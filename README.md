@@ -176,7 +176,7 @@ auto_links:
 | Auto-Relationships | No | Built-in |
 | Vector Search | Plugin | Built-in |
 | Embedded Mode | No | Yes |
-| License | GPL/Commercial | Apache 2.0 |
+| License | GPL/Commercial | MIT |
 
 ## Project Structure
 
@@ -215,4 +215,6 @@ nornicdb/
 
 ## License
 
-Apache 2.0
+MIT License - See [LICENSE](../LICENSE) in the parent Mimir repository.
+
+NornicDB is part of the Mimir project and shares its MIT license.
