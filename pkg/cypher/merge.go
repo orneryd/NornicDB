@@ -432,8 +432,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	onCreateIdx := findKeywordIndex(cypher, "ON CREATE SET")
 	onMatchIdx := findKeywordIndex(cypher, "ON MATCH SET")
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	withIdx := findKeywordIndex(cypher, "WITH")
+	// Use quote-aware search for RETURN and WITH since text content may contain these keywords
+	returnIdx := findKeywordIndexInContext(cypher, "RETURN")
+	withIdx := findKeywordIndexInContext(cypher, "WITH")
 
 	// Find standalone SET (not ON CREATE/MATCH SET)
 	// Must handle SET preceded by space, tab, or newline
@@ -494,7 +495,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	}
 
 	// Handle second MERGE in compound query (handle any whitespace before MERGE)
-	secondMergeIdx := findKeywordIndex(cypher[mergeIdx+5:], "MERGE")
+	// Use quote-aware search since text content may contain "MERGE" keyword
+	secondMergeIdx := findKeywordIndexInContext(cypher[mergeIdx+5:], "MERGE")
 	if secondMergeIdx > 0 {
 		// There's a second MERGE clause - this is for relationships
 		// Handle the first MERGE, then process second
@@ -578,7 +580,12 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	// Apply standalone SET
 	if setIdx > 0 {
 		setEnd := len(cypher)
-		for _, idx := range []int{withIdx, returnIdx} {
+		// Also check for second MERGE - SET clause ends there too
+		secondMergeAbsIdx := -1
+		if secondMergeIdx > 0 {
+			secondMergeAbsIdx = mergeIdx + 5 + secondMergeIdx
+		}
+		for _, idx := range []int{withIdx, returnIdx, secondMergeAbsIdx} {
 			if idx > setIdx && idx < setEnd {
 				setEnd = idx
 			}

@@ -35,8 +35,8 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Database.DataDir != "./data" {
 		t.Errorf("expected data dir './data', got %q", cfg.Database.DataDir)
 	}
-	if cfg.Database.DefaultDatabase != "neo4j" {
-		t.Errorf("expected default db 'neo4j', got %q", cfg.Database.DefaultDatabase)
+	if cfg.Database.DefaultDatabase != "nornicdb" {
+		t.Errorf("expected default db 'nornicdb', got %q", cfg.Database.DefaultDatabase)
 	}
 	if cfg.Database.ReadOnly {
 		t.Error("expected ReadOnly to be false by default")
@@ -162,7 +162,7 @@ func TestLoadFromEnv_Neo4jAuth(t *testing.T) {
 			name:         "password only (legacy)",
 			authEnv:      "simplepassword",
 			wantEnabled:  true,
-			wantUsername: "neo4j",
+			wantUsername: "admin",
 			wantPassword: "simplepassword",
 		},
 	}

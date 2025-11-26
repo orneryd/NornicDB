@@ -5,7 +5,7 @@
 package metal
 
 /*
-#cgo CFLAGS: -x objective-c
+#cgo CFLAGS: -x objective-c -fobjc-arc
 #cgo LDFLAGS: -framework Metal -framework Foundation -framework CoreGraphics
 
 #include <stdlib.h>

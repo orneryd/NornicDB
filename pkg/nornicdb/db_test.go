@@ -87,7 +87,7 @@ func TestStore(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("stores memory with defaults", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -111,7 +111,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("stores memory with explicit tier", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -126,7 +126,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("stores memory with tags and properties", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -144,7 +144,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -154,7 +154,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("returns error for nil memory", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -163,7 +163,7 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("stores with embeddings", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -181,7 +181,7 @@ func TestRecall(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("recalls stored memory", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -203,7 +203,7 @@ func TestRecall(t *testing.T) {
 	})
 
 	t.Run("reinforces memory on recall", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -221,7 +221,7 @@ func TestRecall(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent ID", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -230,7 +230,7 @@ func TestRecall(t *testing.T) {
 	})
 
 	t.Run("returns error for empty ID", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -239,7 +239,7 @@ func TestRecall(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -252,7 +252,7 @@ func TestRemember(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds similar memories", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -293,7 +293,7 @@ func TestRemember(t *testing.T) {
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -313,7 +313,7 @@ func TestRemember(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matches", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -328,7 +328,7 @@ func TestRemember(t *testing.T) {
 	})
 
 	t.Run("returns error for empty embedding", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -337,7 +337,7 @@ func TestRemember(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -350,7 +350,7 @@ func TestLink(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates link between memories", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -375,7 +375,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("uses default edge type", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -388,7 +388,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("normalizes confidence", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -406,7 +406,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent source", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -417,7 +417,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent target", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -428,7 +428,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("returns error for empty IDs", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -440,7 +440,7 @@ func TestLink(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -453,7 +453,7 @@ func TestNeighbors(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds direct neighbors", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -477,7 +477,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("finds incoming neighbors", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -495,7 +495,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("filters by edge type", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -513,7 +513,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("traverses multiple hops", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -537,7 +537,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("returns empty for isolated node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -549,7 +549,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("returns error for empty ID", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -558,7 +558,7 @@ func TestNeighbors(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -571,7 +571,7 @@ func TestForget(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("forgets memory", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -586,7 +586,7 @@ func TestForget(t *testing.T) {
 	})
 
 	t.Run("cleans up edges", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -605,7 +605,7 @@ func TestForget(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent ID", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -614,7 +614,7 @@ func TestForget(t *testing.T) {
 	})
 
 	t.Run("returns error for empty ID", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -623,7 +623,7 @@ func TestForget(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -636,7 +636,7 @@ func TestCypher(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns empty results for now", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -647,7 +647,7 @@ func TestCypher(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -815,7 +815,7 @@ func TestDecayIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("decay affects recall score", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -848,7 +848,7 @@ func TestWithoutDecay(t *testing.T) {
 			DecayEnabled:     false,
 			AutoLinksEnabled: false,
 		}
-		db, err := Open("./testdata", config)
+		db, err := Open(t.TempDir(), config)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -871,7 +871,7 @@ func TestStats(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns initial stats", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -881,7 +881,7 @@ func TestStats(t *testing.T) {
 	})
 
 	t.Run("updates after storing", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -899,7 +899,7 @@ func TestExecuteCypher(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("executes match query", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -910,7 +910,7 @@ func TestExecuteCypher(t *testing.T) {
 	})
 
 	t.Run("executes with parameters", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -921,7 +921,7 @@ func TestExecuteCypher(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -930,7 +930,7 @@ func TestExecuteCypher(t *testing.T) {
 	})
 
 	t.Run("creates and queries nodes", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -953,7 +953,7 @@ func TestListNodes(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("lists all nodes", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -967,7 +967,7 @@ func TestListNodes(t *testing.T) {
 	})
 
 	t.Run("filters by label", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -990,7 +990,7 @@ func TestListNodes(t *testing.T) {
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1004,7 +1004,7 @@ func TestListNodes(t *testing.T) {
 	})
 
 	t.Run("respects offset", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1018,7 +1018,7 @@ func TestListNodes(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1031,7 +1031,7 @@ func TestGetNode(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("gets existing node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1044,7 +1044,7 @@ func TestGetNode(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1053,7 +1053,7 @@ func TestGetNode(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1066,7 +1066,7 @@ func TestCreateNode(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates node with labels", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1077,7 +1077,7 @@ func TestCreateNode(t *testing.T) {
 	})
 
 	t.Run("creates node with properties", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1092,7 +1092,7 @@ func TestCreateNode(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1105,7 +1105,7 @@ func TestUpdateNode(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("updates existing node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1119,7 +1119,7 @@ func TestUpdateNode(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1128,7 +1128,7 @@ func TestUpdateNode(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1141,7 +1141,7 @@ func TestDeleteNode(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("deletes existing node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1157,7 +1157,7 @@ func TestDeleteNode(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1174,7 +1174,7 @@ func TestListEdges(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("lists all edges", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1189,7 +1189,7 @@ func TestListEdges(t *testing.T) {
 	})
 
 	t.Run("filters by type", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1207,7 +1207,7 @@ func TestListEdges(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1220,7 +1220,7 @@ func TestGetEdge(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("gets existing edge", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1236,7 +1236,7 @@ func TestGetEdge(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent edge", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1245,7 +1245,7 @@ func TestGetEdge(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1258,7 +1258,7 @@ func TestCreateEdge(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates edge between nodes", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1273,7 +1273,7 @@ func TestCreateEdge(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent source", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1284,7 +1284,7 @@ func TestCreateEdge(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent target", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1295,7 +1295,7 @@ func TestCreateEdge(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1308,7 +1308,7 @@ func TestDeleteEdge(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("deletes existing edge", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1326,7 +1326,7 @@ func TestDeleteEdge(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1343,7 +1343,7 @@ func TestSearch(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds matching nodes", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1356,7 +1356,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("filters by labels", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1379,7 +1379,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("case insensitive", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1391,7 +1391,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("respects limit", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1405,7 +1405,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matches", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1415,7 +1415,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1428,7 +1428,7 @@ func TestFindSimilar(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("finds similar nodes by embedding", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1449,7 +1449,7 @@ func TestFindSimilar(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent node", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1458,7 +1458,7 @@ func TestFindSimilar(t *testing.T) {
 	})
 
 	t.Run("returns error for node without embedding", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1470,7 +1470,7 @@ func TestFindSimilar(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1487,7 +1487,7 @@ func TestGetLabels(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns labels", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1500,7 +1500,7 @@ func TestGetLabels(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1513,7 +1513,7 @@ func TestGetRelationshipTypes(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns relationship types", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1529,7 +1529,7 @@ func TestGetRelationshipTypes(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1542,7 +1542,7 @@ func TestGetIndexes(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns indexes", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1556,7 +1556,7 @@ func TestCreateIndex(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates index without error", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1573,7 +1573,7 @@ func TestBackup(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("backup succeeds", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1590,7 +1590,7 @@ func TestExportUserData(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("exports user data as JSON", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1612,7 +1612,7 @@ func TestExportUserData(t *testing.T) {
 	})
 
 	t.Run("exports as CSV", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1622,7 +1622,7 @@ func TestExportUserData(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1635,7 +1635,7 @@ func TestDeleteUserData(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("deletes user data", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1650,7 +1650,7 @@ func TestDeleteUserData(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1663,7 +1663,7 @@ func TestAnonymizeUserData(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("anonymizes user data", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1691,7 +1691,7 @@ func TestAnonymizeUserData(t *testing.T) {
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1742,7 +1742,7 @@ func TestHybridSearch(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("basic_hybrid_search", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1768,7 +1768,7 @@ func TestHybridSearch(t *testing.T) {
 	})
 
 	t.Run("hybrid_search_with_labels", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1780,7 +1780,7 @@ func TestHybridSearch(t *testing.T) {
 	})
 
 	t.Run("hybrid_search_closed_db", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1791,7 +1791,7 @@ func TestHybridSearch(t *testing.T) {
 	})
 
 	t.Run("hybrid_search_empty_query", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1807,7 +1807,7 @@ func TestLoadFromExport(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("load_from_nonexistent_directory", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1816,7 +1816,7 @@ func TestLoadFromExport(t *testing.T) {
 	})
 
 	t.Run("load_from_export_closed_db", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1830,7 +1830,7 @@ func TestBuildSearchIndexes(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("build_indexes_on_empty_db", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1839,7 +1839,7 @@ func TestBuildSearchIndexes(t *testing.T) {
 	})
 
 	t.Run("build_indexes_with_data", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1857,7 +1857,7 @@ func TestBuildSearchIndexes(t *testing.T) {
 	})
 
 	t.Run("build_indexes_closed_db", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1869,7 +1869,7 @@ func TestBuildSearchIndexes(t *testing.T) {
 
 func TestSetGetGPUManager(t *testing.T) {
 	t.Run("set_and_get_gpu_manager", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1891,7 +1891,7 @@ func TestSetGetGPUManager(t *testing.T) {
 	})
 
 	t.Run("set_nil_gpu_manager", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1905,7 +1905,7 @@ func TestSetGetGPUManager(t *testing.T) {
 	})
 
 	t.Run("thread_safe_access", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1928,7 +1928,7 @@ func TestCypherFunctionWithParams(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("simple_cypher_query", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1946,7 +1946,7 @@ func TestCypherFunctionWithParams(t *testing.T) {
 	})
 
 	t.Run("cypher_with_create", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1956,7 +1956,7 @@ func TestCypherFunctionWithParams(t *testing.T) {
 	})
 
 	t.Run("cypher_closed_db", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
@@ -1965,7 +1965,7 @@ func TestCypherFunctionWithParams(t *testing.T) {
 	})
 
 	t.Run("cypher_invalid_query", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
@@ -1974,7 +1974,7 @@ func TestCypherFunctionWithParams(t *testing.T) {
 	})
 
 	t.Run("cypher_with_params", func(t *testing.T) {
-		db, err := Open("./testdata", nil)
+		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 

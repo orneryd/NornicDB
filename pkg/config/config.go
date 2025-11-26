@@ -279,7 +279,7 @@ func LoadFromEnv() *Config {
 
 	// Database settings
 	config.Database.DataDir = getEnv("NEO4J_dbms_directories_data", "./data")
-	config.Database.DefaultDatabase = getEnv("NEO4J_dbms_default__database", "neo4j")
+	config.Database.DefaultDatabase = getEnv("NEO4J_dbms_default__database", "nornicdb")
 	config.Database.ReadOnly = getEnvBool("NEO4J_dbms_read__only", false)
 	config.Database.TransactionTimeout = getEnvDuration("NEO4J_dbms_transaction_timeout", 30*time.Second)
 	config.Database.MaxConcurrentTransactions = getEnvInt("NEO4J_dbms_transaction_concurrent_maximum", 1000)

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,21 +192,25 @@ func edgeKey(id EdgeID) []byte {
 }
 
 // labelIndexKey creates a key for the label index.
-// Format: prefix + label + 0x00 + nodeID
+// Format: prefix + label (lowercase) + 0x00 + nodeID
+// Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
 func labelIndexKey(label string, nodeID NodeID) []byte {
-	key := make([]byte, 0, 1+len(label)+1+len(nodeID))
+	normalizedLabel := strings.ToLower(label)
+	key := make([]byte, 0, 1+len(normalizedLabel)+1+len(nodeID))
 	key = append(key, prefixLabelIndex)
-	key = append(key, []byte(label)...)
+	key = append(key, []byte(normalizedLabel)...)
 	key = append(key, 0x00) // Separator
 	key = append(key, []byte(nodeID)...)
 	return key
 }
 
 // labelIndexPrefix returns the prefix for scanning all nodes with a label.
+// Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
 func labelIndexPrefix(label string) []byte {
-	key := make([]byte, 0, 1+len(label)+1)
+	normalizedLabel := strings.ToLower(label)
+	key := make([]byte, 0, 1+len(normalizedLabel)+1)
 	key = append(key, prefixLabelIndex)
-	key = append(key, []byte(label)...)
+	key = append(key, []byte(normalizedLabel)...)
 	key = append(key, 0x00)
 	return key
 }

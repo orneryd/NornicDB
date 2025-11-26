@@ -351,6 +351,63 @@ func TestMerge_FileIndexerPattern(t *testing.T) {
 	})
 }
 
+// Test exact Mimir FileIndexer query format with SET on separate line
+func TestMerge_FileIndexerExactFormat(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create file node
+	_, err := e.Execute(ctx, `
+		CREATE (f:File:Node {
+			path: '/app/docs/TEST.md',
+			name: 'TEST.md',
+			type: 'file'
+		})
+	`, nil)
+	require.NoError(t, err)
+
+	// Get file node ID
+	fileResult, err := e.Execute(ctx, `
+		MATCH (f:File {path: '/app/docs/TEST.md'})
+		RETURN id(f) as fileId
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, fileResult.Rows, 1)
+	fileNodeId := fileResult.Rows[0][0]
+
+	// Use EXACT Mimir query format with SET on separate line
+	_, err = e.Execute(ctx, `
+		MATCH (f:File) WHERE id(f) = $fileNodeId
+		MERGE (c:FileChunk:Node {id: $chunkId})
+		SET
+			c.chunk_index = $chunkIndex,
+			c.text = $text,
+			c.type = 'file_chunk',
+			c.parent_file_id = $parentFileId
+		MERGE (f)-[:HAS_CHUNK {index: $chunkIndex}]->(c)
+	`, map[string]interface{}{
+		"fileNodeId":   fileNodeId,
+		"chunkId":      "chunk-test-0-xyz",
+		"chunkIndex":   0,
+		"text":         "Test content",
+		"parentFileId": fileNodeId,
+	})
+	require.NoError(t, err)
+
+	// Verify chunk was created with ALL properties including type
+	chunkResult, err := e.Execute(ctx, `
+		MATCH (c:FileChunk {id: 'chunk-test-0-xyz'})
+		RETURN c.text, c.chunk_index, c.type, c.parent_file_id
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, chunkResult.Rows, 1, "FileChunk should exist")
+	assert.Equal(t, "Test content", chunkResult.Rows[0][0], "text should match")
+	assert.Equal(t, int64(0), chunkResult.Rows[0][1], "chunk_index should match")
+	assert.Equal(t, "file_chunk", chunkResult.Rows[0][2], "type MUST be set to 'file_chunk'")
+	assert.Equal(t, fileNodeId, chunkResult.Rows[0][3], "parent_file_id should match")
+}
+
 // ========================================
 // MERGE with Parameters Tests
 // ========================================

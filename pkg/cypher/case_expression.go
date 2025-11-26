@@ -184,6 +184,30 @@ func (e *StorageExecutor) evaluateCaseExpression(expr string, nodes map[string]*
 // evaluateCondition evaluates a boolean condition expression.
 func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
 	condition = strings.TrimSpace(condition)
+	upper := strings.ToUpper(condition)
+
+	// Handle AND - split and evaluate both sides
+	// Need to find AND at top level (not inside parentheses)
+	andIdx := findTopLevelKeyword(condition, " AND ")
+	if andIdx > 0 {
+		left := strings.TrimSpace(condition[:andIdx])
+		right := strings.TrimSpace(condition[andIdx+5:])
+		return e.evaluateCondition(left, nodes, rels) && e.evaluateCondition(right, nodes, rels)
+	}
+
+	// Handle OR - split and evaluate both sides
+	orIdx := findTopLevelKeyword(condition, " OR ")
+	if orIdx > 0 {
+		left := strings.TrimSpace(condition[:orIdx])
+		right := strings.TrimSpace(condition[orIdx+4:])
+		return e.evaluateCondition(left, nodes, rels) || e.evaluateCondition(right, nodes, rels)
+	}
+
+	// Handle NOT prefix
+	if strings.HasPrefix(upper, "NOT ") {
+		inner := strings.TrimSpace(condition[4:])
+		return !e.evaluateCondition(inner, nodes, rels)
+	}
 
 	// Handle comparison operators: <, >, <=, >=, =, <>
 	for _, op := range []string{"<=", ">=", "<>", "<", ">", "="} {
@@ -198,13 +222,13 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	}
 
 	// Handle IS NULL / IS NOT NULL
-	if strings.HasSuffix(strings.ToUpper(condition), " IS NULL") {
-		expr := strings.TrimSpace(condition[:len(condition)-7])
+	if strings.HasSuffix(upper, " IS NULL") {
+		expr := strings.TrimSpace(condition[:len(condition)-8])
 		val := e.evaluateExpressionWithContext(expr, nodes, rels)
 		return val == nil
 	}
-	if strings.HasSuffix(strings.ToUpper(condition), " IS NOT NULL") {
-		expr := strings.TrimSpace(condition[:len(condition)-11])
+	if strings.HasSuffix(upper, " IS NOT NULL") {
+		expr := strings.TrimSpace(condition[:len(condition)-12])
 		val := e.evaluateExpressionWithContext(expr, nodes, rels)
 		return val != nil
 	}
@@ -212,6 +236,47 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	// Otherwise evaluate as expression and check truthiness
 	result := e.evaluateExpressionWithContext(condition, nodes, rels)
 	return isTruthy(result)
+}
+
+// findTopLevelKeyword finds a keyword at the top level (not inside parentheses)
+func findTopLevelKeyword(s, keyword string) int {
+	upper := strings.ToUpper(s)
+	upperKeyword := strings.ToUpper(keyword)
+	depth := 0
+	inString := false
+	stringChar := rune(0)
+
+	for i := 0; i < len(s); i++ {
+		ch := rune(s[i])
+
+		// Track string literals
+		if ch == '\'' || ch == '"' {
+			if !inString {
+				inString = true
+				stringChar = ch
+			} else if ch == stringChar {
+				inString = false
+			}
+			continue
+		}
+
+		// Track parentheses
+		if !inString {
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+			}
+		}
+
+		// Check for keyword at top level
+		if !inString && depth == 0 && i+len(keyword) <= len(s) {
+			if upper[i:i+len(keyword)] == upperKeyword {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // compareValues compares two values for equality (used in simple CASE).

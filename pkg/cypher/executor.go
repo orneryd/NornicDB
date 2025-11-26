@@ -35,7 +35,7 @@
 //		"name": "Alice",
 //		"minAge": 25,
 //	}
-//	result, err = executor.Execute(ctx, 
+//	result, err = executor.Execute(ctx,
 //		"MATCH (n:Person {name: $name}) WHERE n.age >= $minAge RETURN n", params)
 //
 //	// Complex query with relationships
@@ -90,20 +90,20 @@
 //
 // Think of Cypher like asking questions about a social network:
 //
-// 1. **MATCH**: "Find all people named Alice" - like searching through
-//    a phone book for everyone with a specific name.
+//  1. **MATCH**: "Find all people named Alice" - like searching through
+//     a phone book for everyone with a specific name.
 //
-// 2. **CREATE**: "Add a new person named Bob" - like writing a new
-//    entry in the phone book.
+//  2. **CREATE**: "Add a new person named Bob" - like writing a new
+//     entry in the phone book.
 //
-// 3. **Relationships**: "Find who Alice knows" - like following the
-//    lines between people on a friendship map.
+//  3. **Relationships**: "Find who Alice knows" - like following the
+//     lines between people on a friendship map.
 //
-// 4. **WHERE**: "Find people older than 25" - like adding a filter
-//    to only show certain results.
+//  4. **WHERE**: "Find people older than 25" - like adding a filter
+//     to only show certain results.
 //
-// 5. **RETURN**: "Show me their names and ages" - like deciding which
-//    information to display from your search.
+//  5. **RETURN**: "Show me their names and ages" - like deciding which
+//     information to display from your search.
 //
 // The Cypher executor is like a smart assistant that understands these
 // questions and knows how to find the answers in your data!
@@ -143,7 +143,7 @@ import (
 //
 //	// Parameterized query
 //	params := map[string]interface{}{"name": "Bob", "age": 30}
-//	result, _ = executor.Execute(ctx, 
+//	result, _ = executor.Execute(ctx,
 //		"CREATE (n:Person {name: $name, age: $age})", params)
 //
 //	// Complex pattern matching
@@ -154,7 +154,8 @@ import (
 //	`, nil)
 //
 // Thread Safety:
-//   The executor is thread-safe and can handle concurrent queries.
+//
+//	The executor is thread-safe and can handle concurrent queries.
 type StorageExecutor struct {
 	parser  *Parser
 	storage storage.Engine
@@ -239,8 +240,9 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 //   - OPTIONAL MATCH: Left outer joins
 //
 // Error Handling:
-//   Returns detailed error messages for syntax errors, type mismatches,
-//   and execution failures with Neo4j-compatible error codes.
+//
+//	Returns detailed error messages for syntax errors, type mismatches,
+//	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	// Normalize query
 	cypher = strings.TrimSpace(cypher)
@@ -295,15 +297,21 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Only route to executeSet if it's a MATCH ... SET or standalone SET, not ON CREATE SET / ON MATCH SET
 	// Normalize whitespace for SET detection (handle newlines/tabs before SET)
 	normalizedUpper := strings.ReplaceAll(strings.ReplaceAll(upperQuery, "\n", " "), "\t", " ")
-	if strings.Contains(normalizedUpper, " SET ") && 
-		!strings.Contains(normalizedUpper, "ON CREATE SET") && 
+	if strings.Contains(normalizedUpper, " SET ") &&
+		!strings.Contains(normalizedUpper, "ON CREATE SET") &&
 		!strings.Contains(normalizedUpper, "ON MATCH SET") {
 		return e.executeSet(ctx, cypher)
 	}
-	
+
 	// Handle MATCH ... REMOVE (property removal)
 	if strings.Contains(normalizedUpper, " REMOVE ") {
 		return e.executeRemove(ctx, cypher)
+	}
+
+	// Compound queries: MATCH ... OPTIONAL MATCH ... (left outer join pattern)
+	// This handles queries like: MATCH (f:File) OPTIONAL MATCH (f)-[:HAS_CHUNK]->(c:FileChunk) WITH ... RETURN ...
+	if strings.HasPrefix(upperQuery, "MATCH") && findKeywordIndex(cypher, "OPTIONAL MATCH") > 0 {
+		return e.executeCompoundMatchOptionalMatch(ctx, cypher)
 	}
 
 	switch {
@@ -318,10 +326,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return e.executeShortestPathQuery(query)
 	case strings.HasPrefix(upperQuery, "MATCH"):
 		return e.executeMatch(ctx, cypher)
-	case strings.HasPrefix(upperQuery, "CREATE CONSTRAINT"), 
-		 strings.HasPrefix(upperQuery, "CREATE FULLTEXT INDEX"),
-		 strings.HasPrefix(upperQuery, "CREATE VECTOR INDEX"),
-		 strings.HasPrefix(upperQuery, "CREATE INDEX"):
+	case strings.HasPrefix(upperQuery, "CREATE CONSTRAINT"),
+		strings.HasPrefix(upperQuery, "CREATE FULLTEXT INDEX"),
+		strings.HasPrefix(upperQuery, "CREATE VECTOR INDEX"),
+		strings.HasPrefix(upperQuery, "CREATE INDEX"):
 		// Schema commands - constraints and indexes (check more specific patterns first)
 		return e.executeSchemaCommand(ctx, cypher)
 	case strings.HasPrefix(upperQuery, "CREATE"):
@@ -372,7 +380,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	}
 
 	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-	
+
 	// Handle simple literal returns like "RETURN 1" or "RETURN true"
 	parts := strings.Split(returnClause, ",")
 	columns := make([]string, 0, len(parts))
@@ -380,7 +388,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		
+
 		// Check for alias (AS)
 		alias := part
 		upperPart := strings.ToUpper(part)
@@ -516,21 +524,21 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 	// Use regex to find all parameter references
 	// Parameters are: $name or $name123 (alphanumeric starting with letter)
 	paramPattern := regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
-	
+
 	result := paramPattern.ReplaceAllStringFunc(cypher, func(match string) string {
 		// Extract parameter name (without $)
 		paramName := match[1:]
-		
+
 		// Look up the value
 		value, exists := params[paramName]
 		if !exists {
 			// Parameter not provided, leave as-is (might be handled elsewhere or is an error)
 			return match
 		}
-		
+
 		return e.valueToLiteral(value)
 	})
-	
+
 	return result
 }
 
@@ -539,15 +547,15 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 	if v == nil {
 		return "null"
 	}
-	
-		switch val := v.(type) {
-		case string:
+
+	switch val := v.(type) {
+	case string:
 		// Escape single quotes by doubling them (Cypher standard)
 		escaped := strings.ReplaceAll(val, "'", "''")
 		// Also escape backslashes
 		escaped = strings.ReplaceAll(escaped, "\\", "\\\\")
 		return fmt.Sprintf("'%s'", escaped)
-		
+
 	case int:
 		return strconv.FormatInt(int64(val), 10)
 	case int8:
@@ -568,18 +576,18 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		return strconv.FormatUint(uint64(val), 10)
 	case uint64:
 		return strconv.FormatUint(val, 10)
-		
+
 	case float32:
 		return strconv.FormatFloat(float64(val), 'f', -1, 32)
 	case float64:
 		return strconv.FormatFloat(val, 'f', -1, 64)
-		
-		case bool:
+
+	case bool:
 		if val {
 			return "true"
 		}
 		return "false"
-		
+
 	case []interface{}:
 		// Convert array to Cypher list literal: [val1, val2, ...]
 		parts := make([]string, len(val))
@@ -587,7 +595,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 			parts[i] = e.valueToLiteral(item)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-		
+
 	case []string:
 		// String array
 		parts := make([]string, len(val))
@@ -595,28 +603,28 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 			parts[i] = e.valueToLiteral(item)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-		
+
 	case []int:
 		parts := make([]string, len(val))
 		for i, item := range val {
 			parts[i] = strconv.Itoa(item)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-		
+
 	case []int64:
 		parts := make([]string, len(val))
 		for i, item := range val {
 			parts[i] = strconv.FormatInt(item, 10)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-		
+
 	case []float64:
 		parts := make([]string, len(val))
 		for i, item := range val {
 			parts[i] = strconv.FormatFloat(item, 'f', -1, 64)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-		
+
 	case map[string]interface{}:
 		// Convert map to Cypher map literal: {key1: val1, key2: val2}
 		parts := make([]string, 0, len(val))
@@ -624,7 +632,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 			parts = append(parts, fmt.Sprintf("%s: %s", k, e.valueToLiteral(v)))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
-		
+
 	default:
 		// Fallback: convert to string
 		return fmt.Sprintf("'%v'", v)
@@ -675,21 +683,21 @@ func (e *StorageExecutor) parseMergePattern(pattern string) (string, []string, m
 func (e *StorageExecutor) applySetToNode(node *storage.Node, varName string, setClause string) {
 	// Split SET clause into individual assignments, respecting parentheses and quotes
 	assignments := e.splitSetAssignments(setClause)
-	
+
 	for _, assignment := range assignments {
 		assignment = strings.TrimSpace(assignment)
 		if !strings.HasPrefix(assignment, varName+".") {
 			continue
 		}
-		
+
 		eqIdx := strings.Index(assignment, "=")
 		if eqIdx <= 0 {
-				continue
+			continue
 		}
-		
+
 		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
 		propValue := strings.TrimSpace(assignment[eqIdx+1:])
-		
+
 		// Evaluate the expression and set the property
 		setNodeProperty(node, propName, e.evaluateSetExpression(propValue))
 	}
@@ -716,7 +724,7 @@ func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 	parenDepth := 0
 	inQuote := false
 	quoteChar := rune(0)
-	
+
 	for i, c := range setClause {
 		switch {
 		case c == '\'' || c == '"':
@@ -745,24 +753,24 @@ func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 			current.WriteRune(c)
 		}
 	}
-	
+
 	// Add final assignment
 	if s := strings.TrimSpace(current.String()); s != "" {
 		assignments = append(assignments, s)
 	}
-	
+
 	return assignments
 }
 
 // evaluateSetExpression evaluates a Cypher expression for SET clauses.
 func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 	expr = strings.TrimSpace(expr)
-	
+
 	// Handle null
 	if strings.ToLower(expr) == "null" {
 		return nil
 	}
-	
+
 	// Handle simple literals
 	if strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'") {
 		return expr[1 : len(expr)-1]
@@ -776,7 +784,7 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 	if expr == "false" {
 		return false
 	}
-	
+
 	// Handle numbers
 	if val, err := strconv.ParseInt(expr, 10, 64); err == nil {
 		return val
@@ -784,7 +792,7 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 	if val, err := strconv.ParseFloat(expr, 64); err == nil {
 		return val
 	}
-	
+
 	// Handle arrays (simplified)
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
@@ -799,42 +807,42 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 		}
 		return result
 	}
-	
+
 	// Handle function calls and expressions
 	lowerExpr := strings.ToLower(expr)
-	
+
 	// timestamp() - returns current timestamp
 	if lowerExpr == "timestamp()" {
 		return e.idCounter()
 	}
-	
+
 	// datetime() - returns ISO date string
 	if lowerExpr == "datetime()" {
 		return fmt.Sprintf("%d", e.idCounter())
 	}
-	
+
 	// randomUUID() or randomuuid()
 	if lowerExpr == "randomuuid()" {
 		return e.generateUUID()
 	}
-	
+
 	// Handle string concatenation: 'prefix-' + toString(timestamp()) + '-' + substring(randomUUID(), 0, 8)
 	if strings.Contains(expr, " + ") {
 		return e.evaluateStringConcat(expr)
 	}
-	
+
 	// Handle toString(expr)
 	if strings.HasPrefix(lowerExpr, "tostring(") && strings.HasSuffix(expr, ")") {
 		inner := expr[9 : len(expr)-1]
 		val := e.evaluateSetExpression(inner)
 		return fmt.Sprintf("%v", val)
 	}
-	
+
 	// Handle substring(str, start, length)
 	if strings.HasPrefix(lowerExpr, "substring(") && strings.HasSuffix(expr, ")") {
 		return e.evaluateSubstring(expr)
 	}
-	
+
 	// If nothing else matched, return as-is (already substituted parameter value)
 	return expr
 }
@@ -842,16 +850,16 @@ func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 // evaluateStringConcat handles string concatenation with +
 func (e *StorageExecutor) evaluateStringConcat(expr string) string {
 	var result strings.Builder
-	
+
 	// Split by + but respect quotes and parentheses
 	parts := e.splitByPlus(expr)
-	
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		val := e.evaluateSetExpression(part)
 		result.WriteString(fmt.Sprintf("%v", val))
 	}
-	
+
 	return result.String()
 }
 
@@ -861,7 +869,7 @@ func (e *StorageExecutor) hasConcatOperator(expr string) bool {
 	inQuote := false
 	quoteChar := rune(0)
 	parenDepth := 0
-	
+
 	for i := 0; i < len(expr); i++ {
 		c := rune(expr[i])
 		switch {
@@ -895,7 +903,7 @@ func (e *StorageExecutor) splitByPlus(expr string) []string {
 	parenDepth := 0
 	inQuote := false
 	quoteChar := rune(0)
-	
+
 	for i := 0; i < len(expr); i++ {
 		c := rune(expr[i])
 		switch {
@@ -922,11 +930,11 @@ func (e *StorageExecutor) splitByPlus(expr string) []string {
 			current.WriteRune(c)
 		}
 	}
-	
+
 	if s := strings.TrimSpace(current.String()); s != "" {
 		parts = append(parts, s)
 	}
-	
+
 	return parts
 }
 
@@ -934,22 +942,22 @@ func (e *StorageExecutor) splitByPlus(expr string) []string {
 func (e *StorageExecutor) evaluateSubstring(expr string) string {
 	// Extract arguments from substring(str, start, length)
 	inner := expr[10 : len(expr)-1] // Remove "substring(" and ")"
-	
+
 	// Split by comma, respecting parentheses
 	args := e.splitFunctionArgs(inner)
 	if len(args) < 2 {
 		return ""
 	}
-	
+
 	// Evaluate the string argument
 	str := fmt.Sprintf("%v", e.evaluateSetExpression(args[0]))
-	
+
 	// Parse start
 	start, err := strconv.Atoi(strings.TrimSpace(args[1]))
 	if err != nil {
 		start = 0
 	}
-	
+
 	// Parse optional length
 	length := len(str) - start
 	if len(args) >= 3 {
@@ -957,7 +965,7 @@ func (e *StorageExecutor) evaluateSubstring(expr string) string {
 			length = l
 		}
 	}
-	
+
 	// Apply substring
 	if start >= len(str) {
 		return ""
@@ -988,17 +996,17 @@ func (e *StorageExecutor) splitFunctionArgs(args string) []string {
 				result = append(result, strings.TrimSpace(current.String()))
 				current.Reset()
 			} else {
-			current.WriteRune(c)
+				current.WriteRune(c)
 			}
 		default:
-				current.WriteRune(c)
+			current.WriteRune(c)
 		}
 	}
-	
+
 	if s := strings.TrimSpace(current.String()); s != "" {
 		result = append(result, s)
 	}
-	
+
 	return result
 }
 
@@ -1021,7 +1029,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 		}
 		filteredProps[k] = v
 	}
-	
+
 	return map[string]interface{}{
 		"id":         string(node.ID),
 		"labels":     node.Labels,
@@ -1084,12 +1092,12 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 	if strings.HasSuffix(pattern, ")") {
 		pattern = pattern[:len(pattern)-1]
 	}
-	
+
 	// Remove properties block
 	if propsStart := strings.Index(pattern, "{"); propsStart > 0 {
 		pattern = pattern[:propsStart]
 	}
-	
+
 	// Split by : and extract labels
 	parts := strings.Split(pattern, ":")
 	labels := []string{}
@@ -1182,7 +1190,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 
 	// Normalize whitespace for index finding (newlines/tabs become spaces)
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
-	
+
 	// Use word boundary detection to avoid matching substrings
 	matchIdx := findKeywordIndex(normalized, "MATCH")
 	setIdx := findKeywordIndex(normalized, "SET")
@@ -1305,7 +1313,7 @@ func (e *StorageExecutor) executeSetMerge(matchResult *ExecuteResult, setPart st
 
 	// Parse the properties to merge
 	var propsToMerge map[string]interface{}
-	
+
 	if strings.HasPrefix(right, "{") {
 		// Inline properties: {key: value, ...}
 		propsToMerge = e.parseProperties(right)
@@ -1329,7 +1337,7 @@ func (e *StorageExecutor) executeSetMerge(matchResult *ExecuteResult, setPart st
 				continue
 			}
 			storageNode, err := e.storage.GetNode(storage.NodeID(id))
-	if err != nil {
+			if err != nil {
 				continue
 			}
 			if storageNode.Properties == nil {
@@ -1363,7 +1371,7 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 
 	// Normalize whitespace
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
-	
+
 	// Use word boundary detection to avoid matching substrings
 	matchIdx := findKeywordIndex(normalized, "MATCH")
 	removeIdx := findKeywordIndex(normalized, "REMOVE")
@@ -1404,7 +1412,7 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 				continue
 			}
 			storageNode, err := e.storage.GetNode(storage.NodeID(id))
-	if err != nil {
+			if err != nil {
 				continue
 			}
 			// Remove specified properties
@@ -1515,23 +1523,23 @@ func (e *StorageExecutor) parseProperties(propsStr string) map[string]interface{
 		propsStr = propsStr[1 : len(propsStr)-1]
 	}
 	propsStr = strings.TrimSpace(propsStr)
-	
+
 	if propsStr == "" {
 		return props
 	}
 
 	// Parse key-value pairs using a state machine that respects quotes, brackets, and nested structures
 	pairs := e.splitPropertyPairs(propsStr)
-	
+
 	for _, pair := range pairs {
 		colonIdx := strings.Index(pair, ":")
 		if colonIdx <= 0 {
 			continue
 		}
-		
+
 		key := strings.TrimSpace(pair[:colonIdx])
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
-		
+
 		// Parse the value
 		props[key] = e.parsePropertyValue(valueStr)
 	}
@@ -1544,10 +1552,10 @@ func (e *StorageExecutor) parseProperties(propsStr string) map[string]interface{
 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 	var pairs []string
 	var current strings.Builder
-	depth := 0        // Track [], {} nesting
+	depth := 0 // Track [], {} nesting
 	inQuote := false
 	quoteChar := rune(0)
-	
+
 	for i, c := range propsStr {
 		switch {
 		case c == '\'' || c == '"':
@@ -1585,28 +1593,28 @@ func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 			current.WriteRune(c)
 		}
 	}
-	
+
 	// Add final pair
 	if s := strings.TrimSpace(current.String()); s != "" {
 		pairs = append(pairs, s)
 	}
-	
+
 	return pairs
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.
 func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
 	valueStr = strings.TrimSpace(valueStr)
-	
+
 	if valueStr == "" {
 		return nil
 	}
-	
+
 	// Handle null
 	if strings.ToLower(valueStr) == "null" {
 		return nil
 	}
-	
+
 	// Handle quoted strings
 	if len(valueStr) >= 2 {
 		first, last := valueStr[0], valueStr[len(valueStr)-1]
@@ -1623,7 +1631,7 @@ func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
 			return content
 		}
 	}
-	
+
 	// Handle booleans
 	lowerVal := strings.ToLower(valueStr)
 	if lowerVal == "true" {
@@ -1632,27 +1640,27 @@ func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
 	if lowerVal == "false" {
 		return false
 	}
-	
+
 	// Handle integers
 	if intVal, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
 		return intVal
 	}
-	
+
 	// Handle floats
 	if floatVal, err := strconv.ParseFloat(valueStr, 64); err == nil {
 		return floatVal
 	}
-	
+
 	// Handle arrays
 	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
 		return e.parseArrayValue(valueStr)
 	}
-	
+
 	// Handle nested maps (rare in properties, but possible)
 	if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
 		return e.parseProperties(valueStr)
 	}
-	
+
 	// Otherwise return as string (handles unquoted identifiers, etc.)
 	return valueStr
 }
@@ -1664,15 +1672,15 @@ func (e *StorageExecutor) parseArrayValue(arrayStr string) []interface{} {
 	if inner == "" {
 		return []interface{}{}
 	}
-	
+
 	// Split array elements respecting nested structures
 	elements := e.splitArrayElements(inner)
 	result := make([]interface{}, len(elements))
-	
+
 	for i, elem := range elements {
 		result[i] = e.parsePropertyValue(strings.TrimSpace(elem))
 	}
-	
+
 	return result
 }
 
@@ -1683,7 +1691,7 @@ func (e *StorageExecutor) splitArrayElements(inner string) []string {
 	depth := 0
 	inQuote := false
 	quoteChar := rune(0)
-	
+
 	for i, c := range inner {
 		switch {
 		case c == '\'' || c == '"':
@@ -1715,11 +1723,11 @@ func (e *StorageExecutor) splitArrayElements(inner string) []string {
 			current.WriteRune(c)
 		}
 	}
-	
+
 	if s := strings.TrimSpace(current.String()); s != "" {
 		elements = append(elements, s)
 	}
-	
+
 	return elements
 }
 
@@ -2192,52 +2200,52 @@ func (e *StorageExecutor) resolveReturnItem(item returnItem, variable string, no
 	if expr == "*" || expr == variable {
 		return e.nodeToMap(node)
 	}
-	
+
 	// Check for CASE expression FIRST (before property access check)
 	// CASE expressions contain dots (like p.age) but should not be treated as property access
 	if isCaseExpression(expr) {
 		return e.evaluateExpression(expr, variable, node)
 	}
-	
+
 	// Handle property access: variable.property
 	if strings.Contains(expr, ".") {
 		parts := strings.SplitN(expr, ".", 2)
 		varName := parts[0]
-			propName := parts[1]
-		
+		propName := parts[1]
+
 		// Check if variable matches
 		if varName != variable {
 			// Different variable - return nil (variable not in scope)
 			return nil
 		}
-		
+
 		// Handle special "id" property - return node's internal ID
-			if propName == "id" {
+		if propName == "id" {
 			// Check if there's an "id" property first
 			if val, ok := node.Properties["id"]; ok {
 				return val
 			}
 			// Fall back to internal node ID
-				return string(node.ID)
+			return string(node.ID)
 		}
-		
+
 		// Regular property access
 		if val, ok := node.Properties[propName]; ok {
 			return val
 		}
 		return nil
 	}
-	
+
 	// Use the comprehensive expression evaluator for all expressions
 	// This supports: id(n), labels(n), keys(n), properties(n), literals, etc.
 	result := e.evaluateExpression(expr, variable, node)
-	
+
 	// If the result is just the expression string unchanged, return nil
 	// (expression wasn't recognized/evaluated)
 	if str, ok := result.(string); ok && str == expr && !strings.HasPrefix(expr, "'") && !strings.HasPrefix(expr, "\"") {
-	return nil
+		return nil
 	}
-	
+
 	return result
 }
 
@@ -2282,7 +2290,7 @@ func (e *StorageExecutor) evaluateNotExistsSubquery(node *storage.Node, variable
 func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
 	upperClause := strings.ToUpper(whereClause)
 	prefixUpper := strings.ToUpper(prefix)
-	
+
 	// Find the prefix position
 	prefixIdx := strings.Index(upperClause, prefixUpper)
 	if prefixIdx < 0 {
@@ -2317,7 +2325,7 @@ func (e *StorageExecutor) checkSubqueryMatch(node *storage.Node, variable, subqu
 	// Parse the MATCH pattern from the subquery
 	// Format: MATCH (var)<-[:TYPE]-(other) or MATCH (var)-[:TYPE]->(other)
 	upperSub := strings.ToUpper(subquery)
-	
+
 	if !strings.HasPrefix(upperSub, "MATCH ") {
 		return false
 	}
@@ -2376,7 +2384,7 @@ func (e *StorageExecutor) checkSubqueryMatch(node *storage.Node, variable, subqu
 // extractRelTypesFromPattern extracts relationship types from a pattern
 func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
 	var types []string
-	
+
 	idx := strings.Index(pattern, prefix)
 	if idx < 0 {
 		return types
@@ -2389,7 +2397,7 @@ func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []s
 	}
 
 	relPart := rest[:endIdx]
-	
+
 	// Extract type after colon
 	if colonIdx := strings.Index(relPart, ":"); colonIdx >= 0 {
 		typePart := relPart[colonIdx+1:]
@@ -2567,7 +2575,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 			{"nornicdb", "standard", "read-write", "localhost:7687", "primary", true, "online", "online", "", true, true, []string{}},
 		},
 		Stats: &QueryStats{
-			NodesCreated: int(nodeCount),
+			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
 		},
 	}, nil

@@ -47,8 +47,15 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
+
+// normalizeLabel converts a label to lowercase for case-insensitive matching.
+// This makes NornicDB compatible with Neo4j's case-insensitive label handling.
+func normalizeLabel(label string) string {
+	return strings.ToLower(label)
+}
 
 // MemoryEngine is a thread-safe in-memory graph storage implementation.
 //
@@ -72,8 +79,9 @@ import (
 //   - Memory usage: ~200-500 bytes per node + properties
 //
 // Thread Safety:
-//   All public methods are thread-safe. Multiple goroutines can safely
-//   call any method concurrently.
+//
+//	All public methods are thread-safe. Multiple goroutines can safely
+//	call any method concurrently.
 //
 // Example:
 //
@@ -207,12 +215,13 @@ func (m *MemoryEngine) CreateNode(node *Node) error {
 	stored := m.copyNode(node)
 	m.nodes[node.ID] = stored
 
-	// Update label index
+	// Update label index (normalized to lowercase for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] == nil {
-			m.nodesByLabel[label] = make(map[NodeID]struct{})
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] == nil {
+			m.nodesByLabel[normalLabel] = make(map[NodeID]struct{})
 		}
-		m.nodesByLabel[label][node.ID] = struct{}{}
+		m.nodesByLabel[normalLabel][node.ID] = struct{}{}
 	}
 
 	// Register unique constraint values
@@ -290,10 +299,11 @@ func (m *MemoryEngine) UpdateNode(node *Node) error {
 		return ErrNotFound
 	}
 
-	// Remove from old label indexes
+	// Remove from old label indexes (normalized for case-insensitive matching)
 	for _, label := range existing.Labels {
-		if m.nodesByLabel[label] != nil {
-			delete(m.nodesByLabel[label], node.ID)
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] != nil {
+			delete(m.nodesByLabel[normalLabel], node.ID)
 		}
 	}
 
@@ -301,12 +311,13 @@ func (m *MemoryEngine) UpdateNode(node *Node) error {
 	stored := m.copyNode(node)
 	m.nodes[node.ID] = stored
 
-	// Update label index
+	// Update label index (normalized for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] == nil {
-			m.nodesByLabel[label] = make(map[NodeID]struct{})
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] == nil {
+			m.nodesByLabel[normalLabel] = make(map[NodeID]struct{})
 		}
-		m.nodesByLabel[label][node.ID] = struct{}{}
+		m.nodesByLabel[normalLabel][node.ID] = struct{}{}
 	}
 
 	return nil
@@ -330,10 +341,11 @@ func (m *MemoryEngine) DeleteNode(id NodeID) error {
 		return ErrNotFound
 	}
 
-	// Remove from label indexes
+	// Remove from label indexes (normalized for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] != nil {
-			delete(m.nodesByLabel[label], id)
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] != nil {
+			delete(m.nodesByLabel[normalLabel], id)
 		}
 	}
 
@@ -564,7 +576,8 @@ func (m *MemoryEngine) GetNodesByLabel(label string) ([]*Node, error) {
 		return nil, ErrStorageClosed
 	}
 
-	nodeIDs := m.nodesByLabel[label]
+	// Normalize label for case-insensitive matching (Neo4j compatible)
+	nodeIDs := m.nodesByLabel[normalizeLabel(label)]
 	if nodeIDs == nil {
 		return []*Node{}, nil
 	}
@@ -653,8 +666,9 @@ func (m *MemoryEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 //	}
 //
 // Use Case:
-//   For a social graph, this finds all people a user follows.
-//   For a dependency graph, this finds all dependencies of a package.
+//
+//	For a social graph, this finds all people a user follows.
+//	For a dependency graph, this finds all dependencies of a package.
 func (m *MemoryEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if nodeID == "" {
 		return nil, ErrInvalidID
@@ -710,8 +724,9 @@ func (m *MemoryEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 //	}
 //
 // Use Case:
-//   For a social graph, this finds all followers of a user.
-//   For a dependency graph, this finds all packages that depend on this one.
+//
+//	For a social graph, this finds all followers of a user.
+//	For a dependency graph, this finds all packages that depend on this one.
 func (m *MemoryEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if nodeID == "" {
 		return nil, ErrInvalidID
@@ -801,7 +816,8 @@ func (m *MemoryEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 //	fmt.Println("Created 3 users in one operation")
 //
 // Performance:
-//   Approximately 10x faster than individual CreateNode calls for 100+ nodes.
+//
+//	Approximately 10x faster than individual CreateNode calls for 100+ nodes.
 func (m *MemoryEngine) BulkCreateNodes(nodes []*Node) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -829,10 +845,11 @@ func (m *MemoryEngine) BulkCreateNodes(nodes []*Node) error {
 		m.nodes[node.ID] = stored
 
 		for _, label := range node.Labels {
-			if m.nodesByLabel[label] == nil {
-				m.nodesByLabel[label] = make(map[NodeID]struct{})
+			normalLabel := normalizeLabel(label)
+			if m.nodesByLabel[normalLabel] == nil {
+				m.nodesByLabel[normalLabel] = make(map[NodeID]struct{})
 			}
-			m.nodesByLabel[label][node.ID] = struct{}{}
+			m.nodesByLabel[normalLabel][node.ID] = struct{}{}
 		}
 	}
 
@@ -1048,12 +1065,13 @@ func (m *MemoryEngine) createNodeUnlocked(node *Node) {
 	stored := m.copyNode(node)
 	m.nodes[node.ID] = stored
 
-	// Update label index
+	// Update label index (normalized for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] == nil {
-			m.nodesByLabel[label] = make(map[NodeID]struct{})
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] == nil {
+			m.nodesByLabel[normalLabel] = make(map[NodeID]struct{})
 		}
-		m.nodesByLabel[label][node.ID] = struct{}{}
+		m.nodesByLabel[normalLabel][node.ID] = struct{}{}
 	}
 
 	// Register unique constraint values
@@ -1072,10 +1090,11 @@ func (m *MemoryEngine) updateNodeUnlocked(node *Node) {
 		return
 	}
 
-	// Remove from old label indexes
+	// Remove from old label indexes (normalized for case-insensitive matching)
 	for _, label := range existing.Labels {
-		if m.nodesByLabel[label] != nil {
-			delete(m.nodesByLabel[label], node.ID)
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] != nil {
+			delete(m.nodesByLabel[normalLabel], node.ID)
 		}
 	}
 
@@ -1083,12 +1102,13 @@ func (m *MemoryEngine) updateNodeUnlocked(node *Node) {
 	stored := m.copyNode(node)
 	m.nodes[node.ID] = stored
 
-	// Update label index
+	// Update label index (normalized for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] == nil {
-			m.nodesByLabel[label] = make(map[NodeID]struct{})
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] == nil {
+			m.nodesByLabel[normalLabel] = make(map[NodeID]struct{})
 		}
-		m.nodesByLabel[label][node.ID] = struct{}{}
+		m.nodesByLabel[normalLabel][node.ID] = struct{}{}
 	}
 }
 
@@ -1100,10 +1120,11 @@ func (m *MemoryEngine) deleteNodeUnlocked(id NodeID) {
 		return
 	}
 
-	// Remove from label indexes
+	// Remove from label indexes (normalized for case-insensitive matching)
 	for _, label := range node.Labels {
-		if m.nodesByLabel[label] != nil {
-			delete(m.nodesByLabel[label], id)
+		normalLabel := normalizeLabel(label)
+		if m.nodesByLabel[normalLabel] != nil {
+			delete(m.nodesByLabel[normalLabel], id)
 		}
 	}
 

@@ -69,19 +69,19 @@
 // NornicDB simulates human memory with three tiers based on cognitive science:
 //
 // 1. **Episodic** (7-day half-life):
-//    - Personal experiences and events
-//    - "I went to the store yesterday"
-//    - Decays quickly unless reinforced
+//   - Personal experiences and events
+//   - "I went to the store yesterday"
+//   - Decays quickly unless reinforced
 //
 // 2. **Semantic** (69-day half-life):
-//    - Facts, concepts, and general knowledge
-//    - "Paris is the capital of France"
-//    - More stable, slower decay
+//   - Facts, concepts, and general knowledge
+//   - "Paris is the capital of France"
+//   - More stable, slower decay
 //
 // 3. **Procedural** (693-day half-life):
-//    - Skills, procedures, and patterns
-//    - "How to ride a bicycle"
-//    - Very stable, minimal decay
+//   - Skills, procedures, and patterns
+//   - "How to ride a bicycle"
+//   - Very stable, minimal decay
 //
 // Integration with Mimir:
 //
@@ -92,31 +92,31 @@
 //   - Embeddings are pre-computed by Mimir and passed to NornicDB
 //
 // Data Flow:
-//   1. Mimir discovers and reads files
-//   2. Mimir generates embeddings via Ollama/OpenAI
-//   3. Mimir sends nodes with embeddings to NornicDB
-//   4. NornicDB stores, indexes, and infers relationships
-//   5. Applications query NornicDB for search and retrieval
+//  1. Mimir discovers and reads files
+//  2. Mimir generates embeddings via Ollama/OpenAI
+//  3. Mimir sends nodes with embeddings to NornicDB
+//  4. NornicDB stores, indexes, and infers relationships
+//  5. Applications query NornicDB for search and retrieval
 //
 // ELI12 (Explain Like I'm 12):
 //
 // Think of NornicDB like your brain's memory system:
 //
-// 1. **Different types of memories**: Just like you remember your birthday party
-//    differently than how to tie your shoes, NornicDB has different "tiers"
-//    for different kinds of information.
+//  1. **Different types of memories**: Just like you remember your birthday party
+//     differently than how to tie your shoes, NornicDB has different "tiers"
+//     for different kinds of information.
 //
-// 2. **Memories fade over time**: Just like you might forget what you had for
-//    lunch last Tuesday, old memories in NornicDB get "weaker" over time
-//    unless you access them again.
+//  2. **Memories fade over time**: Just like you might forget what you had for
+//     lunch last Tuesday, old memories in NornicDB get "weaker" over time
+//     unless you access them again.
 //
-// 3. **Finding related memories**: When you think of "summer", you might
-//    remember "beach", "swimming", and "ice cream". NornicDB automatically
-//    finds these connections between related information.
+//  3. **Finding related memories**: When you think of "summer", you might
+//     remember "beach", "swimming", and "ice cream". NornicDB automatically
+//     finds these connections between related information.
 //
-// 4. **Smart search**: You can ask NornicDB "find me something about dogs"
-//    and it will find information about "puppies", "canines", and "pets"
-//    even if those exact words aren't in your search.
+//  4. **Smart search**: You can ask NornicDB "find me something about dogs"
+//     and it will find information about "puppies", "canines", and "pets"
+//     even if those exact words aren't in your search.
 //
 // It's like having a super-smart assistant that remembers everything you tell
 // it and can find connections you might not have noticed!
@@ -191,11 +191,11 @@ const (
 //	stored, err := db.Store(ctx, memory)
 //
 // Memory Lifecycle:
-//   1. Created with DecayScore = 1.0
-//   2. DecayScore decreases over time based on tier
-//   3. AccessCount increases when retrieved
-//   4. LastAccessed updated on each access
-//   5. Archived when DecayScore < threshold
+//  1. Created with DecayScore = 1.0
+//  2. DecayScore decreases over time based on tier
+//  3. AccessCount increases when retrieved
+//  4. LastAccessed updated on each access
+//  5. Archived when DecayScore < threshold
 type Memory struct {
 	ID           string         `json:"id"`
 	Content      string         `json:"content"`
@@ -375,7 +375,8 @@ func DefaultConfig() *Config {
 //	stored, _ := db.Store(ctx, memory)
 //
 // Thread Safety:
-//   All methods are thread-safe and can be called concurrently.
+//
+//	All methods are thread-safe and can be called concurrently.
 type DB struct {
 	config *Config
 	mu     sync.RWMutex
@@ -387,7 +388,7 @@ type DB struct {
 	inference      *inference.Engine
 	cypherExecutor *cypher.StorageExecutor
 	gpuManager     interface{} // *gpu.Manager - interface to avoid circular import
-	
+
 	// Search service (uses pre-computed embeddings from Mimir)
 	searchService *search.Service
 }
@@ -488,17 +489,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 func (db *DB) LoadFromExport(ctx context.Context, exportDir string) (*LoadResult, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	
+
 	if db.closed {
 		return nil, ErrClosed
 	}
-	
+
 	// Use the storage loader
 	result, err := storage.LoadFromMimirExport(db.storage, exportDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading export: %w", err)
 	}
-	
+
 	return &LoadResult{
 		NodesLoaded:      result.NodesImported,
 		EdgesLoaded:      result.EdgesImported,
@@ -518,15 +519,15 @@ type LoadResult struct {
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	
+
 	if db.closed {
 		return ErrClosed
 	}
-	
+
 	if db.searchService == nil {
 		return fmt.Errorf("search service not initialized")
 	}
-	
+
 	return db.searchService.BuildIndexes(ctx)
 }
 
@@ -975,6 +976,8 @@ func nodeToMemory(node *storage.Node) *Memory {
 	if v, ok := node.Properties["access_count"].(int64); ok {
 		mem.AccessCount = v
 	} else if v, ok := node.Properties["access_count"].(int); ok {
+		mem.AccessCount = int64(v)
+	} else if v, ok := node.Properties["access_count"].(float64); ok {
 		mem.AccessCount = int64(v)
 	}
 	if v, ok := node.Properties["source"].(string); ok {
@@ -1435,7 +1438,7 @@ func (db *DB) DeleteEdge(ctx context.Context, id string) error {
 type SearchResult struct {
 	Node  *Node   `json:"node"`
 	Score float64 `json:"score"`
-	
+
 	// RRF metadata
 	RRFScore   float64 `json:"rrf_score,omitempty"`
 	VectorRank int     `json:"vector_rank,omitempty"`

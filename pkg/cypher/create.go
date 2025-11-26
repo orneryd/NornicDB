@@ -11,6 +11,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
 func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
@@ -237,8 +238,9 @@ func (e *StorageExecutor) executeCreateRelationship(ctx context.Context, cypher,
 // This creates relationships between nodes that were matched by the MATCH clause.
 //
 // Example:
-//   MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
-//   CREATE (a)-[:KNOWS]->(b)
+//
+//	MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+//	CREATE (a)-[:KNOWS]->(b)
 //
 // The key difference from simple CREATE is that (a) and (b) reference
 // EXISTING nodes from the MATCH, rather than creating new nodes.
@@ -250,14 +252,14 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 	}
 
 	// Split into MATCH and CREATE parts
-	upperQuery := strings.ToUpper(cypher)
-	createIdx := strings.Index(upperQuery, " CREATE ")
+	// Use findKeywordIndex to handle whitespace (space, newline, tab) before CREATE
+	createIdx := findKeywordIndex(cypher, "CREATE")
 	if createIdx < 0 {
 		return nil, fmt.Errorf("invalid MATCH...CREATE query: no CREATE clause found")
 	}
 
 	matchPart := strings.TrimSpace(cypher[:createIdx])
-	createPart := strings.TrimSpace(cypher[createIdx+8:]) // Skip " CREATE "
+	createPart := strings.TrimSpace(cypher[createIdx+6:]) // Skip "CREATE" (6 chars)
 
 	// Find RETURN clause if present
 	returnIdx := strings.Index(strings.ToUpper(createPart), "RETURN")
@@ -270,42 +272,42 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 	// Parse all node patterns from MATCH clauses
 	// Handle: MATCH (a), (b)  OR  MATCH (a) MATCH (b)
 	nodeVars := make(map[string]*storage.Node)
-	
+
 	// Split by MATCH keyword to handle multiple MATCH clauses
 	// e.g., "MATCH (a) MATCH (b)" -> ["(a)", "(b)"]
 	matchRe := regexp.MustCompile(`(?i)\bMATCH\s+`)
 	matchClauses := matchRe.Split(matchPart, -1)
-	
+
 	var allPatterns []string
 	for _, clause := range matchClauses {
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
 			continue
 		}
-		
+
 		// Handle WHERE clause if present
 		if whereIdx := strings.Index(strings.ToUpper(clause), " WHERE "); whereIdx > 0 {
 			clause = clause[:whereIdx]
 		}
-		
+
 		// Split by comma but respect parentheses
 		patterns := e.splitNodePatterns(clause)
 		allPatterns = append(allPatterns, patterns...)
 	}
-	
+
 	nodePatterns := allPatterns
-	
+
 	for _, pattern := range nodePatterns {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
 			continue
 		}
-		
+
 		nodeInfo := e.parseNodePattern(pattern)
 		if nodeInfo.variable == "" {
 			continue
 		}
-		
+
 		// Find matching node
 		var candidates []*storage.Node
 		if len(nodeInfo.labels) > 0 {
@@ -313,7 +315,7 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 		} else {
 			candidates, _ = e.storage.AllNodes()
 		}
-		
+
 		// Filter by properties - need to match ALL properties
 		found := false
 		for _, node := range candidates {
@@ -323,7 +325,7 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 				break // Take first match
 			}
 		}
-		
+
 		// If node not found by properties, try matching by id property specifically
 		if !found && len(nodeInfo.properties) > 0 {
 			if idVal, hasID := nodeInfo.properties["id"]; hasID {
@@ -346,13 +348,13 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 	// Pattern: (varA)-[r:TYPE]->(varB) or (varA)-[:TYPE]->(varB)
 	relPattern := regexp.MustCompile(`\((\w+)\)\s*-\[(\w*):?(\w+)\]->\s*\((\w+)\)`)
 	matches := relPattern.FindStringSubmatch(createPart)
-	
+
 	if matches == nil {
 		// Try with left arrow
 		relPattern = regexp.MustCompile(`\((\w+)\)\s*<-\[(\w*):?(\w+)\]-\s*\((\w+)\)`)
 		matches = relPattern.FindStringSubmatch(createPart)
 	}
-	
+
 	if matches == nil {
 		// Try undirected
 		relPattern = regexp.MustCompile(`\((\w+)\)\s*-\[(\w*):?(\w+)\]-\s*\((\w+)\)`)
@@ -374,12 +376,12 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 
 	if !sourceExists {
 		// Provide detailed error for debugging
-		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v", 
+		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v",
 			sourceVar, getKeys(nodeVars), allPatterns)
 	}
 	if !targetExists {
-		// Provide detailed error for debugging  
-		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v", 
+		// Provide detailed error for debugging
+		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v",
 			targetVar, getKeys(nodeVars), allPatterns)
 	}
 
@@ -436,17 +438,17 @@ func getKeys(m map[string]*storage.Node) []string {
 // extractVariablesFromMatch extracts variable names from a MATCH pattern
 func (e *StorageExecutor) extractVariablesFromMatch(matchPart string) map[string]bool {
 	vars := make(map[string]bool)
-	
+
 	// Match node patterns: (varName:Label) or (varName)
 	nodePattern := regexp.MustCompile(`\((\w+)(?::\w+)?`)
 	matches := nodePattern.FindAllStringSubmatch(matchPart, -1)
-	
+
 	for _, m := range matches {
 		if len(m) > 1 && m[1] != "" {
 			vars[m[1]] = true
 		}
 	}
-	
+
 	return vars
 }
 

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	
+
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -174,18 +174,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	gpuConfig := gpu.DefaultConfig()
 	gpuConfig.Enabled = true
 	gpuConfig.FallbackOnError = true
-	
+
 	// Prefer Metal on macOS/Apple Silicon
 	if runtime.GOOS == "darwin" {
 		gpuConfig.PreferredBackend = gpu.BackendMetal
 	}
-	
+
 	gpuManager, gpuErr := gpu.NewManager(gpuConfig)
 	if gpuErr != nil {
 		fmt.Printf("   ⚠️  GPU not available: %v (using CPU)\n", gpuErr)
 	} else if gpuManager.IsEnabled() {
 		db.SetGPUManager(gpuManager)
-		fmt.Printf("   ✅ GPU enabled: %s\n", gpuManager.Device())
+		fmt.Printf("   ✅ GPU enabled: %v\n", gpuManager.Device())
 	} else {
 		fmt.Println("   ⚠️  GPU disabled (CPU fallback active)")
 	}
@@ -217,13 +217,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Println("🔐 Setting up authentication...")
 		authConfig := auth.DefaultAuthConfig()
 		authConfig.JWTSecret = []byte("nornicdb-dev-secret") // TODO: Make configurable
-		
+
 		var authErr error
 		authenticator, authErr = auth.NewAuthenticator(authConfig)
 		if authErr != nil {
 			return fmt.Errorf("creating authenticator: %w", authErr)
 		}
-		
+
 		// Create admin user
 		_, err := authenticator.CreateUser("admin", adminPassword, []auth.Role{auth.RoleAdmin})
 		if err != nil {
@@ -256,11 +256,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start Bolt server for Neo4j driver compatibility
 	boltConfig := bolt.DefaultConfig()
 	boltConfig.Port = boltPort
-	
+
 	// Create query executor adapter
 	queryExecutor := &DBQueryExecutor{db: db}
 	boltServer := bolt.New(boltConfig, queryExecutor)
-	
+
 	// Start Bolt server in goroutine
 	go func() {
 		if err := boltServer.ListenAndServe(); err != nil {
@@ -295,16 +295,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println("\n🛑 Shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// Stop Bolt server
 	if err := boltServer.Close(); err != nil {
 		fmt.Printf("Warning: error stopping Bolt server: %v\n", err)
 	}
-	
+
 	if err := httpServer.Stop(ctx); err != nil {
 		return fmt.Errorf("stopping HTTP server: %w", err)
 	}
-	
+
 	fmt.Println("✅ Server stopped gracefully")
 	return nil
 }
@@ -320,7 +320,7 @@ func (e *DBQueryExecutor) Execute(ctx context.Context, query string, params map[
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &bolt.QueryResult{
 		Columns: result.Columns,
 		Rows:    result.Rows,
@@ -329,7 +329,7 @@ func (e *DBQueryExecutor) Execute(ctx context.Context, query string, params map[
 
 func runInit(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
-	
+
 	fmt.Printf("📂 Initializing NornicDB database in %s\n", dataDir)
 
 	// Create directories
@@ -380,7 +380,7 @@ http_port: 7474
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Start the server:  nornicdb serve --data-dir", dataDir)
 	fmt.Println("  2. Load data:         nornicdb import ./export-dir --data-dir", dataDir)
-	
+
 	return nil
 }
 

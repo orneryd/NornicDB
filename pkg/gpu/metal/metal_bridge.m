@@ -64,7 +64,8 @@ void* metal_create_device(void) {
         // Try to load pre-compiled metallib first
         NSString* libPath = [[NSBundle mainBundle] pathForResource:@"shaders" ofType:@"metallib"];
         if (libPath) {
-            ctx->library = [device newLibraryWithFile:libPath error:&error];
+            NSURL* libURL = [NSURL fileURLWithPath:libPath];
+            ctx->library = [device newLibraryWithURL:libURL error:&error];
         }
         
         // If no metallib, compile from source

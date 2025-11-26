@@ -1936,12 +1936,21 @@ func TestExecuteAggregationNonAggregateInQuery(t *testing.T) {
 	}
 
 	// Mix of aggregate and non-aggregate in RETURN
+	// Neo4j implicitly groups by non-aggregated columns, so we get 3 rows (one per name)
 	result, err := exec.Execute(ctx, "MATCH (n:NonAgg) RETURN n.name, sum(n.val)", nil)
 	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
-	// First column should be first node's name, second should be sum
-	assert.NotNil(t, result.Rows[0][0])
-	assert.Equal(t, float64(30), result.Rows[0][1]) // 0+10+20
+	assert.Len(t, result.Rows, 3) // One row per distinct n.name
+
+	// Verify each row has the correct name and sum for that group
+	sumByName := make(map[string]float64)
+	for _, row := range result.Rows {
+		name := row[0].(string)
+		sum := row[1].(float64)
+		sumByName[name] = sum
+	}
+	assert.Equal(t, float64(0), sumByName["Item0"])   // Only Item0's value
+	assert.Equal(t, float64(10), sumByName["Item1"])  // Only Item1's value
+	assert.Equal(t, float64(20), sumByName["Item2"])  // Only Item2's value
 }
 
 func TestExecuteAggregationEmptyResultSet(t *testing.T) {

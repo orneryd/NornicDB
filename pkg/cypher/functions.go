@@ -22,20 +22,20 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	if expr == "" {
 		return nil
 	}
-	
+
 	// ========================================
 	// CASE Expressions (must be checked first)
 	// ========================================
 	if isCaseExpression(expr) {
 		return e.evaluateCaseExpression(expr, nodes, rels)
 	}
-	
+
 	lowerExpr := strings.ToLower(expr)
-	
+
 	// ========================================
 	// Cypher Functions (Neo4j compatible)
 	// ========================================
-	
+
 	// id(n) - return internal node/relationship ID
 	if strings.HasPrefix(lowerExpr, "id(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[3 : len(expr)-1])
@@ -47,7 +47,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// elementId(n) - same as id() for compatibility
 	if strings.HasPrefix(lowerExpr, "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[10 : len(expr)-1])
@@ -59,7 +59,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// labels(n) - return list of labels for a node
 	if strings.HasPrefix(lowerExpr, "labels(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
@@ -73,7 +73,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// type(r) - return relationship type
 	if strings.HasPrefix(lowerExpr, "type(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -82,7 +82,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// keys(n) - return list of property keys
 	if strings.HasPrefix(lowerExpr, "keys(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -104,7 +104,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// properties(n) - return all properties as a map
 	if strings.HasPrefix(lowerExpr, "properties(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[11 : len(expr)-1])
@@ -122,12 +122,12 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// count(*) or count(n) - simplified aggregation (returns 1 for single row context)
 	if strings.HasPrefix(lowerExpr, "count(") && strings.HasSuffix(expr, ")") {
 		return int64(1)
 	}
-	
+
 	// size(list) or size(string) - return length
 	if strings.HasPrefix(lowerExpr, "size(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -142,7 +142,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return int64(0)
 	}
-	
+
 	// length(path) - same as size for compatibility
 	if strings.HasPrefix(lowerExpr, "length(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
@@ -155,7 +155,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return int64(0)
 	}
-	
+
 	// exists(n.prop) - check if property exists
 	if strings.HasPrefix(lowerExpr, "exists(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
@@ -170,7 +170,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return false
 	}
-	
+
 	// coalesce(val1, val2, ...) - return first non-null value
 	if strings.HasPrefix(lowerExpr, "coalesce(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[9 : len(expr)-1])
@@ -183,7 +183,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// head(list) - return first element
 	if strings.HasPrefix(lowerExpr, "head(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -193,7 +193,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// last(list) - return last element
 	if strings.HasPrefix(lowerExpr, "last(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -203,7 +203,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// tail(list) - return list without first element
 	if strings.HasPrefix(lowerExpr, "tail(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -213,7 +213,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return []interface{}{}
 	}
-	
+
 	// reverse(list) - return reversed list
 	if strings.HasPrefix(lowerExpr, "reverse(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -234,7 +234,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// range(start, end) or range(start, end, step)
 	if strings.HasPrefix(lowerExpr, "range(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -469,7 +469,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 			mapVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 			var keysToRemove []string
 			var valuesToRemove []interface{}
-			
+
 			if len(args) >= 2 {
 				if keys, ok := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels).([]interface{}); ok {
 					for _, k := range keys {
@@ -484,7 +484,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 					valuesToRemove = vals
 				}
 			}
-			
+
 			if m, ok := mapVal.(map[string]interface{}); ok {
 				result := make(map[string]interface{})
 				for k, v := range m {
@@ -515,18 +515,18 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return map[string]interface{}{}
 	}
-	
+
 	// ========================================
 	// String Functions
 	// ========================================
-	
+
 	// toString(value)
 	if strings.HasPrefix(lowerExpr, "tostring(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[9 : len(expr)-1])
 		val := e.evaluateExpressionWithContext(inner, nodes, rels)
 		return fmt.Sprintf("%v", val)
 	}
-	
+
 	// toInteger(value) / toInt(value)
 	if (strings.HasPrefix(lowerExpr, "tointeger(") || strings.HasPrefix(lowerExpr, "toint(")) && strings.HasSuffix(expr, ")") {
 		startIdx := 10
@@ -549,7 +549,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// toFloat(value)
 	if strings.HasPrefix(lowerExpr, "tofloat(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -570,7 +570,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// toBoolean(value)
 	if strings.HasPrefix(lowerExpr, "toboolean(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[10 : len(expr)-1])
@@ -850,7 +850,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// toUpper(string) / upper(string)
 	if (strings.HasPrefix(lowerExpr, "toupper(") || strings.HasPrefix(lowerExpr, "upper(")) && strings.HasSuffix(expr, ")") {
 		startIdx := 8
@@ -864,7 +864,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// trim(string) / ltrim(string) / rtrim(string)
 	if strings.HasPrefix(lowerExpr, "trim(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -890,7 +890,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// replace(string, search, replacement)
 	if strings.HasPrefix(lowerExpr, "replace(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -903,7 +903,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// split(string, delimiter)
 	if strings.HasPrefix(lowerExpr, "split(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -920,12 +920,12 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// substring(string, start, [length])
 	if strings.HasPrefix(lowerExpr, "substring(") && strings.HasSuffix(expr, ")") {
 		return e.evaluateSubstring(expr)
 	}
-	
+
 	// left(string, n) - return first n characters
 	if strings.HasPrefix(lowerExpr, "left(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -940,7 +940,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// right(string, n) - return last n characters
 	if strings.HasPrefix(lowerExpr, "right(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -955,35 +955,35 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Date/Time Functions
 	// ========================================
-	
+
 	// timestamp() - current Unix timestamp in milliseconds
 	if lowerExpr == "timestamp()" {
 		return e.idCounter() // Use counter as pseudo-timestamp for consistency
 	}
-	
+
 	// datetime() - current datetime as string
 	if lowerExpr == "datetime()" {
 		return fmt.Sprintf("%d", e.idCounter())
 	}
-	
+
 	// date() - current date
 	if lowerExpr == "date()" {
 		return fmt.Sprintf("%d", e.idCounter())
 	}
-	
+
 	// time() - current time
 	if lowerExpr == "time()" {
 		return fmt.Sprintf("%d", e.idCounter())
 	}
-	
+
 	// ========================================
 	// Math Functions
 	// ========================================
-	
+
 	// abs(number)
 	if strings.HasPrefix(lowerExpr, "abs(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1002,7 +1002,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ceil(number)
 	if strings.HasPrefix(lowerExpr, "ceil(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1012,7 +1012,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// floor(number)
 	if strings.HasPrefix(lowerExpr, "floor(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1022,7 +1022,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// round(number)
 	if strings.HasPrefix(lowerExpr, "round(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1032,7 +1032,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// sign(number)
 	if strings.HasPrefix(lowerExpr, "sign(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1047,12 +1047,12 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// randomUUID()
 	if lowerExpr == "randomuuid()" {
 		return e.generateUUID()
 	}
-	
+
 	// rand() - random float between 0 and 1
 	if lowerExpr == "rand()" {
 		b := make([]byte, 8)
@@ -1061,11 +1061,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		val := float64(b[0]^b[1]^b[2]^b[3]) / 256.0
 		return val
 	}
-	
+
 	// ========================================
 	// Trigonometric Functions
 	// ========================================
-	
+
 	// sin(x) - sine of x (radians)
 	if strings.HasPrefix(lowerExpr, "sin(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1075,7 +1075,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// cos(x) - cosine of x (radians)
 	if strings.HasPrefix(lowerExpr, "cos(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1085,7 +1085,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// tan(x) - tangent of x (radians)
 	if strings.HasPrefix(lowerExpr, "tan(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1095,7 +1095,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// cot(x) - cotangent of x (radians)
 	if strings.HasPrefix(lowerExpr, "cot(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1105,7 +1105,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// asin(x) - arc sine
 	if strings.HasPrefix(lowerExpr, "asin(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1115,7 +1115,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// acos(x) - arc cosine
 	if strings.HasPrefix(lowerExpr, "acos(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1125,7 +1125,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// atan(x) - arc tangent
 	if strings.HasPrefix(lowerExpr, "atan(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1135,7 +1135,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// atan2(y, x) - arc tangent of y/x
 	if strings.HasPrefix(lowerExpr, "atan2(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1149,11 +1149,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Exponential and Logarithmic Functions
 	// ========================================
-	
+
 	// exp(x) - e^x
 	if strings.HasPrefix(lowerExpr, "exp(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1163,7 +1163,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// log(x) - natural logarithm
 	if strings.HasPrefix(lowerExpr, "log(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[4 : len(expr)-1])
@@ -1173,7 +1173,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// log10(x) - base-10 logarithm
 	if strings.HasPrefix(lowerExpr, "log10(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1183,7 +1183,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// sqrt(x) - square root
 	if strings.HasPrefix(lowerExpr, "sqrt(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[5 : len(expr)-1])
@@ -1193,11 +1193,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Angle Conversion Functions
 	// ========================================
-	
+
 	// radians(degrees) - convert degrees to radians
 	if strings.HasPrefix(lowerExpr, "radians(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -1207,7 +1207,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// degrees(radians) - convert radians to degrees
 	if strings.HasPrefix(lowerExpr, "degrees(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -1217,7 +1217,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// haversin(x) - half of versine = (1 - cos(x))/2
 	if strings.HasPrefix(lowerExpr, "haversin(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[9 : len(expr)-1])
@@ -1227,25 +1227,25 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Mathematical Constants
 	// ========================================
-	
+
 	// pi() - mathematical constant π
 	if lowerExpr == "pi()" {
 		return math.Pi
 	}
-	
+
 	// e() - mathematical constant e
 	if lowerExpr == "e()" {
 		return math.E
 	}
-	
+
 	// ========================================
 	// Relationship Functions
 	// ========================================
-	
+
 	// startNode(r) - return start node of relationship
 	if strings.HasPrefix(lowerExpr, "startnode(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[10 : len(expr)-1])
@@ -1257,7 +1257,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// endNode(r) - return end node of relationship
 	if strings.HasPrefix(lowerExpr, "endnode(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -1269,7 +1269,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// nodes(path) - return list of nodes in a path
 	if strings.HasPrefix(lowerExpr, "nodes(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1279,7 +1279,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return []interface{}{}
 	}
-	
+
 	// relationships(path) - return list of relationships in a path
 	if strings.HasPrefix(lowerExpr, "relationships(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
@@ -1293,11 +1293,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return []interface{}{}
 	}
-	
+
 	// ========================================
 	// Null Check Functions
 	// ========================================
-	
+
 	// isEmpty(list/map/string) - check if empty
 	if strings.HasPrefix(lowerExpr, "isempty(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
@@ -1314,7 +1314,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return false
 	}
-	
+
 	// isNaN(number) - check if not a number
 	if strings.HasPrefix(lowerExpr, "isnan(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1324,7 +1324,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return false
 	}
-	
+
 	// nullIf(val1, val2) - return null if val1 = val2
 	if strings.HasPrefix(lowerExpr, "nullif(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
@@ -1339,11 +1339,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// String Functions (additional)
 	// ========================================
-	
+
 	// btrim(string) / btrim(string, chars) - trim both sides
 	if strings.HasPrefix(lowerExpr, "btrim(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1358,7 +1358,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// char_length(string) / character_length(string)
 	if (strings.HasPrefix(lowerExpr, "char_length(") || strings.HasPrefix(lowerExpr, "character_length(")) && strings.HasSuffix(expr, ")") {
 		startIdx := 12
@@ -1372,7 +1372,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// normalize(string) - Unicode normalization
 	if strings.HasPrefix(lowerExpr, "normalize(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[10 : len(expr)-1])
@@ -1383,11 +1383,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Aggregation Functions (in expression context)
 	// ========================================
-	
+
 	// percentileCont(expr, percentile) - continuous percentile
 	if strings.HasPrefix(lowerExpr, "percentilecont(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
@@ -1398,7 +1398,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// percentileDisc(expr, percentile) - discrete percentile
 	if strings.HasPrefix(lowerExpr, "percentiledisc(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
@@ -1409,7 +1409,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// stDev(expr) - standard deviation
 	if strings.HasPrefix(lowerExpr, "stdev(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1417,7 +1417,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		_ = inner
 		return float64(0)
 	}
-	
+
 	// stDevP(expr) - population standard deviation
 	if strings.HasPrefix(lowerExpr, "stdevp(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
@@ -1425,34 +1425,34 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		_ = inner
 		return float64(0)
 	}
-	
+
 	// ========================================
 	// Reduce Function
 	// ========================================
-	
+
 	// reduce(acc = initial, x IN list | expr) - reduce a list
 	if strings.HasPrefix(lowerExpr, "reduce(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[7 : len(expr)-1])
-		
+
 		// Parse: acc = initial, x IN list | expr
 		eqIdx := strings.Index(inner, "=")
 		commaIdx := strings.Index(inner, ",")
 		inIdx := strings.Index(strings.ToUpper(inner), " IN ")
 		pipeIdx := strings.Index(inner, "|")
-		
+
 		if eqIdx > 0 && commaIdx > eqIdx && inIdx > commaIdx && pipeIdx > inIdx {
 			accName := strings.TrimSpace(inner[:eqIdx])
 			initialExpr := strings.TrimSpace(inner[eqIdx+1 : commaIdx])
 			varName := strings.TrimSpace(inner[commaIdx+1 : inIdx])
 			listExpr := strings.TrimSpace(inner[inIdx+4 : pipeIdx])
 			reduceExpr := strings.TrimSpace(inner[pipeIdx+1:])
-			
+
 			// Get initial value
 			acc := e.evaluateExpressionWithContext(initialExpr, nodes, rels)
-			
+
 			// Get list
 			list := e.evaluateExpressionWithContext(listExpr, nodes, rels)
-			
+
 			var items []interface{}
 			switch v := list.(type) {
 			case []interface{}:
@@ -1460,7 +1460,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 			default:
 				items = []interface{}{list}
 			}
-			
+
 			// Apply reduce
 			for _, item := range items {
 				// Create context with acc and item
@@ -1468,24 +1468,24 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 				for k, v := range nodes {
 					tempNodes[k] = v
 				}
-				
+
 				// Store acc and item as pseudo-properties (simplified)
 				// For a proper implementation, we'd need to handle this more comprehensively
 				substitutedExpr := strings.ReplaceAll(reduceExpr, accName, fmt.Sprintf("%v", acc))
 				substitutedExpr = strings.ReplaceAll(substitutedExpr, varName, fmt.Sprintf("%v", item))
-				
+
 				acc = e.evaluateExpressionWithContext(substitutedExpr, tempNodes, rels)
 			}
-			
+
 			return acc
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Vector Functions
 	// ========================================
-	
+
 	// vector.similarity.cosine(v1, v2)
 	if strings.HasPrefix(lowerExpr, "vector.similarity.cosine(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[25 : len(expr)-1])
@@ -1493,17 +1493,17 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		if len(args) >= 2 {
 			v1 := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 			v2 := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-			
+
 			vec1, ok1 := toFloat64Slice(v1)
 			vec2, ok2 := toFloat64Slice(v2)
-			
+
 			if ok1 && ok2 && len(vec1) == len(vec2) {
 				return cosineSimilarity(vec1, vec2)
 			}
 		}
 		return nil
 	}
-	
+
 	// vector.similarity.euclidean(v1, v2)
 	if strings.HasPrefix(lowerExpr, "vector.similarity.euclidean(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[28 : len(expr)-1])
@@ -1511,21 +1511,21 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		if len(args) >= 2 {
 			v1 := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 			v2 := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-			
+
 			vec1, ok1 := toFloat64Slice(v1)
 			vec2, ok2 := toFloat64Slice(v2)
-			
+
 			if ok1 && ok2 && len(vec1) == len(vec2) {
 				return euclideanSimilarity(vec1, vec2)
 			}
 		}
 		return nil
 	}
-	
+
 	// ========================================
 	// Point/Spatial Functions (basic support)
 	// ========================================
-	
+
 	// point({x: val, y: val}) or point({latitude: val, longitude: val})
 	if strings.HasPrefix(lowerExpr, "point(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[6 : len(expr)-1])
@@ -1536,7 +1536,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		}
 		return nil
 	}
-	
+
 	// distance(p1, p2) - Euclidean distance between two points
 	if strings.HasPrefix(lowerExpr, "distance(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[9 : len(expr)-1])
@@ -1544,10 +1544,10 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		if len(args) >= 2 {
 			p1 := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 			p2 := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-			
+
 			m1, ok1 := p1.(map[string]interface{})
 			m2, ok2 := p2.(map[string]interface{})
-			
+
 			if ok1 && ok2 {
 				// Try x/y coordinates
 				x1, y1, hasXY1 := getXY(m1)
@@ -1555,7 +1555,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 				if hasXY1 && hasXY2 {
 					return math.Sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1))
 				}
-				
+
 				// Try lat/long (haversine distance in meters)
 				lat1, lon1, hasLatLon1 := getLatLon(m1)
 				lat2, lon2, hasLatLon2 := getLatLon(m2)
@@ -2018,7 +2018,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
 		varName := expr[:dotIdx]
 		propName := expr[dotIdx+1:]
-		
+
 		if node, ok := nodes[varName]; ok {
 			// Don't return internal properties like embeddings
 			if e.isInternalProperty(propName) {
@@ -2036,7 +2036,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 			return nil
 		}
 	}
-	
+
 	// ========================================
 	// Variable Reference - return whole node/rel
 	// ========================================
@@ -2057,11 +2057,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 			"properties": rel.Properties,
 		}
 	}
-	
+
 	// ========================================
 	// Literals
 	// ========================================
-	
+
 	// null
 	if lowerExpr == "null" {
 		return nil
@@ -2074,7 +2074,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	if lowerExpr == "false" {
 		return false
 	}
-	
+
 	// String literal (single or double quotes)
 	if len(expr) >= 2 {
 		if (expr[0] == '\'' && expr[len(expr)-1] == '\'') ||
@@ -2082,7 +2082,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 			return expr[1 : len(expr)-1]
 		}
 	}
-	
+
 	// Number literal
 	if num, err := strconv.ParseInt(expr, 10, 64); err == nil {
 		return num
@@ -2090,33 +2090,55 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	if num, err := strconv.ParseFloat(expr, 64); err == nil {
 		return num
 	}
-	
+
 	// Array literal [a, b, c]
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		return e.parseArrayValue(expr)
 	}
-	
+
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		return e.parseProperties(expr)
 	}
-	
-	// Unknown - return as string
+
+	// Check if this looks like a variable reference (identifier pattern)
+	// If it's a valid identifier and not found in nodes/rels, it should be null
+	// This handles cases like OPTIONAL MATCH where the variable might not exist
+	isValidIdentifier := true
+	for i, ch := range expr {
+		if i == 0 {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+				isValidIdentifier = false
+				break
+			}
+		} else {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+				isValidIdentifier = false
+				break
+			}
+		}
+	}
+	if isValidIdentifier && len(expr) > 0 {
+		// This looks like an unresolved variable reference - return null
+		return nil
+	}
+
+	// Unknown - return as string (for string literals without quotes, etc.)
 	return expr
 }
 
 // evaluateStringConcatWithContext handles string concatenation with + operator.
 func (e *StorageExecutor) evaluateStringConcatWithContext(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) string {
 	var result strings.Builder
-	
+
 	// Split by + but respect quotes and parentheses
 	parts := e.splitByPlus(expr)
-	
+
 	for _, part := range parts {
 		val := e.evaluateExpressionWithContext(part, nodes, rels)
 		result.WriteString(fmt.Sprintf("%v", val))
 	}
-	
+
 	return result.String()
 }
 
@@ -2425,7 +2447,7 @@ func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
 func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
 	upperExpr := strings.ToUpper(expr)
 	upperPred := strings.ToUpper(predicate)
-	
+
 	inQuote := false
 	quoteChar := rune(0)
 	parenDepth := 0

@@ -555,6 +555,31 @@ func TestMemoryEngine_GetNodesByLabel(t *testing.T) {
 		_, err := engine.GetNodesByLabel("Test")
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
+
+	t.Run("case insensitive matching (Neo4j compatible)", func(t *testing.T) {
+		engine := NewMemoryEngine()
+		// Create node with PascalCase label
+		require.NoError(t, engine.CreateNode(&Node{
+			ID:     "node-1",
+			Labels: []string{"Person"},
+		}))
+
+		// Query with different cases - all should match
+		lowercase, err := engine.GetNodesByLabel("person")
+		require.NoError(t, err)
+		assert.Len(t, lowercase, 1, "lowercase 'person' should match 'Person'")
+
+		uppercase, err := engine.GetNodesByLabel("PERSON")
+		require.NoError(t, err)
+		assert.Len(t, uppercase, 1, "uppercase 'PERSON' should match 'Person'")
+
+		mixedcase, err := engine.GetNodesByLabel("PeRsOn")
+		require.NoError(t, err)
+		assert.Len(t, mixedcase, 1, "mixed case 'PeRsOn' should match 'Person'")
+
+		// Verify same node is returned
+		assert.Equal(t, "node-1", string(lowercase[0].ID))
+	})
 }
 
 func TestMemoryEngine_GetOutgoingEdges(t *testing.T) {
