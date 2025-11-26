@@ -1183,6 +1183,321 @@ func TestExecuteMatchCreateRelationshipWithMultipleProperties(t *testing.T) {
 	assert.True(t, hasTags, "should have 'tags' property")
 }
 
+// TestExecuteMatchCreateNodeAndRelationships tests MATCH...CREATE that creates NEW nodes
+// and relationships to matched nodes (Northwind pattern: MATCH (s), (c) CREATE (p) CREATE (p)-[:REL]->(c))
+func TestExecuteMatchCreateNodeAndRelationships(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create initial nodes (like Supplier and Category in Northwind)
+	_, err := exec.Execute(ctx, "CREATE (s:Supplier {supplierID: 1, companyName: 'Exotic Liquids'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (c:Category {categoryID: 1, categoryName: 'Beverages'})", nil)
+	require.NoError(t, err)
+
+	// Verify initial state
+	nodes, _ := store.AllNodes()
+	assert.Len(t, nodes, 2, "Should have 2 initial nodes")
+
+	// Now use the Northwind pattern: MATCH existing nodes, CREATE new node AND relationships
+	result, err := exec.Execute(ctx, `
+		MATCH (s:Supplier {supplierID: 1}), (c:Category {categoryID: 1})
+		CREATE (p:Product {productID: 1, productName: 'Chai', unitPrice: 18.0})
+		CREATE (p)-[:PART_OF]->(c)
+		CREATE (s)-[:SUPPLIES]->(p)
+	`, nil)
+	require.NoError(t, err, "MATCH...CREATE with new node and relationships should work")
+
+	// Verify stats
+	assert.Equal(t, 1, result.Stats.NodesCreated, "Should create 1 new Product node")
+	assert.Equal(t, 2, result.Stats.RelationshipsCreated, "Should create 2 relationships")
+
+	// Verify total nodes
+	nodes, err = store.AllNodes()
+	require.NoError(t, err)
+	assert.Len(t, nodes, 3, "Should now have 3 nodes total")
+
+	// Verify Product was created with correct properties
+	products, err := store.GetNodesByLabel("Product")
+	require.NoError(t, err)
+	require.Len(t, products, 1, "Should have 1 Product node")
+	assert.Equal(t, "Chai", products[0].Properties["productName"])
+	assert.Equal(t, float64(18.0), products[0].Properties["unitPrice"])
+
+	// Verify relationships
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	assert.Len(t, edges, 2, "Should have 2 relationships")
+
+	// Check relationship types
+	relTypes := make(map[string]bool)
+	for _, edge := range edges {
+		relTypes[edge.Type] = true
+	}
+	assert.True(t, relTypes["PART_OF"], "Should have PART_OF relationship")
+	assert.True(t, relTypes["SUPPLIES"], "Should have SUPPLIES relationship")
+}
+
+// TestExecuteMatchCreateMultipleNodes tests creating multiple nodes in a single MATCH...CREATE
+func TestExecuteMatchCreateMultipleNodes(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create category
+	_, err := exec.Execute(ctx, "CREATE (c:Category {categoryID: 1, categoryName: 'Beverages'})", nil)
+	require.NoError(t, err)
+
+	// Create multiple products referencing the same category
+	result, err := exec.Execute(ctx, `
+		MATCH (c:Category {categoryID: 1})
+		CREATE (p1:Product {productID: 1, productName: 'Chai'})
+		CREATE (p2:Product {productID: 2, productName: 'Chang'})
+		CREATE (p1)-[:PART_OF]->(c)
+		CREATE (p2)-[:PART_OF]->(c)
+	`, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, result.Stats.NodesCreated, "Should create 2 Product nodes")
+	assert.Equal(t, 2, result.Stats.RelationshipsCreated, "Should create 2 PART_OF relationships")
+
+	// Verify products
+	products, err := store.GetNodesByLabel("Product")
+	require.NoError(t, err)
+	assert.Len(t, products, 2, "Should have 2 Product nodes")
+}
+
+// TestExecuteMatchCreateWithRelationshipProperties tests the full Northwind pattern with rel properties
+func TestExecuteMatchCreateWithRelationshipProperties(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create customer and order pattern (like Northwind)
+	_, err := exec.Execute(ctx, "CREATE (c:Customer {customerID: 'ALFKI', companyName: 'Alfreds'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (o:Order {orderID: 10643})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (p:Product {productID: 1, productName: 'Chai'})", nil)
+	require.NoError(t, err)
+
+	// Create ORDERS relationship with quantity property
+	result, err := exec.Execute(ctx, `
+		MATCH (o:Order {orderID: 10643}), (p:Product {productID: 1})
+		CREATE (o)-[:ORDERS {quantity: 15}]->(p)
+	`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
+
+	// Verify the relationship has the quantity property
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, "ORDERS", edges[0].Type)
+	qty, ok := edges[0].Properties["quantity"]
+	assert.True(t, ok, "Should have quantity property")
+	// Check the value (could be int64 or float64 depending on parsing)
+	switch v := qty.(type) {
+	case int64:
+		assert.Equal(t, int64(15), v)
+	case float64:
+		assert.Equal(t, float64(15), v)
+	default:
+		t.Errorf("quantity has unexpected type: %T", qty)
+	}
+}
+
+// TestExecuteMultipleMatchCreateBlocks tests the Northwind pattern where multiple
+// MATCH...CREATE blocks exist in a single query, each creating nodes and relationships
+// This is the exact pattern from the Northwind benchmark that was failing:
+// MATCH (s1), (c1) CREATE (p1) CREATE (p1)-[:REL]->(c1)
+// MATCH (s2), (c2) CREATE (p2) CREATE (p2)-[:REL]->(c2)
+func TestExecuteMultipleMatchCreateBlocks(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create Categories (like Northwind)
+	_, err := exec.Execute(ctx, `
+		CREATE (c1:Category {categoryID: 1, categoryName: 'Beverages'})
+		CREATE (c2:Category {categoryID: 2, categoryName: 'Condiments'})
+	`, nil)
+	require.NoError(t, err)
+
+	// Create Suppliers (like Northwind)
+	_, err = exec.Execute(ctx, `
+		CREATE (s1:Supplier {supplierID: 1, companyName: 'Exotic Liquids'})
+		CREATE (s2:Supplier {supplierID: 2, companyName: 'New Orleans Cajun'})
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify initial state
+	nodes, _ := store.AllNodes()
+	assert.Len(t, nodes, 4, "Should have 4 initial nodes (2 categories + 2 suppliers)")
+
+	// This is the EXACT pattern from Northwind benchmark that was failing:
+	// Multiple MATCH...CREATE blocks in a single query
+	result, err := exec.Execute(ctx, `
+		MATCH (s1:Supplier {supplierID: 1}), (c1:Category {categoryID: 1})
+		CREATE (p1:Product {productID: 1, productName: 'Chai', unitPrice: 18.0})
+		CREATE (p1)-[:PART_OF]->(c1)
+		CREATE (s1)-[:SUPPLIES]->(p1)
+		
+		MATCH (s1:Supplier {supplierID: 1}), (c1:Category {categoryID: 1})
+		CREATE (p2:Product {productID: 2, productName: 'Chang', unitPrice: 19.0})
+		CREATE (p2)-[:PART_OF]->(c1)
+		CREATE (s1)-[:SUPPLIES]->(p2)
+		
+		MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
+		CREATE (p3:Product {productID: 3, productName: 'Aniseed Syrup', unitPrice: 10.0})
+		CREATE (p3)-[:PART_OF]->(c2)
+		CREATE (s2)-[:SUPPLIES]->(p3)
+	`, nil)
+	require.NoError(t, err, "Multiple MATCH...CREATE blocks should work")
+
+	// Verify stats - should create 3 products with 6 relationships (2 per product)
+	assert.Equal(t, 3, result.Stats.NodesCreated, "Should create 3 Product nodes")
+	assert.Equal(t, 6, result.Stats.RelationshipsCreated, "Should create 6 relationships")
+
+	// Verify total nodes
+	nodes, err = store.AllNodes()
+	require.NoError(t, err)
+	assert.Len(t, nodes, 7, "Should now have 7 nodes total (4 initial + 3 products)")
+
+	// Verify Products were created correctly
+	products, err := store.GetNodesByLabel("Product")
+	require.NoError(t, err)
+	assert.Len(t, products, 3, "Should have 3 Product nodes")
+
+	// Verify relationships
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	assert.Len(t, edges, 6, "Should have 6 relationships")
+
+	// Count relationship types
+	partOfCount := 0
+	suppliesCount := 0
+	for _, edge := range edges {
+		switch edge.Type {
+		case "PART_OF":
+			partOfCount++
+		case "SUPPLIES":
+			suppliesCount++
+		}
+	}
+	assert.Equal(t, 3, partOfCount, "Should have 3 PART_OF relationships")
+	assert.Equal(t, 3, suppliesCount, "Should have 3 SUPPLIES relationships")
+}
+
+// TestExecuteMultipleMatchCreateBlocksWithDifferentCategories tests that
+// each MATCH block correctly finds its own nodes and doesn't reuse previous block's nodes
+func TestExecuteMultipleMatchCreateBlocksWithDifferentCategories(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create multiple categories with different IDs
+	_, err := exec.Execute(ctx, `
+		CREATE (c1:Category {categoryID: 1, categoryName: 'Beverages'})
+		CREATE (c2:Category {categoryID: 2, categoryName: 'Condiments'})
+		CREATE (c3:Category {categoryID: 3, categoryName: 'Confections'})
+	`, nil)
+	require.NoError(t, err)
+
+	// Create multiple suppliers
+	_, err = exec.Execute(ctx, `
+		CREATE (s1:Supplier {supplierID: 1, companyName: 'Supplier One'})
+		CREATE (s2:Supplier {supplierID: 2, companyName: 'Supplier Two'})
+		CREATE (s3:Supplier {supplierID: 3, companyName: 'Supplier Three'})
+	`, nil)
+	require.NoError(t, err)
+
+	// Multiple MATCH blocks referencing DIFFERENT categories
+	result, err := exec.Execute(ctx, `
+		MATCH (s1:Supplier {supplierID: 1}), (c1:Category {categoryID: 1})
+		CREATE (p1:Product {productID: 1, productName: 'Product1'})
+		CREATE (p1)-[:PART_OF]->(c1)
+		
+		MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
+		CREATE (p2:Product {productID: 2, productName: 'Product2'})
+		CREATE (p2)-[:PART_OF]->(c2)
+		
+		MATCH (s3:Supplier {supplierID: 3}), (c3:Category {categoryID: 3})
+		CREATE (p3:Product {productID: 3, productName: 'Product3'})
+		CREATE (p3)-[:PART_OF]->(c3)
+	`, nil)
+	require.NoError(t, err, "Different category MATCHes should work")
+
+	assert.Equal(t, 3, result.Stats.NodesCreated)
+	assert.Equal(t, 3, result.Stats.RelationshipsCreated)
+
+	// Verify each product is linked to the CORRECT category
+	products, _ := store.GetNodesByLabel("Product")
+	require.Len(t, products, 3)
+
+	for _, product := range products {
+		productID := product.Properties["productID"]
+		edges, _ := store.GetOutgoingEdges(product.ID)
+
+		// Find the PART_OF edge
+		for _, edge := range edges {
+			if edge.Type == "PART_OF" {
+				// Get the target category
+				targetNode, _ := store.GetNode(edge.EndNode)
+				categoryID := targetNode.Properties["categoryID"]
+
+				// Product1 should link to Category1, Product2 to Category2, etc.
+				assert.Equal(t, productID, categoryID,
+					"Product %v should be linked to Category %v", productID, categoryID)
+			}
+		}
+	}
+}
+
+// TestExecuteMixedNodesAndRelationshipsCreate tests creating nodes AND relationships
+// in a single CREATE statement (like the FastRP social network pattern)
+func TestExecuteMixedNodesAndRelationshipsCreate(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// This is the exact pattern from the FastRP benchmark
+	result, err := exec.Execute(ctx, `
+		CREATE
+			(dan:Person {name: 'Dan', age: 18}),
+			(annie:Person {name: 'Annie', age: 12}),
+			(matt:Person {name: 'Matt', age: 22}),
+			(dan)-[:KNOWS {weight: 1.0}]->(annie),
+			(dan)-[:KNOWS {weight: 1.5}]->(matt),
+			(annie)-[:KNOWS {weight: 2.0}]->(matt)
+	`, nil)
+	require.NoError(t, err, "Mixed nodes and relationships CREATE should work")
+
+	// Should create 3 nodes and 3 relationships
+	assert.Equal(t, 3, result.Stats.NodesCreated, "Should create 3 Person nodes")
+	assert.Equal(t, 3, result.Stats.RelationshipsCreated, "Should create 3 KNOWS relationships")
+
+	// Verify nodes
+	nodes, err := store.AllNodes()
+	require.NoError(t, err)
+	assert.Len(t, nodes, 3)
+
+	// Verify edges
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	assert.Len(t, edges, 3)
+
+	// Verify relationship properties
+	for _, edge := range edges {
+		assert.Equal(t, "KNOWS", edge.Type)
+		weight, exists := edge.Properties["weight"]
+		assert.True(t, exists, "Should have weight property")
+		_, isFloat := weight.(float64)
+		assert.True(t, isFloat, "Weight should be float64")
+	}
+}
+
 func TestExecuteAllProcedures(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)

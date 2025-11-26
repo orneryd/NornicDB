@@ -29,16 +29,26 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	}
 	pattern = strings.TrimSpace(pattern)
 
-	// Check for relationship pattern: (a)-[r:TYPE]->(b)
-	if strings.Contains(pattern, "->") || strings.Contains(pattern, "<-") || strings.Contains(pattern, "-[") {
-		return e.executeCreateRelationship(ctx, cypher, pattern, returnIdx)
+	// Split into individual patterns (nodes and relationships)
+	allPatterns := e.splitCreatePatterns(pattern)
+
+	// Separate node patterns from relationship patterns
+	var nodePatterns []string
+	var relPatterns []string
+	for _, p := range allPatterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, "->") || strings.Contains(p, "<-") || strings.Contains(p, "-[") {
+			relPatterns = append(relPatterns, p)
+		} else {
+			nodePatterns = append(nodePatterns, p)
+		}
 	}
 
-	// Handle multiple node patterns: CREATE (a:Person), (b:Company)
-	// Split by comma but respect parentheses
-	nodePatterns := e.splitNodePatterns(pattern)
+	// First, create all nodes
 	createdNodes := make(map[string]*storage.Node)
-
 	for _, nodePatternStr := range nodePatterns {
 		nodePatternStr = strings.TrimSpace(nodePatternStr)
 		if nodePatternStr == "" {
@@ -63,6 +73,86 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		if nodePattern.variable != "" {
 			createdNodes[nodePattern.variable] = node
 		}
+	}
+
+	// Then, create all relationships using variable references or inline node definitions
+	for _, relPatternStr := range relPatterns {
+		relPatternStr = strings.TrimSpace(relPatternStr)
+		if relPatternStr == "" {
+			continue
+		}
+
+		// Parse the relationship pattern: (varA)-[:TYPE {props}]->(varB)
+		sourceContent, relStr, targetContent, isReverse, err := e.parseCreateRelPatternWithVars(relPatternStr)
+		if err != nil {
+			return nil, err
+		}
+
+		// Determine source node - either lookup by variable or create inline
+		var sourceNode *storage.Node
+		if node, exists := createdNodes[sourceContent]; exists {
+			// Variable reference to existing node
+			sourceNode = node
+		} else {
+			// Inline node definition - parse and create
+			sourcePattern := e.parseNodePattern("(" + sourceContent + ")")
+			sourceNode = &storage.Node{
+				ID:         storage.NodeID(e.generateID()),
+				Labels:     sourcePattern.labels,
+				Properties: sourcePattern.properties,
+			}
+			if err := e.storage.CreateNode(sourceNode); err != nil {
+				return nil, fmt.Errorf("failed to create source node: %w", err)
+			}
+			result.Stats.NodesCreated++
+			if sourcePattern.variable != "" {
+				createdNodes[sourcePattern.variable] = sourceNode
+			}
+		}
+
+		// Determine target node - either lookup by variable or create inline
+		var targetNode *storage.Node
+		if node, exists := createdNodes[targetContent]; exists {
+			// Variable reference to existing node
+			targetNode = node
+		} else {
+			// Inline node definition - parse and create
+			targetPattern := e.parseNodePattern("(" + targetContent + ")")
+			targetNode = &storage.Node{
+				ID:         storage.NodeID(e.generateID()),
+				Labels:     targetPattern.labels,
+				Properties: targetPattern.properties,
+			}
+			if err := e.storage.CreateNode(targetNode); err != nil {
+				return nil, fmt.Errorf("failed to create target node: %w", err)
+			}
+			result.Stats.NodesCreated++
+			if targetPattern.variable != "" {
+				createdNodes[targetPattern.variable] = targetNode
+			}
+		}
+
+		// Parse relationship type and properties
+		relType, relProps := e.parseRelationshipTypeAndProps(relStr)
+
+		// Handle reverse direction
+		startNode, endNode := sourceNode, targetNode
+		if isReverse {
+			startNode, endNode = targetNode, sourceNode
+		}
+
+		// Create relationship
+		edge := &storage.Edge{
+			ID:         storage.EdgeID(e.generateID()),
+			StartNode:  startNode.ID,
+			EndNode:    endNode.ID,
+			Type:       relType,
+			Properties: relProps,
+		}
+		if err := e.storage.CreateEdge(edge); err != nil {
+			return nil, fmt.Errorf("failed to create relationship: %w", err)
+		}
+		result.Stats.RelationshipsCreated++
 	}
 
 	// Handle RETURN clause
@@ -94,7 +184,191 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	return result, nil
 }
 
+// splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)
+// respecting parentheses depth and handling relationship syntax
+func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
+	var patterns []string
+	var current strings.Builder
+	depth := 0
+	inRelationship := false
+
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '(':
+			depth++
+			current.WriteByte(c)
+		case ')':
+			depth--
+			current.WriteByte(c)
+			if depth == 0 {
+				// Check if next non-whitespace is a relationship operator
+				j := i + 1
+				for j < len(pattern) && (pattern[j] == ' ' || pattern[j] == '\t' || pattern[j] == '\n' || pattern[j] == '\r') {
+					j++
+				}
+				if j < len(pattern) && (pattern[j] == '-' || pattern[j] == '<') {
+					// This is part of a relationship pattern, continue accumulating
+					inRelationship = true
+				} else if !inRelationship {
+					// End of a standalone node pattern
+					patterns = append(patterns, current.String())
+					current.Reset()
+				} else {
+					// End of a relationship pattern
+					patterns = append(patterns, current.String())
+					current.Reset()
+					inRelationship = false
+				}
+			}
+		case ',':
+			if depth == 0 && !inRelationship {
+				// Skip comma between patterns
+				continue
+			}
+			current.WriteByte(c)
+		case ' ', '\t', '\n', '\r':
+			if depth > 0 || inRelationship {
+				// Only keep whitespace inside patterns
+				current.WriteByte(c)
+			}
+		default:
+			if depth > 0 || inRelationship || c == '-' || c == '<' || c == '[' || c == ']' || c == '>' || c == ':' {
+				current.WriteByte(c)
+				if c == '-' || c == '<' {
+					inRelationship = true
+				}
+			}
+		}
+	}
+
+	// Handle any remaining content
+	if current.Len() > 0 {
+		patterns = append(patterns, current.String())
+	}
+
+	return patterns
+}
+
+// parseCreateRelPatternWithVars parses patterns like (varA)-[r:TYPE {props}]->(varB)
+// where varA and varB are variable references (not full node definitions)
+// Returns: sourceVar, relContent, targetVar, isReverse, error
+func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, error) {
+	pattern = strings.TrimSpace(pattern)
+
+	// Find the first node: (varA)
+	if !strings.HasPrefix(pattern, "(") {
+		return "", "", "", false, fmt.Errorf("invalid relationship pattern: must start with (")
+	}
+
+	// Find end of first node
+	depth := 0
+	firstNodeEnd := -1
+	for i, c := range pattern {
+		if c == '(' {
+			depth++
+		} else if c == ')' {
+			depth--
+			if depth == 0 {
+				firstNodeEnd = i
+				break
+			}
+		}
+	}
+	if firstNodeEnd < 0 {
+		return "", "", "", false, fmt.Errorf("invalid relationship pattern: unmatched parenthesis")
+	}
+
+	sourceVar := strings.TrimSpace(pattern[1:firstNodeEnd])
+	rest := pattern[firstNodeEnd+1:]
+	rest = strings.TrimSpace(rest) // Remove any whitespace before -[ or <-[
+
+	// Detect direction and find relationship bracket
+	isReverse := false
+	var relStart int
+
+	if strings.HasPrefix(rest, "-[") {
+		relStart = 2 // Skip "-["
+	} else if strings.HasPrefix(rest, "<-[") {
+		isReverse = true
+		relStart = 3 // Skip "<-["
+	} else {
+		return "", "", "", false, fmt.Errorf("invalid relationship pattern: expected -[ or <-[, got: %s", rest[:min(20, len(rest))])
+	}
+
+	// Find matching ] considering nested brackets in properties
+	depth = 1
+	relEnd := -1
+	inQuote := false
+	quoteChar := rune(0)
+	for i := relStart; i < len(rest); i++ {
+		c := rune(rest[i])
+		if !inQuote {
+			if c == '\'' || c == '"' {
+				inQuote = true
+				quoteChar = c
+			} else if c == '[' {
+				depth++
+			} else if c == ']' {
+				depth--
+				if depth == 0 {
+					relEnd = i
+					break
+				}
+			}
+		} else if c == quoteChar {
+			if i > 0 && rest[i-1] != '\\' {
+				inQuote = false
+			}
+		}
+	}
+	if relEnd < 0 {
+		return "", "", "", false, fmt.Errorf("invalid relationship pattern: unmatched bracket")
+	}
+
+	relContent := rest[relStart:relEnd]
+	afterRel := strings.TrimSpace(rest[relEnd+1:])
+
+	// Now find the second node
+	var secondNodeStart int
+	if isReverse {
+		if !strings.HasPrefix(afterRel, "-(") {
+			return "", "", "", false, fmt.Errorf("invalid relationship pattern: expected -( after ]")
+		}
+		secondNodeStart = 2
+	} else {
+		if !strings.HasPrefix(afterRel, "->(") {
+			return "", "", "", false, fmt.Errorf("invalid relationship pattern: expected ->( after ]")
+		}
+		secondNodeStart = 3
+	}
+
+	// Find end of second node
+	depth = 1
+	secondNodeEnd := -1
+	for i := secondNodeStart; i < len(afterRel); i++ {
+		c := afterRel[i]
+		if c == '(' {
+			depth++
+		} else if c == ')' {
+			depth--
+			if depth == 0 {
+				secondNodeEnd = i
+				break
+			}
+		}
+	}
+	if secondNodeEnd < 0 {
+		return "", "", "", false, fmt.Errorf("invalid relationship pattern: unmatched parenthesis for second node")
+	}
+
+	targetVar := strings.TrimSpace(afterRel[secondNodeStart:secondNodeEnd])
+
+	return sourceVar, relContent, targetVar, isReverse, nil
+}
+
 // splitNodePatterns splits a CREATE pattern into individual node patterns
+// (Used for simple node-only patterns and by other parts of the system)
 func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 	var patterns []string
 	var current strings.Builder
@@ -403,15 +677,29 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(relStr string) (string, 
 }
 
 // executeCompoundMatchCreate handles MATCH ... CREATE queries.
-// This creates relationships between nodes that were matched by the MATCH clause.
+// This handles multiple scenarios:
+// 1. Create relationships between matched nodes
+// 2. Create new nodes and relationships referencing matched nodes
+// 3. Multiple MATCH...CREATE blocks in a single query
 //
-// Example:
+// Example 1: Create relationship only
 //
 //	MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
 //	CREATE (a)-[:KNOWS]->(b)
 //
-// The key difference from simple CREATE is that (a) and (b) reference
-// EXISTING nodes from the MATCH, rather than creating new nodes.
+// Example 2: Create new node with relationships to matched nodes
+//
+//	MATCH (s:Supplier {supplierID: 1}), (c:Category {categoryID: 1})
+//	CREATE (p:Product {productName: 'Chai'})
+//	CREATE (p)-[:PART_OF]->(c)
+//	CREATE (s)-[:SUPPLIES]->(p)
+//
+// Example 3: Multiple MATCH...CREATE blocks
+//
+//	MATCH (s1:Supplier {supplierID: 1}), (c1:Category {categoryID: 1})
+//	CREATE (p1:Product {...})
+//	MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
+//	CREATE (p2:Product {...})
 func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
@@ -419,34 +707,159 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 		Stats:   &QueryStats{},
 	}
 
-	// Split into MATCH and CREATE parts
-	// Use findKeywordIndex to handle whitespace (space, newline, tab) before CREATE
-	createIdx := findKeywordIndex(cypher, "CREATE")
-	if createIdx < 0 {
-		return nil, fmt.Errorf("invalid MATCH...CREATE query: no CREATE clause found")
+	// Check if this query has multiple MATCH blocks (each starting a new scope)
+	// Split into independent MATCH...CREATE blocks
+	blocks := e.splitMatchCreateBlocks(cypher)
+
+	// Track all created nodes across blocks (for cross-block references)
+	allNodeVars := make(map[string]*storage.Node)
+	allEdgeVars := make(map[string]*storage.Edge)
+
+	for _, block := range blocks {
+		blockResult, err := e.executeMatchCreateBlock(ctx, block, allNodeVars, allEdgeVars)
+		if err != nil {
+			return nil, err
+		}
+		// Accumulate stats
+		result.Stats.NodesCreated += blockResult.Stats.NodesCreated
+		result.Stats.RelationshipsCreated += blockResult.Stats.RelationshipsCreated
+		result.Stats.NodesDeleted += blockResult.Stats.NodesDeleted
+		result.Stats.RelationshipsDeleted += blockResult.Stats.RelationshipsDeleted
 	}
 
-	matchPart := strings.TrimSpace(cypher[:createIdx])
-	createPart := strings.TrimSpace(cypher[createIdx+6:]) // Skip "CREATE" (6 chars)
+	return result, nil
+}
 
-	// Find RETURN clause if present
-	returnIdx := strings.Index(strings.ToUpper(createPart), "RETURN")
+// splitMatchCreateBlocks splits a query into independent MATCH...CREATE blocks
+// Each block starts with MATCH and contains all following CREATEs until the next MATCH
+func (e *StorageExecutor) splitMatchCreateBlocks(cypher string) []string {
+	var blocks []string
+
+	// Find all MATCH keyword positions
+	matchPositions := findAllKeywordPositions(cypher, "MATCH")
+
+	if len(matchPositions) == 0 {
+		return []string{cypher}
+	}
+
+	// Split into blocks: each MATCH starts a new block
+	for i, pos := range matchPositions {
+		var endPos int
+		if i+1 < len(matchPositions) {
+			endPos = matchPositions[i+1]
+		} else {
+			endPos = len(cypher)
+		}
+
+		block := strings.TrimSpace(cypher[pos:endPos])
+		if block != "" {
+			blocks = append(blocks, block)
+		}
+	}
+
+	return blocks
+}
+
+// findAllKeywordPositions finds all positions of a keyword in the query
+func findAllKeywordPositions(cypher string, keyword string) []int {
+	var positions []int
+	keywordLen := len(keyword)
+
+	for i := 0; i <= len(cypher)-keywordLen; i++ {
+		// Check if keyword matches at this position (case insensitive)
+		if strings.EqualFold(cypher[i:i+keywordLen], keyword) {
+			// Check word boundary before
+			if i > 0 {
+				prevChar := cypher[i-1]
+				if isAlphaNumericByte(prevChar) {
+					continue // Part of another word
+				}
+			}
+			// Check word boundary after
+			if i+keywordLen < len(cypher) {
+				nextChar := cypher[i+keywordLen]
+				if isAlphaNumericByte(nextChar) {
+					continue // Part of another word
+				}
+			}
+			positions = append(positions, i)
+		}
+	}
+
+	// Handle nested MATCH in strings - check if position is inside quotes
+	var validPositions []int
+	for _, pos := range positions {
+		if !isInsideQuotes(cypher, pos) {
+			validPositions = append(validPositions, pos)
+		}
+	}
+
+	return validPositions
+}
+
+// isAlphaNumericByte checks if a byte is alphanumeric or underscore
+func isAlphaNumericByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// isInsideQuotes checks if a position is inside quotes
+func isInsideQuotes(s string, pos int) bool {
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	for i := 0; i < pos; i++ {
+		c := s[i]
+		if c == '\'' && !inDoubleQuote {
+			inSingleQuote = !inSingleQuote
+		} else if c == '"' && !inSingleQuote {
+			inDoubleQuote = !inDoubleQuote
+		}
+	}
+
+	return inSingleQuote || inDoubleQuote
+}
+
+// executeMatchCreateBlock executes a single MATCH...CREATE block
+func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block string, allNodeVars map[string]*storage.Node, allEdgeVars map[string]*storage.Edge) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Split into MATCH and CREATE parts
+	createIdx := findKeywordIndex(block, "CREATE")
+	if createIdx < 0 {
+		// No CREATE in this block, just MATCH - skip
+		return result, nil
+	}
+
+	matchPart := strings.TrimSpace(block[:createIdx])
+	createPart := strings.TrimSpace(block[createIdx:]) // Keep "CREATE" for splitting
+
+	// Find RETURN clause if present (only in last block typically)
+	returnIdx := findKeywordIndex(createPart, "RETURN")
 	var returnPart string
 	if returnIdx > 0 {
 		returnPart = strings.TrimSpace(createPart[returnIdx+6:])
 		createPart = strings.TrimSpace(createPart[:returnIdx])
 	}
 
-	// Parse all node patterns from MATCH clauses
-	// Handle: MATCH (a), (b)  OR  MATCH (a) MATCH (b)
+	// Parse all node patterns from MATCH clause and find matching nodes
+	// Start with existing vars from previous blocks
 	nodeVars := make(map[string]*storage.Node)
+	for k, v := range allNodeVars {
+		nodeVars[k] = v
+	}
+	edgeVars := make(map[string]*storage.Edge)
+	for k, v := range allEdgeVars {
+		edgeVars[k] = v
+	}
 
-	// Split by MATCH keyword to handle multiple MATCH clauses
-	// e.g., "MATCH (a) MATCH (b)" -> ["(a)", "(b)"]
+	// Split by MATCH keyword to handle comma-separated patterns in MATCH
 	matchRe := regexp.MustCompile(`(?i)\bMATCH\s+`)
 	matchClauses := matchRe.Split(matchPart, -1)
 
-	var allPatterns []string
 	for _, clause := range matchClauses {
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
@@ -460,122 +873,77 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 
 		// Split by comma but respect parentheses
 		patterns := e.splitNodePatterns(clause)
-		allPatterns = append(allPatterns, patterns...)
-	}
 
-	nodePatterns := allPatterns
-
-	for _, pattern := range nodePatterns {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
-
-		nodeInfo := e.parseNodePattern(pattern)
-		if nodeInfo.variable == "" {
-			continue
-		}
-
-		// Find matching node
-		var candidates []*storage.Node
-		if len(nodeInfo.labels) > 0 {
-			candidates, _ = e.storage.GetNodesByLabel(nodeInfo.labels[0])
-		} else {
-			candidates, _ = e.storage.AllNodes()
-		}
-
-		// Filter by properties - need to match ALL properties
-		found := false
-		for _, node := range candidates {
-			if e.nodeMatchesProps(node, nodeInfo.properties) {
-				nodeVars[nodeInfo.variable] = node
-				found = true
-				break // Take first match
+		// Find all matched nodes from MATCH clause
+		for _, pattern := range patterns {
+			pattern = strings.TrimSpace(pattern)
+			if pattern == "" {
+				continue
 			}
-		}
 
-		// If node not found by properties, try matching by id property specifically
-		if !found && len(nodeInfo.properties) > 0 {
-			if idVal, hasID := nodeInfo.properties["id"]; hasID {
-				// Try exact match on id property
-				for _, node := range candidates {
-					if nodeID, ok := node.Properties["id"]; ok {
-						// Compare as strings for reliability
-						if fmt.Sprintf("%v", nodeID) == fmt.Sprintf("%v", idVal) {
-							nodeVars[nodeInfo.variable] = node
-							found = true
-							break
-						}
-					}
+			nodeInfo := e.parseNodePattern(pattern)
+			if nodeInfo.variable == "" {
+				continue
+			}
+
+			// Find matching node
+			var candidates []*storage.Node
+			if len(nodeInfo.labels) > 0 {
+				candidates, _ = e.storage.GetNodesByLabel(nodeInfo.labels[0])
+			} else {
+				candidates, _ = e.storage.AllNodes()
+			}
+
+			// Filter by properties
+			for _, node := range candidates {
+				if e.nodeMatchesProps(node, nodeInfo.properties) {
+					nodeVars[nodeInfo.variable] = node
+					break
 				}
 			}
 		}
 	}
 
-	// Parse the CREATE pattern for relationship
-	// Pattern: (varA)-[r:TYPE {props}]->(varB) or (varA)-[:TYPE {props}]->(varB)
-	// The regex captures: source, relVar, relType, relProps (optional), target
-	relPattern := regexp.MustCompile(`\((\w+)\)\s*-\[(\w*):?(\w+)(?:\s*(\{[^}]*\}))?\]->\s*\((\w+)\)`)
-	matches := relPattern.FindStringSubmatch(createPart)
+	// Split CREATE part into individual CREATE statements
+	createRe := regexp.MustCompile(`(?i)\bCREATE\s+`)
+	createClauses := createRe.Split(createPart, -1)
 
-	if matches == nil {
-		// Try with left arrow
-		relPattern = regexp.MustCompile(`\((\w+)\)\s*<-\[(\w*):?(\w+)(?:\s*(\{[^}]*\}))?\]-\s*\((\w+)\)`)
-		matches = relPattern.FindStringSubmatch(createPart)
+	for _, clause := range createClauses {
+		clause = strings.TrimSpace(clause)
+		if clause == "" {
+			continue
+		}
+
+		// Check if this is a relationship pattern or node pattern
+		if strings.Contains(clause, "->") || strings.Contains(clause, "<-") || strings.Contains(clause, "]-") {
+			// Relationship pattern: (var)-[:TYPE]->(var)
+			err := e.processCreateRelationship(clause, nodeVars, edgeVars, result)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// Node pattern: (var:Label {props})
+			nodePatterns := e.splitNodePatterns(clause)
+			for _, np := range nodePatterns {
+				np = strings.TrimSpace(np)
+				if np == "" {
+					continue
+				}
+				err := e.processCreateNode(np, nodeVars, result)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 
-	if matches == nil {
-		// Try undirected
-		relPattern = regexp.MustCompile(`\((\w+)\)\s*-\[(\w*):?(\w+)(?:\s*(\{[^}]*\}))?\]-\s*\((\w+)\)`)
-		matches = relPattern.FindStringSubmatch(createPart)
+	// Copy new vars back to allNodeVars for use in later blocks
+	for k, v := range nodeVars {
+		allNodeVars[k] = v
 	}
-
-	if len(matches) < 6 {
-		return nil, fmt.Errorf("invalid relationship pattern in CREATE: %s", createPart)
+	for k, v := range edgeVars {
+		allEdgeVars[k] = v
 	}
-
-	sourceVar := matches[1]
-	// relVar := matches[2]  // Optional relationship variable
-	relType := matches[3]
-	relPropsStr := matches[4] // Optional properties like {roles:['Neo']}
-	targetVar := matches[5]
-
-	// Parse relationship properties if present
-	var relProps map[string]interface{}
-	if relPropsStr != "" {
-		relProps = e.parseProperties(relPropsStr)
-	} else {
-		relProps = make(map[string]interface{})
-	}
-
-	// Look up the source and target nodes from matched variables
-	sourceNode, sourceExists := nodeVars[sourceVar]
-	targetNode, targetExists := nodeVars[targetVar]
-
-	if !sourceExists {
-		// Provide detailed error for debugging
-		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v",
-			sourceVar, getKeys(nodeVars), allPatterns)
-	}
-	if !targetExists {
-		// Provide detailed error for debugging
-		return nil, fmt.Errorf("variable '%s' not found in MATCH results (have: %v). Patterns processed: %v",
-			targetVar, getKeys(nodeVars), allPatterns)
-	}
-
-	// Create the relationship
-	edge := &storage.Edge{
-		ID:         storage.EdgeID(e.generateID()),
-		StartNode:  sourceNode.ID,
-		EndNode:    targetNode.ID,
-		Type:       relType,
-		Properties: relProps,
-	}
-
-	if err := e.storage.CreateEdge(edge); err != nil {
-		return nil, fmt.Errorf("failed to create relationship: %w", err)
-	}
-	result.Stats.RelationshipsCreated++
 
 	// Handle RETURN clause
 	if returnPart != "" {
@@ -590,18 +958,125 @@ func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher
 				result.Columns[i] = item.expr
 			}
 
-			// Resolve based on variable
-			switch {
-			case strings.HasPrefix(item.expr, sourceVar):
-				row[i] = e.resolveReturnItem(item, sourceVar, sourceNode)
-			case strings.HasPrefix(item.expr, targetVar):
-				row[i] = e.resolveReturnItem(item, targetVar, targetNode)
+			// Find variable that matches
+			for varName, node := range nodeVars {
+				if strings.HasPrefix(item.expr, varName) {
+					row[i] = e.resolveReturnItem(item, varName, node)
+					break
+				}
 			}
 		}
 		result.Rows = [][]interface{}{row}
 	}
 
 	return result, nil
+}
+
+// processCreateNode creates a new node and adds it to the nodeVars map
+func (e *StorageExecutor) processCreateNode(pattern string, nodeVars map[string]*storage.Node, result *ExecuteResult) error {
+	nodeInfo := e.parseNodePattern(pattern)
+
+	// Create the node
+	node := &storage.Node{
+		ID:         storage.NodeID(e.generateID()),
+		Labels:     nodeInfo.labels,
+		Properties: nodeInfo.properties,
+	}
+
+	if err := e.storage.CreateNode(node); err != nil {
+		return fmt.Errorf("failed to create node: %w", err)
+	}
+
+	result.Stats.NodesCreated++
+
+	// Store in nodeVars for later reference
+	if nodeInfo.variable != "" {
+		nodeVars[nodeInfo.variable] = node
+	}
+
+	return nil
+}
+
+// processCreateRelationship creates a relationship between nodes in nodeVars
+func (e *StorageExecutor) processCreateRelationship(pattern string, nodeVars map[string]*storage.Node, edgeVars map[string]*storage.Edge, result *ExecuteResult) error {
+	// Parse the relationship pattern: (a)-[r:TYPE {props}]->(b)
+	// Use regex that handles optional variable and properties
+
+	// Try forward arrow first: (a)-[...]->(b)
+	relPattern := regexp.MustCompile(`\((\w+)\)\s*-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*->\s*\((\w+)\)`)
+	matches := relPattern.FindStringSubmatch(pattern)
+
+	isReverse := false
+	if matches == nil {
+		// Try reverse arrow: (a)<-[...]-(b)
+		relPattern = regexp.MustCompile(`\((\w+)\)\s*<-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*-\s*\((\w+)\)`)
+		matches = relPattern.FindStringSubmatch(pattern)
+		isReverse = true
+	}
+
+	if len(matches) < 6 {
+		return fmt.Errorf("invalid relationship pattern in CREATE: %s", pattern)
+	}
+
+	sourceVar := matches[1]
+	relVar := matches[2]
+	relType := matches[3]
+	relPropsStr := matches[4]
+	targetVar := matches[5]
+
+	// Default relationship type
+	if relType == "" {
+		relType = "RELATED_TO"
+	}
+
+	// Parse relationship properties if present
+	var relProps map[string]interface{}
+	if relPropsStr != "" {
+		relProps = e.parseProperties(relPropsStr)
+	} else {
+		relProps = make(map[string]interface{})
+	}
+
+	// Look up source and target nodes
+	sourceNode, sourceExists := nodeVars[sourceVar]
+	targetNode, targetExists := nodeVars[targetVar]
+
+	if !sourceExists {
+		return fmt.Errorf("variable '%s' not found in MATCH results (have: %v)",
+			sourceVar, getKeys(nodeVars))
+	}
+	if !targetExists {
+		return fmt.Errorf("variable '%s' not found in MATCH results (have: %v)",
+			targetVar, getKeys(nodeVars))
+	}
+
+	// Handle reverse direction
+	startNode, endNode := sourceNode, targetNode
+	if isReverse {
+		startNode, endNode = targetNode, sourceNode
+	}
+
+	// Create the relationship
+	edge := &storage.Edge{
+		ID:         storage.EdgeID(e.generateID()),
+		StartNode:  startNode.ID,
+		EndNode:    endNode.ID,
+		Type:       relType,
+		Properties: relProps,
+	}
+
+	if err := e.storage.CreateEdge(edge); err != nil {
+		return fmt.Errorf("failed to create relationship: %w", err)
+	}
+
+	result.Stats.RelationshipsCreated++
+
+	// Store edge variable if present
+	if relVar != "" {
+		edgeVars[relVar] = edge
+	}
+
+	return nil
 }
 
 // getKeys returns the keys of a map as a slice
