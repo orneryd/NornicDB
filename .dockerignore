@@ -1,0 +1,33 @@
+# Build artifacts
+nornicdb
+*.exe
+*.test
+*.out
+
+# Data
+data/
+*.db
+
+# UI development files (dist is included via cmd/nornicdb/ui/dist)
+ui/node_modules/
+ui/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Tests
+*_test.go
+testing/
+
+# Docs (not needed in image)
+docs/
+*.md
+!README.md

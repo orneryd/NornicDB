@@ -219,11 +219,12 @@ func TestSessionHandshake(t *testing.T) {
 
 func TestSessionHandleMessage(t *testing.T) {
 	t.Run("hello message", func(t *testing.T) {
-		// Chunk: size (2 bytes) + message type (1 byte) + data + terminator (2 bytes)
+		// PackStream struct format: 0xB1 (tiny struct, 1 field) + signature + data
+		// HELLO message needs an empty map (auth info): 0xA0
 		messageData := []byte{
-			0x00, 0x01, // Size: 1 byte
-			MsgHello,   // Message type
-			0x00, 0x00, // Terminator
+			0x00, 0x03,           // Size: 3 bytes
+			0xB1, MsgHello, 0xA0, // Tiny struct + HELLO sig + empty map
+			0x00, 0x00,           // Zero terminator (end of message)
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -240,9 +241,9 @@ func TestSessionHandleMessage(t *testing.T) {
 
 	t.Run("goodbye message", func(t *testing.T) {
 		messageData := []byte{
-			0x00, 0x01, // Size: 1 byte
-			MsgGoodbye, // Message type
-			0x00, 0x00, // Terminator
+			0x00, 0x02,            // Size: 2 bytes
+			0xB0, MsgGoodbye,      // Tiny struct (0 fields) + GOODBYE sig
+			0x00, 0x00,            // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -255,10 +256,14 @@ func TestSessionHandleMessage(t *testing.T) {
 	})
 
 	t.Run("run message", func(t *testing.T) {
+		// RUN needs query string and params map
+		// Query: "TEST" (0x84 + TEST), Params: empty map (0xA0)
 		messageData := []byte{
-			0x00, 0x01,
-			MsgRun,
-			0x00, 0x00,
+			0x00, 0x08,                              // Size: 8 bytes
+			0xB1, MsgRun,                            // Tiny struct + RUN sig
+			0x84, 'T', 'E', 'S', 'T',                // Query string "TEST"
+			0xA0,                                     // Empty params map
+			0x00, 0x00,                              // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -274,10 +279,11 @@ func TestSessionHandleMessage(t *testing.T) {
 	})
 
 	t.Run("pull message", func(t *testing.T) {
+		// PULL needs options map
 		messageData := []byte{
-			0x00, 0x01,
-			MsgPull,
-			0x00, 0x00,
+			0x00, 0x03,           // Size: 3 bytes
+			0xB1, MsgPull, 0xA0,  // Tiny struct + PULL sig + empty options
+			0x00, 0x00,           // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -291,9 +297,9 @@ func TestSessionHandleMessage(t *testing.T) {
 
 	t.Run("reset message", func(t *testing.T) {
 		messageData := []byte{
-			0x00, 0x01,
-			MsgReset,
-			0x00, 0x00,
+			0x00, 0x02,            // Size: 2 bytes
+			0xB0, MsgReset,        // Tiny struct (0 fields) + RESET sig
+			0x00, 0x00,            // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -314,9 +320,9 @@ func TestSessionHandleMessage(t *testing.T) {
 
 	t.Run("begin message", func(t *testing.T) {
 		messageData := []byte{
-			0x00, 0x01,
-			MsgBegin,
-			0x00, 0x00,
+			0x00, 0x03,            // Size: 3 bytes
+			0xB1, MsgBegin, 0xA0,  // Tiny struct + BEGIN sig + empty options map
+			0x00, 0x00,            // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -334,9 +340,9 @@ func TestSessionHandleMessage(t *testing.T) {
 
 	t.Run("commit message", func(t *testing.T) {
 		messageData := []byte{
-			0x00, 0x01,
-			MsgCommit,
-			0x00, 0x00,
+			0x00, 0x02,            // Size: 2 bytes
+			0xB0, MsgCommit,       // Tiny struct (0 fields) + COMMIT sig
+			0x00, 0x00,            // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -357,9 +363,9 @@ func TestSessionHandleMessage(t *testing.T) {
 
 	t.Run("rollback message", func(t *testing.T) {
 		messageData := []byte{
-			0x00, 0x01,
-			MsgRollback,
-			0x00, 0x00,
+			0x00, 0x02,            // Size: 2 bytes
+			0xB0, MsgRollback,     // Tiny struct (0 fields) + ROLLBACK sig
+			0x00, 0x00,            // Zero terminator
 		}
 
 		conn := &mockConn{readData: messageData}
@@ -952,4 +958,715 @@ func TestSessionHandleRoute(t *testing.T) {
 	err := session.handleMessage()
 	// Route should be handled or return error
 	_ = err
+}
+
+// =============================================================================
+// Tests for Multi-Chunk Message Handling
+// =============================================================================
+
+func TestMultiChunkMessageHandling(t *testing.T) {
+	t.Run("single chunk message", func(t *testing.T) {
+		// Single chunk: size header + data + zero terminator
+		messageData := []byte{
+			0x00, 0x05,           // Size: 5 bytes
+			0xB1, MsgHello, 0xA0, // Tiny struct with signature HELLO, empty map
+			0x00, 0x00,           // Zero chunk terminator
+		}
+
+		conn := &mockConn{readData: messageData}
+		executor := &mockExecutor{}
+		session := &Session{conn: conn, executor: executor}
+
+		err := session.handleMessage()
+		// HELLO needs proper handling, but we're testing chunk reading
+		_ = err
+	})
+
+	t.Run("multi chunk message", func(t *testing.T) {
+		// Build a multi-chunk message: two chunks + zero terminator
+		// Chunk 1: 3 bytes of data
+		// Chunk 2: 2 bytes of data
+		// Zero terminator
+
+		messageData := []byte{
+			// First chunk
+			0x00, 0x03,     // Size: 3 bytes
+			0xB1, 0x01, 'A', // Data
+			// Second chunk
+			0x00, 0x02, // Size: 2 bytes
+			'B', 'C',   // Data
+			// Zero terminator
+			0x00, 0x00,
+		}
+
+		conn := &mockConn{readData: messageData}
+		session := &Session{conn: conn}
+
+		err := session.handleMessage()
+		// Will error since it's not a valid message, but tests multi-chunk reading
+		_ = err
+	})
+
+	t.Run("zero size first chunk", func(t *testing.T) {
+		// Zero-size chunk immediately (empty message)
+		messageData := []byte{0x00, 0x00}
+
+		conn := &mockConn{readData: messageData}
+		session := &Session{conn: conn}
+
+		err := session.handleMessage()
+		if err != nil {
+			t.Errorf("empty message should not error: %v", err)
+		}
+	})
+
+	t.Run("large chunk simulation", func(t *testing.T) {
+		// Simulate a larger message split into chunks
+		chunk1Size := 100
+		chunk2Size := 50
+
+		messageData := make([]byte, 0)
+
+		// First chunk header
+		messageData = append(messageData, byte(chunk1Size>>8), byte(chunk1Size))
+		// First chunk data (padding with valid struct start)
+		chunk1Data := make([]byte, chunk1Size)
+		chunk1Data[0] = 0xB1 // Tiny struct marker
+		chunk1Data[1] = 0x10 // RUN message type
+		messageData = append(messageData, chunk1Data...)
+
+		// Second chunk header
+		messageData = append(messageData, byte(chunk2Size>>8), byte(chunk2Size))
+		// Second chunk data
+		chunk2Data := make([]byte, chunk2Size)
+		messageData = append(messageData, chunk2Data...)
+
+		// Zero terminator
+		messageData = append(messageData, 0x00, 0x00)
+
+		conn := &mockConn{readData: messageData}
+		session := &Session{conn: conn, executor: &mockExecutor{}}
+
+		err := session.handleMessage()
+		// Will likely error on parsing but tests chunk accumulation
+		_ = err
+	})
+}
+
+// =============================================================================
+// Tests for PackStream Encoding
+// =============================================================================
+
+func TestEncodePackStreamString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []byte
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []byte{0x80}, // Tiny string, length 0
+		},
+		{
+			name:     "short string",
+			input:    "hello",
+			expected: []byte{0x85, 'h', 'e', 'l', 'l', 'o'}, // Tiny string, length 5
+		},
+		{
+			name:     "15 char string (max tiny)",
+			input:    "123456789012345",
+			expected: append([]byte{0x8F}, []byte("123456789012345")...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamString(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("length mismatch: got %d, want %d", len(result), len(tt.expected))
+			}
+			for i := range result {
+				if i < len(tt.expected) && result[i] != tt.expected[i] {
+					t.Errorf("byte %d: got 0x%02X, want 0x%02X", i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestEncodePackStreamInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int64
+		checkLen int // Expected minimum length
+	}{
+		{"zero", 0, 1},
+		{"small positive", 42, 1},
+		{"max tiny positive", 127, 1},
+		{"negative one", -1, 1},
+		{"min tiny negative", -16, 1},
+		{"requires int8", 128, 2},
+		{"requires int16", 32768, 3},
+		{"large number", 1000000, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamInt(tt.input)
+			if len(result) < tt.checkLen {
+				t.Errorf("length too short: got %d, want at least %d", len(result), tt.checkLen)
+			}
+		})
+	}
+}
+
+func TestEncodePackStreamMap(t *testing.T) {
+	t.Run("empty map", func(t *testing.T) {
+		result := encodePackStreamMap(nil)
+		if len(result) != 1 || result[0] != 0xA0 {
+			t.Errorf("empty map should be [0xA0], got %v", result)
+		}
+	})
+
+	t.Run("empty map explicit", func(t *testing.T) {
+		result := encodePackStreamMap(map[string]any{})
+		if len(result) != 1 || result[0] != 0xA0 {
+			t.Errorf("empty map should be [0xA0], got %v", result)
+		}
+	})
+
+	t.Run("single key map", func(t *testing.T) {
+		result := encodePackStreamMap(map[string]any{"a": int64(1)})
+		// Should be: 0xA1 (tiny map, 1 entry) + key "a" + value 1
+		if result[0] != 0xA1 {
+			t.Errorf("single-entry map marker should be 0xA1, got 0x%02X", result[0])
+		}
+	})
+}
+
+func TestEncodePackStreamList(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		result := encodePackStreamList(nil)
+		if len(result) != 1 || result[0] != 0x90 {
+			t.Errorf("empty list should be [0x90], got %v", result)
+		}
+	})
+
+	t.Run("single item list", func(t *testing.T) {
+		result := encodePackStreamList([]any{"test"})
+		// Should be: 0x91 (tiny list, 1 entry) + string "test"
+		if result[0] != 0x91 {
+			t.Errorf("single-entry list marker should be 0x91, got 0x%02X", result[0])
+		}
+	})
+
+	t.Run("multiple items", func(t *testing.T) {
+		result := encodePackStreamList([]any{int64(1), int64(2), int64(3)})
+		if result[0] != 0x93 { // Tiny list with 3 items
+			t.Errorf("3-entry list marker should be 0x93, got 0x%02X", result[0])
+		}
+	})
+}
+
+func TestEncodePackStreamValue(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       any
+		expectFirst byte // First byte of encoding
+	}{
+		{"nil", nil, 0xC0},
+		{"true", true, 0xC3},
+		{"false", false, 0xC2},
+		{"small int", int64(42), 42},
+		{"string", "hi", 0x82}, // Tiny string, length 2
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamValue(tt.input)
+			if len(result) == 0 {
+				t.Error("result should not be empty")
+				return
+			}
+			if result[0] != tt.expectFirst {
+				t.Errorf("first byte: got 0x%02X, want 0x%02X", result[0], tt.expectFirst)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for PackStream Decoding
+// =============================================================================
+
+func TestDecodePackStreamString(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		offset   int
+		expected string
+		wantLen  int
+		wantErr  bool
+	}{
+		{
+			name:     "tiny string empty",
+			data:     []byte{0x80},
+			offset:   0,
+			expected: "",
+			wantLen:  1,
+		},
+		{
+			name:     "tiny string hello",
+			data:     []byte{0x85, 'h', 'e', 'l', 'l', 'o'},
+			offset:   0,
+			expected: "hello",
+			wantLen:  6,
+		},
+		{
+			name:     "with offset",
+			data:     []byte{0x00, 0x00, 0x83, 'a', 'b', 'c'},
+			offset:   2,
+			expected: "abc",
+			wantLen:  4,
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a string
+			offset:  0,
+			wantErr: true,
+		},
+		{
+			name:    "out of bounds",
+			data:    []byte{0x85}, // Says 5 chars but no data
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, n, err := decodePackStreamString(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+			if n != tt.wantLen {
+				t.Errorf("consumed %d bytes, want %d", n, tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamMap(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		offset  int
+		wantErr bool
+		check   func(map[string]any) bool
+	}{
+		{
+			name:   "empty map",
+			data:   []byte{0xA0},
+			offset: 0,
+			check:  func(m map[string]any) bool { return len(m) == 0 },
+		},
+		{
+			name: "single entry",
+			data: []byte{
+				0xA1,       // Tiny map, 1 entry
+				0x81, 'a',  // Key: "a"
+				0x01,       // Value: 1
+			},
+			offset: 0,
+			check:  func(m map[string]any) bool { return m["a"] == int64(1) },
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a map
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamMap(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if !tt.check(result) {
+				t.Errorf("check failed for result: %v", result)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		offset   int
+		expected any
+		wantErr  bool
+	}{
+		{"null", []byte{0xC0}, 0, nil, false},
+		{"true", []byte{0xC3}, 0, true, false},
+		{"false", []byte{0xC2}, 0, false, false},
+		{"tiny positive int", []byte{0x2A}, 0, int64(42), false},
+		{"tiny negative int", []byte{0xFF}, 0, int64(-1), false},
+		{"zero", []byte{0x00}, 0, int64(0), false},
+		{"max tiny positive", []byte{0x7F}, 0, int64(127), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamValue(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %v (%T), want %v (%T)", result, result, tt.expected, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDecodePackStreamList(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		offset  int
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name:    "empty list",
+			data:    []byte{0x90},
+			offset:  0,
+			wantLen: 0,
+		},
+		{
+			name:    "single item",
+			data:    []byte{0x91, 0x01}, // [1]
+			offset:  0,
+			wantLen: 1,
+		},
+		{
+			name:    "three items",
+			data:    []byte{0x93, 0x01, 0x02, 0x03}, // [1, 2, 3]
+			offset:  0,
+			wantLen: 3,
+		},
+		{
+			name:    "invalid marker",
+			data:    []byte{0xC0}, // Null, not a list
+			offset:  0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamList(tt.data, tt.offset)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if len(result) != tt.wantLen {
+				t.Errorf("got %d items, want %d", len(result), tt.wantLen)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for parseRunMessage
+// =============================================================================
+
+func TestParseRunMessage(t *testing.T) {
+	t.Run("query only no params", func(t *testing.T) {
+		// Query: "MATCH (n) RETURN n" (18 chars), empty params
+		// 0x80 + 18 = 0x92 is a tiny STRING (0x80-0x8F range is 0-15 chars)
+		// For 18 chars we need STRING8: 0xD0 + length byte
+		data := []byte{
+			0xD0, 18, // STRING8 marker + length
+			'M', 'A', 'T', 'C', 'H', ' ', '(', 'n', ')', ' ',
+			'R', 'E', 'T', 'U', 'R', 'N', ' ', 'n',
+			0xA0, // Empty map for params
+		}
+
+		session := &Session{}
+		query, params, err := session.parseRunMessage(data)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if query != "MATCH (n) RETURN n" {
+			t.Errorf("query: got %q, want %q", query, "MATCH (n) RETURN n")
+		}
+		if len(params) != 0 {
+			t.Errorf("params should be empty, got %v", params)
+		}
+	})
+
+	t.Run("query with string param", func(t *testing.T) {
+		// Query: "MATCH (n {name: $name})", params: {name: "Alice"}
+		data := []byte{
+			0x8D, // Tiny string, 13 chars for "MATCH (n) ..."
+			'M', 'A', 'T', 'C', 'H', ' ', '(', 'n', ')', ' ', 'R', 'E', 'T',
+			0xA1,            // Map with 1 entry
+			0x84, 'n', 'a', 'm', 'e', // Key: "name"
+			0x85, 'A', 'l', 'i', 'c', 'e', // Value: "Alice"
+		}
+
+		session := &Session{}
+		_, params, err := session.parseRunMessage(data)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if params["name"] != "Alice" {
+			t.Errorf("params[name]: got %v, want Alice", params["name"])
+		}
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		session := &Session{}
+		_, _, err := session.parseRunMessage([]byte{})
+
+		if err == nil {
+			t.Error("expected error for empty data")
+		}
+	})
+}
+
+// =============================================================================
+// Tests for Session with Parameters
+// =============================================================================
+
+func TestSessionExecuteWithParams(t *testing.T) {
+	var receivedQuery string
+	var receivedParams map[string]any
+
+	executor := &mockExecutor{
+		executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+			receivedQuery = query
+			receivedParams = params
+			return &QueryResult{
+				Columns: []string{"n"},
+				Rows:    [][]any{{"result"}},
+			}, nil
+		},
+	}
+
+	// Build a RUN message with query and params
+	queryStr := "MATCH (n {id: $id}) RETURN n"
+	queryBytes := encodePackStreamString(queryStr)
+	paramsBytes := encodePackStreamMap(map[string]any{"id": "test-123"})
+
+	// Combine: query + params
+	runData := append(queryBytes, paramsBytes...)
+
+	// Build full message with struct marker
+	fullMessage := []byte{0xB1, MsgRun}
+	fullMessage = append(fullMessage, runData...)
+
+	// Add chunk header and terminator
+	messageData := []byte{byte(len(fullMessage) >> 8), byte(len(fullMessage))}
+	messageData = append(messageData, fullMessage...)
+	messageData = append(messageData, 0x00, 0x00) // Zero terminator
+
+	conn := &mockConn{readData: messageData}
+	session := &Session{conn: conn, executor: executor}
+
+	err := session.handleMessage()
+	if err != nil {
+		t.Errorf("handleMessage error: %v", err)
+	}
+
+	if receivedQuery != queryStr {
+		t.Errorf("query: got %q, want %q", receivedQuery, queryStr)
+	}
+
+	if receivedParams["id"] != "test-123" {
+		t.Errorf("params[id]: got %v, want test-123", receivedParams["id"])
+	}
+}
+
+// =============================================================================
+// Tests for truncateQuery helper
+// =============================================================================
+
+func TestTruncateQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		maxLen   int
+		expected string
+	}{
+		{"short query", "MATCH (n)", 100, "MATCH (n)"},
+		{"exact length", "12345", 5, "12345"},
+		{"needs truncation", "1234567890", 5, "12345..."},
+		{"empty query", "", 10, ""},
+		{"one char max", "hello", 1, "h..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateQuery(tt.query, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for INT encoding variants
+// =============================================================================
+
+func TestEncodePackStreamIntVariants(t *testing.T) {
+	// INT8 is only used for negative values -128 to -17
+	// Positive values > 127 go to INT16
+	tests := []struct {
+		name        string
+		value       int64
+		expectFirst byte
+	}{
+		{"INT8 negative -17", -17, 0xC8},  // -17 requires INT8 (-128 to -17 range)
+		{"INT8 negative -100", -100, 0xC8}, // -100 is in INT8 range
+		{"INT16 positive", 200, 0xC9},      // 200 > 127, goes to INT16
+		{"INT16 negative", -1000, 0xC9},    // -1000 < -128, needs INT16
+		{"INT32 positive", 100000, 0xCA},
+		{"INT32 negative", -100000, 0xCA},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := encodePackStreamInt(tt.value)
+			if len(result) < 2 {
+				t.Fatal("result too short")
+			}
+			if result[0] != tt.expectFirst {
+				t.Errorf("marker: got 0x%02X, want 0x%02X", result[0], tt.expectFirst)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for STRING encoding variants
+// =============================================================================
+
+func TestEncodePackStreamStringVariants(t *testing.T) {
+	t.Run("STRING8", func(t *testing.T) {
+		// Create a string that requires STRING8 (16-255 chars)
+		str := make([]byte, 50)
+		for i := range str {
+			str[i] = 'a'
+		}
+		result := encodePackStreamString(string(str))
+		if result[0] != 0xD0 { // STRING8 marker
+			t.Errorf("marker: got 0x%02X, want 0xD0", result[0])
+		}
+	})
+
+	t.Run("STRING16", func(t *testing.T) {
+		// Create a string that requires STRING16 (256+ chars)
+		str := make([]byte, 300)
+		for i := range str {
+			str[i] = 'b'
+		}
+		result := encodePackStreamString(string(str))
+		if result[0] != 0xD1 { // STRING16 marker
+			t.Errorf("marker: got 0x%02X, want 0xD1", result[0])
+		}
+	})
+}
+
+// =============================================================================
+// Tests for Decode INT variants
+// =============================================================================
+
+func TestDecodePackStreamIntVariants(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected int64
+	}{
+		{"INT8 positive", []byte{0xC8, 0x64}, 100},            // 100
+		{"INT8 negative", []byte{0xC8, 0x9C}, -100},           // -100
+		{"INT16 positive", []byte{0xC9, 0x03, 0xE8}, 1000},    // 1000
+		{"INT16 negative", []byte{0xC9, 0xFC, 0x18}, -1000},   // -1000
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, _, err := decodePackStreamValue(tt.data, 0)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("got %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests for Float encoding/decoding
+// =============================================================================
+
+func TestPackStreamFloat(t *testing.T) {
+	testValue := 3.14159
+
+	// Encode
+	encoded := encodePackStreamValue(testValue)
+	if len(encoded) != 9 { // 1 marker + 8 bytes for float64
+		t.Errorf("float64 should encode to 9 bytes, got %d", len(encoded))
+	}
+	if encoded[0] != 0xC1 { // FLOAT64 marker
+		t.Errorf("float64 marker should be 0xC1, got 0x%02X", encoded[0])
+	}
+
+	// Decode
+	decoded, _, err := decodePackStreamValue(encoded, 0)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if decoded != testValue {
+		t.Errorf("got %v, want %v", decoded, testValue)
+	}
 }

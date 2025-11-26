@@ -371,6 +371,52 @@ func (m *MemoryEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	return nodes, nil
 }
 
+// GetAllNodes returns all nodes in the storage.
+func (m *MemoryEngine) GetAllNodes() []*Node {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return []*Node{}
+	}
+
+	nodes := make([]*Node, 0, len(m.nodes))
+	for _, node := range m.nodes {
+		nodes = append(nodes, m.copyNode(node))
+	}
+
+	return nodes
+}
+
+// GetEdgeBetween returns an edge between two nodes with the given type.
+// Returns nil if no edge exists.
+func (m *MemoryEngine) GetEdgeBetween(source, target NodeID, edgeType string) *Edge {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil
+	}
+
+	// Get outgoing edges from source
+	edgeIDs := m.outgoingEdges[source]
+	if edgeIDs == nil {
+		return nil
+	}
+
+	// Find edge to target with matching type
+	for edgeID := range edgeIDs {
+		edge := m.edges[edgeID]
+		if edge != nil && edge.EndNode == target {
+			if edgeType == "" || edge.Type == edgeType {
+				return m.copyEdge(edge)
+			}
+		}
+	}
+
+	return nil
+}
+
 // GetOutgoingEdges returns all edges starting from the given node.
 func (m *MemoryEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if nodeID == "" {

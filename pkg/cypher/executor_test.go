@@ -78,7 +78,14 @@ func TestExecuteUnsupportedQuery(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.Execute(context.Background(), "DROP INDEX idx", nil)
+	// DROP INDEX is now a no-op (NornicDB manages indexes internally)
+	result, err := exec.Execute(context.Background(), "DROP INDEX idx", nil)
+	assert.NoError(t, err)
+	assert.Empty(t, result.Columns)
+	assert.Empty(t, result.Rows)
+
+	// Test a truly unsupported query
+	_, err = exec.Execute(context.Background(), "GRANT ADMIN TO user", nil)
 	assert.Error(t, err)
 	// Error should mention invalid clause
 	assert.Contains(t, err.Error(), "syntax error")
@@ -2991,4 +2998,767 @@ func TestParserDefaultCase(t *testing.T) {
 	query, err := parser.Parse("MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.NotNil(t, query)
+}
+
+// =============================================================================
+// Tests for Parameter Substitution (substituteParams and valueToLiteral)
+// =============================================================================
+
+func TestSubstituteParamsBasic(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		query    string
+		params   map[string]interface{}
+		expected string
+	}{
+		{
+			name:     "string parameter",
+			query:    "MATCH (n {name: $name}) RETURN n",
+			params:   map[string]interface{}{"name": "Alice"},
+			expected: "MATCH (n {name: 'Alice'}) RETURN n",
+		},
+		{
+			name:     "integer parameter",
+			query:    "MATCH (n) WHERE n.age = $age RETURN n",
+			params:   map[string]interface{}{"age": 25},
+			expected: "MATCH (n) WHERE n.age = 25 RETURN n",
+		},
+		{
+			name:     "float parameter",
+			query:    "MATCH (n) WHERE n.score > $score RETURN n",
+			params:   map[string]interface{}{"score": 85.5},
+			expected: "MATCH (n) WHERE n.score > 85.5 RETURN n",
+		},
+		{
+			name:     "boolean parameter true",
+			query:    "MATCH (n) WHERE n.active = $active RETURN n",
+			params:   map[string]interface{}{"active": true},
+			expected: "MATCH (n) WHERE n.active = true RETURN n",
+		},
+		{
+			name:     "boolean parameter false",
+			query:    "MATCH (n) WHERE n.active = $active RETURN n",
+			params:   map[string]interface{}{"active": false},
+			expected: "MATCH (n) WHERE n.active = false RETURN n",
+		},
+		{
+			name:     "null parameter",
+			query:    "MATCH (n) WHERE n.value = $value RETURN n",
+			params:   map[string]interface{}{"value": nil},
+			expected: "MATCH (n) WHERE n.value = null RETURN n",
+		},
+		{
+			name:     "multiple parameters",
+			query:    "MATCH (n {name: $name, age: $age}) RETURN n",
+			params:   map[string]interface{}{"name": "Bob", "age": 30},
+			expected: "MATCH (n {name: 'Bob', age: 30}) RETURN n",
+		},
+		{
+			name:     "missing parameter unchanged",
+			query:    "MATCH (n {name: $name}) RETURN n",
+			params:   map[string]interface{}{},
+			expected: "MATCH (n {name: $name}) RETURN n",
+		},
+		{
+			name:     "empty params",
+			query:    "MATCH (n) RETURN n",
+			params:   nil,
+			expected: "MATCH (n) RETURN n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.substituteParams(tt.query, tt.params)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+
+	// Verify queries execute correctly after substitution
+	_, err := exec.Execute(ctx, "CREATE (n:ParamTest {name: 'Test'})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:ParamTest {name: $name}) RETURN n", map[string]interface{}{"name": "Test"})
+	require.NoError(t, err)
+	assert.Len(t, result.Rows, 1)
+}
+
+func TestSubstituteParamsStringEscaping(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		value    string
+		expected string
+	}{
+		{
+			name:     "single quote escaping",
+			value:    "O'Connor",
+			expected: "'O''Connor'",
+		},
+		{
+			name:     "backslash escaping",
+			value:    "path\\to\\file",
+			expected: "'path\\\\to\\\\file'",
+		},
+		{
+			name:     "both quotes and backslashes",
+			value:    "It's a\\path",
+			expected: "'It''s a\\\\path'",
+		},
+		{
+			name:     "empty string",
+			value:    "",
+			expected: "''",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.valueToLiteral(tt.value)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestValueToLiteralArrays(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		value    interface{}
+		expected string
+	}{
+		{
+			name:     "string array",
+			value:    []string{"a", "b", "c"},
+			expected: "['a', 'b', 'c']",
+		},
+		{
+			name:     "int array",
+			value:    []int{1, 2, 3},
+			expected: "[1, 2, 3]",
+		},
+		{
+			name:     "int64 array",
+			value:    []int64{100, 200, 300},
+			expected: "[100, 200, 300]",
+		},
+		{
+			name:     "float64 array",
+			value:    []float64{1.5, 2.5, 3.5},
+			expected: "[1.5, 2.5, 3.5]",
+		},
+		{
+			name:     "interface array",
+			value:    []interface{}{"hello", 42, true},
+			expected: "['hello', 42, true]",
+		},
+		{
+			name:     "empty array",
+			value:    []interface{}{},
+			expected: "[]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.valueToLiteral(tt.value)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestValueToLiteralMaps(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	// Map with single key (deterministic)
+	result := exec.valueToLiteral(map[string]interface{}{"name": "Alice"})
+	assert.Equal(t, "{name: 'Alice'}", result)
+
+	// Empty map
+	result = exec.valueToLiteral(map[string]interface{}{})
+	assert.Equal(t, "{}", result)
+}
+
+func TestValueToLiteralIntegerTypes(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		value    interface{}
+		expected string
+	}{
+		{"int", int(42), "42"},
+		{"int8", int8(8), "8"},
+		{"int16", int16(16), "16"},
+		{"int32", int32(32), "32"},
+		{"int64", int64(64), "64"},
+		{"uint", uint(100), "100"},
+		{"uint8", uint8(8), "8"},
+		{"uint16", uint16(16), "16"},
+		{"uint32", uint32(32), "32"},
+		{"uint64", uint64(64), "64"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.valueToLiteral(tt.value)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestValueToLiteralFloats(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	// float32
+	result := exec.valueToLiteral(float32(3.14))
+	assert.Contains(t, result, "3.14")
+
+	// float64
+	result = exec.valueToLiteral(float64(2.718281828))
+	assert.Contains(t, result, "2.718")
+}
+
+// =============================================================================
+// Tests for RETURN Clause Parsing
+// =============================================================================
+
+func TestParseReturnClauseBasic(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	node := &storage.Node{
+		ID:         "ret-1",
+		Labels:     []string{"Person"},
+		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
+	}
+
+	tests := []struct {
+		name            string
+		returnClause    string
+		varName         string
+		expectedCols    []string
+		expectedValFunc func([]interface{}) bool
+	}{
+		{
+			name:         "return star",
+			returnClause: "*",
+			varName:      "n",
+			expectedCols: []string{"n"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 1 && vals[0] != nil
+			},
+		},
+		{
+			name:         "return property with alias",
+			returnClause: "n.name AS personName",
+			varName:      "n",
+			expectedCols: []string{"personName"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 1 && vals[0] == "Alice"
+			},
+		},
+		{
+			name:         "return property without alias",
+			returnClause: "n.age",
+			varName:      "n",
+			expectedCols: []string{"age"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 1 && vals[0] == float64(30)
+			},
+		},
+		{
+			name:         "return id function",
+			returnClause: "id(n) AS node_id",
+			varName:      "n",
+			expectedCols: []string{"node_id"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 1 && vals[0] == "ret-1"
+			},
+		},
+		{
+			name:         "return multiple expressions",
+			returnClause: "n.name AS name, n.age AS age, id(n) AS id",
+			varName:      "n",
+			expectedCols: []string{"name", "age", "id"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 3 && vals[0] == "Alice" && vals[1] == float64(30) && vals[2] == "ret-1"
+			},
+		},
+		{
+			name:         "return variable only",
+			returnClause: "n",
+			varName:      "n",
+			expectedCols: []string{"n"},
+			expectedValFunc: func(vals []interface{}) bool {
+				return len(vals) == 1 && vals[0] != nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cols, vals := exec.parseReturnClause(tt.returnClause, tt.varName, node)
+			assert.Equal(t, tt.expectedCols, cols)
+			assert.True(t, tt.expectedValFunc(vals), "Value validation failed for %v", vals)
+		})
+	}
+}
+
+func TestSplitReturnExpressions(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		clause   string
+		expected []string
+	}{
+		{
+			name:     "single expression",
+			clause:   "n.name",
+			expected: []string{"n.name"},
+		},
+		{
+			name:     "multiple simple expressions",
+			clause:   "n.name, n.age, n.city",
+			expected: []string{"n.name", " n.age", " n.city"},
+		},
+		{
+			name:     "expression with function",
+			clause:   "id(n), n.name",
+			expected: []string{"id(n)", " n.name"},
+		},
+		{
+			name:     "nested parentheses",
+			clause:   "count(n), sum(n.age)",
+			expected: []string{"count(n)", " sum(n.age)"},
+		},
+		{
+			name:     "complex function call",
+			clause:   "collect(n.name), count(*)",
+			expected: []string{"collect(n.name)", " count(*)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.splitReturnExpressions(tt.clause)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestExpressionToAlias(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		expr     string
+		expected string
+	}{
+		{"property access", "n.name", "name"},
+		{"nested property", "n.address.city", "city"},
+		{"function call", "id(n)", "id(n)"},
+		{"simple variable", "n", "n"},
+		{"literal", "'hello'", "'hello'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.expressionToAlias(tt.expr)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvaluateExpression(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	node := &storage.Node{
+		ID:         "eval-1",
+		Labels:     []string{"Test"},
+		Properties: map[string]interface{}{
+			"name":      "Test Node",
+			"count":     float64(42),
+			"active":    true,
+			"embedding": []float64{0.1, 0.2, 0.3}, // Should be filtered
+		},
+	}
+
+	tests := []struct {
+		name     string
+		expr     string
+		varName  string
+		expected interface{}
+	}{
+		{"id function", "id(n)", "n", "eval-1"},
+		{"id function with spaces", "id( n )", "n", "eval-1"},
+		{"property access", "n.name", "n", "Test Node"},
+		{"numeric property", "n.count", "n", float64(42)},
+		{"boolean property", "n.active", "n", true},
+		{"missing property", "n.missing", "n", nil},
+		{"embedding property filtered", "n.embedding", "n", nil},
+		{"string literal", "'hello'", "n", "hello"},
+		{"integer literal", "42", "n", int64(42)},
+		{"float literal", "3.14", "n", float64(3.14)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.evaluateExpression(tt.expr, tt.varName, node)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// =============================================================================
+// Tests for Internal Property Filtering (Embeddings)
+// =============================================================================
+
+func TestIsInternalProperty(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	internalProps := []string{
+		"embedding",
+		"embeddings",
+		"vector",
+		"vectors",
+		"_embedding",
+		"_embeddings",
+		"chunk_embedding",
+		"chunk_embeddings",
+		"EMBEDDING",  // Case insensitive
+		"Embeddings", // Mixed case
+	}
+
+	externalProps := []string{
+		"name",
+		"age",
+		"content",
+		"description",
+		"embed", // Not exact match
+		"id",
+	}
+
+	for _, prop := range internalProps {
+		t.Run("internal_"+prop, func(t *testing.T) {
+			assert.True(t, exec.isInternalProperty(prop), "%s should be internal", prop)
+		})
+	}
+
+	for _, prop := range externalProps {
+		t.Run("external_"+prop, func(t *testing.T) {
+			assert.False(t, exec.isInternalProperty(prop), "%s should not be internal", prop)
+		})
+	}
+}
+
+func TestNodeToMapFiltersEmbeddings(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	node := &storage.Node{
+		ID:     "embed-filter-1",
+		Labels: []string{"Document"},
+		Properties: map[string]interface{}{
+			"name":            "Test Doc",
+			"content":         "Hello world",
+			"embedding":       []float64{0.1, 0.2, 0.3, 0.4, 0.5},
+			"chunk_embedding": []float64{0.5, 0.4, 0.3, 0.2, 0.1},
+			"vector":          []float64{1.0, 2.0, 3.0},
+		},
+	}
+
+	result := exec.nodeToMap(node)
+
+	// Check that regular properties are present
+	props := result["properties"].(map[string]interface{})
+	assert.Equal(t, "Test Doc", props["name"])
+	assert.Equal(t, "Hello world", props["content"])
+
+	// Check that embedding properties are filtered out
+	assert.NotContains(t, props, "embedding")
+	assert.NotContains(t, props, "chunk_embedding")
+	assert.NotContains(t, props, "vector")
+
+	// Check other node fields
+	assert.Equal(t, "embed-filter-1", result["id"])
+	assert.Equal(t, []string{"Document"}, result["labels"])
+}
+
+// =============================================================================
+// Tests for MERGE with ON CREATE SET / ON MATCH SET
+// =============================================================================
+
+func TestMergeWithOnCreateSet(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// MERGE a new node with ON CREATE SET
+	result, err := exec.Execute(ctx, `
+		MERGE (n:Person {name: 'Alice'})
+		ON CREATE SET n.created = 'yes', n.age = 25
+		RETURN n
+	`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Stats.NodesCreated)
+	assert.Len(t, result.Rows, 1)
+
+	// Verify node was created with properties
+	matchResult, err := exec.Execute(ctx, "MATCH (n:Person {name: 'Alice'}) RETURN n.created, n.age", nil)
+	require.NoError(t, err)
+	assert.Len(t, matchResult.Rows, 1)
+}
+
+func TestMergeWithOnMatchSet(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// First create a node
+	_, err := exec.Execute(ctx, "CREATE (n:Person {name: 'Bob', visits: 0})", nil)
+	require.NoError(t, err)
+
+	// MERGE existing node with ON MATCH SET
+	result, err := exec.Execute(ctx, `
+		MERGE (n:Person {name: 'Bob'})
+		ON MATCH SET n.visits = 1
+		RETURN n
+	`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Stats.NodesCreated) // Should not create new node
+}
+
+func TestMergeRouting(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// MERGE with ON CREATE SET should NOT be routed to executeSet
+	result, err := exec.Execute(ctx, `
+		MERGE (n:File {path: '/test/file.txt'})
+		ON CREATE SET n.created = 'true'
+		RETURN n.path AS path
+	`, nil)
+	require.NoError(t, err)
+	assert.Len(t, result.Columns, 1)
+	assert.Equal(t, "path", result.Columns[0])
+}
+
+func TestMergeWithParameterSubstitution(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	params := map[string]interface{}{
+		"path":      "/app/docs/README.md",
+		"name":      "README.md",
+		"size":      int64(1024),
+		"extension": ".md",
+	}
+
+	result, err := exec.Execute(ctx, `
+		MERGE (f:File {path: $path})
+		ON CREATE SET f.name = $name, f.size = $size, f.extension = $extension
+		RETURN f.path AS path, f.name AS name
+	`, params)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Stats.NodesCreated)
+	assert.Len(t, result.Columns, 2)
+	assert.Contains(t, result.Columns, "path")
+	assert.Contains(t, result.Columns, "name")
+}
+
+func TestMergeReturnIdFunction(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+		MERGE (f:File {path: '/test.txt'})
+		RETURN f.path AS path, id(f) AS node_id
+	`, nil)
+	require.NoError(t, err)
+	assert.Len(t, result.Columns, 2)
+	assert.Equal(t, "path", result.Columns[0])
+	assert.Equal(t, "node_id", result.Columns[1])
+
+	// node_id should be a string
+	if len(result.Rows) > 0 {
+		assert.IsType(t, "", result.Rows[0][1])
+	}
+}
+
+// =============================================================================
+// Tests for Extract Helper Functions
+// =============================================================================
+
+func TestExtractVarName(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		pattern  string
+		expected string
+	}{
+		{"simple var with label", "(n:Person)", "n"},
+		{"var with multiple labels", "(f:File:Node)", "f"},
+		{"var with properties", "(n:Person {name: 'Alice'})", "n"},
+		{"var only", "(n)", "n"},
+		{"no var, label only", "(:Person)", "n"}, // Default
+		{"empty pattern", "()", "n"},             // Default
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.extractVarName(tt.pattern)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestExtractLabels(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name     string
+		pattern  string
+		expected []string
+	}{
+		{"single label", "(n:Person)", []string{"Person"}},
+		{"multiple labels", "(f:File:Node)", []string{"File", "Node"}},
+		{"label with properties", "(n:Person {name: 'Alice'})", []string{"Person"}},
+		{"no label", "(n)", []string{}},
+		{"no var, label only", "(:Person)", []string{"Person"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.extractLabels(tt.pattern)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// =============================================================================
+// Tests for DROP INDEX (No-op)
+// =============================================================================
+
+func TestDropIndexNoOp(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// DROP INDEX should be treated as no-op (returns empty result, no error)
+	result, err := exec.Execute(ctx, "DROP INDEX file_path IF EXISTS", nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Columns)
+	assert.Empty(t, result.Rows)
+}
+
+// =============================================================================
+// Tests for Edge Cases in Parameter Substitution
+// =============================================================================
+
+func TestSubstituteParamsEdgeCases(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+
+	tests := []struct {
+		name   string
+		query  string
+		params map[string]interface{}
+	}{
+		{
+			name:   "parameter at start",
+			query:  "$name is the name",
+			params: map[string]interface{}{"name": "test"},
+		},
+		{
+			name:   "parameter at end",
+			query:  "The name is $name",
+			params: map[string]interface{}{"name": "test"},
+		},
+		{
+			name:   "adjacent parameters",
+			query:  "Values: $a$b",
+			params: map[string]interface{}{"a": "x", "b": "y"},
+		},
+		{
+			name:   "underscore in param name",
+			query:  "Path: $host_path",
+			params: map[string]interface{}{"host_path": "/app/docs"},
+		},
+		{
+			name:   "number in param name",
+			query:  "Value: $param123",
+			params: map[string]interface{}{"param123": "test"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.substituteParams(tt.query, tt.params)
+			// Should not contain the original parameter placeholders
+			for key := range tt.params {
+				assert.NotContains(t, result, "$"+key)
+			}
+		})
+	}
+}
+
+func TestSubstituteParamsComplexQuery(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Test with a complex MERGE query like Mimir uses
+	query := `
+		MERGE (f:File:Node {path: $path})
+		ON CREATE SET f.id = 'file-123',
+			f.host_path = $host_path,
+			f.name = $name,
+			f.extension = $extension,
+			f.size_bytes = $size_bytes,
+			f.content = $content
+		RETURN f.path AS path, f.size_bytes AS size_bytes, id(f) AS node_id
+	`
+
+	params := map[string]interface{}{
+		"path":       "/app/docs/README.md",
+		"host_path":  "/Users/dev/docs/README.md",
+		"name":       "README.md",
+		"extension":  ".md",
+		"size_bytes": int64(2048),
+		"content":    "# Hello World\n\nThis is a test file.",
+	}
+
+	result, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	assert.Len(t, result.Columns, 3)
+	assert.Contains(t, result.Columns, "path")
+	assert.Contains(t, result.Columns, "size_bytes")
+	assert.Contains(t, result.Columns, "node_id")
+
+	if len(result.Rows) > 0 {
+		assert.Equal(t, "/app/docs/README.md", result.Rows[0][0])
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/server"
 )
@@ -229,11 +230,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting server: %w", err)
 	}
 
+	// Create and start Bolt server for Neo4j driver compatibility
+	boltConfig := bolt.DefaultConfig()
+	boltConfig.Port = boltPort
+	
+	// Create query executor adapter
+	queryExecutor := &DBQueryExecutor{db: db}
+	boltServer := bolt.New(boltConfig, queryExecutor)
+	
+	// Start Bolt server in goroutine
+	go func() {
+		if err := boltServer.ListenAndServe(); err != nil {
+			fmt.Printf("Bolt server error: %v\n", err)
+		}
+	}()
+
 	fmt.Println()
 	fmt.Println("✅ NornicDB is ready!")
 	fmt.Println()
 	fmt.Println("Endpoints:")
 	fmt.Printf("  • HTTP API:     http://localhost:%d\n", httpPort)
+	fmt.Printf("  • Bolt:         bolt://localhost:%d\n", boltPort)
 	fmt.Printf("  • Health:       http://localhost:%d/health\n", httpPort)
 	fmt.Printf("  • Search:       POST http://localhost:%d/nornicdb/search\n", httpPort)
 	fmt.Printf("  • Cypher:       POST http://localhost:%d/db/neo4j/tx/commit\n", httpPort)
@@ -256,12 +273,35 @@ func runServe(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
+	// Stop Bolt server
+	if err := boltServer.Close(); err != nil {
+		fmt.Printf("Warning: error stopping Bolt server: %v\n", err)
+	}
+	
 	if err := httpServer.Stop(ctx); err != nil {
-		return fmt.Errorf("stopping server: %w", err)
+		return fmt.Errorf("stopping HTTP server: %w", err)
 	}
 	
 	fmt.Println("✅ Server stopped gracefully")
 	return nil
+}
+
+// DBQueryExecutor adapts nornicdb.DB to bolt.QueryExecutor interface.
+type DBQueryExecutor struct {
+	db *nornicdb.DB
+}
+
+// Execute runs a Cypher query against the database.
+func (e *DBQueryExecutor) Execute(ctx context.Context, query string, params map[string]any) (*bolt.QueryResult, error) {
+	result, err := e.db.ExecuteCypher(ctx, query, params)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &bolt.QueryResult{
+		Columns: result.Columns,
+		Rows:    result.Rows,
+	}, nil
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
