@@ -48,6 +48,8 @@ package filter
 import (
 	"math"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // Config holds Kalman filter configuration.
@@ -94,7 +96,7 @@ func DecayPredictionConfig() Config {
 // CoAccessConfig returns config optimized for co-access pattern filtering.
 func CoAccessConfig() Config {
 	return Config{
-		ProcessNoise:      0.2,  // Co-access patterns can change
+		ProcessNoise:      0.2,   // Co-access patterns can change
 		MeasurementNoise:  100.0, // Individual accesses are noisy
 		InitialCovariance: 40.0,
 		VarianceScale:     12.0,
@@ -202,11 +204,11 @@ func (k *Kalman) processInternal(measurement, target float64) float64 {
 
 	// Measurement update
 	k.k = k.p / (k.p + k.r) // Kalman gain
-	
+
 	// Innovation (measurement residual)
 	innovation := measurement - k.x
 	k.x += k.k * innovation
-	
+
 	// Update covariance
 	k.p = (1.0 - k.k) * k.p
 
@@ -248,7 +250,7 @@ func (k *Kalman) PredictWithUncertainty(steps int) (value, uncertainty float64) 
 
 	velocity := k.x - k.lastX
 	value = k.x + (float64(steps) * velocity)
-	
+
 	// Uncertainty grows with prediction horizon
 	// Each step adds process noise
 	uncertainty = k.p
@@ -256,7 +258,7 @@ func (k *Kalman) PredictWithUncertainty(steps int) (value, uncertainty float64) 
 		uncertainty += k.q * k.e
 	}
 	uncertainty = math.Sqrt(uncertainty)
-	
+
 	return value, uncertainty
 }
 
@@ -318,6 +320,52 @@ func (k *Kalman) SetState(state float64) {
 	k.lastX = state
 }
 
+// ProcessIfEnabled applies filtering if the feature is enabled.
+// If disabled, returns the raw measurement unchanged.
+//
+// Parameters:
+//   - feature: The feature flag to check (e.g., FeatureKalmanDecay)
+//   - measurement: The observed value
+//   - target: The desired setpoint (use 0 if no target)
+//
+// Returns a config.FilteredValue containing both raw and filtered values.
+func (k *Kalman) ProcessIfEnabled(feature string, measurement, target float64) config.FilteredValue {
+	result := config.FilteredValue{
+		Raw:     measurement,
+		Feature: feature,
+	}
+
+	if config.IsFeatureEnabled(feature) {
+		result.Filtered = k.Process(measurement, target)
+		result.WasFiltered = true
+	} else {
+		result.Filtered = measurement
+		result.WasFiltered = false
+	}
+
+	return result
+}
+
+// PredictIfEnabled returns a predicted value if the feature is enabled.
+// If disabled, returns the current state unchanged.
+func (k *Kalman) PredictIfEnabled(feature string, steps int) config.FilteredValue {
+	currentState := k.State()
+	result := config.FilteredValue{
+		Raw:     currentState,
+		Feature: feature,
+	}
+
+	if config.IsFeatureEnabled(feature) {
+		result.Filtered = k.Predict(steps)
+		result.WasFiltered = true
+	} else {
+		result.Filtered = currentState
+		result.WasFiltered = false
+	}
+
+	return result
+}
+
 // trackInnovation tracks recent innovations for adaptive R calculation.
 func (k *Kalman) trackInnovation(innovation float64) {
 	k.innovations = append(k.innovations, innovation)
@@ -357,12 +405,12 @@ func (k *Kalman) UpdateAdaptiveR() {
 
 // Stats returns filter statistics.
 type Stats struct {
-	State           float64
-	Velocity        float64
-	Covariance      float64
-	Gain            float64
+	State            float64
+	Velocity         float64
+	Covariance       float64
+	Gain             float64
 	MeasurementNoise float64
-	Observations    int
+	Observations     int
 }
 
 // GetStats returns current filter statistics.
@@ -371,12 +419,12 @@ func (k *Kalman) GetStats() Stats {
 	defer k.mu.RUnlock()
 
 	return Stats{
-		State:           k.x,
-		Velocity:        k.x - k.lastX,
-		Covariance:      k.p,
-		Gain:            k.k,
+		State:            k.x,
+		Velocity:         k.x - k.lastX,
+		Covariance:       k.p,
+		Gain:             k.k,
 		MeasurementNoise: k.r,
-		Observations:    k.observations,
+		Observations:     k.observations,
 	}
 }
 
@@ -389,9 +437,9 @@ type VarianceTracker struct {
 	windowIdx int
 	windowLen int
 
-	sumMean float64
-	sumVar  float64
-	mean    float64
+	sumMean  float64
+	sumVar   float64
+	mean     float64
 	variance float64
 
 	inverseN float64

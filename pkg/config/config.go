@@ -52,6 +52,7 @@ import (
 //   - Memory: NornicDB-specific memory decay and embeddings
 //   - Compliance: GDPR/HIPAA/FISMA/SOC2 compliance controls
 //   - Logging: Logging configuration
+//   - Features: Experimental and optional features (feature flags)
 //
 // Use LoadFromEnv() to create a Config from environment variables.
 //
@@ -81,6 +82,9 @@ type Config struct {
 
 	// Logging
 	Logging LoggingConfig
+
+	// Feature flags for experimental/optional features
+	Features FeatureFlagsConfig
 }
 
 // AuthConfig holds authentication settings.
@@ -225,6 +229,27 @@ type LoggingConfig struct {
 	SlowQueryThreshold time.Duration
 }
 
+// FeatureFlagsConfig holds all feature flags for experimental/optional features.
+// Centralized location for all feature toggles in NornicDB.
+type FeatureFlagsConfig struct {
+	// Kalman filtering for predictive smoothing
+	KalmanEnabled bool
+	
+	// Topological link prediction AUTOMATIC integration
+	// NOTE: Neo4j GDS procedures (CALL gds.linkPrediction.*) are ALWAYS available
+	// This flag only controls automatic integration with inference.Engine.OnStore()
+	TopologyAutoIntegrationEnabled bool    // Enable automatic topology in OnStore()
+	TopologyAlgorithm              string  // adamic_adar, jaccard, etc.
+	TopologyWeight                 float64 // 0.0-1.0, weight vs semantic
+	TopologyTopK                   int
+	TopologyMinScore               float64
+	TopologyGraphRefreshInterval   int
+	
+	// A/B testing for automatic topology integration
+	TopologyABTestEnabled    bool
+	TopologyABTestPercentage int // 0-100
+}
+
 // LoadFromEnv loads configuration from environment variables.
 //
 // This function reads all configuration from the environment, using Neo4j-compatible
@@ -360,6 +385,18 @@ func LoadFromEnv() *Config {
 	config.Logging.Output = getEnv("NORNICDB_LOG_OUTPUT", "stdout")
 	config.Logging.QueryLogEnabled = getEnvBool("NEO4J_dbms_logs_query_enabled", false)
 	config.Logging.SlowQueryThreshold = getEnvDuration("NEO4J_dbms_logs_query_threshold", 5*time.Second)
+
+	// Feature flags
+	config.Features.KalmanEnabled = getEnvBool("NORNICDB_KALMAN_ENABLED", false)
+	// Topology procedures are always available; this controls automatic integration only
+	config.Features.TopologyAutoIntegrationEnabled = getEnvBool("NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED", false)
+	config.Features.TopologyAlgorithm = getEnv("NORNICDB_TOPOLOGY_ALGORITHM", "adamic_adar")
+	config.Features.TopologyWeight = getEnvFloat("NORNICDB_TOPOLOGY_WEIGHT", 0.4)
+	config.Features.TopologyTopK = getEnvInt("NORNICDB_TOPOLOGY_TOPK", 10)
+	config.Features.TopologyMinScore = getEnvFloat("NORNICDB_TOPOLOGY_MIN_SCORE", 0.3)
+	config.Features.TopologyGraphRefreshInterval = getEnvInt("NORNICDB_TOPOLOGY_GRAPH_REFRESH_INTERVAL", 100)
+	config.Features.TopologyABTestEnabled = getEnvBool("NORNICDB_TOPOLOGY_AB_TEST_ENABLED", false)
+	config.Features.TopologyABTestPercentage = getEnvInt("NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE", 50)
 
 	return config
 }

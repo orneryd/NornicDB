@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 func TestAdaptiveConfig_Default(t *testing.T) {
@@ -227,20 +229,20 @@ func TestKalmanAdaptive_ProcessBatch(t *testing.T) {
 }
 
 func TestKalmanAdaptive_ProcessIfEnabled(t *testing.T) {
-	ResetFeatureFlags()
-	defer ResetFeatureFlags()
+	config.ResetFeatureFlags()
+	defer config.ResetFeatureFlags()
 
 	k := NewKalmanAdaptive(DefaultAdaptiveConfig())
 
 	// Disabled
-	result := k.ProcessIfEnabled(FeatureKalmanDecay, 100.0)
+	result := k.ProcessIfEnabled(config.FeatureKalmanDecay, 100.0)
 	if result.WasFiltered {
 		t.Error("Should not filter when disabled")
 	}
 
 	// Enabled
-	EnableKalmanFiltering()
-	result = k.ProcessIfEnabled(FeatureKalmanDecay, 100.0)
+	config.EnableKalmanFiltering()
+	result = k.ProcessIfEnabled(config.FeatureKalmanDecay, 100.0)
 	if !result.WasFiltered {
 		t.Error("Should filter when enabled")
 	}

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/filter"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/temporal"
 )
 
@@ -46,7 +46,7 @@ func TestNewKalmanAdapter(t *testing.T) {
 
 func TestKalmanAdapter_CalculateScore_Basic(t *testing.T) {
 	// Enable Kalman filtering for test
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -88,7 +88,7 @@ func TestKalmanAdapter_CalculateScore_Basic(t *testing.T) {
 
 func TestKalmanAdapter_CalculateScore_Smoothing(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -127,7 +127,7 @@ func TestKalmanAdapter_CalculateScore_Smoothing(t *testing.T) {
 
 func TestKalmanAdapter_WithTemporalIntegration(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -168,7 +168,7 @@ func TestKalmanAdapter_WithTemporalIntegration(t *testing.T) {
 
 func TestKalmanAdapter_ShouldArchive(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -219,7 +219,7 @@ func TestKalmanAdapter_ShouldArchive(t *testing.T) {
 
 func TestKalmanAdapter_GetArchivalCandidates(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -291,7 +291,7 @@ func TestKalmanAdapter_Reinforce(t *testing.T) {
 
 func TestKalmanAdapter_RunDecayCycle(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -362,7 +362,7 @@ func TestKalmanAdapter_GetManager(t *testing.T) {
 
 func TestKalmanAdapter_DisabledSmoothing(t *testing.T) {
 	// Disable Kalman filtering
-	cleanup := filter.WithKalmanDisabled()
+	cleanup := config.WithKalmanDisabled()
 	defer cleanup()
 
 	manager := New(DefaultConfig())
@@ -394,8 +394,8 @@ func TestKalmanAdapter_DisabledSmoothing(t *testing.T) {
 
 // Benchmark Kalman adapter
 func BenchmarkKalmanAdapter_CalculateScore(b *testing.B) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	adapter := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())

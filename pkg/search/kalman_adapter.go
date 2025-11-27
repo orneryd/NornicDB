@@ -70,6 +70,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/filter"
 )
 
@@ -204,7 +205,7 @@ func (ka *KalmanSearchAdapter) Search(ctx context.Context, query string, embeddi
 
 	// Update latency prediction
 	if ka.config.EnableLatencyPrediction {
-		result := ka.latencyFilter.ProcessIfEnabled(filter.FeatureKalmanLatency, latencyMs)
+		result := ka.latencyFilter.ProcessIfEnabled(config.FeatureKalmanLatency, latencyMs)
 		if result.WasFiltered {
 			ka.stats.LatencyPredictions++
 		}
@@ -250,7 +251,7 @@ func (ka *KalmanSearchAdapter) enhanceResult(result SearchResult, query string) 
 
 	// Smooth the similarity score
 	rawScore := result.Score
-	filtered := docFilter.ProcessIfEnabled(filter.FeatureKalmanSimilarity, rawScore, 1.0)
+	filtered := docFilter.ProcessIfEnabled(config.FeatureKalmanSimilarity, rawScore, 1.0)
 
 	if filtered.WasFiltered {
 		result.Score = filtered.Filtered

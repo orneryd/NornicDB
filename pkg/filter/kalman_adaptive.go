@@ -33,6 +33,8 @@ package filter
 import (
 	"math"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // FilterMode represents the current filtering strategy.
@@ -109,9 +111,9 @@ func SmoothingOptimizedConfig() AdaptiveConfig {
 // TrackingOptimizedConfig favors velocity mode, only switches for very stable signals.
 func TrackingOptimizedConfig() AdaptiveConfig {
 	cfg := DefaultAdaptiveConfig()
-	cfg.TrendThreshold = 0.05      // Quick switch to velocity
-	cfg.StabilityThreshold = 0.01  // Need very stable to switch to basic
-	cfg.SwitchHysteresis = 5       // Quick adaptation
+	cfg.TrendThreshold = 0.05     // Quick switch to velocity
+	cfg.StabilityThreshold = 0.01 // Need very stable to switch to basic
+	cfg.SwitchHysteresis = 5      // Quick adaptation
 	cfg.InitialMode = ModeVelocity
 	return cfg
 }
@@ -144,9 +146,9 @@ type KalmanAdaptive struct {
 	lastFiltered float64
 
 	// Statistics for mode switching
-	trendScore     float64 // Running estimate of trend strength
-	predictionErr  float64 // Running prediction error
-	switchCount    int     // Total mode switches
+	trendScore    float64 // Running estimate of trend strength
+	predictionErr float64 // Running prediction error
+	switchCount   int     // Total mode switches
 }
 
 // NewKalmanAdaptive creates a new adaptive filter.
@@ -458,13 +460,13 @@ func (k *KalmanAdaptive) GetStats() AdaptiveStats {
 }
 
 // ProcessIfEnabled applies filtering if enabled.
-func (k *KalmanAdaptive) ProcessIfEnabled(feature string, measurement float64) FilteredValue {
-	result := FilteredValue{
+func (k *KalmanAdaptive) ProcessIfEnabled(feature string, measurement float64) config.FilteredValue {
+	result := config.FilteredValue{
 		Raw:     measurement,
 		Feature: feature,
 	}
 
-	if IsFeatureEnabled(feature) {
+	if config.IsFeatureEnabled(feature) {
 		result.Filtered = k.Process(measurement)
 		result.WasFiltered = true
 	} else {

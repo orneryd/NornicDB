@@ -1,8 +1,14 @@
 // Package embed provides automatic embedding generation for NornicDB.
 //
+// ⚠️ WARNING: AUTO-EMBEDDING IS EXPERIMENTAL AND DISABLED BY DEFAULT
+//
 // This package extends the base embedding functionality with automatic background
 // processing, caching, and batch operations. It's designed to integrate embedding
 // generation directly into database operations, reducing client complexity.
+//
+// STATUS: NOT PRODUCTION READY - DISABLED BY DEFAULT
+// The auto-embedding features have not been fully tested and should not be used
+// in production. The code is kept for future development.
 //
 // Key Features:
 //   - Background embedding generation with worker pools

@@ -340,6 +340,19 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callDbConstraints()
 	case strings.Contains(upper, "DB.PROPERTYKEYS"):
 		result, err = e.callDbPropertyKeys()
+	// Neo4j GDS Link Prediction Procedures (topological)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.ADAMICADAR.STREAM"):
+		result, err = e.callGdsLinkPredictionAdamicAdar(cypher)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.COMMONNEIGHBORS.STREAM"):
+		result, err = e.callGdsLinkPredictionCommonNeighbors(cypher)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.RESOURCEALLOCATION.STREAM"):
+		result, err = e.callGdsLinkPredictionResourceAllocation(cypher)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.PREFERENTIALATTACHMENT.STREAM"):
+		result, err = e.callGdsLinkPredictionPreferentialAttachment(cypher)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.JACCARD.STREAM"):
+		result, err = e.callGdsLinkPredictionJaccard(cypher)
+	case strings.Contains(upper, "GDS.LINKPREDICTION.PREDICT.STREAM"):
+		result, err = e.callGdsLinkPredictionPredict(cypher)
 	// Additional Neo4j procedures for compatibility
 	case strings.Contains(upper, "DB.INFO"):
 		result, err = e.callDbInfo()

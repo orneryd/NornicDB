@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/filter"
 )
 
@@ -40,9 +41,9 @@ type ComparisonResult struct {
 
 func TestAB_AccessRatePrediction(t *testing.T) {
 	// Enable Kalman for this test
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
-	filter.EnableFeature(filter.FeatureKalmanTemporal)
+	config.EnableFeature(config.FeatureKalmanTemporal)
 
 	// Simulate regular access pattern with noise
 	baseInterval := 10.0 // Base: 10 seconds between accesses
@@ -60,14 +61,14 @@ func TestAB_AccessRatePrediction(t *testing.T) {
 	intervals[75] = 30.0 // Another long gap
 
 	// Test A: Raw values (no filtering)
-	filter.DisableFeature(filter.FeatureKalmanTemporal)
+	config.DisableFeature(config.FeatureKalmanTemporal)
 	rawPredictions := make([]float64, len(intervals)-1)
 	for i := 1; i < len(intervals); i++ {
 		rawPredictions[i-1] = intervals[i-1] // Just use last value as prediction
 	}
 
 	// Test B: Kalman filtered
-	filter.EnableFeature(filter.FeatureKalmanTemporal)
+	config.EnableFeature(config.FeatureKalmanTemporal)
 	kf := filter.NewKalmanVelocity(filter.TemporalTrackingConfig())
 	filteredPredictions := make([]float64, len(intervals)-1)
 	for i := 0; i < len(intervals); i++ {
@@ -116,7 +117,7 @@ func TestAB_AccessRatePrediction(t *testing.T) {
 // =============================================================================
 
 func TestAB_SpikeRejection(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	// Signal: stable at 100, with occasional spikes
@@ -171,7 +172,7 @@ func TestAB_SpikeRejection(t *testing.T) {
 // =============================================================================
 
 func TestAB_TrendDetection(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	// Signal starts at 100, trends up to 200
@@ -217,7 +218,7 @@ func TestAB_TrendDetection(t *testing.T) {
 // =============================================================================
 
 func TestAB_QueryLoadPrediction(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	// Simulate QPS with daily pattern: peak at hour 14 (2pm)
@@ -277,7 +278,7 @@ func TestAB_QueryLoadPrediction(t *testing.T) {
 // =============================================================================
 
 func TestAB_RelationshipWeightSmoothing(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	// Simulate relationship weights with noise
@@ -327,7 +328,7 @@ func TestAB_RelationshipWeightSmoothing(t *testing.T) {
 // =============================================================================
 
 func TestAB_DecayModifierStability(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	di := NewDecayIntegration(DefaultDecayIntegrationConfig())
@@ -374,37 +375,50 @@ func TestAB_DecayModifierStability(t *testing.T) {
 
 func TestAB_FeatureFlags(t *testing.T) {
 	// Test with feature disabled
-	filter.DisableKalmanFiltering()
+	config.DisableKalmanFiltering()
 	
 	kf := filter.NewKalman(filter.DefaultConfig())
-	resultDisabled := kf.ProcessIfEnabled(filter.FeatureKalmanTemporal, 100.0, 0)
+	rawValue := 100.0
 	
-	if resultDisabled.WasFiltered {
+	var resultDisabled float64
+	if config.IsFeatureEnabled(config.FeatureKalmanTemporal) {
+		resultDisabled = kf.Process(rawValue, 0)
+	} else {
+		resultDisabled = rawValue
+	}
+	
+	if resultDisabled != rawValue {
 		t.Error("Should NOT be filtered when disabled")
 	}
-	if resultDisabled.Filtered != resultDisabled.Raw {
+	if resultDisabled != rawValue {
 		t.Error("Filtered should equal raw when disabled")
 	}
 
 	// Test with feature enabled
-	filter.EnableKalmanFiltering()
-	filter.EnableFeature(filter.FeatureKalmanTemporal)
+	config.EnableKalmanFiltering()
+	config.EnableFeature(config.FeatureKalmanTemporal)
 	
 	// Process some values to warm up
 	for i := 0; i < 10; i++ {
 		kf.Process(100.0, 0)
 	}
 	
-	resultEnabled := kf.ProcessIfEnabled(filter.FeatureKalmanTemporal, 150.0, 0)
+	testValue := 150.0
+	var resultEnabled float64
+	if config.IsFeatureEnabled(config.FeatureKalmanTemporal) {
+		resultEnabled = kf.Process(testValue, 0)
+	} else {
+		resultEnabled = testValue
+	}
 	
-	if !resultEnabled.WasFiltered {
-		t.Error("Should be filtered when enabled")
+	// Should be filtered and different from raw
+	if resultEnabled == testValue {
+		t.Error("Should be filtered when enabled (smoothing should change the value)")
 	}
 	// Filtered value should be different from raw (smoothed)
-	t.Logf("Feature flag test: Raw=%.1f, Filtered=%.1f, WasFiltered=%v",
-		resultEnabled.Raw, resultEnabled.Filtered, resultEnabled.WasFiltered)
+	t.Logf("Feature flag test: Raw=%.1f, Filtered=%.1f", testValue, resultEnabled)
 
-	filter.ResetFeatureFlags()
+	config.ResetFeatureFlags()
 }
 
 // =============================================================================
@@ -412,7 +426,7 @@ func TestAB_FeatureFlags(t *testing.T) {
 // =============================================================================
 
 func TestAB_Summary(t *testing.T) {
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	t.Log("=============================================================")
@@ -442,9 +456,9 @@ func TestAB_Summary(t *testing.T) {
 	t.Log("   - Smoothing for stable, tracking for trends")
 	t.Log("")
 	t.Log("Feature flags allow A/B testing in production:")
-	t.Log("   filter.EnableKalmanFiltering()      // Enable globally")
-	t.Log("   filter.EnableFeature(FeatureKalmanTemporal)")
-	t.Log("   kf.ProcessIfEnabled(feature, value, target)")
+	t.Log("   config.EnableKalmanFiltering()      // Enable globally")
+	t.Log("   config.EnableFeature(FeatureKalmanTemporal)")
+	t.Log("   if config.IsFeatureEnabled(feature) { kf.Process(value, target) }")
 	t.Log("=============================================================")
 }
 

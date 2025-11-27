@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/filter"
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // TestAB_DecayScoreSmoothing verifies that Kalman smoothing reduces noise in decay scores
 func TestAB_DecayScoreSmoothing(t *testing.T) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	
@@ -90,8 +90,8 @@ func TestAB_DecayScoreSmoothing(t *testing.T) {
 
 // TestAB_VelocityTracking verifies that velocity correctly tracks score changes
 func TestAB_VelocityTracking(t *testing.T) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	adapter := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())
@@ -182,8 +182,8 @@ func TestAB_VelocityTracking(t *testing.T) {
 
 // TestAB_ArchivalDecisions verifies that Kalman-enhanced archival is smarter
 func TestAB_ArchivalDecisions(t *testing.T) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	adapter := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())
@@ -244,8 +244,8 @@ func TestAB_ArchivalDecisions(t *testing.T) {
 
 // TestAB_PredictionAccuracy verifies that Kalman prediction is useful
 func TestAB_PredictionAccuracy(t *testing.T) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	adapter := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())
@@ -286,7 +286,7 @@ func TestAB_PredictionAccuracy(t *testing.T) {
 // TestAB_NoiseRejection verifies spike rejection
 func TestAB_NoiseRejection(t *testing.T) {
 	// Test with Kalman DISABLED
-	filter.DisableKalmanFiltering()
+	config.DisableKalmanFiltering()
 
 	manager := New(DefaultConfig())
 	configOff := DefaultKalmanAdapterConfig()
@@ -294,7 +294,7 @@ func TestAB_NoiseRejection(t *testing.T) {
 	adapterOff := NewKalmanAdapter(manager, configOff)
 
 	// Test with Kalman ENABLED
-	filter.EnableKalmanFiltering()
+	config.EnableKalmanFiltering()
 	adapterOn := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())
 
 	info := &MemoryInfo{
@@ -319,11 +319,11 @@ func TestAB_NoiseRejection(t *testing.T) {
 			info.LastAccessed = baseAccessTime
 		}
 
-		filter.DisableKalmanFiltering()
+		config.DisableKalmanFiltering()
 		scoreOff := adapterOff.CalculateScore(info)
 		scoresOff = append(scoresOff, scoreOff)
 
-		filter.EnableKalmanFiltering()
+		config.EnableKalmanFiltering()
 		scoreOn := adapterOn.CalculateScore(info)
 		scoresOn = append(scoresOn, scoreOn)
 
@@ -345,7 +345,7 @@ func TestAB_NoiseRejection(t *testing.T) {
 		t.Logf("Note: Spike rejection depends on filter configuration")
 	}
 
-	filter.DisableKalmanFiltering()
+	config.DisableKalmanFiltering()
 }
 
 // Helper functions
@@ -409,7 +409,7 @@ func BenchmarkAB_DecayCalculation(b *testing.B) {
 	}
 
 	b.Run("KalmanOff", func(b *testing.B) {
-		filter.DisableKalmanFiltering()
+		config.DisableKalmanFiltering()
 		cfg := DefaultKalmanAdapterConfig()
 		cfg.EnableKalmanSmoothing = false
 		adapter := NewKalmanAdapter(manager, cfg)
@@ -421,7 +421,7 @@ func BenchmarkAB_DecayCalculation(b *testing.B) {
 	})
 
 	b.Run("KalmanOn", func(b *testing.B) {
-		filter.EnableKalmanFiltering()
+		config.EnableKalmanFiltering()
 		adapter := NewKalmanAdapter(manager, DefaultKalmanAdapterConfig())
 		
 		b.ResetTimer()
@@ -430,7 +430,7 @@ func BenchmarkAB_DecayCalculation(b *testing.B) {
 		}
 	})
 
-	filter.DisableKalmanFiltering()
+	config.DisableKalmanFiltering()
 }
 
 // PrintSummary provides a human-readable summary

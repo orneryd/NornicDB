@@ -63,6 +63,7 @@ Features:
 	serveCmd.Flags().String("data-dir", "./data", "Data directory")
 	serveCmd.Flags().String("load-export", "", "Load data from Mimir export directory on startup")
 	serveCmd.Flags().String("embedding-url", "http://localhost:11434", "Embedding API URL (Ollama)")
+	serveCmd.Flags().String("embedding-key", "de1234555", "Embeddings API Key)")
 	serveCmd.Flags().String("embedding-model", "mxbai-embed-large", "Embedding model name")
 	serveCmd.Flags().Int("embedding-dim", 1024, "Embedding dimensions")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")

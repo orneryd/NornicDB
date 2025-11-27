@@ -114,6 +114,60 @@ auto_relationships:
     temporal_proximity: true
 
 # =============================================================================
+# Topological Link Prediction (Feature Flag - NornicDB-specific)
+# =============================================================================
+# Neo4j GDS-compatible topological link prediction
+# 
+# IMPORTANT: Cypher procedures (CALL gds.linkPrediction.*) are ALWAYS available
+# This configuration only controls AUTOMATIC integration with inference engine
+#
+# Complements semantic inference with graph structure analysis
+topology_link_prediction:
+  # Master feature flag - enables/disables AUTOMATIC topology integration
+  # When false: Cypher procedures still work, but OnStore() won't use topology
+  # When true: OnStore() automatically blends topology + semantic suggestions
+  auto_integration_enabled: false  # FEATURE FLAG: disabled by default (opt-in)
+  
+  # Algorithm to use for topology scoring
+  # Options: adamic_adar, jaccard, common_neighbors, 
+  #          resource_allocation, preferential_attachment, ensemble
+  # adamic_adar: Best all-around for most graphs (recommended)
+  # ensemble: Combines all 5 algorithms (slower, more robust)
+  algorithm: adamic_adar
+  
+  # Top-K topology candidates to consider
+  top_k: 10
+  
+  # Minimum topology score threshold (0.0-1.0)
+  # Lower = more suggestions, higher = fewer but more confident
+  min_score: 0.3
+  
+  # Weight for topology vs semantic (0.0-1.0)
+  # 0.0 = pure semantic, 1.0 = pure topology
+  # 0.4 = 40% topology, 60% semantic (recommended balanced)
+  topology_weight: 0.4
+  
+  # Graph cache refresh interval
+  # Higher = better performance, lower = more up-to-date
+  # 0 = rebuild on every prediction (safest, slowest)
+  # 100 = rebuild every 100 predictions (recommended)
+  graph_refresh_interval: 100
+  
+  # A/B Testing support
+  # Allows running experiments comparing topology vs semantic-only
+  ab_testing:
+    # Enable A/B test mode (splits traffic)
+    enabled: false
+    
+    # Percentage of requests to use topology (0-100)
+    # 50 = 50% get topology, 50% get semantic-only
+    # Used for gradual rollout and A/B testing
+    topology_percentage: 50
+    
+    # Log predictions for analysis (debug only)
+    log_predictions: false
+
+# =============================================================================
 # Search Configuration
 # =============================================================================
 search:

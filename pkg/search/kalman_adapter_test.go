@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/filter"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -57,7 +57,7 @@ func TestNewKalmanSearchAdapter(t *testing.T) {
 
 func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -167,7 +167,7 @@ func TestKalmanSearchAdapter_SortByScore(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -189,7 +189,7 @@ func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -212,7 +212,7 @@ func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetDocumentRelevanceTrend(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -242,7 +242,7 @@ func TestKalmanSearchAdapter_GetDocumentRelevanceTrend(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -290,7 +290,7 @@ func TestKalmanSearchAdapter_GetService(t *testing.T) {
 
 func TestKalmanSearchAdapter_Reset(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -321,7 +321,7 @@ func TestKalmanSearchAdapter_Reset(t *testing.T) {
 
 func TestKalmanSearchAdapter_DisabledSmoothing(t *testing.T) {
 	// Disable Kalman filtering globally
-	cleanup := filter.WithKalmanDisabled()
+	cleanup := config.WithKalmanDisabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -346,7 +346,7 @@ func TestKalmanSearchAdapter_DisabledSmoothing(t *testing.T) {
 
 func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := storage.NewMemoryEngine()
@@ -409,8 +409,8 @@ func TestMinHelper(t *testing.T) {
 
 // Benchmark search adapter
 func BenchmarkKalmanSearchAdapter_EnhanceResult(b *testing.B) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	engine := storage.NewMemoryEngine()
 	service := NewService(engine)

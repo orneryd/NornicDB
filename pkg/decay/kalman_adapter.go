@@ -54,6 +54,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/filter"
 	"github.com/orneryd/nornicdb/pkg/temporal"
 )
@@ -221,7 +222,7 @@ func (ka *KalmanAdapter) CalculateScore(info *MemoryInfo) float64 {
 		}
 
 		// Use feature flag for A/B testing
-		result := kf.ProcessIfEnabled(filter.FeatureKalmanDecay, modifiedScore, 0.5)
+		result := kf.ProcessIfEnabled(config.FeatureKalmanDecay, modifiedScore, 0.5)
 		finalScore = result.Filtered
 
 		if result.WasFiltered {

@@ -35,6 +35,8 @@ package filter
 import (
 	"math"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // VelocityConfig holds configuration for the 2-state Kalman filter.
@@ -312,13 +314,13 @@ func (k *KalmanVelocity) SetState(pos, vel float64) {
 
 // VelocityStats returns detailed filter statistics.
 type VelocityStats struct {
-	Position           float64
-	Velocity           float64
-	PositionVariance   float64
-	VelocityVariance   float64
-	CrossCovariance    float64
-	MeasurementNoise   float64
-	Observations       int
+	Position         float64
+	Velocity         float64
+	PositionVariance float64
+	VelocityVariance float64
+	CrossCovariance  float64
+	MeasurementNoise float64
+	Observations     int
 }
 
 // GetStats returns current filter statistics.
@@ -338,13 +340,13 @@ func (k *KalmanVelocity) GetStats() VelocityStats {
 }
 
 // ProcessIfEnabled applies filtering if the feature is enabled.
-func (k *KalmanVelocity) ProcessIfEnabled(feature string, measurement float64) FilteredValue {
-	result := FilteredValue{
+func (k *KalmanVelocity) ProcessIfEnabled(feature string, measurement float64) config.FilteredValue {
+	result := config.FilteredValue{
 		Raw:     measurement,
 		Feature: feature,
 	}
 
-	if IsFeatureEnabled(feature) {
+	if config.IsFeatureEnabled(feature) {
 		result.Filtered = k.Process(measurement)
 		result.WasFiltered = true
 	} else {
@@ -356,13 +358,13 @@ func (k *KalmanVelocity) ProcessIfEnabled(feature string, measurement float64) F
 }
 
 // PredictIfEnabled returns prediction if enabled.
-func (k *KalmanVelocity) PredictIfEnabled(feature string, steps int) FilteredValue {
-	result := FilteredValue{
+func (k *KalmanVelocity) PredictIfEnabled(feature string, steps int) config.FilteredValue {
+	result := config.FilteredValue{
 		Raw:     k.State(),
 		Feature: feature,
 	}
 
-	if IsFeatureEnabled(feature) {
+	if config.IsFeatureEnabled(feature) {
 		result.Filtered = k.Predict(steps)
 		result.WasFiltered = true
 	} else {

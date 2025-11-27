@@ -59,6 +59,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/filter"
 	"github.com/orneryd/nornicdb/pkg/temporal"
 )
@@ -389,7 +390,7 @@ func (ka *KalmanAdapter) enhanceSuggestion(sug EdgeSuggestion) EdgeSuggestion {
 	velocity := float64(0)
 
 	if ka.config.EnableConfidenceSmoothing && kf != nil {
-		result := kf.ProcessIfEnabled(filter.FeatureKalmanCoAccess, sug.Confidence)
+		result := kf.ProcessIfEnabled(config.FeatureKalmanCoAccess, sug.Confidence)
 		smoothedConf = result.Filtered
 		velocity = kf.Velocity()
 

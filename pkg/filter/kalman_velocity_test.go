@@ -5,6 +5,8 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 func TestVelocityConfig_Default(t *testing.T) {
@@ -368,13 +370,13 @@ func TestKalmanVelocity_Position(t *testing.T) {
 }
 
 func TestKalmanVelocity_ProcessIfEnabled(t *testing.T) {
-	ResetFeatureFlags()
-	defer ResetFeatureFlags()
+	config.ResetFeatureFlags()
+	defer config.ResetFeatureFlags()
 
 	k := NewKalmanVelocity(DefaultVelocityConfig())
 
 	// Disabled: pass through
-	result := k.ProcessIfEnabled(FeatureKalmanTemporal, 100.0)
+	result := k.ProcessIfEnabled(config.FeatureKalmanTemporal, 100.0)
 	if result.WasFiltered {
 		t.Error("Should not filter when disabled")
 	}
@@ -383,16 +385,16 @@ func TestKalmanVelocity_ProcessIfEnabled(t *testing.T) {
 	}
 
 	// Enabled: filter
-	EnableKalmanFiltering()
-	result = k.ProcessIfEnabled(FeatureKalmanTemporal, 100.0)
+	config.EnableKalmanFiltering()
+	result = k.ProcessIfEnabled(config.FeatureKalmanTemporal, 100.0)
 	if !result.WasFiltered {
 		t.Error("Should filter when enabled")
 	}
 }
 
 func TestKalmanVelocity_PredictIfEnabled(t *testing.T) {
-	ResetFeatureFlags()
-	defer ResetFeatureFlags()
+	config.ResetFeatureFlags()
+	defer config.ResetFeatureFlags()
 
 	k := NewKalmanVelocity(DefaultVelocityConfig())
 
@@ -402,14 +404,14 @@ func TestKalmanVelocity_PredictIfEnabled(t *testing.T) {
 	}
 
 	// Disabled
-	result := k.PredictIfEnabled(FeatureKalmanTemporal, 5)
+	result := k.PredictIfEnabled(config.FeatureKalmanTemporal, 5)
 	if result.WasFiltered {
 		t.Error("Should not predict when disabled")
 	}
 
 	// Enabled
-	EnableKalmanFiltering()
-	result = k.PredictIfEnabled(FeatureKalmanTemporal, 5)
+	config.EnableKalmanFiltering()
+	result = k.PredictIfEnabled(config.FeatureKalmanTemporal, 5)
 	if !result.WasFiltered {
 		t.Error("Should predict when enabled")
 	}

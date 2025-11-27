@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/filter"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/temporal"
 )
 
@@ -52,7 +52,7 @@ func TestNewKalmanAdapter(t *testing.T) {
 
 func TestKalmanAdapter_OnAccess(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -85,7 +85,7 @@ func TestKalmanAdapter_OnAccess(t *testing.T) {
 
 func TestKalmanAdapter_OnStore(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -110,7 +110,7 @@ func TestKalmanAdapter_OnStore(t *testing.T) {
 
 func TestKalmanAdapter_WithSessionDetector(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -161,7 +161,7 @@ func TestKalmanAdapter_WithTracker(t *testing.T) {
 
 func TestKalmanAdapter_ConfidenceSmoothing(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -212,7 +212,7 @@ func TestKalmanAdapter_MakeEdgeKey(t *testing.T) {
 
 func TestKalmanAdapter_GetStrengtheningRelationships(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -238,7 +238,7 @@ func TestKalmanAdapter_GetStrengtheningRelationships(t *testing.T) {
 
 func TestKalmanAdapter_GetWeakeningRelationships(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -264,7 +264,7 @@ func TestKalmanAdapter_GetWeakeningRelationships(t *testing.T) {
 
 func TestKalmanAdapter_PredictFutureRelationships(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -346,7 +346,7 @@ func TestKalmanAdapter_GetEngine(t *testing.T) {
 
 func TestKalmanAdapter_Reset(t *testing.T) {
 	// Enable Kalman filtering
-	cleanup := filter.WithKalmanEnabled()
+	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -381,7 +381,7 @@ func TestKalmanAdapter_Reset(t *testing.T) {
 
 func TestKalmanAdapter_DisabledSmoothing(t *testing.T) {
 	// Disable Kalman filtering
-	cleanup := filter.WithKalmanDisabled()
+	cleanup := config.WithKalmanDisabled()
 	defer cleanup()
 
 	engine := New(DefaultConfig())
@@ -433,8 +433,8 @@ func TestKalmanAdapter_SessionConfidence(t *testing.T) {
 
 // Benchmark inference adapter
 func BenchmarkKalmanAdapter_EnhanceSuggestion(b *testing.B) {
-	filter.EnableKalmanFiltering()
-	defer filter.DisableKalmanFiltering()
+	config.EnableKalmanFiltering()
+	defer config.DisableKalmanFiltering()
 
 	engine := New(DefaultConfig())
 	adapter := NewKalmanAdapter(engine, DefaultKalmanAdapterConfig())
