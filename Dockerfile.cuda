@@ -22,10 +22,10 @@ COPY ui/ .
 RUN npm run build
 
 # Stage 2: Build the Go binary with CUDA support
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
 
 # Install Go
-ENV GO_VERSION=1.23.3
+ENV GO_VERSION=1.23.4
 RUN apt-get update && apt-get install -y wget git gcc && \
     wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && \
@@ -49,7 +49,7 @@ COPY --from=ui-builder /ui/dist ./ui/dist
 RUN CGO_ENABLED=1 GOOS=linux go build -tags cuda -ldflags="-s -w" -o nornicdb ./cmd/nornicdb
 
 # Runtime stage - use CUDA runtime image (smaller than devel)
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 WORKDIR /app
 

@@ -8,8 +8,8 @@ package cuda
 /*
 #cgo linux CFLAGS: -I/usr/local/cuda/include
 #cgo linux LDFLAGS: -L/usr/local/cuda/lib64 -lcudart -lcublas -lcuda
-#cgo windows CFLAGS: -IC:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/include
-#cgo windows LDFLAGS: -LC:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/lib/x64 -lcudart -lcublas -lcuda
+#cgo windows CFLAGS: -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
+#cgo windows LDFLAGS: -L${SRCDIR}/../../../lib/cuda -lcudart -lcublas -lcuda
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>

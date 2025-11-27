@@ -9,6 +9,7 @@
     "db:noauth": "go run ./cmd/nornicdb serve --no-auth",
     "db:bolt": "go run ./cmd/nornicdb-bolt",
     "db:build": "go build -o bin/nornicdb ./cmd/nornicdb && go build -o bin/nornicdb-bolt ./cmd/nornicdb-bolt",
+    "db:build:cuda": "set CGO_ENABLED=1 && go build -tags cuda -o bin/nornicdb ./cmd/nornicdb && go build -o bin/nornicdb-bolt ./cmd/nornicdb-bolt",
     "db:start": "npm run db:build && ./bin/nornicdb serve",
     "db:dev": "go run ./cmd/nornicdb serve --bolt-port 7687 --http-port 7474",
     "db:bolt-only": "go run ./cmd/nornicdb-bolt -port 7687",
@@ -16,7 +17,11 @@
     "test:coverage": "go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out",
     "test:cypher": "go test -v ./pkg/cypher/",
     "test:storage": "go test -v ./pkg/storage/",
-    "test:bolt": "go test -v ./pkg/bolt/"
+    "test:bolt": "go test -v ./pkg/bolt/",
+    "docker:build": "docker build -t timothyswt/nornicdb:latest -f Dockerfile .",
+    "docker:build:cuda": "docker build -t timothyswt/nornicdb:cuda -f Dockerfile.cuda .",
+    "docker:run:cuda": "docker-compose -f docker-compose.cuda.yml up",
+    "docker:run:cuda:build": "docker-compose -f docker-compose.cuda.yml up --build"
   },
   "keywords": [
     "graph-database",

@@ -1,0 +1,42 @@
+version: '3.8'
+
+# NornicDB with CUDA GPU Acceleration
+# Usage: docker-compose -f docker-compose.cuda.yml up --build
+
+services:
+  nornicdb-cuda:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: nornicdb:cuda
+    container_name: nornicdb-cuda
+    ports:
+      - "7474:7474"  # HTTP/UI
+      - "7687:7687"  # Bolt protocol
+    volumes:
+      - nornicdb-cuda-data:/data
+    environment:
+      - NORNICDB_DATA_DIR=/data
+      - NORNICDB_HTTP_PORT=7474
+      - NORNICDB_BOLT_PORT=7687
+      - NORNICDB_NO_AUTH=true
+      - NORNICDB_GPU_ENABLED=true
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7474/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  nornicdb-cuda-data:
