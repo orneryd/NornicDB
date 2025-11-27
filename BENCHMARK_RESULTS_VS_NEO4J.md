@@ -807,3 +807,133 @@ Let me also check how nodes are returned/serialized - this could be a bottleneck
 Searched for regex `make\(map\[string\]|make\(\[\]` (`**/nornicdb/pkg/cypher/*.go`), 20 results
 
 Let me check the regex_patterns.go to see the structure and look for the regex cache opportunity:
+
+
+────────────────────────────────────────────────────────────────────────
+
+
+
+ ✓ testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind) 41568ms
+     name                                                    hz     min     max    mean     p75     p99    p995    p999     rme  samples
+    536
+   · Customer to supplier through orders and products  1,031.31  0.6650  4.6032  0.9696  0.9645  2.6989  4.2535  4.6032  ±2.99%      516
+   · Products per category                             1,117.17  0.7190  2.1266  0.8951  0.9380  1.1234  1.3042  2.1266  ±0.84%      559
+   · Average price per category                        1,176.60  0.6270  2.1334  0.8499  0.8803  1.0428  1.0670  2.1334  ±0.79%      589
+   · Total quantity ordered per product                1,017.37  0.7366  2.1327  0.9829  1.0323  1.2541  1.3257  2.1327  ±0.86%      509
+   · Orders per customer                               1,117.22  0.6544  3.9100  0.8951  0.9415  1.1478  2.1856  3.9100  ±1.59%      559
+   · Products per supplier                             1,140.24  0.6239  2.6550  0.8770  0.9274  1.1900  1.3216  2.6550  ±1.20%      571
+   · Top products by revenue (price * quantity)        1,271.93  0.6412  2.3894  0.7862  0.8129  1.0327  1.1199  2.3894  ±1.08%      637
+   · Products out of stock                             1,285.50  0.6430  2.2735  0.7779  0.8005  0.9989  1.0871  2.2735  ±0.97%      643
+   · Expensive products (price > 30)                   1,209.61  0.6636  1.9992  0.8267  0.8798  1.0449  1.0792  1.9992  ±1.04%      605
+   · Categories with product lists                     1,141.45  0.7414  2.2706  0.8761  0.9122  1.1751  1.2315  2.2706  ±0.95%      571
+   · Customers with order lists                        1,082.78  0.6969  2.7066  0.9235  0.9599  1.0634  1.0903  2.7066  ±1.09%      542
+   · Products with or without orders                   1,201.73  0.6383  3.4020  0.8321  0.8785  1.1018  1.2001  3.4020  ±1.37%      601
+   · Create and delete product node                      754.22  1.0031  2.3815  1.3259  1.3233  2.3314  2.3529  2.3815  ±1.75%      378
+   · Create and delete relationship                    1,184.00  0.6500  2.1544  0.8446  0.8891  1.0150  1.0539  2.1544  ±0.84%      593
+stdout | testing\benchmarks\nornicdb-vs-neo4j-northwind.bench.ts:411:11
+
+────────────────────────────────────────────────────────────────────────
+
+stdout | testing\benchmarks\nornicdb-vs-neo4j-northwind.bench.ts:412:11
+Cleaning up...
+
+
+ ✓ testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > Neo4j Benchmarks (Northwind) 17704ms
+     name                                                  hz     min      max    mean     p75     p99    p995     p999     rme  samples
+   · Count all nodes                                   451.95  1.7100   3.9066  2.2126  2.2950  3.2194  3.3107   3.9066  ±1.77%      227
+   · Count all relationships                           467.13  1.5926   3.8127  2.1407  2.3228  2.8931  3.3900   3.8127  ±1.78%      234
+   · Get all products                                  442.73  1.8030   3.0118  2.2587  2.4116  2.9224  2.9970   3.0118  ±1.42%      222
+   · Get all categories                                471.52  1.5977   6.2990  2.1208  2.1714  3.6964  4.2035   6.2990  ±2.54%      236
+   · Get all customers                                 421.99  1.7777   5.9498  2.3697  2.4817  4.6237  4.6954   5.9498  ±2.76%      211
+   · Find product by name                              442.91  1.6685   3.5084  2.2578  2.4339  3.4152  3.4477   3.5084  ±2.17%      222
+   · Find category by name                             449.41  1.5563   4.4131  2.2251  2.5065  3.6915  3.9018   4.4131  ±2.85%      225
+   · Find customer by ID                               477.39  1.4832   3.1421  2.0947  2.3276  2.8058  3.0540   3.1421  ±1.89%      239
+   · Products in Beverages category                    453.24  1.3902  19.0072  2.2063  2.3434  3.2030  3.2145  19.0072  ±6.91%      227
+   · Products supplied by Exotic Liquids               489.57  1.3827   3.0612  2.0426  2.2112  2.8266  2.8471   3.0612  ±1.75%      245
+   · Orders by customer ALFKI                          592.76  1.2123   3.5823  1.6870  1.7344  2.9155  3.4440   3.5823  ±2.25%      297
+   · Products in order 10643                           623.10  1.1736   2.5195  1.6049  1.6936  2.1065  2.1294   2.5195  ±1.20%      312
+   · Supplier to category through products             532.53  1.3698   2.8540  1.8778  2.0774  2.5914  2.5942   2.8540  ±1.86%      267
+   · Customer orders to products                       647.56  1.1950   2.3117  1.5443  1.6559  2.2135  2.2737   2.3117  ±1.53%      324
+   · Customer to category through orders and products  530.51  1.3416   6.3153  1.8850  2.0381  2.7913  2.8481   6.3153  ±2.48%      266
+   · Customer to supplier through orders and products  523.72  1.4665   3.0557  1.9094  2.0671  2.7347  2.8156   3.0557  ±1.74%      262
+   · Products per category                             550.91  1.2888   2.8005  1.8152  1.9648  2.5696  2.7129   2.8005  ±1.66%      276
+   · Average price per category                        509.00  1.0654   3.6025  1.9646  2.2677  3.3211  3.3794   3.6025  ±2.97%      255
+   · Total quantity ordered per product                622.58  1.2270   2.6862  1.6062  1.7455  2.2409  2.6389   2.6862  ±1.62%      312
+   · Orders per customer                               663.20  1.1364   2.2180  1.5078  1.5984  1.9929  2.0883   2.2180  ±1.16%      333
+   · Products per supplier                             582.89  1.1452   5.0242  1.7156  1.9287  3.1040  3.1280   5.0242  ±3.00%      292
+   · Top products by revenue (price * quantity)        548.85  1.1585   3.4319  1.8220  2.0011  3.0117  3.0762   3.4319  ±2.28%      275
+   · Products out of stock                             757.79  0.9920   3.2709  1.3196  1.4263  1.9332  2.1028   3.2709  ±1.61%      379
+   · Expensive products (price > 30)                   627.58  1.1188   5.1640  1.5934  1.7012  2.4953  2.5551   5.1640  ±2.35%      315
+   · Categories with product lists                     634.17  1.0582   3.0414  1.5769  1.7907  2.8042  2.9368   3.0414  ±2.87%      318
+   · Customers with order lists                        713.61  1.1269   2.4573  1.4013  1.4759  2.0956  2.2985   2.4573  ±1.38%      357
+   · Products with or without orders                   648.69  0.9861   2.7417  1.5416  1.6742  2.1130  2.1998   2.7417  ±1.68%      325
+   · Create and delete product node                    447.50  1.2669   4.3633  2.2346  2.5678  3.7773  4.2393   4.3633  ±3.56%      224
+   · Create and delete relationship                    518.00  1.3475   6.2666  1.9305  2.0269  2.9652  3.8091   6.2666  ±2.47%      259
+stdout | testing\benchmarks\nornicdb-vs-neo4j-northwind.bench.ts:426:11
+✓ Cleanup complete
+
+
+
+ BENCH  Summary
+
+  Products out of stock - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
+    1.01x faster than Top products by revenue (price * quantity)
+    1.04x faster than Find customer by ID
+    1.06x faster than Expensive products (price > 30)
+    1.07x faster than Products with or without orders
+    1.07x faster than Customer orders to products
+    1.09x faster than Create and delete relationship
+    1.09x faster than Supplier to category through products
+    1.09x faster than Average price per category
+    1.10x faster than Find category by name
+    1.11x faster than Products in order 10643
+    1.13x faster than Categories with product lists
+    1.13x faster than Products per supplier
+    1.14x faster than Products supplied by Exotic Liquids
+    1.14x faster than Find product by name
+    1.15x faster than Orders per customer
+    1.15x faster than Products per category
+    1.17x faster than Products in Beverages category
+    1.17x faster than Orders by customer ALFKI
+    1.18x faster than Count all relationships
+    1.19x faster than Customers with order lists
+    1.20x faster than Customer to category through orders and products
+    1.25x faster than Customer to supplier through orders and products
+    1.25x faster than Count all nodes
+    1.25x faster than Get all customers
+    1.26x faster than Total quantity ordered per product
+    1.28x faster than Get all categories
+    1.34x faster than Get all products
+    1.70x faster than Create and delete product node
+
+  Products out of stock - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > Neo4j Benchmarks (Northwind)
+    1.06x faster than Customers with order lists
+    1.14x faster than Orders per customer
+    1.17x faster than Products with or without orders
+    1.17x faster than Customer orders to products
+    1.19x faster than Categories with product lists
+    1.21x faster than Expensive products (price > 30)
+    1.22x faster than Products in order 10643
+    1.22x faster than Total quantity ordered per product
+    1.28x faster than Orders by customer ALFKI
+    1.30x faster than Products per supplier
+    1.38x faster than Products per category
+    1.38x faster than Top products by revenue (price * quantity)
+    1.42x faster than Supplier to category through products
+    1.43x faster than Customer to category through orders and products
+    1.45x faster than Customer to supplier through orders and products
+    1.46x faster than Create and delete relationship
+    1.49x faster than Average price per category
+    1.55x faster than Products supplied by Exotic Liquids
+    1.59x faster than Find customer by ID
+    1.61x faster than Get all categories
+    1.62x faster than Count all relationships
+    1.67x faster than Products in Beverages category
+    1.68x faster than Count all nodes
+    1.69x faster than Find category by name
+    1.69x faster than Create and delete product node
+    1.71x faster than Find product by name
+    1.71x faster than Get all products
+    1.80x faster than Get all customers
+
+PS C:\Users\timot\Documents\GitHub\Mimir> 
