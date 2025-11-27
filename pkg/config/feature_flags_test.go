@@ -277,6 +277,29 @@ func TestFeatureFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("with_wal_enabled_disabled", func(t *testing.T) {
+		ResetFeatureFlags()
+
+		// Test enable scope
+		cleanup := WithWALEnabled()
+		if !IsWALEnabled() {
+			t.Error("WAL should be enabled in scope")
+		}
+		cleanup()
+
+		// Test disable scope
+		EnableWAL()
+		cleanup = WithWALDisabled()
+		if IsWALEnabled() {
+			t.Error("WAL should be disabled in scope")
+		}
+		cleanup()
+
+		if !IsWALEnabled() {
+			t.Error("WAL should be re-enabled after cleanup")
+		}
+	})
+
 	t.Run("feature_status_includes_tier1", func(t *testing.T) {
 		// Enable all tier 1 features
 		EnableCooldown()

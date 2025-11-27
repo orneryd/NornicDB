@@ -386,7 +386,7 @@ func DisableCooldownAutoIntegration() {
 //
 //	// Disable auto-integration
 //	os.Setenv("NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED", "false")
-//	
+//
 //	// Manually check cooldown
 //	if engine.GetCooldownTable().CanMaterialize(src, dst, label) {
 //	    db.CreateEdge(...)
@@ -522,7 +522,7 @@ func WithEdgeProvenanceAutoIntegrationDisabled() func() {
 //	userConfig.MaxOutEdges = 50
 //	userConfig.DenyList = []string{"spam-node"}
 //	engine.GetNodeConfigStore().Set(userConfig)
-//	
+//
 //	// ProcessSuggestion automatically enforces limits
 //	result := engine.ProcessSuggestion(suggestion, "session-123")
 //	if result.NodeConfigBlocked {
@@ -532,7 +532,7 @@ func WithEdgeProvenanceAutoIntegrationDisabled() func() {
 // Example (auto-integration disabled - manual control):
 //
 //	os.Setenv("NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED", "false")
-//	
+//
 //	// Manually check node config
 //	store := engine.GetNodeConfigStore()
 //	if allowed, _ := store.IsEdgeAllowedWithReason(src, dst, label); allowed {
@@ -877,6 +877,19 @@ func WithWALEnabled() func() {
 		walEnabled.Store(prev)
 		if !prev {
 			DisableFeature(FeatureWAL)
+		}
+	}
+}
+
+// WithWALDisabled temporarily disables WAL and returns cleanup function.
+func WithWALDisabled() func() {
+	prev := walEnabled.Load()
+	walEnabled.Store(false)
+	DisableFeature(FeatureWAL)
+	return func() {
+		walEnabled.Store(prev)
+		if prev {
+			EnableFeature(FeatureWAL)
 		}
 	}
 }
