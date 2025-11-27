@@ -23,8 +23,8 @@ var (
 	constraintOnAssert          = regexp.MustCompile(`(?i)CREATE\s+CONSTRAINT(?:\s+IF\s+NOT\s+EXISTS)?\s+ON\s+\((\w+):(\w+)\)\s+ASSERT\s+(\w+)\.(\w+)\s+IS\s+UNIQUE`)
 
 	// Index patterns - CREATE INDEX [name] [IF NOT EXISTS] FOR (var:Label) ON (var.prop)
-	indexNamedFor   = regexp.MustCompile(`(?i)CREATE\s+INDEX\s+(\w+)(?:\s+IF\s+NOT\s+EXISTS)?\s+FOR\s+\((\w+):(\w+)\)\s+ON\s+\((\w+)\.(\w+)\)`)
-	indexUnnamedFor = regexp.MustCompile(`(?i)CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+FOR\s+\((\w+):(\w+)\)\s+ON\s+\((\w+)\.(\w+)\)`)
+	indexNamedFor   = regexp.MustCompile(`(?i)CREATE\s+INDEX\s+(\w+)(?:\s+IF\s+NOT\s+EXISTS)?\s+FOR\s+\((\w+):(\w+)\)\s+ON\s+\(([^)]+)\)`)
+	indexUnnamedFor = regexp.MustCompile(`(?i)CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+FOR\s+\((\w+):(\w+)\)\s+ON\s+\(([^)]+)\)`)
 
 	// Fulltext index pattern - CREATE FULLTEXT INDEX name FOR (var:Label) ON EACH [props]
 	fulltextIndexPattern = regexp.MustCompile(`(?i)CREATE\s+FULLTEXT\s+INDEX\s+(\w+)(?:\s+IF\s+NOT\s+EXISTS)?\s+FOR\s+\((\w+):(\w+)\)\s+ON\s+EACH\s+\[([^\]]+)\]`)

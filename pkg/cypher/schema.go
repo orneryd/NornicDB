@@ -3,6 +3,7 @@
 // This file implements Neo4j schema management commands:
 //   - CREATE CONSTRAINT
 //   - CREATE INDEX
+//   - CREATE RANGE INDEX
 //   - CREATE FULLTEXT INDEX
 //   - CREATE VECTOR INDEX
 package cypher
@@ -25,6 +26,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return e.executeCreateFulltextIndex(ctx, cypher)
 	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
 		return e.executeCreateVectorIndex(ctx, cypher)
+	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
+		return e.executeCreateRangeIndex(ctx, cypher)
 	} else if strings.Contains(upper, "CREATE INDEX") {
 		return e.executeCreateIndex(ctx, cypher)
 	}
@@ -90,16 +93,26 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 // Supported syntax:
 //
 //	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.property)
+//	CREATE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2)
+//	CREATE INDEX IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2, n.prop3)
+//
+// Supports both single-property and composite (multi-property) indexes.
 func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Pattern: CREATE INDEX name IF NOT EXISTS FOR (n:Label) ON (n.property)
+	// Pattern: CREATE INDEX name IF NOT EXISTS FOR (n:Label) ON (n.property[, n.property2, ...])
 	// Uses pre-compiled patterns from regex_patterns.go
 	if matches := indexNamedFor.FindStringSubmatch(cypher); matches != nil {
 		indexName := matches[1]
 		label := matches[3]
-		property := matches[5]
+		propertiesStr := matches[4] // e.g., "n.prop1, n.prop2"
 
-		// Add index to schema
-		if err := e.storage.GetSchema().AddPropertyIndex(indexName, label, []string{property}); err != nil {
+		// Parse properties (single or multiple)
+		properties := e.parseIndexProperties(propertiesStr)
+		if len(properties) == 0 {
+			return nil, fmt.Errorf("no properties specified for index")
+		}
+
+		// Add index to schema (supports composite indexes)
+		if err := e.storage.GetSchema().AddPropertyIndex(indexName, label, properties); err != nil {
 			return nil, err
 		}
 
@@ -109,11 +122,20 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 	// Try without index name
 	if matches := indexUnnamedFor.FindStringSubmatch(cypher); matches != nil {
 		label := matches[2]
-		property := matches[4]
-		indexName := fmt.Sprintf("index_%s_%s", strings.ToLower(label), strings.ToLower(property))
+		propertiesStr := matches[3] // e.g., "n.prop1, n.prop2"
+
+		// Parse properties
+		properties := e.parseIndexProperties(propertiesStr)
+		if len(properties) == 0 {
+			return nil, fmt.Errorf("no properties specified for index")
+		}
+
+		// Generate index name based on label and properties
+		propsJoined := strings.Join(properties, "_")
+		indexName := fmt.Sprintf("index_%s_%s", strings.ToLower(label), strings.ToLower(propsJoined))
 
 		// Add index
-		if err := e.storage.GetSchema().AddPropertyIndex(indexName, label, []string{property}); err != nil {
+		if err := e.storage.GetSchema().AddPropertyIndex(indexName, label, properties); err != nil {
 			return nil, err
 		}
 
@@ -121,6 +143,82 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 	}
 
 	return nil, fmt.Errorf("invalid CREATE INDEX syntax")
+}
+
+// executeCreateRangeIndex handles CREATE RANGE INDEX commands.
+//
+// Supported syntax:
+//
+//	CREATE RANGE INDEX index_name IF NOT EXISTS FOR (n:Label) ON (n.property)
+//
+// Range indexes optimize queries with range predicates (>, <, >=, <=, BETWEEN).
+func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Pattern: CREATE RANGE INDEX name IF NOT EXISTS FOR (n:Label) ON (n.property)
+	// Reuse the standard index pattern - same structure
+	if matches := indexNamedFor.FindStringSubmatch(cypher); matches != nil {
+		indexName := matches[1]
+		label := matches[3]
+		propertiesStr := matches[5]
+
+		// Range index only supports single property
+		properties := e.parseIndexProperties(propertiesStr)
+		if len(properties) != 1 {
+			return nil, fmt.Errorf("RANGE INDEX only supports single property, got %d", len(properties))
+		}
+
+		err := e.storage.GetSchema().AddRangeIndex(indexName, label, properties[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to create range index: %w", err)
+		}
+
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	// Unnamed range index
+	if matches := indexUnnamedFor.FindStringSubmatch(cypher); matches != nil {
+		label := matches[2]
+		propertiesStr := matches[4]
+
+		properties := e.parseIndexProperties(propertiesStr)
+		if len(properties) != 1 {
+			return nil, fmt.Errorf("RANGE INDEX only supports single property, got %d", len(properties))
+		}
+
+		indexName := fmt.Sprintf("range_idx_%s_%s", strings.ToLower(label), properties[0])
+		err := e.storage.GetSchema().AddRangeIndex(indexName, label, properties[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to create range index: %w", err)
+		}
+
+		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	}
+
+	return nil, fmt.Errorf("invalid CREATE RANGE INDEX syntax")
+}
+
+// parseIndexProperties parses property list from index ON clause.
+//
+// Handles both single and composite property syntax:
+//   - "n.property"           -> ["property"]
+//   - "n.prop1, n.prop2"     -> ["prop1", "prop2"]
+//   - "n.a, n.b, n.c"        -> ["a", "b", "c"]
+func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
+	// Split by comma
+	parts := strings.Split(propertiesStr, ",")
+	var properties []string
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		// Extract property name after dot (e.g., "n.prop" -> "prop")
+		if dotIdx := strings.LastIndex(part, "."); dotIdx >= 0 && dotIdx < len(part)-1 {
+			propName := strings.TrimSpace(part[dotIdx+1:])
+			if propName != "" {
+				properties = append(properties, propName)
+			}
+		}
+	}
+
+	return properties
 }
 
 // executeCreateFulltextIndex handles CREATE FULLTEXT INDEX commands.

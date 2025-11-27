@@ -3,6 +3,7 @@
 // This file implements Neo4j-compatible schema management including:
 //   - Unique constraints
 //   - Property indexes (single and composite)
+//   - Range indexes (for efficient range queries)
 //   - Full-text indexes
 //   - Vector indexes
 //
@@ -13,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -47,6 +49,7 @@ type SchemaManager struct {
 	compositeIndexes map[string]*CompositeIndex // key: index name
 	fulltextIndexes  map[string]*FulltextIndex  // key: index_name
 	vectorIndexes    map[string]*VectorIndex    // key: index_name
+	rangeIndexes     map[string]*RangeIndex     // key: index_name
 }
 
 // NewSchemaManager creates a new schema manager with empty constraint and index collections.
@@ -65,7 +68,7 @@ type SchemaManager struct {
 // Example 1 - Basic Usage:
 //
 //	schema := storage.NewSchemaManager()
-//	
+//
 //	// Add unique constraint
 //	constraint := &storage.UniqueConstraint{
 //		Name:     "unique_user_email",
@@ -73,7 +76,7 @@ type SchemaManager struct {
 //		Property: "email",
 //	}
 //	schema.AddUniqueConstraint(constraint)
-//	
+//
 //	// Validate before creating node
 //	err := schema.ValidateUnique("User", "email", "alice@example.com", "")
 //	if err != nil {
@@ -83,17 +86,17 @@ type SchemaManager struct {
 // Example 2 - Multiple Constraints:
 //
 //	schema := storage.NewSchemaManager()
-//	
+//
 //	// Email must be unique
 //	schema.AddUniqueConstraint(&storage.UniqueConstraint{
 //		Name: "unique_email", Label: "User", Property: "email",
 //	})
-//	
+//
 //	// Username must be unique
 //	schema.AddUniqueConstraint(&storage.UniqueConstraint{
 //		Name: "unique_username", Label: "User", Property: "username",
 //	})
-//	
+//
 //	// All users must have email property
 //	schema.AddConstraint(storage.Constraint{
 //		Name: "user_must_have_email",
@@ -105,14 +108,14 @@ type SchemaManager struct {
 // Example 3 - With Indexes for Performance:
 //
 //	schema := storage.NewSchemaManager()
-//	
+//
 //	// Index for fast lookups
 //	schema.AddPropertyIndex(&storage.PropertyIndex{
 //		Name:       "idx_user_email",
 //		Label:      "User",
 //		Properties: []string{"email"},
 //	})
-//	
+//
 //	// Vector index for semantic search
 //	schema.AddVectorIndex(&storage.VectorIndex{
 //		Name:       "doc_embeddings",
@@ -132,7 +135,8 @@ type SchemaManager struct {
 // If yes, data goes in. If no, you get an error. It keeps your database clean!
 //
 // Thread Safety:
-//   All methods are thread-safe for concurrent access.
+//
+//	All methods are thread-safe for concurrent access.
 func NewSchemaManager() *SchemaManager {
 	return &SchemaManager{
 		uniqueConstraints: make(map[string]*UniqueConstraint),
@@ -141,6 +145,7 @@ func NewSchemaManager() *SchemaManager {
 		compositeIndexes:  make(map[string]*CompositeIndex),
 		fulltextIndexes:   make(map[string]*FulltextIndex),
 		vectorIndexes:     make(map[string]*VectorIndex),
+		rangeIndexes:      make(map[string]*RangeIndex),
 	}
 }
 
@@ -187,7 +192,7 @@ type CompositeKey struct {
 //	key := storage.NewCompositeKey("Alice", "Johnson")
 //	// key.Hash = "a1b2c3..." (SHA-256)
 //	// key.Values = ["Alice", "Johnson"]
-//	
+//
 //	// Can store in map for O(1) lookup
 //	uniqueKeys := make(map[string]bool)
 //	uniqueKeys[key.Hash] = true
@@ -198,7 +203,7 @@ type CompositeKey struct {
 //	key1 := storage.NewCompositeKey("user", "example.com")
 //	key2 := storage.NewCompositeKey("user", "different.com")
 //	// key1.Hash != key2.Hash (different combinations)
-//	
+//
 //	key3 := storage.NewCompositeKey("user", "example.com")
 //	// key3.Hash == key1.Hash (same combination)
 //
@@ -206,10 +211,10 @@ type CompositeKey struct {
 //
 //	// Store locations - no duplicate (lat, lon) pairs
 //	locations := make(map[string]storage.NodeID)
-//	
+//
 //	loc1 := storage.NewCompositeKey(40.7128, -74.0060) // NYC
 //	locations[loc1.Hash] = storage.NodeID("loc-nyc")
-//	
+//
 //	loc2 := storage.NewCompositeKey(40.7128, -74.0060) // Same coords
 //	if _, exists := locations[loc2.Hash]; exists {
 //		fmt.Println("Location already exists!")
@@ -302,6 +307,17 @@ type VectorIndex struct {
 	Property       string
 	Dimensions     int
 	SimilarityFunc string // "cosine", "euclidean", "dot"
+}
+
+// RangeIndex represents an index for range queries on a single property.
+// It maintains a sorted list of entries for efficient O(log n) range queries.
+type RangeIndex struct {
+	Name     string
+	Label    string
+	Property string
+	entries  []rangeEntry   // Sorted by value for binary search
+	nodeMap  map[NodeID]int // NodeID -> index in entries (for O(1) delete)
+	mu       sync.RWMutex
 }
 
 // AddUniqueConstraint adds a unique constraint.
@@ -679,6 +695,184 @@ func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions
 	return nil
 }
 
+// AddRangeIndex adds a range index for a single property.
+func (sm *SchemaManager) AddRangeIndex(name, label, property string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if _, exists := sm.rangeIndexes[name]; exists {
+		return nil // Already exists
+	}
+
+	sm.rangeIndexes[name] = &RangeIndex{
+		Name:     name,
+		Label:    label,
+		Property: property,
+		entries:  make([]rangeEntry, 0),
+		nodeMap:  make(map[NodeID]int), // NodeID -> index in entries
+	}
+
+	return nil
+}
+
+// rangeEntry represents a single entry in the range index.
+type rangeEntry struct {
+	value  float64 // Normalized numeric value for comparison
+	nodeID NodeID
+}
+
+// RangeIndexInsert adds a value to a range index.
+func (sm *SchemaManager) RangeIndexInsert(name string, nodeID NodeID, value interface{}) error {
+	sm.mu.Lock()
+	idx, exists := sm.rangeIndexes[name]
+	sm.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("range index %s not found", name)
+	}
+
+	// Convert value to float64 for comparison
+	numVal, ok := toFloat64ForIndex(value)
+	if !ok {
+		return fmt.Errorf("range index only supports numeric values, got %T", value)
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Binary search for insert position
+	pos := sort.Search(len(idx.entries), func(i int) bool {
+		return idx.entries[i].value >= numVal
+	})
+
+	// Insert at position
+	entry := rangeEntry{value: numVal, nodeID: nodeID}
+	idx.entries = append(idx.entries, rangeEntry{})
+	copy(idx.entries[pos+1:], idx.entries[pos:])
+	idx.entries[pos] = entry
+	idx.nodeMap[nodeID] = pos
+
+	// Update positions of entries after insert
+	for i := pos + 1; i < len(idx.entries); i++ {
+		idx.nodeMap[idx.entries[i].nodeID] = i
+	}
+
+	return nil
+}
+
+// RangeIndexDelete removes a value from a range index.
+func (sm *SchemaManager) RangeIndexDelete(name string, nodeID NodeID) error {
+	sm.mu.Lock()
+	idx, exists := sm.rangeIndexes[name]
+	sm.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("range index %s not found", name)
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	pos, exists := idx.nodeMap[nodeID]
+	if !exists {
+		return nil // Not in index
+	}
+
+	// Remove from entries
+	idx.entries = append(idx.entries[:pos], idx.entries[pos+1:]...)
+	delete(idx.nodeMap, nodeID)
+
+	// Update positions of entries after delete
+	for i := pos; i < len(idx.entries); i++ {
+		idx.nodeMap[idx.entries[i].nodeID] = i
+	}
+
+	return nil
+}
+
+// RangeQuery performs a range query on a range index.
+// Returns node IDs where value is in range [minVal, maxVal].
+// Pass nil for minVal or maxVal to indicate unbounded.
+func (sm *SchemaManager) RangeQuery(name string, minVal, maxVal interface{}, includeMin, includeMax bool) ([]NodeID, error) {
+	sm.mu.RLock()
+	idx, exists := sm.rangeIndexes[name]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("range index %s not found", name)
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	if len(idx.entries) == 0 {
+		return nil, nil
+	}
+
+	// Determine bounds
+	var minF, maxF float64 = idx.entries[0].value - 1, idx.entries[len(idx.entries)-1].value + 1
+
+	if minVal != nil {
+		if f, ok := toFloat64ForIndex(minVal); ok {
+			minF = f
+		}
+	}
+	if maxVal != nil {
+		if f, ok := toFloat64ForIndex(maxVal); ok {
+			maxF = f
+		}
+	}
+
+	// Binary search for start position
+	start := sort.Search(len(idx.entries), func(i int) bool {
+		if includeMin {
+			return idx.entries[i].value >= minF
+		}
+		return idx.entries[i].value > minF
+	})
+
+	// Collect results
+	var results []NodeID
+	for i := start; i < len(idx.entries); i++ {
+		v := idx.entries[i].value
+		if includeMax {
+			if v > maxF {
+				break
+			}
+		} else {
+			if v >= maxF {
+				break
+			}
+		}
+		results = append(results, idx.entries[i].nodeID)
+	}
+
+	return results, nil
+}
+
+// toFloat64ForIndex converts a value to float64 for range index operations.
+func toFloat64ForIndex(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case int:
+		return float64(val), true
+	case int32:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case float32:
+		return float64(val), true
+	case float64:
+		return val, true
+	case string:
+		// Try to parse as float
+		var f float64
+		_, err := fmt.Sscanf(val, "%f", &f)
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
 // GetConstraints returns all unique constraints.
 func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 	sm.mu.RLock()
@@ -789,6 +983,15 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 		})
 	}
 
+	for _, idx := range sm.rangeIndexes {
+		indexes = append(indexes, map[string]interface{}{
+			"name":     idx.Name,
+			"type":     "RANGE",
+			"label":    idx.Label,
+			"property": idx.Property,
+		})
+	}
+
 	return indexes
 }
 
@@ -808,4 +1011,220 @@ func (sm *SchemaManager) GetFulltextIndex(name string) (*FulltextIndex, bool) {
 
 	idx, exists := sm.fulltextIndexes[name]
 	return idx, exists
+}
+
+// GetRangeIndex returns a range index by name.
+func (sm *SchemaManager) GetRangeIndex(name string) (*RangeIndex, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	idx, exists := sm.rangeIndexes[name]
+	return idx, exists
+}
+
+// GetPropertyIndex returns a property index by label and property.
+func (sm *SchemaManager) GetPropertyIndex(label, property string) (*PropertyIndex, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := fmt.Sprintf("%s:%s", label, property)
+	idx, exists := sm.propertyIndexes[key]
+	return idx, exists
+}
+
+// PropertyIndexInsert adds a node to a property index.
+func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID NodeID, value interface{}) error {
+	sm.mu.Lock()
+	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	sm.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("property index %s:%s not found", label, property)
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if idx.values == nil {
+		idx.values = make(map[interface{}][]NodeID)
+	}
+
+	idx.values[value] = append(idx.values[value], nodeID)
+	return nil
+}
+
+// PropertyIndexDelete removes a node from a property index.
+func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID NodeID, value interface{}) error {
+	sm.mu.Lock()
+	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	sm.mu.Unlock()
+
+	if !exists {
+		return nil // Not indexed
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if ids, ok := idx.values[value]; ok {
+		newIDs := make([]NodeID, 0, len(ids)-1)
+		for _, id := range ids {
+			if id != nodeID {
+				newIDs = append(newIDs, id)
+			}
+		}
+		if len(newIDs) > 0 {
+			idx.values[value] = newIDs
+		} else {
+			delete(idx.values, value)
+		}
+	}
+	return nil
+}
+
+// PropertyIndexLookup looks up node IDs by property value using an index.
+// Returns nil if no index exists for the label/property.
+func (sm *SchemaManager) PropertyIndexLookup(label, property string, value interface{}) []NodeID {
+	sm.mu.RLock()
+	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	if ids, ok := idx.values[value]; ok {
+		// Return a copy to avoid mutation
+		result := make([]NodeID, len(ids))
+		copy(result, ids)
+		return result
+	}
+	return nil
+}
+
+// IndexStats represents statistics about an index.
+type IndexStats struct {
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	Label        string   `json:"label"`
+	Property     string   `json:"property,omitempty"`
+	Properties   []string `json:"properties,omitempty"`
+	TotalEntries int64    `json:"totalEntries"`
+	UniqueValues int64    `json:"uniqueValues"`
+	Selectivity  float64  `json:"selectivity"` // uniqueValues / totalEntries
+}
+
+// GetIndexStats returns statistics for all indexes.
+func (sm *SchemaManager) GetIndexStats() []IndexStats {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	var stats []IndexStats
+
+	// Property indexes
+	for _, idx := range sm.propertyIndexes {
+		idx.mu.RLock()
+		totalEntries := int64(0)
+		for _, ids := range idx.values {
+			totalEntries += int64(len(ids))
+		}
+		uniqueValues := int64(len(idx.values))
+		selectivity := float64(0)
+		if totalEntries > 0 {
+			selectivity = float64(uniqueValues) / float64(totalEntries)
+		}
+		idx.mu.RUnlock()
+
+		prop := ""
+		if len(idx.Properties) > 0 {
+			prop = idx.Properties[0]
+		}
+
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "PROPERTY",
+			Label:        idx.Label,
+			Property:     prop,
+			Properties:   idx.Properties,
+			TotalEntries: totalEntries,
+			UniqueValues: uniqueValues,
+			Selectivity:  selectivity,
+		})
+	}
+
+	// Range indexes
+	for _, idx := range sm.rangeIndexes {
+		idx.mu.RLock()
+		totalEntries := int64(len(idx.entries))
+		// For range indexes, each entry is unique
+		uniqueValues := totalEntries
+		selectivity := float64(1.0)
+		if totalEntries > 0 {
+			selectivity = float64(uniqueValues) / float64(totalEntries)
+		}
+		idx.mu.RUnlock()
+
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "RANGE",
+			Label:        idx.Label,
+			Property:     idx.Property,
+			TotalEntries: totalEntries,
+			UniqueValues: uniqueValues,
+			Selectivity:  selectivity,
+		})
+	}
+
+	// Composite indexes
+	for _, idx := range sm.compositeIndexes {
+		totalEntries := int64(0)
+		for _, ids := range idx.fullIndex {
+			totalEntries += int64(len(ids))
+		}
+		uniqueValues := int64(len(idx.fullIndex))
+		selectivity := float64(0)
+		if totalEntries > 0 {
+			selectivity = float64(uniqueValues) / float64(totalEntries)
+		}
+
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "COMPOSITE",
+			Label:        idx.Label,
+			Properties:   idx.Properties,
+			TotalEntries: totalEntries,
+			UniqueValues: uniqueValues,
+			Selectivity:  selectivity,
+		})
+	}
+
+	// Fulltext indexes
+	for _, idx := range sm.fulltextIndexes {
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "FULLTEXT",
+			Properties:   idx.Properties,
+			TotalEntries: 0, // Would require integration with fulltext engine
+			UniqueValues: 0,
+			Selectivity:  0,
+		})
+	}
+
+	// Vector indexes
+	for _, idx := range sm.vectorIndexes {
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "VECTOR",
+			Label:        idx.Label,
+			Property:     idx.Property,
+			TotalEntries: 0, // Would require integration with vector index
+			UniqueValues: 0,
+			Selectivity:  0,
+		})
+	}
+
+	return stats
 }

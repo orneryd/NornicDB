@@ -2705,6 +2705,172 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 	return false
 }
 
+// evaluateCountSubqueryComparison evaluates COUNT { } subquery with comparison
+// Syntax: COUNT { MATCH (node)-[:TYPE]->(other) } > 5
+// Returns true if the comparison holds
+func (e *StorageExecutor) evaluateCountSubqueryComparison(node *storage.Node, variable, whereClause string) bool {
+	// Extract the subquery from COUNT { ... }
+	subquery := e.extractSubquery(whereClause, "COUNT")
+	if subquery == "" {
+		return true // No valid subquery, pass through
+	}
+
+	// Count matching relationships
+	count := e.countSubqueryMatches(node, variable, subquery)
+
+	// Extract and evaluate the comparison operator
+	// Find the closing brace to get what comes after
+	upperClause := strings.ToUpper(whereClause)
+	countIdx := strings.Index(upperClause, "COUNT")
+	if countIdx < 0 {
+		return false
+	}
+
+	remaining := whereClause[countIdx:]
+	braceDepth := 0
+	closeIdx := -1
+	for i := 0; i < len(remaining); i++ {
+		if remaining[i] == '{' {
+			braceDepth++
+		} else if remaining[i] == '}' {
+			braceDepth--
+			if braceDepth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+
+	if closeIdx == -1 {
+		// No closing brace, invalid
+		return false
+	}
+
+	// Get comparison part after COUNT { }
+	comparison := strings.TrimSpace(remaining[closeIdx+1:])
+	if comparison == "" {
+		// No comparison, return true if count > 0
+		return count > 0
+	}
+
+	// Parse comparison operator and value
+	var op string
+	var valueStr string
+	
+	if strings.HasPrefix(comparison, ">=") {
+		op = ">="
+		valueStr = strings.TrimSpace(comparison[2:])
+	} else if strings.HasPrefix(comparison, "<=") {
+		op = "<="
+		valueStr = strings.TrimSpace(comparison[2:])
+	} else if strings.HasPrefix(comparison, ">") {
+		op = ">"
+		valueStr = strings.TrimSpace(comparison[1:])
+	} else if strings.HasPrefix(comparison, "<") {
+		op = "<"
+		valueStr = strings.TrimSpace(comparison[1:])
+	} else if strings.HasPrefix(comparison, "=") {
+		op = "="
+		valueStr = strings.TrimSpace(comparison[1:])
+	} else if strings.HasPrefix(comparison, "!=") || strings.HasPrefix(comparison, "<>") {
+		op = "!="
+		if strings.HasPrefix(comparison, "!=") {
+			valueStr = strings.TrimSpace(comparison[2:])
+		} else {
+			valueStr = strings.TrimSpace(comparison[2:])
+		}
+	} else {
+		// No valid operator, treat as > 0
+		return count > 0
+	}
+
+	// Parse the comparison value
+	var compareValue int64
+	_, err := fmt.Sscanf(valueStr, "%d", &compareValue)
+	if err != nil {
+		// Invalid number, treat as false
+		return false
+	}
+
+	// Perform comparison
+	switch op {
+	case ">":
+		return count > compareValue
+	case ">=":
+		return count >= compareValue
+	case "<":
+		return count < compareValue
+	case "<=":
+		return count <= compareValue
+	case "=":
+		return count == compareValue
+	case "!=":
+		return count != compareValue
+	default:
+		return false
+	}
+}
+
+// countSubqueryMatches counts how many matches a subquery produces
+func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, subquery string) int64 {
+	// Parse the MATCH pattern from the subquery
+	upperSub := strings.ToUpper(subquery)
+
+	if !strings.HasPrefix(upperSub, "MATCH ") {
+		return 0
+	}
+
+	pattern := strings.TrimSpace(subquery[6:])
+
+	// Check if pattern references our variable
+	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
+		return 0
+	}
+
+	// Parse relationship pattern
+	var checkIncoming, checkOutgoing bool
+	var relTypes []string
+
+	if strings.Contains(pattern, "<-[") {
+		checkIncoming = true
+		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+	}
+	if strings.Contains(pattern, "]->(") || strings.Contains(pattern, "]->") {
+		checkOutgoing = true
+		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+	}
+
+	// Count matching edges
+	var count int64
+
+	if checkIncoming {
+		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		for _, edge := range edges {
+			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
+				count++
+			}
+		}
+	}
+
+	if checkOutgoing {
+		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		for _, edge := range edges {
+			if len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes) {
+				count++
+			}
+		}
+	}
+
+	// If no direction specified, count both
+	if !checkIncoming && !checkOutgoing {
+		incoming, _ := e.storage.GetIncomingEdges(node.ID)
+		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
+		count = int64(len(incoming) + len(outgoing))
+	}
+
+	return count
+}
+
 // ===== SHOW Commands (Neo4j compatibility) =====
 
 // executeShowIndexes handles SHOW INDEXES command
@@ -2752,6 +2918,7 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 		{"dbms.listConnections", "dbms.listConnections() :: (...)", "List active connections", "DBMS", false},
 		{"apoc.path.subgraphNodes", "apoc.path.subgraphNodes(startNode :: NODE, config :: MAP) :: (node :: NODE)", "Return all nodes in a subgraph", "READ", false},
 		{"apoc.path.expand", "apoc.path.expand(startNode :: NODE, relationshipFilter :: STRING, labelFilter :: STRING, minLevel :: INTEGER, maxLevel :: INTEGER) :: (path :: PATH)", "Expand paths from start node", "READ", false},
+		{"apoc.path.spanningTree", "apoc.path.spanningTree(startNode :: NODE, config :: MAP) :: (path :: PATH)", "Return spanning tree from start node", "READ", false},
 		{"nornicdb.version", "nornicdb.version() :: (version :: STRING)", "NornicDB version", "READ", false},
 		{"nornicdb.stats", "nornicdb.stats() :: (...)", "NornicDB statistics", "READ", false},
 		{"nornicdb.decay.info", "nornicdb.decay.info() :: (...)", "NornicDB decay information", "READ", false},
@@ -2835,6 +3002,10 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		// Spatial functions
 		{"point", "point(input :: MAP) :: POINT", "Creates a point", false, false, false},
 		{"distance", "distance(point1 :: POINT, point2 :: POINT) :: FLOAT", "Returns distance between points", false, false, false},
+		{"polygon", "polygon(points :: LIST<POINT>) :: POLYGON", "Creates a polygon from a list of points", false, false, false},
+		{"lineString", "lineString(points :: LIST<POINT>) :: LINESTRING", "Creates a lineString from a list of points", false, false, false},
+		{"point.intersects", "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", "Checks if point intersects with polygon", false, false, false},
+		{"point.contains", "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", "Checks if polygon contains point", false, false, false},
 		// Vector functions
 		{"vector.similarity.cosine", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false, false, false},
 		{"vector.similarity.euclidean", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false, false, false},

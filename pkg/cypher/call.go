@@ -316,6 +316,26 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callApocPathSubgraphNodes(cypher)
 	case strings.Contains(upper, "APOC.PATH.EXPAND"):
 		result, err = e.callApocPathExpand(cypher)
+	case strings.Contains(upper, "APOC.PATH.SPANNINGTREE"):
+		result, err = e.callApocPathSpanningTree(cypher)
+	// APOC Graph Algorithms
+	case strings.Contains(upper, "APOC.ALGO.DIJKSTRA"):
+		result, err = e.callApocAlgoDijkstra(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.ASTAR"):
+		result, err = e.callApocAlgoAStar(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.ALLSIMPLEPATHS"):
+		result, err = e.callApocAlgoAllSimplePaths(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.PAGERANK"):
+		result, err = e.callApocAlgoPageRank(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.BETWEENNESS"):
+		result, err = e.callApocAlgoBetweenness(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.CLOSENESS"):
+		result, err = e.callApocAlgoCloseness(ctx, cypher)
+	// APOC Neighbor Traversal
+	case strings.Contains(upper, "APOC.NEIGHBORS.TOHOP"):
+		result, err = e.callApocNeighborsTohop(ctx, cypher)
+	case strings.Contains(upper, "APOC.NEIGHBORS.BYHOP"):
+		result, err = e.callApocNeighborsByhop(ctx, cypher)
 	// NornicDB Extensions
 	case strings.Contains(upper, "NORNICDB.VERSION"):
 		result, err = e.callNornicDbVersion()
@@ -336,6 +356,8 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callDbRelationshipTypes()
 	case strings.Contains(upper, "DB.INDEXES"):
 		result, err = e.callDbIndexes()
+	case strings.Contains(upper, "DB.INDEX.STATS"):
+		result, err = e.callDbIndexStats()
 	case strings.Contains(upper, "DB.CONSTRAINTS"):
 		result, err = e.callDbConstraints()
 	case strings.Contains(upper, "DB.PROPERTYKEYS"):
@@ -362,8 +384,14 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callDbIndexFulltextQueryRelationships(cypher)
 	case strings.Contains(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS"):
 		result, err = e.callDbIndexVectorQueryRelationships(cypher)
+	case strings.Contains(upper, "DB.INDEX.VECTOR.CREATENODEINDEX"):
+		result, err = e.callDbIndexVectorCreateNodeIndex(ctx, cypher)
 	case strings.Contains(upper, "DB.INDEX.FULLTEXT.LISTAVAILABLEANALYZERS"):
 		result, err = e.callDbIndexFulltextListAvailableAnalyzers()
+	case strings.Contains(upper, "DB.CREATE.SETNODEVECTORPROPERTY"):
+		result, err = e.callDbCreateSetNodeVectorProperty(ctx, cypher)
+	case strings.Contains(upper, "DB.CREATE.SETRELATIONSHIPVECTORPROPERTY"):
+		result, err = e.callDbCreateSetRelationshipVectorProperty(ctx, cypher)
 	case strings.Contains(upper, "DBMS.INFO"):
 		result, err = e.callDbmsInfo()
 	case strings.Contains(upper, "DBMS.LISTCONFIG"):
@@ -480,10 +508,63 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
-	// Return empty for now - no indexes implemented yet
+	// Get indexes from schema manager
+	schema := e.storage.GetSchema()
+	indexes := schema.GetIndexes()
+
+	rows := make([][]interface{}, 0, len(indexes))
+	for _, idx := range indexes {
+		idxMap := idx.(map[string]interface{})
+		name := idxMap["name"]
+		idxType := idxMap["type"]
+
+		// Get labels/properties based on index type
+		var labels interface{}
+		var properties interface{}
+
+		if l, ok := idxMap["label"]; ok {
+			labels = []string{l.(string)}
+		} else if ls, ok := idxMap["labels"]; ok {
+			labels = ls
+		}
+
+		if p, ok := idxMap["property"]; ok {
+			properties = []string{p.(string)}
+		} else if ps, ok := idxMap["properties"]; ok {
+			properties = ps
+		}
+
+		rows = append(rows, []interface{}{name, idxType, labels, properties, "ONLINE"})
+	}
+
 	return &ExecuteResult{
 		Columns: []string{"name", "type", "labelsOrTypes", "properties", "state"},
-		Rows:    [][]interface{}{},
+		Rows:    rows,
+	}, nil
+}
+
+// callDbIndexStats returns statistics for all indexes.
+// Syntax: CALL db.index.stats() YIELD name, type, totalEntries, uniqueValues, selectivity
+func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	stats := schema.GetIndexStats()
+
+	rows := make([][]interface{}, 0, len(stats))
+	for _, s := range stats {
+		rows = append(rows, []interface{}{
+			s.Name,
+			s.Type,
+			s.Label,
+			s.Property,
+			s.TotalEntries,
+			s.UniqueValues,
+			s.Selectivity,
+		})
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"name", "type", "label", "property", "totalEntries", "uniqueValues", "selectivity"},
+		Rows:    rows,
 	}, nil
 }
 
@@ -1812,6 +1893,298 @@ func (e *StorageExecutor) callApocPathExpand(cypher string) (*ExecuteResult, err
 	return result, nil
 }
 
+// callApocPathSpanningTree implements apoc.path.spanningTree
+// Syntax: CALL apoc.path.spanningTree(startNode, {maxLevel: n, relationshipFilter: 'TYPE', ...})
+//
+// Returns a spanning tree from the start node - a minimal tree that connects all reachable
+// nodes without creating cycles. The tree is represented as a list of relationships.
+//
+// Config Parameters:
+//   - maxLevel: Maximum traversal depth (default: -1 for unlimited)
+//   - minLevel: Minimum traversal depth before returning results (default: 0)
+//   - relationshipFilter: Filter by relationship types (e.g., "RELATES_TO|CONTAINS")
+//   - labelFilter: Filter by node labels (e.g., "+Memory|-Archive")
+//   - limit: Maximum number of relationships to return
+//   - bfs: Use breadth-first search (default: true, DFS if false)
+//
+// Returns: List of relationships that form the spanning tree
+func (e *StorageExecutor) callApocPathSpanningTree(cypher string) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{"path"},
+		Rows:    [][]interface{}{},
+	}
+
+	// Parse configuration and start node
+	config := e.parseApocPathConfig(cypher)
+	if config.maxLevel == 3 { // Default from parseApocPathConfig
+		config.maxLevel = -1 // For spanning tree, default to unlimited
+	}
+	startNodeID := e.extractStartNodeID(cypher)
+
+	// Get starting node
+	if startNodeID == "" || startNodeID == "*" {
+		// Spanning tree requires a specific start node
+		return result, fmt.Errorf("apoc.path.spanningTree requires a specific start node")
+	}
+
+	startNode, err := e.storage.GetNode(storage.NodeID(startNodeID))
+	if err != nil || startNode == nil {
+		return result, nil
+	}
+
+	// Build spanning tree using BFS or DFS
+	var treeEdges []*storage.Edge
+	if config.bfs {
+		treeEdges = e.bfsSpanningTree(startNode, config)
+	} else {
+		treeEdges = e.dfsSpanningTree(startNode, config)
+	}
+
+	// Apply limit if specified
+	if config.limit > 0 && len(treeEdges) > config.limit {
+		treeEdges = treeEdges[:config.limit]
+	}
+
+	// Convert edges to path format
+	// Each path contains the edge and its connected nodes
+	for _, edge := range treeEdges {
+		// Get the nodes
+		startNodeObj, _ := e.storage.GetNode(edge.StartNode)
+		endNodeObj, _ := e.storage.GetNode(edge.EndNode)
+
+		if startNodeObj != nil && endNodeObj != nil {
+			path := map[string]interface{}{
+				"nodes": []interface{}{
+					e.nodeToMap(startNodeObj),
+					e.nodeToMap(endNodeObj),
+				},
+				"relationships": []interface{}{
+					map[string]interface{}{
+						"id":         string(edge.ID),
+						"type":       edge.Type,
+						"properties": edge.Properties,
+						"startNode":  string(edge.StartNode),
+						"endNode":    string(edge.EndNode),
+					},
+				},
+				"length": 1,
+			}
+			result.Rows = append(result.Rows, []interface{}{path})
+		}
+	}
+
+	return result, nil
+}
+
+// bfsSpanningTree builds a spanning tree using breadth-first search
+func (e *StorageExecutor) bfsSpanningTree(startNode *storage.Node, config apocPathConfig) []*storage.Edge {
+	var treeEdges []*storage.Edge
+	visited := make(map[string]bool)
+
+	// Queue: (node, level, parentEdge)
+	type queueItem struct {
+		node       *storage.Node
+		level      int
+		parentEdge *storage.Edge
+	}
+	queue := []queueItem{{node: startNode, level: 0, parentEdge: nil}}
+	visited[string(startNode.ID)] = true
+
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+
+		node := item.node
+		level := item.level
+
+		// Add the edge that got us here (if any) and if level > minLevel
+		// Note: edges connect level N to level N+1, so check level > minLevel not level >= minLevel
+		if item.parentEdge != nil && level > config.minLevel {
+			treeEdges = append(treeEdges, item.parentEdge)
+		}
+
+		// Check if we should terminate at this node
+		if isTerminateNode(node, config.terminateLabels) {
+			continue
+		}
+
+		// Check if we've reached max level
+		if config.maxLevel >= 0 && level >= config.maxLevel {
+			continue
+		}
+
+		// Get edges based on direction
+		var edges []*storage.Edge
+		switch config.direction {
+		case "outgoing":
+			edges, _ = e.storage.GetOutgoingEdges(node.ID)
+		case "incoming":
+			edges, _ = e.storage.GetIncomingEdges(node.ID)
+		default: // "both"
+			out, _ := e.storage.GetOutgoingEdges(node.ID)
+			in, _ := e.storage.GetIncomingEdges(node.ID)
+			edges = append(out, in...)
+		}
+
+		// Process each edge
+		for _, edge := range edges {
+			// Check relationship type filter
+			if len(config.relationshipTypes) > 0 {
+				found := false
+				for _, t := range config.relationshipTypes {
+					if edge.Type == t {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
+			// Get the other node
+			var nextNodeID storage.NodeID
+			if edge.StartNode == node.ID {
+				nextNodeID = edge.EndNode
+			} else {
+				nextNodeID = edge.StartNode
+			}
+
+			// Skip if already visited (no cycles in spanning tree)
+			if visited[string(nextNodeID)] {
+				continue
+			}
+			visited[string(nextNodeID)] = true
+
+			// Get the node
+			nextNode, err := e.storage.GetNode(nextNodeID)
+			if err != nil || nextNode == nil {
+				continue
+			}
+
+			// Check label filters
+			if !passesLabelFilter(nextNode, config.includeLabels, config.excludeLabels) {
+				continue
+			}
+
+			// Add to queue with this edge
+			queue = append(queue, queueItem{
+				node:       nextNode,
+				level:      level + 1,
+				parentEdge: edge,
+			})
+		}
+	}
+
+	return treeEdges
+}
+
+// dfsSpanningTree builds a spanning tree using depth-first search
+func (e *StorageExecutor) dfsSpanningTree(startNode *storage.Node, config apocPathConfig) []*storage.Edge {
+	var treeEdges []*storage.Edge
+	visited := make(map[string]bool)
+
+	// Stack: (node, level, parentEdge)
+	type stackItem struct {
+		node       *storage.Node
+		level      int
+		parentEdge *storage.Edge
+	}
+	stack := []stackItem{{node: startNode, level: 0, parentEdge: nil}}
+	visited[string(startNode.ID)] = true
+
+	for len(stack) > 0 {
+		// Pop from stack
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		node := item.node
+		level := item.level
+
+		// Add the edge that got us here (if any) and if level > minLevel
+		// Note: edges connect level N to level N+1, so check level > minLevel not level >= minLevel
+		if item.parentEdge != nil && level > config.minLevel {
+			treeEdges = append(treeEdges, item.parentEdge)
+		}
+
+		// Check if we should terminate at this node
+		if isTerminateNode(node, config.terminateLabels) {
+			continue
+		}
+
+		// Check if we've reached max level
+		if config.maxLevel >= 0 && level >= config.maxLevel {
+			continue
+		}
+
+		// Get edges based on direction
+		var edges []*storage.Edge
+		switch config.direction {
+		case "outgoing":
+			edges, _ = e.storage.GetOutgoingEdges(node.ID)
+		case "incoming":
+			edges, _ = e.storage.GetIncomingEdges(node.ID)
+		default: // "both"
+			out, _ := e.storage.GetOutgoingEdges(node.ID)
+			in, _ := e.storage.GetIncomingEdges(node.ID)
+			edges = append(out, in...)
+		}
+
+		// Process each edge (in reverse for DFS to maintain order)
+		for i := len(edges) - 1; i >= 0; i-- {
+			edge := edges[i]
+
+			// Check relationship type filter
+			if len(config.relationshipTypes) > 0 {
+				found := false
+				for _, t := range config.relationshipTypes {
+					if edge.Type == t {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
+			// Get the other node
+			var nextNodeID storage.NodeID
+			if edge.StartNode == node.ID {
+				nextNodeID = edge.EndNode
+			} else {
+				nextNodeID = edge.StartNode
+			}
+
+			// Skip if already visited (no cycles in spanning tree)
+			if visited[string(nextNodeID)] {
+				continue
+			}
+			visited[string(nextNodeID)] = true
+
+			// Get the node
+			nextNode, err := e.storage.GetNode(nextNodeID)
+			if err != nil || nextNode == nil {
+				continue
+			}
+
+			// Check label filters
+			if !passesLabelFilter(nextNode, config.includeLabels, config.excludeLabels) {
+				continue
+			}
+
+			// Push to stack with this edge
+			stack = append(stack, stackItem{
+				node:       nextNode,
+				level:      level + 1,
+				parentEdge: edge,
+			})
+		}
+	}
+
+	return treeEdges
+}
+
 // ===== Additional Neo4j Compatibility Procedures =====
 
 // callDbInfo returns database information - Neo4j db.info()
@@ -1944,6 +2317,186 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(cypher string) (*E
 	return &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
+	}, nil
+}
+
+// callDbIndexVectorCreateNodeIndex creates a vector index on nodes - Neo4j db.index.vector.createNodeIndex()
+// Syntax: CALL db.index.vector.createNodeIndex(indexName, label, property, dimension, similarityFunction)
+func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parse: CALL db.index.vector.createNodeIndex('indexName', 'Label', 'propertyKey', dimension, 'similarity')
+	upper := strings.ToUpper(cypher)
+	idx := strings.Index(upper, "CREATENODEINDEX")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid db.index.vector.createNodeIndex syntax")
+	}
+
+	remainder := cypher[idx:]
+	openParen := strings.Index(remainder, "(")
+	closeParen := strings.LastIndex(remainder, ")")
+	if openParen < 0 || closeParen < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing parentheses")
+	}
+
+	args := remainder[openParen+1 : closeParen]
+	parts := strings.Split(args, ",")
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("db.index.vector.createNodeIndex requires at least 4 arguments: indexName, label, property, dimension")
+	}
+
+	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
+	label := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+	property := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
+	dimensionStr := strings.TrimSpace(parts[3])
+	var dimension int
+	fmt.Sscanf(dimensionStr, "%d", &dimension)
+
+	similarity := "cosine" // Default
+	if len(parts) > 4 {
+		similarity = strings.Trim(strings.TrimSpace(parts[4]), "'\"")
+	}
+
+	// Create vector index using schema manager
+	schema := e.storage.GetSchema()
+	err := schema.AddVectorIndex(indexName, label, property, dimension, similarity)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create vector index: %w", err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"name", "label", "property", "dimension", "similarityFunction"},
+		Rows:    [][]interface{}{{indexName, label, property, dimension, similarity}},
+	}, nil
+}
+
+// callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
+// Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
+func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parse: CALL db.create.setNodeVectorProperty(nodeId, 'propertyKey', [vector])
+	upper := strings.ToUpper(cypher)
+	idx := strings.Index(upper, "SETNODEVECTORPROPERTY")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid db.create.setNodeVectorProperty syntax")
+	}
+
+	remainder := cypher[idx:]
+	openParen := strings.Index(remainder, "(")
+	closeParen := strings.LastIndex(remainder, ")")
+	if openParen < 0 || closeParen < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing parentheses")
+	}
+
+	argsStr := remainder[openParen+1 : closeParen]
+
+	// Extract nodeId (first arg)
+	commaIdx := strings.Index(argsStr, ",")
+	if commaIdx < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing arguments")
+	}
+	nodeIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
+	argsStr = argsStr[commaIdx+1:]
+
+	// Extract property key (second arg)
+	commaIdx = strings.Index(argsStr, ",")
+	if commaIdx < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing vector argument")
+	}
+	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
+	argsStr = argsStr[commaIdx+1:]
+
+	// Extract vector (third arg) - can be [1.0, 2.0, 3.0] format
+	vectorStr := strings.TrimSpace(argsStr)
+	vectorStr = strings.Trim(vectorStr, "[]")
+	vectorParts := strings.Split(vectorStr, ",")
+	vector := make([]float64, len(vectorParts))
+	for i, vp := range vectorParts {
+		var val float64
+		fmt.Sscanf(strings.TrimSpace(vp), "%f", &val)
+		vector[i] = val
+	}
+
+	// Get and update the node
+	nodeID := storage.NodeID(nodeIDStr)
+	node, err := e.storage.GetNode(nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("node not found: %s", nodeIDStr)
+	}
+
+	// Set the vector property
+	node.Properties[propertyKey] = vector
+	err = e.storage.UpdateNode(node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update node: %w", err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"node"},
+		Rows:    [][]interface{}{{e.nodeToMap(node)}},
+	}, nil
+}
+
+// callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
+// Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
+func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Parse: CALL db.create.setRelationshipVectorProperty(relId, 'propertyKey', [vector])
+	upper := strings.ToUpper(cypher)
+	idx := strings.Index(upper, "SETRELATIONSHIPVECTORPROPERTY")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid db.create.setRelationshipVectorProperty syntax")
+	}
+
+	remainder := cypher[idx:]
+	openParen := strings.Index(remainder, "(")
+	closeParen := strings.LastIndex(remainder, ")")
+	if openParen < 0 || closeParen < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing parentheses")
+	}
+
+	argsStr := remainder[openParen+1 : closeParen]
+
+	// Extract relId (first arg)
+	commaIdx := strings.Index(argsStr, ",")
+	if commaIdx < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing arguments")
+	}
+	relIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
+	argsStr = argsStr[commaIdx+1:]
+
+	// Extract property key (second arg)
+	commaIdx = strings.Index(argsStr, ",")
+	if commaIdx < 0 {
+		return nil, fmt.Errorf("invalid syntax: missing vector argument")
+	}
+	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
+	argsStr = argsStr[commaIdx+1:]
+
+	// Extract vector (third arg)
+	vectorStr := strings.TrimSpace(argsStr)
+	vectorStr = strings.Trim(vectorStr, "[]")
+	vectorParts := strings.Split(vectorStr, ",")
+	vector := make([]float64, len(vectorParts))
+	for i, vp := range vectorParts {
+		var val float64
+		fmt.Sscanf(strings.TrimSpace(vp), "%f", &val)
+		vector[i] = val
+	}
+
+	// Get and update the relationship
+	relID := storage.EdgeID(relIDStr)
+	rel, err := e.storage.GetEdge(relID)
+	if err != nil {
+		return nil, fmt.Errorf("relationship not found: %s", relIDStr)
+	}
+
+	// Set the vector property
+	rel.Properties[propertyKey] = vector
+	err = e.storage.UpdateEdge(rel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update relationship: %w", err)
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"relationship"},
+		Rows:    [][]interface{}{{e.edgeToMap(rel)}},
 	}, nil
 }
 

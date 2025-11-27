@@ -3031,6 +3031,253 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		return false
 	}
 
+	// point.withinDistance(point, center, distance) - check if point is within distance of center
+	if strings.HasPrefix(lowerExpr, "point.withindistance(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[21 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) < 3 {
+			return false
+		}
+		point := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
+		center := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+		maxDist := e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels)
+
+		pm, ok1 := point.(map[string]interface{})
+		cm, ok2 := center.(map[string]interface{})
+		dist, ok3 := toFloat64(maxDist)
+		if !ok1 || !ok2 || !ok3 {
+			return false
+		}
+
+		// Calculate distance between point and center
+		x1, y1, hasXY1 := getXY(pm)
+		x2, y2, hasXY2 := getXY(cm)
+		if hasXY1 && hasXY2 {
+			actualDist := math.Sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1))
+			return actualDist <= dist
+		}
+
+		lat1, lon1, hasLatLon1 := getLatLon(pm)
+		lat2, lon2, hasLatLon2 := getLatLon(cm)
+		if hasLatLon1 && hasLatLon2 {
+			actualDist := haversineDistance(lat1, lon1, lat2, lon2)
+			return actualDist <= dist
+		}
+
+		return false
+	}
+
+	// point.height(point) - get height/altitude (alias for z coordinate)
+	if strings.HasPrefix(lowerExpr, "point.height(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[13 : len(expr)-1])
+		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		if m, ok := val.(map[string]interface{}); ok {
+			// Try z first (3D Cartesian)
+			if z, ok := m["z"]; ok {
+				if v, ok := toFloat64(z); ok {
+					return v
+				}
+			}
+			// Try height (geographic)
+			if h, ok := m["height"]; ok {
+				if v, ok := toFloat64(h); ok {
+					return v
+				}
+			}
+			// Try altitude (alternative name)
+			if alt, ok := m["altitude"]; ok {
+				if v, ok := toFloat64(alt); ok {
+					return v
+				}
+			}
+		}
+		return nil
+	}
+
+	// point.crs(point) - get Coordinate Reference System name
+	if strings.HasPrefix(lowerExpr, "point.crs(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[10 : len(expr)-1])
+		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		if m, ok := val.(map[string]interface{}); ok {
+			// Check if CRS is explicitly set
+			if crs, ok := m["crs"]; ok {
+				return crs
+			}
+			// Infer CRS from coordinate type
+			if _, ok := m["latitude"]; ok {
+				if _, ok := m["height"]; ok {
+					return "wgs-84-3d"
+				}
+				return "wgs-84"
+			}
+			if _, ok := m["z"]; ok {
+				return "cartesian-3d"
+			}
+			return "cartesian"
+		}
+		return nil
+	}
+
+	// polygon(points) - create a polygon geometry from a list of points
+	if strings.HasPrefix(lowerExpr, "polygon(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[8 : len(expr)-1])
+		
+		// Check if inner is a list literal [...]
+		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+			// Parse and evaluate list elements manually
+			listContent := inner[1 : len(inner)-1]
+			pointExprs := e.splitFunctionArgs(listContent)
+			
+			pointList := make([]interface{}, 0, len(pointExprs))
+			for _, pointExpr := range pointExprs {
+				evalPoint := e.evaluateExpressionWithContext(strings.TrimSpace(pointExpr), nodes, rels)
+				pointList = append(pointList, evalPoint)
+			}
+			
+			// Validate that we have at least 3 points for a valid polygon
+			if len(pointList) < 3 {
+				return nil
+			}
+			
+			// Return a polygon structure
+			return map[string]interface{}{
+				"type":   "polygon",
+				"points": pointList,
+			}
+		}
+		
+		// Otherwise try evaluating as variable or expression
+		pointsVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		if pointList, ok := pointsVal.([]interface{}); ok {
+			if len(pointList) < 3 {
+				return nil
+			}
+			return map[string]interface{}{
+				"type":   "polygon",
+				"points": pointList,
+			}
+		}
+		return nil
+	}
+
+	// lineString(points) - create a lineString geometry from a list of points
+	if strings.HasPrefix(lowerExpr, "linestring(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[11 : len(expr)-1])
+		
+		// Check if inner is a list literal [...]
+		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+			// Parse and evaluate list elements manually
+			listContent := inner[1 : len(inner)-1]
+			pointExprs := e.splitFunctionArgs(listContent)
+			
+			pointList := make([]interface{}, 0, len(pointExprs))
+			for _, pointExpr := range pointExprs {
+				evalPoint := e.evaluateExpressionWithContext(strings.TrimSpace(pointExpr), nodes, rels)
+				pointList = append(pointList, evalPoint)
+			}
+			
+			// Validate that we have at least 2 points for a valid lineString
+			if len(pointList) < 2 {
+				return nil
+			}
+			
+			// Return a lineString structure
+			return map[string]interface{}{
+				"type":   "linestring",
+				"points": pointList,
+			}
+		}
+		
+		// Otherwise try evaluating as variable or expression
+		pointsVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		if pointList, ok := pointsVal.([]interface{}); ok {
+			if len(pointList) < 2 {
+				return nil
+			}
+			return map[string]interface{}{
+				"type":   "linestring",
+				"points": pointList,
+			}
+		}
+		return nil
+	}
+
+	// point.intersects(point, polygon) - check if point intersects with polygon
+	if strings.HasPrefix(lowerExpr, "point.intersects(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[17 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) < 2 {
+			return false
+		}
+		
+		pointVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
+		polygonVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+		
+		pm, ok1 := pointVal.(map[string]interface{})
+		polygonMap, ok2 := polygonVal.(map[string]interface{})
+		if !ok1 || !ok2 {
+			return false
+		}
+		
+		// Extract polygon points
+		polygonPoints := extractPolygonPoints(polygonMap)
+		if polygonPoints == nil {
+			return false
+		}
+		
+		// Get point coordinates
+		px, py, hasXY := getXY(pm)
+		if !hasXY {
+			// Try lat/lon
+			var hasLatLon bool
+			px, py, hasLatLon = getLatLon(pm)
+			if !hasLatLon {
+				return false
+			}
+		}
+		
+		// Use point-in-polygon algorithm
+		return pointInPolygon(px, py, polygonPoints)
+	}
+
+	// point.contains(polygon, point) - check if polygon contains point
+	if strings.HasPrefix(lowerExpr, "point.contains(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) < 2 {
+			return false
+		}
+		
+		polygonVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
+		pointVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+		
+		polygonMap, ok1 := polygonVal.(map[string]interface{})
+		pm, ok2 := pointVal.(map[string]interface{})
+		if !ok1 || !ok2 {
+			return false
+		}
+		
+		// Extract polygon points
+		polygonPoints := extractPolygonPoints(polygonMap)
+		if polygonPoints == nil {
+			return false
+		}
+		
+		// Get point coordinates
+		px, py, hasXY := getXY(pm)
+		if !hasXY {
+			// Try lat/lon
+			var hasLatLon bool
+			px, py, hasLatLon = getLatLon(pm)
+			if !hasLatLon {
+				return false
+			}
+		}
+		
+		// Use point-in-polygon algorithm
+		return pointInPolygon(px, py, polygonPoints)
+	}
+
 	// ========================================
 	// List Predicate Functions
 	// ========================================

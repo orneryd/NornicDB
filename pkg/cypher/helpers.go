@@ -201,3 +201,82 @@ func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
 	
 	return earthRadius * c
 }
+
+// pointInPolygon uses the ray casting algorithm to determine if a point is inside a polygon.
+// The polygon is defined by a list of point maps (with x,y or latitude,longitude coordinates).
+// Returns true if the point is inside or on the boundary of the polygon.
+func pointInPolygon(px, py float64, polygonPoints []interface{}) bool {
+	if len(polygonPoints) < 3 {
+		return false // A valid polygon needs at least 3 points
+	}
+	
+	// Extract coordinates from polygon points
+	coords := make([][2]float64, 0, len(polygonPoints))
+	for _, p := range polygonPoints {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		
+		// Try x/y coordinates
+		x, y, hasXY := getXY(pm)
+		if hasXY {
+			coords = append(coords, [2]float64{x, y})
+			continue
+		}
+		
+		// Try lat/lon coordinates
+		lat, lon, hasLatLon := getLatLon(pm)
+		if hasLatLon {
+			coords = append(coords, [2]float64{lat, lon})
+			continue
+		}
+		
+		return false // Invalid point format
+	}
+	
+	if len(coords) < 3 {
+		return false
+	}
+	
+	// Ray casting algorithm: count how many times a ray from the point
+	// to infinity crosses the polygon edges. Odd = inside, Even = outside.
+	inside := false
+	j := len(coords) - 1
+	
+	for i := 0; i < len(coords); i++ {
+		xi, yi := coords[i][0], coords[i][1]
+		xj, yj := coords[j][0], coords[j][1]
+		
+		// Check if point is on a horizontal edge
+		if yi == py && yj == py && ((xi <= px && px <= xj) || (xj <= px && px <= xi)) {
+			return true // On boundary
+		}
+		
+		// Ray casting check
+		if ((yi > py) != (yj > py)) &&
+			(px < (xj-xi)*(py-yi)/(yj-yi)+xi) {
+			inside = !inside
+		}
+		
+		j = i
+	}
+	
+	return inside
+}
+
+// extractPolygonPoints extracts point list from a polygon/lineString map
+func extractPolygonPoints(geom map[string]interface{}) []interface{} {
+	if points, ok := geom["points"]; ok {
+		if pointList, ok := points.([]interface{}); ok {
+			return pointList
+		}
+	}
+	// Try "coordinates" as alternative (GeoJSON style)
+	if coords, ok := geom["coordinates"]; ok {
+		if coordList, ok := coords.([]interface{}); ok {
+			return coordList
+		}
+	}
+	return nil
+}
