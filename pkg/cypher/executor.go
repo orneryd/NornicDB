@@ -2099,15 +2099,13 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 }
 
 func (e *StorageExecutor) filterNodes(nodes []*storage.Node, variable, whereClause string) []*storage.Node {
-	var filtered []*storage.Node
-
-	for _, node := range nodes {
-		if e.evaluateWhere(node, variable, whereClause) {
-			filtered = append(filtered, node)
-		}
+	// Create filter function for parallel execution
+	filterFn := func(node *storage.Node) bool {
+		return e.evaluateWhere(node, variable, whereClause)
 	}
 
-	return filtered
+	// Use parallel filtering for large datasets
+	return parallelFilterNodes(nodes, filterFn)
 }
 
 func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClause string) bool {

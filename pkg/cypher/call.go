@@ -331,11 +331,35 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callApocAlgoBetweenness(ctx, cypher)
 	case strings.Contains(upper, "APOC.ALGO.CLOSENESS"):
 		result, err = e.callApocAlgoCloseness(ctx, cypher)
+	// APOC Community Detection
+	case strings.Contains(upper, "APOC.ALGO.LOUVAIN"):
+		result, err = e.callApocAlgoLouvain(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.LABELPROPAGATION"):
+		result, err = e.callApocAlgoLabelPropagation(ctx, cypher)
+	case strings.Contains(upper, "APOC.ALGO.WCC"):
+		result, err = e.callApocAlgoWCC(ctx, cypher)
 	// APOC Neighbor Traversal
 	case strings.Contains(upper, "APOC.NEIGHBORS.TOHOP"):
 		result, err = e.callApocNeighborsTohop(ctx, cypher)
 	case strings.Contains(upper, "APOC.NEIGHBORS.BYHOP"):
 		result, err = e.callApocNeighborsByhop(ctx, cypher)
+	// APOC Load/Export Procedures
+	case strings.Contains(upper, "APOC.LOAD.JSONARRAY"):
+		result, err = e.callApocLoadJsonArray(ctx, cypher)
+	case strings.Contains(upper, "APOC.LOAD.JSON"):
+		result, err = e.callApocLoadJson(ctx, cypher)
+	case strings.Contains(upper, "APOC.LOAD.CSV"):
+		result, err = e.callApocLoadCsv(ctx, cypher)
+	case strings.Contains(upper, "APOC.EXPORT.JSON.ALL"):
+		result, err = e.callApocExportJsonAll(ctx, cypher)
+	case strings.Contains(upper, "APOC.EXPORT.JSON.QUERY"):
+		result, err = e.callApocExportJsonQuery(ctx, cypher)
+	case strings.Contains(upper, "APOC.EXPORT.CSV.ALL"):
+		result, err = e.callApocExportCsvAll(ctx, cypher)
+	case strings.Contains(upper, "APOC.EXPORT.CSV.QUERY"):
+		result, err = e.callApocExportCsvQuery(ctx, cypher)
+	case strings.Contains(upper, "APOC.IMPORT.JSON"):
+		result, err = e.callApocImportJson(ctx, cypher)
 	// NornicDB Extensions
 	case strings.Contains(upper, "NORNICDB.VERSION"):
 		result, err = e.callNornicDbVersion()

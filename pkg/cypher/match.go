@@ -974,30 +974,28 @@ func splitArithmeticExpression(expr string) []string {
 
 // filterNodesByProperties filters nodes to only include those matching ALL specified properties.
 // This is used for MATCH pattern property filtering like MATCH (n:Label {prop: value}).
+// Uses parallel execution for large datasets (>1000 nodes) for improved performance.
 func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props map[string]interface{}) []*storage.Node {
 	if len(props) == 0 {
 		return nodes
 	}
 
-	var result []*storage.Node
-	for _, node := range nodes {
-		matches := true
+	// Create filter function that checks all properties
+	filterFn := func(node *storage.Node) bool {
 		for key, expectedVal := range props {
 			actualVal, exists := node.Properties[key]
 			if !exists {
-				matches = false
-				break
+				return false
 			}
 			if !e.compareEqual(actualVal, expectedVal) {
-				matches = false
-				break
+				return false
 			}
 		}
-		if matches {
-			result = append(result, node)
-		}
+		return true
 	}
-	return result
+
+	// Use parallel filtering for large datasets
+	return parallelFilterNodes(nodes, filterFn)
 }
 
 // executeCreate handles CREATE queries.

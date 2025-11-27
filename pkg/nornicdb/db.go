@@ -307,6 +307,11 @@ type Config struct {
 	AutoLinksSimilarityThreshold float64       `yaml:"auto_links_similarity_threshold"`
 	AutoLinksCoAccessWindow      time.Duration `yaml:"auto_links_co_access_window"`
 
+	// Parallel execution
+	ParallelEnabled      bool `yaml:"parallel_enabled"`       // Enable parallel query execution
+	ParallelMaxWorkers   int  `yaml:"parallel_max_workers"`   // Max worker goroutines (0 = auto, uses runtime.NumCPU())
+	ParallelMinBatchSize int  `yaml:"parallel_min_batch_size"` // Min items before parallelizing (default: 1000)
+
 	// Server
 	BoltPort int `yaml:"bolt_port"`
 	HTTPPort int `yaml:"http_port"`
@@ -341,6 +346,9 @@ func DefaultConfig() *Config {
 		AutoLinksEnabled:             true,
 		AutoLinksSimilarityThreshold: 0.82,
 		AutoLinksCoAccessWindow:      30 * time.Second,
+		ParallelEnabled:              true,   // Enable parallel query execution by default
+		ParallelMaxWorkers:           0,      // 0 = auto (runtime.NumCPU())
+		ParallelMinBatchSize:         1000,   // Parallelize for 1000+ items
 		BoltPort:                     7687,
 		HTTPPort:                     7474,
 	}
@@ -695,6 +703,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+
+	// Configure parallel execution
+	parallelCfg := cypher.ParallelConfig{
+		Enabled:      config.ParallelEnabled,
+		MaxWorkers:   config.ParallelMaxWorkers,
+		MinBatchSize: config.ParallelMinBatchSize,
+	}
+	// If MaxWorkers is 0, the parallel package will use runtime.NumCPU()
+	cypher.SetParallelConfig(parallelCfg)
 
 	// Initialize decay manager
 	if config.DecayEnabled {

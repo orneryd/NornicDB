@@ -1,5 +1,5 @@
 # NornicDB Configuration
-# 
+#
 # NornicDB is a high-performance drop-in replacement for Neo4j.
 # It receives pre-embedded nodes from Mimir - no embedding generation here.
 #
@@ -12,18 +12,18 @@
 server:
   # Bolt protocol port (Neo4j compatible)
   bolt_port: 7687
-  
+
   # HTTP API port (Neo4j compatible)
   http_port: 7474
-  
+
   # Data directory for persistence
   data_dir: ./data
-  
+
   # Authentication (Neo4j compatible format: username:password)
   # Default: disabled (set to "none" or leave unset)
   # To enable: set to "admin:admin" or use environment: NEO4J_AUTH=admin/admin
-  auth: "none"  # disabled by default for easy development
-  
+  auth: "none" # disabled by default for easy development
+
   # Enable TLS (optional)
   tls:
     enabled: false
@@ -36,7 +36,7 @@ server:
 gpu:
   # Enable GPU acceleration for vector search
   enabled: true
-  
+
   # Backend: auto, metal, cuda, opencl, vulkan, cpu
   # auto: Automatically detect best available backend
   # metal: Apple Silicon (M1/M2/M3)
@@ -45,11 +45,11 @@ gpu:
   # vulkan: Cross-platform (experimental)
   # cpu: Fallback, no GPU
   backend: auto
-  
+
   # Maximum VRAM usage (bytes, 0 = auto)
   # Default: ~80% of available VRAM
   max_vram_bytes: 0
-  
+
   # Batch size for GPU operations
   batch_size: 1000
 
@@ -59,10 +59,10 @@ gpu:
 decay:
   # Enable memory decay system
   enabled: true
-  
+
   # Run decay every N hours
   interval_hours: 24
-  
+
   # Memory types and their decay rates
   types:
     # Episodic: Personal events, experiences
@@ -70,23 +70,23 @@ decay:
     episodic:
       enabled: true
       initial_strength: 1.0
-      decay_rate: 0.1      # 10% per interval
+      decay_rate: 0.1 # 10% per interval
       min_strength: 0.1
-    
+
     # Semantic: Facts, concepts, knowledge
     # Slow, steady decay
     semantic:
       enabled: true
       initial_strength: 1.0
-      decay_rate: 0.02     # 2% per interval
+      decay_rate: 0.02 # 2% per interval
       min_strength: 0.3
-    
+
     # Procedural: Skills, how-to knowledge
     # Very slow decay
     procedural:
       enabled: true
       initial_strength: 1.0
-      decay_rate: 0.01     # 1% per interval
+      decay_rate: 0.01 # 1% per interval
       min_strength: 0.5
 
 # =============================================================================
@@ -95,21 +95,21 @@ decay:
 auto_relationships:
   # Enable automatic relationship creation
   enabled: true
-  
+
   # Minimum similarity threshold for auto-linking (0.0-1.0)
   similarity_threshold: 0.85
-  
+
   # Maximum edges to auto-create per node
   max_edges_per_node: 10
-  
+
   # Types of auto-relationships to create
   types:
     # Link nodes with similar embeddings
     embedding_similarity: true
-    
+
     # Link nodes accessed together
     co_access: true
-    
+
     # Link nodes created close in time
     temporal_proximity: true
 
@@ -117,7 +117,7 @@ auto_relationships:
 # Topological Link Prediction (Feature Flag - NornicDB-specific)
 # =============================================================================
 # Neo4j GDS-compatible topological link prediction
-# 
+#
 # IMPORTANT: Cypher procedures (CALL gds.linkPrediction.*) are ALWAYS available
 # This configuration only controls AUTOMATIC integration with inference engine
 #
@@ -126,44 +126,44 @@ topology_link_prediction:
   # Master feature flag - enables/disables AUTOMATIC topology integration
   # When false: Cypher procedures still work, but OnStore() won't use topology
   # When true: OnStore() automatically blends topology + semantic suggestions
-  auto_integration_enabled: false  # FEATURE FLAG: disabled by default (opt-in)
-  
+  auto_integration_enabled: false # FEATURE FLAG: disabled by default (opt-in)
+
   # Algorithm to use for topology scoring
-  # Options: adamic_adar, jaccard, common_neighbors, 
+  # Options: adamic_adar, jaccard, common_neighbors,
   #          resource_allocation, preferential_attachment, ensemble
   # adamic_adar: Best all-around for most graphs (recommended)
   # ensemble: Combines all 5 algorithms (slower, more robust)
   algorithm: adamic_adar
-  
+
   # Top-K topology candidates to consider
   top_k: 10
-  
+
   # Minimum topology score threshold (0.0-1.0)
   # Lower = more suggestions, higher = fewer but more confident
   min_score: 0.3
-  
+
   # Weight for topology vs semantic (0.0-1.0)
   # 0.0 = pure semantic, 1.0 = pure topology
   # 0.4 = 40% topology, 60% semantic (recommended balanced)
   topology_weight: 0.4
-  
+
   # Graph cache refresh interval
   # Higher = better performance, lower = more up-to-date
   # 0 = rebuild on every prediction (safest, slowest)
   # 100 = rebuild every 100 predictions (recommended)
   graph_refresh_interval: 100
-  
+
   # A/B Testing support
   # Allows running experiments comparing topology vs semantic-only
   ab_testing:
     # Enable A/B test mode (splits traffic)
     enabled: false
-    
+
     # Percentage of requests to use topology (0-100)
     # 50 = 50% get topology, 50% get semantic-only
     # Used for gradual rollout and A/B testing
     topology_percentage: 50
-    
+
     # Log predictions for analysis (debug only)
     log_predictions: false
 
@@ -175,16 +175,16 @@ search:
   rrf:
     # RRF constant (higher = more equal weight to lower ranks)
     k: 60
-    
+
     # Default weight for vector search (0.0-1.0)
     vector_weight: 0.6
-    
+
     # Default weight for BM25 search (0.0-1.0)
     bm25_weight: 0.4
-    
+
     # Use adaptive weights based on query length
     adaptive: true
-  
+
   # Properties indexed for full-text search
   # Must match Mimir's Neo4j node_search fulltext index
   fulltext_properties:
@@ -198,14 +198,40 @@ search:
     - requirements
 
 # =============================================================================
+# Parallel Execution Configuration (NornicDB-specific)
+# =============================================================================
+# Parallel execution significantly improves query performance on large datasets
+# by distributing work across multiple CPU cores.
+#
+# Performance: 3-4x speedup on large node sets (tested with 100K nodes)
+# Recommended for production workloads with >1000 nodes
+parallel:
+  # Enable parallel query execution globally
+  # Disabling reverts to sequential (single-threaded) execution
+  enabled: true
+
+  # Maximum number of worker goroutines
+  # 0 = auto (uses all available CPU cores, runtime.NumCPU())
+  # Set explicitly for container resource limits or testing
+  max_workers: 0
+
+  # Minimum batch size before parallelizing
+  # Below this threshold, sequential execution is used (overhead not worth it)
+  # Tune based on your typical query sizes:
+  #   - 500: Aggressive parallelization (more overhead, better for large queries)
+  #   - 1000: Balanced (recommended default)
+  #   - 2000: Conservative (less overhead, only parallelize large queries)
+  min_batch_size: 1000
+
+# =============================================================================
 # Logging Configuration
 # =============================================================================
 logging:
   # Log level: debug, info, warn, error
   level: info
-  
+
   # Log format: json, text
   format: text
-  
+
   # Log file (empty = stdout only)
   file: ""

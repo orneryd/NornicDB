@@ -68,6 +68,10 @@ Features:
 	serveCmd.Flags().Int("embedding-dim", 1024, "Embedding dimensions")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
 	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
+	// Parallel execution flags
+	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
+	serveCmd.Flags().Int("parallel-workers", 0, "Max parallel workers (0 = auto, uses all CPUs)")
+	serveCmd.Flags().Int("parallel-batch-size", 1000, "Min batch size before parallelizing")
 	rootCmd.AddCommand(serveCmd)
 
 	// Init command
@@ -136,6 +140,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	embeddingDim, _ := cmd.Flags().GetInt("embedding-dim")
 	noAuth, _ := cmd.Flags().GetBool("no-auth")
 	adminPassword, _ := cmd.Flags().GetString("admin-password")
+	parallelEnabled, _ := cmd.Flags().GetBool("parallel")
+	parallelWorkers, _ := cmd.Flags().GetInt("parallel-workers")
+	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
 
 	fmt.Printf("🚀 Starting NornicDB v%s\n", version)
 	fmt.Printf("   Data directory:  %s\n", dataDir)
@@ -143,6 +150,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   HTTP API:        http://localhost:%d\n", httpPort)
 	fmt.Printf("   Embedding URL:   %s\n", embeddingURL)
 	fmt.Printf("   Embedding model: %s (%d dims)\n", embeddingModel, embeddingDim)
+	if parallelEnabled {
+		workers := parallelWorkers
+		if workers == 0 {
+			workers = runtime.NumCPU()
+		}
+		fmt.Printf("   Parallel exec:   ✅ enabled (%d workers, batch size %d)\n", workers, parallelBatchSize)
+	} else {
+		fmt.Printf("   Parallel exec:   ❌ disabled\n")
+	}
 	fmt.Println()
 
 	// Create data directory
@@ -158,6 +174,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	config.EmbeddingAPIURL = embeddingURL
 	config.EmbeddingModel = embeddingModel
 	config.EmbeddingDimensions = embeddingDim
+	config.ParallelEnabled = parallelEnabled
+	config.ParallelMaxWorkers = parallelWorkers
+	config.ParallelMinBatchSize = parallelBatchSize
 
 	// Open database
 	fmt.Println("📂 Opening database...")
@@ -372,6 +391,11 @@ decay_archive_threshold: 0.05
 # Auto-linking
 auto_links_enabled: true
 auto_links_similarity_threshold: 0.82
+
+# Parallel execution
+parallel_enabled: true
+parallel_max_workers: 0           # 0 = auto (uses all CPUs)
+parallel_min_batch_size: 1000     # Only parallelize for 1000+ items
 
 # Server
 bolt_port: 7687
