@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,8 +17,11 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
+	"github.com/orneryd/nornicdb/pkg/cache"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/pool"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/orneryd/nornicdb/ui"
 )
@@ -25,6 +30,39 @@ var (
 	version = "0.1.0"
 	commit  = "dev"
 )
+
+// parseMemorySize parses a human-readable memory size string.
+// Supports: "1024", "1KB", "1MB", "1GB", "1TB", "0", "unlimited"
+func parseMemorySize(s string) int64 {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" || s == "0" || s == "UNLIMITED" {
+		return 0
+	}
+
+	s = strings.TrimSuffix(s, "B")
+
+	var multiplier int64 = 1
+	switch {
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "K")
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "G"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "G")
+	case strings.HasSuffix(s, "T"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "T")
+	}
+
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return val * multiplier
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -72,6 +110,12 @@ Features:
 	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
 	serveCmd.Flags().Int("parallel-workers", 0, "Max parallel workers (0 = auto, uses all CPUs)")
 	serveCmd.Flags().Int("parallel-batch-size", 1000, "Min batch size before parallelizing")
+	// Memory management flags
+	serveCmd.Flags().String("memory-limit", "", "Memory limit (e.g., 2GB, 512MB, 0 for unlimited)")
+	serveCmd.Flags().Int("gc-percent", 100, "GC aggressiveness (100=default, lower=more aggressive)")
+	serveCmd.Flags().Bool("pool-enabled", true, "Enable object pooling for reduced allocations")
+	serveCmd.Flags().Int("query-cache-size", 1000, "Query plan cache size (0 to disable)")
+	serveCmd.Flags().String("query-cache-ttl", "5m", "Query plan cache TTL")
 	rootCmd.AddCommand(serveCmd)
 
 	// Init command
@@ -143,6 +187,42 @@ func runServe(cmd *cobra.Command, args []string) error {
 	parallelEnabled, _ := cmd.Flags().GetBool("parallel")
 	parallelWorkers, _ := cmd.Flags().GetInt("parallel-workers")
 	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
+	// Memory management flags
+	memoryLimit, _ := cmd.Flags().GetString("memory-limit")
+	gcPercent, _ := cmd.Flags().GetInt("gc-percent")
+	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
+	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
+	queryCacheTTL, _ := cmd.Flags().GetString("query-cache-ttl")
+
+	// Apply memory configuration FIRST (before heavy allocations)
+	cfg := config.LoadFromEnv()
+
+	// Override with CLI flags if provided
+	if memoryLimit != "" {
+		cfg.Memory.RuntimeLimitStr = memoryLimit
+		cfg.Memory.RuntimeLimit = parseMemorySize(memoryLimit)
+	}
+	if gcPercent != 100 {
+		cfg.Memory.GCPercent = gcPercent
+	}
+	cfg.Memory.PoolEnabled = poolEnabled
+	cfg.Memory.QueryCacheEnabled = queryCacheSize > 0
+	cfg.Memory.QueryCacheSize = queryCacheSize
+	if ttl, err := time.ParseDuration(queryCacheTTL); err == nil {
+		cfg.Memory.QueryCacheTTL = ttl
+	}
+	cfg.Memory.ApplyRuntimeMemory()
+
+	// Configure object pooling
+	pool.Configure(pool.PoolConfig{
+		Enabled: cfg.Memory.PoolEnabled,
+		MaxSize: cfg.Memory.PoolMaxSize,
+	})
+
+	// Configure query cache
+	if cfg.Memory.QueryCacheEnabled {
+		cache.ConfigureGlobalCache(cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL)
+	}
 
 	fmt.Printf("🚀 Starting NornicDB v%s\n", version)
 	fmt.Printf("   Data directory:  %s\n", dataDir)
@@ -159,6 +239,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("   Parallel exec:   ❌ disabled\n")
 	}
+	// Memory management info
+	if cfg.Memory.RuntimeLimit > 0 {
+		fmt.Printf("   Memory limit:    %s\n", config.FormatMemorySize(cfg.Memory.RuntimeLimit))
+	} else {
+		fmt.Printf("   Memory limit:    unlimited\n")
+	}
+	if cfg.Memory.GCPercent != 100 {
+		fmt.Printf("   GC percent:      %d%% (more aggressive)\n", cfg.Memory.GCPercent)
+	}
+	if cfg.Memory.PoolEnabled {
+		fmt.Printf("   Object pooling:  ✅ enabled\n")
+	}
+	if cfg.Memory.QueryCacheEnabled {
+		fmt.Printf("   Query cache:     ✅ %d entries, TTL %v\n", cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL)
+	}
 	fmt.Println()
 
 	// Create data directory
@@ -167,20 +262,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Configure database
-	config := nornicdb.DefaultConfig()
-	config.DataDir = dataDir
-	config.BoltPort = boltPort
-	config.HTTPPort = httpPort
-	config.EmbeddingAPIURL = embeddingURL
-	config.EmbeddingModel = embeddingModel
-	config.EmbeddingDimensions = embeddingDim
-	config.ParallelEnabled = parallelEnabled
-	config.ParallelMaxWorkers = parallelWorkers
-	config.ParallelMinBatchSize = parallelBatchSize
+	dbConfig := nornicdb.DefaultConfig()
+	dbConfig.DataDir = dataDir
+	dbConfig.BoltPort = boltPort
+	dbConfig.HTTPPort = httpPort
+	dbConfig.EmbeddingAPIURL = embeddingURL
+	dbConfig.EmbeddingModel = embeddingModel
+	dbConfig.EmbeddingDimensions = embeddingDim
+	dbConfig.ParallelEnabled = parallelEnabled
+	dbConfig.ParallelMaxWorkers = parallelWorkers
+	dbConfig.ParallelMinBatchSize = parallelBatchSize
 
 	// Open database
 	fmt.Println("📂 Opening database...")
-	db, err := nornicdb.Open(dataDir, config)
+	db, err := nornicdb.Open(dataDir, dbConfig)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

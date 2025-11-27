@@ -38,6 +38,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ type ServerConfig struct {
 	HTTPTLSKey string
 }
 
-// MemoryConfig holds NornicDB memory decay settings.
+// MemoryConfig holds NornicDB memory decay settings and runtime memory management.
 type MemoryConfig struct {
 	// DecayEnabled controls memory decay
 	DecayEnabled bool
@@ -168,6 +169,28 @@ type MemoryConfig struct {
 	AutoLinksEnabled bool
 	// AutoLinksSimilarityThreshold for similarity-based links
 	AutoLinksSimilarityThreshold float64
+
+	// === Runtime Memory Management (Go runtime tuning) ===
+
+	// RuntimeLimit is the soft memory limit (GOMEMLIMIT) in bytes
+	// 0 = unlimited (Go manages automatically)
+	// Set to 80% of container memory for optimal performance
+	RuntimeLimit int64
+	// RuntimeLimitStr is the human-readable form (e.g., "2GB", "512MB")
+	RuntimeLimitStr string
+	// GCPercent controls GC aggressiveness (GOGC)
+	// 100 = default, lower = more aggressive (less memory, more CPU)
+	GCPercent int
+	// PoolEnabled controls object pooling for query results
+	PoolEnabled bool
+	// PoolMaxSize limits pool memory usage per pool
+	PoolMaxSize int
+	// QueryCacheEnabled controls query plan caching
+	QueryCacheEnabled bool
+	// QueryCacheSize is the maximum number of cached query plans
+	QueryCacheSize int
+	// QueryCacheTTL is how long cached plans remain valid
+	QueryCacheTTL time.Duration
 }
 
 // ComplianceConfig holds settings for GDPR/HIPAA/FISMA/SOC2 compliance.
@@ -180,8 +203,8 @@ type ComplianceConfig struct {
 
 	// Data Retention - Required by: GDPR Art.5(1)(e), HIPAA §164.530(j)
 	RetentionEnabled     bool
-	RetentionPolicyDays  int  // Default retention period (0 = indefinite)
-	RetentionAutoDelete  bool // Auto-delete vs archive after retention
+	RetentionPolicyDays  int      // Default retention period (0 = indefinite)
+	RetentionAutoDelete  bool     // Auto-delete vs archive after retention
 	RetentionExemptRoles []string // Roles exempt from retention (e.g., "admin")
 
 	// Access Control - Required by: GDPR Art.32, HIPAA §164.312(a), FISMA
@@ -205,9 +228,9 @@ type ComplianceConfig struct {
 	AnonymizationMethod  string // "pseudonymization", "generalization", "suppression"
 
 	// Consent - Required by: GDPR Art.7
-	ConsentRequired      bool
-	ConsentVersioning    bool
-	ConsentAuditTrail    bool
+	ConsentRequired   bool
+	ConsentVersioning bool
+	ConsentAuditTrail bool
 
 	// Breach Notification - Required by: GDPR Art.33-34, HIPAA §164.408
 	BreachDetectionEnabled bool
@@ -234,7 +257,7 @@ type LoggingConfig struct {
 type FeatureFlagsConfig struct {
 	// Kalman filtering for predictive smoothing
 	KalmanEnabled bool
-	
+
 	// Topological link prediction AUTOMATIC integration
 	// NOTE: Neo4j GDS procedures (CALL gds.linkPrediction.*) are ALWAYS available
 	// This flag only controls automatic integration with inference.Engine.OnStore()
@@ -244,7 +267,7 @@ type FeatureFlagsConfig struct {
 	TopologyTopK                   int
 	TopologyMinScore               float64
 	TopologyGraphRefreshInterval   int
-	
+
 	// A/B testing for automatic topology integration
 	TopologyABTestEnabled    bool
 	TopologyABTestPercentage int // 0-100
@@ -282,14 +305,14 @@ type FeatureFlagsConfig struct {
 //
 //	// No environment variables set - use defaults
 //	config := config.LoadFromEnv()
-//	
+//
 //	// Auth disabled by default (NEO4J_AUTH=none)
 //	fmt.Printf("Auth enabled: %v\n", config.Auth.Enabled) // false
-//	
+//
 //	// Bolt server on default port
 //	fmt.Printf("Bolt: %s:%d\n",
 //		config.Server.BoltAddress, config.Server.BoltPort) // 0.0.0.0:7687
-//	
+//
 //	// Memory decay enabled by default
 //	fmt.Printf("Decay enabled: %v\n", config.Memory.DecayEnabled) // true
 //
@@ -300,14 +323,14 @@ type FeatureFlagsConfig struct {
 //	os.Setenv("NEO4J_dbms_connector_bolt_listen__address_port", "7687")
 //	os.Setenv("NORNICDB_AUTH_JWT_SECRET", "your-32-char-secret-key-here!!")
 //	os.Setenv("NORNICDB_AUDIT_ENABLED", "true")
-//	
+//
 //	config := config.LoadFromEnv()
-//	
+//
 //	// Validate before use
 //	if err := config.Validate(); err != nil {
 //		log.Fatal("Invalid config:", err)
 //	}
-//	
+//
 //	// Auth now enabled
 //	fmt.Printf("Admin: %s\n", config.Auth.InitialUsername) // admin
 //	fmt.Printf("Audit: %s\n", config.Compliance.AuditLogPath)
@@ -332,7 +355,7 @@ type FeatureFlagsConfig struct {
 //	    ports:
 //	      - "7687:7687"
 //	      - "7474:7474"
-//	
+//
 //	// In application code
 //	config := config.LoadFromEnv()
 //	// All environment variables automatically loaded
@@ -349,9 +372,9 @@ type FeatureFlagsConfig struct {
 //	os.Setenv("NORNICDB_MAX_FAILED_LOGINS", "3")
 //	os.Setenv("NORNICDB_LOCKOUT_DURATION", "30m")
 //	os.Setenv("NORNICDB_SESSION_TIMEOUT", "15m")
-//	
+//
 //	config := config.LoadFromEnv()
-//	
+//
 //	// Verify HIPAA requirements met
 //	if !config.Compliance.AuditEnabled {
 //		log.Fatal("HIPAA requires audit logging")
@@ -367,10 +390,10 @@ type FeatureFlagsConfig struct {
 //	if err != nil {
 //		log.Printf("No .env file: %v", err)
 //	}
-//	
+//
 //	// Then load from environment
 //	config := config.LoadFromEnv()
-//	
+//
 //	// Override for specific environment
 //	switch os.Getenv("ENV") {
 //	case "production":
@@ -392,10 +415,10 @@ type FeatureFlagsConfig struct {
 //   - The function reads ALL the sticky notes and builds a complete recipe
 //
 // Why use environment variables?
-//   1. Security: Keep secrets out of code (passwords, API keys)
-//   2. Flexibility: Change settings without recompiling
-//   3. Docker-friendly: Easy to configure containers
-//   4. 12-Factor App: Industry best practice
+//  1. Security: Keep secrets out of code (passwords, API keys)
+//  2. Flexibility: Change settings without recompiling
+//  3. Docker-friendly: Easy to configure containers
+//  4. 12-Factor App: Industry best practice
 //
 // Neo4j Compatibility:
 //   - NEO4J_AUTH format: "username/password" or "none"
@@ -404,39 +427,40 @@ type FeatureFlagsConfig struct {
 //
 // Common Environment Variables:
 //
-//   Authentication:
-//   - NEO4J_AUTH="neo4j/password" (enable auth)
-//   - NEO4J_AUTH="none" (disable auth, dev only)
-//   - NORNICDB_AUTH_JWT_SECRET="..." (32+ chars)
+//	Authentication:
+//	- NEO4J_AUTH="neo4j/password" (enable auth)
+//	- NEO4J_AUTH="none" (disable auth, dev only)
+//	- NORNICDB_AUTH_JWT_SECRET="..." (32+ chars)
 //
-//   Network:
-//   - NEO4J_dbms_connector_bolt_listen__address_port=7687
-//   - NEO4J_dbms_connector_http_listen__address_port=7474
+//	Network:
+//	- NEO4J_dbms_connector_bolt_listen__address_port=7687
+//	- NEO4J_dbms_connector_http_listen__address_port=7474
 //
-//   Storage:
-//   - NEO4J_dbms_directories_data="./data"
-//   - NEO4J_dbms_default__database="nornicdb"
+//	Storage:
+//	- NEO4J_dbms_directories_data="./data"
+//	- NEO4J_dbms_default__database="nornicdb"
 //
-//   Memory (NornicDB-specific):
-//   - NORNICDB_MEMORY_DECAY_ENABLED=true
-//   - NORNICDB_EMBEDDING_PROVIDER=ollama
-//   - NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
+//	Memory (NornicDB-specific):
+//	- NORNICDB_MEMORY_DECAY_ENABLED=true
+//	- NORNICDB_EMBEDDING_PROVIDER=ollama
+//	- NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
 //
-//   Compliance:
-//   - NORNICDB_AUDIT_ENABLED=true
-//   - NORNICDB_AUDIT_RETENTION_DAYS=2555
-//   - NORNICDB_ENCRYPTION_AT_REST=true
+//	Compliance:
+//	- NORNICDB_AUDIT_ENABLED=true
+//	- NORNICDB_AUDIT_RETENTION_DAYS=2555
+//	- NORNICDB_ENCRYPTION_AT_REST=true
 //
 // Configuration Priority:
-//   1. Environment variables (highest)
-//   2. Default values (if env var not set)
-//   3. No config files (environment-only by design)
+//  1. Environment variables (highest)
+//  2. Default values (if env var not set)
+//  3. No config files (environment-only by design)
 //
 // Validation:
-//   Always call config.Validate() after LoadFromEnv() to catch errors:
-//   - Missing required fields
-//   - Invalid values (negative numbers, bad formats)
-//   - Conflicting settings
+//
+//	Always call config.Validate() after LoadFromEnv() to catch errors:
+//	- Missing required fields
+//	- Invalid values (negative numbers, bad formats)
+//	- Conflicting settings
 //
 // Performance:
 //   - O(n) where n = number of environment variables
@@ -444,8 +468,9 @@ type FeatureFlagsConfig struct {
 //   - Config is loaded once at startup
 //
 // Thread Safety:
-//   LoadFromEnv reads environment variables which are process-global and
-//   should not be modified after startup. The returned Config is immutable.
+//
+//	LoadFromEnv reads environment variables which are process-global and
+//	should not be modified after startup. The returned Config is immutable.
 func LoadFromEnv() *Config {
 	config := &Config{}
 
@@ -505,6 +530,16 @@ func LoadFromEnv() *Config {
 	config.Memory.EmbeddingDimensions = getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024)
 	config.Memory.AutoLinksEnabled = getEnvBool("NORNICDB_AUTO_LINKS_ENABLED", true)
 	config.Memory.AutoLinksSimilarityThreshold = getEnvFloat("NORNICDB_AUTO_LINKS_THRESHOLD", 0.82)
+
+	// Runtime memory management settings
+	config.Memory.RuntimeLimitStr = getEnv("NORNICDB_MEMORY_LIMIT", "0")
+	config.Memory.RuntimeLimit = parseMemorySize(config.Memory.RuntimeLimitStr)
+	config.Memory.GCPercent = getEnvInt("NORNICDB_GC_PERCENT", 100)
+	config.Memory.PoolEnabled = getEnvBool("NORNICDB_POOL_ENABLED", true)
+	config.Memory.PoolMaxSize = getEnvInt("NORNICDB_POOL_MAX_SIZE", 1000)
+	config.Memory.QueryCacheEnabled = getEnvBool("NORNICDB_QUERY_CACHE_ENABLED", true)
+	config.Memory.QueryCacheSize = getEnvInt("NORNICDB_QUERY_CACHE_SIZE", 1000)
+	config.Memory.QueryCacheTTL = getEnvDuration("NORNICDB_QUERY_CACHE_TTL", 5*time.Minute)
 
 	// Compliance settings (NornicDB-specific, framework-agnostic)
 	// Audit Logging
@@ -704,4 +739,71 @@ func getEnvStringSlice(key string, defaultVal []string) []string {
 func generateDefaultSecret() string {
 	// In production, this should be explicitly set
 	return "CHANGE_ME_IN_PRODUCTION_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+// parseMemorySize parses a human-readable memory size string.
+// Supports: "1024", "1KB", "1MB", "1GB", "1TB", "0", "unlimited"
+func parseMemorySize(s string) int64 {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "" || s == "0" || s == "UNLIMITED" {
+		return 0
+	}
+
+	s = strings.TrimSuffix(s, "B")
+
+	var multiplier int64 = 1
+	switch {
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "K")
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "G"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "G")
+	case strings.HasSuffix(s, "T"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "T")
+	}
+
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return val * multiplier
+}
+
+// FormatMemorySize formats bytes as human-readable string.
+func FormatMemorySize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case bytes >= TB:
+		return fmt.Sprintf("%.2f TB", float64(bytes)/float64(TB))
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+// ApplyRuntimeMemory applies the runtime memory settings to the Go runtime.
+// Should be called early in main() before heavy allocations.
+func (c *MemoryConfig) ApplyRuntimeMemory() {
+	if c.RuntimeLimit > 0 {
+		debug.SetMemoryLimit(c.RuntimeLimit)
+	}
+	if c.GCPercent != 100 {
+		debug.SetGCPercent(c.GCPercent)
+	}
 }

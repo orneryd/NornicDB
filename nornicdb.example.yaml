@@ -224,6 +224,45 @@ parallel:
   min_batch_size: 1000
 
 # =============================================================================
+# Memory Management Configuration (NornicDB-specific)
+# =============================================================================
+# Fine-grained control over Go's memory management to balance
+# performance vs memory usage for different deployment scenarios.
+#
+# Environment variables (override these settings):
+#   NORNICDB_MEMORY_LIMIT, NORNICDB_GC_PERCENT, NORNICDB_POOL_ENABLED,
+#   NORNICDB_QUERY_CACHE_SIZE, NORNICDB_QUERY_CACHE_TTL
+memory:
+  # Soft memory limit (GOMEMLIMIT)
+  # Examples: "2GB", "512MB", "0" (unlimited)
+  # Recommended: Set to 80% of container/system memory
+  # For 4GB container: "3GB"
+  limit: "0"  # Unlimited by default
+
+  # GC aggressiveness (GOGC)
+  # 100 = default (GC when heap doubles)
+  # 50  = more frequent GC (lower memory, slightly more CPU)
+  # 20  = aggressive GC (lowest memory, more CPU overhead)
+  # 200 = less frequent GC (higher memory, better throughput)
+  # -1  = disable GC (use with caution!)
+  gc_percent: 100
+
+  # Object pooling for reduced allocations
+  # Reuses query result structures, reducing GC pressure
+  # Recommended: true for high-throughput workloads
+  pool_enabled: true
+
+  # Maximum objects per pool (memory leak prevention)
+  pool_max_size: 1000
+
+  # Query plan caching
+  # Avoids re-parsing identical Cypher queries
+  query_cache:
+    enabled: true
+    size: 1000      # Maximum cached query plans
+    ttl: "5m"       # Cache entry TTL
+
+# =============================================================================
 # Logging Configuration
 # =============================================================================
 logging:
