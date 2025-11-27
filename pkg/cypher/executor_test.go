@@ -4471,3 +4471,135 @@ func TestSubstituteParamsComplexQuery(t *testing.T) {
 		assert.Equal(t, "/app/docs/README.md", result.Rows[0][0])
 	}
 }
+
+// TestRelationshipCountAggregation tests that COUNT(r) properly aggregates
+// all relationships instead of returning 1 (the bug that was fixed)
+func TestRelationshipCountAggregation(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create a small graph with multiple relationships
+	// 3 products, 2 categories, 2 suppliers
+	// Each product has 2 relationships (PART_OF category, SUPPLIES from supplier)
+	// Total: 6 relationships
+
+	// Create categories
+	cat1 := &storage.Node{ID: "cat1", Labels: []string{"Category"}, Properties: map[string]interface{}{"categoryID": int64(1), "name": "Beverages"}}
+	cat2 := &storage.Node{ID: "cat2", Labels: []string{"Category"}, Properties: map[string]interface{}{"categoryID": int64(2), "name": "Condiments"}}
+	require.NoError(t, store.CreateNode(cat1))
+	require.NoError(t, store.CreateNode(cat2))
+
+	// Create suppliers
+	sup1 := &storage.Node{ID: "sup1", Labels: []string{"Supplier"}, Properties: map[string]interface{}{"supplierID": int64(1), "name": "Exotic Liquids"}}
+	sup2 := &storage.Node{ID: "sup2", Labels: []string{"Supplier"}, Properties: map[string]interface{}{"supplierID": int64(2), "name": "New Orleans"}}
+	require.NoError(t, store.CreateNode(sup1))
+	require.NoError(t, store.CreateNode(sup2))
+
+	// Create products
+	prod1 := &storage.Node{ID: "prod1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(1), "name": "Chai"}}
+	prod2 := &storage.Node{ID: "prod2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(2), "name": "Chang"}}
+	prod3 := &storage.Node{ID: "prod3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(3), "name": "Aniseed Syrup"}}
+	require.NoError(t, store.CreateNode(prod1))
+	require.NoError(t, store.CreateNode(prod2))
+	require.NoError(t, store.CreateNode(prod3))
+
+	// Create relationships
+	// Product 1: Beverages category, Supplier 1
+	edge1 := &storage.Edge{ID: "e1", StartNode: "prod1", EndNode: "cat1", Type: "PART_OF"}
+	edge2 := &storage.Edge{ID: "e2", StartNode: "sup1", EndNode: "prod1", Type: "SUPPLIES"}
+	require.NoError(t, store.CreateEdge(edge1))
+	require.NoError(t, store.CreateEdge(edge2))
+
+	// Product 2: Beverages category, Supplier 1
+	edge3 := &storage.Edge{ID: "e3", StartNode: "prod2", EndNode: "cat1", Type: "PART_OF"}
+	edge4 := &storage.Edge{ID: "e4", StartNode: "sup1", EndNode: "prod2", Type: "SUPPLIES"}
+	require.NoError(t, store.CreateEdge(edge3))
+	require.NoError(t, store.CreateEdge(edge4))
+
+	// Product 3: Condiments category, Supplier 2
+	edge5 := &storage.Edge{ID: "e5", StartNode: "prod3", EndNode: "cat2", Type: "PART_OF"}
+	edge6 := &storage.Edge{ID: "e6", StartNode: "sup2", EndNode: "prod3", Type: "SUPPLIES"}
+	require.NoError(t, store.CreateEdge(edge5))
+	require.NoError(t, store.CreateEdge(edge6))
+
+	// Test 1: Count all relationships
+	t.Run("count all relationships", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN count(r) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1, "Should return single aggregated row")
+		require.Len(t, result.Rows[0], 1, "Should return single column")
+		
+		count := result.Rows[0][0]
+		assert.Equal(t, int64(6), count, "Should count all 6 relationships, not return 1")
+	})
+
+	// Test 2: Count relationships by type
+	t.Run("count PART_OF relationships", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r:PART_OF]->() RETURN count(r) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		
+		count := result.Rows[0][0]
+		assert.Equal(t, int64(3), count, "Should count 3 PART_OF relationships")
+	})
+
+	t.Run("count SUPPLIES relationships", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r:SUPPLIES]->() RETURN count(r) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		
+		count := result.Rows[0][0]
+		assert.Equal(t, int64(3), count, "Should count 3 SUPPLIES relationships")
+	})
+
+	// Test 3: Count with wildcard (COUNT(*))
+	t.Run("count with wildcard", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN count(*) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		
+		count := result.Rows[0][0]
+		assert.Equal(t, int64(6), count, "COUNT(*) should count all 6 relationships")
+	})
+
+	// Test 4: Verify non-aggregation still works (should return all rows)
+	t.Run("non-aggregation returns all relationships", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN type(r) as relType", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Rows, 6, "Non-aggregation should return all 6 relationship rows")
+	})
+
+	// Test 5: Count with GROUP BY (implicit grouping by type)
+	t.Run("count grouped by type", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN type(r) as relType, count(*) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Should group by type: PART_OF (3) and SUPPLIES (3) = 2 groups
+		assert.Len(t, result.Rows, 2, "Should return 2 groups (PART_OF and SUPPLIES)")
+		
+		// Verify counts
+		for _, row := range result.Rows {
+			relType := row[0].(string)
+			count := row[1].(int64)
+			assert.Equal(t, int64(3), count, "Each type should have count of 3")
+			assert.Contains(t, []string{"PART_OF", "SUPPLIES"}, relType)
+		}
+	})
+
+	// Test 6: Empty result aggregation
+	t.Run("count with no matches", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH ()-[r:NONEXISTENT]->() RETURN count(r) as count", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		
+		count := result.Rows[0][0]
+		assert.Equal(t, int64(0), count, "COUNT should return 0 for no matches")
+	})
+}

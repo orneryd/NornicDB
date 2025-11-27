@@ -847,18 +847,19 @@ func TestStringConcatenation(t *testing.T) {
 func TestCountFunction(t *testing.T) {
 	e := setupTestExecutor(t)
 
-	// count(*) in expression context returns 1
+	// count(*) in expression context should NOT be evaluated here
+	// Aggregation functions must be handled by executeAggregation() or executeMatchWithRelationships()
 	result := e.evaluateExpressionWithContext("count(*)", nil, nil)
-	if result != int64(1) {
-		t.Errorf("count(*) = %v, want 1", result)
+	if result != nil {
+		t.Errorf("count(*) in expression context should return nil, got %v", result)
 	}
 
-	// count(n) also returns 1 in expression context
+	// count(n) also should NOT be evaluated in expression context
 	node := createTestNode(t, e, "node-1", []string{"Person"}, nil)
 	nodes := map[string]*storage.Node{"n": node}
 	result = e.evaluateExpressionWithContext("count(n)", nodes, nil)
-	if result != int64(1) {
-		t.Errorf("count(n) = %v, want 1", result)
+	if result != nil {
+		t.Errorf("count(n) in expression context should return nil, got %v", result)
 	}
 }
 

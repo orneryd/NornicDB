@@ -113,7 +113,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1289,20 +1288,33 @@ func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 	}
 }
 
+// internalProps is pre-computed at package init to avoid allocation per call.
+// These properties should not be returned in query results.
+// All keys are lowercase for case-insensitive matching.
+var internalProps = map[string]bool{
+	"embedding":        true,
+	"embeddings":       true,
+	"vector":           true,
+	"vectors":          true,
+	"_embedding":       true,
+	"_embeddings":      true,
+	"chunk_embedding":  true,
+	"chunk_embeddings": true,
+}
+
 // isInternalProperty returns true for properties that should not be returned in results.
 // This includes embeddings (huge float arrays) and other internal metadata.
+// Uses direct lookup for common lowercase names, falls back to ToLower for mixed case.
 func (e *StorageExecutor) isInternalProperty(propName string) bool {
-	internalProps := map[string]bool{
-		"embedding":        true,
-		"embeddings":       true,
-		"vector":           true,
-		"vectors":          true,
-		"_embedding":       true,
-		"_embeddings":      true,
-		"chunk_embedding":  true,
-		"chunk_embeddings": true,
+	// Fast path: check if it's already lowercase (most common case)
+	if internalProps[propName] {
+		return true
 	}
-	return internalProps[strings.ToLower(propName)]
+	// Check for uppercase first char (common pattern: Embedding, Vector)
+	if len(propName) > 0 && propName[0] >= 'A' && propName[0] <= 'Z' {
+		return internalProps[strings.ToLower(propName)]
+	}
+	return false
 }
 
 // extractVarName extracts the variable name from a pattern like "(n:Label {...})"
@@ -2360,6 +2372,7 @@ func (e *StorageExecutor) compareLess(actual, expected interface{}) bool {
 }
 
 // compareRegex handles =~ regex comparison
+// Uses cached compiled regex for performance (avoids recompiling same pattern)
 func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 	pattern, ok := expected.(string)
 	if !ok {
@@ -2367,11 +2380,13 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 	}
 
 	actualStr := fmt.Sprintf("%v", actual)
-	matched, err := regexp.MatchString(pattern, actualStr)
+
+	// Use cached regex compilation
+	re, err := GetCachedRegex(pattern)
 	if err != nil {
 		return false
 	}
-	return matched
+	return re.MatchString(actualStr)
 }
 
 // evaluateStringOp handles CONTAINS, STARTS WITH, ENDS WITH

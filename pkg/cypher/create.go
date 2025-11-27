@@ -6,7 +6,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -857,8 +856,8 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 	}
 
 	// Split by MATCH keyword to handle comma-separated patterns in MATCH
-	matchRe := regexp.MustCompile(`(?i)\bMATCH\s+`)
-	matchClauses := matchRe.Split(matchPart, -1)
+	// Uses pre-compiled matchKeywordPattern from regex_patterns.go
+	matchClauses := matchKeywordPattern.Split(matchPart, -1)
 
 	for _, clause := range matchClauses {
 		clause = strings.TrimSpace(clause)
@@ -905,8 +904,8 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 	}
 
 	// Split CREATE part into individual CREATE statements
-	createRe := regexp.MustCompile(`(?i)\bCREATE\s+`)
-	createClauses := createRe.Split(createPart, -1)
+	// Uses pre-compiled createKeywordPattern from regex_patterns.go
+	createClauses := createKeywordPattern.Split(createPart, -1)
 
 	for _, clause := range createClauses {
 		clause = strings.TrimSpace(clause)
@@ -1000,17 +999,15 @@ func (e *StorageExecutor) processCreateNode(pattern string, nodeVars map[string]
 // processCreateRelationship creates a relationship between nodes in nodeVars
 func (e *StorageExecutor) processCreateRelationship(pattern string, nodeVars map[string]*storage.Node, edgeVars map[string]*storage.Edge, result *ExecuteResult) error {
 	// Parse the relationship pattern: (a)-[r:TYPE {props}]->(b)
-	// Use regex that handles optional variable and properties
+	// Uses pre-compiled patterns from regex_patterns.go for performance
 
 	// Try forward arrow first: (a)-[...]->(b)
-	relPattern := regexp.MustCompile(`\((\w+)\)\s*-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*->\s*\((\w+)\)`)
-	matches := relPattern.FindStringSubmatch(pattern)
+	matches := relForwardPattern.FindStringSubmatch(pattern)
 
 	isReverse := false
 	if matches == nil {
 		// Try reverse arrow: (a)<-[...]-(b)
-		relPattern = regexp.MustCompile(`\((\w+)\)\s*<-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*-\s*\((\w+)\)`)
-		matches = relPattern.FindStringSubmatch(pattern)
+		matches = relReversePattern.FindStringSubmatch(pattern)
 		isReverse = true
 	}
 
@@ -1093,8 +1090,8 @@ func (e *StorageExecutor) extractVariablesFromMatch(matchPart string) map[string
 	vars := make(map[string]bool)
 
 	// Match node patterns: (varName:Label) or (varName)
-	nodePattern := regexp.MustCompile(`\((\w+)(?::\w+)?`)
-	matches := nodePattern.FindAllStringSubmatch(matchPart, -1)
+	// Uses pre-compiled nodeVarPattern from regex_patterns.go
+	matches := nodeVarPattern.FindAllStringSubmatch(matchPart, -1)
 
 	for _, m := range matches {
 		if len(m) > 1 && m[1] != "" {
@@ -1153,8 +1150,8 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 	createdEdges := make(map[string]*storage.Edge)
 
 	// Parse all node patterns from CREATE - find all (varName:Label) patterns
-	nodePattern := regexp.MustCompile(`\((\w+)(?::(\w+))?`)
-	allNodeMatches := nodePattern.FindAllStringSubmatch(createPart, -1)
+	// Uses pre-compiled nodeVarLabelPattern from regex_patterns.go
+	allNodeMatches := nodeVarLabelPattern.FindAllStringSubmatch(createPart, -1)
 	for _, matches := range allNodeMatches {
 		if len(matches) > 1 {
 			varName := matches[1]
@@ -1176,8 +1173,8 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 
 	// Parse relationship variable if present: [r:TYPE] or [r] or [:TYPE]
 	// Pattern: [varName:TYPE] where varName is optional
-	relPattern := regexp.MustCompile(`\[(\w+)(?::(\w+))?\]`)
-	if matches := relPattern.FindStringSubmatch(createPart); len(matches) > 1 {
+	// Uses pre-compiled relVarTypePattern from regex_patterns.go
+	if matches := relVarTypePattern.FindStringSubmatch(createPart); len(matches) > 1 {
 		relVar := matches[1]
 		// Check if first capture is actually a variable (not a type without variable)
 		// If there's a colon, first part is variable, second is type

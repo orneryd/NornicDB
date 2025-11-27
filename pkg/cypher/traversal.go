@@ -141,7 +141,141 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 	// Execute traversal
 	paths := e.traverseGraph(matches)
 
-	// Build result rows
+	// Pre-compute upper-case expressions and aggregation flags ONCE for all items
+	// This avoids repeated strings.ToUpper() calls in loops (major performance win)
+	upperExprs := make([]string, len(returnItems))
+	isAggFlags := make([]bool, len(returnItems))
+	for i, item := range returnItems {
+		upperExprs[i] = strings.ToUpper(item.expr)
+		isAggFlags[i] = strings.HasPrefix(upperExprs[i], "COUNT(") ||
+			strings.HasPrefix(upperExprs[i], "SUM(") ||
+			strings.HasPrefix(upperExprs[i], "AVG(") ||
+			strings.HasPrefix(upperExprs[i], "MIN(") ||
+			strings.HasPrefix(upperExprs[i], "MAX(") ||
+			strings.HasPrefix(upperExprs[i], "COLLECT(")
+	}
+
+	// Check if this is an aggregation query
+	hasAggregation := false
+	for _, isAgg := range isAggFlags {
+		if isAgg {
+			hasAggregation = true
+			break
+		}
+	}
+
+	// Handle aggregation queries
+	if hasAggregation {
+		// Check if there are non-aggregation columns (implicit GROUP BY)
+		hasGrouping := false
+		for _, isAgg := range isAggFlags {
+			if !isAgg {
+				hasGrouping = true
+				break
+			}
+		}
+		
+		// If no grouping, return single aggregated row
+		if !hasGrouping {
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				upperExpr := upperExprs[i] // Use pre-computed
+				
+				switch {
+				case strings.HasPrefix(upperExpr, "COUNT("):
+					row[i] = int64(len(paths))
+					
+				case strings.HasPrefix(upperExpr, "COLLECT("):
+					collected := make([]interface{}, 0, len(paths))
+					inner := item.expr[8 : len(item.expr)-1]
+					for _, path := range paths {
+						context := e.buildPathContext(path, matches)
+						val := e.evaluateExpressionWithContext(inner, context.nodes, context.rels)
+						collected = append(collected, val)
+					}
+					row[i] = collected
+					
+				default:
+					if len(paths) > 0 {
+						context := e.buildPathContext(paths[0], matches)
+						row[i] = e.evaluateExpressionWithContext(item.expr, context.nodes, context.rels)
+					} else {
+						row[i] = nil
+					}
+				}
+			}
+			result.Rows = append(result.Rows, row)
+			return result, nil
+		}
+		
+		// GROUP BY: group paths by non-aggregation column values
+		groups := make(map[string][]PathResult)
+		groupKeys := make(map[string][]interface{})
+		
+		for _, path := range paths {
+			context := e.buildPathContext(path, matches)
+			keyParts := make([]interface{}, 0)
+			
+			// Build group key from non-aggregation columns
+			for i, item := range returnItems {
+				if !isAggFlags[i] { // Use pre-computed flag
+					val := e.evaluateExpressionWithContext(item.expr, context.nodes, context.rels)
+					keyParts = append(keyParts, val)
+				}
+			}
+			
+			key := fmt.Sprintf("%v", keyParts)
+			groups[key] = append(groups[key], path)
+			if _, exists := groupKeys[key]; !exists {
+				groupKeys[key] = keyParts
+			}
+		}
+		
+		// Build result rows for each group
+		for key, groupPaths := range groups {
+			row := make([]interface{}, len(returnItems))
+			keyIdx := 0
+			
+			for i, item := range returnItems {
+				upperExpr := upperExprs[i] // Use pre-computed
+				
+				if !isAggFlags[i] { // Use pre-computed flag
+					// Non-aggregated column - use group key value
+					row[i] = groupKeys[key][keyIdx]
+					keyIdx++
+					continue
+				}
+				
+				// Aggregation function - aggregate over this group
+				switch {
+				case strings.HasPrefix(upperExpr, "COUNT("):
+					row[i] = int64(len(groupPaths))
+					
+				case strings.HasPrefix(upperExpr, "COLLECT("):
+					collected := make([]interface{}, 0, len(groupPaths))
+					inner := item.expr[8 : len(item.expr)-1]
+					for _, path := range groupPaths {
+						context := e.buildPathContext(path, matches)
+						val := e.evaluateExpressionWithContext(inner, context.nodes, context.rels)
+						collected = append(collected, val)
+					}
+					row[i] = collected
+					
+				default:
+					if len(groupPaths) > 0 {
+						context := e.buildPathContext(groupPaths[0], matches)
+						row[i] = e.evaluateExpressionWithContext(item.expr, context.nodes, context.rels)
+					} else {
+						row[i] = nil
+					}
+				}
+			}
+			result.Rows = append(result.Rows, row)
+		}
+		return result, nil
+	}
+
+	// Build result rows (non-aggregation)
 	for _, path := range paths {
 		row := make([]interface{}, len(returnItems))
 		context := e.buildPathContext(path, matches)

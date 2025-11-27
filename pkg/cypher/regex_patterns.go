@@ -10,7 +10,10 @@
 //   - Duration parsing: 3-5x faster (2 patterns)
 package cypher
 
-import "regexp"
+import (
+	"regexp"
+	"sync"
+)
 
 // =============================================================================
 // Schema DDL Patterns (CREATE CONSTRAINT, CREATE INDEX)
@@ -155,3 +158,57 @@ var (
 	// MATCH clause extraction for shortest path
 	matchClausePattern = regexp.MustCompile(`(?is)MATCH\s+(.+?)\s+MATCH`)
 )
+
+// =============================================================================
+// CREATE Statement Patterns (pre-compiled for hot path optimization)
+// =============================================================================
+
+var (
+	// MATCH keyword split pattern
+	matchKeywordPattern = regexp.MustCompile(`(?i)\bMATCH\s+`)
+
+	// CREATE keyword split pattern
+	createKeywordPattern = regexp.MustCompile(`(?i)\bCREATE\s+`)
+
+	// Forward relationship pattern: (a)-[r:TYPE {props}]->(b)
+	relForwardPattern = regexp.MustCompile(`\((\w+)\)\s*-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*->\s*\((\w+)\)`)
+
+	// Reverse relationship pattern: (a)<-[r:TYPE {props}]-(b)
+	relReversePattern = regexp.MustCompile(`\((\w+)\)\s*<-\[(\w*)(?::(\w+))?(?:\s*(\{[^}]*\}))?\]\s*-\s*\((\w+)\)`)
+
+	// Node variable extraction: (varName:Label) or (varName)
+	nodeVarPattern = regexp.MustCompile(`\((\w+)(?::\w+)?`)
+
+	// Node variable with label: (varName:Label) or (varName)
+	nodeVarLabelPattern = regexp.MustCompile(`\((\w+)(?::(\w+))?`)
+
+	// Relationship variable extraction: [r:TYPE] or [r] or [:TYPE]
+	relVarTypePattern = regexp.MustCompile(`\[(\w+)(?::(\w+))?\]`)
+)
+
+// =============================================================================
+// Dynamic Regex Cache (for user-provided patterns like =~ comparison)
+// =============================================================================
+
+// regexCache provides thread-safe caching of compiled regex patterns.
+// Used for dynamic patterns like Cypher's =~ regex comparison operator.
+var regexCache sync.Map // map[string]*regexp.Regexp
+
+// GetCachedRegex returns a compiled regex for the pattern, using cache if available.
+// This avoids re-compiling the same pattern on every =~ comparison.
+func GetCachedRegex(pattern string) (*regexp.Regexp, error) {
+	// Check cache first
+	if cached, ok := regexCache.Load(pattern); ok {
+		return cached.(*regexp.Regexp), nil
+	}
+
+	// Compile and cache
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache (another goroutine might have stored it already, that's fine)
+	regexCache.Store(pattern, re)
+	return re, nil
+}

@@ -462,10 +462,11 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		return nil
 	}
 
-	// count(*) or count(n) - simplified aggregation (returns 1 for single row context)
-	if strings.HasPrefix(lowerExpr, "count(") && strings.HasSuffix(expr, ")") {
-		return int64(1)
-	}
+	// Note: count(), sum(), avg(), etc. are aggregation functions and should NOT be
+	// evaluated here. They must be handled by executeAggregation() in match.go or
+	// executeMatchWithRelationships() in traversal.go. If we reach here with count(),
+	// it means the query wasn't properly detected as an aggregation query - that's a bug
+	// in the query router, not something we should handle here.
 
 	// size(list) or size(string) - return length
 	if strings.HasPrefix(lowerExpr, "size(") && strings.HasSuffix(expr, ")") {
@@ -3796,6 +3797,18 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	}
 	if isValidIdentifier && len(expr) > 0 {
 		// This looks like an unresolved variable reference - return null
+		return nil
+	}
+
+	// Check if this is an aggregation function - they should not be evaluated in expression context
+	exprLower := strings.ToLower(expr)
+	if strings.HasPrefix(exprLower, "count(") ||
+		strings.HasPrefix(exprLower, "sum(") ||
+		strings.HasPrefix(exprLower, "avg(") ||
+		strings.HasPrefix(exprLower, "min(") ||
+		strings.HasPrefix(exprLower, "max(") ||
+		strings.HasPrefix(exprLower, "collect(") {
+		// Aggregation functions must be handled by aggregation logic, not per-row evaluation
 		return nil
 	}
 

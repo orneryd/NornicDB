@@ -224,6 +224,13 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
 	// Use pre-compiled case-insensitive regex patterns for aggregation functions
 
+	// Pre-compute upper-case expressions ONCE for all subsequent use
+	upperExprs := make([]string, len(items))
+	for i, item := range items {
+		upperExprs[i] = strings.ToUpper(item.expr)
+	}
+	upperVariable := strings.ToUpper(variable)
+
 	// Identify which columns are aggregations and which are grouping keys
 	type colInfo struct {
 		isAggregation bool
@@ -232,7 +239,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 	colInfos := make([]colInfo, len(items))
 
 	for i, item := range items {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperExprs[i] // Use pre-computed upper-case
 		if strings.HasPrefix(upperExpr, "COUNT(") ||
 			strings.HasPrefix(upperExpr, "SUM(") ||
 			strings.HasPrefix(upperExpr, "AVG(") ||
@@ -295,7 +302,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 		keyIdx := 0 // Track position in keyParts
 
 		for i, item := range items {
-			upperExpr := strings.ToUpper(item.expr)
+			upperExpr := upperExprs[i] // Use pre-computed upper-case expression
 
 			if !colInfos[i].isAggregation {
 				// Non-aggregated column - use the group key value
@@ -307,7 +314,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 			switch {
 			case strings.HasPrefix(upperExpr, "COUNT("):
 				// COUNT(*) or COUNT(n)
-				if strings.Contains(upperExpr, "*") || strings.Contains(upperExpr, "("+strings.ToUpper(variable)+")") {
+				if strings.Contains(upperExpr, "*") || strings.Contains(upperExpr, "("+upperVariable+")") {
 					row[i] = int64(len(groupNodes))
 				} else {
 					// COUNT(n.property) - count non-null values
@@ -443,10 +450,17 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
 	row := make([]interface{}, len(items))
 
+	// Pre-compute upper-case expressions ONCE to avoid repeated ToUpper calls in loop
+	upperExprs := make([]string, len(items))
+	for i, item := range items {
+		upperExprs[i] = strings.ToUpper(item.expr)
+	}
+	upperVariable := strings.ToUpper(variable)
+
 	// Use pre-compiled regex patterns from regex_patterns.go
 
 	for i, item := range items {
-		upperExpr := strings.ToUpper(item.expr)
+		upperExpr := upperExprs[i]
 
 		switch {
 		// Handle SUM() + SUM() arithmetic expressions first
@@ -470,7 +484,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 			}
 
 		case strings.HasPrefix(upperExpr, "COUNT("):
-			if strings.Contains(upperExpr, "*") || strings.Contains(upperExpr, "("+strings.ToUpper(variable)+")") {
+			if strings.Contains(upperExpr, "*") || strings.Contains(upperExpr, "("+upperVariable+")") {
 				row[i] = int64(len(nodes))
 			} else {
 				propMatch := countPropPattern.FindStringSubmatch(item.expr)
