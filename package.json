@@ -18,7 +18,7 @@
     "test:cypher": "go test -v ./pkg/cypher/",
     "test:storage": "go test -v ./pkg/storage/",
     "test:bolt": "go test -v ./pkg/bolt/",
-    "docker:build": "docker build -t timothyswt/nornicdb-amd64-cuda:latest -f Dockerfile .",
+    "docker:build:metal": "docker build -t timothyswt/nornicdb-arm64-metal:latest -f Dockerfile .",
     "docker:build:cuda": "docker build -t timothyswt/nornicdb-amd64-cuda:latest -f Dockerfile.cuda .",
     "docker:run:cuda": "docker-compose -f docker-compose.cuda.yml up",
     "docker:run:cuda:build": "docker-compose -f docker-compose.cuda.yml up --build"
