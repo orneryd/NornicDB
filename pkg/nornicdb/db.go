@@ -129,12 +129,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/decay"
+	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -296,6 +299,7 @@ type Config struct {
 	EmbeddingAPIURL     string `yaml:"embedding_api_url"`
 	EmbeddingModel      string `yaml:"embedding_model"`
 	EmbeddingDimensions int    `yaml:"embedding_dimensions"`
+	AutoEmbedEnabled    bool   `yaml:"auto_embed_enabled"` // Auto-generate embeddings on node create/update
 
 	// Decay
 	DecayEnabled             bool          `yaml:"decay_enabled"`
@@ -308,8 +312,8 @@ type Config struct {
 	AutoLinksCoAccessWindow      time.Duration `yaml:"auto_links_co_access_window"`
 
 	// Parallel execution
-	ParallelEnabled      bool `yaml:"parallel_enabled"`       // Enable parallel query execution
-	ParallelMaxWorkers   int  `yaml:"parallel_max_workers"`   // Max worker goroutines (0 = auto, uses runtime.NumCPU())
+	ParallelEnabled      bool `yaml:"parallel_enabled"`        // Enable parallel query execution
+	ParallelMaxWorkers   int  `yaml:"parallel_max_workers"`    // Max worker goroutines (0 = auto, uses runtime.NumCPU())
 	ParallelMinBatchSize int  `yaml:"parallel_min_batch_size"` // Min items before parallelizing (default: 1000)
 
 	// Server
@@ -336,19 +340,20 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		DataDir:                      "./data",
-		EmbeddingProvider:            "ollama",
+		EmbeddingProvider:            "openai", // Use OpenAI-compatible endpoint (llama.cpp, vLLM, etc.)
 		EmbeddingAPIURL:              "http://localhost:11434",
 		EmbeddingModel:               "mxbai-embed-large",
 		EmbeddingDimensions:          1024,
+		AutoEmbedEnabled:             true, // Auto-generate embeddings on node creation
 		DecayEnabled:                 true,
 		DecayRecalculateInterval:     time.Hour,
 		DecayArchiveThreshold:        0.05,
 		AutoLinksEnabled:             true,
 		AutoLinksSimilarityThreshold: 0.82,
 		AutoLinksCoAccessWindow:      30 * time.Second,
-		ParallelEnabled:              true,   // Enable parallel query execution by default
-		ParallelMaxWorkers:           0,      // 0 = auto (runtime.NumCPU())
-		ParallelMinBatchSize:         1000,   // Parallelize for 1000+ items
+		ParallelEnabled:              true, // Enable parallel query execution by default
+		ParallelMaxWorkers:           0,    // 0 = auto (runtime.NumCPU())
+		ParallelMinBatchSize:         1000, // Parallelize for 1000+ items
 		BoltPort:                     7687,
 		HTTPPort:                     7474,
 	}
@@ -399,6 +404,9 @@ type DB struct {
 
 	// Search service (uses pre-computed embeddings from Mimir)
 	searchService *search.Service
+
+	// Async embedding queue for auto-generating embeddings
+	embedQueue *EmbedQueue
 }
 
 // Open opens or creates a NornicDB database at the specified directory.
@@ -658,24 +666,24 @@ type DB struct {
 //  5. **Connect related books**: Set up the inference engine to find relationships
 //
 // Two types of libraries:
-//  - **Real building** (dataDir provided): Books stored on shelves, survive overnight
-//  - **Pop-up library** (no dataDir): Books on temporary tables, packed away at night
+//   - **Real building** (dataDir provided): Books stored on shelves, survive overnight
+//   - **Pop-up library** (no dataDir): Books on temporary tables, packed away at night
 //
 // After opening, the library is ready:
-//  - You can add books (Store memories)
-//  - Search for books (Search queries)
-//  - Find related books (Relationship inference)
-//  - Old books get moved to archive (Decay simulation)
+//   - You can add books (Store memories)
+//   - Search for books (Search queries)
+//   - Find related books (Relationship inference)
+//   - Old books get moved to archive (Decay simulation)
 //
 // Important:
-//  - Only one person can have the keys (file lock)
-//  - Must close the library when done (db.Close())
-//  - Multiple libraries can exist in different locations
+//   - Only one person can have the keys (file lock)
+//   - Must close the library when done (db.Close())
+//   - Multiple libraries can exist in different locations
 //
 // The library staff (background goroutines) work automatically:
-//  - Decay manager reorganizes books periodically
-//  - Inference engine finds connections between books
-//  - Search system keeps the catalog updated
+//   - Decay manager reorganizes books periodically
+//   - Inference engine finds connections between books
+//   - Search system keeps the catalog updated
 //
 // You just add books and search - the rest happens automatically!
 func Open(dataDir string, config *Config) (*DB, error) {
@@ -741,6 +749,25 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize search service (uses pre-computed embeddings from Mimir)
 	db.searchService = search.NewService(db.storage)
+
+	// Initialize async embedding queue (if enabled and provider configured)
+	if config.AutoEmbedEnabled && config.EmbeddingProvider != "" {
+		embedConfig := &embed.Config{
+			Provider:   config.EmbeddingProvider,
+			APIURL:     config.EmbeddingAPIURL,
+			Model:      config.EmbeddingModel,
+			Dimensions: config.EmbeddingDimensions,
+			Timeout:    30 * time.Second,
+		}
+		embedder, err := embed.NewEmbedder(embedConfig)
+		if err != nil {
+			fmt.Printf("⚠️  Auto-embed disabled: %v\n", err)
+		} else {
+			db.embedQueue = NewEmbedQueue(embedder, db.storage, nil)
+			fmt.Printf("🧠 Auto-embed queue started using %s/%s (%d dims)\n",
+				config.EmbeddingProvider, config.EmbeddingModel, config.EmbeddingDimensions)
+		}
+	}
 
 	return db, nil
 }
@@ -808,6 +835,11 @@ func (db *DB) Close() error {
 		db.decay.Stop()
 	}
 
+	// Close embed queue gracefully (processes remaining batch)
+	if db.embedQueue != nil {
+		db.embedQueue.Close()
+	}
+
 	if db.storage != nil {
 		if err := db.storage.Close(); err != nil {
 			errs = append(errs, err)
@@ -818,6 +850,25 @@ func (db *DB) Close() error {
 		return fmt.Errorf("close errors: %v", errs)
 	}
 	return nil
+}
+
+// EmbedQueueStats returns statistics about the async embedding queue.
+// Returns nil if auto-embed is not enabled.
+func (db *DB) EmbedQueueStats() *QueueStats {
+	if db.embedQueue == nil {
+		return nil
+	}
+	stats := db.embedQueue.Stats()
+	return &stats
+}
+
+// EmbedExisting queues all existing nodes without embeddings for async processing.
+// Returns the number of nodes queued.
+func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
+	if db.embedQueue == nil {
+		return 0, fmt.Errorf("auto-embed not enabled")
+	}
+	return db.embedQueue.EnqueueExisting(ctx)
 }
 
 // Store creates a new memory with automatic relationship inference.
@@ -1396,6 +1447,218 @@ func (db *DB) ExecuteCypher(ctx context.Context, query string, params map[string
 	}, nil
 }
 
+// TypedCypherResult holds typed query results.
+type TypedCypherResult[T any] struct {
+	Columns []string `json:"columns"`
+	Rows    []T      `json:"rows"`
+}
+
+// ExecuteCypherTyped runs a Cypher query and decodes results into typed structs.
+// Usage:
+//
+//	type Task struct {
+//	    ID     string `cypher:"id"`
+//	    Title  string `cypher:"title"`
+//	    Status string `cypher:"status"`
+//	}
+//	result, err := db.ExecuteCypherTyped[Task](ctx, "MATCH (t:Task) RETURN t.id, t.title, t.status", nil)
+func ExecuteCypherTyped[T any](db *DB, ctx context.Context, query string, params map[string]interface{}) (*TypedCypherResult[T], error) {
+	raw, err := db.ExecuteCypher(ctx, query, params)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]T, 0, len(raw.Rows))
+	for _, row := range raw.Rows {
+		var decoded T
+		if err := decodeRow(raw.Columns, row, &decoded); err != nil {
+			return nil, fmt.Errorf("failed to decode row: %w", err)
+		}
+		rows = append(rows, decoded)
+	}
+
+	return &TypedCypherResult[T]{
+		Columns: raw.Columns,
+		Rows:    rows,
+	}, nil
+}
+
+// First returns the first row or zero value if empty.
+func (r *TypedCypherResult[T]) First() (T, bool) {
+	if len(r.Rows) == 0 {
+		var zero T
+		return zero, false
+	}
+	return r.Rows[0], true
+}
+
+// decodeRow decodes a row into a typed struct using reflection.
+func decodeRow(columns []string, values []interface{}, dest interface{}) error {
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+		return fmt.Errorf("dest must be a non-nil pointer")
+	}
+
+	destElem := destVal.Elem()
+	destType := destElem.Type()
+
+	// Handle map return (node as map)
+	if len(values) == 1 {
+		if m, ok := values[0].(map[string]interface{}); ok {
+			// Check for nested properties
+			if props, ok := m["properties"].(map[string]interface{}); ok {
+				return decodeMapToStruct(props, destElem, destType)
+			}
+			return decodeMapToStruct(m, destElem, destType)
+		}
+	}
+
+	// Build field mapping from struct tags
+	fieldMap := make(map[string]int)
+	for i := 0; i < destType.NumField(); i++ {
+		field := destType.Field(i)
+		name := field.Tag.Get("cypher")
+		if name == "" {
+			name = field.Tag.Get("json")
+			if idx := strings.Index(name, ","); idx != -1 {
+				name = name[:idx]
+			}
+		}
+		if name == "" || name == "-" {
+			name = strings.ToLower(field.Name)
+		}
+		fieldMap[name] = i
+	}
+
+	// Map columns to fields
+	for i, col := range columns {
+		if i >= len(values) {
+			break
+		}
+
+		// Normalize column name (handle n.property notation)
+		colName := col
+		if idx := strings.LastIndex(col, "."); idx != -1 {
+			colName = col[idx+1:]
+		}
+		colName = strings.ToLower(colName)
+
+		fieldIdx, ok := fieldMap[colName]
+		if !ok {
+			continue
+		}
+
+		field := destElem.Field(fieldIdx)
+		if !field.CanSet() {
+			continue
+		}
+
+		if err := assignValue(field, values[i]); err != nil {
+			return fmt.Errorf("field %s: %w", col, err)
+		}
+	}
+
+	return nil
+}
+
+// decodeMapToStruct decodes a map into a struct
+func decodeMapToStruct(m map[string]interface{}, destElem reflect.Value, destType reflect.Type) error {
+	for i := 0; i < destType.NumField(); i++ {
+		field := destType.Field(i)
+		fieldVal := destElem.Field(i)
+
+		if !fieldVal.CanSet() {
+			continue
+		}
+
+		name := field.Tag.Get("cypher")
+		if name == "" {
+			name = field.Tag.Get("json")
+			if idx := strings.Index(name, ","); idx != -1 {
+				name = name[:idx]
+			}
+		}
+		if name == "" || name == "-" {
+			name = strings.ToLower(field.Name)
+		}
+
+		val, ok := m[name]
+		if !ok {
+			val, ok = m[strings.ToLower(name)]
+		}
+		if !ok {
+			val, ok = m[field.Name]
+		}
+		if !ok {
+			continue
+		}
+
+		if err := assignValue(fieldVal, val); err != nil {
+			return fmt.Errorf("field %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// assignValue assigns a value to a reflect.Value with type conversion
+func assignValue(field reflect.Value, val interface{}) error {
+	if val == nil {
+		return nil
+	}
+
+	valReflect := reflect.ValueOf(val)
+
+	// Direct assignment if types match
+	if valReflect.Type().AssignableTo(field.Type()) {
+		field.Set(valReflect)
+		return nil
+	}
+
+	// Type conversion
+	if valReflect.Type().ConvertibleTo(field.Type()) {
+		field.Set(valReflect.Convert(field.Type()))
+		return nil
+	}
+
+	// Handle numeric conversions
+	switch field.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		switch v := val.(type) {
+		case float64:
+			field.SetInt(int64(v))
+			return nil
+		case int:
+			field.SetInt(int64(v))
+			return nil
+		case int64:
+			field.SetInt(v)
+			return nil
+		}
+	case reflect.Float32, reflect.Float64:
+		switch v := val.(type) {
+		case int:
+			field.SetFloat(float64(v))
+			return nil
+		case int64:
+			field.SetFloat(float64(v))
+			return nil
+		case float64:
+			field.SetFloat(v)
+			return nil
+		}
+	case reflect.String:
+		field.SetString(fmt.Sprintf("%v", val))
+		return nil
+	case reflect.Bool:
+		if b, ok := val.(bool); ok {
+			field.SetBool(b)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("cannot assign %T to %v", val, field.Type())
+}
+
 // Node represents a graph node for HTTP API.
 type Node struct {
 	ID         string                 `json:"id"`
@@ -1499,8 +1762,37 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 		CreatedAt:  now,
 	}
 
+	// Extract embedding from properties if present (MCP store tool passes embeddings this way)
+	if embProp, ok := properties["embedding"]; ok {
+		switch v := embProp.(type) {
+		case []float32:
+			node.Embedding = v
+		case []float64:
+			// Convert float64 to float32
+			node.Embedding = make([]float32, len(v))
+			for i, f := range v {
+				node.Embedding[i] = float32(f)
+			}
+		case []interface{}:
+			// JSON arrays come in as []interface{}
+			node.Embedding = make([]float32, len(v))
+			for i, f := range v {
+				if fv, ok := f.(float64); ok {
+					node.Embedding[i] = float32(fv)
+				}
+			}
+		}
+		// Remove from properties to avoid duplication (stored in Embedding field)
+		delete(properties, "embedding")
+	}
+
 	if err := db.storage.CreateNode(node); err != nil {
 		return nil, err
+	}
+
+	// Queue for async embedding if not provided and queue is available (non-blocking)
+	if len(node.Embedding) == 0 && db.embedQueue != nil {
+		db.embedQueue.Enqueue(id)
 	}
 
 	// Update search indexes (live indexing for seamless Mimir compatibility)

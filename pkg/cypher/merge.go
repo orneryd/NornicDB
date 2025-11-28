@@ -12,6 +12,11 @@ import (
 )
 
 func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -215,6 +220,11 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 // executeCompoundMatchMerge handles MATCH ... MERGE ... queries where MERGE references matched nodes.
 // This is the Neo4j pattern: MATCH (a) ... MERGE (b) ... SET b.prop = a.prop, etc.
 func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},

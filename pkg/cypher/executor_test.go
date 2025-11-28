@@ -4185,14 +4185,18 @@ func TestNodeToMapFiltersEmbeddings(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	node := &storage.Node{
-		ID:     "embed-filter-1",
-		Labels: []string{"Document"},
+		ID:        "embed-filter-1",
+		Labels:    []string{"Document"},
+		Embedding: []float32{0.1, 0.2, 0.3, 0.4, 0.5}, // Actual embedding in storage
 		Properties: map[string]interface{}{
-			"name":            "Test Doc",
-			"content":         "Hello world",
-			"embedding":       []float64{0.1, 0.2, 0.3, 0.4, 0.5},
-			"chunk_embedding": []float64{0.5, 0.4, 0.3, 0.2, 0.1},
-			"vector":          []float64{1.0, 2.0, 3.0},
+			"name":                 "Test Doc",
+			"content":              "Hello world",
+			"embedding":            []float64{0.1, 0.2, 0.3, 0.4, 0.5}, // Should be filtered from properties
+			"chunk_embedding":      []float64{0.5, 0.4, 0.3, 0.2, 0.1},
+			"vector":               []float64{1.0, 2.0, 3.0},
+			"embedding_model":      "mxbai-embed-large",
+			"embedding_dimensions": 1024,
+			"has_embedding":        true,
 		},
 	}
 
@@ -4202,8 +4206,19 @@ func TestNodeToMapFiltersEmbeddings(t *testing.T) {
 	assert.Equal(t, "Test Doc", result["name"])
 	assert.Equal(t, "Hello world", result["content"])
 
-	// Check that embedding properties are filtered out
-	assert.NotContains(t, result, "embedding")
+	// Check that embedding is now a summary object, not raw array
+	embSummary, ok := result["embedding"].(map[string]interface{})
+	assert.True(t, ok, "embedding should be a summary map")
+	assert.Equal(t, "ready", embSummary["status"])
+	assert.Equal(t, 5, embSummary["dimensions"]) // 5 from node.Embedding
+	assert.Equal(t, "mxbai-embed-large", embSummary["model"])
+
+	// Check that raw embedding arrays are NOT in properties
+	assert.NotContains(t, result, "chunk_embedding")
+	assert.NotContains(t, result, "vector")
+	assert.NotContains(t, result, "embedding_model")      // Shown in summary instead
+	assert.NotContains(t, result, "embedding_dimensions") // Shown in summary instead
+	assert.NotContains(t, result, "has_embedding")        // Shown in summary instead
 
 	// Check node metadata fields
 	assert.Equal(t, "embed-filter-1", result["id"])
@@ -4530,7 +4545,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1, "Should return single aggregated row")
 		require.Len(t, result.Rows[0], 1, "Should return single column")
-		
+
 		count := result.Rows[0][0]
 		assert.Equal(t, int64(6), count, "Should count all 6 relationships, not return 1")
 	})
@@ -4541,7 +4556,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1)
-		
+
 		count := result.Rows[0][0]
 		assert.Equal(t, int64(3), count, "Should count 3 PART_OF relationships")
 	})
@@ -4551,7 +4566,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1)
-		
+
 		count := result.Rows[0][0]
 		assert.Equal(t, int64(3), count, "Should count 3 SUPPLIES relationships")
 	})
@@ -4562,7 +4577,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1)
-		
+
 		count := result.Rows[0][0]
 		assert.Equal(t, int64(6), count, "COUNT(*) should count all 6 relationships")
 	})
@@ -4582,7 +4597,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NotNil(t, result)
 		// Should group by type: PART_OF (3) and SUPPLIES (3) = 2 groups
 		assert.Len(t, result.Rows, 2, "Should return 2 groups (PART_OF and SUPPLIES)")
-		
+
 		// Verify counts
 		for _, row := range result.Rows {
 			relType := row[0].(string)
@@ -4598,7 +4613,7 @@ func TestRelationshipCountAggregation(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Rows, 1)
-		
+
 		count := result.Rows[0][0]
 		assert.Equal(t, int64(0), count, "COUNT should return 0 for no matches")
 	})

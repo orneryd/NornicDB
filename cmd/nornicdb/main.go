@@ -105,7 +105,7 @@ Features:
 	serveCmd.Flags().String("embedding-model", "mxbai-embed-large", "Embedding model name")
 	serveCmd.Flags().Int("embedding-dim", 1024, "Embedding dimensions")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
-	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
+	serveCmd.Flags().String("admin-password", "admin", "Admin password (default: admin)")
 	// Parallel execution flags
 	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
 	serveCmd.Flags().Int("parallel-workers", 0, "Max parallel workers (0 = auto, uses all CPUs)")
@@ -401,7 +401,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	if !noAuth {
 		fmt.Println("Authentication:")
-		fmt.Printf("  • Username: neo4j\n")
+		fmt.Printf("  • Username: admin\n")
 		fmt.Printf("  • Password: %s\n", adminPassword)
 	}
 	fmt.Println()

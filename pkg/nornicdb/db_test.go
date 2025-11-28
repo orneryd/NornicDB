@@ -660,7 +660,7 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
 	assert.Equal(t, "./data", config.DataDir)
-	assert.Equal(t, "ollama", config.EmbeddingProvider)
+	assert.Equal(t, "openai", config.EmbeddingProvider)
 	assert.Equal(t, "http://localhost:11434", config.EmbeddingAPIURL)
 	assert.Equal(t, "mxbai-embed-large", config.EmbeddingModel)
 	assert.Equal(t, 1024, config.EmbeddingDimensions)

@@ -68,6 +68,11 @@ func isAlphanumeric(r rune) bool {
 
 // executeWith handles WITH clause - intermediate result projection
 func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	upper := strings.ToUpper(cypher)
 
 	withIdx := strings.Index(upper, "WITH")
@@ -178,6 +183,11 @@ func (e *StorageExecutor) splitWithItems(expr string) []string {
 
 // executeUnwind handles UNWIND clause - list expansion
 func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	upper := strings.ToUpper(cypher)
 
 	unwindIdx := strings.Index(upper, "UNWIND")
@@ -315,6 +325,11 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 
 // executeOptionalMatch handles OPTIONAL MATCH - returns null for non-matches
 func (e *StorageExecutor) executeOptionalMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	upper := strings.ToUpper(cypher)
 	optMatchIdx := strings.Index(upper, "OPTIONAL MATCH")
 	if optMatchIdx == -1 {

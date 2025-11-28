@@ -57,17 +57,17 @@
 //
 // The server supports multiple authentication methods:
 //
-// 1. **Basic Auth** (Neo4j compatible):
-//    Authorization: Basic base64(username:password)
+//  1. **Basic Auth** (Neo4j compatible):
+//     Authorization: Basic base64(username:password)
 //
-// 2. **Bearer Token** (JWT):
-//    Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+//  2. **Bearer Token** (JWT):
+//     Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 //
-// 3. **Cookie** (browser sessions):
-//    Cookie: token=eyJhbGciOiJIUzI1NiIs...
+//  3. **Cookie** (browser sessions):
+//     Cookie: token=eyJhbGciOiJIUzI1NiIs...
 //
-// 4. **Query Parameter** (for SSE/WebSocket):
-//    ?token=eyJhbGciOiJIUzI1NiIs...
+//  4. **Query Parameter** (for SSE/WebSocket):
+//     ?token=eyJhbGciOiJIUzI1NiIs...
 //
 // Neo4j HTTP API Endpoints:
 //
@@ -108,18 +108,18 @@
 //
 // Think of this server like a restaurant:
 //
-// 1. **Neo4j compatibility**: We speak the same "language" as Neo4j, so existing
-//    customers (tools/drivers) can order from our menu without learning new words.
+//  1. **Neo4j compatibility**: We speak the same "language" as Neo4j, so existing
+//     customers (tools/drivers) can order from our menu without learning new words.
 //
-// 2. **Authentication**: Like checking IDs at the door - we make sure you're allowed
-//    to be here and what you're allowed to do.
+//  2. **Authentication**: Like checking IDs at the door - we make sure you're allowed
+//     to be here and what you're allowed to do.
 //
-// 3. **Endpoints**: Different "counters" for different services - one for regular
-//    food (Cypher queries), one for special orders (vector search), one for the
-//    manager's office (admin functions).
+//  3. **Endpoints**: Different "counters" for different services - one for regular
+//     food (Cypher queries), one for special orders (vector search), one for the
+//     manager's office (admin functions).
 //
-// 4. **Middleware**: Like security guards, cashiers, and cleaners who help every
-//    customer but do different jobs (logging, auth, error handling).
+//  4. **Middleware**: Like security guards, cashiers, and cleaners who help every
+//     customer but do different jobs (logging, auth, error handling).
 //
 // The server makes sure everyone gets served safely and efficiently!
 package server
@@ -140,7 +140,9 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 )
 
@@ -203,6 +205,18 @@ type Config struct {
 	TLSCertFile string
 	// TLSKeyFile for HTTPS
 	TLSKeyFile string
+
+	// Embedding Configuration (for vector search)
+	// EmbeddingEnabled turns on automatic embedding generation
+	EmbeddingEnabled bool
+	// EmbeddingProvider: "ollama" or "openai"
+	EmbeddingProvider string
+	// EmbeddingAPIURL is the base URL (e.g., http://localhost:11434)
+	EmbeddingAPIURL string
+	// EmbeddingModel is the model name (e.g., mxbai-embed-large)
+	EmbeddingModel string
+	// EmbeddingDimensions is expected vector size (e.g., 1024)
+	EmbeddingDimensions int
 }
 
 // DefaultConfig returns Neo4j-compatible default server configuration.
@@ -215,6 +229,19 @@ type Config struct {
 //   - 10MB max request size
 //   - CORS enabled for browser compatibility
 //   - Compression enabled
+//
+// Embedding defaults (for MCP vector search):
+//   - Enabled by default, connects to localhost:11434 (llama.cpp/Ollama)
+//   - Model: mxbai-embed-large (1024 dimensions)
+//   - Falls back to text search if embeddings unavailable
+//
+// Environment Variables to override embedding config:
+//
+//	NORNICDB_EMBEDDING_ENABLED=true|false  - Enable/disable embeddings
+//	NORNICDB_EMBEDDING_PROVIDER=openai     - API format: "openai" or "ollama"
+//	NORNICDB_EMBEDDING_URL=http://...      - Embeddings API URL
+//	NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
+//	NORNICDB_EMBEDDING_DIM=1024            - Vector dimensions
 //
 // Example:
 //
@@ -237,6 +264,19 @@ func DefaultConfig() *Config {
 		EnableCORS:        true,
 		CORSOrigins:       []string{"*"},
 		EnableCompression: true,
+
+		// Embedding defaults - connects to local llama.cpp/Ollama server
+		// Override via environment variables:
+		//   NORNICDB_EMBEDDING_ENABLED=false     - Disable embeddings entirely
+		//   NORNICDB_EMBEDDING_PROVIDER=ollama   - Use "ollama" or "openai" format
+		//   NORNICDB_EMBEDDING_URL=http://...    - Embeddings API URL
+		//   NORNICDB_EMBEDDING_MODEL=...         - Model name
+		//   NORNICDB_EMBEDDING_DIM=1024          - Vector dimensions
+		EmbeddingEnabled:    true,
+		EmbeddingProvider:   "openai", // llama.cpp uses OpenAI-compatible format
+		EmbeddingAPIURL:     "http://localhost:11434",
+		EmbeddingModel:      "mxbai-embed-large",
+		EmbeddingDimensions: 1024,
 	}
 }
 
@@ -281,6 +321,9 @@ type Server struct {
 	db     *nornicdb.DB
 	auth   *auth.Authenticator
 	audit  *audit.Logger
+
+	// MCP server for LLM tool interface
+	mcpServer *mcp.Server
 
 	httpServer *http.Server
 	listener   net.Listener
@@ -332,10 +375,63 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil, fmt.Errorf("database required")
 	}
 
+	// Create MCP server config with embedding settings for validation
+	mcpConfig := mcp.DefaultServerConfig()
+	mcpConfig.EmbeddingEnabled = config.EmbeddingEnabled
+	mcpConfig.EmbeddingModel = config.EmbeddingModel
+	mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions
+
+	// Create MCP server for LLM tool interface
+	mcpServer := mcp.NewServer(db, mcpConfig)
+
+	// Configure embeddings if enabled
+	if config.EmbeddingEnabled && config.EmbeddingAPIURL != "" {
+		var embedder mcp.Embedder
+
+		embedConfig := &embed.Config{
+			Provider:   config.EmbeddingProvider,
+			APIURL:     config.EmbeddingAPIURL,
+			Model:      config.EmbeddingModel,
+			Dimensions: config.EmbeddingDimensions,
+			Timeout:    30 * time.Second,
+		}
+
+		// Set API path based on provider
+		switch config.EmbeddingProvider {
+		case "ollama":
+			embedConfig.APIPath = "/api/embeddings"
+			embedder = embed.NewOllama(embedConfig)
+		case "openai":
+			embedConfig.APIPath = "/v1/embeddings"
+			embedder = embed.NewOpenAI(embedConfig)
+		default:
+			// Default to Ollama
+			embedConfig.APIPath = "/api/embeddings"
+			embedder = embed.NewOllama(embedConfig)
+		}
+
+		// Health check: test embedding endpoint before enabling
+		// If unavailable, gracefully fall back to text-only search
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := embedder.Embed(ctx, "health check")
+		cancel()
+
+		if err != nil {
+			fmt.Printf("⚠️  Embeddings endpoint unavailable (%s): %v\n", config.EmbeddingAPIURL, err)
+			fmt.Println("   → Falling back to full-text search only")
+			// Don't set embedder - MCP server will use text search
+		} else {
+			fmt.Printf("✓ Embeddings enabled: %s (%s, %d dims)\n",
+				config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions)
+			mcpServer.SetEmbedder(embedder)
+		}
+	}
+
 	s := &Server{
-		config: config,
-		db:     db,
-		auth:   authenticator,
+		config:    config,
+		db:        db,
+		auth:      authenticator,
+		mcpServer: mcpServer,
 	}
 
 	return s, nil
@@ -373,8 +469,9 @@ func (s *Server) SetAuditLogger(logger *audit.Logger) {
 //	select {}
 //
 // TLS Support:
-//   If TLSCertFile and TLSKeyFile are configured, the server automatically
-//   starts with HTTPS. Otherwise, it uses HTTP.
+//
+//	If TLSCertFile and TLSKeyFile are configured, the server automatically
+//	starts with HTTPS. Otherwise, it uses HTTP.
 func (s *Server) Start() error {
 	if s.closed.Load() {
 		return ErrServerClosed
@@ -569,6 +666,15 @@ func (s *Server) buildRouter() http.Handler {
 	// GDPR compliance endpoints (NornicDB-specific)
 	mux.HandleFunc("/gdpr/export", s.withAuth(s.handleGDPRExport, auth.PermRead))
 	mux.HandleFunc("/gdpr/delete", s.withAuth(s.handleGDPRDelete, auth.PermDelete))
+
+	// ==========================================================================
+	// MCP Tool Endpoints (LLM-native interface)
+	// ==========================================================================
+	// Register MCP routes on the same server (port 7474)
+	// Routes: /mcp, /mcp/initialize, /mcp/tools/list, /mcp/tools/call, /mcp/health
+	if s.mcpServer != nil {
+		s.mcpServer.RegisterRoutes(mux)
+	}
 
 	// Wrap with middleware
 	handler := s.corsMiddleware(mux)
@@ -1335,7 +1441,7 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 	}{
 		DevLoginEnabled: true, // Always enable dev login for now
 		SecurityEnabled: s.auth != nil && s.auth.IsSecurityEnabled(),
-		OAuthProviders:  []struct {
+		OAuthProviders: []struct {
 			Name        string `json:"name"`
 			URL         string `json:"url"`
 			DisplayName string `json:"displayName"`

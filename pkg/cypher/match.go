@@ -13,6 +13,11 @@ import (
 )
 
 func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},

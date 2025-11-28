@@ -12,6 +12,11 @@ import (
 )
 
 func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -39,7 +44,9 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		if p == "" {
 			continue
 		}
-		if strings.Contains(p, "->") || strings.Contains(p, "<-") || strings.Contains(p, "-[") {
+		// Use string-literal-aware checks to avoid matching arrows inside content strings
+		// e.g., 'Data -> Output' should NOT be treated as a relationship
+		if containsOutsideStrings(p, "->") || containsOutsideStrings(p, "<-") || containsOutsideStrings(p, "-[") {
 			relPatterns = append(relPatterns, p)
 		} else {
 			nodePatterns = append(nodePatterns, p)
@@ -184,15 +191,42 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 }
 
 // splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)
-// respecting parentheses depth and handling relationship syntax
+// respecting parentheses depth, string literals, and handling relationship syntax.
+// IMPORTANT: This properly handles content inside string literals (single/double quotes)
+// so that Cypher-like content inside strings is not parsed as relationship patterns.
 func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
 	var patterns []string
 	var current strings.Builder
 	depth := 0
 	inRelationship := false
+	inString := false
+	stringChar := byte(0) // Track which quote character started the string
 
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
+
+		// Handle string literal boundaries
+		if (c == '\'' || c == '"') && (i == 0 || pattern[i-1] != '\\') {
+			if !inString {
+				// Starting a string literal
+				inString = true
+				stringChar = c
+			} else if c == stringChar {
+				// Ending the string literal (same quote type)
+				inString = false
+				stringChar = 0
+			}
+			current.WriteByte(c)
+			continue
+		}
+
+		// If inside a string literal, add character without parsing
+		if inString {
+			current.WriteByte(c)
+			continue
+		}
+
+		// Normal parsing outside string literals
 		switch c {
 		case '(':
 			depth++
@@ -700,6 +734,11 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(relStr string) (string, 
 //	MATCH (s2:Supplier {supplierID: 2}), (c2:Category {categoryID: 2})
 //	CREATE (p2:Product {...})
 func (e *StorageExecutor) executeCompoundMatchCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -914,7 +953,8 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		}
 
 		// Check if this is a relationship pattern or node pattern
-		if strings.Contains(clause, "->") || strings.Contains(clause, "<-") || strings.Contains(clause, "]-") {
+		// Use string-literal-aware checks to avoid matching arrows inside content strings
+		if containsOutsideStrings(clause, "->") || containsOutsideStrings(clause, "<-") || containsOutsideStrings(clause, "]-") {
 			// Relationship pattern: (var)-[:TYPE]->(var)
 			err := e.processCreateRelationship(clause, nodeVars, edgeVars, result)
 			if err != nil {
@@ -1106,6 +1146,11 @@ func (e *StorageExecutor) extractVariablesFromMatch(matchPart string) map[string
 // This pattern creates a node/relationship, passes it through WITH, then deletes it.
 // Example: CREATE (t:TestNode {name: 'temp'}) WITH t DELETE t RETURN count(t)
 func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},

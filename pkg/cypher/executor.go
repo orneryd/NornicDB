@@ -245,7 +245,21 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 // Error Handling:
 //
 //	Returns detailed error messages for syntax errors, type mismatches,
-//	and execution failures with Neo4j-compatible error codes.
+//
+// paramsKey is used to store params in context
+type paramsKeyType struct{}
+
+var paramsKey = paramsKeyType{}
+
+// getParams retrieves params from context
+func getParamsFromContext(ctx context.Context) map[string]interface{} {
+	if params, ok := ctx.Value(paramsKey).(map[string]interface{}); ok {
+		return params
+	}
+	return nil
+}
+
+// and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	// Normalize query
 	cypher = strings.TrimSpace(cypher)
@@ -258,17 +272,34 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 
-	// Substitute parameters
-	cypher = e.substituteParams(cypher, params)
+	// IMPORTANT: Do NOT substitute parameters before routing!
+	// We need to route the query based on the ORIGINAL query structure,
+	// not the substituted one. Otherwise, keywords inside parameter values
+	// (like 'MATCH (n) SET n.x = 1' stored as content) will be incorrectly
+	// detected as Cypher clauses.
+	//
+	// Parameter substitution happens AFTER routing, inside each handler.
+	// This matches Neo4j's architecture where params are kept separate.
 
-	// Check if query is read-only and cacheable
+	// Store params in context for handlers to use
+	ctx = context.WithValue(ctx, paramsKey, params)
+
+	// Check if query is read-only and cacheable (use original query for routing)
 	upperQuery := strings.ToUpper(cypher)
-	isReadOnly := strings.HasPrefix(upperQuery, "MATCH") ||
+
+	// Check for write operations that can appear after MATCH
+	hasWriteOperation := strings.Contains(upperQuery, "DELETE") ||
+		strings.Contains(upperQuery, "SET ") ||
+		strings.Contains(upperQuery, "REMOVE ") ||
+		strings.Contains(upperQuery, "CREATE") ||
+		strings.Contains(upperQuery, "MERGE")
+
+	isReadOnly := !hasWriteOperation && (strings.HasPrefix(upperQuery, "MATCH") ||
 		strings.HasPrefix(upperQuery, "CALL DB.") ||
 		strings.HasPrefix(upperQuery, "SHOW") ||
 		strings.HasPrefix(upperQuery, "EXPLAIN") ||
 		strings.HasPrefix(upperQuery, "PROFILE") ||
-		strings.HasPrefix(upperQuery, "RETURN")
+		strings.HasPrefix(upperQuery, "RETURN"))
 
 	// Try cache for read-only queries
 	if isReadOnly && e.cache != nil {
@@ -345,12 +376,12 @@ func (e *StorageExecutor) executeImplicit(ctx context.Context, cypher string, up
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	// Route to appropriate handler based on query type
 	// upperQuery is passed in to avoid redundant conversion
-	
+
 	// Cache keyword checks to avoid repeated searches
 	startsWithMatch := strings.HasPrefix(upperQuery, "MATCH")
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
-	
+
 	// MERGE queries get special handling - they have their own ON CREATE SET / ON MATCH SET logic
 	if startsWithMerge {
 		return e.executeMerge(ctx, cypher)
@@ -358,7 +389,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 	// Cache findKeywordIndex results for compound query detection
 	var mergeIdx, createIdx, withIdx, deleteIdx, optionalMatchIdx int = -1, -1, -1, -1, -1
-	
+
 	if startsWithMatch {
 		// Only search for keywords if query starts with MATCH
 		mergeIdx = findKeywordIndex(cypher, "MERGE")
@@ -387,31 +418,35 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeCompoundCreateWithDelete(ctx, cypher)
 	}
 
-	// Cache contains checks for DELETE
-	hasDeleteSpace := strings.Contains(upperQuery, " DELETE ")
-	hasDeleteEnd := strings.HasSuffix(upperQuery, " DELETE")
-	hasDetachDelete := strings.Contains(upperQuery, "DETACH DELETE")
-	
+	// Cache contains checks for DELETE - use string-literal-aware detection
+	hasDeleteSpace := containsKeywordOutsideStrings(cypher, " DELETE ")
+	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
+	// For suffix check, verify keyword is outside strings
+	hasDeleteEnd := false
+	if strings.HasSuffix(strings.ToUpper(strings.TrimSpace(cypher)), " DELETE") {
+		// Check if the DELETE keyword at end is outside strings
+		deleteIdx := findKeywordIndex(cypher, "DELETE")
+		hasDeleteEnd = deleteIdx >= 0 && deleteIdx > len(cypher)-10 // near end
+	}
+
 	// Check for compound queries - MATCH ... DELETE, MATCH ... SET, etc.
 	if hasDeleteSpace || hasDeleteEnd || hasDetachDelete {
 		return e.executeDelete(ctx, cypher)
 	}
-	
-	// Normalize whitespace once for SET/REMOVE detection
-	normalizedUpper := strings.ReplaceAll(strings.ReplaceAll(upperQuery, "\n", " "), "\t", " ")
-	
-	// Cache SET-related checks
-	hasSet := strings.Contains(normalizedUpper, " SET ")
-	hasOnCreateSet := strings.Contains(normalizedUpper, "ON CREATE SET")
-	hasOnMatchSet := strings.Contains(normalizedUpper, "ON MATCH SET")
-	
+
+	// Cache SET-related checks - use string-literal-aware detection to avoid
+	// matching keywords inside user content like 'MATCH (n) SET n.x = 1'
+	hasSet := containsKeywordOutsideStrings(cypher, " SET ")
+	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
+	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
+
 	// Only route to executeSet if it's a MATCH ... SET or standalone SET
 	if hasSet && !hasOnCreateSet && !hasOnMatchSet {
 		return e.executeSet(ctx, cypher)
 	}
 
-	// Handle MATCH ... REMOVE (property removal)
-	if strings.Contains(normalizedUpper, " REMOVE ") {
+	// Handle MATCH ... REMOVE (property removal) - string-literal-aware
+	if containsKeywordOutsideStrings(cypher, " REMOVE ") {
 		return e.executeRemove(ctx, cypher)
 	}
 
@@ -1259,11 +1294,13 @@ func (e *StorageExecutor) generateUUID() string {
 // nodeToMap converts a storage.Node to a map for result output.
 // Filters out internal properties like embeddings which are huge.
 // Properties are included at the top level for Neo4j compatibility.
+// Embeddings are replaced with a summary showing status and dimensions.
 func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	// Start with node metadata
+	// Use _nodeId for internal storage ID to avoid conflicts with user "id" property
 	result := map[string]interface{}{
-		"id":     string(node.ID),
-		"labels": node.Labels,
+		"_nodeId": string(node.ID), // Internal storage ID for DELETE operations
+		"labels":  node.Labels,
 	}
 
 	// Add properties at top level for Neo4j compatibility
@@ -1274,7 +1311,45 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 		result[k] = v
 	}
 
+	// If no user "id" property, use storage ID for backward compatibility
+	if _, hasUserID := result["id"]; !hasUserID {
+		result["id"] = string(node.ID)
+	}
+
+	// Add embedding summary instead of large array
+	result["embedding"] = e.buildEmbeddingSummary(node)
+
 	return result
+}
+
+// buildEmbeddingSummary creates a summary of embedding status without the actual vector.
+func (e *StorageExecutor) buildEmbeddingSummary(node *storage.Node) map[string]interface{} {
+	summary := map[string]interface{}{}
+
+	// Check if node has embedding in storage
+	if len(node.Embedding) > 0 {
+		summary["status"] = "ready"
+		summary["dimensions"] = len(node.Embedding)
+	} else {
+		// Check if queued for embedding via has_embedding property
+		if hasEmb, ok := node.Properties["has_embedding"].(bool); ok && hasEmb {
+			summary["status"] = "ready"
+			if dims, ok := node.Properties["embedding_dimensions"].(int); ok {
+				summary["dimensions"] = dims
+			}
+		} else {
+			// Check for pending status
+			summary["status"] = "pending"
+			summary["dimensions"] = 0
+		}
+	}
+
+	// Add model info if available
+	if model, ok := node.Properties["embedding_model"].(string); ok {
+		summary["model"] = model
+	}
+
+	return summary
 }
 
 // edgeToMap converts a storage.Edge to a map for result output.
@@ -1292,6 +1367,7 @@ func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 // These properties should not be returned in query results.
 // All keys are lowercase for case-insensitive matching.
 var internalProps = map[string]bool{
+	// Embedding arrays (huge float arrays - never return these)
 	"embedding":        true,
 	"embeddings":       true,
 	"vector":           true,
@@ -1300,6 +1376,11 @@ var internalProps = map[string]bool{
 	"_embeddings":      true,
 	"chunk_embedding":  true,
 	"chunk_embeddings": true,
+	// Embedding metadata (shown in embedding summary instead)
+	"embedding_model":      true,
+	"embedding_dimensions": true,
+	"has_embedding":        true,
+	"embedded_at":          true,
 }
 
 // isInternalProperty returns true for properties that should not be returned in results.
@@ -1363,6 +1444,11 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 
 // executeDelete handles DELETE queries.
 func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -1401,25 +1487,47 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	// Delete matched nodes
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			if node, ok := val.(map[string]interface{}); ok {
-				if id, ok := node["id"].(string); ok {
-					if detach {
-						// Delete all connected edges first
-						edges, _ := e.storage.GetOutgoingEdges(storage.NodeID(id))
-						for _, edge := range edges {
-							e.storage.DeleteEdge(edge.ID)
-							result.Stats.RelationshipsDeleted++
-						}
-						edges, _ = e.storage.GetIncomingEdges(storage.NodeID(id))
-						for _, edge := range edges {
-							e.storage.DeleteEdge(edge.ID)
-							result.Stats.RelationshipsDeleted++
-						}
-					}
-					if err := e.storage.DeleteNode(storage.NodeID(id)); err == nil {
-						result.Stats.NodesDeleted++
-					}
+			// Extract node ID - handle multiple formats
+			var nodeID string
+
+			switch v := val.(type) {
+			case map[string]interface{}:
+				// Node as map - check for _nodeId first (internal storage ID)
+				// then fall back to id for backward compatibility
+				if id, ok := v["_nodeId"].(string); ok {
+					nodeID = id
+				} else if id, ok := v["id"].(string); ok {
+					nodeID = id
+				} else if id, ok := v["id"]; ok {
+					nodeID = fmt.Sprintf("%v", id)
 				}
+			case *storage.Node:
+				// Direct node pointer
+				nodeID = string(v.ID)
+			case string:
+				// Just an ID string
+				nodeID = v
+			}
+
+			if nodeID == "" {
+				continue
+			}
+
+			if detach {
+				// Delete all connected edges first
+				edges, _ := e.storage.GetOutgoingEdges(storage.NodeID(nodeID))
+				for _, edge := range edges {
+					e.storage.DeleteEdge(edge.ID)
+					result.Stats.RelationshipsDeleted++
+				}
+				edges, _ = e.storage.GetIncomingEdges(storage.NodeID(nodeID))
+				for _, edge := range edges {
+					e.storage.DeleteEdge(edge.ID)
+					result.Stats.RelationshipsDeleted++
+				}
+			}
+			if err := e.storage.DeleteNode(storage.NodeID(nodeID)); err == nil {
+				result.Stats.NodesDeleted++
 			}
 		}
 	}
@@ -1429,6 +1537,11 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 
 // executeSet handles MATCH ... SET queries.
 func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -1610,6 +1723,11 @@ func (e *StorageExecutor) executeSetMerge(matchResult *ExecuteResult, setPart st
 // executeRemove handles MATCH ... REMOVE queries for property removal.
 // Syntax: MATCH (n:Label) REMOVE n.property [, n.property2] [RETURN ...]
 func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -2769,7 +2887,7 @@ func (e *StorageExecutor) evaluateCountSubqueryComparison(node *storage.Node, va
 	// Parse comparison operator and value
 	var op string
 	var valueStr string
-	
+
 	if strings.HasPrefix(comparison, ">=") {
 		op = ">="
 		valueStr = strings.TrimSpace(comparison[2:])

@@ -100,36 +100,36 @@ var SearchableProperties = []string{
 
 // SearchResult represents a unified search result.
 type SearchResult struct {
-	ID             string            `json:"id"`
-	NodeID         storage.NodeID    `json:"nodeId"`
-	Type           string            `json:"type"`
-	Labels         []string          `json:"labels"`
-	Title          string            `json:"title,omitempty"`
-	Description    string            `json:"description,omitempty"`
-	ContentPreview string            `json:"content_preview,omitempty"`
-	Properties     map[string]any    `json:"properties,omitempty"`
-	
+	ID             string         `json:"id"`
+	NodeID         storage.NodeID `json:"nodeId"`
+	Type           string         `json:"type"`
+	Labels         []string       `json:"labels"`
+	Title          string         `json:"title,omitempty"`
+	Description    string         `json:"description,omitempty"`
+	ContentPreview string         `json:"content_preview,omitempty"`
+	Properties     map[string]any `json:"properties,omitempty"`
+
 	// Scoring
-	Score          float64           `json:"score"`
-	Similarity     float64           `json:"similarity,omitempty"`
-	
+	Score      float64 `json:"score"`
+	Similarity float64 `json:"similarity,omitempty"`
+
 	// RRF metadata
-	RRFScore       float64           `json:"rrf_score,omitempty"`
-	VectorRank     int               `json:"vector_rank,omitempty"`
-	BM25Rank       int               `json:"bm25_rank,omitempty"`
+	RRFScore   float64 `json:"rrf_score,omitempty"`
+	VectorRank int     `json:"vector_rank,omitempty"`
+	BM25Rank   int     `json:"bm25_rank,omitempty"`
 }
 
 // SearchResponse is the response from a search operation.
 type SearchResponse struct {
-	Status           string         `json:"status"`
-	Query            string         `json:"query"`
-	Results          []SearchResult `json:"results"`
-	TotalCandidates  int            `json:"total_candidates"`
-	Returned         int            `json:"returned"`
-	SearchMethod     string         `json:"search_method"`
-	FallbackTriggered bool          `json:"fallback_triggered"`
-	Message          string         `json:"message,omitempty"`
-	Metrics          *SearchMetrics `json:"metrics,omitempty"`
+	Status            string         `json:"status"`
+	Query             string         `json:"query"`
+	Results           []SearchResult `json:"results"`
+	TotalCandidates   int            `json:"total_candidates"`
+	Returned          int            `json:"returned"`
+	SearchMethod      string         `json:"search_method"`
+	FallbackTriggered bool           `json:"fallback_triggered"`
+	Message           string         `json:"message,omitempty"`
+	Metrics           *SearchMetrics `json:"metrics,omitempty"`
 }
 
 // SearchMetrics contains timing and statistics.
@@ -147,18 +147,18 @@ type SearchMetrics struct {
 type SearchOptions struct {
 	// Limit is the maximum number of results to return
 	Limit int
-	
+
 	// MinSimilarity is the minimum similarity threshold for vector search
 	MinSimilarity float64
-	
+
 	// Types filters results by node type (labels)
 	Types []string
-	
+
 	// RRF configuration
-	RRFK         float64  // RRF constant (default: 60)
-	VectorWeight float64  // Weight for vector results (default: 1.0)
-	BM25Weight   float64  // Weight for BM25 results (default: 1.0)
-	MinRRFScore  float64  // Minimum RRF score threshold (default: 0.01)
+	RRFK         float64 // RRF constant (default: 60)
+	VectorWeight float64 // Weight for vector results (default: 1.0)
+	BM25Weight   float64 // Weight for BM25 results (default: 1.0)
+	MinRRFScore  float64 // Minimum RRF score threshold (default: 0.01)
 }
 
 // DefaultSearchOptions returns sensible defaults.
@@ -197,12 +197,11 @@ func DefaultSearchOptions() *SearchOptions {
 //	if err := svc.IndexNode(node); err != nil {
 //		log.Printf("Failed to index: %v", err)
 //	}
-//
 type Service struct {
-	engine       storage.Engine
-	vectorIndex  *VectorIndex
+	engine        storage.Engine
+	vectorIndex   *VectorIndex
 	fulltextIndex *FulltextIndex
-	mu           sync.RWMutex
+	mu            sync.RWMutex
 }
 
 // NewService creates a new search Service with empty indexes.
@@ -231,12 +230,12 @@ type Service struct {
 //	engine := storage.NewMemoryEngine()
 //	svc := search.NewService(engine)
 //	defer svc.Close()
-//	
+//
 //	// Build indexes from existing nodes
 //	if err := svc.BuildIndexes(ctx); err != nil {
 //		log.Fatal(err)
 //	}
-//	
+//
 //	// Now ready to search
 //	results, _ := svc.Search(ctx, "machine learning", nil, nil)
 //
@@ -244,10 +243,10 @@ type Service struct {
 //
 //	engine := storage.NewBadgerEngine("./data")
 //	svc := search.NewService(engine)
-//	
+//
 //	// Create embedder
 //	embedder := embed.NewOllama(embed.DefaultOllamaConfig())
-//	
+//
 //	// Index documents with embeddings
 //	for _, doc := range documents {
 //		node := &storage.Node{
@@ -266,22 +265,22 @@ type Service struct {
 // Example 3 - Real-time Indexing:
 //
 //	svc := search.NewService(engine)
-//	
+//
 //	// Index as nodes are created
 //	onCreate := func(node *storage.Node) {
 //		if err := svc.IndexNode(node); err != nil {
 //			log.Printf("Index failed: %v", err)
 //		}
 //	}
-//	
+//
 //	// Hook into storage engine
 //	engine.OnNodeCreate(onCreate)
 //
 // ELI12:
 //
 // Think of NewService like building a library with two special catalogs:
-//   1. A "similarity catalog" (vector index) - finds books that are LIKE what you want
-//   2. A "keyword catalog" (fulltext index) - finds books with specific words
+//  1. A "similarity catalog" (vector index) - finds books that are LIKE what you want
+//  2. A "keyword catalog" (fulltext index) - finds books with specific words
 //
 // When you search, the library assistant checks BOTH catalogs and shows you
 // the books that appear in both lists first. That's hybrid search!
@@ -292,7 +291,8 @@ type Service struct {
 //   - Memory: ~4KB per 1000-dim embedding + ~500 bytes per document
 //
 // Thread Safety:
-//   Safe for concurrent searches from multiple goroutines.
+//
+//	Safe for concurrent searches from multiple goroutines.
 func NewService(engine storage.Engine) *Service {
 	return &Service{
 		engine:        engine,
@@ -308,6 +308,8 @@ func (s *Service) IndexNode(node *storage.Node) error {
 
 	// Add to vector index if node has embedding
 	if len(node.Embedding) > 0 {
+		// DEBUG: Print embedding info
+		// fmt.Printf("DEBUG: IndexNode %s has %d-dim embedding\n", node.ID, len(node.Embedding))
 		if err := s.vectorIndex.Add(string(node.ID), node.Embedding); err != nil {
 			return err
 		}
@@ -494,16 +496,16 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 //	Document appears in:
 //	  - Vector results at rank #2
 //	  - BM25 results at rank #5
-//	
+//
 //	RRF_score = (1.0 / (60 + 2)) + (1.0 / (60 + 5))
 //	          = (1.0 / 62) + (1.0 / 65)
 //	          = 0.01613 + 0.01538
 //	          = 0.03151
-//	
+//
 //	Document only in vector at rank #1:
 //	RRF_score = (1.0 / (60 + 1)) + 0
 //	          = 0.01639
-//	
+//
 //	First document wins! Being in both lists beats being #1 in just one.
 //
 // ELI12:
@@ -572,10 +574,10 @@ func (s *Service) fuseRRF(vectorResults, bm25Results []indexResult, opts *Search
 		}
 
 		results = append(results, rrfResult{
-			ID:          id,
-			RRFScore:    rrfScore,
-			VectorRank:  vectorRanks[id],
-			BM25Rank:    bm25Ranks[id],
+			ID:            id,
+			RRFScore:      rrfScore,
+			VectorRank:    vectorRanks[id],
+			BM25Rank:      bm25Ranks[id],
 			OriginalScore: originalScore,
 		})
 	}
@@ -628,14 +630,14 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	searchResults := s.enrichIndexResults(results, opts.Limit)
 
 	return &SearchResponse{
-		Status:           "success",
-		Query:            query,
-		Results:          searchResults,
-		TotalCandidates:  len(results),
-		Returned:         len(searchResults),
-		SearchMethod:     "fulltext",
+		Status:            "success",
+		Query:             query,
+		Results:           searchResults,
+		TotalCandidates:   len(results),
+		Returned:          len(searchResults),
+		SearchMethod:      "fulltext",
 		FallbackTriggered: true,
-		Message:          "Full-text BM25 search (vector search unavailable or returned no results)",
+		Message:           "Full-text BM25 search (vector search unavailable or returned no results)",
 	}, nil
 }
 
@@ -682,7 +684,7 @@ func (s *Service) filterByType(results []indexResult, types []string) []indexRes
 				break
 			}
 		}
-		
+
 		// Also check type property
 		if nodeType, ok := node.Properties["type"].(string); ok {
 			if _, ok := typeSet[strings.ToLower(nodeType)]; ok {

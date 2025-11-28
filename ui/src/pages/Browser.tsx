@@ -180,11 +180,29 @@ export function Browser() {
                     </thead>
                     <tbody>
                       {cypherResult.results[0].data.map((row, i) => (
-                        <tr key={i}>
+                        <tr 
+                          key={i}
+                          onClick={() => {
+                            // Find first node-like object in row and select it
+                            for (const cell of row.row) {
+                              if (cell && typeof cell === 'object') {
+                                const cellObj = cell as Record<string, unknown>;
+                                if (cellObj.id || cellObj._nodeId) {
+                                  const nodeData = extractNodeFromResult(cellObj);
+                                  if (nodeData) {
+                                    setSelectedNode({ node: { ...nodeData, created_at: '' }, score: 0 });
+                                    break;
+                                  }
+                                }
+                              }
+                            }
+                          }}
+                          className="cursor-pointer hover:bg-nornic-primary/10"
+                        >
                           {row.row.map((cell, j) => (
                             <td key={j} className="font-mono text-xs">
                               {typeof cell === 'object' 
-                                ? <JsonPreview data={cell} />
+                                ? <NodePreview data={cell} />
                                 : String(cell)}
                             </td>
                           ))}
@@ -399,4 +417,74 @@ function getNodePreview(properties: Record<string, unknown>): string {
     }
   }
   return JSON.stringify(properties).slice(0, 100);
+}
+
+// Extract node data from Cypher result cell
+function extractNodeFromResult(cell: Record<string, unknown>): { id: string; labels: string[]; properties: Record<string, unknown> } | null {
+  if (!cell || typeof cell !== 'object') return null;
+  
+  // Get ID (could be _nodeId, id, or elementId)
+  const id = (cell._nodeId || cell.id || cell.elementId) as string;
+  if (!id) return null;
+  
+  // Get labels
+  let labels: string[] = [];
+  if (Array.isArray(cell.labels)) {
+    labels = cell.labels as string[];
+  } else if (cell.type && typeof cell.type === 'string') {
+    labels = [cell.type];
+  }
+  
+  // Properties are the rest of the fields (excluding metadata)
+  const excludeKeys = new Set(['_nodeId', 'id', 'elementId', 'labels', 'meta']);
+  const properties: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(cell)) {
+    if (!excludeKeys.has(key)) {
+      properties[key] = value;
+    }
+  }
+  
+  return { id, labels, properties };
+}
+
+// Show node preview with ID and title
+function NodePreview({ data }: { data: unknown }) {
+  if (data === null) return <span className="json-null">null</span>;
+  if (typeof data !== 'object') return <span>{String(data)}</span>;
+  
+  const obj = data as Record<string, unknown>;
+  
+  // Check if it's a node-like object
+  const id = obj._nodeId || obj.id || obj.elementId;
+  const title = obj.title || obj.name || obj.text;
+  const type = obj.type;
+  const labels = obj.labels as string[] | undefined;
+  
+  if (id) {
+    const idStr = String(id);
+    const titleStr = title ? String(title) : '';
+    return (
+      <div className="flex items-center gap-2">
+        {labels && labels.length > 0 ? (
+          <span className="px-1.5 py-0.5 text-xs bg-frost-ice/20 text-frost-ice rounded">
+            {labels[0]}
+          </span>
+        ) : typeof type === 'string' ? (
+          <span className="px-1.5 py-0.5 text-xs bg-nornic-primary/20 text-nornic-primary rounded">
+            {type}
+          </span>
+        ) : null}
+        <span className="text-valhalla-gold text-xs">{idStr.slice(0, 20)}</span>
+        {titleStr && (
+          <span className="text-norse-silver truncate max-w-[200px]">
+            {titleStr.slice(0, 50)}{titleStr.length > 50 ? '...' : ''}
+          </span>
+        )}
+      </div>
+    );
+  }
+  
+  // Not a node - show key count
+  const keys = Object.keys(obj);
+  return <span className="text-norse-silver">{'{'}...{keys.length} props{'}'}</span>;
 }

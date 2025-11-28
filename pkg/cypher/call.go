@@ -296,6 +296,11 @@ func (e *StorageExecutor) evaluateYieldWhere(whereExpr string, ctx map[string]in
 }
 
 func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
 	upper := strings.ToUpper(cypher)
 
 	// Parse YIELD clause for post-processing
