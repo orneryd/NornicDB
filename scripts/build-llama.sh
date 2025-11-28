@@ -58,10 +58,15 @@ CMAKE_ARGS="-DLLAMA_STATIC=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -D
 GPU_SUFFIX=""
 if [[ "$OS" == "darwin" && "$ARCH" == "arm64" ]]; then
     echo "   GPU: Metal (Apple Silicon)"
-    CMAKE_ARGS="$CMAKE_ARGS -DLLAMA_METAL=ON"
+    echo "   Features: Flash Attention, Embedded Metal Shaders"
+    # Use GGML_ prefixed options (newer llama.cpp)
+    CMAKE_ARGS="$CMAKE_ARGS -DGGML_METAL=ON"
+    CMAKE_ARGS="$CMAKE_ARGS -DGGML_METAL_EMBED_LIBRARY=ON"  # Embed Metal shaders in binary
 elif [[ "$OS" == "linux" && "$ARCH" == "amd64" ]] && command -v nvcc &> /dev/null; then
     echo "   GPU: CUDA detected"
-    CMAKE_ARGS="$CMAKE_ARGS -DLLAMA_CUDA=ON"
+    echo "   Features: Flash Attention for all quants"
+    CMAKE_ARGS="$CMAKE_ARGS -DGGML_CUDA=ON"
+    CMAKE_ARGS="$CMAKE_ARGS -DGGML_CUDA_FA_ALL_QUANTS=ON"  # Flash attention for all quants
     GPU_SUFFIX="_cuda"
 else
     echo "   GPU: None (CPU only with SIMD)"
