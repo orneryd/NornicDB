@@ -474,28 +474,11 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		}
 	}
 
-	// Handle embeddings: user-provided OR auto-generated
-	var embedding []float32
-	embedded := false
-
-	// Check for user-provided embedding
-	if userEmb, ok := args["embedding"]; ok && userEmb != nil {
-		var err error
-		embedding, err = s.validateAndConvertEmbedding(userEmb)
-		if err != nil {
-			return nil, err // Returns 400-style error with explanation
-		}
-		embedded = true
-		props["embedding"] = embedding
-	} else if s.embed != nil && s.config.EmbeddingEnabled {
-		// Auto-generate embedding from content
-		var err error
-		embedding, err = s.embed.Embed(ctx, content)
-		if err == nil {
-			embedded = true
-			props["embedding"] = embedding
-		}
-	}
+	// Embeddings are internal-only - silently ignore any user-provided embedding
+	// The database's embed queue will generate embeddings asynchronously
+	delete(props, "embedding")
+	delete(props, "embeddings")
+	delete(props, "vector")
 
 	// Store in database
 	var nodeID string
@@ -514,7 +497,7 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 	return StoreResult{
 		ID:       nodeID,
 		Title:    title,
-		Embedded: embedded,
+		Embedded: true, // Embeddings are generated asynchronously by the database
 	}, nil
 }
 

@@ -297,6 +297,7 @@ type Config struct {
 	// Embeddings
 	EmbeddingProvider   string `yaml:"embedding_provider"` // ollama, openai
 	EmbeddingAPIURL     string `yaml:"embedding_api_url"`
+	EmbeddingAPIKey     string `yaml:"embedding_api_key"` // API key (use dummy for llama.cpp)
 	EmbeddingModel      string `yaml:"embedding_model"`
 	EmbeddingDimensions int    `yaml:"embedding_dimensions"`
 	AutoEmbedEnabled    bool   `yaml:"auto_embed_enabled"` // Auto-generate embeddings on node create/update
@@ -342,6 +343,7 @@ func DefaultConfig() *Config {
 		DataDir:                      "./data",
 		EmbeddingProvider:            "openai", // Use OpenAI-compatible endpoint (llama.cpp, vLLM, etc.)
 		EmbeddingAPIURL:              "http://localhost:11434",
+		EmbeddingAPIKey:              "not-needed", // Dummy key for llama.cpp (doesn't validate)
 		EmbeddingModel:               "mxbai-embed-large",
 		EmbeddingDimensions:          1024,
 		AutoEmbedEnabled:             true, // Auto-generate embeddings on node creation
@@ -752,9 +754,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize async embedding queue (if enabled and provider configured)
 	if config.AutoEmbedEnabled && config.EmbeddingProvider != "" {
+		// Set API path based on provider
+		apiPath := "/v1/embeddings" // OpenAI-compatible (llama.cpp, vLLM, etc.)
+		if config.EmbeddingProvider == "ollama" {
+			apiPath = "/api/embeddings"
+		}
+
 		embedConfig := &embed.Config{
 			Provider:   config.EmbeddingProvider,
 			APIURL:     config.EmbeddingAPIURL,
+			APIPath:    apiPath,
+			APIKey:     config.EmbeddingAPIKey,
 			Model:      config.EmbeddingModel,
 			Dimensions: config.EmbeddingDimensions,
 			Timeout:    30 * time.Second,
@@ -862,13 +872,23 @@ func (db *DB) EmbedQueueStats() *QueueStats {
 	return &stats
 }
 
-// EmbedExisting queues all existing nodes without embeddings for async processing.
-// Returns the number of nodes queued.
+// EmbedExisting triggers the worker to scan for nodes without embeddings.
+// The worker runs automatically, but this can be used to trigger immediate processing.
 func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
 	if db.embedQueue == nil {
 		return 0, fmt.Errorf("auto-embed not enabled")
 	}
-	return db.embedQueue.EnqueueExisting(ctx)
+	db.embedQueue.Trigger()
+	return 0, nil // Worker will process in background
+}
+
+// EmbedQuery generates an embedding for a search query.
+// Returns nil if embeddings are not enabled.
+func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	if db.embedQueue == nil {
+		return nil, nil // Not an error - just no embedding available
+	}
+	return db.embedQueue.embedder.Embed(ctx, query)
 }
 
 // Store creates a new memory with automatic relationship inference.
@@ -1755,6 +1775,12 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 	id := generateID("node")
 	now := time.Now()
 
+	// Embeddings are internal-only - silently strip any user-provided embedding property
+	// Users cannot supply embeddings; they are generated asynchronously by the embed queue
+	delete(properties, "embedding")
+	delete(properties, "embeddings")
+	delete(properties, "vector")
+
 	node := &storage.Node{
 		ID:         storage.NodeID(id),
 		Labels:     labels,
@@ -1762,36 +1788,12 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 		CreatedAt:  now,
 	}
 
-	// Extract embedding from properties if present (MCP store tool passes embeddings this way)
-	if embProp, ok := properties["embedding"]; ok {
-		switch v := embProp.(type) {
-		case []float32:
-			node.Embedding = v
-		case []float64:
-			// Convert float64 to float32
-			node.Embedding = make([]float32, len(v))
-			for i, f := range v {
-				node.Embedding[i] = float32(f)
-			}
-		case []interface{}:
-			// JSON arrays come in as []interface{}
-			node.Embedding = make([]float32, len(v))
-			for i, f := range v {
-				if fv, ok := f.(float64); ok {
-					node.Embedding[i] = float32(fv)
-				}
-			}
-		}
-		// Remove from properties to avoid duplication (stored in Embedding field)
-		delete(properties, "embedding")
-	}
-
 	if err := db.storage.CreateNode(node); err != nil {
 		return nil, err
 	}
 
-	// Queue for async embedding if not provided and queue is available (non-blocking)
-	if len(node.Embedding) == 0 && db.embedQueue != nil {
+	// Always queue for async embedding generation (non-blocking)
+	if db.embedQueue != nil {
 		db.embedQueue.Enqueue(id)
 	}
 
@@ -1821,6 +1823,11 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	if err != nil {
 		return nil, ErrNotFound
 	}
+
+	// Embeddings are internal-only - silently strip any user-provided embedding property
+	delete(properties, "embedding")
+	delete(properties, "embeddings")
+	delete(properties, "vector")
 
 	// Merge properties
 	for k, v := range properties {

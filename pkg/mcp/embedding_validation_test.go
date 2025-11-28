@@ -1,5 +1,10 @@
 package mcp
 
+// DISABLED: User-provided embeddings are now ignored.
+// Embeddings are internal-only and generated asynchronously by the embed queue.
+// These tests are kept for reference if we ever need to support user embeddings.
+
+/*
 import (
 	"testing"
 )
@@ -120,3 +125,4 @@ func TestValidateAndConvertEmbedding(t *testing.T) {
 		t.Log("✓ Accepts any dimensions when not configured")
 	})
 }
+*/

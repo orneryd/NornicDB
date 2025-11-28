@@ -180,6 +180,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	loadExport, _ := cmd.Flags().GetString("load-export")
 	embeddingURL, _ := cmd.Flags().GetString("embedding-url")
+	embeddingKey, _ := cmd.Flags().GetString("embedding-key")
 	embeddingModel, _ := cmd.Flags().GetString("embedding-model")
 	embeddingDim, _ := cmd.Flags().GetInt("embedding-dim")
 	noAuth, _ := cmd.Flags().GetBool("no-auth")
@@ -267,6 +268,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.BoltPort = boltPort
 	dbConfig.HTTPPort = httpPort
 	dbConfig.EmbeddingAPIURL = embeddingURL
+	dbConfig.EmbeddingAPIKey = embeddingKey
 	dbConfig.EmbeddingModel = embeddingModel
 	dbConfig.EmbeddingDimensions = embeddingDim
 	dbConfig.ParallelEnabled = parallelEnabled

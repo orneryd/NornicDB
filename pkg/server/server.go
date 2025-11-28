@@ -652,6 +652,10 @@ func (s *Server) buildRouter() http.Handler {
 	// Memory decay (NornicDB-specific)
 	mux.HandleFunc("/nornicdb/decay", s.withAuth(s.handleDecay, auth.PermRead))
 
+	// Embedding control (NornicDB-specific)
+	mux.HandleFunc("/nornicdb/embed/trigger", s.withAuth(s.handleEmbedTrigger, auth.PermWrite))
+	mux.HandleFunc("/nornicdb/embed/stats", s.withAuth(s.handleEmbedStats, auth.PermRead))
+
 	// Admin endpoints (NornicDB-specific)
 	mux.HandleFunc("/admin/stats", s.withAuth(s.handleAdminStats, auth.PermAdmin))
 	mux.HandleFunc("/admin/config", s.withAuth(s.handleAdminConfig, auth.PermAdmin))
@@ -1298,6 +1302,66 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, response)
 }
 
+// handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
+func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+		return
+	}
+
+	stats := s.db.EmbedQueueStats()
+	if stats == nil {
+		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.DatabaseError.General.UnknownError", "Auto-embed not enabled")
+		return
+	}
+
+	// Check if already running
+	wasRunning := stats.Running
+
+	// Trigger (safe to call even if already running - just wakes up worker)
+	_, err := s.db.EmbedExisting(r.Context())
+	if err != nil {
+		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+		return
+	}
+
+	// Get updated stats
+	stats = s.db.EmbedQueueStats()
+
+	var message string
+	if wasRunning {
+		message = "Embedding worker already running - will continue processing"
+	} else {
+		message = "Embedding worker triggered - processing nodes in background"
+	}
+
+	response := map[string]interface{}{
+		"triggered":      true,
+		"already_active": wasRunning,
+		"message":        message,
+		"stats":          stats,
+	}
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+// handleEmbedStats returns embedding worker statistics.
+func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
+	stats := s.db.EmbedQueueStats()
+	if stats == nil {
+		response := map[string]interface{}{
+			"enabled": false,
+			"message": "Auto-embed not enabled",
+		}
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+	response := map[string]interface{}{
+		"enabled": true,
+		"stats":   stats,
+	}
+	s.writeJSON(w, http.StatusOK, response)
+}
+
 // =============================================================================
 // Discovery & Health Handlers
 // =============================================================================
@@ -1336,9 +1400,20 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Get embedding worker status
+	embedStatus := "disabled"
+	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
+		if embedStats.Running {
+			embedStatus = "processing"
+		} else {
+			embedStatus = "idle"
+		}
+	}
+
 	response := map[string]interface{}{
-		"status": "healthy",
-		"time":   time.Now().Format(time.RFC3339),
+		"status":     "healthy",
+		"time":       time.Now().Format(time.RFC3339),
+		"embeddings": embedStatus,
 	}
 	s.writeJSON(w, http.StatusOK, response)
 }
@@ -1346,6 +1421,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 	dbStats := s.db.Stats()
+
+	// Build embedding info
+	embedInfo := map[string]interface{}{
+		"enabled": false,
+	}
+	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
+		status := "idle"
+		if embedStats.Running {
+			status = "processing"
+		}
+		embedInfo = map[string]interface{}{
+			"enabled":   true,
+			"status":    status,
+			"processed": embedStats.Processed,
+			"failed":    embedStats.Failed,
+		}
+	}
 
 	response := map[string]interface{}{
 		"status": "running",
@@ -1359,6 +1451,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"nodes": dbStats.NodeCount,
 			"edges": dbStats.EdgeCount,
 		},
+		"embeddings": embedInfo,
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
@@ -1610,7 +1703,20 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	results, err := s.db.Search(r.Context(), req.Query, req.Labels, req.Limit)
+	// Try to generate embedding for hybrid search
+	queryEmbedding, _ := s.db.EmbedQuery(r.Context(), req.Query)
+
+	var results []*nornicdb.SearchResult
+	var err error
+
+	if queryEmbedding != nil {
+		// Use hybrid search (vector + text)
+		results, err = s.db.HybridSearch(r.Context(), req.Query, queryEmbedding, req.Labels, req.Limit)
+	} else {
+		// Fall back to text-only search
+		results, err = s.db.Search(r.Context(), req.Query, req.Labels, req.Limit)
+	}
+
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
 		return

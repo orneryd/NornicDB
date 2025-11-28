@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react';
 import { 
   Database, Search, Play, History, Terminal, 
   Network, HardDrive, Clock, Activity, ChevronRight,
-  Sparkles, X
+  Sparkles, X, Zap, Loader2
 } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
+
+interface EmbedStats {
+  running: boolean;
+  processed: number;
+  failed: number;
+}
 
 export function Browser() {
   const {
@@ -16,6 +22,52 @@ export function Browser() {
   
   const [activeTab, setActiveTab] = useState<'query' | 'search'>('query');
   const [showHistory, setShowHistory] = useState(false);
+  const [embedStats, setEmbedStats] = useState<EmbedStats | null>(null);
+  const [embedTriggering, setEmbedTriggering] = useState(false);
+  const [embedMessage, setEmbedMessage] = useState<string | null>(null);
+
+  // Fetch embed stats periodically
+  useEffect(() => {
+    const fetchEmbedStats = async () => {
+      try {
+        const res = await fetch('/nornicdb/embed/stats');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.enabled) {
+            setEmbedStats(data.stats);
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+    fetchEmbedStats();
+    const interval = setInterval(fetchEmbedStats, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleTriggerEmbed = async () => {
+    setEmbedTriggering(true);
+    setEmbedMessage(null);
+    try {
+      const res = await fetch('/nornicdb/embed/trigger', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setEmbedMessage(data.message);
+        if (data.stats) {
+          setEmbedStats(data.stats);
+        }
+      } else {
+        setEmbedMessage(data.message || 'Failed to trigger embeddings');
+      }
+    } catch (err) {
+      setEmbedMessage('Error triggering embeddings');
+    } finally {
+      setEmbedTriggering(false);
+      // Clear message after 3 seconds
+      setTimeout(() => setEmbedMessage(null), 3000);
+    }
+  };
 
   useEffect(() => {
     fetchStats();
@@ -72,6 +124,31 @@ export function Browser() {
                 </div>
               </>
             )}
+            {/* Embed Button */}
+            <button
+              type="button"
+              onClick={handleTriggerEmbed}
+              disabled={embedTriggering}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                embedStats?.running 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                  : 'bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune'
+              }`}
+              title={embedStats ? `Processed: ${embedStats.processed}, Failed: ${embedStats.failed}` : 'Trigger embedding generation'}
+            >
+              {embedTriggering || embedStats?.running ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              <span>
+                {embedStats?.running ? 'Embedding...' : 'Generate Embeddings'}
+              </span>
+              {embedStats && embedStats.processed > 0 && (
+                <span className="text-xs text-norse-silver">({embedStats.processed})</span>
+              )}
+            </button>
+
             <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${connected ? 'bg-nornic-primary/20 status-connected' : 'bg-red-500/20'}`}>
               <Activity className={`w-4 h-4 ${connected ? 'text-nornic-primary' : 'text-red-400'}`} />
               <span className={`text-sm ${connected ? 'text-nornic-primary' : 'text-red-400'}`}>
@@ -80,6 +157,12 @@ export function Browser() {
             </div>
           </div>
         </div>
+        {/* Embed Message Toast */}
+        {embedMessage && (
+          <div className="absolute top-16 right-4 bg-norse-shadow border border-norse-rune rounded-lg px-4 py-2 text-sm text-norse-silver shadow-lg">
+            {embedMessage}
+          </div>
+        )}
       </header>
 
       {/* Main Content */}
@@ -310,9 +393,9 @@ export function Browser() {
                 <div className="mb-4">
                   <h3 className="text-xs font-medium text-norse-silver mb-2">LABELS</h3>
                   <div className="flex flex-wrap gap-2">
-                    {selectedNode.node.labels.map((label, i) => (
-                      <span key={i} className="px-3 py-1 bg-frost-ice/20 text-frost-ice rounded-full text-sm">
-                        {label}
+                    {(selectedNode.node.labels as string[]).map((label, i) => (
+                      <span key={`label-${i}`} className="px-3 py-1 bg-frost-ice/20 text-frost-ice rounded-full text-sm">
+                        {String(label)}
                       </span>
                     ))}
                   </div>
@@ -323,6 +406,14 @@ export function Browser() {
                   <h3 className="text-xs font-medium text-norse-silver mb-2">ID</h3>
                   <code className="text-sm text-valhalla-gold font-mono">{selectedNode.node.id}</code>
                 </div>
+
+                {/* Embedding Status - Always show at top */}
+                {'embedding' in selectedNode.node.properties && selectedNode.node.properties.embedding != null && (
+                  <div className="mb-4">
+                    <h3 className="text-xs font-medium text-norse-silver mb-2">EMBEDDING</h3>
+                    <EmbeddingStatus embedding={selectedNode.node.properties.embedding} />
+                  </div>
+                )}
 
                 {/* Scores */}
                 {(selectedNode.rrf_score || selectedNode.vector_rank || selectedNode.bm25_rank) && (
@@ -348,11 +439,13 @@ export function Browser() {
                   </div>
                 )}
 
-                {/* Properties */}
+                {/* Properties (excluding embedding - shown above) */}
                 <div>
                   <h3 className="text-xs font-medium text-norse-silver mb-2">PROPERTIES</h3>
                   <div className="space-y-2">
-                    {Object.entries(selectedNode.node.properties).map(([key, value]) => (
+                    {Object.entries(selectedNode.node.properties)
+                      .filter(([key]) => key !== 'embedding')
+                      .map(([key, value]) => (
                       <div key={key} className="bg-norse-stone rounded-lg p-3">
                         <div className="flex items-center gap-2 mb-1">
                           <ChevronRight className="w-3 h-3 text-norse-fog" />
@@ -487,4 +580,73 @@ function NodePreview({ data }: { data: unknown }) {
   // Not a node - show key count
   const keys = Object.keys(obj);
   return <span className="text-norse-silver">{'{'}...{keys.length} props{'}'}</span>;
+}
+
+// Display embedding status nicely
+function EmbeddingStatus({ embedding }: { embedding: unknown }) {
+  if (!embedding || typeof embedding !== 'object') {
+    return <span className="text-norse-silver">No embedding data</span>;
+  }
+  
+  const emb = embedding as Record<string, unknown>;
+  const status = emb.status as string || 'unknown';
+  const dimensions = emb.dimensions as number || 0;
+  const model = emb.model as string | undefined;
+  
+  const isReady = status === 'ready';
+  const isPending = status === 'pending';
+  
+  return (
+    <div className="bg-norse-stone rounded-lg p-3">
+      <div className="flex items-center gap-3">
+        {/* Status indicator */}
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
+          isReady 
+            ? 'bg-nornic-primary/20' 
+            : isPending 
+              ? 'bg-valhalla-gold/20' 
+              : 'bg-red-500/20'
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${
+            isReady 
+              ? 'bg-nornic-primary animate-pulse' 
+              : isPending 
+                ? 'bg-valhalla-gold animate-pulse' 
+                : 'bg-red-400'
+          }`} />
+          <span className={`text-sm font-medium ${
+            isReady 
+              ? 'text-nornic-primary' 
+              : isPending 
+                ? 'text-valhalla-gold' 
+                : 'text-red-400'
+          }`}>
+            {isReady ? 'Ready' : isPending ? 'Generating...' : status}
+          </span>
+        </div>
+        
+        {/* Dimensions */}
+        {dimensions > 0 && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-norse-silver">Dimensions:</span>
+            <span className="text-sm text-frost-ice font-mono">{dimensions}</span>
+          </div>
+        )}
+        
+        {/* Model */}
+        {model && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-norse-silver">Model:</span>
+            <span className="text-sm text-nornic-accent">{model}</span>
+          </div>
+        )}
+      </div>
+      
+      {isPending && (
+        <p className="text-xs text-norse-fog mt-2">
+          Embedding will be generated automatically by the background queue.
+        </p>
+      )}
+    </div>
+  );
 }

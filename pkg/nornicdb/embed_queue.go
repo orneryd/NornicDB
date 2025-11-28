@@ -1,10 +1,11 @@
-// Package nornicdb provides async embedding queue for background embedding generation.
+// Package nornicdb provides async embedding worker for background embedding generation.
 package nornicdb
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,300 +13,317 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// EmbedQueue manages async embedding generation with durable persistence.
-// Nodes are queued for embedding and processed in the background without blocking.
-type EmbedQueue struct {
+// EmbedWorker manages async embedding generation using a pull-based model.
+// On each cycle, it scans for nodes without embeddings and processes them.
+type EmbedWorker struct {
 	embedder embed.Embedder
 	storage  storage.Engine
-	
-	mu       sync.Mutex
-	queue    chan string        // In-memory channel for fast queuing
-	pending  map[string]bool    // Track what's in queue to avoid duplicates
-	
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	
-	batchSize     int
-	batchInterval time.Duration
-	workers       int
+	config   *EmbedWorkerConfig
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	// Trigger channel to wake up worker immediately
+	trigger chan struct{}
+
+	// Stats
+	mu        sync.Mutex
+	processed int
+	failed    int
+	running   bool
 }
 
-// EmbedQueueConfig holds configuration for the embedding queue.
-type EmbedQueueConfig struct {
-	BatchSize     int           // How many to process at once (default: 10)
-	BatchInterval time.Duration // Max time to wait before processing partial batch (default: 5s)
-	Workers       int           // Number of worker goroutines (default: 2)
-	QueueSize     int           // In-memory queue buffer size (default: 10000)
+// EmbedWorkerConfig holds configuration for the embedding worker.
+type EmbedWorkerConfig struct {
+	// Worker settings
+	ScanInterval time.Duration // How often to scan for nodes without embeddings (default: 5s)
+	BatchDelay   time.Duration // Delay between processing nodes (default: 500ms)
+	MaxRetries   int           // Max retry attempts per node (default: 3)
+
+	// Text chunking settings (matches Mimir: MIMIR_EMBEDDINGS_CHUNK_SIZE, MIMIR_EMBEDDINGS_CHUNK_OVERLAP)
+	ChunkSize    int // Max characters per chunk (default: 512)
+	ChunkOverlap int // Characters to overlap between chunks (default: 50)
 }
 
-// DefaultEmbedQueueConfig returns sensible defaults.
-func DefaultEmbedQueueConfig() *EmbedQueueConfig {
-	return &EmbedQueueConfig{
-		BatchSize:     10,
-		BatchInterval: 5 * time.Second,
-		Workers:       2,
-		QueueSize:     10000,
+// DefaultEmbedWorkerConfig returns sensible defaults.
+func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
+	return &EmbedWorkerConfig{
+		ScanInterval: 5 * time.Second,
+		BatchDelay:   500 * time.Millisecond,
+		MaxRetries:   3,
+		ChunkSize:    512,
+		ChunkOverlap: 50,
 	}
 }
 
-// NewEmbedQueue creates a new async embedding queue.
-func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *EmbedQueueConfig) *EmbedQueue {
+// NewEmbedWorker creates a new async embedding worker.
+func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *EmbedWorkerConfig) *EmbedWorker {
 	if config == nil {
-		config = DefaultEmbedQueueConfig()
+		config = DefaultEmbedWorkerConfig()
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
-	eq := &EmbedQueue{
-		embedder:      embedder,
-		storage:       storage,
-		queue:         make(chan string, config.QueueSize),
-		pending:       make(map[string]bool),
-		ctx:           ctx,
-		cancel:        cancel,
-		batchSize:     config.BatchSize,
-		batchInterval: config.BatchInterval,
-		workers:       config.Workers,
+
+	ew := &EmbedWorker{
+		embedder: embedder,
+		storage:  storage,
+		config:   config,
+		ctx:      ctx,
+		cancel:   cancel,
+		trigger:  make(chan struct{}, 1),
 	}
-	
-	// Start workers
-	for i := 0; i < config.Workers; i++ {
-		eq.wg.Add(1)
-		go eq.worker(i)
-	}
-	
-	// Recover any pending items from storage on startup
-	go eq.recoverPending()
-	
-	return eq
+
+	// Start worker
+	ew.wg.Add(1)
+	go ew.worker()
+
+	return ew
 }
 
-// Enqueue adds a node ID to the embedding queue (non-blocking).
-func (eq *EmbedQueue) Enqueue(nodeID string) {
-	eq.mu.Lock()
-	if eq.pending[nodeID] {
-		eq.mu.Unlock()
-		return // Already queued
-	}
-	eq.pending[nodeID] = true
-	eq.mu.Unlock()
-	
-	// Mark as pending in storage for durability
-	eq.markPending(nodeID)
-	
-	// Non-blocking send to channel
+// Trigger wakes up the worker to check for nodes without embeddings.
+// Call this after creating a new node.
+func (ew *EmbedWorker) Trigger() {
 	select {
-	case eq.queue <- nodeID:
+	case ew.trigger <- struct{}{}:
 	default:
-		// Queue full - will be recovered from storage later
+		// Already triggered
 	}
 }
 
-// QueueStats returns current queue statistics.
-type QueueStats struct {
-	Pending    int `json:"pending"`
-	Processing int `json:"processing"`
-	Completed  int `json:"completed"`
-	Failed     int `json:"failed"`
+// WorkerStats returns current worker statistics.
+type WorkerStats struct {
+	Running   bool `json:"running"`
+	Processed int  `json:"processed"`
+	Failed    int  `json:"failed"`
 }
 
-// Stats returns current queue statistics.
-func (eq *EmbedQueue) Stats() QueueStats {
-	eq.mu.Lock()
-	defer eq.mu.Unlock()
-	return QueueStats{
-		Pending: len(eq.pending),
+// Stats returns current worker statistics.
+func (ew *EmbedWorker) Stats() WorkerStats {
+	ew.mu.Lock()
+	defer ew.mu.Unlock()
+	return WorkerStats{
+		Running:   ew.running,
+		Processed: ew.processed,
+		Failed:    ew.failed,
 	}
 }
 
-// Close gracefully shuts down the queue.
-func (eq *EmbedQueue) Close() {
-	eq.cancel()
-	close(eq.queue)
-	eq.wg.Wait()
+// Close gracefully shuts down the worker.
+func (ew *EmbedWorker) Close() {
+	ew.cancel()
+	close(ew.trigger)
+	ew.wg.Wait()
 }
 
-// worker processes embedding requests in batches.
-func (eq *EmbedQueue) worker(id int) {
-	defer eq.wg.Done()
-	
-	batch := make([]string, 0, eq.batchSize)
-	timer := time.NewTimer(eq.batchInterval)
-	
+// worker runs the embedding loop.
+func (ew *EmbedWorker) worker() {
+	defer ew.wg.Done()
+
+	fmt.Println("🧠 Embed worker started")
+
+	// Initial delay to let server start
+	time.Sleep(2 * time.Second)
+
+	ticker := time.NewTicker(ew.config.ScanInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-eq.ctx.Done():
-			// Process remaining batch before exit
-			if len(batch) > 0 {
-				eq.processBatch(batch)
-			}
+		case <-ew.ctx.Done():
+			fmt.Println("🧠 Embed worker stopped")
 			return
-			
-		case nodeID, ok := <-eq.queue:
-			if !ok {
-				// Channel closed
-				if len(batch) > 0 {
-					eq.processBatch(batch)
-				}
-				return
-			}
-			
-			batch = append(batch, nodeID)
-			
-			if len(batch) >= eq.batchSize {
-				eq.processBatch(batch)
-				batch = make([]string, 0, eq.batchSize)
-				timer.Reset(eq.batchInterval)
-			}
-			
-		case <-timer.C:
-			// Process partial batch on timeout
-			if len(batch) > 0 {
-				eq.processBatch(batch)
-				batch = make([]string, 0, eq.batchSize)
-			}
-			timer.Reset(eq.batchInterval)
+
+		case <-ew.trigger:
+			// Immediate trigger - process now
+			ew.processNextBatch()
+
+		case <-ticker.C:
+			// Regular interval scan
+			ew.processNextBatch()
 		}
 	}
 }
 
-// processBatch generates embeddings for a batch of nodes.
-func (eq *EmbedQueue) processBatch(nodeIDs []string) {
-	if len(nodeIDs) == 0 {
+// processNextBatch finds and processes nodes without embeddings.
+func (ew *EmbedWorker) processNextBatch() {
+	ew.mu.Lock()
+	ew.running = true
+	ew.mu.Unlock()
+
+	defer func() {
+		ew.mu.Lock()
+		ew.running = false
+		ew.mu.Unlock()
+	}()
+
+	// Find one node without embedding
+	node := ew.findNodeWithoutEmbedding()
+	if node == nil {
+		return // Nothing to process
+	}
+
+	fmt.Printf("🔄 Processing node %s for embedding...\n", node.ID)
+
+	// Build text for embedding
+	text := buildEmbeddingText(node.Properties)
+	if text == "" {
+		// No content - mark as processed but skip
+		node.Properties["has_embedding"] = false
+		node.Properties["embedding_skipped"] = "no content"
+		_ = ew.storage.UpdateNode(node)
 		return
 	}
-	
-	// Collect texts for batch embedding
-	texts := make([]string, 0, len(nodeIDs))
-	validIDs := make([]string, 0, len(nodeIDs))
-	nodes := make([]*storage.Node, 0, len(nodeIDs))
-	
-	for _, id := range nodeIDs {
-		node, err := eq.storage.GetNode(storage.NodeID(id))
-		if err != nil {
-			eq.clearPending(id)
-			continue
+
+	// Chunk text if needed
+	chunks := chunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
+
+	// Embed with retry
+	embedding, err := ew.embedWithRetry(chunks)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to embed node %s: %v\n", node.ID, err)
+		ew.mu.Lock()
+		ew.failed++
+		ew.mu.Unlock()
+		return
+	}
+
+	// Update node with embedding
+	node.Embedding = embedding
+	node.Properties["embedding_model"] = ew.embedder.Model()
+	node.Properties["embedding_dimensions"] = ew.embedder.Dimensions()
+	node.Properties["has_embedding"] = true
+	node.Properties["embedded_at"] = time.Now().Format(time.RFC3339)
+	if len(chunks) > 1 {
+		node.Properties["embedding_chunks"] = len(chunks)
+	}
+
+	if err := ew.storage.UpdateNode(node); err != nil {
+		fmt.Printf("⚠️  Failed to update node %s: %v\n", node.ID, err)
+		ew.mu.Lock()
+		ew.failed++
+		ew.mu.Unlock()
+		return
+	}
+
+	ew.mu.Lock()
+	ew.processed++
+	ew.mu.Unlock()
+
+	fmt.Printf("✅ Embedded node %s (%d dims, %d chunks)\n", node.ID, len(embedding), len(chunks))
+
+	// Small delay before next
+	time.Sleep(ew.config.BatchDelay)
+
+	// Trigger another check immediately if there might be more
+	ew.Trigger()
+}
+
+// findNodeWithoutEmbedding scans storage for a single node that needs embedding.
+// Uses streaming/iteration to avoid loading all nodes at once.
+func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
+	// Get all nodes but iterate - AllNodes returns a slice unfortunately
+	// For now, just get first match. Could optimize with a query later.
+	nodes, err := ew.storage.AllNodes()
+	if err != nil {
+		return nil
+	}
+
+	for _, node := range nodes {
+		// Skip internal nodes
+		for _, label := range node.Labels {
+			if strings.HasPrefix(label, "_") {
+				continue
+			}
 		}
-		
+
 		// Skip if already has embedding
 		if len(node.Embedding) > 0 {
-			eq.clearPending(id)
 			continue
 		}
-		
-		text := buildEmbeddingText(node.Properties)
-		if text == "" {
-			eq.clearPending(id)
+
+		// Skip if already checked and has no content
+		if _, ok := node.Properties["embedding_skipped"]; ok {
 			continue
 		}
-		
-		texts = append(texts, text)
-		validIDs = append(validIDs, id)
-		nodes = append(nodes, node)
+
+		// Skip if marked as having embedding (even if empty - might be queued)
+		if hasEmbed, ok := node.Properties["has_embedding"].(bool); ok && hasEmbed {
+			continue
+		}
+
+		// Found one that needs processing
+		return node
 	}
-	
-	if len(texts) == 0 {
-		return
-	}
-	
-	// Batch embed
-	embeddings, err := eq.embedder.EmbedBatch(eq.ctx, texts)
-	if err != nil {
-		fmt.Printf("⚠️  Embed batch failed: %v\n", err)
-		return
-	}
-	
-	// Update nodes with embeddings
-	for i, emb := range embeddings {
-		if i >= len(nodes) {
+
+	return nil
+}
+
+// embedWithRetry embeds chunks with retry logic and averages if multiple chunks.
+func (ew *EmbedWorker) embedWithRetry(chunks []string) ([]float32, error) {
+	var allEmbeddings [][]float32
+	var err error
+
+	for attempt := 1; attempt <= ew.config.MaxRetries; attempt++ {
+		allEmbeddings, err = ew.embedder.EmbedBatch(ew.ctx, chunks)
+		if err == nil {
 			break
 		}
-		
-		node := nodes[i]
-		node.Embedding = emb
-		node.Properties["embedding_model"] = eq.embedder.Model()
-		node.Properties["embedding_dimensions"] = eq.embedder.Dimensions()
-		node.Properties["has_embedding"] = true
-		node.Properties["embedded_at"] = time.Now().Format(time.RFC3339)
-		
-		if err := eq.storage.UpdateNode(node); err != nil {
-			fmt.Printf("⚠️  Failed to update node %s with embedding: %v\n", validIDs[i], err)
+
+		if attempt < ew.config.MaxRetries {
+			backoff := time.Duration(attempt) * 2 * time.Second
+			fmt.Printf("   ⚠️  Embed attempt %d failed, retrying in %v\n", attempt, backoff)
+			time.Sleep(backoff)
+		} else {
+			return nil, err
 		}
-		
-		eq.clearPending(validIDs[i])
 	}
-	
-	fmt.Printf("🧠 Embedded %d nodes\n", len(embeddings))
+
+	// If single chunk, return directly
+	if len(allEmbeddings) == 1 {
+		return allEmbeddings[0], nil
+	}
+
+	// Average multiple chunk embeddings
+	return averageEmbeddings(allEmbeddings), nil
 }
 
-// markPending persists node ID to durable queue.
-func (eq *EmbedQueue) markPending(nodeID string) {
-	// Store as a special node type for durability
-	pendingNode := &storage.Node{
-		ID:     storage.NodeID("_embed_pending_" + nodeID),
-		Labels: []string{"_EmbedPending"},
-		Properties: map[string]interface{}{
-			"target_node_id": nodeID,
-			"queued_at":      time.Now().Format(time.RFC3339),
-		},
+// averageEmbeddings computes the element-wise average of multiple embeddings.
+func averageEmbeddings(embeddings [][]float32) []float32 {
+	if len(embeddings) == 0 {
+		return nil
 	}
-	_ = eq.storage.CreateNode(pendingNode) // Best effort
-}
-
-// clearPending removes node from durable queue.
-func (eq *EmbedQueue) clearPending(nodeID string) {
-	eq.mu.Lock()
-	delete(eq.pending, nodeID)
-	eq.mu.Unlock()
-	
-	// Remove from durable storage
-	_ = eq.storage.DeleteNode(storage.NodeID("_embed_pending_" + nodeID))
-}
-
-// recoverPending loads unprocessed items from storage on startup.
-func (eq *EmbedQueue) recoverPending() {
-	// Find all pending embed nodes
-	nodes, err := eq.storage.AllNodes()
-	if err != nil {
-		return
+	if len(embeddings) == 1 {
+		return embeddings[0]
 	}
-	
-	recovered := 0
-	for _, node := range nodes {
-		for _, label := range node.Labels {
-			if label == "_EmbedPending" {
-				if targetID, ok := node.Properties["target_node_id"].(string); ok {
-					eq.mu.Lock()
-					if !eq.pending[targetID] {
-						eq.pending[targetID] = true
-						eq.mu.Unlock()
-						select {
-						case eq.queue <- targetID:
-							recovered++
-						default:
-						}
-					} else {
-						eq.mu.Unlock()
-					}
-				}
-				break
+
+	dims := len(embeddings[0])
+	avg := make([]float32, dims)
+
+	for _, emb := range embeddings {
+		for i, v := range emb {
+			if i < dims {
+				avg[i] += v
 			}
 		}
 	}
-	
-	if recovered > 0 {
-		fmt.Printf("🔄 Recovered %d pending embeddings from queue\n", recovered)
+
+	n := float32(len(embeddings))
+	for i := range avg {
+		avg[i] /= n
 	}
+
+	return avg
 }
 
 // buildEmbeddingText creates text for embedding from node properties.
+// The text will be chunked by the caller if it exceeds ChunkSize.
 func buildEmbeddingText(properties map[string]interface{}) string {
 	var parts []string
-	
+
 	// Priority fields for embedding
 	priorityFields := []string{"title", "content", "description", "name", "text", "body", "summary"}
-	
+
 	for _, field := range priorityFields {
 		if val, ok := properties[field]; ok {
 			if str, ok := val.(string); ok && str != "" {
@@ -313,12 +331,12 @@ func buildEmbeddingText(properties map[string]interface{}) string {
 			}
 		}
 	}
-	
+
 	// Add type if present
 	if nodeType, ok := properties["type"].(string); ok && nodeType != "" {
 		parts = append(parts, "Type: "+nodeType)
 	}
-	
+
 	// Add tags if present
 	if tags, ok := properties["tags"].([]interface{}); ok && len(tags) > 0 {
 		tagStrs := make([]string, 0, len(tags))
@@ -328,75 +346,86 @@ func buildEmbeddingText(properties map[string]interface{}) string {
 			}
 		}
 		if len(tagStrs) > 0 {
-			parts = append(parts, "Tags: "+joinStrings(tagStrs, ", "))
+			parts = append(parts, "Tags: "+strings.Join(tagStrs, ", "))
 		}
 	}
-	
+
 	// Add reasoning/rationale if present (important for memories)
 	if reasoning, ok := properties["reasoning"].(string); ok && reasoning != "" {
 		parts = append(parts, reasoning)
 	}
-	
-	return joinStrings(parts, "\n\n")
+
+	return strings.Join(parts, "\n\n")
 }
 
-// joinStrings joins strings with separator.
-func joinStrings(strs []string, sep string) string {
-	if len(strs) == 0 {
-		return ""
+// chunkText splits text into chunks with overlap, trying to break at natural boundaries.
+// Returns the original text as single chunk if it fits within chunkSize.
+func chunkText(text string, chunkSize, overlap int) []string {
+	if len(text) <= chunkSize {
+		return []string{text}
 	}
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += sep + strs[i]
-	}
-	return result
-}
 
-// EnqueueExisting queues all existing nodes that don't have embeddings.
-func (eq *EmbedQueue) EnqueueExisting(ctx context.Context) (int, error) {
-	nodes, err := eq.storage.AllNodes()
-	if err != nil {
-		return 0, err
-	}
-	
-	count := 0
-	for _, node := range nodes {
-		// Skip internal nodes
-		isInternal := false
-		for _, label := range node.Labels {
-			if label == "_EmbedPending" {
-				isInternal = true
-				break
+	var chunks []string
+	start := 0
+
+	for start < len(text) {
+		end := start + chunkSize
+		if end > len(text) {
+			end = len(text)
+		}
+
+		// If not the last chunk, try to break at natural boundary
+		if end < len(text) {
+			chunk := text[start:end]
+
+			// Try paragraph break
+			if idx := strings.LastIndex(chunk, "\n\n"); idx > chunkSize/2 {
+				end = start + idx
+			} else if idx := strings.LastIndex(chunk, ". "); idx > chunkSize/2 {
+				// Try sentence break
+				end = start + idx + 1
+			} else if idx := strings.LastIndex(chunk, " "); idx > chunkSize/2 {
+				// Try word break
+				end = start + idx
 			}
 		}
-		if isInternal {
-			continue
+
+		chunks = append(chunks, text[start:end])
+
+		// Move start forward, accounting for overlap
+		nextStart := end - overlap
+		if nextStart <= start {
+			nextStart = end // Prevent infinite loop
 		}
-		
-		// Skip if already has embedding
-		if len(node.Embedding) > 0 {
-			continue
-		}
-		
-		// Skip if no content to embed
-		text := buildEmbeddingText(node.Properties)
-		if text == "" {
-			continue
-		}
-		
-		eq.Enqueue(string(node.ID))
-		count++
+		start = nextStart
 	}
-	
-	return count, nil
+
+	return chunks
 }
 
-// MarshalJSON for queue stats.
-func (s QueueStats) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]int{
-		"pending":    s.Pending,
-		"processing": s.Processing,
-		"completed":  s.Completed,
-		"failed":     s.Failed,
+// MarshalJSON for worker stats.
+func (s WorkerStats) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"running":   s.Running,
+		"processed": s.Processed,
+		"failed":    s.Failed,
 	})
+}
+
+// Legacy aliases for compatibility with existing code
+type EmbedQueue = EmbedWorker
+type EmbedQueueConfig = EmbedWorkerConfig
+type QueueStats = WorkerStats
+
+func DefaultEmbedQueueConfig() *EmbedQueueConfig {
+	return DefaultEmbedWorkerConfig()
+}
+
+func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *EmbedQueueConfig) *EmbedQueue {
+	return NewEmbedWorker(embedder, storage, config)
+}
+
+// Enqueue is now just a trigger - tells worker to check for work.
+func (ew *EmbedWorker) Enqueue(nodeID string) {
+	ew.Trigger()
 }

@@ -1323,31 +1323,40 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 }
 
 // buildEmbeddingSummary creates a summary of embedding status without the actual vector.
+// Embeddings are internal-only and generated asynchronously by the embed queue.
 func (e *StorageExecutor) buildEmbeddingSummary(node *storage.Node) map[string]interface{} {
 	summary := map[string]interface{}{}
 
-	// Check if node has embedding in storage
+	// Check if node has embedding in dedicated storage field (the only valid location)
 	if len(node.Embedding) > 0 {
 		summary["status"] = "ready"
 		summary["dimensions"] = len(node.Embedding)
 	} else {
-		// Check if queued for embedding via has_embedding property
-		if hasEmb, ok := node.Properties["has_embedding"].(bool); ok && hasEmb {
-			summary["status"] = "ready"
-			if dims, ok := node.Properties["embedding_dimensions"].(int); ok {
-				summary["dimensions"] = dims
-			}
-		} else {
-			// Check for pending status
-			summary["status"] = "pending"
-			summary["dimensions"] = 0
-		}
+		// No embedding yet - will be generated asynchronously by embed queue
+		summary["status"] = "pending"
+		summary["dimensions"] = 0
 	}
 
-	// Add model info if available
-	if model, ok := node.Properties["embedding_model"].(string); ok {
-		summary["model"] = model
-	}
+	// DEAD CODE PATH - kept for potential future use if we ever support legacy imports
+	// This code path is never reached because embeddings in properties are stripped on intake
+	/*
+		if embProp := node.Properties["embedding"]; embProp != nil {
+			switch emb := embProp.(type) {
+			case []float32:
+				summary["status"] = "ready"
+				summary["dimensions"] = len(emb)
+			case []float64:
+				summary["status"] = "ready"
+				summary["dimensions"] = len(emb)
+			case []interface{}:
+				summary["status"] = "ready"
+				summary["dimensions"] = len(emb)
+			default:
+				summary["status"] = "invalid"
+				summary["dimensions"] = 0
+			}
+		}
+	*/
 
 	return summary
 }
@@ -2640,6 +2649,16 @@ func (e *StorageExecutor) resolveReturnItem(item returnItem, variable string, no
 			}
 			// Fall back to internal node ID
 			return string(node.ID)
+		}
+
+		// Handle special "embedding" property - return summary, never the raw array
+		if propName == "embedding" {
+			return e.buildEmbeddingSummary(node)
+		}
+
+		// Filter out internal embedding-related properties
+		if e.isInternalProperty(propName) {
+			return nil
 		}
 
 		// Regular property access
