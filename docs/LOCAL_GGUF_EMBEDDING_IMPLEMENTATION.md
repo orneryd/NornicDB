@@ -5,6 +5,18 @@
 
 ---
 
+## Overview
+
+This plan adds a new `local` embedding provider that runs GGUF models directly within NornicDB. **External providers (Ollama, OpenAI) remain fully supported and unchanged.**
+
+| Provider | Description | Status |
+|----------|-------------|--------|
+| `local` | **NEW** - Tightly coupled, runs in-process | This RFC |
+| `ollama` | External Ollama server | Existing, unchanged |
+| `openai` | OpenAI API | Existing, unchanged |
+
+---
+
 ## Licensing
 
 **BYOM (Bring Your Own Model)** - Licensing delineation is at the model file level.
@@ -22,30 +34,64 @@ Users download their own `.gguf` files. We don't ship or recommend any specific 
 
 ## Design Principles
 
-1. **BYOM** - User downloads/converts their own GGUF models
-2. **Use existing config** - Same `NORNICDB_EMBEDDING_MODEL` env var, same pattern
-3. **Simple model path** - Model name → `/data/models/{name}.gguf`
-4. **Default to BGE-M3** - `bge-m3` instead of `mxbai-embed-large`
-5. **Tight CGO integration** - Direct llama.cpp bindings, no IPC/subprocess
-6. **Low memory footprint** - mmap models, quantized weights, shared context
-7. **CPU-efficient** - Respect thread limits, batch smartly, don't thrash
+1. **Backward compatible** - Existing `ollama` and `openai` configs unchanged
+2. **BYOM** - User downloads/converts their own GGUF models
+3. **Use existing config** - Same `NORNICDB_EMBEDDING_MODEL` env var, same pattern
+4. **Simple model path** - Model name → `/data/models/{name}.gguf`
+5. **Default to BGE-M3** - `bge-m3` instead of `mxbai-embed-large`
+6. **GPU-first, CPU fallback** - Auto-detect CUDA/Metal, graceful fallback
+7. **Tight CGO integration** - Direct llama.cpp bindings, no IPC/subprocess
+8. **Low memory footprint** - mmap models, quantized weights, shared context
 
 ---
 
 ## Configuration (Matches Existing Pattern)
 
 ```bash
-# Existing env vars - just add provider=local
-NORNICDB_EMBEDDING_PROVIDER=local              # "local", "ollama", or "openai"
-NORNICDB_EMBEDDING_MODEL=bge-m3                # Model name (default: bge-m3)
-NORNICDB_EMBEDDING_DIMENSIONS=1024             # Vector dimensions
+# NEW local mode (tightly coupled with database)
+NORNICDB_EMBEDDING_PROVIDER=local
+NORNICDB_EMBEDDING_MODEL=bge-m3                # Model name → /data/models/{name}.gguf
+NORNICDB_EMBEDDING_DIMENSIONS=1024
 
-# Model resolution:
-# NORNICDB_EMBEDDING_MODEL=bge-m3 → /data/models/bge-m3.gguf
-# NORNICDB_EMBEDDING_MODEL=e5-large-v2 → /data/models/e5-large-v2.gguf
+# Existing providers still fully supported
+NORNICDB_EMBEDDING_PROVIDER=ollama             # Uses external Ollama server
+NORNICDB_EMBEDDING_PROVIDER=openai             # Uses OpenAI API
+
+# GPU configuration (local mode only)
+NORNICDB_EMBEDDING_GPU_LAYERS=-1               # -1 = auto (all to GPU if available)
+                                               # 0 = CPU only
+                                               # N = offload N layers to GPU
 ```
 
-**The API surface stays exactly the same.** Just set `provider=local` and put your `.gguf` in `/data/models/`.
+**Backward Compatibility:** Existing `ollama` and `openai` configurations work exactly as before.
+
+---
+
+## GPU Acceleration
+
+Follows llama.cpp's GPU-first strategy:
+
+```
+Startup sequence (local mode):
+1. Detect available GPU backend (CUDA → Metal → Vulkan → CPU)
+2. If GPU found → offload all layers to GPU
+3. If no GPU or NORNICDB_EMBEDDING_GPU_LAYERS=0 → use CPU with SIMD (AVX2/NEON)
+```
+
+| Backend | Platform | Detection |
+|---------|----------|-----------|
+| **CUDA** | Linux/Windows + NVIDIA | Primary, auto-detect |
+| **Metal** | macOS Apple Silicon | Primary, auto-detect |
+| **Vulkan** | Cross-platform | Fallback |
+| **CPU** | All platforms | Always available |
+
+### CGO Build Flags
+
+```go
+// Build with GPU support
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_linux_amd64_cuda -lcudart -lcublas
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_darwin_arm64 -framework Metal -framework Accelerate
+```
 
 ---
 
@@ -86,7 +132,10 @@ NORNICDB_EMBEDDING_DIMENSIONS=1024             # Vector dimensions
 nornicdb/
 ├── pkg/
 │   ├── embed/
-│   │   └── local_gguf.go         # LocalGGUFEmbedder
+│   │   ├── embed.go              # Embedder interface (unchanged)
+│   │   ├── ollama.go             # OllamaEmbedder (unchanged)
+│   │   ├── openai.go             # OpenAIEmbedder (unchanged)
+│   │   └── local_gguf.go         # LocalGGUFEmbedder (NEW)
 │   └── localllm/
 │       ├── llama.go              # CGO bindings + Go wrapper
 │       ├── llama_test.go
@@ -96,11 +145,12 @@ nornicdb/
 │   └── llama/                    # Vendored llama.cpp
 │       ├── llama.h
 │       ├── ggml.h
-│       ├── libllama_linux_amd64.a
+│       ├── libllama_linux_amd64.a       # CPU only
+│       ├── libllama_linux_amd64_cuda.a  # With CUDA
 │       ├── libllama_linux_arm64.a
+│       ├── libllama_darwin_arm64.a      # With Metal
 │       ├── libllama_darwin_amd64.a
-│       ├── libllama_darwin_arm64.a
-│       └── libllama_windows_amd64.a
+│       └── libllama_windows_amd64.a     # With CUDA
 │
 └── scripts/
     └── build-llama.sh            # Build static libs
@@ -119,17 +169,26 @@ package localllm
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../lib/llama
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_linux_amd64 -lm -lstdc++ -lpthread
+
+// Linux with CUDA (GPU primary)
+#cgo linux,amd64,cuda LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_linux_amd64_cuda -lcudart -lcublas -lm -lstdc++ -lpthread
+// Linux CPU fallback
+#cgo linux,amd64,!cuda LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_linux_amd64 -lm -lstdc++ -lpthread
+
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_linux_arm64 -lm -lstdc++ -lpthread
+
+// macOS with Metal (GPU primary on Apple Silicon)
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_darwin_arm64 -lm -lc++ -framework Accelerate -framework Metal -framework MetalPerformanceShaders
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_darwin_amd64 -lm -lc++ -framework Accelerate
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_darwin_arm64 -lm -lc++ -framework Accelerate -framework Metal
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_windows_amd64 -lm -lstdc++
+
+// Windows with CUDA
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../lib/llama -lllama_windows_amd64 -lcudart -lcublas -lm -lstdc++
 
 #include <stdlib.h>
 #include <string.h>
 #include "llama.h"
 
-// Initialize backend once
+// Initialize backend once (handles GPU detection)
 static int initialized = 0;
 void init_backend() {
     if (!initialized) {
@@ -223,10 +282,11 @@ type Options struct {
     ContextSize int  // Default: 512
     BatchSize   int  // Default: 512
     Threads     int  // Default: NumCPU/2, capped at 8
-    GPULayers   int  // Default: 0 (CPU only)
+    GPULayers   int  // Default: -1 (auto: all layers to GPU if available)
+                     // 0 = CPU only, N = offload N layers
 }
 
-// DefaultOptions returns conservative defaults for low-powered hardware
+// DefaultOptions returns options optimized for GPU with CPU fallback
 func DefaultOptions(modelPath string) Options {
     threads := runtime.NumCPU() / 2
     if threads < 1 {
@@ -240,7 +300,7 @@ func DefaultOptions(modelPath string) Options {
         ContextSize: 512,
         BatchSize:   512,
         Threads:     threads,
-        GPULayers:   0,
+        GPULayers:   -1, // Auto: use GPU if available, fallback to CPU
     }
 }
 
@@ -508,7 +568,7 @@ jobs:
 
 ---
 
-## Environment Variables (Matches Existing)
+## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -516,6 +576,9 @@ jobs:
 | `NORNICDB_EMBEDDING_MODEL` | `bge-m3` | Model name (looked up in models dir) |
 | `NORNICDB_EMBEDDING_DIMENSIONS` | `1024` | Vector dimensions |
 | `NORNICDB_MODELS_DIR` | `/data/models` | Directory for `.gguf` files |
+| `NORNICDB_EMBEDDING_GPU_LAYERS` | `-1` | GPU offload: -1=auto, 0=CPU only, N=N layers |
+
+**Note:** `NORNICDB_EMBEDDING_GPU_LAYERS` only applies to `local` provider. External providers (`ollama`, `openai`) manage their own GPU usage.
 
 ---
 
@@ -612,13 +675,16 @@ nornicdb serve --embedding-provider=local --embedding-model=bge-m3
 ## Checklist
 
 - [ ] Vendor llama.cpp headers (`lib/llama/`)
-- [ ] Build static libs (CI for linux/darwin amd64/arm64)  
-- [ ] Implement `pkg/localllm/llama.go` (CGO bindings)
+- [ ] Build static libs with GPU support (CUDA for Linux/Windows, Metal for macOS)
+- [ ] Implement `pkg/localllm/llama.go` (CGO bindings with GPU detection)
 - [ ] Implement `pkg/embed/local_gguf.go` (Embedder)
 - [ ] Update `NewEmbedder()` factory to handle `local` provider
+- [ ] **Ensure `ollama` and `openai` providers remain unchanged**
 - [ ] Change default model to `bge-m3`
 - [ ] Add `NORNICDB_MODELS_DIR` env var
-- [ ] Tests + benchmarks
+- [ ] Add `NORNICDB_EMBEDDING_GPU_LAYERS` env var
+- [ ] GPU auto-detection with graceful CPU fallback
+- [ ] Tests + benchmarks (CPU and GPU)
 - [ ] Docs update
 
 ---
@@ -628,11 +694,11 @@ nornicdb serve --embedding-provider=local --embedding-model=bge-m3
 For users already using `mxbai-embed-large` via Ollama:
 
 ```bash
-# Before (Ollama)
+# Before (Ollama) - STILL WORKS, NO CHANGES NEEDED
 NORNICDB_EMBEDDING_PROVIDER=ollama
 NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
 
-# After (Local GGUF) - just change provider and put model in /data/models/
+# After (Local GGUF) - NEW OPTION, put model in /data/models/
 NORNICDB_EMBEDDING_PROVIDER=local
 NORNICDB_EMBEDDING_MODEL=bge-m3   # or e5-large-v2, or keep mxbai if you have the GGUF
 ```
