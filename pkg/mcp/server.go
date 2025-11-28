@@ -309,7 +309,20 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		result = s.doListTools()
 	case "tools/call":
-		result, rpcErr = s.doCallTool(r.Context(), req.Params)
+		toolResult, err := s.doCallTool(r.Context(), req.Params)
+		if err != nil {
+			// Wrap error in MCP content format
+			result = CallToolResponse{
+				Content: []Content{{Type: "text", Text: err.Error()}},
+				IsError: true,
+			}
+		} else {
+			// Wrap result in MCP content format (required by MCP spec)
+			resultJSON, _ := json.Marshal(toolResult)
+			result = CallToolResponse{
+				Content: []Content{{Type: "text", Text: string(resultJSON)}},
+			}
+		}
 	default:
 		s.writeJSONRPCError(w, req.ID, -32601, "Method not found", req.Method)
 		return
