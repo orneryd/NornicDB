@@ -495,6 +495,7 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 
 	// Store in database
 	var nodeID string
+	var embedded bool
 	if s.db != nil {
 		labels := []string{nodeType}
 		node, err := s.db.CreateNode(ctx, labels, props)
@@ -502,15 +503,24 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 			return nil, fmt.Errorf("failed to store node: %w", err)
 		}
 		nodeID = node.ID
+		embedded = true // Embeddings are generated asynchronously by the database
 	} else {
 		// Fallback for testing without database
 		nodeID = fmt.Sprintf("node-%d", time.Now().UnixNano())
+
+		// If embedder available, call it directly (for testing)
+		if s.config.EmbeddingEnabled && s.embed != nil {
+			_, err := s.embed.Embed(ctx, content)
+			if err == nil {
+				embedded = true
+			}
+		}
 	}
 
 	return StoreResult{
 		ID:       nodeID,
 		Title:    title,
-		Embedded: true, // Embeddings are generated asynchronously by the database
+		Embedded: embedded,
 	}, nil
 }
 

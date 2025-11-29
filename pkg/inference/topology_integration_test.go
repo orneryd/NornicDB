@@ -250,34 +250,6 @@ func TestDisabledTopology(t *testing.T) {
 	}
 }
 
-// TestScoreNormalization tests score normalization for different algorithms.
-func TestScoreNormalization(t *testing.T) {
-	config := DefaultTopologyConfig()
-	topo := NewTopologyIntegration(nil, config)
-
-	tests := []struct {
-		score     float64
-		algorithm string
-		wantRange [2]float64 // min, max
-	}{
-		{0.5, "jaccard", [2]float64{0.5, 0.5}},     // Already normalized
-		{2.0, "common_neighbors", [2]float64{0.5, 0.8}}, // Should map 0-N to 0-1
-		{3.0, "adamic_adar", [2]float64{0.4, 0.7}},      // Unbounded, use tanh
-		{100.0, "preferential_attachment", [2]float64{0.4, 0.6}}, // Large values, use log
-	}
-
-	for _, tt := range tests {
-		normalized := topo.normalizeScore(tt.score, tt.algorithm)
-		if normalized < 0 || normalized > 1 {
-			t.Errorf("Score out of [0,1]: %.3f for %s", normalized, tt.algorithm)
-		}
-		if normalized < tt.wantRange[0] || normalized > tt.wantRange[1] {
-			t.Logf("Score %.3f (%s) normalized to %.3f (expected %.3f-%.3f)",
-				tt.score, tt.algorithm, normalized, tt.wantRange[0], tt.wantRange[1])
-		}
-	}
-}
-
 // TestMinScoreThreshold tests filtering by minimum score.
 func TestMinScoreThreshold(t *testing.T) {
 	engine := storage.NewMemoryEngine()
@@ -304,9 +276,10 @@ func TestMinScoreThreshold(t *testing.T) {
 // Helper: setupTestGraph creates test graph structure.
 //
 // Structure:
-//   alice -- bob -- diana
-//   alice -- charlie -- diana
-//   eve (isolated)
+//
+//	alice -- bob -- diana
+//	alice -- charlie -- diana
+//	eve (isolated)
 func setupTestGraph(t *testing.T, engine storage.Engine) {
 	nodes := []*storage.Node{
 		{ID: "alice", Labels: []string{"Person"}},
@@ -374,35 +347,50 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 	}
 }
 
-// TestNormalizeScoreEdgeCases tests score normalization edge cases
+// TestNormalizeScoreEdgeCases tests that algorithm scores are normalized in [0, 1].
+// Normalization is now done in pkg/linkpredict/topology.go, not here.
 func TestNormalizeScoreEdgeCases(t *testing.T) {
+	// Build a simple graph to test normalization
+	engine := storage.NewMemoryEngine()
+	ctx := context.Background()
+
+	// Create some nodes
+	engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Test"}})
+	engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Test"}})
+	engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Test"}})
+	engine.CreateNode(&storage.Node{ID: "d", Labels: []string{"Test"}})
+	engine.CreateNode(&storage.Node{ID: "e", Labels: []string{"Test"}})
+
+	// Create edges: a-b, a-c, b-c, b-d, c-d, c-e (small connected graph)
+	engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
+	engine.CreateEdge(&storage.Edge{ID: "e2", StartNode: "a", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(&storage.Edge{ID: "e3", StartNode: "b", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(&storage.Edge{ID: "e4", StartNode: "b", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(&storage.Edge{ID: "e5", StartNode: "c", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(&storage.Edge{ID: "e6", StartNode: "c", EndNode: "e", Type: "KNOWS"})
+
 	config := DefaultTopologyConfig()
-	topo := NewTopologyIntegration(nil, config)
+	config.Enabled = true
+	config.MinScore = 0.0 // Accept all scores
 
-	tests := []struct {
-		score     float64
-		algorithm string
-		wantRange [2]float64 // min, max
-	}{
-		{0, "jaccard", [2]float64{0, 0}},
-		{1.0, "jaccard", [2]float64{1.0, 1.0}},
-		{0, "common_neighbors", [2]float64{0, 0.1}},
-		{10, "common_neighbors", [2]float64{0.7, 1.0}},
-		{0, "adamic_adar", [2]float64{0, 0.1}},
-		{100, "adamic_adar", [2]float64{0.99, 1.01}}, // Allow slightly over 1.0 due to normalization
-		{1, "preferential_attachment", [2]float64{0, 0.1}},
-		{10000, "preferential_attachment", [2]float64{0.9, 1.0}},
-		{0.5, "unknown_algorithm", [2]float64{0.5, 0.5}},
-	}
+	algorithms := []string{"adamic_adar", "jaccard", "common_neighbors", "resource_allocation", "preferential_attachment"}
 
-	for _, tt := range tests {
-		normalized := topo.normalizeScore(tt.score, tt.algorithm)
-		// Allow 1% tolerance for floating point rounding
-		if normalized < -0.01 || normalized > 1.01 {
-			t.Errorf("Score %.3f (%s) normalized to %.3f (significantly out of [0,1])",
-				tt.score, tt.algorithm, normalized)
+	for _, algo := range algorithms {
+		config.Algorithm = algo
+		topo := NewTopologyIntegration(engine, config)
+
+		suggestions, err := topo.SuggestTopological(ctx, "a")
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", algo, err)
 		}
-		t.Logf("%s(%.1f) = %.3f", tt.algorithm, tt.score, normalized)
+
+		for _, s := range suggestions {
+			if s.Confidence < 0.0 || s.Confidence > 1.0 {
+				t.Errorf("%s: score %.3f out of [0, 1] range for target %s",
+					algo, s.Confidence, s.TargetID)
+			}
+		}
+		t.Logf("%s: %d suggestions, all scores in [0, 1]", algo, len(suggestions))
 	}
 }
 

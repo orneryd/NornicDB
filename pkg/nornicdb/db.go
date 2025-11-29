@@ -410,6 +410,9 @@ type DB struct {
 
 	// Async embedding queue for auto-generating embeddings
 	embedQueue *EmbedQueue
+
+	// Background goroutine tracking
+	bgWg sync.WaitGroup
 }
 
 // Open opens or creates a NornicDB database at the specified directory.
@@ -755,7 +758,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Build search indexes from existing data (including embeddings)
 	// This runs in background to not block startup
+	db.bgWg.Add(1)
 	go func() {
+		defer db.bgWg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		if err := db.searchService.BuildIndexes(ctx); err != nil {
@@ -855,6 +860,9 @@ func (db *DB) Close() error {
 		return nil
 	}
 	db.closed = true
+
+	// Wait for background goroutines to complete
+	db.bgWg.Wait()
 
 	var errs []error
 

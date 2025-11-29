@@ -1337,26 +1337,10 @@ func (e *StorageExecutor) buildEmbeddingSummary(node *storage.Node) map[string]i
 		summary["dimensions"] = 0
 	}
 
-	// DEAD CODE PATH - kept for potential future use if we ever support legacy imports
-	// This code path is never reached because embeddings in properties are stripped on intake
-	/*
-		if embProp := node.Properties["embedding"]; embProp != nil {
-			switch emb := embProp.(type) {
-			case []float32:
-				summary["status"] = "ready"
-				summary["dimensions"] = len(emb)
-			case []float64:
-				summary["status"] = "ready"
-				summary["dimensions"] = len(emb)
-			case []interface{}:
-				summary["status"] = "ready"
-				summary["dimensions"] = len(emb)
-			default:
-				summary["status"] = "invalid"
-				summary["dimensions"] = 0
-			}
-		}
-	*/
+	// Include model info from properties if available
+	if model, ok := node.Properties["embedding_model"]; ok {
+		summary["model"] = model
+	}
 
 	return summary
 }

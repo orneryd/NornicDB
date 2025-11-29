@@ -23,8 +23,18 @@ func TestCommonNeighbors(t *testing.T) {
 		t.Errorf("Expected diana, got %s", predictions[0].TargetID)
 	}
 
-	if predictions[0].Score != 2.0 {
-		t.Errorf("Expected score 2.0, got %.1f", predictions[0].Score)
+	// Scores should be normalized to [0, 1]
+	// 2 common neighbors -> 1 - 1/(1 + 2/2) = 0.5
+	expectedScore := 0.5
+	if predictions[0].Score < expectedScore-0.01 || predictions[0].Score > expectedScore+0.01 {
+		t.Errorf("Expected normalized score ~%.2f, got %.3f", expectedScore, predictions[0].Score)
+	}
+
+	// Verify all scores in [0, 1]
+	for _, pred := range predictions {
+		if pred.Score < 0 || pred.Score > 1 {
+			t.Errorf("Score out of [0,1] range: %.3f", pred.Score)
+		}
 	}
 }
 
@@ -61,10 +71,10 @@ func TestAdamicAdar(t *testing.T) {
 		t.Fatal("Expected predictions, got none")
 	}
 
-	// Scores should be positive
+	// Scores should be normalized to [0, 1]
 	for _, pred := range predictions {
-		if pred.Score <= 0 {
-			t.Errorf("Expected positive score, got %.3f", pred.Score)
+		if pred.Score < 0 || pred.Score > 1 {
+			t.Errorf("Score out of [0,1] range: %.3f", pred.Score)
 		}
 	}
 
@@ -84,14 +94,11 @@ func TestPreferentialAttachment(t *testing.T) {
 		t.Fatal("Expected predictions, got none")
 	}
 
-	// Verify scores are degree products
-	aliceDegree := float64(graph.Degree("alice"))
-	
+	// Scores should be normalized to [0, 1]
+	// Using log10(degreeProduct)/4 normalization
 	for _, pred := range predictions {
-		expectedScore := aliceDegree * float64(graph.Degree(pred.TargetID))
-		if pred.Score != expectedScore {
-			t.Errorf("Expected score %.0f, got %.0f for %s",
-				expectedScore, pred.Score, pred.TargetID)
+		if pred.Score < 0 || pred.Score > 1 {
+			t.Errorf("Score out of [0,1] range: %.3f for %s", pred.Score, pred.TargetID)
 		}
 	}
 
@@ -99,6 +106,18 @@ func TestPreferentialAttachment(t *testing.T) {
 	if predictions[0].Algorithm != "preferential_attachment" {
 		t.Errorf("Expected algorithm 'preferential_attachment', got '%s'",
 			predictions[0].Algorithm)
+	}
+
+	// diana (degree 2) should have a reasonable normalized score
+	// alice degree = 2, diana degree = 2, product = 4
+	// log10(4)/4 = 0.15
+	for _, pred := range predictions {
+		if pred.TargetID == "diana" {
+			if pred.Score < 0.1 || pred.Score > 0.3 {
+				t.Errorf("Expected diana score ~0.15, got %.3f", pred.Score)
+			}
+			break
+		}
 	}
 }
 
@@ -112,10 +131,10 @@ func TestResourceAllocation(t *testing.T) {
 		t.Fatal("Expected predictions, got none")
 	}
 
-	// Scores should be positive
+	// Scores should be normalized to [0, 1]
 	for _, pred := range predictions {
-		if pred.Score <= 0 {
-			t.Errorf("Expected positive score, got %.3f", pred.Score)
+		if pred.Score < 0 || pred.Score > 1 {
+			t.Errorf("Score out of [0,1] range: %.3f", pred.Score)
 		}
 	}
 
@@ -492,9 +511,10 @@ func TestEdgeCases(t *testing.T) {
 // Helper: buildTestGraph creates a small test graph.
 //
 // Structure:
-//   alice -- bob -- diana
-//   alice -- charlie -- diana
-//   eve (isolated)
+//
+//	alice -- bob -- diana
+//	alice -- charlie -- diana
+//	eve (isolated)
 func buildTestGraph() Graph {
 	return Graph{
 		"alice":   {"bob": {}, "charlie": {}},
@@ -518,7 +538,7 @@ func buildLargeGraph(nodes int, avgDegree int) Graph {
 	// Create random edges (simplified - not truly random)
 	for i := 0; i < nodes; i++ {
 		nodeID := storage.NodeID("node-" + string(rune(i)))
-		
+
 		// Connect to next avgDegree nodes (circular)
 		for j := 1; j <= avgDegree; j++ {
 			targetIdx := (i + j) % nodes

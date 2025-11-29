@@ -49,7 +49,7 @@ func TestGraphBuilder_Basic(t *testing.T) {
 
 func TestGraphBuilder_Parallel(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	// Create larger graph for parallelization test
 	nodeCount := 100
 	for i := 0; i < nodeCount; i++ {
@@ -58,7 +58,7 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 			Labels: []string{"Test"},
 		})
 	}
-	
+
 	// Create random edges
 	edgeCount := 0
 	for i := 0; i < nodeCount; i++ {
@@ -104,7 +104,7 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 
 func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	// Create graph
 	nodeCount := 50
 	for i := 0; i < nodeCount; i++ {
@@ -114,7 +114,7 @@ func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 	}
 
 	chunksProcessed := int32(0)
-	
+
 	config := DefaultBuildConfig()
 	config.ChunkSize = 10
 	config.ProgressCallback = func(processed, total int, elapsed time.Duration) {
@@ -136,7 +136,7 @@ func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 
 func TestGraphBuilder_ContextCancellation(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	// Create graph
 	for i := 0; i < 100; i++ {
 		engine.CreateNode(&storage.Node{
@@ -163,7 +163,7 @@ func TestGraphBuilder_ContextCancellation(t *testing.T) {
 
 func TestGraphBuilder_GCAfterChunk(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	// Create graph
 	for i := 0; i < 30; i++ {
 		engine.CreateNode(&storage.Node{
@@ -567,7 +567,7 @@ func TestParallelJaccard(t *testing.T) {
 
 func TestParallelAlgorithms_Cancellation(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	// Create larger graph
 	for i := 0; i < 100; i++ {
 		engine.CreateNode(&storage.Node{
@@ -626,7 +626,7 @@ func TestGraphStreamer(t *testing.T) {
 
 func TestGraphStreamer_Cancellation(t *testing.T) {
 	engine := storage.NewMemoryEngine()
-	
+
 	for i := 0; i < 50; i++ {
 		engine.CreateNode(&storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
@@ -878,26 +878,32 @@ func TestGraphBuilder_ApplyDelta_Concurrent(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
+	var mu sync.Mutex // Protect graph access
 
-	// Concurrent delta applications (not safe without external sync)
-	// This tests that ApplyDelta doesn't panic
+	// Concurrent delta applications with proper synchronization
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			
+
 			delta := &GraphDelta{
 				AddedNodes: []storage.NodeID{storage.NodeID(fmt.Sprintf("node-%d", idx))},
 				AddedEdges: []EdgeChange{
 					{From: "a", To: storage.NodeID(fmt.Sprintf("node-%d", idx))},
 				},
 			}
-			
-			// Note: In real usage, graph should be protected by mutex
-			// This test just ensures no panics
-			_ = builder.ApplyDelta(graph, delta)
+
+			// Protect graph access with mutex
+			mu.Lock()
+			graph = builder.ApplyDelta(graph, delta)
+			mu.Unlock()
 		}(i)
 	}
 
 	wg.Wait()
+
+	// Verify all nodes were added
+	if len(graph) < 12 { // a, b, + 10 new nodes
+		t.Errorf("Expected at least 12 nodes, got %d", len(graph))
+	}
 }

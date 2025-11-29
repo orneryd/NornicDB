@@ -17,7 +17,6 @@ package inference
 
 import (
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -269,12 +268,10 @@ func (t *TopologyIntegration) SuggestTopological(ctx context.Context, sourceID s
 	}
 
 	// Convert to EdgeSuggestion format
+	// Scores are already normalized to [0, 1] by the algorithm implementations
 	suggestions := make([]EdgeSuggestion, 0, len(predictions))
 	for _, pred := range predictions {
-		// Normalize score to [0, 1] for consistency with semantic scores
-		normalizedScore := t.normalizeScore(pred.Score, pred.Algorithm)
-
-		if normalizedScore < t.config.MinScore {
+		if pred.Score < t.config.MinScore {
 			continue
 		}
 
@@ -282,7 +279,7 @@ func (t *TopologyIntegration) SuggestTopological(ctx context.Context, sourceID s
 			SourceID:   sourceID,
 			TargetID:   string(pred.TargetID),
 			Type:       "RELATES_TO",
-			Confidence: normalizedScore,
+			Confidence: pred.Score,
 			Reason:     pred.Reason,
 			Method:     "topology_" + pred.Algorithm,
 		})
@@ -401,52 +398,6 @@ func (t *TopologyIntegration) OnEdgeRemoved(from, to storage.NodeID) {
 		From: from,
 		To:   to,
 	})
-}
-
-// normalizeScore converts algorithm-specific scores to [0, 1] range.
-//
-// Different algorithms have different score ranges:
-//   - Common Neighbors: 0-N (integer count)
-//   - Jaccard: 0.0-1.0 (already normalized)
-//   - Adamic-Adar: 0.0-∞ (unbounded)
-//   - Resource Allocation: 0.0-∞ (unbounded)
-//   - Preferential Attachment: 0-N² (product of degrees)
-//
-// This function maps them to a consistent [0, 1] range using heuristics.
-func (t *TopologyIntegration) normalizeScore(score float64, algorithm string) float64 {
-	switch algorithm {
-	case "jaccard":
-		// Already in [0, 1]
-		return score
-
-	case "common_neighbors":
-		// Map count to [0, 1] with sigmoid-like curve
-		// Score of 1 neighbor → 0.5, 3 → 0.75, 5 → 0.85, etc.
-		return 1.0 - (1.0 / (1.0 + score/2.0))
-
-	case "adamic_adar", "resource_allocation":
-		// Unbounded scores, use tanh to map to [0, 1]
-		// Typical range is 0-5, so divide by 5 first
-		// CLAMP to 1.0 to fix overflow on dense graphs
-		result := tanh(score / 5.0)
-		if result > 1.0 {
-			return 1.0
-		}
-		return result
-
-	case "preferential_attachment":
-		// Very large values, use log then normalize
-		// Typical range is 1-10000, log brings to 0-4
-		if score <= 1.0 {
-			return 0.0
-		}
-		logScore := log10(score)
-		return min(1.0, logScore/4.0)
-
-	default:
-		// Conservative default
-		return min(1.0, score)
-	}
 }
 
 // CombinedSuggestions blends semantic and topological suggestions.
@@ -583,30 +534,6 @@ type TopologyStats struct {
 	PendingChanges  int
 	CacheHits       int64
 	CacheMisses     int64
-}
-
-// Helper functions
-
-func tanh(x float64) float64 {
-	return math.Tanh(x)
-}
-
-func exp(x float64) float64 {
-	return math.Exp(x)
-}
-
-func log10(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	return math.Log10(x)
-}
-
-func min(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func sortByConfidence(suggestions []EdgeSuggestion) {

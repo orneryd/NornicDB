@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"testing"
@@ -483,62 +484,6 @@ func TestTopologyComplexAlgorithmComparison(t *testing.T) {
 	}
 }
 
-// TestTopologyComplexScoreNormalization tests score normalization edge cases.
-func TestTopologyComplexScoreNormalization(t *testing.T) {
-	config := DefaultTopologyConfig()
-	topo := NewTopologyIntegration(nil, config)
-
-	testCases := []struct {
-		score     float64
-		algorithm string
-		minNorm   float64
-		maxNorm   float64
-	}{
-		// Jaccard: already normalized
-		{0.0, "jaccard", 0.0, 0.0},
-		{0.5, "jaccard", 0.5, 0.5},
-		{1.0, "jaccard", 1.0, 1.0},
-
-		// Common neighbors: count to [0, 1]
-		{0.0, "common_neighbors", 0.0, 0.1},
-		{1.0, "common_neighbors", 0.3, 0.4},
-		{5.0, "common_neighbors", 0.7, 0.9},
-		{100.0, "common_neighbors", 0.95, 1.0},
-
-		// Adamic-Adar: unbounded, use tanh
-		{0.0, "adamic_adar", 0.0, 0.1},
-		{2.0, "adamic_adar", 0.3, 0.5},
-		{5.0, "adamic_adar", 0.7, 0.9},
-		{100.0, "adamic_adar", 0.99, 1.0},
-
-		// Preferential attachment: large values, use log
-		{0.0, "preferential_attachment", 0.0, 0.0},
-		{1.0, "preferential_attachment", 0.0, 0.1},
-		{100.0, "preferential_attachment", 0.4, 0.6},
-		{10000.0, "preferential_attachment", 0.9, 1.0},
-
-		// Unknown algorithm: min(1, score)
-		{0.5, "unknown", 0.5, 0.5},
-		{2.0, "unknown", 1.0, 1.0},
-	}
-
-	for _, tc := range testCases {
-		name := fmt.Sprintf("%s_%.1f", tc.algorithm, tc.score)
-		t.Run(name, func(t *testing.T) {
-			normalized := topo.normalizeScore(tc.score, tc.algorithm)
-
-			if normalized < 0 || normalized > 1.01 {
-				t.Errorf("Normalized score out of range: %.4f", normalized)
-			}
-
-			if normalized < tc.minNorm || normalized > tc.maxNorm {
-				t.Logf("Normalized %.1f (%s) = %.4f (expected %.2f-%.2f)",
-					tc.score, tc.algorithm, normalized, tc.minNorm, tc.maxNorm)
-			}
-		})
-	}
-}
-
 // TestTopologyComplexCacheLifecycle tests full cache lifecycle.
 func TestTopologyComplexCacheLifecycle(t *testing.T) {
 	engine := storage.NewMemoryEngine()
@@ -735,9 +680,10 @@ func buildRandomStorageGraph(nodes int, density float64, seed int64) storage.Eng
 	return engine
 }
 
-// TestTopologyMathHelpers tests the math helper functions.
+// TestTopologyMathHelpers tests that math.Tanh, math.Exp, math.Log10 work as expected.
+// This is mostly a sanity check that the standard library behaves correctly.
 func TestTopologyMathHelpers(t *testing.T) {
-	// Test tanh
+	// Test math.Tanh - used in normalizeScore for adamic_adar/resource_allocation
 	tanhTests := []struct {
 		input    float64
 		expected float64
@@ -748,18 +694,18 @@ func TestTopologyMathHelpers(t *testing.T) {
 		{-1, -0.761594, 0.001},
 		{20, 1.0, 0.0001},
 		{-20, -1.0, 0.0001},
-		{100, 1.0, 0.0001}, // Clamped
+		{100, 1.0, 0.0001},
 		{-100, -1.0, 0.0001},
 	}
 
 	for _, tc := range tanhTests {
-		result := tanh(tc.input)
+		result := math.Tanh(tc.input)
 		if result < tc.expected-tc.delta || result > tc.expected+tc.delta {
-			t.Errorf("tanh(%.1f) = %.6f, expected %.6f", tc.input, result, tc.expected)
+			t.Errorf("math.Tanh(%.1f) = %.6f, expected %.6f", tc.input, result, tc.expected)
 		}
 	}
 
-	// Test exp
+	// Test math.Exp - used for various calculations
 	expTests := []struct {
 		input    float64
 		expected float64
@@ -772,31 +718,37 @@ func TestTopologyMathHelpers(t *testing.T) {
 	}
 
 	for _, tc := range expTests {
-		result := exp(tc.input)
+		result := math.Exp(tc.input)
 		if result < tc.expected-tc.delta || result > tc.expected+tc.delta {
-			t.Errorf("exp(%.1f) = %.6f, expected %.6f", tc.input, result, tc.expected)
+			t.Errorf("math.Exp(%.1f) = %.6f, expected %.6f", tc.input, result, tc.expected)
 		}
 	}
 
-	// Test log10
+	// Test math.Log10 - used in normalizeScore for preferential_attachment
 	log10Tests := []struct {
 		input    float64
 		expected float64
 		delta    float64
 	}{
-		{1, 0, 0.1},
-		{10, 1, 0.1},
-		{100, 2, 0.1},
-		{1000, 3, 0.1},
-		{0, 0, 0.001},  // Edge case
-		{-1, 0, 0.001}, // Edge case
+		{1, 0, 0.001},
+		{10, 1, 0.001},
+		{100, 2, 0.001},
+		{1000, 3, 0.001},
 	}
 
 	for _, tc := range log10Tests {
-		result := log10(tc.input)
+		result := math.Log10(tc.input)
 		if result < tc.expected-tc.delta || result > tc.expected+tc.delta {
-			t.Logf("log10(%.1f) = %.3f, expected %.3f", tc.input, result, tc.expected)
+			t.Errorf("math.Log10(%.1f) = %.6f, expected %.6f", tc.input, result, tc.expected)
 		}
+	}
+
+	// Verify edge cases for Log10 (negative/zero inputs return -Inf or NaN)
+	if !math.IsInf(math.Log10(0), -1) {
+		t.Error("math.Log10(0) should be -Inf")
+	}
+	if !math.IsNaN(math.Log10(-1)) {
+		t.Error("math.Log10(-1) should be NaN")
 	}
 }
 

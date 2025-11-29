@@ -620,13 +620,16 @@ func ResourceAllocation(graph Graph, source storage.NodeID, topK int) []Predicti
 }
 
 // topKPredictions converts score map to sorted prediction list.
+// Scores are automatically normalized to [0, 1] range based on algorithm.
 func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string) []Prediction {
 	predictions := make([]Prediction, 0, len(scores))
 
 	for nodeID, score := range scores {
+		// Normalize score to [0, 1] based on algorithm characteristics
+		normalizedScore := normalizeAlgorithmScore(score, algorithm)
 		predictions = append(predictions, Prediction{
 			TargetID:  nodeID,
-			Score:     score,
+			Score:     normalizedScore,
 			Algorithm: algorithm,
 			Reason:    "Topological similarity",
 		})
@@ -643,6 +646,48 @@ func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string)
 	}
 
 	return predictions
+}
+
+// normalizeAlgorithmScore converts algorithm-specific scores to [0, 1] range.
+//
+// Different algorithms have different score ranges:
+//   - Jaccard: already in [0, 1]
+//   - Common Neighbors: 0 to N (integer count)
+//   - Adamic-Adar: 0 to ∞ (unbounded, sum of 1/log(degree))
+//   - Resource Allocation: 0 to ∞ (unbounded, sum of 1/degree)
+//   - Preferential Attachment: 0 to N² (product of degrees)
+//
+// This function maps them to a consistent [0, 1] range using tanh-based
+// transformations that preserve relative ordering while clamping extremes.
+func normalizeAlgorithmScore(score float64, algorithm string) float64 {
+	switch algorithm {
+	case "jaccard":
+		// Already in [0, 1], just clamp for safety
+		return math.Min(1.0, math.Max(0.0, score))
+
+	case "common_neighbors":
+		// Map count to [0, 1] with sigmoid-like curve
+		// 1 neighbor → 0.33, 3 → 0.6, 5 → 0.71, 10 → 0.83
+		return 1.0 - (1.0 / (1.0 + score/2.0))
+
+	case "adamic_adar", "resource_allocation":
+		// Unbounded scores, use tanh to map to [0, 1]
+		// Typical range is 0-5, so divide by 5 first
+		// tanh(1) ≈ 0.76, tanh(2) ≈ 0.96, tanh(3) ≈ 0.995
+		return math.Tanh(score / 5.0)
+
+	case "preferential_attachment":
+		// Very large values (product of degrees), use log then normalize
+		// Typical range is 1-10000, log10 brings to 0-4
+		if score <= 1.0 {
+			return 0.0
+		}
+		return math.Min(1.0, math.Log10(score)/4.0)
+
+	default:
+		// Conservative default: clamp to [0, 1]
+		return math.Min(1.0, math.Max(0.0, score))
+	}
 }
 
 // Contains checks if a node exists in a set.
