@@ -477,3 +477,201 @@ func TestInvalidateCache(t *testing.T) {
 		t.Error("Prediction count should be reset after invalidation")
 	}
 }
+
+func TestTopologyIntegration_OnNodeAdded(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Add multiple nodes
+	topo.OnNodeAdded("node1")
+	topo.OnNodeAdded("node2")
+	topo.OnNodeAdded("node3")
+
+	// Verify pending delta has the added nodes
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.AddedNodes) != 3 {
+		t.Errorf("Expected 3 pending added nodes, got %d", len(topo.pendingDelta.AddedNodes))
+	}
+	if topo.pendingDelta.AddedNodes[0] != "node1" {
+		t.Errorf("Expected first added node to be 'node1', got %s", topo.pendingDelta.AddedNodes[0])
+	}
+	topo.deltaMu.Unlock()
+}
+
+func TestTopologyIntegration_OnNodeRemoved(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Remove multiple nodes
+	topo.OnNodeRemoved("node1")
+	topo.OnNodeRemoved("node2")
+
+	// Verify pending delta has the removed nodes
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.RemovedNodes) != 2 {
+		t.Errorf("Expected 2 pending removed nodes, got %d", len(topo.pendingDelta.RemovedNodes))
+	}
+	if topo.pendingDelta.RemovedNodes[0] != "node1" {
+		t.Errorf("Expected first removed node to be 'node1', got %s", topo.pendingDelta.RemovedNodes[0])
+	}
+	topo.deltaMu.Unlock()
+}
+
+func TestTopologyIntegration_OnEdgeAdded(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Add multiple edges
+	topo.OnEdgeAdded("alice", "bob")
+	topo.OnEdgeAdded("bob", "carol")
+
+	// Verify pending delta has the added edges
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.AddedEdges) != 2 {
+		t.Errorf("Expected 2 pending added edges, got %d", len(topo.pendingDelta.AddedEdges))
+	}
+	if topo.pendingDelta.AddedEdges[0].From != "alice" || topo.pendingDelta.AddedEdges[0].To != "bob" {
+		t.Errorf("Expected first edge alice->bob, got %s->%s",
+			topo.pendingDelta.AddedEdges[0].From, topo.pendingDelta.AddedEdges[0].To)
+	}
+	topo.deltaMu.Unlock()
+}
+
+func TestTopologyIntegration_OnEdgeRemoved(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Remove edges
+	topo.OnEdgeRemoved("alice", "bob")
+	topo.OnEdgeRemoved("carol", "dave")
+
+	// Verify pending delta has the removed edges
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.RemovedEdges) != 2 {
+		t.Errorf("Expected 2 pending removed edges, got %d", len(topo.pendingDelta.RemovedEdges))
+	}
+	if topo.pendingDelta.RemovedEdges[0].From != "alice" || topo.pendingDelta.RemovedEdges[0].To != "bob" {
+		t.Errorf("Expected first removed edge alice->bob, got %s->%s",
+			topo.pendingDelta.RemovedEdges[0].From, topo.pendingDelta.RemovedEdges[0].To)
+	}
+	topo.deltaMu.Unlock()
+}
+
+func TestTopologyIntegration_Stats(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	setupTestGraph(t, engine)
+
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Get stats before any predictions
+	stats := topo.Stats()
+	if stats.GraphNodeCount != 0 {
+		t.Errorf("Expected 0 nodes before first prediction, got %d", stats.GraphNodeCount)
+	}
+	if stats.PredictionsRun != 0 {
+		t.Errorf("Expected 0 predictions, got %d", stats.PredictionsRun)
+	}
+
+	// Add some pending changes
+	topo.OnNodeAdded("new_node")
+	topo.OnEdgeAdded("alice", "new_node")
+
+	stats = topo.Stats()
+	if stats.PendingChanges != 2 {
+		t.Errorf("Expected 2 pending changes, got %d", stats.PendingChanges)
+	}
+
+	// Run a prediction to build the graph
+	_, err := topo.SuggestTopological(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Prediction failed: %v", err)
+	}
+
+	stats = topo.Stats()
+	if stats.PredictionsRun == 0 {
+		t.Error("Expected predictions to be counted")
+	}
+	if stats.GraphNodeCount == 0 {
+		t.Error("Expected graph to have nodes after prediction")
+	}
+}
+
+func TestTopologyIntegration_ApplyPendingDelta(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	setupTestGraph(t, engine)
+
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	config.GraphRefreshInterval = 1000 // Large to avoid auto-rebuild
+	topo := NewTopologyIntegration(engine, config)
+
+	// Build initial graph
+	_, err := topo.SuggestTopological(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("First prediction failed: %v", err)
+	}
+
+	initialNodeCount := len(topo.cachedGraph)
+
+	// Add a node to delta
+	topo.OnNodeAdded("new_test_node")
+
+	// Call applyPendingDelta
+	err = topo.applyPendingDelta()
+	if err != nil {
+		t.Fatalf("applyPendingDelta failed: %v", err)
+	}
+
+	// Delta should be applied (new node may or may not be in graph depending on implementation)
+	// At minimum, the pending delta should be cleared
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.AddedNodes) != 0 {
+		t.Error("Expected pending delta to be cleared after apply")
+	}
+	topo.deltaMu.Unlock()
+
+	// Graph should still exist
+	if topo.cachedGraph == nil {
+		t.Error("Cached graph should not be nil after applying delta")
+	}
+
+	// Node count should be >= initial (delta may add node)
+	if len(topo.cachedGraph) < initialNodeCount {
+		t.Errorf("Expected at least %d nodes, got %d", initialNodeCount, len(topo.cachedGraph))
+	}
+}
+
+func TestTopologyIntegration_ApplyPendingDelta_NoCachedGraph(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+
+	config := DefaultTopologyConfig()
+	config.Enabled = true
+	topo := NewTopologyIntegration(engine, config)
+
+	// Add changes without building graph first
+	topo.OnNodeAdded("node1")
+	topo.OnEdgeAdded("node1", "node2")
+
+	// applyPendingDelta should return nil without error when no cached graph exists
+	err := topo.applyPendingDelta()
+	if err != nil {
+		t.Errorf("Expected nil error when no cached graph, got: %v", err)
+	}
+
+	// Delta should still be cleared
+	topo.deltaMu.Lock()
+	if len(topo.pendingDelta.AddedNodes) != 0 {
+		t.Error("Expected pending delta to be cleared even without cached graph")
+	}
+	topo.deltaMu.Unlock()
+}

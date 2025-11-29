@@ -2755,6 +2755,131 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	}
 
 	// ========================================
+	// Kalman Filter Functions
+	// ========================================
+
+	// kalman.init() or kalman.init({processNoise: 0.1, measurementNoise: 88.0})
+	if strings.HasPrefix(lowerExpr, "kalman.init(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[12 : len(expr)-1])
+		var configMap map[string]interface{}
+		if inner != "" {
+			val := e.evaluateExpressionWithContext(inner, nodes, rels)
+			if m, ok := val.(map[string]interface{}); ok {
+				configMap = m
+			}
+		}
+		return kalmanInit(configMap)
+	}
+
+	// kalman.process(measurement, stateJson) or kalman.process(measurement, stateJson, target)
+	if strings.HasPrefix(lowerExpr, "kalman.process(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			measurement, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			stateJSON, _ := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels).(string)
+			target := 0.0
+			if len(args) >= 3 {
+				target, _ = toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels))
+			}
+			return kalmanProcess(measurement, stateJSON, target)
+		}
+		return nil
+	}
+
+	// kalman.predict(stateJson, steps)
+	if strings.HasPrefix(lowerExpr, "kalman.predict(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			stateJSON, _ := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels).(string)
+			stepsFloat, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels))
+			steps := int(stepsFloat)
+			return kalmanPredict(stateJSON, steps)
+		}
+		return nil
+	}
+
+	// kalman.state(stateJson) - get current state estimate
+	if strings.HasPrefix(lowerExpr, "kalman.state(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[13 : len(expr)-1])
+		stateJSON, _ := e.evaluateExpressionWithContext(inner, nodes, rels).(string)
+		return kalmanStateValue(stateJSON)
+	}
+
+	// kalman.reset(stateJson) - reset to initial values
+	if strings.HasPrefix(lowerExpr, "kalman.reset(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[13 : len(expr)-1])
+		stateJSON, _ := e.evaluateExpressionWithContext(inner, nodes, rels).(string)
+		return kalmanReset(stateJSON)
+	}
+
+	// kalman.velocity.init() or kalman.velocity.init(initialPos, initialVel)
+	if strings.HasPrefix(lowerExpr, "kalman.velocity.init(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[21 : len(expr)-1])
+		if inner == "" {
+			return kalmanVelocityInit(0, 0, false)
+		}
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			pos, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			vel, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels))
+			return kalmanVelocityInit(pos, vel, true)
+		}
+		return kalmanVelocityInit(0, 0, false)
+	}
+
+	// kalman.velocity.process(measurement, stateJson)
+	if strings.HasPrefix(lowerExpr, "kalman.velocity.process(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[24 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			measurement, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			stateJSON, _ := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels).(string)
+			return kalmanVelocityProcess(measurement, stateJSON)
+		}
+		return nil
+	}
+
+	// kalman.velocity.predict(stateJson, steps)
+	if strings.HasPrefix(lowerExpr, "kalman.velocity.predict(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[24 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			stateJSON, _ := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels).(string)
+			stepsFloat, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels))
+			steps := int(stepsFloat)
+			return kalmanVelocityPredict(stateJSON, steps)
+		}
+		return nil
+	}
+
+	// kalman.adaptive.init() or kalman.adaptive.init({trendThreshold: 0.1, ...})
+	if strings.HasPrefix(lowerExpr, "kalman.adaptive.init(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[21 : len(expr)-1])
+		var configMap map[string]interface{}
+		if inner != "" {
+			val := e.evaluateExpressionWithContext(inner, nodes, rels)
+			if m, ok := val.(map[string]interface{}); ok {
+				configMap = m
+			}
+		}
+		return kalmanAdaptiveInit(configMap)
+	}
+
+	// kalman.adaptive.process(measurement, stateJson)
+	if strings.HasPrefix(lowerExpr, "kalman.adaptive.process(") && strings.HasSuffix(expr, ")") {
+		inner := strings.TrimSpace(expr[24 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			measurement, _ := toFloat64(e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			stateJSON, _ := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels).(string)
+			return kalmanAdaptiveProcess(measurement, stateJSON)
+		}
+		return nil
+	}
+
+	// ========================================
 	// Vector Functions
 	// ========================================
 
@@ -3122,31 +3247,31 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	// polygon(points) - create a polygon geometry from a list of points
 	if strings.HasPrefix(lowerExpr, "polygon(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[8 : len(expr)-1])
-		
+
 		// Check if inner is a list literal [...]
 		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)
-			
+
 			pointList := make([]interface{}, 0, len(pointExprs))
 			for _, pointExpr := range pointExprs {
 				evalPoint := e.evaluateExpressionWithContext(strings.TrimSpace(pointExpr), nodes, rels)
 				pointList = append(pointList, evalPoint)
 			}
-			
+
 			// Validate that we have at least 3 points for a valid polygon
 			if len(pointList) < 3 {
 				return nil
 			}
-			
+
 			// Return a polygon structure
 			return map[string]interface{}{
 				"type":   "polygon",
 				"points": pointList,
 			}
 		}
-		
+
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContext(inner, nodes, rels)
 		if pointList, ok := pointsVal.([]interface{}); ok {
@@ -3164,31 +3289,31 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 	// lineString(points) - create a lineString geometry from a list of points
 	if strings.HasPrefix(lowerExpr, "linestring(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[11 : len(expr)-1])
-		
+
 		// Check if inner is a list literal [...]
 		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)
-			
+
 			pointList := make([]interface{}, 0, len(pointExprs))
 			for _, pointExpr := range pointExprs {
 				evalPoint := e.evaluateExpressionWithContext(strings.TrimSpace(pointExpr), nodes, rels)
 				pointList = append(pointList, evalPoint)
 			}
-			
+
 			// Validate that we have at least 2 points for a valid lineString
 			if len(pointList) < 2 {
 				return nil
 			}
-			
+
 			// Return a lineString structure
 			return map[string]interface{}{
 				"type":   "linestring",
 				"points": pointList,
 			}
 		}
-		
+
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContext(inner, nodes, rels)
 		if pointList, ok := pointsVal.([]interface{}); ok {
@@ -3210,22 +3335,22 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		if len(args) < 2 {
 			return false
 		}
-		
+
 		pointVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 		polygonVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-		
+
 		pm, ok1 := pointVal.(map[string]interface{})
 		polygonMap, ok2 := polygonVal.(map[string]interface{})
 		if !ok1 || !ok2 {
 			return false
 		}
-		
+
 		// Extract polygon points
 		polygonPoints := extractPolygonPoints(polygonMap)
 		if polygonPoints == nil {
 			return false
 		}
-		
+
 		// Get point coordinates
 		px, py, hasXY := getXY(pm)
 		if !hasXY {
@@ -3236,7 +3361,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 				return false
 			}
 		}
-		
+
 		// Use point-in-polygon algorithm
 		return pointInPolygon(px, py, polygonPoints)
 	}
@@ -3248,22 +3373,22 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 		if len(args) < 2 {
 			return false
 		}
-		
+
 		polygonVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
 		pointVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-		
+
 		polygonMap, ok1 := polygonVal.(map[string]interface{})
 		pm, ok2 := pointVal.(map[string]interface{})
 		if !ok1 || !ok2 {
 			return false
 		}
-		
+
 		// Extract polygon points
 		polygonPoints := extractPolygonPoints(polygonMap)
 		if polygonPoints == nil {
 			return false
 		}
-		
+
 		// Get point coordinates
 		px, py, hasXY := getXY(pm)
 		if !hasXY {
@@ -3274,7 +3399,7 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 				return false
 			}
 		}
-		
+
 		// Use point-in-polygon algorithm
 		return pointInPolygon(px, py, polygonPoints)
 	}

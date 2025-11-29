@@ -230,6 +230,10 @@ type Engine struct {
 	// Optional cluster integration for GPU-accelerated search
 	clusterIntegration *ClusterIntegration
 
+	// Optional Kalman adapter for smoothed confidence and temporal patterns
+	// Enabled via NORNICDB_KALMAN_ENABLED=true
+	kalmanAdapter *KalmanAdapter
+
 	// Tier 1 features - enabled by default for production safety
 	cooldownTable   *CooldownTable           // Prevents rapid re-materialization
 	evidenceBuffer  *EvidenceBuffer          // Requires multiple signals before materializing
@@ -373,6 +377,38 @@ func (e *Engine) GetClusterIntegration() *ClusterIntegration {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.clusterIntegration
+}
+
+// SetKalmanAdapter configures the Kalman-enhanced inference adapter.
+//
+// The KalmanAdapter provides:
+//   - Smoothed confidence scores using Kalman filtering
+//   - Temporal access pattern tracking
+//   - Session-aware co-access detection
+//   - Relationship strength trend analysis
+//
+// This is an OPTIONAL enhancement - if not set, base inference works normally.
+// Enable via NORNICDB_KALMAN_ENABLED=true environment variable.
+//
+// Example:
+//
+//	if config.IsKalmanEnabled() {
+//		adapter := inference.NewKalmanAdapter(engine, inference.DefaultKalmanAdapterConfig())
+//		tracker := temporal.NewTracker(temporal.DefaultConfig())
+//		adapter.SetTracker(tracker)
+//		engine.SetKalmanAdapter(adapter)
+//	}
+func (e *Engine) SetKalmanAdapter(adapter *KalmanAdapter) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.kalmanAdapter = adapter
+}
+
+// GetKalmanAdapter returns the current Kalman adapter (or nil if not configured).
+func (e *Engine) GetKalmanAdapter() *KalmanAdapter {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.kalmanAdapter
 }
 
 // OnStore is called when a new node is stored in the graph.

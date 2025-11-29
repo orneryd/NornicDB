@@ -404,6 +404,19 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callGdsLinkPredictionJaccard(cypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.PREDICT.STREAM"):
 		result, err = e.callGdsLinkPredictionPredict(cypher)
+	// GDS Graph Management and FastRP
+	case strings.Contains(upper, "GDS.VERSION"):
+		result, err = e.callGdsVersion()
+	case strings.Contains(upper, "GDS.GRAPH.LIST"):
+		result, err = e.callGdsGraphList()
+	case strings.Contains(upper, "GDS.GRAPH.DROP"):
+		result, err = e.callGdsGraphDrop(cypher)
+	case strings.Contains(upper, "GDS.GRAPH.PROJECT"):
+		result, err = e.callGdsGraphProject(cypher)
+	case strings.Contains(upper, "GDS.FASTRP.STREAM"):
+		result, err = e.callGdsFastRPStream(cypher)
+	case strings.Contains(upper, "GDS.FASTRP.STATS"):
+		result, err = e.callGdsFastRPStats(cypher)
 	// Additional Neo4j procedures for compatibility
 	case strings.Contains(upper, "DB.INFO"):
 		result, err = e.callDbInfo()

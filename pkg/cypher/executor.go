@@ -1839,6 +1839,48 @@ func (e *StorageExecutor) parseRemoveProperties(removePart string) []string {
 
 // Helper functions
 
+// looksLikeFunctionCall checks if a string looks like any function call.
+// Matches patterns like: functionName(), name.sub(), kalman.init({...})
+// Unlike isFunctionCall(expr, funcName) which checks for a specific function,
+// this checks if the string has function call syntax.
+func looksLikeFunctionCall(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+
+	// Must end with ) for a function call
+	if !strings.HasSuffix(s, ")") {
+		return false
+	}
+
+	// Find the opening parenthesis
+	parenIdx := strings.Index(s, "(")
+	if parenIdx <= 0 {
+		return false
+	}
+
+	// The part before ( must be a valid identifier or dotted name
+	funcName := s[:parenIdx]
+
+	// Check if it looks like a function name (alphanumeric, dots, underscores)
+	for i, c := range funcName {
+		if i == 0 {
+			// First char must be letter or underscore
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+				return false
+			}
+		} else {
+			// Subsequent chars can be alphanumeric, underscore, or dot
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.') {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
 func (e *StorageExecutor) parseNodePattern(pattern string) nodePatternInfo {
 	info := nodePatternInfo{
 		labels:     []string{},
@@ -2018,6 +2060,16 @@ func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
 	// Handle nested maps (rare in properties, but possible)
 	if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
 		return e.parseProperties(valueStr)
+	}
+
+	// Handle function calls like kalman.init(), toUpper('test'), etc.
+	// A function call has the pattern: name(...) or name.sub.name(...)
+	if looksLikeFunctionCall(valueStr) {
+		result := e.evaluateExpressionWithContext(valueStr, nil, nil)
+		// Only use the result if evaluation succeeded (not returned as original string)
+		if result != nil && result != valueStr {
+			return result
+		}
 	}
 
 	// Otherwise return as string (handles unquoted identifiers, etc.)
@@ -3151,6 +3203,17 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		// Vector functions
 		{"vector.similarity.cosine", "vector.similarity.cosine(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Cosine similarity", false, false, false},
 		{"vector.similarity.euclidean", "vector.similarity.euclidean(vector1 :: LIST<FLOAT>, vector2 :: LIST<FLOAT>) :: FLOAT", "Euclidean similarity", false, false, false},
+		// Kalman filter functions
+		{"kalman.init", "kalman.init(config? :: MAP) :: STRING", "Create new Kalman filter state (basic scalar filter for noise smoothing)", false, false, false},
+		{"kalman.process", "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", "Process measurement, returns {value, state}", false, false, false},
+		{"kalman.predict", "kalman.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict state n steps into the future", false, false, false},
+		{"kalman.state", "kalman.state(state :: STRING) :: FLOAT", "Get current state estimate from state JSON", false, false, false},
+		{"kalman.reset", "kalman.reset(state :: STRING) :: STRING", "Reset filter state to initial values", false, false, false},
+		{"kalman.velocity.init", "kalman.velocity.init(initialPos? :: FLOAT, initialVel? :: FLOAT) :: STRING", "Create 2-state Kalman filter (position + velocity for trend tracking)", false, false, false},
+		{"kalman.velocity.process", "kalman.velocity.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, velocity, state}", false, false, false},
+		{"kalman.velocity.predict", "kalman.velocity.predict(state :: STRING, steps :: INTEGER) :: FLOAT", "Predict position n steps into the future", false, false, false},
+		{"kalman.adaptive.init", "kalman.adaptive.init(config? :: MAP) :: STRING", "Create adaptive Kalman filter (auto-switches between basic and velocity modes)", false, false, false},
+		{"kalman.adaptive.process", "kalman.adaptive.process(measurement :: FLOAT, state :: STRING) :: MAP", "Process measurement, returns {value, mode, state}", false, false, false},
 	}
 
 	return &ExecuteResult{

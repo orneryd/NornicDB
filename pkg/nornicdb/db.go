@@ -143,6 +143,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/temporal"
 )
 
 // Errors returned by DB operations.
@@ -766,7 +767,23 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 			topo := inference.NewTopologyIntegration(db.storage, topoConfig)
 			db.inference.SetTopologyIntegration(topo)
-			fmt.Println("✅ Topology auto-integration enabled (NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED=true)")
+			fmt.Println("✅ Topology auto-integration enabled (NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED=true)")
+		}
+
+		// Wire up KalmanAdapter if feature flag is enabled
+		// This enables Kalman-smoothed confidence and temporal pattern tracking
+		// Note: Base inference works without this - it's an enhancement
+		if featureflags.IsKalmanEnabled() {
+			kalmanConfig := inference.DefaultKalmanAdapterConfig()
+			kalmanAdapter := inference.NewKalmanAdapter(db.inference, kalmanConfig)
+
+			// Create temporal tracker for access pattern analysis
+			trackerConfig := temporal.DefaultConfig()
+			tracker := temporal.NewTracker(trackerConfig)
+			kalmanAdapter.SetTracker(tracker)
+
+			db.inference.SetKalmanAdapter(kalmanAdapter)
+			fmt.Println("✅ Kalman filtering enabled (NORNICDB_KALMAN_ENABLED=true)")
 		}
 	}
 

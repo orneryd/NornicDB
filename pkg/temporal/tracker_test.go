@@ -423,3 +423,84 @@ func BenchmarkTracker_GetStats(b *testing.B) {
 		tracker.GetStats("node-1")
 	}
 }
+
+// ===== Missing Coverage Tests =====
+
+func TestTracker_IsSessionBoundary(t *testing.T) {
+	tracker := NewTracker(DefaultConfig())
+
+	// Unknown node should return false
+	if tracker.IsSessionBoundary("unknown") {
+		t.Error("Unknown node should not be session boundary")
+	}
+
+	// Fresh node with no velocity history should return false
+	tracker.RecordAccess("node-1")
+	if tracker.IsSessionBoundary("node-1") {
+		t.Error("New node with single access should not be boundary")
+	}
+
+	// Record multiple accesses to establish velocity
+	baseTime := time.Now()
+	for i := 0; i < 10; i++ {
+		tracker.RecordAccessAt("node-2", baseTime.Add(time.Duration(i*10)*time.Second))
+	}
+
+	// Check - may or may not be boundary depending on pattern
+	_ = tracker.IsSessionBoundary("node-2")
+	// Just ensure it doesn't panic and returns a bool
+	t.Log("IsSessionBoundary executed successfully")
+}
+
+func TestTracker_Cleanup(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxTrackedNodes = 5 // Small limit to test eviction
+	tracker := NewTracker(cfg)
+
+	// Add more nodes than max
+	for i := 0; i < 10; i++ {
+		tracker.RecordAccess("node-" + string(rune('A'+i)))
+	}
+
+	// Should have evicted some nodes
+	stats := tracker.GetGlobalStats()
+	if stats.TrackedNodes > cfg.MaxTrackedNodes {
+		t.Errorf("Should have evicted nodes, have %d, max %d", stats.TrackedNodes, cfg.MaxTrackedNodes)
+	}
+	t.Logf("Tracked %d nodes after adding 10 (max: %d)", stats.TrackedNodes, cfg.MaxTrackedNodes)
+}
+
+func TestTracker_GetHotNodes(t *testing.T) {
+	tracker := NewTracker(DefaultConfig())
+
+	baseTime := time.Now()
+	// Create nodes with different access frequencies
+	for i := 0; i < 5; i++ {
+		// Hot nodes - accessed many times recently
+		for j := 0; j < (5 - i); j++ {
+			tracker.RecordAccessAt("hot-"+string(rune('A'+i)), baseTime.Add(time.Duration(j)*time.Second))
+		}
+	}
+
+	hotNodes := tracker.GetHotNodes(3)
+	if len(hotNodes) > 3 {
+		t.Errorf("Requested 3 hot nodes, got %d", len(hotNodes))
+	}
+	t.Logf("Hot nodes: %v", hotNodes)
+}
+
+func TestTracker_GetColdNodes(t *testing.T) {
+	tracker := NewTracker(DefaultConfig())
+
+	baseTime := time.Now()
+	// Create old accesses
+	for i := 0; i < 5; i++ {
+		tracker.RecordAccessAt("cold-"+string(rune('A'+i)), baseTime.Add(-time.Duration(i+1)*time.Hour))
+	}
+
+	coldNodes := tracker.GetColdNodes(3)
+	if len(coldNodes) > 3 {
+		t.Errorf("Requested 3 cold nodes, got %d", len(coldNodes))
+	}
+	t.Logf("Cold nodes: %v", coldNodes)
+}
