@@ -538,8 +538,9 @@ func TestClusterIndex_ClusterStats(t *testing.T) {
 		MaxIterations: 50,
 	})
 
-	// Add embeddings
-	for i := 0; i < 40; i++ {
+	// Add enough embeddings to ensure measurable clustering time
+	const numEmbeddings = 500
+	for i := 0; i < numEmbeddings; i++ {
 		emb := make([]float32, testDims)
 		emb[i%testDims] = 1.0
 		ci.Add("node-"+string(rune('A'+i)), emb)
@@ -550,8 +551,8 @@ func TestClusterIndex_ClusterStats(t *testing.T) {
 	if stats.Clustered {
 		t.Error("Clustered should be false before clustering")
 	}
-	if stats.EmbeddingCount != 40 {
-		t.Errorf("expected 40 embeddings, got %d", stats.EmbeddingCount)
+	if stats.EmbeddingCount != numEmbeddings {
+		t.Errorf("expected %d embeddings, got %d", numEmbeddings, stats.EmbeddingCount)
 	}
 
 	// Cluster
@@ -568,8 +569,10 @@ func TestClusterIndex_ClusterStats(t *testing.T) {
 	if stats.Iterations == 0 {
 		t.Error("Iterations should be > 0")
 	}
-	// Note: LastClusterTime may be 0 if clustering completes in < 1 nanosecond
-	// (possible on very fast systems with few embeddings). We just log it.
+	// With 500 embeddings, clustering should take measurable time
+	if stats.LastClusterTime == 0 {
+		t.Log("Warning: LastClusterTime is 0, clustering was extremely fast")
+	}
 	t.Logf("LastClusterTime: %v, Iterations: %d", stats.LastClusterTime, stats.Iterations)
 	if stats.AvgClusterSize == 0 {
 		t.Error("AvgClusterSize should be > 0")
