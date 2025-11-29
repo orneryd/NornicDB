@@ -780,6 +780,52 @@ func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 	return nil
 }
 
+// NodeNeedsEmbedding checks if a node needs an embedding to be generated.
+// Returns true if the node should have an embedding generated, false if it should be skipped.
+//
+// A node is skipped (returns false) if:
+//   - It has an internal label (starts with '_')
+//   - It already has an embedding
+//   - It has the "embedding_skipped" property set
+//   - It has "has_embedding" property explicitly set to false
+//
+// Example:
+//
+//	for _, node := range nodes {
+//	    if storage.NodeNeedsEmbedding(node) {
+//	        generateEmbedding(node)
+//	    }
+//	}
+func NodeNeedsEmbedding(node *Node) bool {
+	if node == nil {
+		return false
+	}
+
+	// Skip internal nodes (labels starting with _)
+	for _, label := range node.Labels {
+		if len(label) > 0 && label[0] == '_' {
+			return false
+		}
+	}
+
+	// Skip if already has embedding
+	if len(node.Embedding) > 0 {
+		return false
+	}
+
+	// Skip if already processed (marked as skipped)
+	if _, skipped := node.Properties["embedding_skipped"]; skipped {
+		return false
+	}
+
+	// Skip if explicitly marked as not needing embedding
+	if hasEmbed, ok := node.Properties["has_embedding"].(bool); ok && !hasEmbed {
+		return false
+	}
+
+	return true
+}
+
 // CountNodesWithLabel counts nodes with a specific label using streaming.
 func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int64, error) {
 	var count int64

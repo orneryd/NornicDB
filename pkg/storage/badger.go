@@ -1564,31 +1564,23 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 					return nil // Skip invalid nodes
 				}
 
-				// Skip internal nodes (labels starting with _)
-				isInternal := false
+				// Skip internal nodes for stats
 				for _, label := range node.Labels {
 					if len(label) > 0 && label[0] == '_' {
-						isInternal = true
-						break
+						internal++
+						return nil
 					}
 				}
-				if isInternal {
-					internal++
-					return nil // Continue to next node
-				}
 
-				// Check if node already has embedding
+				// Track nodes with embeddings for stats
 				if len(node.Embedding) > 0 {
 					withEmbed++
-					return nil // Has embedding, continue
+					return nil
 				}
 
-				// Check if node was already processed (skipped due to no content)
-				if _, skipped := node.Properties["embedding_skipped"]; skipped {
-					return nil // Already processed, skip
-				}
-				if hasEmbed, ok := node.Properties["has_embedding"].(bool); ok && !hasEmbed {
-					return nil // Explicitly marked as no embedding needed
+				// Use helper to check if node needs embedding
+				if !NodeNeedsEmbedding(node) {
+					return nil
 				}
 
 				// Found one that needs embedding

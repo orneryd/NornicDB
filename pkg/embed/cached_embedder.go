@@ -23,18 +23,19 @@ package embed
 import (
 	"container/list"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"hash/fnv"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
 
 // CachedEmbedder wraps an Embedder with LRU caching.
 //
-// The cache is keyed by SHA256 hash of the input text, providing:
+// The cache is keyed by FNV-1a hash of the input text, providing:
 //   - Exact match caching (same text = same embedding)
 //   - Efficient lookup (O(1) for cache hits)
 //   - Bounded memory usage (LRU eviction)
+//   - Fast hashing (FNV-1a is non-cryptographic but fast)
 //
 // Thread-safe: All methods can be called from multiple goroutines.
 type CachedEmbedder struct {
@@ -83,10 +84,12 @@ func NewCachedEmbedder(base Embedder, maxSize int) *CachedEmbedder {
 	}
 }
 
-// hashText creates a cache key from text content.
+// hashText creates a cache key from text content using FNV-1a.
+// FNV-1a is a fast non-cryptographic hash suitable for cache keys.
 func hashText(text string) string {
-	h := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(h[:])
+	h := fnv.New64a()
+	h.Write([]byte(text))
+	return strconv.FormatUint(h.Sum64(), 36)
 }
 
 // Embed generates or retrieves a cached embedding for the text.

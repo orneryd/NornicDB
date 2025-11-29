@@ -184,10 +184,17 @@ func (ew *EmbedWorker) processNextBatch() {
 		_ = ew.storage.UpdateNode(node)
 
 		// Immediately try next node (don't wait for next trigger)
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			ew.Trigger()
-		}()
+		ew.wg.Add(1)
+		go func(ctx context.Context) {
+			defer ew.wg.Done()
+			select {
+			case <-time.After(100 * time.Millisecond):
+				ew.Trigger()
+			case <-ctx.Done():
+				// Worker is shutting down, abort
+				return
+			}
+		}(ew.ctx)
 		return
 	}
 

@@ -208,7 +208,7 @@ if ($isLibFiles) {
     $libBat = Join-Path $TmpDir "combine-libs.bat"
     @"
 @echo off
-call "$vcvarsPath" x64
+call "$vcvarsall" x64
 $libCmd
 "@ | Out-File -FilePath $libBat -Encoding ASCII
     

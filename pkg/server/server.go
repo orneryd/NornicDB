@@ -158,6 +158,12 @@ var (
 	ErrInternalError    = fmt.Errorf("internal server error")
 )
 
+// embeddingCacheMemoryMB calculates approximate memory usage for embedding cache.
+// Each cached embedding uses: cacheSize * dimensions * 4 bytes (float32).
+func embeddingCacheMemoryMB(cacheSize, dimensions int) int {
+	return cacheSize * dimensions * 4 / 1024 / 1024
+}
+
 // Config holds HTTP server configuration options.
 //
 // All settings have sensible defaults via DefaultConfig(). The server follows
@@ -442,7 +448,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				if config.EmbeddingCacheSize > 0 {
 					embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
 					log.Printf("✓ Embedding cache enabled: %d entries (~%dMB)",
-						config.EmbeddingCacheSize, config.EmbeddingCacheSize*config.EmbeddingDimensions*4/1024/1024)
+						config.EmbeddingCacheSize, embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
 				}
 
 				if config.EmbeddingProvider == "local" {

@@ -533,30 +533,9 @@ func FindNodeNeedingEmbedding(engine Engine) *Node {
 			return nil
 		}
 		for _, node := range nodes {
-			// Skip internal nodes
-			isInternal := false
-			for _, label := range node.Labels {
-				if len(label) > 0 && label[0] == '_' {
-					isInternal = true
-					break
-				}
+			if NodeNeedsEmbedding(node) {
+				return node
 			}
-			if isInternal {
-				continue
-			}
-			// Skip if already has embedding
-			if len(node.Embedding) > 0 {
-				continue
-			}
-			// Skip if already processed (marked as skipped)
-			if _, skipped := node.Properties["embedding_skipped"]; skipped {
-				continue
-			}
-			if hasEmbed, ok := node.Properties["has_embedding"].(bool); ok && !hasEmbed {
-				continue
-			}
-			// Found one that needs embedding
-			return node
 		}
 	}
 	return nil

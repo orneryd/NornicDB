@@ -659,6 +659,9 @@ func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string)
 //
 // This function maps them to a consistent [0, 1] range using tanh-based
 // transformations that preserve relative ordering while clamping extremes.
+//
+// Note: This normalization is applied automatically by the algorithm implementations;
+// callers do not need to normalize scores again.
 func normalizeAlgorithmScore(score float64, algorithm string) float64 {
 	switch algorithm {
 	case "jaccard":
