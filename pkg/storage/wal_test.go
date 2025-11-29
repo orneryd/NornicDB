@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -882,5 +883,161 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		walEngine.CreateNode(&Node{ID: NodeID("n" + string(rune(i)))})
+	}
+}
+
+// ============================================================================
+// BatchWriter Tests
+// ============================================================================
+
+func TestBatchWriter_AppendNode(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
+	wal, err := NewWAL("", cfg)
+	require.NoError(t, err)
+	defer wal.Close()
+
+	batch := wal.NewBatch()
+	require.NotNil(t, batch)
+
+	// Write multiple entries in batch
+	node1 := &Node{ID: "batch-n1", Labels: []string{"Test"}}
+	node2 := &Node{ID: "batch-n2", Labels: []string{"Test"}}
+
+	err = batch.AppendNode(OpCreateNode, node1)
+	require.NoError(t, err)
+
+	err = batch.AppendNode(OpCreateNode, node2)
+	require.NoError(t, err)
+
+	// Before commit, entries should be buffered
+	assert.Equal(t, 2, batch.Len())
+}
+
+func TestBatchWriter_Commit(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
+	wal, err := NewWAL("", cfg)
+	require.NoError(t, err)
+	defer wal.Close()
+
+	batch := wal.NewBatch()
+
+	// Add entries
+	for i := 0; i < 5; i++ {
+		node := &Node{ID: NodeID(fmt.Sprintf("commit-n%d", i)), Labels: []string{"Test"}}
+		err = batch.AppendNode(OpCreateNode, node)
+		require.NoError(t, err)
+	}
+
+	// Commit batch
+	err = batch.Commit()
+	require.NoError(t, err)
+
+	// Batch should be cleared after commit
+	assert.Equal(t, 0, batch.Len())
+}
+
+func TestBatchWriter_Rollback(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
+	wal, err := NewWAL("", cfg)
+	require.NoError(t, err)
+	defer wal.Close()
+
+	batch := wal.NewBatch()
+
+	// Add entries
+	for i := 0; i < 3; i++ {
+		node := &Node{ID: NodeID(fmt.Sprintf("rollback-n%d", i)), Labels: []string{"Test"}}
+		batch.AppendNode(OpCreateNode, node)
+	}
+
+	// Rollback - should discard all entries
+	batch.Rollback()
+
+	// Batch should be cleared
+	assert.Equal(t, 0, batch.Len())
+}
+
+func TestBatchWriter_AppendEdge(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
+	wal, err := NewWAL("", cfg)
+	require.NoError(t, err)
+	defer wal.Close()
+
+	batch := wal.NewBatch()
+
+	// Add edge entries
+	edge1 := &Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"}
+	edge2 := &Edge{ID: "e2", Type: "LIKES", StartNode: "n2", EndNode: "n3"}
+
+	err = batch.AppendEdge(OpCreateEdge, edge1)
+	require.NoError(t, err)
+
+	err = batch.AppendEdge(OpCreateEdge, edge2)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, batch.Len())
+
+	err = batch.Commit()
+	require.NoError(t, err)
+}
+
+func TestBatchWriter_AppendDelete(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
+	wal, err := NewWAL("", cfg)
+	require.NoError(t, err)
+	defer wal.Close()
+
+	batch := wal.NewBatch()
+
+	// Add delete entries
+	err = batch.AppendDelete(OpDeleteNode, "node-to-delete-1")
+	require.NoError(t, err)
+
+	err = batch.AppendDelete(OpDeleteNode, "node-to-delete-2")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, batch.Len())
+
+	err = batch.Commit()
+	require.NoError(t, err)
+}
+
+func BenchmarkBatchWriter_Commit(b *testing.B) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := b.TempDir()
+	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
+	wal, _ := NewWAL("", cfg)
+	defer wal.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		batch := wal.NewBatch()
+		for j := 0; j < 100; j++ {
+			node := &Node{ID: NodeID(fmt.Sprintf("bench-n%d-%d", i, j))}
+			batch.AppendNode(OpCreateNode, node)
+		}
+		batch.Commit()
 	}
 }

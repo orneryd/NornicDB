@@ -18,13 +18,13 @@ func TestExecutor_CacheIntegration(t *testing.T) {
 	exec.Execute(ctx, `CREATE (n:User {name: 'Bob', age: 25})`, nil)
 
 	// First query - cache miss
-	_, missesBefore, _ := exec.cache.Stats()
+	_, missesBefore, _, _, _ := exec.cache.Stats()
 	result1, err := exec.Execute(ctx, `MATCH (n:User) RETURN count(n) AS count`, nil)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
-	hitsAfter, missesAfter, _ := exec.cache.Stats()
+	hitsAfter, missesAfter, _, _, _ := exec.cache.Stats()
 	if missesAfter != missesBefore+1 {
 		t.Error("Expected cache miss on first query")
 	}
@@ -35,7 +35,7 @@ func TestExecutor_CacheIntegration(t *testing.T) {
 		t.Fatalf("Query failed: %v", err)
 	}
 
-	hitsAfter2, _, _ := exec.cache.Stats()
+	hitsAfter2, _, _, _, _ := exec.cache.Stats()
 	if hitsAfter2 != hitsAfter+1 {
 		t.Error("Expected cache hit on second query")
 	}
@@ -49,10 +49,10 @@ func TestExecutor_CacheIntegration(t *testing.T) {
 	exec.Execute(ctx, `CREATE (n:User {name: 'Charlie', age: 35})`, nil)
 
 	// Query again - should be cache miss after invalidation
-	_, missesBefore3, _ := exec.cache.Stats()
+	_, missesBefore3, _, _, _ := exec.cache.Stats()
 	exec.Execute(ctx, `MATCH (n:User) RETURN count(n) AS count`, nil)
 
-	_, missesAfter3, _ := exec.cache.Stats()
+	_, missesAfter3, _, _, _ := exec.cache.Stats()
 	if missesAfter3 != missesBefore3+1 {
 		t.Error("Expected cache miss after write operation")
 	}
@@ -81,7 +81,7 @@ func TestExecutor_CacheSchemaQueries(t *testing.T) {
 	}
 
 	// Schema query - should be cached
-	hitsBefore, _, _ := exec.cache.Stats()
+	hitsBefore, _, _, _, _ := exec.cache.Stats()
 	result1, err := exec.Execute(ctx, `CALL db.labels()`, nil)
 	if err != nil {
 		t.Fatalf("First CALL db.labels() failed: %v", err)
@@ -90,7 +90,7 @@ func TestExecutor_CacheSchemaQueries(t *testing.T) {
 		t.Fatal("First CALL db.labels() returned nil result")
 	}
 
-	hitsAfter, _, _ := exec.cache.Stats()
+	hitsAfter, _, _, _, _ := exec.cache.Stats()
 	if hitsAfter != hitsBefore {
 		t.Log("First schema query should be cache miss (expected)")
 	}
@@ -104,7 +104,7 @@ func TestExecutor_CacheSchemaQueries(t *testing.T) {
 		t.Fatal("Second CALL db.labels() returned nil result")
 	}
 
-	hitsAfter2, _, _ := exec.cache.Stats()
+	hitsAfter2, _, _, _, _ := exec.cache.Stats()
 	if hitsAfter2 != hitsAfter+1 {
 		t.Errorf("Second schema query should be cache hit (hits before: %d, after: %d)", hitsAfter, hitsAfter2)
 	}
@@ -141,7 +141,7 @@ func TestExecutor_CacheParameterizedQueries(t *testing.T) {
 	}
 
 	// Query with param2 - different query, should not hit cache
-	hitsBefore, _, _ := exec.cache.Stats()
+	hitsBefore, _, _, _, _ := exec.cache.Stats()
 	result2, err := exec.Execute(ctx, `MATCH (n:PersonB) RETURN n.age AS age`, nil)
 	if err != nil {
 		t.Fatalf("Query PersonB failed: %v", err)
@@ -150,7 +150,7 @@ func TestExecutor_CacheParameterizedQueries(t *testing.T) {
 		t.Fatal("Query PersonB returned no rows")
 	}
 
-	hitsAfter, _, _ := exec.cache.Stats()
+	hitsAfter, _, _, _, _ := exec.cache.Stats()
 	if hitsAfter != hitsBefore {
 		t.Error("Different queries should not hit cache")
 	}
@@ -168,7 +168,7 @@ func TestExecutor_CacheParameterizedQueries(t *testing.T) {
 		t.Fatalf("Query PersonA (second time) failed: %v", err)
 	}
 
-	hitsAfter2, _, _ := exec.cache.Stats()
+	hitsAfter2, _, _, _, _ := exec.cache.Stats()
 	if hitsAfter2 != hitsAfter+1 {
 		t.Errorf("Same query should hit cache (hits before: %d, after: %d)", hitsAfter, hitsAfter2)
 	}
@@ -188,10 +188,10 @@ func TestExecutor_CacheOnlyReadQueries(t *testing.T) {
 
 	// Write queries should NOT be cached
 	exec.Execute(ctx, `CREATE (n:Test {value: 1})`, nil)
-	_, missesBefore, sizeBefore := exec.cache.Stats()
+	_, missesBefore, sizeBefore, _, _ := exec.cache.Stats()
 
 	exec.Execute(ctx, `CREATE (n:Test {value: 2})`, nil)
-	_, missesAfter, sizeAfter := exec.cache.Stats()
+	_, missesAfter, sizeAfter, _, _ := exec.cache.Stats()
 
 	// Cache size and misses should not change for write queries
 	if sizeBefore != sizeAfter {

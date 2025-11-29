@@ -161,7 +161,8 @@ type StorageExecutor struct {
 	parser    *Parser
 	storage   storage.Engine
 	txContext *TransactionContext // Active transaction context
-	cache     *QueryCache         // Query result cache
+	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
+	planCache *QueryPlanCache     // Parsed query plan cache
 }
 
 // NewStorageExecutor creates a new Cypher executor with the given storage backend.
@@ -185,9 +186,10 @@ type StorageExecutor struct {
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
 func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	return &StorageExecutor{
-		parser:  NewParser(),
-		storage: store,
-		cache:   NewQueryCache(1000), // Cache up to 1000 query results
+		parser:    NewParser(),
+		storage:   store,
+		cache:     NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
+		planCache: NewQueryPlanCache(500),   // Cache 500 parsed query plans
 	}
 }
 
@@ -342,9 +344,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		e.cache.Put(cypher, params, result, ttl)
 	}
 
-	// Invalidate cache on write operations
+	// Smart invalidation: only invalidate caches for affected labels
 	if !isReadOnly && e.cache != nil {
-		e.cache.Invalidate()
+		affectedLabels := extractLabelsFromQuery(cypher)
+		if len(affectedLabels) > 0 {
+			e.cache.InvalidateLabels(affectedLabels)
+		} else {
+			e.cache.Invalidate()
+		}
 	}
 
 	return result, err
