@@ -2192,6 +2192,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 }
 
 // GetLabels returns all distinct node labels.
+// Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) GetLabels(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -2200,28 +2201,18 @@ func (db *DB) GetLabels(ctx context.Context) ([]string, error) {
 		return nil, ErrClosed
 	}
 
-	allNodes, err := db.storage.AllNodes()
+	// Use streaming helper for memory efficiency
+	labels, err := storage.CollectLabels(ctx, db.storage)
 	if err != nil {
 		return nil, err
 	}
 
-	labelSet := make(map[string]bool)
-	for _, n := range allNodes {
-		for _, l := range n.Labels {
-			labelSet[l] = true
-		}
-	}
-
-	labels := make([]string, 0, len(labelSet))
-	for l := range labelSet {
-		labels = append(labels, l)
-	}
 	sort.Strings(labels)
-
 	return labels, nil
 }
 
 // GetRelationshipTypes returns all distinct edge types.
+// Uses streaming iteration to avoid loading all edges into memory.
 func (db *DB) GetRelationshipTypes(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -2230,20 +2221,12 @@ func (db *DB) GetRelationshipTypes(ctx context.Context) ([]string, error) {
 		return nil, ErrClosed
 	}
 
-	allEdges, err := db.storage.AllEdges()
+	// Use streaming helper for memory efficiency
+	types, err := storage.CollectEdgeTypes(ctx, db.storage)
 	if err != nil {
 		return nil, err
 	}
 
-	typeSet := make(map[string]bool)
-	for _, e := range allEdges {
-		typeSet[e.Type] = true
-	}
-
-	types := make([]string, 0, len(typeSet))
-	for t := range typeSet {
-		types = append(types, t)
-	}
 	sort.Strings(types)
 
 	return types, nil
@@ -2276,6 +2259,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 }
 
 // ExportUserData exports all data for a user (GDPR compliance).
+// Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -2284,15 +2268,9 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 		return nil, ErrClosed
 	}
 
-	// Find all nodes associated with user
-	allNodes, err := db.storage.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-
+	// Collect user data using streaming
 	var userData []map[string]interface{}
-	for _, n := range allNodes {
-		// Check if node belongs to user (by owner_id property or similar)
+	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(n *storage.Node) error {
 		if owner, ok := n.Properties["owner_id"].(string); ok && owner == userID {
 			userData = append(userData, map[string]interface{}{
 				"id":         string(n.ID),
@@ -2301,6 +2279,10 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 				"created_at": n.CreatedAt,
 			})
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Format output
@@ -2318,6 +2300,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 }
 
 // DeleteUserData deletes all data for a user (GDPR compliance).
+// Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -2326,16 +2309,22 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 		return ErrClosed
 	}
 
-	allNodes, err := db.storage.AllNodes()
+	// Collect IDs to delete first (can't delete while iterating)
+	var toDelete []storage.NodeID
+	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(n *storage.Node) error {
+		if owner, ok := n.Properties["owner_id"].(string); ok && owner == userID {
+			toDelete = append(toDelete, n.ID)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 
-	for _, n := range allNodes {
-		if owner, ok := n.Properties["owner_id"].(string); ok && owner == userID {
-			if err := db.storage.DeleteNode(n.ID); err != nil {
-				return err
-			}
+	// Now delete the collected nodes
+	for _, id := range toDelete {
+		if err := db.storage.DeleteNode(id); err != nil {
+			return err
 		}
 	}
 
@@ -2343,6 +2332,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 }
 
 // AnonymizeUserData anonymizes all data for a user (GDPR compliance).
+// Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -2351,14 +2341,11 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 		return ErrClosed
 	}
 
-	allNodes, err := db.storage.AllNodes()
-	if err != nil {
-		return err
-	}
-
 	anonymousID := "anon-" + generateID("")
 
-	for _, n := range allNodes {
+	// Collect nodes to update (can't update while streaming in some engines)
+	var toUpdate []*storage.Node
+	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(n *storage.Node) error {
 		if owner, ok := n.Properties["owner_id"].(string); ok && owner == userID {
 			// Replace identifying info
 			n.Properties["owner_id"] = anonymousID
@@ -2366,10 +2353,18 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 			delete(n.Properties, "name")
 			delete(n.Properties, "username")
 			delete(n.Properties, "ip_address")
+			toUpdate = append(toUpdate, n)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 
-			if err := db.storage.UpdateNode(n); err != nil {
-				return err
-			}
+	// Now update the collected nodes
+	for _, n := range toUpdate {
+		if err := db.storage.UpdateNode(n); err != nil {
+			return err
 		}
 	}
 

@@ -366,25 +366,22 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		return nil
 	}
 
-	// Fallback to AllNodes (loads everything into memory)
-	if exportable, ok := s.engine.(storage.ExportableEngine); ok {
-		nodes, err := exportable.AllNodes()
-		if err != nil {
-			return err
+	// Use streaming fallback with chunked processing
+	count := 0
+	err := storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
+		if err := s.IndexNode(node); err != nil {
+			return nil // Continue on indexing errors
 		}
-
-		for _, node := range nodes {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				if err := s.IndexNode(node); err != nil {
-					continue
-				}
-			}
+		count++
+		if count%100 == 0 {
+			fmt.Printf("📊 Indexed %d nodes...\n", count)
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-
+	fmt.Printf("📊 Indexed %d total nodes\n", count)
 	return nil
 }
 
