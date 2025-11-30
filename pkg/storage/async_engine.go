@@ -113,17 +113,24 @@ func (ae *AsyncEngine) Flush() error {
 
 	ae.totalFlushes++
 
-	// Snapshot pending changes
-	nodesToWrite := ae.nodeCache
-	edgesToWrite := ae.edgeCache
-	nodesToDelete := ae.deleteNodes
-	edgesToDelete := ae.deleteEdges
-
-	// Clear caches BEFORE unlock - reads will go to engine
-	ae.nodeCache = make(map[NodeID]*Node)
-	ae.edgeCache = make(map[EdgeID]*Edge)
-	ae.deleteNodes = make(map[NodeID]bool)
-	ae.deleteEdges = make(map[EdgeID]bool)
+	// Snapshot pending changes - keep originals in cache during write
+	// to prevent race condition where reads miss data during flush
+	nodesToWrite := make(map[NodeID]*Node, len(ae.nodeCache))
+	for k, v := range ae.nodeCache {
+		nodesToWrite[k] = v
+	}
+	edgesToWrite := make(map[EdgeID]*Edge, len(ae.edgeCache))
+	for k, v := range ae.edgeCache {
+		edgesToWrite[k] = v
+	}
+	nodesToDelete := make(map[NodeID]bool, len(ae.deleteNodes))
+	for k, v := range ae.deleteNodes {
+		nodesToDelete[k] = v
+	}
+	edgesToDelete := make(map[EdgeID]bool, len(ae.deleteEdges))
+	for k, v := range ae.deleteEdges {
+		edgesToDelete[k] = v
+	}
 
 	ae.mu.Unlock()
 
@@ -163,6 +170,32 @@ func (ae *AsyncEngine) Flush() error {
 			ae.engine.UpdateEdge(edge)
 		}
 	}
+
+	// Clear flushed items from cache AFTER engine writes complete
+	// This prevents the race condition where reads miss data during flush
+	ae.mu.Lock()
+	for id := range nodesToWrite {
+		// Only delete if it's the same object (not updated during flush)
+		if ae.nodeCache[id] == nodesToWrite[id] {
+			delete(ae.nodeCache, id)
+		}
+	}
+	for id := range edgesToWrite {
+		if ae.edgeCache[id] == edgesToWrite[id] {
+			delete(ae.edgeCache, id)
+		}
+	}
+	for id := range nodesToDelete {
+		if ae.deleteNodes[id] {
+			delete(ae.deleteNodes, id)
+		}
+	}
+	for id := range edgesToDelete {
+		if ae.deleteEdges[id] {
+			delete(ae.deleteEdges, id)
+		}
+	}
+	ae.mu.Unlock()
 
 	return nil
 }
@@ -432,6 +465,48 @@ func (ae *AsyncEngine) AllEdges() ([]*Edge, error) {
 	}
 
 	engineEdges, err := ae.engine.AllEdges()
+	if err != nil {
+		return cachedEdges, nil
+	}
+
+	result := make([]*Edge, 0, len(cachedEdges)+len(engineEdges))
+	seenIDs := make(map[EdgeID]bool)
+
+	for _, edge := range cachedEdges {
+		result = append(result, edge)
+		seenIDs[edge.ID] = true
+	}
+	for _, edge := range engineEdges {
+		if !seenIDs[edge.ID] && !deletedIDs[edge.ID] {
+			result = append(result, edge)
+		}
+	}
+
+	return result, nil
+}
+
+// GetEdgesByType returns all edges of a specific type, merging cache and engine.
+func (ae *AsyncEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	if edgeType == "" {
+		return ae.AllEdges()
+	}
+
+	ae.mu.RLock()
+	normalizedType := strings.ToLower(edgeType)
+	cachedEdges := make([]*Edge, 0)
+	deletedIDs := make(map[EdgeID]bool)
+
+	for id := range ae.deleteEdges {
+		deletedIDs[id] = true
+	}
+	for _, edge := range ae.edgeCache {
+		if strings.ToLower(edge.Type) == normalizedType {
+			cachedEdges = append(cachedEdges, edge)
+		}
+	}
+	ae.mu.RUnlock()
+
+	engineEdges, err := ae.engine.GetEdgesByType(edgeType)
 	if err != nil {
 		return cachedEdges, nil
 	}

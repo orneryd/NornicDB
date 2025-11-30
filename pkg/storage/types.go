@@ -369,6 +369,7 @@ type Engine interface {
 	GetIncomingEdges(nodeID NodeID) ([]*Edge, error)
 	GetEdgesBetween(startID, endID NodeID) ([]*Edge, error)
 	GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
+	GetEdgesByType(edgeType string) ([]*Edge, error) // Fast lookup by edge type
 	AllNodes() ([]*Node, error)
 	AllEdges() ([]*Edge, error)
 	GetAllNodes() []*Node

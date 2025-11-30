@@ -26,6 +26,7 @@ const (
 	prefixLabelIndex    = byte(0x03) // label:labelName:nodeID -> []byte{}
 	prefixOutgoingIndex = byte(0x04) // outgoing:nodeID:edgeID -> []byte{}
 	prefixIncomingIndex = byte(0x05) // incoming:nodeID:edgeID -> []byte{}
+	prefixEdgeTypeIndex = byte(0x06) // edgetype:type:edgeID -> []byte{} (NEW: for fast type lookups)
 )
 
 // BadgerEngine provides persistent storage using BadgerDB.
@@ -70,6 +71,11 @@ type BadgerEngine struct {
 	nodeCacheMu sync.RWMutex
 	cacheHits   int64
 	cacheMisses int64
+
+	// Edge type cache for mutual relationship queries
+	// Caches edges by type for O(1) lookup
+	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
+	edgeTypeCacheMu sync.RWMutex
 }
 
 // BadgerOptions configures the BadgerDB engine.
@@ -301,9 +307,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	}
 
 	return &BadgerEngine{
-		db:        db,
-		schema:    NewSchemaManager(),
-		nodeCache: make(map[NodeID]*Node, 10000), // Cache up to 10K hot nodes
+		db:            db,
+		schema:        NewSchemaManager(),
+		nodeCache:     make(map[NodeID]*Node, 10000), // Cache up to 10K hot nodes
+		edgeTypeCache: make(map[string][]*Edge, 100), // Cache edges by type for mutual queries
 	}, nil
 }
 
@@ -400,6 +407,29 @@ func incomingIndexPrefix(nodeID NodeID) []byte {
 	key := make([]byte, 0, 1+len(nodeID)+1)
 	key = append(key, prefixIncomingIndex)
 	key = append(key, []byte(nodeID)...)
+	key = append(key, 0x00)
+	return key
+}
+
+// edgeTypeIndexKey creates a key for the edge type index.
+// Format: prefix + edgeType (lowercase) + 0x00 + edgeID
+func edgeTypeIndexKey(edgeType string, edgeID EdgeID) []byte {
+	normalizedType := strings.ToLower(edgeType)
+	key := make([]byte, 0, 1+len(normalizedType)+1+len(edgeID))
+	key = append(key, prefixEdgeTypeIndex)
+	key = append(key, []byte(normalizedType)...)
+	key = append(key, 0x00) // Separator
+	key = append(key, []byte(edgeID)...)
+	return key
+}
+
+// edgeTypeIndexPrefix returns the prefix for scanning all edges of a type.
+// Edge types are normalized to lowercase for case-insensitive matching (Neo4j compatible)
+func edgeTypeIndexPrefix(edgeType string) []byte {
+	normalizedType := strings.ToLower(edgeType)
+	key := make([]byte, 0, 1+len(normalizedType)+1)
+	key = append(key, prefixEdgeTypeIndex)
+	key = append(key, []byte(normalizedType)...)
 	key = append(key, 0x00)
 	return key
 }
@@ -834,7 +864,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	}
 	b.mu.RUnlock()
 
-	return b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.Update(func(txn *badger.Txn) error {
 		// Check if edge already exists
 		key := edgeKey(edge.ID)
 		_, err := txn.Get(key)
@@ -886,8 +916,21 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return err
 		}
 
+		// Create edge type index
+		edgeTypeKey := edgeTypeIndexKey(edge.Type, edge.ID)
+		if err := txn.Set(edgeTypeKey, []byte{}); err != nil {
+			return err
+		}
+
 		return nil
 	})
+
+	// Invalidate only this edge type (not entire cache)
+	if err == nil {
+		b.InvalidateEdgeTypeCacheForType(edge.Type)
+	}
+
+	return err
 }
 
 // GetEdge retrieves an edge by ID.
@@ -1010,9 +1053,23 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	b.mu.RUnlock()
 
-	return b.db.Update(func(txn *badger.Txn) error {
+	// Get edge type before deletion for selective cache invalidation
+	edge, _ := b.GetEdge(id)
+	var edgeType string
+	if edge != nil {
+		edgeType = edge.Type
+	}
+
+	err := b.db.Update(func(txn *badger.Txn) error {
 		return b.deleteEdgeInTxn(txn, id)
 	})
+
+	// Invalidate only this edge type (not entire cache)
+	if err == nil && edgeType != "" {
+		b.InvalidateEdgeTypeCacheForType(edgeType)
+	}
+
+	return err
 }
 
 // deleteEdgeInTxn is the internal helper for deleting an edge within a transaction.
@@ -1042,6 +1099,9 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 		return err
 	}
 	if err := txn.Delete(incomingIndexKey(edge.EndNode, id)); err != nil {
+		return err
+	}
+	if err := txn.Delete(edgeTypeIndexKey(edge.Type, id)); err != nil {
 		return err
 	}
 
@@ -1147,7 +1207,7 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 	}
 	b.mu.RUnlock()
 
-	return b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.Update(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue // Skip invalid IDs
@@ -1159,6 +1219,13 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 		}
 		return nil
 	})
+
+	// Invalidate edge type cache on successful bulk delete
+	if err == nil && len(ids) > 0 {
+		b.InvalidateEdgeTypeCache()
+	}
+
+	return err
 }
 
 // ============================================================================
@@ -1289,6 +1356,109 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 	})
 
 	return edges, err
+}
+
+// GetEdgesByType returns all edges of a specific type using the edge type index.
+// This is MUCH faster than AllEdges() for queries like mutual follows.
+// Edge types are matched case-insensitively (Neo4j compatible).
+// Results are cached per type to speed up repeated queries.
+func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	if edgeType == "" {
+		return b.AllEdges() // No type filter = all edges
+	}
+
+	normalizedType := strings.ToLower(edgeType)
+
+	// Check cache first
+	b.edgeTypeCacheMu.RLock()
+	if cached, ok := b.edgeTypeCache[normalizedType]; ok {
+		b.edgeTypeCacheMu.RUnlock()
+		return cached, nil
+	}
+	b.edgeTypeCacheMu.RUnlock()
+
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return nil, ErrStorageClosed
+	}
+	b.mu.RUnlock()
+
+	var edges []*Edge
+	err := b.db.View(func(txn *badger.Txn) error {
+		prefix := edgeTypeIndexPrefix(edgeType)
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // We only need the key to get edgeID
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		// Collect edge IDs from index
+		var edgeIDs []EdgeID
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().Key()
+			// Extract edgeID from key: prefix + type + 0x00 + edgeID
+			sepIdx := bytes.LastIndexByte(key, 0x00)
+			if sepIdx >= 0 && sepIdx < len(key)-1 {
+				edgeIDs = append(edgeIDs, EdgeID(key[sepIdx+1:]))
+			}
+		}
+
+		// Batch fetch edges
+		edges = make([]*Edge, 0, len(edgeIDs))
+		for _, edgeID := range edgeIDs {
+			item, err := txn.Get(edgeKey(edgeID))
+			if err != nil {
+				continue
+			}
+
+			var edge *Edge
+			if err := item.Value(func(val []byte) error {
+				var decodeErr error
+				edge, decodeErr = decodeEdge(val)
+				return decodeErr
+			}); err != nil {
+				continue
+			}
+
+			edges = append(edges, edge)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result (simple LRU-style: clear if too many types)
+	b.edgeTypeCacheMu.Lock()
+	if len(b.edgeTypeCache) > 50 {
+		b.edgeTypeCache = make(map[string][]*Edge, 50)
+	}
+	b.edgeTypeCache[normalizedType] = edges
+	b.edgeTypeCacheMu.Unlock()
+
+	return edges, nil
+}
+
+// InvalidateEdgeTypeCache clears the entire edge type cache.
+// Called after bulk edge mutations to ensure cache consistency.
+func (b *BadgerEngine) InvalidateEdgeTypeCache() {
+	b.edgeTypeCacheMu.Lock()
+	b.edgeTypeCache = make(map[string][]*Edge, 50)
+	b.edgeTypeCacheMu.Unlock()
+}
+
+// InvalidateEdgeTypeCacheForType removes only the specified edge type from cache.
+// Much faster than full invalidation for single-edge operations.
+func (b *BadgerEngine) InvalidateEdgeTypeCacheForType(edgeType string) {
+	if edgeType == "" {
+		return
+	}
+	normalizedType := strings.ToLower(edgeType)
+	b.edgeTypeCacheMu.Lock()
+	delete(b.edgeTypeCache, normalizedType)
+	b.edgeTypeCacheMu.Unlock()
 }
 
 // BatchGetNodes fetches multiple nodes in a single transaction.
@@ -1569,7 +1739,7 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 		}
 	}
 
-	return b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.Update(func(txn *badger.Txn) error {
 		// Validate all edges
 		for _, edge := range edges {
 			// Check edge doesn't exist
@@ -1607,10 +1777,20 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 			if err := txn.Set(incomingIndexKey(edge.EndNode, edge.ID), []byte{}); err != nil {
 				return err
 			}
+			if err := txn.Set(edgeTypeIndexKey(edge.Type, edge.ID), []byte{}); err != nil {
+				return err
+			}
 		}
 
 		return nil
 	})
+
+	// Invalidate edge type cache on successful bulk create
+	if err == nil && len(edges) > 0 {
+		b.InvalidateEdgeTypeCache()
+	}
+
+	return err
 }
 
 // ============================================================================

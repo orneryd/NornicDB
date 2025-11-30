@@ -1028,6 +1028,11 @@ func (w *WALEngine) AllEdges() ([]*Edge, error) {
 	return w.engine.AllEdges()
 }
 
+// GetEdgesByType delegates to underlying engine.
+func (w *WALEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	return w.engine.GetEdgesByType(edgeType)
+}
+
 // GetAllNodes delegates to underlying engine.
 func (w *WALEngine) GetAllNodes() []*Node {
 	return w.engine.GetAllNodes()

@@ -71,24 +71,18 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 		Stats:   &QueryStats{},
 	}
 
-	// Get all edges (we'll filter by type)
-	allEdges, err := e.storage.AllEdges()
+	// Get edges by type directly (MUCH faster than AllEdges + filter)
+	// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
+	edgeList, err := e.storage.GetEdgesByType(info.RelType)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build edge set: key = "source:target" for edges of the right type
-	// Also build reverse lookup for quick pair finding
-	edgeSet := make(map[string]bool)
-	edgeList := make([]*storage.Edge, 0)
-	normalizedType := strings.ToLower(info.RelType)
-
-	for _, edge := range allEdges {
-		if strings.ToLower(edge.Type) == normalizedType {
-			key := string(edge.StartNode) + ":" + string(edge.EndNode)
-			edgeSet[key] = true
-			edgeList = append(edgeList, edge)
-		}
+	// Build edge set for O(1) reverse lookup
+	edgeSet := make(map[string]bool, len(edgeList))
+	for _, edge := range edgeList {
+		key := string(edge.StartNode) + ":" + string(edge.EndNode)
+		edgeSet[key] = true
 	}
 
 	// Find mutual pairs: for each edge A→B, check if B→A exists

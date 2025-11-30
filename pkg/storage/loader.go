@@ -103,6 +103,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // LoadFromNeo4jJSON loads nodes and edges from Neo4j APOC JSON export format.
@@ -570,6 +571,31 @@ func (m *MemoryEngine) AllEdges() ([]*Edge, error) {
 	edges := make([]*Edge, 0, len(m.edges))
 	for _, edge := range m.edges {
 		edges = append(edges, m.copyEdge(edge))
+	}
+
+	return edges, nil
+}
+
+// GetEdgesByType returns all edges of a specific type.
+// For MemoryEngine this filters AllEdges() but is semantically equivalent.
+func (m *MemoryEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	if edgeType == "" {
+		return m.AllEdges()
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, ErrStorageClosed
+	}
+
+	normalizedType := strings.ToLower(edgeType)
+	var edges []*Edge
+	for _, edge := range m.edges {
+		if strings.ToLower(edge.Type) == normalizedType {
+			edges = append(edges, m.copyEdge(edge))
+		}
 	}
 
 	return edges, nil
