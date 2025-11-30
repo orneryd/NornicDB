@@ -5,7 +5,6 @@ import (
 	"container/list"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -661,7 +660,7 @@ func (sc *SmartQueryCache) evictOldestLRU() {
 
 // extractLabelsFromQuery extracts node labels from a Cypher query string.
 // Uses regex to find patterns like :Label, (:Label), and :Label:AnotherLabel
-var labelRegex = regexp.MustCompile(`:([A-Z][A-Za-z0-9_]*)`)
+// Note: labelRegex is defined in regex_patterns.go for centralized pre-compilation
 
 func extractLabelsFromQuery(cypher string) []string {
 	matches := labelRegex.FindAllStringSubmatch(cypher, -1)

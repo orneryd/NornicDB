@@ -187,6 +187,31 @@ var (
 )
 
 // =============================================================================
+// Cache/Label Extraction Patterns
+// =============================================================================
+
+var (
+	// Label extraction: :Label, (:Label), :Label:AnotherLabel
+	// Used in cache.go for query analysis
+	labelRegex = regexp.MustCompile(`:([A-Z][A-Za-z0-9_]*)`)
+)
+
+// =============================================================================
+// Index Hint Patterns (USING INDEX, USING SCAN, USING JOIN)
+// =============================================================================
+
+var (
+	// USING INDEX n:Label(property) or USING INDEX n:Label(prop1, prop2)
+	indexHintPattern = regexp.MustCompile(`(?i)USING\s+INDEX\s+(\w+):(\w+)\s*\(\s*([^)]+)\s*\)`)
+
+	// USING SCAN n:Label
+	scanHintPattern = regexp.MustCompile(`(?i)USING\s+SCAN\s+(\w+):(\w+)`)
+
+	// USING JOIN ON n
+	joinHintPattern = regexp.MustCompile(`(?i)USING\s+JOIN\s+ON\s+(\w+)`)
+)
+
+// =============================================================================
 // Dynamic Regex Cache (for user-provided patterns like =~ comparison)
 // =============================================================================
 

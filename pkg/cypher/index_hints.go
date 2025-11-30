@@ -36,7 +36,6 @@ package cypher
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -61,10 +60,10 @@ const (
 //	USING INDEX n:Person(name)
 //	→ IndexHint{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}
 type IndexHint struct {
-	Type     IndexHintType
-	Variable string   // The variable name (e.g., "n" in "n:Person")
-	Label    string   // The label (e.g., "Person")
-	Property string   // The property for index hints (e.g., "name")
+	Type       IndexHintType
+	Variable   string   // The variable name (e.g., "n" in "n:Person")
+	Label      string   // The label (e.g., "Person")
+	Property   string   // The property for index hints (e.g., "name")
 	Properties []string // Multiple properties for composite hints
 }
 
@@ -85,17 +84,10 @@ func (h *IndexHint) String() string {
 	}
 }
 
-// Regex patterns for parsing index hints
-var (
-	// USING INDEX n:Label(property) or USING INDEX n:Label(prop1, prop2)
-	indexHintPattern = regexp.MustCompile(`(?i)USING\s+INDEX\s+(\w+):(\w+)\s*\(\s*([^)]+)\s*\)`)
-	
-	// USING SCAN n:Label
-	scanHintPattern = regexp.MustCompile(`(?i)USING\s+SCAN\s+(\w+):(\w+)`)
-	
-	// USING JOIN ON n
-	joinHintPattern = regexp.MustCompile(`(?i)USING\s+JOIN\s+ON\s+(\w+)`)
-)
+// Regex patterns for parsing index hints are defined in regex_patterns.go:
+// - indexHintPattern: USING INDEX n:Label(property)
+// - scanHintPattern: USING SCAN n:Label
+// - joinHintPattern: USING JOIN ON n
 
 // ParseIndexHints extracts all index hints from a Cypher query.
 //
@@ -124,7 +116,7 @@ func ParseIndexHints(query string) ([]IndexHint, string) {
 			for i := range props {
 				props[i] = strings.TrimSpace(props[i])
 			}
-			
+
 			hint := IndexHint{
 				Type:       HintIndex,
 				Variable:   match[1],
@@ -185,11 +177,11 @@ func NewIndexHintContext(hints []IndexHint) *IndexHintContext {
 		Hints:      hints,
 		HintsByVar: make(map[string][]IndexHint),
 	}
-	
+
 	for _, hint := range hints {
 		ctx.HintsByVar[hint.Variable] = append(ctx.HintsByVar[hint.Variable], hint)
 	}
-	
+
 	return ctx
 }
 
@@ -206,11 +198,11 @@ func (ctx *IndexHintContext) HasIndexHint(variable, label, property string) bool
 	if ctx == nil {
 		return false
 	}
-	
+
 	hints := ctx.HintsByVar[variable]
 	for _, hint := range hints {
-		if hint.Type == HintIndex && 
-			strings.EqualFold(hint.Label, label) && 
+		if hint.Type == HintIndex &&
+			strings.EqualFold(hint.Label, label) &&
 			strings.EqualFold(hint.Property, property) {
 			return true
 		}
@@ -223,7 +215,7 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 	if ctx == nil {
 		return false
 	}
-	
+
 	hints := ctx.HintsByVar[variable]
 	for _, hint := range hints {
 		if hint.Type == HintScan && strings.EqualFold(hint.Label, label) {
@@ -308,7 +300,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 
 	indexes := schema.GetIndexes()
 	indexMap := make(map[string]bool)
-	
+
 	for _, idx := range indexes {
 		if m, ok := idx.(map[string]interface{}); ok {
 			label, _ := m["label"].(string)
@@ -325,7 +317,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 			key := fmt.Sprintf("%s:%s", strings.ToLower(hint.Label), strings.ToLower(hint.Property))
 			if !indexMap[key] {
 				// Neo4j returns a specific error for missing indexes
-				return fmt.Errorf("no index found for hint: %s (index on :%s(%s) does not exist)", 
+				return fmt.Errorf("no index found for hint: %s (index on :%s(%s) does not exist)",
 					hint.String(), hint.Label, hint.Property)
 			}
 		}
