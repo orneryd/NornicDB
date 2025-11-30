@@ -1075,21 +1075,38 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	}
 	b.mu.RUnlock()
 
-	var nodes []*Node
+	// OPTIMIZATION: Two-phase approach - collect IDs first, then batch fetch
+	// This enables better prefetching and reduces transaction overhead
+	var nodeIDs []NodeID
 	err := b.db.View(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
+		opts.PrefetchValues = false // Don't need values from index
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
+		// Phase 1: Collect all node IDs from label index
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), len(label))
-			if nodeID == "" {
-				continue
+			if nodeID != "" {
+				nodeIDs = append(nodeIDs, nodeID)
 			}
+		}
+		return nil
+	})
 
-			// Get the node
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodeIDs) == 0 {
+		return []*Node{}, nil
+	}
+
+	// Phase 2: Batch fetch all nodes in single transaction with prefetch
+	nodes := make([]*Node, 0, len(nodeIDs))
+	err = b.db.View(func(txn *badger.Txn) error {
+		for _, nodeID := range nodeIDs {
 			item, err := txn.Get(nodeKey(nodeID))
 			if err != nil {
 				continue // Skip if node was deleted
@@ -1106,7 +1123,6 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 			nodes = append(nodes, node)
 		}
-
 		return nil
 	})
 
@@ -1189,6 +1205,54 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 	})
 
 	return edges, err
+}
+
+// BatchGetNodes fetches multiple nodes in a single transaction.
+// Returns a map for O(1) lookup by ID. Missing nodes are not included in the result.
+// This is optimized for traversal operations that need to fetch many nodes.
+func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+	if len(ids) == 0 {
+		return make(map[NodeID]*Node), nil
+	}
+
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return nil, ErrStorageClosed
+	}
+	b.mu.RUnlock()
+
+	result := make(map[NodeID]*Node, len(ids))
+	err := b.db.View(func(txn *badger.Txn) error {
+		for _, id := range ids {
+			if id == "" {
+				continue
+			}
+
+			item, err := txn.Get(nodeKey(id))
+			if err != nil {
+				continue // Skip missing nodes
+			}
+
+			var node *Node
+			if err := item.Value(func(val []byte) error {
+				var decodeErr error
+				node, decodeErr = decodeNode(val)
+				return decodeErr
+			}); err != nil {
+				continue
+			}
+
+			result[id] = node
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // GetOutgoingEdges returns all edges where the given node is the source.

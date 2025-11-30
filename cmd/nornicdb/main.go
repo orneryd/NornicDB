@@ -120,6 +120,8 @@ Features:
 	serveCmd.Flags().Bool("pool-enabled", true, "Enable object pooling for reduced allocations")
 	serveCmd.Flags().Int("query-cache-size", 1000, "Query plan cache size (0 to disable)")
 	serveCmd.Flags().String("query-cache-ttl", "5m", "Query plan cache TTL")
+	// Logging flags
+	serveCmd.Flags().Bool("log-queries", getEnvBool("NORNICDB_LOG_QUERIES", false), "Log all Bolt queries to stdout (for debugging)")
 	rootCmd.AddCommand(serveCmd)
 
 	// Init command
@@ -206,6 +208,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
 	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
 	queryCacheTTL, _ := cmd.Flags().GetString("query-cache-ttl")
+	logQueries, _ := cmd.Flags().GetBool("log-queries")
 
 	// Apply memory configuration FIRST (before heavy allocations)
 	cfg := config.LoadFromEnv()
@@ -412,6 +415,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start Bolt server for Neo4j driver compatibility
 	boltConfig := bolt.DefaultConfig()
 	boltConfig.Port = boltPort
+	boltConfig.LogQueries = logQueries
 
 	// Create query executor adapter
 	queryExecutor := &DBQueryExecutor{db: db}
@@ -646,6 +650,19 @@ func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {
 		if i, err := strconv.Atoi(val); err == nil {
 			return i
+		}
+	}
+	return defaultVal
+}
+
+// getEnvBool returns environment variable as bool or default
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		switch strings.ToLower(val) {
+		case "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
 		}
 	}
 	return defaultVal

@@ -717,6 +717,33 @@ func (m *MemoryEngine) BulkDeleteEdges(ids []EdgeID) error {
 	return nil
 }
 
+// BatchGetNodes fetches multiple nodes by ID in a single operation.
+// Returns a map for O(1) lookup. Missing nodes are not included.
+func (m *MemoryEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+	if len(ids) == 0 {
+		return make(map[NodeID]*Node), nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, ErrStorageClosed
+	}
+
+	result := make(map[NodeID]*Node, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if node, exists := m.nodes[id]; exists {
+			result[id] = copyNode(node)
+		}
+	}
+
+	return result, nil
+}
+
 // GetNodesByLabel returns all nodes that have the specified label.
 //
 // Uses an index for O(k) performance where k = number of nodes with this label.

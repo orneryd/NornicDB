@@ -388,6 +388,11 @@ type Engine interface {
 	BulkDeleteNodes(ids []NodeID) error
 	BulkDeleteEdges(ids []EdgeID) error
 
+	// Batch read operations (for traversal performance)
+	// BatchGetNodes fetches multiple nodes in a single operation
+	// Returns a map for O(1) lookup by ID
+	BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error)
+
 	// Lifecycle
 	Close() error
 

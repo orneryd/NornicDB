@@ -321,6 +321,58 @@ func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	return result, nil
 }
 
+// BatchGetNodes fetches multiple nodes, checking cache first then engine.
+// Returns a map for O(1) lookup. Missing nodes are not included.
+func (ae *AsyncEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+	if len(ids) == 0 {
+		return make(map[NodeID]*Node), nil
+	}
+
+	ae.mu.RLock()
+	defer ae.mu.RUnlock()
+
+	result := make(map[NodeID]*Node, len(ids))
+	var missingIDs []NodeID
+
+	// Check cache and deleted set first
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+
+		// Skip if marked for deletion
+		if ae.deleteNodes[id] {
+			continue
+		}
+
+		// Check cache first
+		if node, exists := ae.nodeCache[id]; exists {
+			result[id] = node
+			continue
+		}
+
+		// Need to fetch from engine
+		missingIDs = append(missingIDs, id)
+	}
+
+	// Batch fetch missing from engine
+	if len(missingIDs) > 0 {
+		engineNodes, err := ae.engine.BatchGetNodes(missingIDs)
+		if err != nil {
+			return result, nil // Return what we have from cache
+		}
+
+		// Add engine nodes not marked for deletion
+		for id, node := range engineNodes {
+			if !ae.deleteNodes[id] {
+				result[id] = node
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // AllNodes returns merged view of cache and engine.
 // NOTE: We hold the read lock for the ENTIRE operation to prevent race conditions
 // with Flush() which clears the cache after writing to the engine.

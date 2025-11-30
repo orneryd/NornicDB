@@ -474,6 +474,14 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		}
 		return e.executeShortestPathQuery(query)
 	case startsWithMatch:
+		// Check for optimizable patterns FIRST
+		patternInfo := DetectQueryPattern(cypher)
+		if patternInfo.IsOptimizable() {
+			if result, ok := e.ExecuteOptimized(ctx, cypher, patternInfo); ok {
+				return result, nil
+			}
+			// Fall through to generic on optimization failure
+		}
 		return e.executeMatch(ctx, cypher)
 	case strings.HasPrefix(upperQuery, "CREATE CONSTRAINT"),
 		strings.HasPrefix(upperQuery, "CREATE FULLTEXT INDEX"),

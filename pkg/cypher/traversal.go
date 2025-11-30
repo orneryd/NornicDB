@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -21,14 +22,17 @@ type PathResult struct {
 
 // TraversalContext holds state during graph traversal
 type TraversalContext struct {
-	startNode   *storage.Node
-	endNode     *storage.Node
-	relTypes    []string       // Allowed relationship types (empty = any)
-	direction   string         // "outgoing", "incoming", "both"
-	minHops     int
-	maxHops     int
-	visited     map[string]bool
-	paths       []PathResult
+	startNode    *storage.Node
+	endNode      *storage.Node
+	relTypes     []string       // Allowed relationship types (empty = any)
+	direction    string         // "outgoing", "incoming", "both"
+	minHops      int
+	maxHops      int
+	visited      map[string]bool
+	paths        []PathResult
+	nodeCache    map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
+	limit        int                              // OPTIMIZATION: Early termination limit (0 = no limit)
+	resultCount  int                              // Count of results found so far
 }
 
 // RelationshipPattern represents a parsed relationship pattern
@@ -346,8 +350,6 @@ func (e *StorageExecutor) parseNodePatternFromString(s string) nodePatternInfo {
 
 // traverseGraph executes the traversal and returns all matching paths
 func (e *StorageExecutor) traverseGraph(match *TraversalMatch) []PathResult {
-	var results []PathResult
-
 	// Get starting nodes
 	var startNodes []*storage.Node
 	if len(match.StartNode.labels) > 0 {
@@ -367,7 +369,20 @@ func (e *StorageExecutor) traverseGraph(match *TraversalMatch) []PathResult {
 		startNodes = filtered
 	}
 
-	// Traverse from each starting node
+	// OPTIMIZATION: Use parallel traversal for large start node sets
+	// Threshold is MinBatchSize (default 200) - goroutine overhead hurts small traversals
+	config := GetParallelConfig()
+	if config.Enabled && len(startNodes) >= config.MinBatchSize {
+		return e.traverseGraphParallel(match, startNodes, config)
+	}
+
+	return e.traverseGraphSequential(match, startNodes)
+}
+
+// traverseGraphSequential performs sequential traversal from start nodes
+func (e *StorageExecutor) traverseGraphSequential(match *TraversalMatch, startNodes []*storage.Node) []PathResult {
+	var results []PathResult
+
 	for _, startNode := range startNodes {
 		ctx := &TraversalContext{
 			startNode: startNode,
@@ -376,6 +391,7 @@ func (e *StorageExecutor) traverseGraph(match *TraversalMatch) []PathResult {
 			minHops:   match.Relationship.MinHops,
 			maxHops:   match.Relationship.MaxHops,
 			visited:   make(map[string]bool),
+			nodeCache: make(map[storage.NodeID]*storage.Node),
 		}
 
 		paths := e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -383,6 +399,74 @@ func (e *StorageExecutor) traverseGraph(match *TraversalMatch) []PathResult {
 	}
 
 	return results
+}
+
+// traverseGraphParallel performs parallel traversal from multiple start nodes
+// Each goroutine gets its own TraversalContext to avoid data races
+func (e *StorageExecutor) traverseGraphParallel(match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig) []PathResult {
+	numWorkers := config.MaxWorkers
+	if numWorkers > len(startNodes) {
+		numWorkers = len(startNodes)
+	}
+
+	// Channel for collecting results from workers
+	type workerResult struct {
+		paths []PathResult
+	}
+	resultsChan := make(chan workerResult, numWorkers)
+
+	// Divide start nodes among workers
+	chunkSize := (len(startNodes) + numWorkers - 1) / numWorkers
+
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if start >= len(startNodes) {
+			break
+		}
+		if end > len(startNodes) {
+			end = len(startNodes)
+		}
+
+		wg.Add(1)
+		go func(workerNodes []*storage.Node) {
+			defer wg.Done()
+
+			var workerPaths []PathResult
+			for _, startNode := range workerNodes {
+				// Each goroutine gets its own context (no shared state)
+				ctx := &TraversalContext{
+					startNode: startNode,
+					relTypes:  match.Relationship.Types,
+					direction: match.Relationship.Direction,
+					minHops:   match.Relationship.MinHops,
+					maxHops:   match.Relationship.MaxHops,
+					visited:   make(map[string]bool),
+					nodeCache: make(map[storage.NodeID]*storage.Node),
+				}
+
+				paths := e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+				workerPaths = append(workerPaths, paths...)
+			}
+
+			resultsChan <- workerResult{paths: workerPaths}
+		}(startNodes[start:end])
+	}
+
+	// Close channel when all workers done
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect results
+	var allResults []PathResult
+	for wr := range resultsChan {
+		allResults = append(allResults, wr.paths...)
+	}
+
+	return allResults
 }
 
 // findPaths performs DFS to find all paths matching the pattern
@@ -396,6 +480,11 @@ func (e *StorageExecutor) findPaths(
 ) []PathResult {
 	var results []PathResult
 
+	// OPTIMIZATION: Early termination if limit reached
+	if ctx.limit > 0 && ctx.resultCount >= ctx.limit {
+		return results
+	}
+
 	// Check if current path meets minimum length and endpoint requirements
 	if depth >= ctx.minHops {
 		if e.matchesEndPattern(currentNode, endPattern) {
@@ -404,6 +493,12 @@ func (e *StorageExecutor) findPaths(
 				Relationships: append([]*storage.Edge{}, pathEdges...),
 				Length:        depth,
 			})
+			ctx.resultCount++ // Track for early termination
+
+			// Check again after adding result
+			if ctx.limit > 0 && ctx.resultCount >= ctx.limit {
+				return results
+			}
 		}
 	}
 
@@ -454,18 +549,29 @@ func (e *StorageExecutor) findPaths(
 			continue
 		}
 
-		nextNode, err := e.storage.GetNode(nextNodeID)
-		if err != nil || nextNode == nil {
-			continue
+		// OPTIMIZATION: Use node cache to avoid repeated lookups
+		nextNode := ctx.nodeCache[nextNodeID]
+		if nextNode == nil {
+			var err error
+			nextNode, err = e.storage.GetNode(nextNodeID)
+			if err != nil || nextNode == nil {
+				continue
+			}
+			ctx.nodeCache[nextNodeID] = nextNode
 		}
 
 		// Mark as visited
 		ctx.visited[string(nextNodeID)] = true
 
-		// Recurse
-		newPathNodes := append(append([]*storage.Node{}, pathNodes...), nextNode)
-		newPathEdges := append(append([]*storage.Edge{}, pathEdges...), edge)
-		
+		// Recurse with optimized path copying (pre-allocate exact size)
+		newPathNodes := make([]*storage.Node, len(pathNodes)+1)
+		copy(newPathNodes, pathNodes)
+		newPathNodes[len(pathNodes)] = nextNode
+
+		newPathEdges := make([]*storage.Edge, len(pathEdges)+1)
+		copy(newPathEdges, pathEdges)
+		newPathEdges[len(pathEdges)] = edge
+
 		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
 		results = append(results, subPaths...)
 

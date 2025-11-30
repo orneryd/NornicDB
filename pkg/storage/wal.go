@@ -993,6 +993,11 @@ func (w *WALEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	return w.engine.GetNodesByLabel(label)
 }
 
+// BatchGetNodes delegates to underlying engine.
+func (w *WALEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+	return w.engine.BatchGetNodes(ids)
+}
+
 // GetOutgoingEdges delegates to underlying engine.
 func (w *WALEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	return w.engine.GetOutgoingEdges(nodeID)

@@ -301,6 +301,7 @@ type Config struct {
 	MaxConnections  int
 	ReadBufferSize  int
 	WriteBufferSize int
+	LogQueries      bool // Log all queries to stdout (for debugging)
 }
 
 // DefaultConfig returns Neo4j-compatible default Bolt server configuration.
@@ -763,10 +764,26 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse RUN message: %v", err))
 	}
 
+	// Log query if enabled
+	if s.server.config.LogQueries {
+		remoteAddr := "unknown"
+		if s.conn != nil {
+			remoteAddr = s.conn.RemoteAddr().String()
+		}
+		if len(params) > 0 {
+			fmt.Printf("[BOLT] %s: %s (params: %v)\n", remoteAddr, truncateQuery(query, 200), params)
+		} else {
+			fmt.Printf("[BOLT] %s: %s\n", remoteAddr, truncateQuery(query, 200))
+		}
+	}
+
 	// Execute query
 	ctx := context.Background()
 	result, err := s.executor.Execute(ctx, query, params)
 	if err != nil {
+		if s.server.config.LogQueries {
+			fmt.Printf("[BOLT] ERROR: %v\n", err)
+		}
 		return s.sendFailure("Neo.ClientError.Statement.SyntaxError", err.Error())
 	}
 

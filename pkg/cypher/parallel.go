@@ -57,7 +57,7 @@ func DefaultParallelConfig() ParallelConfig {
 	return ParallelConfig{
 		Enabled:      true,
 		MaxWorkers:   runtime.NumCPU(),
-		MinBatchSize: 1000,
+		MinBatchSize: 200, // OPTIMIZATION: Reduced from 1000 - parallelization benefits smaller batches
 	}
 }
 
