@@ -379,9 +379,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return e.executeInTransaction(ctx, cypher, upperQuery)
 	}
 
-	// Otherwise, auto-commit single query (implicit transaction)
-	// This maintains Neo4j compatibility: single queries are atomic
-	result, err := e.executeImplicit(ctx, cypher, upperQuery)
+	// Auto-commit single query - use async path for performance
+	// This uses AsyncEngine's write-behind cache instead of synchronous disk I/O
+	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
+	result, err := e.executeImplicitAsync(ctx, cypher, upperQuery)
 
 	// Cache successful read-only queries
 	if err == nil && isReadOnly && e.cache != nil {
@@ -416,7 +417,44 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	return result, err
 }
 
+// executeImplicitAsync executes a single query using AsyncEngine's write-behind cache.
+// This provides much better performance than executeImplicit by avoiding synchronous disk I/O.
+// For strict ACID guarantees, use explicit BEGIN/COMMIT transactions.
+func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// Aggregation queries with MATCH...RETURN count() have a bug in executeWithoutTransaction
+	// Fall back to executeImplicit for these until fixed
+	if strings.Contains(upperQuery, "MATCH") &&
+		strings.Contains(upperQuery, "RETURN") &&
+		(strings.Contains(upperQuery, "COUNT(") || strings.Contains(upperQuery, "SUM(") ||
+			strings.Contains(upperQuery, "AVG(") || strings.Contains(upperQuery, "COLLECT(")) {
+		return e.executeImplicit(ctx, cypher, upperQuery)
+	}
+
+	// Execute directly against storage (AsyncEngine) - no transaction wrapper
+	result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	// For write operations, flush AsyncEngine to ensure durability
+	// This is still faster than synchronous transactions because AsyncEngine batches writes
+	isWrite := strings.Contains(upperQuery, "CREATE") ||
+		strings.Contains(upperQuery, "DELETE") ||
+		strings.Contains(upperQuery, "SET") ||
+		strings.Contains(upperQuery, "MERGE") ||
+		strings.Contains(upperQuery, "REMOVE")
+
+	if isWrite {
+		if asyncEngine, ok := e.storage.(*storage.AsyncEngine); ok {
+			asyncEngine.Flush()
+		}
+	}
+
+	return result, nil
+}
+
 // executeImplicit wraps a single query in an implicit transaction.
+// This provides strict ACID guarantees but is slower than executeImplicitAsync.
 func (e *StorageExecutor) executeImplicit(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	// Start implicit transaction
 	if _, err := e.handleBegin(); err != nil {
@@ -485,19 +523,14 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeCompoundCreateWithDelete(ctx, cypher)
 	}
 
-	// Cache contains checks for DELETE - use string-literal-aware detection
-	hasDeleteSpace := containsKeywordOutsideStrings(cypher, " DELETE ")
+	// Cache contains checks for DELETE - use word-boundary-aware detection
+	// Note: Can't use " DELETE " because DELETE is often followed by variable name (DELETE n)
+	// findKeywordIndex handles word boundaries properly (won't match 'ToDelete' in string literals)
+	hasDelete := findKeywordIndex(cypher, "DELETE") > 0 // Must be after MATCH, not at start
 	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
-	// For suffix check, verify keyword is outside strings
-	hasDeleteEnd := false
-	if strings.HasSuffix(strings.ToUpper(strings.TrimSpace(cypher)), " DELETE") {
-		// Check if the DELETE keyword at end is outside strings
-		deleteIdx := findKeywordIndex(cypher, "DELETE")
-		hasDeleteEnd = deleteIdx >= 0 && deleteIdx > len(cypher)-10 // near end
-	}
 
 	// Check for compound queries - MATCH ... DELETE, MATCH ... SET, etc.
-	if hasDeleteSpace || hasDeleteEnd || hasDetachDelete {
+	if hasDelete || hasDetachDelete {
 		return e.executeDelete(ctx, cypher)
 	}
 
@@ -1545,24 +1578,50 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 		return nil, fmt.Errorf("DELETE requires a MATCH clause")
 	}
 
-	// Execute the match first
-	matchQuery := cypher[matchIdx:deleteIdx] + " RETURN *"
+	// Parse the delete target variable(s) - e.g., "DELETE n" or "DELETE n, r"
+	// Preserve original case of variable names
+	deleteClause := strings.TrimSpace(cypher[deleteIdx:])
+	upperDeleteClause := strings.ToUpper(deleteClause)
+	if detach {
+		if strings.HasPrefix(upperDeleteClause, "DETACH DELETE ") {
+			deleteClause = deleteClause[14:] // len("DETACH DELETE ")
+		} else if strings.HasPrefix(upperDeleteClause, "DETACH ") {
+			deleteClause = deleteClause[7:] // len("DETACH ")
+		}
+	}
+	upperDeleteClause = strings.ToUpper(deleteClause)
+	if strings.HasPrefix(upperDeleteClause, "DELETE ") {
+		deleteClause = deleteClause[7:] // len("DELETE ")
+	}
+	deleteVars := strings.TrimSpace(deleteClause)
+
+	// Execute the match first - return the specific variables being deleted
+	// Can't use RETURN * because it returns literal "*" instead of expanding
+	matchQuery := cypher[matchIdx:deleteIdx] + " RETURN " + deleteVars
 	matchResult, err := e.executeMatch(ctx, matchQuery)
 	if err != nil {
 		return nil, err
 	}
 
-	// Delete matched nodes
+	// Delete matched nodes and/or relationships
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			// Extract node ID - handle multiple formats
+			// Try to extract node ID or edge ID
 			var nodeID string
+			var edgeID string
 
 			switch v := val.(type) {
 			case map[string]interface{}:
-				// Node as map - check for _nodeId first (internal storage ID)
-				// then fall back to id for backward compatibility
-				if id, ok := v["_nodeId"].(string); ok {
+				// Check if it's a relationship - relationships have "type" key, nodes have "labels"
+				if _, hasType := v["type"]; hasType {
+					// It's a relationship
+					if id, ok := v["id"].(string); ok {
+						edgeID = id
+					} else if id, ok := v["_edgeId"].(string); ok {
+						edgeID = id
+					}
+				} else if id, ok := v["_nodeId"].(string); ok {
+					// Node as map - check for _nodeId first (internal storage ID)
 					nodeID = id
 				} else if id, ok := v["id"].(string); ok {
 					nodeID = id
@@ -1572,11 +1631,23 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 			case *storage.Node:
 				// Direct node pointer
 				nodeID = string(v.ID)
+			case *storage.Edge:
+				// Direct edge pointer
+				edgeID = string(v.ID)
 			case string:
-				// Just an ID string
+				// Just an ID string - could be node or edge
 				nodeID = v
 			}
 
+			// Handle relationship deletion
+			if edgeID != "" {
+				if err := e.storage.DeleteEdge(storage.EdgeID(edgeID)); err == nil {
+					result.Stats.RelationshipsDeleted++
+				}
+				continue
+			}
+
+			// Handle node deletion
 			if nodeID == "" {
 				continue
 			}
