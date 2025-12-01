@@ -60,7 +60,7 @@ type EmbedWorkerConfig struct {
 // DefaultEmbedWorkerConfig returns sensible defaults.
 func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 	return &EmbedWorkerConfig{
-		ScanInterval: 1 * time.Hour,          // Hourly scan for missed nodes
+		ScanInterval: 15 * time.Minute,       // Scan for missed nodes every 15 minutes
 		BatchDelay:   500 * time.Millisecond, // Delay between processing nodes
 		MaxRetries:   3,
 		ChunkSize:    512,
