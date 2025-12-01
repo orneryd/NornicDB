@@ -1,6 +1,6 @@
 # Using NornicDB with Cursor Chat Modes
 
-> **Version:** 0.1.3  
+> **Version:** 0.2.0  
 > **Prerequisite:** NornicDB running locally or via Docker
 
 This guide explains how to use NornicDB as a persistent memory system within Cursor IDE using custom chat modes (agent preambles).
@@ -97,10 +97,10 @@ NornicDB provides **8 tools** via MCP:
 | `recall` | Retrieve by ID or filters | (none - all optional) |
 | `discover` | Semantic search by meaning | `query` |
 | `link` | Connect related concepts | `from`, `to`, `relation` |
-| `index` | Index files for search | `path` |
-| `unindex` | Remove indexed files | `path` or `watch_id` |
 | `task` | Create/update single task | `title` (create) or `id` (update) |
 | `tasks` | Query multiple tasks | (none - all optional) |
+
+> **Note:** `index` and `unindex` tools are now handled by Mimir (the intelligence layer), not NornicDB directly.
 
 ---
 
@@ -183,10 +183,9 @@ The mimir-v2 chat mode enforces a **memory-first** approach:
 When starting a new session:
 
 ```
-1. Check indexed files: Are project files indexed?
-2. Memory check: discover(query="current project context")
-3. Task check: tasks(status=["pending", "active"])
-4. Continue where you left off
+1. Memory check: discover(query="current project context")
+2. Task check: tasks(status=["pending", "active"])
+3. Continue where you left off
 ```
 
 ### Continuous Learning
@@ -294,15 +293,11 @@ discover(query="authentication", depth=2)
 
 ### File Indexing
 
-Index your codebase for semantic code search:
+> **Note:** File indexing is handled by Mimir (the intelligence layer). When using the full Mimir+NornicDB stack, Mimir's `index()` tool handles file indexing.
 
+Search indexed code by meaning:
 ```
-index(path="/workspace/src", patterns=["*.go", "*.ts"])
-```
-
-Then search code by meaning:
-```
-discover(query="database connection pooling", type=["file", "file_chunk"])
+discover(query="database connection pooling", type=["file"])
 ```
 
 ### Task Dependencies

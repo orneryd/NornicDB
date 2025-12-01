@@ -73,10 +73,6 @@ const (
 	PermissionDiscover MCPPermission = "discover"
 	// PermissionLink allows creating relationships
 	PermissionLink MCPPermission = "link"
-	// PermissionIndex allows indexing files
-	PermissionIndex MCPPermission = "index"
-	// PermissionUnindex allows removing indexed files
-	PermissionUnindex MCPPermission = "unindex"
 	// PermissionTask allows task management
 	PermissionTask MCPPermission = "task"
 	// PermissionTasks allows listing tasks
@@ -91,27 +87,27 @@ const (
 func AllMCPPermissions() []MCPPermission {
 	return []MCPPermission{
 		PermissionStore, PermissionRecall, PermissionDiscover,
-		PermissionLink, PermissionIndex, PermissionUnindex,
-		PermissionTask, PermissionTasks, PermissionAdmin, PermissionAudit,
+		PermissionLink, PermissionTask, PermissionTasks,
+		PermissionAdmin, PermissionAudit,
 	}
 }
 
 // MCPRolePermissions maps each MCP role to its allowed permissions.
+// Note: index/unindex permissions removed - file indexing is handled by Mimir.
 var MCPRolePermissions = map[MCPRole][]MCPPermission{
 	RoleSuperAdmin: {
 		PermissionStore, PermissionRecall, PermissionDiscover,
-		PermissionLink, PermissionIndex, PermissionUnindex,
-		PermissionTask, PermissionTasks, PermissionAdmin, PermissionAudit,
+		PermissionLink, PermissionTask, PermissionTasks,
+		PermissionAdmin, PermissionAudit,
 	},
 	RoleOrgAdmin: {
 		PermissionStore, PermissionRecall, PermissionDiscover,
-		PermissionLink, PermissionIndex, PermissionUnindex,
-		PermissionTask, PermissionTasks, PermissionAdmin,
+		PermissionLink, PermissionTask, PermissionTasks,
+		PermissionAdmin,
 	},
 	RoleOrgDeveloper: {
 		PermissionStore, PermissionRecall, PermissionDiscover,
-		PermissionLink, PermissionIndex, PermissionUnindex,
-		PermissionTask, PermissionTasks,
+		PermissionLink, PermissionTask, PermissionTasks,
 	},
 	RoleOrgViewer: {
 		PermissionRecall, PermissionDiscover, PermissionTasks,
@@ -122,7 +118,7 @@ var MCPRolePermissions = map[MCPRole][]MCPPermission{
 	},
 	RoleServiceAccount: {
 		PermissionStore, PermissionRecall, PermissionDiscover,
-		PermissionLink, PermissionIndex, PermissionUnindex,
+		PermissionLink,
 	},
 }
 
@@ -132,8 +128,6 @@ var ToolPermissions = map[string]MCPPermission{
 	ToolRecall:   PermissionRecall,
 	ToolDiscover: PermissionDiscover,
 	ToolLink:     PermissionLink,
-	ToolIndex:    PermissionIndex,
-	ToolUnindex:  PermissionUnindex,
 	ToolTask:     PermissionTask,
 	ToolTasks:    PermissionTasks,
 }

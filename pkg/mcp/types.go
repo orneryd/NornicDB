@@ -83,10 +83,10 @@ type StoreParams struct {
 
 // StoreResult - Output from store tool
 type StoreResult struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	Embedded    bool          `json:"embedded"`
-	Suggestions []Suggestion  `json:"suggestions,omitempty"`
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Embedded    bool         `json:"embedded"`
+	Suggestions []Suggestion `json:"suggestions,omitempty"`
 }
 
 // Suggestion represents a suggested related node
@@ -132,12 +132,12 @@ type DiscoverResult struct {
 
 // SearchResult represents a search result node
 type SearchResult struct {
-	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`
-	Title           string                 `json:"title"`
-	ContentPreview  string                 `json:"content_preview,omitempty"`
-	Similarity      float64                `json:"similarity"`
-	Properties      map[string]interface{} `json:"properties,omitempty"`
+	ID             string                 `json:"id"`
+	Type           string                 `json:"type"`
+	Title          string                 `json:"title"`
+	ContentPreview string                 `json:"content_preview,omitempty"`
+	Similarity     float64                `json:"similarity"`
+	Properties     map[string]interface{} `json:"properties,omitempty"`
 }
 
 // LinkParams - Input for link tool
@@ -157,34 +157,8 @@ type LinkResult struct {
 	Suggested []Edge `json:"suggested,omitempty"`
 }
 
-// IndexParams - Input for index tool
-type IndexParams struct {
-	Path       string   `json:"path"`                 // Required
-	Patterns   []string `json:"patterns,omitempty"`   // Optional, default: all text files
-	Embeddings bool     `json:"embeddings,omitempty"` // Optional, default: true
-	Recursive  bool     `json:"recursive,omitempty"`  // Optional, default: true
-}
-
-// IndexResult - Output from index tool
-type IndexResult struct {
-	WatchID      string `json:"watch_id"`
-	FilesQueued  int    `json:"files_queued"`
-	Status       string `json:"status"` // "indexing"
-	EstimateSec  int    `json:"estimate_sec,omitempty"`
-}
-
-// UnindexParams - Input for unindex tool
-type UnindexParams struct {
-	Path    string `json:"path,omitempty"`     // Optional, folder path
-	WatchID string `json:"watch_id,omitempty"` // Optional, watch ID
-}
-
-// UnindexResult - Output from unindex tool
-type UnindexResult struct {
-	RemovedFiles  int     `json:"removed_files"`
-	RemovedChunks int     `json:"removed_chunks"`
-	FreedMB       float64 `json:"freed_mb,omitempty"`
-}
+// Note: IndexParams, IndexResult, UnindexParams, UnindexResult removed
+// File indexing is handled by Mimir (the intelligence layer), not NornicDB
 
 // TaskParams - Input for task tool
 type TaskParams struct {
@@ -207,19 +181,19 @@ type TaskResult struct {
 
 // TasksParams - Input for tasks tool
 type TasksParams struct {
-	Status         []string `json:"status,omitempty"`           // Optional, filter by status
-	Priority       []string `json:"priority,omitempty"`         // Optional, filter by priority
-	AssignedTo     string   `json:"assigned_to,omitempty"`      // Optional, filter by assignee
-	UnblockedOnly  bool     `json:"unblocked_only,omitempty"`   // Optional, default: false
-	Limit          int      `json:"limit,omitempty"`            // Optional, default: 20
+	Status        []string `json:"status,omitempty"`         // Optional, filter by status
+	Priority      []string `json:"priority,omitempty"`       // Optional, filter by priority
+	AssignedTo    string   `json:"assigned_to,omitempty"`    // Optional, filter by assignee
+	UnblockedOnly bool     `json:"unblocked_only,omitempty"` // Optional, default: false
+	Limit         int      `json:"limit,omitempty"`          // Optional, default: 20
 }
 
 // TasksResult - Output from tasks tool
 type TasksResult struct {
-	Tasks           []Node          `json:"tasks"`
-	Stats           TaskStats       `json:"stats"`
-	DependencyGraph []Dependency    `json:"dependency_graph,omitempty"`
-	Recommended     []Node          `json:"recommended,omitempty"`
+	Tasks           []Node       `json:"tasks"`
+	Stats           TaskStats    `json:"stats"`
+	DependencyGraph []Dependency `json:"dependency_graph,omitempty"`
+	Recommended     []Node       `json:"recommended,omitempty"`
 }
 
 // TaskStats contains task statistics

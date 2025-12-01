@@ -1,10 +1,13 @@
 # MCP Tools Quick Reference
 
-> **Version:** 0.1.3 (Production)  
-> **Status:** ✅ All 8 tools fully implemented and tested  
-> **Docker:** `docker pull timothyswt/nornicdb-arm64-metal:0.1.3`
+> **Version:** 0.2.0 (Production)  
+> **Status:** ✅ All 6 tools fully implemented and tested  
+> **Docker:** `docker pull timothyswt/nornicdb-arm64-metal:latest`
 
 **For LLMs:** This is your cheat sheet for using NornicDB's memory system.
+
+> **Note:** `index` and `unindex` tools have been moved to Mimir (the intelligence layer).  
+> NornicDB focuses on storage, embeddings, and search. File indexing is handled by Mimir.
 
 ---
 
@@ -14,8 +17,6 @@
 **Know the ID, need to fetch?** → `recall`  
 **Search by meaning/topic?** → `discover`  
 **Connect two things?** → `link`  
-**Index code files?** → `index`  
-**Remove indexed files?** → `unindex`  
 **Work with tasks?** → `task` (single) or `tasks` (multiple)
 
 ---
@@ -28,8 +29,6 @@
 | `recall` | Getting something by ID or filters | `recall(id="node-123")` |
 | `discover` | Finding by meaning, not keywords | `discover(query="auth implementation")` |
 | `link` | Connecting related knowledge | `link(from="A", to="B", relation="depends_on")` |
-| `index` | Making code searchable | `index(path="/workspace/src")` |
-| `unindex` | Removing indexed code | `unindex(path="/workspace/old")` |
 | `task` | Single task CRUD | `task(title="Fix bug", priority="high")` |
 | `tasks` | Query/list multiple tasks | `tasks(status=["pending"], unblocked_only=true)` |
 

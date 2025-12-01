@@ -213,6 +213,12 @@ type Config struct {
 	// TLSKeyFile for HTTPS
 	TLSKeyFile string
 
+	// MCP Configuration (Model Context Protocol)
+	// MCPEnabled controls whether the MCP server is started (default: true)
+	// Set to false to disable MCP tools entirely
+	// Env: NORNICDB_MCP_ENABLED=true|false
+	MCPEnabled bool
+
 	// Embedding Configuration (for vector search)
 	// EmbeddingEnabled turns on automatic embedding generation
 	EmbeddingEnabled bool
@@ -274,6 +280,10 @@ func DefaultConfig() *Config {
 		EnableCORS:        true,
 		CORSOrigins:       []string{"*"},
 		EnableCompression: true,
+
+		// MCP server enabled by default
+		// Override: NORNICDB_MCP_ENABLED=false
+		MCPEnabled: true,
 
 		// Embedding defaults - connects to local llama.cpp/Ollama server
 		// Override via environment variables:
@@ -386,14 +396,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil, fmt.Errorf("database required")
 	}
 
-	// Create MCP server config with embedding settings for validation
-	mcpConfig := mcp.DefaultServerConfig()
-	mcpConfig.EmbeddingEnabled = config.EmbeddingEnabled
-	mcpConfig.EmbeddingModel = config.EmbeddingModel
-	mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions
-
-	// Create MCP server for LLM tool interface
-	mcpServer := mcp.NewServer(db, mcpConfig)
+	// Create MCP server for LLM tool interface (if enabled)
+	var mcpServer *mcp.Server
+	if config.MCPEnabled {
+		mcpConfig := mcp.DefaultServerConfig()
+		mcpConfig.EmbeddingEnabled = config.EmbeddingEnabled
+		mcpConfig.EmbeddingModel = config.EmbeddingModel
+		mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions
+		mcpServer = mcp.NewServer(db, mcpConfig)
+	} else {
+		log.Println("ℹ️  MCP server disabled via configuration")
+	}
 
 	// Configure embeddings if enabled
 	// Local provider doesn't need API URL, others do
@@ -458,7 +471,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					log.Printf("✓ Embeddings enabled: %s (%s, %d dims)",
 						config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions)
 				}
-				mcpServer.SetEmbedder(embedder)
+				if mcpServer != nil {
+					mcpServer.SetEmbedder(embedder)
+				}
 				// Share embedder with DB for auto-embed queue
 				db.SetEmbedder(embedder)
 			}

@@ -8,8 +8,9 @@ import (
 func TestGetToolDefinitions(t *testing.T) {
 	tools := GetToolDefinitions()
 
-	if len(tools) != 8 {
-		t.Errorf("Expected 8 tools, got %d", len(tools))
+	// Note: index/unindex tools removed - handled by Mimir
+	if len(tools) != 6 {
+		t.Errorf("Expected 6 tools, got %d", len(tools))
 	}
 
 	// Check all tools are present
@@ -18,8 +19,6 @@ func TestGetToolDefinitions(t *testing.T) {
 		ToolRecall:   false,
 		ToolDiscover: false,
 		ToolLink:     false,
-		ToolIndex:    false,
-		ToolUnindex:  false,
 		ToolTask:     false,
 		ToolTasks:    false,
 	}
@@ -53,12 +52,7 @@ func TestToolConstants(t *testing.T) {
 	if ToolLink != "link" {
 		t.Error("ToolLink should be 'link'")
 	}
-	if ToolIndex != "index" {
-		t.Error("ToolIndex should be 'index'")
-	}
-	if ToolUnindex != "unindex" {
-		t.Error("ToolUnindex should be 'unindex'")
-	}
+	// Note: ToolIndex and ToolUnindex removed - handled by Mimir
 	if ToolTask != "task" {
 		t.Error("ToolTask should be 'task'")
 	}
@@ -68,13 +62,13 @@ func TestToolConstants(t *testing.T) {
 }
 
 func TestToolPermissions(t *testing.T) {
-	// Verify ToolPermissions map is populated
-	if len(ToolPermissions) != 8 {
-		t.Errorf("Expected 8 tool permissions, got %d", len(ToolPermissions))
+	// Verify ToolPermissions map is populated (6 tools now - index/unindex removed)
+	if len(ToolPermissions) != 6 {
+		t.Errorf("Expected 6 tool permissions, got %d", len(ToolPermissions))
 	}
 
 	// Check each tool has a permission
-	tools := []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolIndex, ToolUnindex, ToolTask, ToolTasks}
+	tools := []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTask, ToolTasks}
 	for _, tool := range tools {
 		if _, exists := ToolPermissions[tool]; !exists {
 			t.Errorf("Missing permission for tool: %s", tool)

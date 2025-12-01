@@ -236,6 +236,37 @@ memory := &nornicdb.Memory{
 
 NornicDB includes a native MCP (Model Context Protocol) server for AI agent integration.
 
+### MCP Server Configuration
+
+The MCP server is **enabled by default**. You can disable it if you don't need AI agent integration:
+
+**CLI Flag:**
+```bash
+# Disable MCP server
+./nornicdb serve --mcp-enabled=false
+```
+
+**Environment Variable:**
+```bash
+# Disable MCP server via environment
+export NORNICDB_MCP_ENABLED=false
+./nornicdb serve
+```
+
+**Go Config:**
+```go
+import "github.com/orneryd/nornicdb/pkg/server"
+
+config := server.DefaultConfig()
+config.MCPEnabled = false  // Disable MCP server
+```
+
+When MCP is disabled:
+- The `/mcp` endpoint will not be registered
+- All other HTTP API endpoints remain functional
+- Memory is saved (no MCP overhead)
+- Useful for pure database use without AI integration
+
 ### Configure Cursor IDE
 
 Add to `~/.cursor/mcp.json`:

@@ -173,6 +173,16 @@ type StorageExecutor struct {
 
 	// deferFlush when true, writes are not auto-flushed (Bolt layer handles it)
 	deferFlush bool
+
+	// embedder for server-side query embedding (optional)
+	// If set, vector search can accept string queries which are embedded automatically
+	embedder QueryEmbedder
+}
+
+// QueryEmbedder generates embeddings for search queries.
+// This is a minimal interface to avoid import cycles with embed package.
+type QueryEmbedder interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
 // NewStorageExecutor creates a new Cypher executor with the given storage backend.
@@ -202,6 +212,22 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 		planCache:       NewQueryPlanCache(500),   // Cache 500 parsed query plans
 		nodeLookupCache: make(map[string]*storage.Node, 1000),
 	}
+}
+
+// SetEmbedder sets the query embedder for server-side embedding.
+// When set, db.index.vector.queryNodes can accept string queries
+// which are automatically embedded before search.
+//
+// Example:
+//
+//	executor := cypher.NewStorageExecutor(storage)
+//	executor.SetEmbedder(embedder)
+//
+//	// Now vector search accepts both:
+//	// CALL db.index.vector.queryNodes('idx', 10, [0.1, 0.2, ...])  // Vector
+//	// CALL db.index.vector.queryNodes('idx', 10, 'search query')   // String (auto-embedded)
+func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
+	e.embedder = embedder
 }
 
 // Flush persists all pending writes to storage.
@@ -1208,6 +1234,53 @@ func (e *StorageExecutor) splitSetAssignments(setClause string) []string {
 	return assignments
 }
 
+// splitSetAssignmentsRespectingBrackets splits a SET clause into individual assignments,
+// respecting brackets (for arrays), parentheses, and quotes.
+// e.g., "n.embedding = [0.1, 0.2], n.dim = 4" -> ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
+func (e *StorageExecutor) splitSetAssignmentsRespectingBrackets(setClause string) []string {
+	var assignments []string
+	var current strings.Builder
+	depth := 0 // Tracks both () and []
+	inQuote := false
+	quoteChar := rune(0)
+
+	for i, c := range setClause {
+		switch {
+		case c == '\'' || c == '"':
+			if !inQuote {
+				inQuote = true
+				quoteChar = c
+			} else if c == quoteChar {
+				// Check for escaped quote
+				if i > 0 && setClause[i-1] != '\\' {
+					inQuote = false
+				}
+			}
+			current.WriteRune(c)
+		case (c == '(' || c == '[') && !inQuote:
+			depth++
+			current.WriteRune(c)
+		case (c == ')' || c == ']') && !inQuote:
+			depth--
+			current.WriteRune(c)
+		case c == ',' && !inQuote && depth == 0:
+			if s := strings.TrimSpace(current.String()); s != "" {
+				assignments = append(assignments, s)
+			}
+			current.Reset()
+		default:
+			current.WriteRune(c)
+		}
+	}
+
+	// Add final assignment
+	if s := strings.TrimSpace(current.String()); s != "" {
+		assignments = append(assignments, s)
+	}
+
+	return assignments
+}
+
 // evaluateSetExpression evaluates a Cypher expression for SET clauses.
 func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
 	expr = strings.TrimSpace(expr)
@@ -1869,42 +1942,52 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		return e.executeSetMerge(matchResult, setPart, result)
 	}
 
-	// Parse assignment: n.property = value
-	eqIdx := strings.Index(setPart, "=")
-	if eqIdx == -1 {
-		return nil, fmt.Errorf("SET requires an assignment")
-	}
+	// Split SET clause into individual assignments, respecting brackets
+	// e.g., "n.embedding = [0.1, 0.2], n.dim = 4" -> ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
+	assignments := e.splitSetAssignmentsRespectingBrackets(setPart)
 
-	left := strings.TrimSpace(setPart[:eqIdx])
-	right := strings.TrimSpace(setPart[eqIdx+1:])
+	var variable string
+	for _, assignment := range assignments {
+		assignment = strings.TrimSpace(assignment)
+		if assignment == "" {
+			continue
+		}
 
-	// Extract variable and property
-	parts := strings.SplitN(left, ".", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("SET requires property access (n.property)")
-	}
-	variable := parts[0]
-	propName := parts[1]
-	propValue := e.parseValue(right)
+		// Parse assignment: n.property = value
+		eqIdx := strings.Index(assignment, "=")
+		if eqIdx == -1 {
+			continue // Skip malformed assignments
+		}
 
-	// Update matched nodes
-	for _, row := range matchResult.Rows {
-		for _, val := range row {
-			if node, ok := val.(map[string]interface{}); ok {
-				id, ok := node["_nodeId"].(string)
-				if !ok {
-					continue
-				}
-				storageNode, err := e.storage.GetNode(storage.NodeID(id))
-				if err != nil {
-					continue
-				}
-				if storageNode.Properties == nil {
-					storageNode.Properties = make(map[string]interface{})
-				}
-				storageNode.Properties[propName] = propValue
-				if err := e.storage.UpdateNode(storageNode); err == nil {
-					result.Stats.PropertiesSet++
+		left := strings.TrimSpace(assignment[:eqIdx])
+		right := strings.TrimSpace(assignment[eqIdx+1:])
+
+		// Extract variable and property
+		parts := strings.SplitN(left, ".", 2)
+		if len(parts) != 2 {
+			continue // Skip malformed assignments
+		}
+		variable = parts[0]
+		propName := parts[1]
+		propValue := e.parseValue(right)
+
+		// Update matched nodes
+		for _, row := range matchResult.Rows {
+			for _, val := range row {
+				if node, ok := val.(map[string]interface{}); ok {
+					id, ok := node["_nodeId"].(string)
+					if !ok {
+						continue
+					}
+					storageNode, err := e.storage.GetNode(storage.NodeID(id))
+					if err != nil {
+						continue
+					}
+					// Use setNodeProperty to properly route "embedding" to node.Embedding
+					setNodeProperty(storageNode, propName, propValue)
+					if err := e.storage.UpdateNode(storageNode); err == nil {
+						result.Stats.PropertiesSet++
+					}
 				}
 			}
 		}
@@ -1988,12 +2071,10 @@ func (e *StorageExecutor) executeSetMerge(matchResult *ExecuteResult, setPart st
 			if err != nil {
 				continue
 			}
-			if storageNode.Properties == nil {
-				storageNode.Properties = make(map[string]interface{})
-			}
 			// Merge properties (new values override existing)
+			// Use setNodeProperty to properly route "embedding" to node.Embedding
 			for k, v := range propsToMerge {
-				storageNode.Properties[k] = v
+				setNodeProperty(storageNode, k, v)
 				result.Stats.PropertiesSet++
 			}
 			_ = e.storage.UpdateNode(storageNode)
@@ -2739,6 +2820,11 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 // parseValue extracts the actual value from a Cypher literal
 func (e *StorageExecutor) parseValue(s string) interface{} {
 	s = strings.TrimSpace(s)
+
+	// Handle arrays: [0.1, 0.2, 0.3]
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		return e.parseArrayValue(s)
+	}
 
 	// Handle quoted strings
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||

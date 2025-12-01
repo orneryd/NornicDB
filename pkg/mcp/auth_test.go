@@ -78,15 +78,13 @@ func TestHasPermission(t *testing.T) {
 		{RoleOrgViewer, PermissionStore, false},
 		{RoleOrgViewer, PermissionLink, false},
 
-		// LLMAgent has graph tools but not file indexing
+		// LLMAgent has graph tools
 		{RoleLLMAgent, PermissionStore, true},
 		{RoleLLMAgent, PermissionRecall, true},
-		{RoleLLMAgent, PermissionIndex, false},
-		{RoleLLMAgent, PermissionUnindex, false},
+		// Note: PermissionIndex/Unindex removed - file indexing handled by Mimir
 
 		// ServiceAccount has specific tools
 		{RoleServiceAccount, PermissionStore, true},
-		{RoleServiceAccount, PermissionIndex, true},
 		{RoleServiceAccount, PermissionAdmin, false},
 
 		// Unknown role has nothing
@@ -115,8 +113,7 @@ func TestCanUseTool(t *testing.T) {
 		{RoleSuperAdmin, ToolRecall, true},
 		{RoleSuperAdmin, ToolDiscover, true},
 		{RoleSuperAdmin, ToolLink, true},
-		{RoleSuperAdmin, ToolIndex, true},
-		{RoleSuperAdmin, ToolUnindex, true},
+		// Note: ToolIndex/ToolUnindex removed - file indexing handled by Mimir
 		{RoleSuperAdmin, ToolTask, true},
 		{RoleSuperAdmin, ToolTasks, true},
 
@@ -126,12 +123,11 @@ func TestCanUseTool(t *testing.T) {
 		{RoleOrgViewer, ToolTasks, true},
 		{RoleOrgViewer, ToolStore, false},
 		{RoleOrgViewer, ToolLink, false},
-		{RoleOrgViewer, ToolIndex, false},
 
-		// LLMAgent can't index files
+		// LLMAgent can use graph tools
 		{RoleLLMAgent, ToolStore, true},
-		{RoleLLMAgent, ToolIndex, false},
-		{RoleLLMAgent, ToolUnindex, false},
+		{RoleLLMAgent, ToolRecall, true},
+		{RoleLLMAgent, ToolTask, true},
 
 		// Unknown tool returns false
 		{RoleSuperAdmin, "unknown_tool", false},
@@ -150,8 +146,9 @@ func TestCanUseTool(t *testing.T) {
 
 func TestAllMCPPermissions(t *testing.T) {
 	perms := AllMCPPermissions()
-	if len(perms) != 10 {
-		t.Errorf("AllMCPPermissions() returned %d permissions, want 10", len(perms))
+	// Note: index/unindex permissions removed - file indexing handled by Mimir
+	if len(perms) != 8 {
+		t.Errorf("AllMCPPermissions() returned %d permissions, want 8", len(perms))
 	}
 
 	// Check all expected permissions are present
@@ -160,8 +157,6 @@ func TestAllMCPPermissions(t *testing.T) {
 		PermissionRecall:   true,
 		PermissionDiscover: true,
 		PermissionLink:     true,
-		PermissionIndex:    true,
-		PermissionUnindex:  true,
 		PermissionTask:     true,
 		PermissionTasks:    true,
 		PermissionAdmin:    true,

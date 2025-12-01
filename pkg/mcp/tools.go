@@ -5,20 +5,21 @@ import (
 	"encoding/json"
 )
 
-// GetToolDefinitions returns all 8 MCP tool definitions with JSON schemas.
+// GetToolDefinitions returns all 6 MCP tool definitions with JSON schemas.
 // These tools are designed for LLM-native usage with:
 // - Verb-noun naming (clear intent)
 // - Minimal required parameters
 // - Smart defaults
 // - Rich, actionable responses
+//
+// Note: File indexing (index/unindex) is handled by Mimir (the intelligence layer).
+// NornicDB is the storage/embedding layer - it receives already-processed content.
 func GetToolDefinitions() []Tool {
 	return []Tool{
 		getStoreTool(),
 		getRecallTool(),
 		getDiscoverTool(),
 		getLinkTool(),
-		getIndexTool(),
-		getUnindexTool(),
 		getTaskTool(),
 		getTasksTool(),
 	}
@@ -49,8 +50,8 @@ func getStoreTool() Tool {
 				"description": "Tags for organization and filtering.",
 			},
 			"metadata": map[string]interface{}{
-				"type":        "object",
-				"description": "Additional key-value metadata.",
+				"type":                 "object",
+				"description":          "Additional key-value metadata.",
 				"additionalProperties": true,
 			},
 		},
@@ -200,8 +201,8 @@ func getLinkTool() Tool {
 				"maximum":     1.0,
 			},
 			"metadata": map[string]interface{}{
-				"type":        "object",
-				"description": "Additional edge properties.",
+				"type":                 "object",
+				"description":          "Additional edge properties.",
 				"additionalProperties": true,
 			},
 		},
@@ -222,79 +223,6 @@ Examples:
 	}
 }
 
-// getIndexTool returns the index tool definition
-func getIndexTool() Tool {
-	schema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "Absolute path to folder to index.",
-			},
-			"patterns": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "File patterns to include (e.g., [\"*.go\", \"*.md\"]). Default: all text files.",
-			},
-			"embeddings": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Generate vector embeddings for semantic search.",
-				"default":     true,
-			},
-			"recursive": map[string]interface{}{
-				"type":        "boolean",
-				"description": "Include subdirectories.",
-				"default":     true,
-			},
-		},
-		"required": []string{"path"},
-	}
-
-	schemaJSON, _ := json.Marshal(schema)
-	return Tool{
-		Name: "index",
-		Description: `Index files from a folder into the knowledge graph. Files are watched for changes and
-automatically re-indexed. Supports code, docs, any text files. Generates embeddings
-for semantic code search.
-
-Examples:
-- index(path="/workspace/src")
-- index(path="/workspace/src", patterns=["*.go", "*.proto"])
-- index(path="/workspace/docs", embeddings=true, recursive=true)`,
-		InputSchema: schemaJSON,
-	}
-}
-
-// getUnindexTool returns the unindex tool definition
-func getUnindexTool() Tool {
-	schema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "Folder path to stop indexing.",
-			},
-			"watch_id": map[string]interface{}{
-				"type":        "string",
-				"description": "Watch ID returned from index operation.",
-			},
-		},
-		"required": []string{},
-	}
-
-	schemaJSON, _ := json.Marshal(schema)
-	return Tool{
-		Name: "unindex",
-		Description: `Stop watching a folder and remove all indexed files from the graph.
-Use when you no longer need files in the knowledge base.
-
-Examples:
-- unindex(path="/workspace/old-project")
-- unindex(watch_id="watch-abc123")`,
-		InputSchema: schemaJSON,
-	}
-}
-
 // getTaskTool returns the task tool definition
 func getTaskTool() Tool {
 	schema := map[string]interface{}{
@@ -302,7 +230,7 @@ func getTaskTool() Tool {
 		"properties": map[string]interface{}{
 			"id": map[string]interface{}{
 				"type":        "string",
-				"description": "Task ID for update/complete. Omit for creating new tasks.",
+				"description": "Task ID for update/complete/delete. Omit for creating new tasks.",
 			},
 			"title": map[string]interface{}{
 				"type":        "string",
@@ -332,6 +260,14 @@ func getTaskTool() Tool {
 				"type":        "string",
 				"description": "Assign to agent or person.",
 			},
+			"complete": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set to true to mark task as done. Shorthand for status='done'.",
+			},
+			"delete": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set to true to delete the task.",
+			},
 		},
 		"required": []string{},
 	}
@@ -348,8 +284,10 @@ Status auto-toggle: If you provide an ID without status, it advances the status:
 
 Examples:
 - task(title="Implement auth", priority="high")
-- task(id="task-123", status="done")
-- task(id="task-456")  # Toggle status`,
+- task(id="task-123", complete=true)
+- task(id="task-123", status="blocked")
+- task(id="task-456")  # Toggle status
+- task(id="task-789", delete=true)`,
 		InputSchema: schemaJSON,
 	}
 }
@@ -410,8 +348,6 @@ const (
 	ToolRecall   = "recall"
 	ToolDiscover = "discover"
 	ToolLink     = "link"
-	ToolIndex    = "index"
-	ToolUnindex  = "unindex"
 	ToolTask     = "task"
 	ToolTasks    = "tasks"
 )
@@ -423,8 +359,6 @@ func AllTools() []string {
 		ToolRecall,
 		ToolDiscover,
 		ToolLink,
-		ToolIndex,
-		ToolUnindex,
 		ToolTask,
 		ToolTasks,
 	}
@@ -451,12 +385,11 @@ func InferOperation(tool string, args map[string]interface{}) string {
 		return "read"
 	case ToolLink:
 		return "create"
-	case ToolIndex:
-		return "create"
-	case ToolUnindex:
-		return "delete"
 	case ToolTask:
 		if _, hasID := args["id"]; hasID {
+			if del, ok := args["delete"].(bool); ok && del {
+				return "delete"
+			}
 			return "update"
 		}
 		return "create"
@@ -484,8 +417,6 @@ func ExtractResourceType(tool string, args map[string]interface{}) string {
 		return "*"
 	case ToolLink:
 		return "edge"
-	case ToolIndex, ToolUnindex:
-		return "file"
 	case ToolTask, ToolTasks:
 		return "task"
 	default:

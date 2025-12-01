@@ -848,7 +848,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 // SetEmbedder configures the auto-embed queue with the given embedder.
 // This should be called by the server after creating a working embedder.
-// The embedder is shared with the MCP server for consistency.
+// The embedder is shared with the MCP server and Cypher executor for consistency.
 func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if embedder == nil {
 		return
@@ -856,6 +856,12 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
+
+	// Share embedder with Cypher executor for server-side query embedding
+	// This enables: CALL db.index.vector.queryNodes('idx', 10, 'search text')
+	if db.cypherExecutor != nil {
+		db.cypherExecutor.SetEmbedder(embedder)
+	}
 
 	if db.embedQueue != nil {
 		// Already set up

@@ -18,11 +18,11 @@ import (
 
 // MockDB implements a minimal mock of nornicdb.DB for testing
 type MockDB struct {
-	nodes      map[string]*nornicdb.Node
-	edges      map[string]*nornicdb.GraphEdge
-	createErr  error
-	getErr     error
-	searchErr  error
+	nodes     map[string]*nornicdb.Node
+	edges     map[string]*nornicdb.GraphEdge
+	createErr error
+	getErr    error
+	searchErr error
 }
 
 func NewMockDB() *MockDB {
@@ -153,8 +153,9 @@ func TestNewServer(t *testing.T) {
 	if server == nil {
 		t.Fatal("NewServer() returned nil")
 	}
-	if len(server.handlers) != 8 {
-		t.Errorf("Expected 8 handlers, got %d", len(server.handlers))
+	// Note: 6 handlers now - index/unindex removed (handled by Mimir)
+	if len(server.handlers) != 6 {
+		t.Errorf("Expected 6 handlers, got %d", len(server.handlers))
 	}
 }
 
@@ -228,8 +229,9 @@ func TestHandleListTools(t *testing.T) {
 
 	var resp ListToolsResponse
 	json.NewDecoder(rec.Body).Decode(&resp)
-	if len(resp.Tools) != 8 {
-		t.Errorf("Expected 8 tools, got %d", len(resp.Tools))
+	// Note: 6 tools now - index/unindex removed (handled by Mimir)
+	if len(resp.Tools) != 6 {
+		t.Errorf("Expected 6 tools, got %d", len(resp.Tools))
 	}
 }
 
@@ -372,49 +374,8 @@ func TestHandleLink_NoDB(t *testing.T) {
 	}
 }
 
-func TestHandleIndex_NoDB(t *testing.T) {
-	server := NewServer(nil, nil)
-	ctx := context.Background()
-
-	result, err := server.handleIndex(ctx, map[string]interface{}{
-		"path": "/test/path",
-	})
-	if err != nil {
-		t.Fatalf("handleIndex() error = %v", err)
-	}
-
-	indexResult := result.(IndexResult)
-	if indexResult.WatchID == "" {
-		t.Error("Expected WatchID")
-	}
-
-	// Missing path
-	_, err = server.handleIndex(ctx, map[string]interface{}{})
-	if err == nil {
-		t.Error("Expected error for missing path")
-	}
-}
-
-func TestHandleUnindex_NoDB(t *testing.T) {
-	server := NewServer(nil, nil)
-	ctx := context.Background()
-
-	// First index
-	indexResult, _ := server.handleIndex(ctx, map[string]interface{}{"path": "/test"})
-	watchID := indexResult.(IndexResult).WatchID
-
-	// Unindex
-	_, err := server.handleUnindex(ctx, map[string]interface{}{"watch_id": watchID})
-	if err != nil {
-		t.Fatalf("handleUnindex() error = %v", err)
-	}
-
-	// Non-existent
-	_, err = server.handleUnindex(ctx, map[string]interface{}{"watch_id": "non-existent"})
-	if err == nil {
-		t.Error("Expected error for non-existent watch")
-	}
-}
+// Note: TestHandleIndex_NoDB and TestHandleUnindex_NoDB removed
+// These handlers were removed - file indexing is handled by Mimir
 
 func TestHandleTask_NoDB(t *testing.T) {
 	server := NewServer(nil, nil)

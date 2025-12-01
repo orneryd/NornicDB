@@ -110,6 +110,7 @@ Features:
 	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), "GPU layers for local provider: -1=auto, 0=CPU only")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
 	serveCmd.Flags().String("admin-password", "admin", "Admin password (default: admin)")
+	serveCmd.Flags().Bool("mcp-enabled", getEnvBool("NORNICDB_MCP_ENABLED", true), "Enable MCP (Model Context Protocol) server for LLM tools")
 	// Parallel execution flags
 	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
 	serveCmd.Flags().Int("parallel-workers", 0, "Max parallel workers (0 = auto, uses all CPUs)")
@@ -199,6 +200,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		os.Setenv("NORNICDB_EMBEDDING_GPU_LAYERS", fmt.Sprintf("%d", embeddingGPULayers))
 	}
 	adminPassword, _ := cmd.Flags().GetString("admin-password")
+	mcpEnabled, _ := cmd.Flags().GetBool("mcp-enabled")
 	parallelEnabled, _ := cmd.Flags().GetBool("parallel")
 	parallelWorkers, _ := cmd.Flags().GetInt("parallel-workers")
 	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
@@ -391,6 +393,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
+	// MCP server configuration
+	serverConfig.MCPEnabled = mcpEnabled
 	// Pass embedding settings to server
 	serverConfig.EmbeddingEnabled = true
 	serverConfig.EmbeddingProvider = embeddingProvider
@@ -437,6 +441,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  • Health:       http://localhost:%d/health\n", httpPort)
 	fmt.Printf("  • Search:       POST http://localhost:%d/nornicdb/search\n", httpPort)
 	fmt.Printf("  • Cypher:       POST http://localhost:%d/db/neo4j/tx/commit\n", httpPort)
+	if mcpEnabled {
+		fmt.Printf("  • MCP:          http://localhost:%d/mcp\n", httpPort)
+	}
 	fmt.Println()
 	if !noAuth {
 		fmt.Println("Authentication:")

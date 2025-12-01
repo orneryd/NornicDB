@@ -12,15 +12,16 @@
 //   - Rich, Actionable Responses: Return IDs, next-step hints, relationship counts
 //   - Progressive Disclosure: Common case is simple, advanced features available
 //
-// Tool Surface (8 Tools):
+// Tool Surface (6 Tools):
 //   - store: Store knowledge/memory as a node in the graph
 //   - recall: Retrieve knowledge by ID or criteria
 //   - discover: Semantic search by meaning (vector embeddings)
 //   - link: Create relationships between nodes
-//   - index: Index files/folders for search
-//   - unindex: Stop indexing and remove files
 //   - task: Create/manage individual tasks
 //   - tasks: Query/list multiple tasks
+//
+// Note: File indexing (index/unindex) is handled by Mimir (the intelligence layer).
+// NornicDB is the storage/embedding layer - it receives already-processed content.
 //
 // Example Usage:
 //
@@ -47,8 +48,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -78,10 +77,6 @@ type Server struct {
 
 	// Tool handlers
 	handlers map[string]ToolHandler
-
-	// File watcher management
-	watchers   map[string]*WatchInfo
-	watchersMu sync.RWMutex
 }
 
 // ServerConfig holds MCP server configuration.
@@ -121,16 +116,6 @@ func DefaultServerConfig() *ServerConfig {
 	}
 }
 
-// WatchInfo tracks an indexed folder
-type WatchInfo struct {
-	ID        string    `json:"id"`
-	Path      string    `json:"path"`
-	Patterns  []string  `json:"patterns"`
-	Recursive bool      `json:"recursive"`
-	StartedAt time.Time `json:"started_at"`
-	FileCount int       `json:"file_count"`
-}
-
 // ToolHandler is a function that handles a tool call
 type ToolHandler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
 
@@ -145,7 +130,6 @@ func NewServer(db *nornicdb.DB, config *ServerConfig) *Server {
 		config:   config,
 		embed:    config.Embedder,
 		handlers: make(map[string]ToolHandler),
-		watchers: make(map[string]*WatchInfo),
 	}
 
 	// Register all tool handlers
@@ -167,10 +151,6 @@ func (s *Server) registerHandlers() {
 	s.handlers[ToolRecall] = s.handleRecall
 	s.handlers[ToolDiscover] = s.handleDiscover
 	s.handlers[ToolLink] = s.handleLink
-
-	// File indexing tools
-	s.handlers[ToolIndex] = s.handleIndex
-	s.handlers[ToolUnindex] = s.handleUnindex
 
 	// Task management tools
 	s.handlers[ToolTask] = s.handleTask
@@ -755,166 +735,6 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 		EdgeID: edgeID,
 		From:   fromNode,
 		To:     toNode,
-	}, nil
-}
-
-// handleIndex implements the index tool - indexes files for search.
-func (s *Server) handleIndex(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	path := getString(args, "path")
-	if path == "" {
-		return nil, fmt.Errorf("path is required")
-	}
-
-	patterns := getStringSlice(args, "patterns")
-	if len(patterns) == 0 {
-		patterns = []string{"*.go", "*.md", "*.txt", "*.py", "*.js", "*.ts"}
-	}
-	recursive := getBool(args, "recursive", true)
-	embeddings := getBool(args, "embeddings", true)
-
-	// Create watch ID
-	watchID := fmt.Sprintf("watch-%d", time.Now().UnixNano())
-
-	// Store watch info
-	s.watchersMu.Lock()
-	s.watchers[watchID] = &WatchInfo{
-		ID:        watchID,
-		Path:      path,
-		Patterns:  patterns,
-		Recursive: recursive,
-		StartedAt: time.Now(),
-		FileCount: 0,
-	}
-	s.watchersMu.Unlock()
-
-	// Index files in background
-	go s.indexFilesAsync(ctx, watchID, path, patterns, recursive, embeddings)
-
-	return IndexResult{
-		WatchID:     watchID,
-		FilesQueued: 0, // Will be updated async
-		Status:      "indexing",
-	}, nil
-}
-
-// indexFilesAsync indexes files in the background.
-func (s *Server) indexFilesAsync(ctx context.Context, watchID, basePath string, patterns []string, recursive, embeddings bool) {
-	fileCount := 0
-
-	walkFn := func(filePath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
-
-		if info.IsDir() {
-			if !recursive && filePath != basePath {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Check if file matches patterns
-		matched := false
-		for _, pattern := range patterns {
-			if m, _ := filepath.Match(pattern, info.Name()); m {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return nil
-		}
-
-		// Read file content
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil
-		}
-
-		// Create node for file
-		props := map[string]interface{}{
-			"title":      info.Name(),
-			"content":    string(content),
-			"path":       filePath,
-			"size":       info.Size(),
-			"modified":   info.ModTime().Format(time.RFC3339),
-			"indexed_at": time.Now().Format(time.RFC3339),
-			"watch_id":   watchID,
-		}
-
-		// Generate embedding if enabled
-		if embeddings && s.embed != nil && s.config.EmbeddingEnabled {
-			if embedding, err := s.embed.Embed(ctx, string(content)); err == nil {
-				props["embedding"] = embedding
-			}
-		}
-
-		// Store in database
-		if s.db != nil {
-			s.db.CreateNode(ctx, []string{"File"}, props)
-		}
-
-		fileCount++
-		return nil
-	}
-
-	filepath.Walk(basePath, walkFn)
-
-	// Update watcher file count
-	s.watchersMu.Lock()
-	if w, exists := s.watchers[watchID]; exists {
-		w.FileCount = fileCount
-	}
-	s.watchersMu.Unlock()
-}
-
-// handleUnindex implements the unindex tool - removes indexed files.
-func (s *Server) handleUnindex(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	path := getString(args, "path")
-	watchID := getString(args, "watch_id")
-
-	if path == "" && watchID == "" {
-		return nil, fmt.Errorf("path or watch_id is required")
-	}
-
-	s.watchersMu.Lock()
-	defer s.watchersMu.Unlock()
-
-	// Find and remove watch
-	var removed *WatchInfo
-	var targetWatchID string
-	for id, w := range s.watchers {
-		if id == watchID || w.Path == path {
-			removed = w
-			targetWatchID = id
-			delete(s.watchers, id)
-			break
-		}
-	}
-
-	if removed == nil {
-		return nil, fmt.Errorf("watch not found")
-	}
-
-	// Remove files from database
-	removedFiles := 0
-	removedChunks := 0
-	if s.db != nil {
-		// Query for files with this watch_id
-		query := `MATCH (f:File) WHERE f.watch_id = $watch_id DELETE f RETURN count(f) as count`
-		result, err := s.db.ExecuteCypher(ctx, query, map[string]interface{}{
-			"watch_id": targetWatchID,
-		})
-		if err == nil && len(result.Rows) > 0 {
-			if count, ok := result.Rows[0][0].(int64); ok {
-				removedFiles = int(count)
-			}
-		}
-	}
-
-	return UnindexResult{
-		RemovedFiles:  removedFiles,
-		RemovedChunks: removedChunks,
 	}, nil
 }
 

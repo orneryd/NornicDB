@@ -64,7 +64,7 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 		// Verify the vector was set
 		node, err := engine.GetNode("node1")
 		require.NoError(t, err)
-		
+
 		embedding, ok := node.Properties["embedding"].([]float64)
 		require.True(t, ok, "embedding should be []float64")
 		assert.Equal(t, []float64{0.1, 0.2, 0.3, 0.4}, embedding)
@@ -78,7 +78,7 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 		// Verify the vector was updated
 		node, err := engine.GetNode("node1")
 		require.NoError(t, err)
-		
+
 		embedding, ok := node.Properties["embedding"].([]float64)
 		require.True(t, ok)
 		assert.Equal(t, []float64{0.5, 0.6, 0.7, 0.8}, embedding)
@@ -118,7 +118,7 @@ func TestCallDbCreateSetRelationshipVectorProperty(t *testing.T) {
 		// Verify the vector was set
 		rel, err := engine.GetEdge("rel1")
 		require.NoError(t, err)
-		
+
 		features, ok := rel.Properties["features"].([]float64)
 		require.True(t, ok, "features should be []float64")
 		assert.Equal(t, []float64{1.0, 2.0, 3.0}, features)
@@ -147,6 +147,250 @@ func TestVectorIndexQueryNodesWithProcedure(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 	})
+
+	t.Run("string_query_without_embedder", func(t *testing.T) {
+		// String query without embedder should return helpful error
+		_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, 'search text') YIELD node, score", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no embedder configured")
+	})
+
+	t.Run("string_query_with_embedder", func(t *testing.T) {
+		// Create a mock embedder
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.1, 0.2, 0.3, 0.4},
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Now string query should work (embeds the string first)
+		result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('test_idx', 5, 'machine learning') YIELD node, score", nil)
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+		// Verify the embedder was called
+		assert.Equal(t, "machine learning", mockEmbedder.lastQuery)
+	})
+}
+
+// mockQueryEmbedder is a test embedder for string queries
+type mockQueryEmbedder struct {
+	embedding []float32
+	lastQuery string
+}
+
+func (m *mockQueryEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	m.lastQuery = text
+	return m.embedding, nil
+}
+
+// TestVectorSearchQueryModes tests all three query modes:
+// 1. Direct vector array (Neo4j compatible)
+// 2. String query (NornicDB server-side embedding)
+// 3. Parameter reference ($queryVector)
+func TestVectorSearchQueryModes(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create test nodes with embeddings via Cypher SET (like Mimir does with Neo4j)
+	// Node 1: about machine learning
+	_, err := exec.Execute(ctx, `CREATE (n:Document {id: 'doc1', title: 'ML Guide', content: 'Machine learning basics'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc1'}) SET n.embedding = [0.9, 0.1, 0.0, 0.0]`, nil)
+	require.NoError(t, err)
+
+	// Node 2: about databases
+	_, err = exec.Execute(ctx, `CREATE (n:Document {id: 'doc2', title: 'DB Guide', content: 'Database fundamentals'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc2'}) SET n.embedding = [0.0, 0.9, 0.1, 0.0]`, nil)
+	require.NoError(t, err)
+
+	// Node 3: about web development
+	_, err = exec.Execute(ctx, `CREATE (n:Document {id: 'doc3', title: 'Web Guide', content: 'Web development intro'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (n:Document {id: 'doc3'}) SET n.embedding = [0.0, 0.0, 0.9, 0.1]`, nil)
+	require.NoError(t, err)
+
+	t.Run("query_with_direct_vector_array", func(t *testing.T) {
+		// Query for ML-related documents using direct vector (Neo4j style)
+		mlQuery := [4]float32{0.85, 0.15, 0.0, 0.0} // Similar to doc1
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, [0.85, 0.15, 0.0, 0.0]) YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Should find nodes with embeddings, doc1 should be most similar
+		assert.Greater(t, len(result.Rows), 0, "Should find at least one document")
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(map[string]interface{})
+			assert.Equal(t, "doc1", topNode["id"], "doc1 should be most similar to ML query")
+			score := result.Rows[0][1].(float64)
+			assert.Greater(t, score, 0.8, "Score should be high for similar vectors")
+		}
+		_ = mlQuery // Suppress unused warning
+	})
+
+	t.Run("query_with_string_auto_embedded", func(t *testing.T) {
+		// Set up mock embedder that returns ML-like vector for any query
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.85, 0.15, 0.0, 0.0}, // Returns ML-like vector
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Query using string - server embeds it automatically
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, 'machine learning tutorial') YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Verify embedder was called with the query string
+		assert.Equal(t, "machine learning tutorial", mockEmbedder.lastQuery)
+
+		// Should find nodes, doc1 should be most similar
+		assert.Greater(t, len(result.Rows), 0, "Should find documents")
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(map[string]interface{})
+			assert.Equal(t, "doc1", topNode["id"], "doc1 should match ML query")
+		}
+	})
+
+	t.Run("query_with_double_quoted_string", func(t *testing.T) {
+		mockEmbedder := &mockQueryEmbedder{
+			embedding: []float32{0.0, 0.85, 0.15, 0.0}, // Returns DB-like vector
+		}
+		exec.SetEmbedder(mockEmbedder)
+
+		// Query using double-quoted string
+		result, err := exec.Execute(ctx,
+			`CALL db.index.vector.queryNodes('doc_idx', 10, "database query") YIELD node, score`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Verify embedder was called
+		assert.Equal(t, "database query", mockEmbedder.lastQuery)
+
+		// doc2 should be most similar
+		if len(result.Rows) > 0 {
+			topNode := result.Rows[0][0].(map[string]interface{})
+			assert.Equal(t, "doc2", topNode["id"], "doc2 should match DB query")
+		}
+	})
+
+	t.Run("query_with_parameter_reference", func(t *testing.T) {
+		// Parameter queries return empty result (params resolved at higher level)
+		// This tests that the syntax is accepted
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('doc_idx', 10, $queryVector) YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		// Empty because parameters aren't resolved at this level
+		assert.Empty(t, result.Rows, "Parameter queries return empty at executor level")
+	})
+
+	t.Run("string_query_error_without_embedder", func(t *testing.T) {
+		// Create fresh executor without embedder
+		freshExec := NewStorageExecutor(engine)
+
+		// Should fail gracefully with helpful message
+		_, err := freshExec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('idx', 5, 'test query') YIELD node, score", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no embedder configured")
+		assert.Contains(t, err.Error(), "use vector array")
+	})
+
+	t.Run("dimension_mismatch_silently_filters", func(t *testing.T) {
+		// Query with different dimension vector - should return 0 results (not error)
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('idx', 10, [0.5, 0.5]) YIELD node, score", nil) // 2-dim vs 4-dim
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, result.Rows, "Dimension mismatch should filter out all nodes")
+	})
+
+	t.Run("limit_results", func(t *testing.T) {
+		// Query with limit of 2
+		result, err := exec.Execute(ctx,
+			"CALL db.index.vector.queryNodes('idx', 2, [0.5, 0.5, 0.5, 0.5]) YIELD node, score", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.LessOrEqual(t, len(result.Rows), 2, "Should respect limit")
+	})
+}
+
+// TestVectorSearchEndToEnd simulates the Mimir workflow:
+// 1. Mimir generates embedding client-side
+// 2. Mimir stores embedding via Cypher SET
+// 3. Mimir queries via db.index.vector.queryNodes with vector
+func TestVectorSearchEndToEnd(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Simulate Mimir storing a node with embedding (as it does with Neo4j today)
+	_, err := exec.Execute(ctx, `CREATE (n:Node {id: 'node-abc123', type: 'decision', content: 'Use PostgreSQL', title: 'Database Choice'})`, nil)
+	require.NoError(t, err)
+
+	// Mimir generates embedding and stores it (single SET for simplicity)
+	_, err = exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) SET n.embedding = [0.7, 0.2, 0.05, 0.05]`, nil)
+	require.NoError(t, err)
+
+	// Additional properties
+	_, err = exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) SET n.has_embedding = true`, nil)
+	require.NoError(t, err)
+
+	// Verify embedding was stored
+	result, err := exec.Execute(ctx, `MATCH (n:Node {id: 'node-abc123'}) RETURN n`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	// Query like Mimir does: with pre-computed query vector
+	searchResult, err := exec.Execute(ctx, `CALL db.index.vector.queryNodes('node_embedding_index', 10, [0.65, 0.25, 0.05, 0.05]) YIELD node, score`, nil)
+	require.NoError(t, err)
+	require.NotNil(t, searchResult)
+
+	// Should find our node with high similarity
+	require.GreaterOrEqual(t, len(searchResult.Rows), 1, "Should find the stored node")
+	if len(searchResult.Rows) > 0 {
+		score := searchResult.Rows[0][1].(float64)
+		assert.Greater(t, score, 0.9, "Should have high similarity score")
+	}
+}
+
+// TestMultiLineSetWithArray tests that SET clauses with arrays and multiple properties work
+func TestMultiLineSetWithArray(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(engine)
+	ctx := context.Background()
+
+	// Create a node
+	_, err := exec.Execute(ctx, `CREATE (n:Node {id: 'test-multi'})`, nil)
+	require.NoError(t, err)
+
+	// Multi-line SET with array - this is how Mimir sets embeddings with metadata
+	_, err = exec.Execute(ctx, `
+		MATCH (n:Node {id: 'test-multi'})
+		SET n.embedding = [0.7, 0.2, 0.05, 0.05],
+		    n.embedding_dimensions = 4,
+		    n.embedding_model = 'mxbai-embed-large',
+		    n.has_embedding = true
+	`, nil)
+	require.NoError(t, err)
+
+	// Verify all properties were set
+	nodes, err := engine.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	node := nodes[0]
+
+	// Check embedding was set (routed to node.Embedding)
+	assert.Equal(t, 4, len(node.Embedding), "Embedding should have 4 dimensions")
+	assert.InDelta(t, 0.7, node.Embedding[0], 0.01, "First embedding value")
+
+	// Check other properties were set
+	assert.Equal(t, float64(4), node.Properties["embedding_dimensions"])
+	assert.Equal(t, "mxbai-embed-large", node.Properties["embedding_model"])
+	assert.Equal(t, true, node.Properties["has_embedding"])
 }
 
 func TestCallDbIndexVectorQueryRelationships(t *testing.T) {

@@ -157,48 +157,8 @@ func TestLinkResultSerialization(t *testing.T) {
 	}
 }
 
-func TestIndexResultSerialization(t *testing.T) {
-	result := IndexResult{
-		WatchID:     "watch-123",
-		FilesQueued: 42,
-		Status:      "indexing",
-	}
-
-	data, err := json.Marshal(result)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-
-	var decoded IndexResult
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-
-	if decoded.FilesQueued != 42 {
-		t.Errorf("FilesQueued mismatch: got %d, want 42", decoded.FilesQueued)
-	}
-}
-
-func TestUnindexResultSerialization(t *testing.T) {
-	result := UnindexResult{
-		RemovedFiles:  10,
-		RemovedChunks: 50,
-	}
-
-	data, err := json.Marshal(result)
-	if err != nil {
-		t.Fatalf("Failed to marshal: %v", err)
-	}
-
-	var decoded UnindexResult
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal: %v", err)
-	}
-
-	if decoded.RemovedFiles != 10 {
-		t.Errorf("RemovedFiles mismatch: got %d, want 10", decoded.RemovedFiles)
-	}
-}
+// Note: TestIndexResultSerialization and TestUnindexResultSerialization removed
+// These types were removed - file indexing is handled by Mimir
 
 func TestTaskResultSerialization(t *testing.T) {
 	result := TaskResult{

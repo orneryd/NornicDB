@@ -891,10 +891,39 @@ func (e *StorageExecutor) callDbmsFunctions() (*ExecuteResult, error) {
 //   - node: The matched node with all properties
 //   - score: Cosine similarity score (0.0 to 1.0)
 func (e *StorageExecutor) callDbIndexVectorQueryNodes(cypher string) (*ExecuteResult, error) {
-	// Parse parameters from: CALL db.index.vector.queryNodes('indexName', k, $queryVector)
-	indexName, k, queryVector, err := e.parseVectorQueryParams(cypher)
+	// Parse parameters from: CALL db.index.vector.queryNodes('indexName', k, queryInput)
+	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
+	indexName, k, input, err := e.parseVectorQueryParams(cypher)
 	if err != nil {
 		return nil, fmt.Errorf("vector query parse error: %w", err)
+	}
+
+	// Resolve the query vector
+	var queryVector []float32
+
+	if len(input.vector) > 0 {
+		// Direct vector provided (Neo4j compatible)
+		queryVector = input.vector
+	} else if input.stringQuery != "" {
+		// String query - embed server-side (NornicDB enhancement)
+		if e.embedder == nil {
+			return nil, fmt.Errorf("string query provided but no embedder configured; use vector array or configure embedding service")
+		}
+		ctx := context.Background()
+		embedded, embedErr := e.embedder.Embed(ctx, input.stringQuery)
+		if embedErr != nil {
+			return nil, fmt.Errorf("failed to embed query '%s': %w", input.stringQuery, embedErr)
+		}
+		queryVector = embedded
+	} else if input.paramName != "" {
+		// Parameter reference - should have been resolved by caller
+		// For now, return empty result (parameter resolution happens at higher level)
+		return &ExecuteResult{
+			Columns: []string{"node", "score"},
+			Rows:    [][]interface{}{},
+		}, nil
+	} else {
+		return nil, fmt.Errorf("no query vector or search text provided")
 	}
 
 	result := &ExecuteResult{
@@ -998,11 +1027,23 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(cypher string) (*ExecuteRe
 	return result, nil
 }
 
-// parseVectorQueryParams extracts indexName, k, and queryVector from a vector query CALL
-func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName string, k int, queryVector []float32, err error) {
+// vectorQueryInput represents either a vector or a string query for vector search
+type vectorQueryInput struct {
+	vector      []float32 // Pre-computed vector (from client)
+	stringQuery string    // Text query to embed server-side
+	paramName   string    // Parameter name if using $param
+}
+
+// parseVectorQueryParams extracts indexName, k, and query input from a vector query CALL.
+// The query can be either:
+//   - A vector array: [0.1, 0.2, ...]
+//   - A string query: 'search text' (will be embedded server-side if embedder available)
+//   - A parameter: $queryVector (resolved later)
+func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName string, k int, input *vectorQueryInput, err error) {
 	// Default values
 	k = 10
 	indexName = "default"
+	input = &vectorQueryInput{}
 
 	// Find the procedure call
 	upper := strings.ToUpper(cypher)
@@ -1056,21 +1097,26 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	}
 
 	if len(parts) >= 3 {
-		// Third param is query vector (array or $parameter)
-		vectorStr := strings.TrimSpace(parts[2])
+		// Third param can be:
+		// - Vector array: [0.1, 0.2, ...]
+		// - String query: 'search text' or "search text"
+		// - Parameter: $queryVector
+		queryStr := strings.TrimSpace(parts[2])
 
-		// Check if it's a parameter reference
-		if strings.HasPrefix(vectorStr, "$") {
-			// Parameter will be substituted by caller - for now return nil
-			// The actual vector should be passed via context/parameters
-			queryVector = nil
-		} else if strings.HasPrefix(vectorStr, "[") {
-			// Parse inline array
-			queryVector = parseInlineVector(vectorStr)
+		if strings.HasPrefix(queryStr, "$") {
+			// Parameter reference - store name for later resolution
+			input.paramName = strings.TrimPrefix(queryStr, "$")
+		} else if strings.HasPrefix(queryStr, "[") {
+			// Inline vector array
+			input.vector = parseInlineVector(queryStr)
+		} else if (strings.HasPrefix(queryStr, "'") && strings.HasSuffix(queryStr, "'")) ||
+			(strings.HasPrefix(queryStr, "\"") && strings.HasSuffix(queryStr, "\"")) {
+			// Quoted string query - will be embedded server-side
+			input.stringQuery = strings.Trim(queryStr, "'\"")
 		}
 	}
 
-	return indexName, k, queryVector, nil
+	return indexName, k, input, nil
 }
 
 // splitParamsCarefully splits comma-separated parameters while respecting brackets
