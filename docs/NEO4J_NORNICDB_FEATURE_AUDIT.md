@@ -248,9 +248,16 @@ Features NornicDB has that Neo4j doesn't:
 | Gap | Impact | Workaround |
 |-----|--------|------------|
 | 87% APOC missing | Low | Core algorithms covered |
-| Bookmarks (causal consistency) | Low | Use explicit ordering |
 | Prometheus metrics | Medium | Use BadgerDB metrics |
 | Slow query log | Medium | Custom logging |
+
+### ✅ Recently Completed
+
+| Feature | Implementation |
+|---------|----------------|
+| Bookmarks (causal consistency) | Returns `nornicdb:bookmark:*` on commit, accepts in BEGIN |
+| String query auto-embedding | `db.index.vector.queryNodes` accepts text strings |
+| Multi-line SET with arrays | Full support for embedding storage workflow |
 
 ### 🟢 Not Applicable
 
