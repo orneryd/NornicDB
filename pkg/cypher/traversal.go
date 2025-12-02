@@ -22,27 +22,27 @@ type PathResult struct {
 
 // TraversalContext holds state during graph traversal
 type TraversalContext struct {
-	startNode    *storage.Node
-	endNode      *storage.Node
-	relTypes     []string       // Allowed relationship types (empty = any)
-	direction    string         // "outgoing", "incoming", "both"
-	minHops      int
-	maxHops      int
-	visited      map[string]bool
-	paths        []PathResult
-	nodeCache    map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
-	limit        int                              // OPTIMIZATION: Early termination limit (0 = no limit)
-	resultCount  int                              // Count of results found so far
+	startNode   *storage.Node
+	endNode     *storage.Node
+	relTypes    []string // Allowed relationship types (empty = any)
+	direction   string   // "outgoing", "incoming", "both"
+	minHops     int
+	maxHops     int
+	visited     map[string]bool
+	paths       []PathResult
+	nodeCache   map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
+	limit       int                              // OPTIMIZATION: Early termination limit (0 = no limit)
+	resultCount int                              // Count of results found so far
 }
 
 // RelationshipPattern represents a parsed relationship pattern
 type RelationshipPattern struct {
-	Variable    string   // r in [r:TYPE]
-	Types       []string // TYPE in [r:TYPE|OTHER]
-	Direction   string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
-	MinHops     int      // min in [*min..max]
-	MaxHops     int      // max in [*min..max]
-	Properties  map[string]interface{}
+	Variable   string   // r in [r:TYPE]
+	Types      []string // TYPE in [r:TYPE|OTHER]
+	Direction  string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
+	MinHops    int      // min in [*min..max]
+	MaxHops    int      // max in [*min..max]
+	Properties map[string]interface{}
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
@@ -72,21 +72,29 @@ func (e *StorageExecutor) parseRelationshipPattern(pattern string) *Relationship
 	// Extract [r:TYPE {props}] part
 	if strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]") {
 		inner := pattern[1 : len(pattern)-1]
-		
-		// Check for variable length: [*], [*2], [*1..3]
+
+		// Check for variable length: [*], [*2], [*1..3], [*2..], [*..5]
 		if strings.Contains(inner, "*") {
 			if matches := varLengthRelPattern.FindStringSubmatch(inner); matches != nil {
+				hasRange := strings.Contains(matches[0], "..") // Check if .. is present
+
 				if matches[1] != "" {
 					result.MinHops, _ = strconv.Atoi(matches[1])
 				} else {
 					result.MinHops = 1
 				}
+
 				if matches[2] != "" {
 					result.MaxHops, _ = strconv.Atoi(matches[2])
+				} else if hasRange {
+					// *2.. or *.. means unbounded max
+					result.MaxHops = 100 // High number for unbounded
 				} else if matches[1] != "" {
+					// *2 means exactly 2 hops
 					result.MaxHops = result.MinHops
 				} else {
-					result.MaxHops = 10 // Default max for unbounded
+					// * means any length (1 to default max)
+					result.MaxHops = 10
 				}
 			}
 			// Remove variable length part
@@ -97,13 +105,13 @@ func (e *StorageExecutor) parseRelationshipPattern(pattern string) *Relationship
 		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
 			result.Variable = strings.TrimSpace(inner[:colonIdx])
 			typesPart := inner[colonIdx+1:]
-			
+
 			// Check for properties
 			if propsIdx := strings.Index(typesPart, "{"); propsIdx >= 0 {
 				result.Properties = e.parseProperties(typesPart[propsIdx:])
 				typesPart = typesPart[:propsIdx]
 			}
-			
+
 			// Split by | for multiple types
 			for _, t := range strings.Split(typesPart, "|") {
 				t = strings.TrimSpace(t)
@@ -145,6 +153,11 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 	// Execute traversal
 	paths := e.traverseGraph(matches)
 
+	// Apply WHERE clause filter if present
+	if whereClause != "" {
+		paths = e.filterPathsByWhere(paths, matches, whereClause)
+	}
+
 	// Pre-compute upper-case expressions and aggregation flags ONCE for all items
 	// This avoids repeated strings.ToUpper() calls in loops (major performance win)
 	upperExprs := make([]string, len(returnItems))
@@ -178,17 +191,17 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 				break
 			}
 		}
-		
+
 		// If no grouping, return single aggregated row
 		if !hasGrouping {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
 				upperExpr := upperExprs[i] // Use pre-computed
-				
+
 				switch {
 				case strings.HasPrefix(upperExpr, "COUNT("):
 					row[i] = int64(len(paths))
-					
+
 				case strings.HasPrefix(upperExpr, "COLLECT("):
 					collected := make([]interface{}, 0, len(paths))
 					inner := item.expr[8 : len(item.expr)-1]
@@ -198,7 +211,7 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 						collected = append(collected, val)
 					}
 					row[i] = collected
-					
+
 				default:
 					if len(paths) > 0 {
 						context := e.buildPathContext(paths[0], matches)
@@ -211,15 +224,15 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 			result.Rows = append(result.Rows, row)
 			return result, nil
 		}
-		
+
 		// GROUP BY: group paths by non-aggregation column values
 		groups := make(map[string][]PathResult)
 		groupKeys := make(map[string][]interface{})
-		
+
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
 			keyParts := make([]interface{}, 0)
-			
+
 			// Build group key from non-aggregation columns
 			for i, item := range returnItems {
 				if !isAggFlags[i] { // Use pre-computed flag
@@ -227,34 +240,34 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 					keyParts = append(keyParts, val)
 				}
 			}
-			
+
 			key := fmt.Sprintf("%v", keyParts)
 			groups[key] = append(groups[key], path)
 			if _, exists := groupKeys[key]; !exists {
 				groupKeys[key] = keyParts
 			}
 		}
-		
+
 		// Build result rows for each group
 		for key, groupPaths := range groups {
 			row := make([]interface{}, len(returnItems))
 			keyIdx := 0
-			
+
 			for i, item := range returnItems {
 				upperExpr := upperExprs[i] // Use pre-computed
-				
+
 				if !isAggFlags[i] { // Use pre-computed flag
 					// Non-aggregated column - use group key value
 					row[i] = groupKeys[key][keyIdx]
 					keyIdx++
 					continue
 				}
-				
+
 				// Aggregation function - aggregate over this group
 				switch {
 				case strings.HasPrefix(upperExpr, "COUNT("):
 					row[i] = int64(len(groupPaths))
-					
+
 				case strings.HasPrefix(upperExpr, "COLLECT("):
 					collected := make([]interface{}, 0, len(groupPaths))
 					inner := item.expr[8 : len(item.expr)-1]
@@ -264,7 +277,7 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 						collected = append(collected, val)
 					}
 					row[i] = collected
-					
+
 				default:
 					if len(groupPaths) > 0 {
 						context := e.buildPathContext(groupPaths[0], matches)
@@ -283,7 +296,7 @@ func (e *StorageExecutor) executeMatchWithRelationships(pattern string, whereCla
 	for _, path := range paths {
 		row := make([]interface{}, len(returnItems))
 		context := e.buildPathContext(path, matches)
-		
+
 		for i, item := range returnItems {
 			row[i] = e.evaluateExpressionWithContext(item.expr, context.nodes, context.rels)
 		}
@@ -301,20 +314,131 @@ type TraversalMatch struct {
 }
 
 // parseTraversalPattern parses (a:Label)-[r:TYPE]->(b:Label) style patterns
+// Uses a state machine instead of regex to properly handle parentheses in property values
 func (e *StorageExecutor) parseTraversalPattern(pattern string) *TraversalMatch {
-	// Pattern regex: (startNode)-[rel]->(endNode) or (startNode)<-[rel]-(endNode)
-	// Uses pre-compiled pathPatternRe from regex_patterns.go
-	
+	// Try regex first for simple patterns (faster)
 	matches := pathPatternRe.FindStringSubmatch(pattern)
-	if matches == nil {
-		return nil
+	if matches != nil {
+		// Verify the regex matched the ENTIRE pattern - if not, it got confused by special chars
+		// The full match (matches[0]) should equal the trimmed pattern
+		fullMatch := strings.TrimSpace(matches[0])
+		trimmedPattern := strings.TrimSpace(pattern)
+
+		if fullMatch == trimmedPattern {
+			// Regex captured the complete pattern
+			startNode := e.parseNodePatternFromString(matches[1])
+			endNode := e.parseNodePatternFromString(matches[3])
+
+			return &TraversalMatch{
+				StartNode:    startNode,
+				Relationship: *e.parseRelationshipPattern(matches[2]),
+				EndNode:      endNode,
+			}
+		}
+		// Regex matched only a partial pattern (e.g., stopped at ')' inside a quoted string)
+		// Fall through to state machine parsing
 	}
 
-	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(matches[1]),
-		Relationship: *e.parseRelationshipPattern(matches[2]),
-		EndNode:      e.parseNodePatternFromString(matches[3]),
+	// Fall back to state-machine parsing for complex patterns with special chars
+	return e.parseTraversalPatternStateMachine(pattern)
+}
+
+// parseTraversalPatternStateMachine parses patterns with a state machine
+// to properly handle parentheses and special characters inside quoted property values.
+func (e *StorageExecutor) parseTraversalPatternStateMachine(pattern string) *TraversalMatch {
+	// Find the boundaries of (startNode), -[rel]->, and (endNode)
+	// respecting quotes and nested parentheses
+
+	// Find start node: first balanced parentheses
+	startIdx := strings.Index(pattern, "(")
+	if startIdx < 0 {
+		return nil
 	}
+	startEnd := findMatchingParen(pattern, startIdx)
+	if startEnd < 0 {
+		return nil
+	}
+	startNodeStr := pattern[startIdx+1 : startEnd]
+
+	// Find relationship: -[...]-> or <-[...]-
+	relStart := strings.Index(pattern[startEnd:], "[")
+	if relStart < 0 {
+		return nil
+	}
+	relStart += startEnd
+	relEnd := strings.Index(pattern[relStart:], "]")
+	if relEnd < 0 {
+		return nil
+	}
+	relEnd += relStart
+
+	// Extract full relationship pattern including arrows
+	relPatternStart := startEnd + 1
+	relPatternEnd := relEnd + 1
+	// Include the arrow after ]
+	for relPatternEnd < len(pattern) && (pattern[relPatternEnd] == '-' || pattern[relPatternEnd] == '>') {
+		relPatternEnd++
+	}
+	relStr := pattern[relPatternStart:relPatternEnd]
+
+	// Find end node: next balanced parentheses after relationship
+	endStart := strings.Index(pattern[relEnd:], "(")
+	if endStart < 0 {
+		return nil
+	}
+	endStart += relEnd
+	endEnd := findMatchingParen(pattern, endStart)
+	if endEnd < 0 {
+		return nil
+	}
+	endNodeStr := pattern[endStart+1 : endEnd]
+
+	return &TraversalMatch{
+		StartNode:    e.parseNodePatternFromString(startNodeStr),
+		Relationship: *e.parseRelationshipPattern(relStr),
+		EndNode:      e.parseNodePatternFromString(endNodeStr),
+	}
+}
+
+// findMatchingParen finds the index of the closing paren that matches the opening paren at startIdx.
+// Respects quoted strings so that ')' inside quotes is not treated as a closing paren.
+func findMatchingParen(s string, startIdx int) int {
+	if startIdx >= len(s) || s[startIdx] != '(' {
+		return -1
+	}
+
+	depth := 0
+	inQuote := false
+	quoteChar := byte(0)
+
+	for i := startIdx; i < len(s); i++ {
+		c := s[i]
+
+		// Handle quotes
+		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
+			if !inQuote {
+				inQuote = true
+				quoteChar = c
+			} else if c == quoteChar {
+				inQuote = false
+			}
+			continue
+		}
+
+		// Only count parens when not in a quote
+		if !inQuote {
+			if c == '(' {
+				depth++
+			} else if c == ')' {
+				depth--
+				if depth == 0 {
+					return i
+				}
+			}
+		}
+	}
+
+	return -1 // No matching paren found
 }
 
 // parseNodePatternFromString parses n:Label {props} from a string
@@ -322,15 +446,15 @@ func (e *StorageExecutor) parseNodePatternFromString(s string) nodePatternInfo {
 	info := nodePatternInfo{
 		properties: make(map[string]interface{}),
 	}
-	
+
 	s = strings.TrimSpace(s)
-	
+
 	// Check for properties
 	if propsIdx := strings.Index(s, "{"); propsIdx >= 0 {
 		info.properties = e.parseProperties(s[propsIdx:])
 		s = s[:propsIdx]
 	}
-	
+
 	// Check for labels
 	if colonIdx := strings.Index(s, ":"); colonIdx >= 0 {
 		info.variable = strings.TrimSpace(s[:colonIdx])
@@ -647,8 +771,8 @@ func (e *StorageExecutor) shortestPath(startNode, endNode *storage.Node, relType
 
 	// BFS for shortest path
 	type queueItem struct {
-		node  *storage.Node
-		path  PathResult
+		node *storage.Node
+		path PathResult
 	}
 
 	queue := []queueItem{{
@@ -745,8 +869,8 @@ func (e *StorageExecutor) allShortestPaths(startNode, endNode *storage.Node, rel
 
 	// BFS for all shortest paths
 	type queueItem struct {
-		node  *storage.Node
-		path  PathResult
+		node *storage.Node
+		path PathResult
 	}
 
 	queue := []queueItem{{
@@ -852,4 +976,173 @@ func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 		return ""
 	}
 	return edge.Type
+}
+
+// filterPathsByWhere filters paths based on a WHERE clause condition.
+// This evaluates conditions like "i.name = 'value'" against each path's context.
+func (e *StorageExecutor) filterPathsByWhere(paths []PathResult, matches *TraversalMatch, whereClause string) []PathResult {
+	if whereClause == "" {
+		return paths
+	}
+
+	var filtered []PathResult
+	for _, path := range paths {
+		context := e.buildPathContext(path, matches)
+		if e.evaluateWhereOnPath(whereClause, context) {
+			filtered = append(filtered, path)
+		}
+	}
+	return filtered
+}
+
+// evaluateWhereOnPath evaluates a WHERE condition against a path context.
+// Handles conditions like: i.name = 'value', e.score < 90, etc.
+func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathContext) bool {
+	upperClause := strings.ToUpper(whereClause)
+
+	// Handle AND conditions
+	if idx := strings.Index(upperClause, " AND "); idx > 0 {
+		left := strings.TrimSpace(whereClause[:idx])
+		right := strings.TrimSpace(whereClause[idx+5:])
+		return e.evaluateWhereOnPath(left, context) && e.evaluateWhereOnPath(right, context)
+	}
+
+	// Handle OR conditions
+	if idx := strings.Index(upperClause, " OR "); idx > 0 {
+		left := strings.TrimSpace(whereClause[:idx])
+		right := strings.TrimSpace(whereClause[idx+4:])
+		return e.evaluateWhereOnPath(left, context) || e.evaluateWhereOnPath(right, context)
+	}
+
+	// Handle comparison operators: =, <>, <, >, <=, >=
+	operators := []string{"<>", "<=", ">=", "=", "<", ">"}
+	for _, op := range operators {
+		if idx := strings.Index(whereClause, op); idx > 0 {
+			leftExpr := strings.TrimSpace(whereClause[:idx])
+			rightExpr := strings.TrimSpace(whereClause[idx+len(op):])
+
+			leftVal := e.evaluateExpressionWithContext(leftExpr, context.nodes, context.rels)
+			rightVal := e.evaluatePathValue(rightExpr)
+
+			return e.compareValues(leftVal, rightVal, op)
+		}
+	}
+
+	// Handle CONTAINS
+	if idx := strings.Index(upperClause, " CONTAINS "); idx > 0 {
+		leftExpr := strings.TrimSpace(whereClause[:idx])
+		rightExpr := strings.TrimSpace(whereClause[idx+10:])
+
+		leftVal := e.evaluateExpressionWithContext(leftExpr, context.nodes, context.rels)
+		rightVal := e.evaluatePathValue(rightExpr)
+
+		leftStr, lok := leftVal.(string)
+		rightStr, rok := rightVal.(string)
+		if lok && rok {
+			return strings.Contains(leftStr, rightStr)
+		}
+		return false
+	}
+
+	// Handle IS NULL / IS NOT NULL
+	if strings.HasSuffix(upperClause, " IS NOT NULL") {
+		expr := strings.TrimSpace(whereClause[:len(whereClause)-12])
+		val := e.evaluateExpressionWithContext(expr, context.nodes, context.rels)
+		return val != nil
+	}
+	if strings.HasSuffix(upperClause, " IS NULL") {
+		expr := strings.TrimSpace(whereClause[:len(whereClause)-8])
+		val := e.evaluateExpressionWithContext(expr, context.nodes, context.rels)
+		return val == nil
+	}
+
+	return true // Default: pass through
+}
+
+// evaluatePathValue parses a literal value from a WHERE clause expression.
+func (e *StorageExecutor) evaluatePathValue(expr string) interface{} {
+	expr = strings.TrimSpace(expr)
+
+	// Handle quoted strings
+	if len(expr) >= 2 {
+		first, last := expr[0], expr[len(expr)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			return expr[1 : len(expr)-1]
+		}
+	}
+
+	// Handle numbers
+	if i, err := strconv.ParseInt(expr, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(expr, 64); err == nil {
+		return f
+	}
+
+	// Handle booleans
+	if strings.EqualFold(expr, "true") {
+		return true
+	}
+	if strings.EqualFold(expr, "false") {
+		return false
+	}
+
+	return expr
+}
+
+// compareValues compares two values using the given operator.
+func (e *StorageExecutor) compareValues(left, right interface{}, op string) bool {
+	// Handle nil cases
+	if left == nil || right == nil {
+		if op == "=" {
+			return left == right
+		}
+		if op == "<>" {
+			return left != right
+		}
+		return false
+	}
+
+	// String comparison
+	leftStr, leftIsStr := left.(string)
+	rightStr, rightIsStr := right.(string)
+	if leftIsStr && rightIsStr {
+		switch op {
+		case "=":
+			return leftStr == rightStr
+		case "<>":
+			return leftStr != rightStr
+		case "<":
+			return leftStr < rightStr
+		case ">":
+			return leftStr > rightStr
+		case "<=":
+			return leftStr <= rightStr
+		case ">=":
+			return leftStr >= rightStr
+		}
+	}
+
+	// Numeric comparison - convert to float64 for comparison
+	leftNum, leftOk := toFloat64(left)
+	rightNum, rightOk := toFloat64(right)
+	if leftOk && rightOk {
+		switch op {
+		case "=":
+			return leftNum == rightNum
+		case "<>":
+			return leftNum != rightNum
+		case "<":
+			return leftNum < rightNum
+		case ">":
+			return leftNum > rightNum
+		case "<=":
+			return leftNum <= rightNum
+		case ">=":
+			return leftNum >= rightNum
+		}
+	}
+
+	// Fallback: string comparison
+	return fmt.Sprintf("%v", left) == fmt.Sprintf("%v", right) && op == "="
 }

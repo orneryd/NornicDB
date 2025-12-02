@@ -2747,8 +2747,30 @@ func (e *StorageExecutor) filterNodes(nodes []*storage.Node, variable, whereClau
 }
 
 func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClause string) bool {
-	// Handle multiple conditions with AND/OR
+	whereClause = strings.TrimSpace(whereClause)
 	upperClause := strings.ToUpper(whereClause)
+
+	// Handle parenthesized expressions - strip outer parens and recurse
+	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
+		// Verify these are matching outer parens, not separate groups
+		depth := 0
+		isOuterParen := true
+		for i, ch := range whereClause {
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+			}
+			// If depth goes to 0 before the last char, these aren't outer parens
+			if depth == 0 && i < len(whereClause)-1 {
+				isOuterParen = false
+				break
+			}
+		}
+		if isOuterParen {
+			return e.evaluateWhere(node, variable, whereClause[1:len(whereClause)-1])
+		}
+	}
 
 	// Handle NOT EXISTS { } subquery FIRST (before other NOT handling)
 	if strings.Contains(upperClause, "NOT EXISTS") {
@@ -2761,29 +2783,25 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 	}
 
 	// Handle COUNT { } subquery with comparison
-	// Examples: COUNT { MATCH (n)-[:KNOWS]->(m) } > 5
 	if strings.Contains(upperClause, "COUNT {") {
 		return e.evaluateCountSubqueryComparison(node, variable, whereClause)
 	}
 
-	// Handle AND conditions BEFORE NOT (AND/OR have lower precedence than NOT)
-	// (but not inside EXISTS subqueries)
-	if strings.Contains(upperClause, " AND ") && !strings.Contains(whereClause, "{") {
-		andIdx := strings.Index(upperClause, " AND ")
+	// Handle AND at top level only (not inside parentheses or strings)
+	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(whereClause[:andIdx])
 		right := strings.TrimSpace(whereClause[andIdx+5:])
 		return e.evaluateWhere(node, variable, left) && e.evaluateWhere(node, variable, right)
 	}
 
-	// Handle OR conditions (also lower precedence than NOT)
-	if strings.Contains(upperClause, " OR ") && !strings.Contains(whereClause, "{") {
-		orIdx := strings.Index(upperClause, " OR ")
+	// Handle OR at top level only
+	if orIdx := findTopLevelKeyword(whereClause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(whereClause[:orIdx])
 		right := strings.TrimSpace(whereClause[orIdx+4:])
 		return e.evaluateWhere(node, variable, left) || e.evaluateWhere(node, variable, right)
 	}
 
-	// Handle NOT prefix (higher precedence than AND/OR, applies to single term)
+	// Handle NOT prefix
 	if strings.HasPrefix(upperClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
 		return !e.evaluateWhere(node, variable, inner)
@@ -2938,10 +2956,15 @@ func (e *StorageExecutor) parseValue(s string) interface{} {
 		return e.parseArrayValue(s)
 	}
 
-	// Handle quoted strings
+	// Handle quoted strings with escape sequence support
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
 		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		return s[1 : len(s)-1]
+		inner := s[1 : len(s)-1]
+		// Unescape: \' -> ', \" -> ", \\ -> \
+		inner = strings.ReplaceAll(inner, "\\'", "'")
+		inner = strings.ReplaceAll(inner, "\\\"", "\"")
+		inner = strings.ReplaceAll(inner, "\\\\", "\\")
+		return inner
 	}
 
 	// Handle booleans
@@ -2956,9 +2979,10 @@ func (e *StorageExecutor) parseValue(s string) interface{} {
 		return nil
 	}
 
-	// Handle numbers
+	// Handle numbers - preserve int64 for integers, use float64 only for decimals
+	// The comparison functions use toFloat64() which handles both types
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return float64(i) // Normalize to float64 for comparison
+		return i // Keep as int64 for Neo4j compatibility
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
 		return f

@@ -27,6 +27,24 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	upper := strings.ToUpper(cypher)
 
+	// Check for multiple MATCH clauses (excluding OPTIONAL MATCH, UNION, EXISTS)
+	// This handles: MATCH (a)-[:REL]->(b) MATCH (c)-[:REL]->(b) WHERE a <> c RETURN a, b, c
+	// And also: MATCH (a)-[:REL]->(b) MATCH (a)-[:REL2]->(c) RETURN count(a), b.name (with aggregation)
+	// But NOT: MATCH (a) RETURN a UNION MATCH (b) RETURN b
+	// And NOT: MATCH (n) WHERE EXISTS { MATCH (m) ... } RETURN n
+	hasUnion := strings.Contains(upper, "UNION")
+	hasExists := strings.Contains(upper, "EXISTS")
+	hasCountSubquery := strings.Contains(upper, "COUNT {")
+	hasWith := findKeywordIndex(cypher, "WITH") > 0
+
+	if !hasUnion && !hasExists && !hasCountSubquery && !hasWith {
+		matchCount := countKeywordOccurrences(upper, "MATCH")
+		optionalMatchCount := countKeywordOccurrences(upper, "OPTIONAL MATCH")
+		if matchCount-optionalMatchCount > 1 {
+			return e.executeMultiMatch(ctx, cypher)
+		}
+	}
+
 	// Check for WITH clause between MATCH and RETURN
 	// This handles MATCH ... WITH (CASE WHEN) ... RETURN queries
 	// But we must avoid false positives from "STARTS WITH" or "ENDS WITH" in WHERE clauses
@@ -719,57 +737,533 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 	return result, nil
 }
 
-// orderNodes sorts nodes by the given expression
-func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
-	// Parse: n.property [ASC|DESC]
-	desc := strings.HasSuffix(strings.ToUpper(orderExpr), " DESC")
-	orderExpr = strings.TrimSuffix(strings.TrimSuffix(orderExpr, " DESC"), " ASC")
-	orderExpr = strings.TrimSpace(orderExpr)
+// nodeOrderSpec represents a single ORDER BY specification for nodes
+type nodeOrderSpec struct {
+	propName   string
+	descending bool
+}
 
-	// Extract property name
-	var propName string
-	if strings.HasPrefix(orderExpr, variable+".") {
-		propName = orderExpr[len(variable)+1:]
-	} else {
-		propName = orderExpr
+// orderNodes sorts nodes by the given expression, supporting multiple columns
+func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
+	if len(nodes) <= 1 {
+		return nodes
 	}
 
-	// Sort using a simple bubble sort (could use sort.Slice for efficiency)
+	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
+	specs := e.parseNodeOrderSpecs(orderExpr, variable)
+	if len(specs) == 0 {
+		return nodes
+	}
+
 	sorted := make([]*storage.Node, len(nodes))
 	copy(sorted, nodes)
 
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := 0; j < len(sorted)-i-1; j++ {
-			val1, _ := sorted[j].Properties[propName]
-			val2, _ := sorted[j+1].Properties[propName]
+	sort.Slice(sorted, func(i, j int) bool {
+		for _, spec := range specs {
+			val1, _ := sorted[i].Properties[spec.propName]
+			val2, _ := sorted[j].Properties[spec.propName]
 
-			shouldSwap := false
-			num1, ok1 := toFloat64(val1)
-			num2, ok2 := toFloat64(val2)
-
-			if ok1 && ok2 {
-				if desc {
-					shouldSwap = num1 < num2
-				} else {
-					shouldSwap = num1 > num2
+			cmp := e.compareOrderValues(val1, val2)
+			if cmp != 0 {
+				if spec.descending {
+					return cmp > 0
 				}
+				return cmp < 0
+			}
+		}
+		return false // All equal
+	})
+
+	return sorted
+}
+
+// parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
+func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []nodeOrderSpec {
+	var specs []nodeOrderSpec
+
+	// Split by comma
+	parts := splitOutsideParens(orderExpr, ',')
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Parse: "n.property [ASC|DESC]"
+		tokens := strings.Fields(part)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		expr := tokens[0]
+		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
+
+		// Extract property name
+		var propName string
+		if strings.HasPrefix(expr, variable+".") {
+			propName = expr[len(variable)+1:]
+		} else {
+			propName = expr
+		}
+
+		specs = append(specs, nodeOrderSpec{propName: propName, descending: descending})
+	}
+
+	return specs
+}
+
+// executeMatchRelationshipsWithClause handles MATCH (a)-[r:TYPE]->(b) WITH ... RETURN queries
+// This combines relationship traversal with WITH clause aggregation
+func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Context, pattern string, preWithWhere string, withAndReturn string) (*ExecuteResult, error) {
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Parse the traversal pattern
+	matches := e.parseTraversalPattern(pattern)
+	if matches == nil {
+		return result, fmt.Errorf("invalid traversal pattern: %s", pattern)
+	}
+
+	// Execute traversal to get all paths
+	paths := e.traverseGraph(matches)
+
+	// Apply pre-WITH WHERE clause filter if present
+	if preWithWhere != "" {
+		paths = e.filterPathsByWhere(paths, matches, preWithWhere)
+	}
+
+	// Parse WITH and RETURN clauses from withAndReturn string
+	// withAndReturn starts with "WITH ..."
+	upper := strings.ToUpper(withAndReturn)
+	returnIdx := findKeywordIndex(withAndReturn, "RETURN")
+	if returnIdx == -1 {
+		return nil, fmt.Errorf("RETURN clause required after WITH")
+	}
+
+	// Extract WITH clause section
+	withSection := strings.TrimSpace(withAndReturn[4:returnIdx]) // Skip "WITH"
+
+	// Check for WHERE between WITH and RETURN (post-aggregation filter, like SQL HAVING)
+	var withClause string
+	var postWithWhere string
+	postWhereIdx := findKeywordNotInBrackets(strings.ToUpper(withSection), " WHERE ")
+	if postWhereIdx > 0 {
+		withClause = strings.TrimSpace(withSection[:postWhereIdx])
+		postWithWhere = strings.TrimSpace(withSection[postWhereIdx+7:]) // Skip " WHERE "
+	} else {
+		withClause = withSection
+	}
+
+	// Extract ORDER BY, SKIP, LIMIT from after RETURN
+	returnPart := strings.TrimSpace(withAndReturn[returnIdx+6:])
+	var orderByClause string
+	var skipVal, limitVal int
+
+	orderByIdx := strings.Index(strings.ToUpper(returnPart), " ORDER BY ")
+	if orderByIdx >= 0 {
+		afterReturn := returnPart[orderByIdx+10:]
+		endIdx := len(afterReturn)
+		for _, kw := range []string{" SKIP ", " LIMIT "} {
+			if idx := strings.Index(strings.ToUpper(afterReturn), kw); idx >= 0 && idx < endIdx {
+				endIdx = idx
+			}
+		}
+		orderByClause = strings.TrimSpace(afterReturn[:endIdx])
+		returnPart = returnPart[:orderByIdx]
+	}
+
+	// Parse SKIP
+	if idx := strings.Index(upper[returnIdx:], " SKIP "); idx >= 0 {
+		skipPart := withAndReturn[returnIdx+idx+6:]
+		endIdx := len(skipPart)
+		for _, kw := range []string{" LIMIT ", " ORDER BY "} {
+			if i := strings.Index(strings.ToUpper(skipPart), kw); i >= 0 && i < endIdx {
+				endIdx = i
+			}
+		}
+		skipVal, _ = strconv.Atoi(strings.TrimSpace(skipPart[:endIdx]))
+	}
+
+	// Parse LIMIT
+	if idx := strings.Index(upper[returnIdx:], " LIMIT "); idx >= 0 {
+		limitPart := withAndReturn[returnIdx+idx+7:]
+		endIdx := len(limitPart)
+		for _, kw := range []string{" SKIP ", " ORDER BY "} {
+			if i := strings.Index(strings.ToUpper(limitPart), kw); i >= 0 && i < endIdx {
+				endIdx = i
+			}
+		}
+		limitVal, _ = strconv.Atoi(strings.TrimSpace(limitPart[:endIdx]))
+	}
+
+	returnClause := strings.TrimSpace(returnPart)
+
+	// Parse WITH items
+	withItems := e.splitWithItems(withClause)
+	type withItem struct {
+		expr        string
+		alias       string
+		isAggregate bool
+	}
+	var parsedWithItems []withItem
+	hasWithAggregation := false
+
+	for _, item := range withItems {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+
+		upperItem := strings.ToUpper(item)
+		asIdx := strings.Index(upperItem, " AS ")
+		var alias string
+		var expr string
+		if asIdx > 0 {
+			expr = strings.TrimSpace(item[:asIdx])
+			alias = strings.TrimSpace(item[asIdx+4:])
+		} else {
+			expr = item
+			alias = item
+		}
+
+		upperExpr := strings.ToUpper(expr)
+		isAgg := strings.HasPrefix(upperExpr, "COUNT(") ||
+			strings.HasPrefix(upperExpr, "SUM(") ||
+			strings.HasPrefix(upperExpr, "AVG(") ||
+			strings.HasPrefix(upperExpr, "COLLECT(") ||
+			strings.HasPrefix(upperExpr, "MIN(") ||
+			strings.HasPrefix(upperExpr, "MAX(")
+
+		if isAgg {
+			hasWithAggregation = true
+		}
+
+		parsedWithItems = append(parsedWithItems, withItem{
+			expr:        expr,
+			alias:       alias,
+			isAggregate: isAgg,
+		})
+	}
+
+	// Build computed values for each path (or group of paths if aggregating)
+	type computedRow struct {
+		values map[string]interface{}
+	}
+	var computedRows []computedRow
+
+	if hasWithAggregation {
+		// WITH clause has aggregation - need to GROUP BY non-aggregated columns
+		var groupByExprs []withItem
+		var aggregateExprs []withItem
+		for _, wi := range parsedWithItems {
+			if wi.isAggregate {
+				aggregateExprs = append(aggregateExprs, wi)
 			} else {
-				str1 := fmt.Sprintf("%v", val1)
-				str2 := fmt.Sprintf("%v", val2)
-				if desc {
-					shouldSwap = str1 < str2
-				} else {
-					shouldSwap = str1 > str2
+				groupByExprs = append(groupByExprs, wi)
+			}
+		}
+
+		// Group paths by their grouping column values
+		groups := make(map[string][]PathResult)
+		groupKeys := make(map[string]map[string]interface{})
+
+		for _, path := range paths {
+			pathCtx := e.buildPathContext(path, matches)
+
+			// Build the group key from non-aggregated expressions
+			keyParts := make([]string, len(groupByExprs))
+			keyValues := make(map[string]interface{})
+
+			for i, ge := range groupByExprs {
+				val := e.evaluateExpressionWithContext(ge.expr, pathCtx.nodes, pathCtx.rels)
+				keyParts[i] = fmt.Sprintf("%v", val)
+				keyValues[ge.alias] = val
+			}
+
+			key := strings.Join(keyParts, "|")
+			groups[key] = append(groups[key], path)
+			if _, exists := groupKeys[key]; !exists {
+				groupKeys[key] = keyValues
+			}
+		}
+
+		// Calculate aggregates for each group
+		for key, groupPaths := range groups {
+			values := make(map[string]interface{})
+
+			// Copy non-aggregated values
+			for k, v := range groupKeys[key] {
+				values[k] = v
+			}
+
+			// Calculate aggregates
+			for _, ae := range aggregateExprs {
+				upperExpr := strings.ToUpper(ae.expr)
+				switch {
+				case strings.HasPrefix(upperExpr, "COUNT(DISTINCT "):
+					inner := ae.expr[15 : len(ae.expr)-1]
+					seen := make(map[string]bool)
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						if val != nil {
+							seen[fmt.Sprintf("%v", val)] = true
+						}
+					}
+					values[ae.alias] = int64(len(seen))
+
+				case strings.HasPrefix(upperExpr, "COUNT("):
+					inner := ae.expr[6 : len(ae.expr)-1]
+					if inner == "*" {
+						values[ae.alias] = int64(len(groupPaths))
+					} else {
+						count := int64(0)
+						for _, p := range groupPaths {
+							pCtx := e.buildPathContext(p, matches)
+							val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+							if val != nil {
+								count++
+							}
+						}
+						values[ae.alias] = count
+					}
+
+				case strings.HasPrefix(upperExpr, "SUM("):
+					inner := ae.expr[4 : len(ae.expr)-1]
+					sum := float64(0)
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						if num, ok := toFloat64(val); ok {
+							sum += num
+						}
+					}
+					values[ae.alias] = sum
+
+				case strings.HasPrefix(upperExpr, "AVG("):
+					inner := ae.expr[4 : len(ae.expr)-1]
+					sum := float64(0)
+					count := 0
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						if num, ok := toFloat64(val); ok {
+							sum += num
+							count++
+						}
+					}
+					if count > 0 {
+						values[ae.alias] = sum / float64(count)
+					} else {
+						values[ae.alias] = nil
+					}
+
+				case strings.HasPrefix(upperExpr, "MIN("):
+					inner := ae.expr[4 : len(ae.expr)-1]
+					var minVal interface{}
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
+							minVal = val
+						}
+					}
+					values[ae.alias] = minVal
+
+				case strings.HasPrefix(upperExpr, "MAX("):
+					inner := ae.expr[4 : len(ae.expr)-1]
+					var maxVal interface{}
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
+							maxVal = val
+						}
+					}
+					values[ae.alias] = maxVal
+
+				case strings.HasPrefix(upperExpr, "COLLECT(DISTINCT "):
+					inner := ae.expr[17 : len(ae.expr)-1]
+					seen := make(map[string]bool)
+					var collected []interface{}
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						key := fmt.Sprintf("%v", val)
+						if !seen[key] {
+							seen[key] = true
+							collected = append(collected, val)
+						}
+					}
+					values[ae.alias] = collected
+
+				case strings.HasPrefix(upperExpr, "COLLECT("):
+					inner := ae.expr[8 : len(ae.expr)-1]
+					var collected []interface{}
+					for _, p := range groupPaths {
+						pCtx := e.buildPathContext(p, matches)
+						val := e.evaluateExpressionWithContext(inner, pCtx.nodes, pCtx.rels)
+						collected = append(collected, val)
+					}
+					values[ae.alias] = collected
 				}
 			}
 
-			if shouldSwap {
-				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
+			computedRows = append(computedRows, computedRow{values: values})
+		}
+	} else {
+		// No aggregation - process each path individually
+		for _, path := range paths {
+			pathCtx := e.buildPathContext(path, matches)
+			values := make(map[string]interface{})
+
+			for _, wi := range parsedWithItems {
+				values[wi.alias] = e.evaluateExpressionWithContext(wi.expr, pathCtx.nodes, pathCtx.rels)
+			}
+
+			computedRows = append(computedRows, computedRow{values: values})
+		}
+	}
+
+	// Apply post-WITH WHERE clause filter
+	if postWithWhere != "" {
+		var filtered []computedRow
+		for _, row := range computedRows {
+			if e.evaluateWhereOnComputedRow(postWithWhere, row.values) {
+				filtered = append(filtered, row)
+			}
+		}
+		computedRows = filtered
+	}
+
+	// Parse RETURN items and build final result
+	returnItems := e.parseReturnItems(returnClause)
+	result.Columns = make([]string, len(returnItems))
+	for i, item := range returnItems {
+		if item.alias != "" {
+			result.Columns[i] = item.alias
+		} else {
+			result.Columns[i] = item.expr
+		}
+	}
+
+	// Build result rows
+	for _, row := range computedRows {
+		resultRow := make([]interface{}, len(returnItems))
+		for i, item := range returnItems {
+			// Try alias first, then expression
+			if val, ok := row.values[item.expr]; ok {
+				resultRow[i] = val
+			} else if val, ok := row.values[item.alias]; ok {
+				resultRow[i] = val
+			} else {
+				// Evaluate expression using computed values as context
+				resultRow[i] = e.evaluateExpressionFromValues(item.expr, row.values)
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY
+	if orderByClause != "" {
+		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderByClause)
+	}
+
+	// Apply SKIP
+	if skipVal > 0 && skipVal < len(result.Rows) {
+		result.Rows = result.Rows[skipVal:]
+	} else if skipVal >= len(result.Rows) {
+		result.Rows = [][]interface{}{}
+	}
+
+	// Apply LIMIT
+	if limitVal > 0 && limitVal < len(result.Rows) {
+		result.Rows = result.Rows[:limitVal]
+	}
+
+	return result, nil
+}
+
+// evaluateWhereOnComputedRow evaluates a WHERE condition on computed values
+func (e *StorageExecutor) evaluateWhereOnComputedRow(whereClause string, values map[string]interface{}) bool {
+	whereClause = strings.TrimSpace(whereClause)
+
+	// Handle AND
+	if idx := strings.Index(strings.ToUpper(whereClause), " AND "); idx > 0 {
+		left := whereClause[:idx]
+		right := whereClause[idx+5:]
+		return e.evaluateWhereOnComputedRow(left, values) && e.evaluateWhereOnComputedRow(right, values)
+	}
+
+	// Handle OR
+	if idx := strings.Index(strings.ToUpper(whereClause), " OR "); idx > 0 {
+		left := whereClause[:idx]
+		right := whereClause[idx+4:]
+		return e.evaluateWhereOnComputedRow(left, values) || e.evaluateWhereOnComputedRow(right, values)
+	}
+
+	// Handle comparison operators
+	for _, op := range []string{">=", "<=", "<>", "!=", "=", ">", "<"} {
+		if idx := strings.Index(whereClause, op); idx > 0 {
+			left := strings.TrimSpace(whereClause[:idx])
+			right := strings.TrimSpace(whereClause[idx+len(op):])
+
+			leftVal := e.evaluateExpressionFromValues(left, values)
+			rightVal := e.parseValue(right)
+
+			switch op {
+			case "=":
+				return fmt.Sprintf("%v", leftVal) == fmt.Sprintf("%v", rightVal)
+			case "<>", "!=":
+				return fmt.Sprintf("%v", leftVal) != fmt.Sprintf("%v", rightVal)
+			case ">":
+				lf, lok := toFloat64(leftVal)
+				rf, rok := toFloat64(rightVal)
+				return lok && rok && lf > rf
+			case "<":
+				lf, lok := toFloat64(leftVal)
+				rf, rok := toFloat64(rightVal)
+				return lok && rok && lf < rf
+			case ">=":
+				lf, lok := toFloat64(leftVal)
+				rf, rok := toFloat64(rightVal)
+				return lok && rok && lf >= rf
+			case "<=":
+				lf, lok := toFloat64(leftVal)
+				rf, rok := toFloat64(rightVal)
+				return lok && rok && lf <= rf
 			}
 		}
 	}
 
-	return sorted
+	return true
+}
+
+// evaluateExpressionFromValues evaluates an expression using computed values map
+func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+	expr = strings.TrimSpace(expr)
+
+	// Direct lookup
+	if val, ok := values[expr]; ok {
+		return val
+	}
+
+	// Handle property access on computed values (e.g., x.property where x is a node)
+	if idx := strings.Index(expr, "."); idx > 0 {
+		varName := expr[:idx]
+		propName := expr[idx+1:]
+		if val, ok := values[varName]; ok {
+			if node, ok := val.(*storage.Node); ok {
+				return node.Properties[propName]
+			}
+		}
+	}
+
+	return expr // Return as literal if not found
 }
 
 // executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries
@@ -805,6 +1299,12 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		whereClause = strings.TrimSpace(matchPart[whereIdx+5:]) // Skip "WHERE"
 	} else {
 		nodePatternPart = matchPart
+	}
+
+	// Check for relationship pattern: (a)-[r:TYPE]->(b) or (a)<-[r]-(b)
+	if strings.Contains(nodePatternPart, "-[") || strings.Contains(nodePatternPart, "]-") {
+		// Delegate to relationship pattern handler with WITH clause
+		return e.executeMatchRelationshipsWithClause(ctx, nodePatternPart, whereClause, cypher[withIdx:])
 	}
 
 	// Parse node pattern
@@ -1482,81 +1982,148 @@ func (e *StorageExecutor) filterNodesByWhereClause(nodes []*storage.Node, whereC
 	return parallelFilterNodes(nodes, filterFn)
 }
 
+// orderSpec represents a single ORDER BY column specification
+type orderSpec struct {
+	colIdx     int
+	descending bool
+}
+
 // orderResultRows sorts result rows by the specified ORDER BY expression.
-// Used for ordering aggregated results.
+// Supports multiple columns: "col1 ASC, col2 DESC"
 func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string, orderExpr string) [][]interface{} {
 	if len(rows) <= 1 {
 		return rows
 	}
 
-	// Parse order expression (e.g., "cnt DESC" or "ext ASC")
-	parts := strings.Fields(orderExpr)
-	if len(parts) == 0 {
+	// Parse multiple ORDER BY columns separated by comma
+	orderSpecs := e.parseOrderBySpecs(orderExpr, columns)
+	if len(orderSpecs) == 0 {
 		return rows
 	}
 
-	orderCol := parts[0]
-	descending := len(parts) > 1 && strings.ToUpper(parts[1]) == "DESC"
-
-	// Find column index
-	colIdx := -1
-	for i, col := range columns {
-		if strings.EqualFold(col, orderCol) {
-			colIdx = i
-			break
-		}
-	}
-	if colIdx == -1 {
-		return rows // Column not found
-	}
-
-	// Sort rows
+	// Sort rows using all order specifications
 	sort.Slice(rows, func(i, j int) bool {
-		valI := rows[i][colIdx]
-		valJ := rows[j][colIdx]
-
-		// Handle nil values (nulls last)
-		if valI == nil && valJ == nil {
-			return false
-		}
-		if valI == nil {
-			return false // nil goes last
-		}
-		if valJ == nil {
-			return true // non-nil before nil
-		}
-
-		// Compare based on type
-		var less bool
-		switch vI := valI.(type) {
-		case int64:
-			if vJ, ok := valJ.(int64); ok {
-				less = vI < vJ
-			}
-		case float64:
-			if vJ, ok := valJ.(float64); ok {
-				less = vI < vJ
-			}
-		case string:
-			if vJ, ok := valJ.(string); ok {
-				less = vI < vJ
-			}
-		default:
-			// Try numeric comparison
-			if numI, okI := toFloat64(valI); okI {
-				if numJ, okJ := toFloat64(valJ); okJ {
-					less = numI < numJ
+		for _, spec := range orderSpecs {
+			cmp := e.compareOrderValues(rows[i][spec.colIdx], rows[j][spec.colIdx])
+			if cmp != 0 {
+				if spec.descending {
+					return cmp > 0
 				}
+				return cmp < 0
 			}
+			// Values are equal, try next ORDER BY column
 		}
-
-		if descending {
-			return !less
-		}
-		return less
+		return false // All columns equal, maintain order
 	})
 
 	return rows
+}
+
+// parseOrderBySpecs parses "col1 ASC, col2 DESC" into orderSpec slice
+func (e *StorageExecutor) parseOrderBySpecs(orderExpr string, columns []string) []orderSpec {
+	var specs []orderSpec
+
+	// Split by comma (but not inside parentheses)
+	parts := splitOutsideParens(orderExpr, ',')
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Parse: "column [ASC|DESC]"
+		tokens := strings.Fields(part)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		colName := tokens[0]
+		descending := len(tokens) > 1 && strings.ToUpper(tokens[1]) == "DESC"
+
+		// Find column index
+		colIdx := -1
+		for i, col := range columns {
+			if strings.EqualFold(col, colName) {
+				colIdx = i
+				break
+			}
+		}
+		if colIdx == -1 {
+			continue // Column not found, skip
+		}
+
+		specs = append(specs, orderSpec{colIdx: colIdx, descending: descending})
+	}
+
+	return specs
+}
+
+// compareOrderValues compares two values for ordering
+// Returns -1 if a < b, 0 if a == b, 1 if a > b
+func (e *StorageExecutor) compareOrderValues(a, b interface{}) int {
+	// Handle nil values (nulls last)
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return 1 // nil goes last
+	}
+	if b == nil {
+		return -1 // non-nil before nil
+	}
+
+	// Try numeric comparison
+	numA, okA := toFloat64(a)
+	numB, okB := toFloat64(b)
+	if okA && okB {
+		if numA < numB {
+			return -1
+		}
+		if numA > numB {
+			return 1
+		}
+		return 0
+	}
+
+	// String comparison
+	strA := fmt.Sprintf("%v", a)
+	strB := fmt.Sprintf("%v", b)
+	if strA < strB {
+		return -1
+	}
+	if strA > strB {
+		return 1
+	}
+	return 0
+}
+
+// splitOutsideParens splits a string by delimiter, respecting parentheses
+func splitOutsideParens(s string, delim rune) []string {
+	var parts []string
+	var current strings.Builder
+	depth := 0
+
+	for _, ch := range s {
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		}
+
+		if ch == delim && depth == 0 {
+			parts = append(parts, current.String())
+			current.Reset()
+		} else {
+			current.WriteRune(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+
+	return parts
 }
 
 // filterNodesByProperties filters nodes to only include those matching ALL specified properties.
@@ -2224,6 +2791,559 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	}
 
 	return result, nil
+}
+
+// countKeywordOccurrences counts how many times a keyword appears in the query
+// using word boundary detection. Excludes occurrences inside labels (after ':')
+func countKeywordOccurrences(upper, keyword string) int {
+	count := 0
+	idx := 0
+	for {
+		found := strings.Index(upper[idx:], keyword)
+		if found == -1 {
+			break
+		}
+		// Check word boundary before
+		pos := idx + found
+		// Must have space/newline/tab before, NOT ':' (which would indicate a label)
+		beforeOk := pos == 0 || (upper[pos-1] == ' ' || upper[pos-1] == '\n' || upper[pos-1] == '\t')
+		// Check word boundary after
+		afterPos := pos + len(keyword)
+		afterOk := afterPos >= len(upper) || (upper[afterPos] == ' ' || upper[afterPos] == '(' || upper[afterPos] == '\n' || upper[afterPos] == '\t')
+
+		if beforeOk && afterOk {
+			count++
+		}
+		idx = pos + len(keyword)
+	}
+	return count
+}
+
+// executeMultiMatch handles queries with multiple MATCH clauses
+// Example: MATCH (p1:Person)-[:WORKS_AT]->(c:Company) MATCH (p2:Person)-[:WORKS_AT]->(c) WHERE p1 <> p2 RETURN p1, p2, c
+func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	upper := strings.ToUpper(cypher)
+
+	// Find RETURN and WHERE positions
+	returnIdx := findKeywordIndex(cypher, "RETURN")
+	if returnIdx == -1 {
+		return nil, fmt.Errorf("multi-MATCH query requires RETURN clause")
+	}
+
+	// Extract WHERE clause if present (between last MATCH pattern and RETURN)
+	var whereClause string
+	whereIdx := findKeywordIndex(cypher, "WHERE")
+	if whereIdx > 0 && whereIdx < returnIdx {
+		whereClause = strings.TrimSpace(cypher[whereIdx+5 : returnIdx])
+	}
+
+	// Parse RETURN clause
+	returnPart := cypher[returnIdx+6:]
+	returnEndIdx := len(returnPart)
+	for _, kw := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
+		if idx := strings.Index(strings.ToUpper(returnPart), kw); idx >= 0 && idx < returnEndIdx {
+			returnEndIdx = idx
+		}
+	}
+	returnClause := strings.TrimSpace(returnPart[:returnEndIdx])
+	returnItems := e.parseReturnItems(returnClause)
+
+	// Split MATCH clauses
+	matchClauses := splitMatchClauses(cypher, whereIdx, returnIdx)
+	if len(matchClauses) < 2 {
+		return nil, fmt.Errorf("expected multiple MATCH clauses")
+	}
+
+	// Execute first MATCH and get initial bindings
+	bindings := e.executeFirstMatch(matchClauses[0])
+
+	// Execute subsequent MATCH clauses with bindings
+	for i := 1; i < len(matchClauses); i++ {
+		bindings = e.executeChainedMatch(matchClauses[i], bindings)
+	}
+
+	// Apply WHERE filter if present
+	if whereClause != "" {
+		bindings = e.filterBindingsByWhere(bindings, whereClause)
+	}
+
+	// Build result from bindings
+	result := &ExecuteResult{
+		Columns: make([]string, len(returnItems)),
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	for i, item := range returnItems {
+		if item.alias != "" {
+			result.Columns[i] = item.alias
+		} else {
+			result.Columns[i] = item.expr
+		}
+	}
+
+	// Check if this is an aggregation query
+	hasAggregation := false
+	isAggFlags := make([]bool, len(returnItems))
+	for i, item := range returnItems {
+		upperExpr := strings.ToUpper(item.expr)
+		isAggFlags[i] = strings.HasPrefix(upperExpr, "COUNT(") ||
+			strings.HasPrefix(upperExpr, "SUM(") ||
+			strings.HasPrefix(upperExpr, "AVG(") ||
+			strings.HasPrefix(upperExpr, "MIN(") ||
+			strings.HasPrefix(upperExpr, "MAX(") ||
+			strings.HasPrefix(upperExpr, "COLLECT(")
+		if isAggFlags[i] {
+			hasAggregation = true
+		}
+	}
+
+	if hasAggregation {
+		// Group bindings by non-aggregated columns
+		groups := make(map[string][]binding)
+		groupKeys := make(map[string][]interface{})
+
+		for _, b := range bindings {
+			// Build group key from non-aggregated columns
+			keyParts := make([]interface{}, 0)
+			for i, item := range returnItems {
+				if !isAggFlags[i] {
+					val := e.resolveBindingItem(item, b)
+					keyParts = append(keyParts, val)
+				}
+			}
+			key := fmt.Sprintf("%v", keyParts)
+			groups[key] = append(groups[key], b)
+			if _, exists := groupKeys[key]; !exists {
+				groupKeys[key] = keyParts
+			}
+		}
+
+		// Build result rows with aggregations
+		for key, groupBindings := range groups {
+			row := make([]interface{}, len(returnItems))
+			keyIdx := 0
+
+			for i, item := range returnItems {
+				if !isAggFlags[i] {
+					// Non-aggregated column - use group key value
+					row[i] = groupKeys[key][keyIdx]
+					keyIdx++
+					continue
+				}
+
+				// Aggregation function
+				upperExpr := strings.ToUpper(item.expr)
+				switch {
+				case strings.HasPrefix(upperExpr, "COUNT("):
+					inner := item.expr[6 : len(item.expr)-1]
+					if inner == "*" {
+						row[i] = int64(len(groupBindings))
+					} else {
+						count := int64(0)
+						for _, b := range groupBindings {
+							val := e.resolveBindingItem(returnItem{expr: inner}, b)
+							if val != nil {
+								count++
+							}
+						}
+						row[i] = count
+					}
+
+				case strings.HasPrefix(upperExpr, "SUM("):
+					inner := item.expr[4 : len(item.expr)-1]
+					sum := float64(0)
+					for _, b := range groupBindings {
+						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						if num, ok := toFloat64(val); ok {
+							sum += num
+						}
+					}
+					row[i] = sum
+
+				case strings.HasPrefix(upperExpr, "AVG("):
+					inner := item.expr[4 : len(item.expr)-1]
+					sum := float64(0)
+					count := 0
+					for _, b := range groupBindings {
+						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						if num, ok := toFloat64(val); ok {
+							sum += num
+							count++
+						}
+					}
+					if count > 0 {
+						row[i] = sum / float64(count)
+					} else {
+						row[i] = nil
+					}
+
+				case strings.HasPrefix(upperExpr, "MIN("):
+					inner := item.expr[4 : len(item.expr)-1]
+					var minVal interface{}
+					for _, b := range groupBindings {
+						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
+							minVal = val
+						}
+					}
+					row[i] = minVal
+
+				case strings.HasPrefix(upperExpr, "MAX("):
+					inner := item.expr[4 : len(item.expr)-1]
+					var maxVal interface{}
+					for _, b := range groupBindings {
+						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
+							maxVal = val
+						}
+					}
+					row[i] = maxVal
+
+				case strings.HasPrefix(upperExpr, "COLLECT("):
+					inner := item.expr[8 : len(item.expr)-1]
+					var collected []interface{}
+					for _, b := range groupBindings {
+						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						collected = append(collected, val)
+					}
+					row[i] = collected
+				}
+			}
+			result.Rows = append(result.Rows, row)
+		}
+	} else {
+		// Non-aggregation - process each binding directly
+		for _, b := range bindings {
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				row[i] = e.resolveBindingItem(item, b)
+			}
+			result.Rows = append(result.Rows, row)
+		}
+	}
+
+	// Apply ORDER BY, SKIP, LIMIT
+	orderByIdx := strings.Index(upper, "ORDER BY")
+	if orderByIdx > 0 {
+		orderPart := upper[orderByIdx+8:]
+		endIdx := len(orderPart)
+		for _, kw := range []string{" SKIP ", " LIMIT "} {
+			if idx := strings.Index(orderPart, kw); idx >= 0 && idx < endIdx {
+				endIdx = idx
+			}
+		}
+		orderExpr := strings.TrimSpace(cypher[orderByIdx+8 : orderByIdx+8+endIdx])
+		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
+	}
+
+	return result, nil
+}
+
+// splitMatchClauses splits the query into individual MATCH clause patterns
+func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
+	upper := strings.ToUpper(cypher)
+	var clauses []string
+
+	// Find the end of MATCH patterns (before WHERE or RETURN)
+	endIdx := returnIdx
+	if whereIdx > 0 && whereIdx < returnIdx {
+		endIdx = whereIdx
+	}
+
+	matchPart := cypher[5:endIdx] // Skip first "MATCH"
+
+	// Split by subsequent MATCH keywords
+	parts := strings.Split(strings.ToUpper(matchPart), "MATCH")
+	offset := 5 // Start after first MATCH
+
+	for i, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		// Find the actual length in original case
+		pattern := strings.TrimSpace(cypher[offset : offset+len(p)])
+		clauses = append(clauses, pattern)
+		offset += len(p)
+		if i < len(parts)-1 {
+			offset += 5 // Skip "MATCH"
+		}
+	}
+
+	// Fix: Re-split using findKeywordIndex for accuracy
+	clauses = clauses[:0]
+	start := 5 // After first MATCH
+	searchStart := start
+	for {
+		nextMatch := strings.Index(upper[searchStart:], "MATCH")
+		if nextMatch == -1 || searchStart+nextMatch >= endIdx {
+			// No more MATCH - take everything to end
+			clauses = append(clauses, strings.TrimSpace(cypher[start:endIdx]))
+			break
+		}
+		// Check if it's a real MATCH (word boundary)
+		pos := searchStart + nextMatch
+		beforeOk := pos == 0 || upper[pos-1] == ' ' || upper[pos-1] == '\n' || upper[pos-1] == '\t'
+		afterOk := pos+5 >= len(upper) || upper[pos+5] == ' ' || upper[pos+5] == '('
+
+		if beforeOk && afterOk {
+			clauses = append(clauses, strings.TrimSpace(cypher[start:pos]))
+			start = pos + 5 // Skip "MATCH"
+		}
+		searchStart = pos + 5
+	}
+
+	return clauses
+}
+
+// binding represents variable bindings from multiple MATCH clauses
+type binding map[string]*storage.Node
+
+// executeFirstMatch executes the first MATCH and returns initial bindings
+func (e *StorageExecutor) executeFirstMatch(pattern string) []binding {
+	var bindings []binding
+
+	// Check for relationship pattern
+	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+		matches := e.parseTraversalPattern(pattern)
+		if matches == nil {
+			return bindings
+		}
+
+		paths := e.traverseGraph(matches)
+		for _, path := range paths {
+			if len(path.Nodes) < 2 {
+				continue
+			}
+			b := make(binding)
+			if matches.StartNode.variable != "" {
+				b[matches.StartNode.variable] = path.Nodes[0]
+			}
+			if matches.EndNode.variable != "" {
+				b[matches.EndNode.variable] = path.Nodes[len(path.Nodes)-1]
+			}
+			bindings = append(bindings, b)
+		}
+	} else {
+		// Simple node pattern
+		nodePattern := e.parseNodePattern(pattern)
+		var nodes []*storage.Node
+		if len(nodePattern.labels) > 0 {
+			nodes, _ = e.storage.GetNodesByLabel(nodePattern.labels[0])
+		} else {
+			nodes, _ = e.storage.AllNodes()
+		}
+
+		if len(nodePattern.properties) > 0 {
+			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		}
+
+		for _, node := range nodes {
+			b := make(binding)
+			b[nodePattern.variable] = node
+			bindings = append(bindings, b)
+		}
+	}
+
+	return bindings
+}
+
+// executeChainedMatch executes a subsequent MATCH against existing bindings
+func (e *StorageExecutor) executeChainedMatch(pattern string, existingBindings []binding) []binding {
+	var newBindings []binding
+
+	for _, existing := range existingBindings {
+		// Check for relationship pattern
+		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+			matches := e.parseTraversalPattern(pattern)
+			if matches == nil {
+				continue
+			}
+
+			// Check if any bound variables are referenced
+			boundStartNode := existing[matches.StartNode.variable]
+			boundEndNode := existing[matches.EndNode.variable]
+
+			paths := e.traverseGraph(matches)
+			for _, path := range paths {
+				if len(path.Nodes) < 2 {
+					continue
+				}
+				startNode := path.Nodes[0]
+				endNode := path.Nodes[len(path.Nodes)-1]
+
+				// Check if path matches any bound variables
+				startMatches := boundStartNode == nil || startNode.ID == boundStartNode.ID
+				endMatches := boundEndNode == nil || endNode.ID == boundEndNode.ID
+
+				if startMatches && endMatches {
+					// Create new binding combining existing and new
+					b := make(binding)
+					for k, v := range existing {
+						b[k] = v
+					}
+					if matches.StartNode.variable != "" {
+						b[matches.StartNode.variable] = startNode
+					}
+					if matches.EndNode.variable != "" {
+						b[matches.EndNode.variable] = endNode
+					}
+					newBindings = append(newBindings, b)
+				}
+			}
+		} else {
+			// Simple node pattern
+			nodePattern := e.parseNodePattern(pattern)
+
+			// Check if variable is already bound
+			if boundNode := existing[nodePattern.variable]; boundNode != nil {
+				// Variable is bound, just propagate
+				newBindings = append(newBindings, existing)
+				continue
+			}
+
+			var nodes []*storage.Node
+			if len(nodePattern.labels) > 0 {
+				nodes, _ = e.storage.GetNodesByLabel(nodePattern.labels[0])
+			} else {
+				nodes, _ = e.storage.AllNodes()
+			}
+
+			if len(nodePattern.properties) > 0 {
+				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+			}
+
+			for _, node := range nodes {
+				b := make(binding)
+				for k, v := range existing {
+					b[k] = v
+				}
+				b[nodePattern.variable] = node
+				newBindings = append(newBindings, b)
+			}
+		}
+	}
+
+	return newBindings
+}
+
+// filterBindingsByWhere filters bindings based on WHERE clause
+func (e *StorageExecutor) filterBindingsByWhere(bindings []binding, whereClause string) []binding {
+	var result []binding
+
+	for _, b := range bindings {
+		if e.evaluateBindingWhere(b, whereClause) {
+			result = append(result, b)
+		}
+	}
+
+	return result
+}
+
+// evaluateBindingWhere evaluates WHERE clause against a binding
+func (e *StorageExecutor) evaluateBindingWhere(b binding, whereClause string) bool {
+	whereClause = strings.TrimSpace(whereClause)
+	upper := strings.ToUpper(whereClause)
+
+	// Handle AND
+	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
+		left := strings.TrimSpace(whereClause[:andIdx])
+		right := strings.TrimSpace(whereClause[andIdx+5:])
+		return e.evaluateBindingWhere(b, left) && e.evaluateBindingWhere(b, right)
+	}
+
+	// Handle OR
+	if orIdx := findTopLevelKeyword(whereClause, " OR "); orIdx > 0 {
+		left := strings.TrimSpace(whereClause[:orIdx])
+		right := strings.TrimSpace(whereClause[orIdx+4:])
+		return e.evaluateBindingWhere(b, left) || e.evaluateBindingWhere(b, right)
+	}
+
+	// Handle NOT
+	if strings.HasPrefix(upper, "NOT ") {
+		return !e.evaluateBindingWhere(b, whereClause[4:])
+	}
+
+	// Handle variable comparison: p1 <> p2 (comparing node IDs)
+	if strings.Contains(whereClause, "<>") || strings.Contains(whereClause, "!=") {
+		op := "<>"
+		opIdx := strings.Index(whereClause, "<>")
+		if opIdx == -1 {
+			op = "!="
+			opIdx = strings.Index(whereClause, "!=")
+		}
+
+		left := strings.TrimSpace(whereClause[:opIdx])
+		right := strings.TrimSpace(whereClause[opIdx+len(op):])
+
+		// Check if comparing node variables (not properties)
+		if !strings.Contains(left, ".") && !strings.Contains(right, ".") {
+			leftNode := b[left]
+			rightNode := b[right]
+			if leftNode != nil && rightNode != nil {
+				return leftNode.ID != rightNode.ID
+			}
+		}
+	}
+
+	// Handle property comparison: n.prop = value
+	for _, op := range []string{"<>", "!=", ">=", "<=", "=", ">", "<"} {
+		if idx := strings.Index(whereClause, op); idx > 0 {
+			left := strings.TrimSpace(whereClause[:idx])
+			right := strings.TrimSpace(whereClause[idx+len(op):])
+
+			if dotIdx := strings.Index(left, "."); dotIdx > 0 {
+				varName := left[:dotIdx]
+				propName := left[dotIdx+1:]
+
+				if node := b[varName]; node != nil {
+					actualVal := node.Properties[propName]
+					expectedVal := e.parseValue(right)
+
+					switch op {
+					case "=":
+						return e.compareEqual(actualVal, expectedVal)
+					case "<>", "!=":
+						return !e.compareEqual(actualVal, expectedVal)
+					case ">":
+						return e.compareGreater(actualVal, expectedVal)
+					case ">=":
+						return e.compareGreater(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
+					case "<":
+						return e.compareLess(actualVal, expectedVal)
+					case "<=":
+						return e.compareLess(actualVal, expectedVal) || e.compareEqual(actualVal, expectedVal)
+					}
+				}
+			}
+			break
+		}
+	}
+
+	return true
+}
+
+// resolveBindingItem resolves a return item against a binding
+func (e *StorageExecutor) resolveBindingItem(item returnItem, b binding) interface{} {
+	expr := item.expr
+
+	// Check for property access: var.prop
+	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
+		varName := expr[:dotIdx]
+		propName := expr[dotIdx+1:]
+
+		if node := b[varName]; node != nil {
+			return node.Properties[propName]
+		}
+		return nil
+	}
+
+	// Check for node variable
+	if node := b[expr]; node != nil {
+		return e.nodeToMap(node)
+	}
+
+	return nil
 }
 
 // executeCreate handles CREATE queries.

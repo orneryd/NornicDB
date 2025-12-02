@@ -634,8 +634,10 @@ func TestComplexScoreDistribution(t *testing.T) {
 		t.Run(algo.name, func(t *testing.T) {
 			preds := algo.fn(graph, sourceID, 50)
 
+			// With 200 nodes at 20% density, we MUST get predictions
+			// Zero predictions indicates a bug in the algorithm
 			if len(preds) == 0 {
-				t.Skip("No predictions")
+				t.Fatal("Expected predictions for a well-connected graph, got 0 - algorithm may be broken")
 			}
 
 			// Calculate score statistics

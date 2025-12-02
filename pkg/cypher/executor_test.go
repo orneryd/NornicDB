@@ -832,9 +832,9 @@ func TestExecuteSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Stats.PropertiesSet)
 
-	// Verify update
+	// Verify update - integer values should be stored as int64 (Neo4j compatible)
 	updated, _ := store.GetNode("set-test")
-	assert.Equal(t, float64(30), updated.Properties["age"])
+	assert.Equal(t, int64(30), updated.Properties["age"])
 }
 
 func TestExecuteSetWithReturn(t *testing.T) {

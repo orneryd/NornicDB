@@ -159,8 +159,10 @@ var (
 // =============================================================================
 
 var (
-	// Variable-length relationship: *1..3, *, *..5
-	varLengthRelPattern = regexp.MustCompile(`\*(\d*)(?:\.\.(\d+))?`)
+	// Variable-length relationship: *1..3, *, *..5, *2..
+	// Group 1: min hops (optional digits)
+	// Group 2: max hops (optional digits after ..)
+	varLengthRelPattern = regexp.MustCompile(`\*(\d*)(?:\.\.(\d*))?`)
 
 	// Path pattern: (node1)-[rel]->(node2)
 	pathPatternRe = regexp.MustCompile(`\(([^)]*)\)\s*(<?\-\[[^\]]*\]\-?>?)\s*\(([^)]*)\)`)

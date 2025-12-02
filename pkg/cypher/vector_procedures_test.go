@@ -387,8 +387,8 @@ func TestMultiLineSetWithArray(t *testing.T) {
 	assert.Equal(t, 4, len(node.Embedding), "Embedding should have 4 dimensions")
 	assert.InDelta(t, 0.7, node.Embedding[0], 0.01, "First embedding value")
 
-	// Check other properties were set
-	assert.Equal(t, float64(4), node.Properties["embedding_dimensions"])
+	// Check other properties were set - integers stored as int64 (Neo4j compatible)
+	assert.Equal(t, int64(4), node.Properties["embedding_dimensions"])
 	assert.Equal(t, "mxbai-embed-large", node.Properties["embedding_model"])
 	assert.Equal(t, true, node.Properties["has_embedding"])
 }

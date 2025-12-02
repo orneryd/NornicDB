@@ -1263,7 +1263,25 @@ func (e *StorageExecutor) evaluateExpressionWithContext(expr string, nodes map[s
 
 	// substring(string, start, [length])
 	if strings.HasPrefix(lowerExpr, "substring(") && strings.HasSuffix(expr, ")") {
-		return e.evaluateSubstring(expr)
+		inner := strings.TrimSpace(expr[10 : len(expr)-1])
+		args := e.splitFunctionArgs(inner)
+		if len(args) >= 2 {
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			start, _ := strconv.Atoi(strings.TrimSpace(args[1]))
+			length := len(str) - start
+			if len(args) >= 3 {
+				length, _ = strconv.Atoi(strings.TrimSpace(args[2]))
+			}
+			if start >= len(str) {
+				return ""
+			}
+			end := start + length
+			if end > len(str) {
+				end = len(str)
+			}
+			return str[start:end]
+		}
+		return nil
 	}
 
 	// left(string, n) - return first n characters
