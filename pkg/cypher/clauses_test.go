@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -1263,7 +1264,7 @@ func TestCosineSimilarity(t *testing.T) {
 	// Identical vectors should have similarity 1
 	a := []float64{1, 0, 0}
 	b := []float64{1, 0, 0}
-	sim := cosineSimilarity(a, b)
+	sim := vector.CosineSimilarityFloat64(a, b)
 	if sim < 0.99 {
 		t.Errorf("Identical vectors should have sim ~1, got %f", sim)
 	}
@@ -1271,7 +1272,7 @@ func TestCosineSimilarity(t *testing.T) {
 	// Orthogonal vectors should have similarity 0
 	a = []float64{1, 0, 0}
 	b = []float64{0, 1, 0}
-	sim = cosineSimilarity(a, b)
+	sim = vector.CosineSimilarityFloat64(a, b)
 	if sim > 0.01 {
 		t.Errorf("Orthogonal vectors should have sim ~0, got %f", sim)
 	}
@@ -1279,7 +1280,7 @@ func TestCosineSimilarity(t *testing.T) {
 	// Different length vectors
 	a = []float64{1, 2}
 	b = []float64{1, 2, 3}
-	sim = cosineSimilarity(a, b)
+	sim = vector.CosineSimilarityFloat64(a, b)
 	if sim != 0 {
 		t.Errorf("Different length vectors should return 0, got %f", sim)
 	}
@@ -1289,7 +1290,7 @@ func TestEuclideanSimilarity(t *testing.T) {
 	// Identical vectors should have high similarity
 	a := []float64{1, 0, 0}
 	b := []float64{1, 0, 0}
-	sim := euclideanSimilarity(a, b)
+	sim := vector.EuclideanSimilarityFloat64(a, b)
 	if sim < 0.99 {
 		t.Errorf("Identical vectors should have sim ~1, got %f", sim)
 	}
@@ -1297,7 +1298,7 @@ func TestEuclideanSimilarity(t *testing.T) {
 	// Different length vectors
 	a = []float64{1, 2}
 	b = []float64{1, 2, 3}
-	sim = euclideanSimilarity(a, b)
+	sim = vector.EuclideanSimilarityFloat64(a, b)
 	if sim != 0 {
 		t.Errorf("Different length vectors should return 0, got %f", sim)
 	}

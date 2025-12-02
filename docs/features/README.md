@@ -18,6 +18,7 @@
 
 ### Configuration
 - **[Feature Flags](feature-flags.md)** - Runtime configuration
+- **[APOC Functions](apoc-functions.md)** - 450+ Neo4j-compatible functions
 
 ## 📚 Feature Categories
 
@@ -85,6 +86,7 @@ ORDER BY n.decayScore DESC
 
 ## 📖 Feature Guides
 
+- **[APOC Functions](apoc-functions.md)** - 450+ collection, text, math, graph functions
 - **[Feature Flags](feature-flags.md)** - Runtime configuration
 - **[Link Prediction](link-prediction.md)** - Predict missing relationships
 - **[MCP Integration](mcp-integration.md)** - AI agent tools

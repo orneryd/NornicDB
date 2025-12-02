@@ -2,10 +2,22 @@ package cypher
 
 import (
 	"math"
-	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
 )
+
+// toFloat64 is a package-level alias to convert.ToFloat64 for internal use.
+// This avoids updating 100+ call sites while still consolidating the implementation.
+func toFloat64(v interface{}) (float64, bool) {
+	return convert.ToFloat64(v)
+}
+
+// toFloat64Slice is a package-level alias to convert.ToFloat64Slice for internal use.
+func toFloat64Slice(v interface{}) ([]float64, bool) {
+	return convert.ToFloat64Slice(v)
+}
 
 // ========================================
 // Keyword Detection Functions
@@ -164,104 +176,6 @@ func makeStringLiteralMask(s string) []bool {
 	}
 
 	return mask
-}
-
-// ========================================
-// Type Conversion Functions
-// ========================================
-
-// toFloat64 attempts to convert a value to float64
-func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case int32:
-		return float64(val), true
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
-}
-
-// toFloat64Slice converts a value to a slice of float64
-func toFloat64Slice(v interface{}) ([]float64, bool) {
-	switch val := v.(type) {
-	case []float64:
-		return val, true
-	case []interface{}:
-		result := make([]float64, len(val))
-		for i, item := range val {
-			if f, ok := toFloat64(item); ok {
-				result[i] = f
-			} else {
-				return nil, false
-			}
-		}
-		return result, true
-	}
-	return nil, false
-}
-
-// ========================================
-// Math Helper Functions
-// ========================================
-
-// min returns the smaller of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// max returns the larger of two integers
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// ========================================
-// Vector Similarity Functions
-// ========================================
-
-// cosineSimilarity calculates cosine similarity between two vectors
-func cosineSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dotProduct, normA, normB float64
-	for i := range a {
-		dotProduct += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
-// euclideanSimilarity calculates similarity based on Euclidean distance
-func euclideanSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var sum float64
-	for i := range a {
-		diff := a[i] - b[i]
-		sum += diff * diff
-	}
-	return 1.0 / (1.0 + math.Sqrt(sum))
 }
 
 // ========================================

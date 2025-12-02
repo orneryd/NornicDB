@@ -141,6 +141,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/inference"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/temporal"
@@ -1112,7 +1113,7 @@ func (db *DB) Remember(ctx context.Context, embedding []float32, limit int) ([]*
 		}
 
 		mem := nodeToMemory(node)
-		sim := cosineSimilarity(embedding, mem.Embedding)
+		sim := vector.CosineSimilarity(embedding, mem.Embedding)
 
 		// If we don't have enough results yet, just add
 		if len(results) < limit {
@@ -1503,40 +1504,6 @@ func storageEdgeToEdge(se *storage.Edge) *Edge {
 		e.Reason = v
 	}
 	return e
-}
-
-// cosineSimilarity computes cosine similarity between two float32 vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var dot, normA, normB float64
-	for i := 0; i < len(a); i++ {
-		aFloat := float64(a[i])
-		bFloat := float64(b[i])
-		dot += aFloat * bFloat
-		normA += aFloat * aFloat
-		normB += bFloat * bFloat
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dot / (sqrt(normA) * sqrt(normB))
-}
-
-// sqrt is a simple square root implementation.
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x / 2
-	for i := 0; i < 10; i++ {
-		z = z - (z*z-x)/(2*z)
-	}
-	return z
 }
 
 // =============================================================================
@@ -2284,7 +2251,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 			return nil
 		}
 
-		sim := cosineSimilarity(target.Embedding, n.Embedding)
+		sim := vector.CosineSimilarity(target.Embedding, n.Embedding)
 
 		// Maintain top-k results
 		if len(results) < limit {

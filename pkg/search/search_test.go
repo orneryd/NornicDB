@@ -4,6 +4,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -864,7 +865,8 @@ func TestSearchService_EnrichResults(t *testing.T) {
 	}
 }
 
-// TestSqrt tests the sqrt helper function.
+// TestSqrt tests the math.Sqrt standard library function.
+// (Originally tested custom sqrt, now consolidated to use math.Sqrt)
 func TestSqrt(t *testing.T) {
 	tests := []struct {
 		input    float64
@@ -879,7 +881,7 @@ func TestSqrt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := sqrt(tt.input)
+		result := math.Sqrt(tt.input)
 		assert.InDelta(t, tt.expected, result, 0.01)
 	}
 }

@@ -72,8 +72,8 @@ func TestLlamaCppEmbeddings(t *testing.T) {
 		vec2, _ := embedder.Embed(ctx, "kitten")
 		vec3, _ := embedder.Embed(ctx, "automobile")
 
-		sim12 := cosineSim(vec1, vec2)
-		sim13 := cosineSim(vec1, vec3)
+		sim12 := vector.CosineSimilarity(vec1, vec2)
+		sim13 := vector.CosineSimilarity(vec1, vec3)
 
 		t.Logf("cat vs kitten: %.4f", sim12)
 		t.Logf("cat vs automobile: %.4f", sim13)
@@ -83,28 +83,4 @@ func TestLlamaCppEmbeddings(t *testing.T) {
 		}
 		t.Logf("✓ Similarity ordering correct")
 	})
-}
-
-func cosineSim(a, b []float32) float64 {
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (sqrt(normA) * sqrt(normB))
-}
-
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = (z + x/z) / 2
-	}
-	return z
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -765,10 +766,9 @@ func TestFastRPConnectedNodesSimilarity(t *testing.T) {
 	// Log similarities for analysis
 	// Dan (p1) is connected to Annie (p2) and Matt (p3)
 	// John (p7) is only connected to Jeff (p4)
-	// Using cosineSimilarity from helpers.go (same package)
-	simDanAnnie := cosineSimilarity(embeddings["p1"], embeddings["p2"])
-	simDanMatt := cosineSimilarity(embeddings["p1"], embeddings["p3"])
-	simDanJohn := cosineSimilarity(embeddings["p1"], embeddings["p7"])
+	simDanAnnie := vector.CosineSimilarityFloat64(embeddings["p1"], embeddings["p2"])
+	simDanMatt := vector.CosineSimilarityFloat64(embeddings["p1"], embeddings["p3"])
+	simDanJohn := vector.CosineSimilarityFloat64(embeddings["p1"], embeddings["p7"])
 
 	t.Logf("Similarity Dan-Annie (connected): %.4f", simDanAnnie)
 	t.Logf("Similarity Dan-Matt (connected): %.4f", simDanMatt)

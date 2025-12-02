@@ -3,10 +3,12 @@ package nornicdb
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/decay"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -750,64 +752,66 @@ func TestCosineSimilarity(t *testing.T) {
 	t.Run("identical vectors", func(t *testing.T) {
 		a := []float32{1.0, 0.0, 0.0}
 		b := []float32{1.0, 0.0, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.InDelta(t, 1.0, sim, 0.001)
 	})
 
 	t.Run("orthogonal vectors", func(t *testing.T) {
 		a := []float32{1.0, 0.0, 0.0}
 		b := []float32{0.0, 1.0, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.InDelta(t, 0.0, sim, 0.001)
 	})
 
 	t.Run("opposite vectors", func(t *testing.T) {
 		a := []float32{1.0, 0.0, 0.0}
 		b := []float32{-1.0, 0.0, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.InDelta(t, -1.0, sim, 0.001)
 	})
 
 	t.Run("similar vectors", func(t *testing.T) {
 		a := []float32{1.0, 0.0, 0.0}
 		b := []float32{0.9, 0.1, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.Greater(t, sim, 0.9)
 	})
 
 	t.Run("different lengths returns 0", func(t *testing.T) {
 		a := []float32{1.0, 0.0}
 		b := []float32{1.0, 0.0, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.Equal(t, 0.0, sim)
 	})
 
 	t.Run("empty vectors returns 0", func(t *testing.T) {
-		sim := cosineSimilarity([]float32{}, []float32{})
+		sim := vector.CosineSimilarity([]float32{}, []float32{})
 		assert.Equal(t, 0.0, sim)
 	})
 
 	t.Run("zero vectors returns 0", func(t *testing.T) {
 		a := []float32{0.0, 0.0}
 		b := []float32{0.0, 0.0}
-		sim := cosineSimilarity(a, b)
+		sim := vector.CosineSimilarity(a, b)
 		assert.Equal(t, 0.0, sim)
 	})
 }
 
 func TestSqrt(t *testing.T) {
+	// Tests now use math.Sqrt (standard library) instead of custom implementation
 	t.Run("positive values", func(t *testing.T) {
-		assert.InDelta(t, 2.0, sqrt(4.0), 0.001)
-		assert.InDelta(t, 3.0, sqrt(9.0), 0.001)
-		assert.InDelta(t, 1.414, sqrt(2.0), 0.01)
+		assert.InDelta(t, 2.0, math.Sqrt(4.0), 0.001)
+		assert.InDelta(t, 3.0, math.Sqrt(9.0), 0.001)
+		assert.InDelta(t, 1.414, math.Sqrt(2.0), 0.01)
 	})
 
 	t.Run("zero", func(t *testing.T) {
-		assert.Equal(t, 0.0, sqrt(0.0))
+		assert.Equal(t, 0.0, math.Sqrt(0.0))
 	})
 
-	t.Run("negative returns 0", func(t *testing.T) {
-		assert.Equal(t, 0.0, sqrt(-1.0))
+	t.Run("negative returns NaN", func(t *testing.T) {
+		// math.Sqrt returns NaN for negative values (standard behavior)
+		assert.True(t, math.IsNaN(math.Sqrt(-1.0)))
 	})
 }
 

@@ -108,8 +108,8 @@ func DefaultKalmanSearchConfig() KalmanSearchConfig {
 		EnableRankingStability:  true,
 		EnableLatencyPrediction: true,
 		SimilarityConfig: filter.Config{
-			ProcessNoise:      0.05,  // Scores are relatively stable
-			MeasurementNoise:  30.0,  // ANN can be noisy
+			ProcessNoise:      0.05, // Scores are relatively stable
+			MeasurementNoise:  30.0, // ANN can be noisy
 			InitialCovariance: 20.0,
 			VarianceScale:     8.0,
 		},
@@ -414,12 +414,4 @@ func (ka *KalmanSearchAdapter) Reset() {
 	ka.recentRankings = ka.recentRankings[:0]
 	ka.latencyFilter = filter.NewKalmanVelocity(filter.DefaultVelocityConfig())
 	ka.stats = SearchAdapterStats{}
-}
-
-// Helper function
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

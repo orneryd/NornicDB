@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 // HNSWConfig contains configuration parameters for the HNSW index.
@@ -61,15 +63,15 @@ func NewHNSWIndex(dimensions int, config HNSWConfig) *HNSWIndex {
 }
 
 // Add inserts a vector into the index.
-func (h *HNSWIndex) Add(id string, vector []float32) error {
-	if len(vector) != h.dimensions {
+func (h *HNSWIndex) Add(id string, vec []float32) error {
+	if len(vec) != h.dimensions {
 		return ErrDimensionMismatch
 	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	normalized := normalizeVector(vector)
+	normalized := vector.Normalize(vec)
 	level := h.randomLevel()
 
 	node := &hnswNode{
@@ -188,7 +190,7 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, minSimil
 		return []SearchResult{}, nil
 	}
 
-	normalized := normalizeVector(query)
+	normalized := vector.Normalize(query)
 	ep := h.entryPoint
 
 	for l := h.maxLevel; l > 0; l-- {
@@ -204,7 +206,7 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, minSimil
 		}
 
 		node := h.nodes[candidateID]
-		similarity := dotProduct(normalized, node.vector)
+		similarity := vector.DotProduct(normalized, node.vector)
 
 		if similarity >= minSimilarity {
 			results = append(results, SearchResult{
@@ -238,7 +240,7 @@ func (h *HNSWIndex) Size() int {
 
 func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int) string {
 	current := entryID
-	currentDist := 1.0 - dotProduct(query, h.nodes[current].vector)
+	currentDist := 1.0 - vector.DotProduct(query, h.nodes[current].vector)
 
 	for {
 		changed := false
@@ -249,7 +251,7 @@ func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int
 
 		for _, neighborID := range neighbors {
 			neighbor := h.nodes[neighborID]
-			dist := 1.0 - dotProduct(query, neighbor.vector)
+			dist := 1.0 - vector.DotProduct(query, neighbor.vector)
 			if dist < currentDist {
 				current = neighborID
 				currentDist = dist
@@ -275,7 +277,7 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level i
 	results := &hnswDistHeap{}
 	heap.Init(results)
 
-	entryDist := 1.0 - dotProduct(query, h.nodes[entryID].vector)
+	entryDist := 1.0 - vector.DotProduct(query, h.nodes[entryID].vector)
 	heap.Push(candidates, hnswDistItem{id: entryID, dist: entryDist, isMax: false})
 	heap.Push(results, hnswDistItem{id: entryID, dist: entryDist, isMax: true})
 
@@ -301,7 +303,7 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level i
 			visited[neighborID] = true
 
 			neighbor := h.nodes[neighborID]
-			dist := 1.0 - dotProduct(query, neighbor.vector)
+			dist := 1.0 - vector.DotProduct(query, neighbor.vector)
 
 			if results.Len() < ef || dist < (*results)[0].dist {
 				heap.Push(candidates, hnswDistItem{id: neighborID, dist: dist, isMax: false})
@@ -336,7 +338,7 @@ func (h *HNSWIndex) selectNeighbors(query []float32, candidates []string, m int)
 	for i, cid := range candidates {
 		dists[i] = distNode{
 			id:   cid,
-			dist: 1.0 - dotProduct(query, h.nodes[cid].vector),
+			dist: 1.0 - vector.DotProduct(query, h.nodes[cid].vector),
 		}
 	}
 

@@ -113,6 +113,8 @@ package index
 import (
 	"context"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 // SearchResult represents a search result with score.
@@ -356,7 +358,7 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, threshol
 	results := make([]SearchResult, 0, k)
 	
 	for id, vec := range h.vectors {
-		score := cosineSimilarity(query, vec)
+		score := vector.CosineSimilarity(query, vec)
 		if score >= threshold {
 			results = append(results, SearchResult{ID: id, Score: score})
 		}
@@ -371,38 +373,6 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, threshol
 	}
 
 	return results, nil
-}
-
-// cosineSimilarity calculates cosine similarity between two vectors.
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-
-	var dotProduct, normA, normB float64
-	for i := range a {
-		dotProduct += float64(a[i] * b[i])
-		normA += float64(a[i] * a[i])
-		normB += float64(b[i] * b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProduct / (sqrt(normA) * sqrt(normB))
-}
-
-func sqrt(x float64) float64 {
-	// Simple sqrt implementation
-	if x < 0 {
-		return 0
-	}
-	z := x / 2
-	for i := 0; i < 10; i++ {
-		z = z - (z*z-x)/(2*z)
-	}
-	return z
 }
 
 func sortResultsByScore(results []SearchResult) {

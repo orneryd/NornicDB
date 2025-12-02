@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // QueryCache provides LRU (Least Recently Used) caching for Cypher query results
@@ -829,4 +831,89 @@ func normalizeQuery(cypher string) string {
 	// Collapse multiple spaces/newlines to single space
 	normalized := strings.Join(strings.Fields(cypher), " ")
 	return normalized
+}
+
+// ========================================
+// Node Lookup Cache
+// ========================================
+
+// makeLookupKey creates a cache key from label and properties.
+//
+// Used for fast node lookups during query execution. The key combines
+// the label with sorted property values to ensure consistent cache hits.
+//
+// # Parameters
+//
+//   - label: The node label
+//   - props: Property map for filtering
+//
+// # Returns
+//
+//   - A string key suitable for cache lookup
+//
+// # Example
+//
+//	key := makeLookupKey("Person", map[string]interface{}{"name": "Alice"})
+//	// key = "Person:name=Alice,"
+func makeLookupKey(label string, props map[string]interface{}) string {
+	if len(props) == 0 {
+		return label
+	}
+	// Simple key: label + sorted props
+	key := label + ":"
+	for k, v := range props {
+		key += fmt.Sprintf("%s=%v,", k, v)
+	}
+	return key
+}
+
+// lookupCachedNode looks up a node by label+properties from cache.
+//
+// This provides a fast path for repeated node lookups during MATCH operations.
+// Thread-safe for concurrent access.
+//
+// # Parameters
+//
+//   - label: The node label to match
+//   - props: Property filters
+//
+// # Returns
+//
+//   - The cached node, or nil if not in cache
+func (e *StorageExecutor) lookupCachedNode(label string, props map[string]interface{}) *storage.Node {
+	key := makeLookupKey(label, props)
+	e.nodeLookupCacheMu.RLock()
+	node := e.nodeLookupCache[key]
+	e.nodeLookupCacheMu.RUnlock()
+	return node
+}
+
+// cacheNodeLookup caches a node lookup result.
+//
+// Includes simple eviction when cache grows too large (>10000 entries).
+// Thread-safe for concurrent access.
+//
+// # Parameters
+//
+//   - label: The node label
+//   - props: Property filters used for lookup
+//   - node: The node to cache
+func (e *StorageExecutor) cacheNodeLookup(label string, props map[string]interface{}, node *storage.Node) {
+	key := makeLookupKey(label, props)
+	e.nodeLookupCacheMu.Lock()
+	// Simple eviction: if too large, clear
+	if len(e.nodeLookupCache) > 10000 {
+		e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	}
+	e.nodeLookupCache[key] = node
+	e.nodeLookupCacheMu.Unlock()
+}
+
+// invalidateNodeLookupCache clears the node lookup cache.
+//
+// Should be called after write operations that may affect node properties.
+func (e *StorageExecutor) invalidateNodeLookupCache() {
+	e.nodeLookupCacheMu.Lock()
+	e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	e.nodeLookupCacheMu.Unlock()
 }

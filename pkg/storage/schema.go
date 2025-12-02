@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // ConstraintType represents the type of constraint.
@@ -732,7 +734,7 @@ func (sm *SchemaManager) RangeIndexInsert(name string, nodeID NodeID, value inte
 	}
 
 	// Convert value to float64 for comparison
-	numVal, ok := toFloat64ForIndex(value)
+	numVal, ok := convert.ToFloat64(value)
 	if !ok {
 		return fmt.Errorf("range index only supports numeric values, got %T", value)
 	}
@@ -813,12 +815,12 @@ func (sm *SchemaManager) RangeQuery(name string, minVal, maxVal interface{}, inc
 	var minF, maxF float64 = idx.entries[0].value - 1, idx.entries[len(idx.entries)-1].value + 1
 
 	if minVal != nil {
-		if f, ok := toFloat64ForIndex(minVal); ok {
+		if f, ok := convert.ToFloat64(minVal); ok {
 			minF = f
 		}
 	}
 	if maxVal != nil {
-		if f, ok := toFloat64ForIndex(maxVal); ok {
+		if f, ok := convert.ToFloat64(maxVal); ok {
 			maxF = f
 		}
 	}
@@ -848,29 +850,6 @@ func (sm *SchemaManager) RangeQuery(name string, minVal, maxVal interface{}, inc
 	}
 
 	return results, nil
-}
-
-// toFloat64ForIndex converts a value to float64 for range index operations.
-func toFloat64ForIndex(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case int:
-		return float64(val), true
-	case int32:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case float32:
-		return float64(val), true
-	case float64:
-		return val, true
-	case string:
-		// Try to parse as float
-		var f float64
-		_, err := fmt.Sscanf(val, "%f", &f)
-		return f, err == nil
-	default:
-		return 0, false
-	}
 }
 
 // GetConstraints returns all unique constraints.

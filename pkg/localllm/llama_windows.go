@@ -170,10 +170,11 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"math"
 	"runtime"
 	"sync"
 	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 // Model wraps a GGUF model for embedding generation.
@@ -356,7 +357,7 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 
 	// Normalize to unit vector for cosine similarity
-	normalize(emb)
+	vector.NormalizeInPlace(emb)
 	return emb, nil
 }
 
@@ -424,20 +425,4 @@ func (m *Model) Close() error {
 		m.model = nil
 	}
 	return nil
-}
-
-// normalize applies L2 normalization to a vector in-place.
-// This converts the vector to unit length for cosine similarity.
-func normalize(v []float32) {
-	var sum float64
-	for _, x := range v {
-		sum += float64(x) * float64(x)
-	}
-	if sum == 0 {
-		return
-	}
-	norm := float32(1.0 / math.Sqrt(sum))
-	for i := range v {
-		v[i] *= norm
-	}
 }

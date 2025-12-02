@@ -1189,11 +1189,3 @@ func TestRaceConditionPrevention(t *testing.T) {
 		t.Log("✓ No race condition detected during concurrent node access")
 	})
 }
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

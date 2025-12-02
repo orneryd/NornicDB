@@ -46,7 +46,8 @@
 // embeddings where magnitude is less important than direction.
 //
 // Cosine Similarity Formula:
-//   similarity = (A · B) / (||A|| × ||B||)
+//
+//	similarity = (A · B) / (||A|| × ||B||)
 //
 // Where:
 //   - A · B is the dot product of vectors A and B
@@ -54,8 +55,9 @@
 //   - ||B|| is the magnitude (L2 norm) of vector B
 //
 // Optimization:
-//   Vectors are normalized when added to the index, so cosine similarity
-//   becomes just the dot product, making search much faster.
+//
+//	Vectors are normalized when added to the index, so cosine similarity
+//	becomes just the dot product, making search much faster.
 //
 // Performance Characteristics:
 //   - Add: O(d) where d is vector dimensions
@@ -64,13 +66,14 @@
 //   - Thread-safe: Uses RWMutex for concurrent access
 //
 // When to Use:
-//   ✅ Exact similarity search required
-//   ✅ Moderate dataset sizes (<100K vectors)
-//   ✅ High-dimensional embeddings (>100 dimensions)
-//   ✅ Simplicity and reliability preferred
-//   ❌ Very large datasets (>1M vectors)
-//   ❌ Approximate search acceptable
-//   ❌ Sub-linear search time required
+//
+//	✅ Exact similarity search required
+//	✅ Moderate dataset sizes (<100K vectors)
+//	✅ High-dimensional embeddings (>100 dimensions)
+//	✅ Simplicity and reliability preferred
+//	❌ Very large datasets (>1M vectors)
+//	❌ Approximate search acceptable
+//	❌ Sub-linear search time required
 //
 // Future Improvements:
 //   - HNSW implementation for O(log n) search
@@ -82,19 +85,19 @@
 //
 // Think of vector similarity like comparing the "direction" things are pointing:
 //
-// 1. **Vectors**: Like arrows pointing in different directions in space.
-//    Each arrow represents a document, image, or piece of text.
+//  1. **Vectors**: Like arrows pointing in different directions in space.
+//     Each arrow represents a document, image, or piece of text.
 //
-// 2. **Cosine similarity**: Measures how much two arrows point in the
-//    same direction. If they point exactly the same way, similarity = 1.
-//    If they point opposite ways, similarity = -1.
+//  2. **Cosine similarity**: Measures how much two arrows point in the
+//     same direction. If they point exactly the same way, similarity = 1.
+//     If they point opposite ways, similarity = -1.
 //
-// 3. **Normalization**: We make all arrows the same length so we only
-//    care about direction, not how "strong" they are.
+//  3. **Normalization**: We make all arrows the same length so we only
+//     care about direction, not how "strong" they are.
 //
-// 4. **Search**: When you give us a query arrow, we check how similar
-//    its direction is to all the arrows we've stored, then give you
-//    the most similar ones.
+//  4. **Search**: When you give us a query arrow, we check how similar
+//     its direction is to all the arrows we've stored, then give you
+//     the most similar ones.
 //
 // It's like finding documents that "point in the same direction" as your search!
 package search
@@ -102,9 +105,10 @@ package search
 import (
 	"context"
 	"errors"
-	"math"
 	"sort"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 var (
@@ -146,7 +150,8 @@ var (
 //   - Memory: O(n×d) for normalized vectors
 //
 // Thread Safety:
-//   All methods are thread-safe using RWMutex for concurrent access.
+//
+//	All methods are thread-safe using RWMutex for concurrent access.
 type VectorIndex struct {
 	dimensions int
 	mu         sync.RWMutex
@@ -214,10 +219,11 @@ func NewVectorIndex(dimensions int) *VectorIndex {
 //   - Thread-safe: Uses write lock during update
 //
 // Normalization:
-//   Vectors are automatically normalized to unit length, so cosine
-//   similarity becomes a simple dot product during search.
-func (v *VectorIndex) Add(id string, vector []float32) error {
-	if len(vector) != v.dimensions {
+//
+//	Vectors are automatically normalized to unit length, so cosine
+//	similarity becomes a simple dot product during search.
+func (v *VectorIndex) Add(id string, vec []float32) error {
+	if len(vec) != v.dimensions {
 		return ErrDimensionMismatch
 	}
 
@@ -225,7 +231,7 @@ func (v *VectorIndex) Add(id string, vector []float32) error {
 	defer v.mu.Unlock()
 
 	// Normalize for faster cosine similarity calculation
-	v.vectors[id] = normalizeVector(vector)
+	v.vectors[id] = vector.Normalize(vec)
 	return nil
 }
 
@@ -301,7 +307,8 @@ func (v *VectorIndex) Remove(id string) {
 //   - -1.0: Opposite vectors (opposite directions)
 //
 // Thread Safety:
-//   Uses read lock during search, allowing concurrent searches.
+//
+//	Uses read lock during search, allowing concurrent searches.
 func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]indexResult, error) {
 	if len(query) != v.dimensions {
 		return nil, ErrDimensionMismatch
@@ -311,7 +318,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 	defer v.mu.RUnlock()
 
 	// Normalize query
-	normalizedQuery := normalizeVector(query)
+	normalizedQuery := vector.Normalize(query)
 
 	// Calculate similarities (brute force)
 	type scored struct {
@@ -328,7 +335,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 		}
 
 		// Dot product of normalized vectors = cosine similarity
-		sim := dotProduct(normalizedQuery, vec)
+		sim := vector.DotProduct(normalizedQuery, vec)
 		if sim >= minSimilarity {
 			results = append(results, scored{id: id, score: sim})
 		}
@@ -371,54 +378,4 @@ func (v *VectorIndex) HasVector(id string) bool {
 // GetDimensions returns the vector dimensions.
 func (v *VectorIndex) GetDimensions() int {
 	return v.dimensions
-}
-
-// normalizeVector returns a unit vector (L2 norm = 1).
-func normalizeVector(vec []float32) []float32 {
-	var sumSquares float64
-	for _, v := range vec {
-		sumSquares += float64(v * v)
-	}
-
-	if sumSquares == 0 {
-		return vec
-	}
-
-	norm := math.Sqrt(sumSquares)
-	normalized := make([]float32, len(vec))
-	for i, v := range vec {
-		normalized[i] = float32(float64(v) / norm)
-	}
-	return normalized
-}
-
-// dotProduct calculates the dot product of two vectors.
-// For normalized vectors, this equals cosine similarity.
-func dotProduct(a, b []float32) float64 {
-	var sum float64
-	for i := range a {
-		sum += float64(a[i] * b[i])
-	}
-	return sum
-}
-
-// cosineSimilarity calculates cosine similarity between two vectors.
-// Range: [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite
-func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var dotProd, normA, normB float64
-	for i := range a {
-		dotProd += float64(a[i] * b[i])
-		normA += float64(a[i] * a[i])
-		normB += float64(b[i] * b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProd / (math.Sqrt(normA) * math.Sqrt(normB))
 }

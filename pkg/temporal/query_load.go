@@ -79,6 +79,7 @@
 package temporal
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -88,14 +89,14 @@ import (
 // LoadPrediction represents a query load prediction.
 type LoadPrediction struct {
 	// Current metrics
-	CurrentQPS     float64 // Queries per second (smoothed)
-	CurrentQPM     float64 // Queries per minute (smoothed)
-	RawQPS         float64 // Unfiltered QPS
-	TotalQueries   int64
+	CurrentQPS   float64 // Queries per second (smoothed)
+	CurrentQPM   float64 // Queries per minute (smoothed)
+	RawQPS       float64 // Unfiltered QPS
+	TotalQueries int64
 
 	// Trend
-	Velocity  float64 // Rate of change (positive = increasing load)
-	Trend     string  // "increasing", "decreasing", "stable"
+	Velocity float64 // Rate of change (positive = increasing load)
+	Trend    string  // "increasing", "decreasing", "stable"
 
 	// Predictions
 	PredictedQPS5m  float64 // Predicted QPS in 5 minutes
@@ -106,8 +107,8 @@ type LoadPrediction struct {
 	Confidence float64
 
 	// Time-of-day pattern
-	PeakHour    int
-	IsNearPeak  bool
+	PeakHour   int
+	IsNearPeak bool
 
 	// Anomaly detection
 	IsAnomaly   bool
@@ -148,9 +149,9 @@ type LoadConfig struct {
 func DefaultLoadConfig() LoadConfig {
 	return LoadConfig{
 		FilterConfig: filter.VelocityConfig{
-			ProcessNoisePos:    0.5,  // QPS can change quickly
+			ProcessNoisePos:    0.5, // QPS can change quickly
 			ProcessNoiseVel:    0.1,
-			MeasurementNoise:   2.0,  // Measurement has noise
+			MeasurementNoise:   2.0, // Measurement has noise
 			InitialPosVariance: 100.0,
 			InitialVelVariance: 10.0,
 			Dt:                 1.0,
@@ -200,19 +201,19 @@ type QueryLoadPredictor struct {
 	hourSums   [24]float64
 
 	// Baseline for anomaly detection
-	baselineQPS   float64
+	baselineQPS    float64
 	baselineStdDev float64
 }
 
 // NewQueryLoadPredictor creates a new query load predictor.
 func NewQueryLoadPredictor(cfg LoadConfig) *QueryLoadPredictor {
 	return &QueryLoadPredictor{
-		config:       cfg,
-		qpsFilter:    filter.NewKalmanVelocity(cfg.FilterConfig),
-		startTime:    time.Now(),
+		config:        cfg,
+		qpsFilter:     filter.NewKalmanVelocity(cfg.FilterConfig),
+		startTime:     time.Now(),
 		currentBucket: time.Now().Truncate(time.Duration(cfg.BucketDurationSeconds) * time.Second),
-		recentQPS:    make([]float64, 60), // Track last 60 measurements
-		windowSize:   60,
+		recentQPS:     make([]float64, 60), // Track last 60 measurements
+		windowSize:    60,
 	}
 }
 
@@ -302,20 +303,8 @@ func (qlp *QueryLoadPredictor) updateBaseline() {
 		}
 
 		qlp.baselineQPS = mean
-		qlp.baselineStdDev = sqrt(variance)
+		qlp.baselineStdDev = math.Sqrt(variance)
 	}
-}
-
-// sqrt is a simple square root implementation.
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = (z + x/z) / 2
-	}
-	return z
 }
 
 // GetPrediction returns the current load prediction.

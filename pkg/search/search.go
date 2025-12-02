@@ -83,6 +83,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -738,7 +739,7 @@ func (s *Service) applyMMR(results []rrfResult, queryEmbedding []float32, limit 
 					// Find embedding for selected doc
 					for _, c := range candidates {
 						if c.result.ID == sel.ID && c.embedding != nil {
-							sim := cosineSimilarity(cand.embedding, c.embedding)
+							sim := vector.CosineSimilarity(cand.embedding, c.embedding)
 							if sim > maxSimToSelected {
 								maxSimToSelected = sim
 							}
@@ -1165,9 +1166,4 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// sqrt returns the square root of x.
-func sqrt(x float64) float64 {
-	return math.Sqrt(x)
 }

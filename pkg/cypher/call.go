@@ -26,8 +26,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// toFloat32Slice is a package-level alias to convert.ToFloat32Slice for internal use.
+func toFloat32Slice(v interface{}) []float32 {
+	return convert.ToFloat32Slice(v)
+}
 
 // yieldClause represents parsed YIELD information from a CALL statement.
 // Syntax: CALL procedure() YIELD var1, var2 AS alias WHERE condition
@@ -1006,11 +1013,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(cypher string) (*ExecuteRe
 		var score float64
 		switch similarityFunc {
 		case "euclidean":
-			score = euclideanSimilarityFloat32(queryVector, nodeEmbedding)
+			score = vector.EuclideanSimilarity(queryVector, nodeEmbedding)
 		case "dot":
-			score = dotProductFloat32(queryVector, nodeEmbedding)
+			score = vector.DotProduct(queryVector, nodeEmbedding)
 		default: // cosine
-			score = cosineSimilarityFloat32(queryVector, nodeEmbedding)
+			score = vector.CosineSimilarity(queryVector, nodeEmbedding)
 		}
 
 		scoredNodes = append(scoredNodes, scoredNode{node: node, score: score})
@@ -1172,85 +1179,6 @@ func parseInlineVector(s string) []float32 {
 	}
 
 	return result
-}
-
-// toFloat32Slice converts various types to []float32
-func toFloat32Slice(v interface{}) []float32 {
-	switch val := v.(type) {
-	case []float32:
-		return val
-	case []float64:
-		result := make([]float32, len(val))
-		for i, f := range val {
-			result[i] = float32(f)
-		}
-		return result
-	case []interface{}:
-		result := make([]float32, 0, len(val))
-		for _, item := range val {
-			switch f := item.(type) {
-			case float64:
-				result = append(result, float32(f))
-			case float32:
-				result = append(result, f)
-			case int:
-				result = append(result, float32(f))
-			case int64:
-				result = append(result, float32(f))
-			}
-		}
-		return result
-	}
-	return nil
-}
-
-// cosineSimilarityFloat32 calculates cosine similarity between two float32 vectors
-func cosineSimilarityFloat32(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var dotProd, normA, normB float64
-	for i := range a {
-		dotProd += float64(a[i] * b[i])
-		normA += float64(a[i] * a[i])
-		normB += float64(b[i] * b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dotProd / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
-// euclideanSimilarityFloat32 calculates similarity based on Euclidean distance
-func euclideanSimilarityFloat32(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-
-	var sum float64
-	for i := range a {
-		diff := float64(a[i] - b[i])
-		sum += diff * diff
-	}
-
-	// Convert distance to similarity (higher is more similar)
-	return 1.0 / (1.0 + math.Sqrt(sum))
-}
-
-// dotProductFloat32 calculates dot product of two float32 vectors
-func dotProductFloat32(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-
-	var sum float64
-	for i := range a {
-		sum += float64(a[i] * b[i])
-	}
-	return sum
 }
 
 // ========================================

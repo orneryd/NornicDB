@@ -5,6 +5,8 @@ import (
 	"context"
 	"math"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 func TestDefaultHNSWConfig(t *testing.T) {
@@ -116,9 +118,9 @@ func TestHNSWSearch(t *testing.T) {
 	index := NewHNSW(config)
 
 	// Add some test vectors
-	index.Add("vec-1", []float32{1.0, 0.0, 0.0, 0.0}) // Points in X direction
-	index.Add("vec-2", []float32{0.0, 1.0, 0.0, 0.0}) // Points in Y direction
-	index.Add("vec-3", []float32{0.0, 0.0, 1.0, 0.0}) // Points in Z direction
+	index.Add("vec-1", []float32{1.0, 0.0, 0.0, 0.0})     // Points in X direction
+	index.Add("vec-2", []float32{0.0, 1.0, 0.0, 0.0})     // Points in Y direction
+	index.Add("vec-3", []float32{0.0, 0.0, 1.0, 0.0})     // Points in Z direction
 	index.Add("vec-4", []float32{0.707, 0.707, 0.0, 0.0}) // 45 degrees between X and Y
 
 	ctx := context.Background()
@@ -265,7 +267,7 @@ func TestCosineSimilarity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := cosineSimilarity(tt.a, tt.b)
+			result := vector.CosineSimilarity(tt.a, tt.b)
 			if math.Abs(result-tt.expected) > tt.epsilon {
 				t.Errorf("expected %f, got %f", tt.expected, result)
 			}
@@ -273,7 +275,7 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 }
 
-func TestSqrt(t *testing.T) {
+func TestMathSqrt(t *testing.T) {
 	tests := []struct {
 		input    float64
 		expected float64
@@ -283,13 +285,12 @@ func TestSqrt(t *testing.T) {
 		{9.0, 3.0, 0.001},
 		{2.0, 1.414, 0.01},
 		{0.0, 0.0, 0.001},
-		{-1.0, 0.0, 0.001}, // Negative returns 0
 	}
 
 	for _, tt := range tests {
-		result := sqrt(tt.input)
+		result := math.Sqrt(tt.input)
 		if math.Abs(result-tt.expected) > tt.epsilon {
-			t.Errorf("sqrt(%f): expected %f, got %f", tt.input, tt.expected, result)
+			t.Errorf("math.Sqrt(%f): expected %f, got %f", tt.input, tt.expected, result)
 		}
 	}
 }
@@ -452,7 +453,7 @@ func BenchmarkCosineSimilarity(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cosineSimilarity(a, vecB)
+		vector.CosineSimilarity(a, vecB)
 	}
 }
 
@@ -464,7 +465,7 @@ func BenchmarkHNSWSearch(b *testing.B) {
 	for i := 0; i < 1000; i++ {
 		vec := make([]float32, 128)
 		for j := range vec {
-			vec[j] = float32((i + j) % 100) / 100
+			vec[j] = float32((i+j)%100) / 100
 		}
 		index.Add(string(rune(i)), vec)
 	}
