@@ -1,0 +1,91 @@
+# NornicDB AMD64 CPU-only
+# Lightweight build with no GPU support and embeddings disabled
+# For deployments that use external embedding services or don't need embeddings
+#
+# Build:  docker build -f docker/Dockerfile.amd64-cpu -t nornicdb-amd64-cpu .
+# Headless (no UI):
+#         docker build -f docker/Dockerfile.amd64-cpu --build-arg HEADLESS=true -t nornicdb-amd64-cpu-headless .
+
+# =============================================================================
+# Stage 1: UI (skipped in headless mode)
+# =============================================================================
+FROM node:20-alpine AS ui
+ARG HEADLESS=false
+WORKDIR /ui
+COPY ui/package*.json ./
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm ci 2>/dev/null || npm install --legacy-peer-deps; \
+    fi
+COPY ui/ .
+RUN if [ "$HEADLESS" != "true" ]; then \
+      npm run build; \
+    else \
+      mkdir -p dist && echo "Headless mode - UI skipped" > dist/HEADLESS; \
+    fi
+
+# =============================================================================
+# Stage 2: Go build (no llama.cpp, no CUDA)
+# =============================================================================
+FROM golang:1.23-bookworm AS builder
+ARG HEADLESS=false
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
+
+# Go dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source + UI
+COPY . .
+COPY --from=ui /ui/dist ./ui/dist
+
+# Build WITHOUT localllm tag (no embedded embeddings)
+RUN if [ "$HEADLESS" = "true" ]; then \
+      echo "Building headless CPU-only (no UI, no localllm)..." && \
+      CGO_ENABLED=0 go build -tags "noui" \
+        -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
+        -o nornicdb ./cmd/nornicdb; \
+    else \
+      echo "Building CPU-only with UI (no localllm)..." && \
+      CGO_ENABLED=0 go build \
+        -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
+        -o nornicdb ./cmd/nornicdb; \
+    fi
+
+# =============================================================================
+# Stage 3: Runtime (minimal base)
+# =============================================================================
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata wget && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data
+
+COPY --from=builder /build/nornicdb /app/
+COPY docker/entrypoint.sh /app/
+RUN chmod +x /app/entrypoint.sh
+
+ARG HEADLESS=false
+RUN if [ "$HEADLESS" = "true" ]; then \
+      echo "✓ Headless mode enabled (no UI)"; \
+    fi && \
+    echo "✓ CPU-only build (no GPU support, embeddings disabled)"
+
+EXPOSE 7474 7687
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD wget --spider -q http://localhost:7474/health || exit 1
+
+# Embeddings DISABLED by default - use external service or set provider to 'none'
+ENV NORNICDB_DATA_DIR=/data \
+    NORNICDB_HTTP_PORT=7474 \
+    NORNICDB_BOLT_PORT=7687 \
+    NORNICDB_EMBEDDING_PROVIDER=none \
+    NORNICDB_EMBEDDING_ENABLED=false \
+    NORNICDB_NO_AUTH=true \
+    NORNICDB_GPU_ENABLED=false \
+    NORNICDB_HEADLESS=${HEADLESS}
+
+ENTRYPOINT ["/app/entrypoint.sh"]
