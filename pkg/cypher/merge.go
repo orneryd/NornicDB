@@ -926,4 +926,562 @@ func (e *StorageExecutor) expressionToAlias(expr string) string {
 	return expr
 }
 
+// executeMergeWithChain handles MERGE ... WITH ... MATCH ... MERGE chain patterns.
+// This is the pattern used in import scripts:
+//
+//	MERGE (e:Entry {key: $key})
+//	ON CREATE SET e.value = $value
+//	WITH e
+//	MATCH (c:Category {name: $category})
+//	MERGE (e)-[:IN_CATEGORY]->(c)
+//	WITH e
+//	MATCH (t:Team {name: $team})
+//	MERGE (e)-[:MANAGED_BY]->(t)
+//	RETURN e.key
+//
+// In Neo4j Cypher, if any MATCH in the chain fails to find a node,
+// the query returns 0 rows (the chain is broken). The MERGE still executes
+// for nodes found before the break.
+func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Split the query into segments at each WITH clause
+	// Each segment is: [initial MERGE] or [MATCH ... MERGE relationship]
+	segments := e.splitMergeChainSegments(cypher)
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("invalid MERGE...WITH chain: no segments found")
+	}
+
+	// Context to track bound variables (node variable -> *storage.Node)
+	nodeContext := make(map[string]*storage.Node)
+	relContext := make(map[string]*storage.Edge)
+
+	// Track if chain is broken (a MATCH returned 0 rows)
+	chainBroken := false
+
+	// Process each segment
+	for i, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+
+		upperSeg := strings.ToUpper(segment)
+
+		if i == 0 {
+			// First segment: MERGE (node) [ON CREATE SET ...] [ON MATCH SET ...]
+			// Execute the initial MERGE to create/find the node
+			mergedNode, varName, err := e.executeMergeNodeSegment(ctx, segment)
+			if err != nil {
+				return nil, fmt.Errorf("initial MERGE failed: %w", err)
+			}
+			if mergedNode != nil && varName != "" {
+				nodeContext[varName] = mergedNode
+				result.Stats.NodesCreated++ // May be 0 if node existed
+			}
+		} else if strings.HasPrefix(upperSeg, "MATCH") {
+			// MATCH segment: MATCH (var:Label {props}) [MERGE (e)-[:REL]->(var)]
+			if chainBroken {
+				// Chain already broken, skip this segment
+				continue
+			}
+
+			matchedNode, matchVarName, err := e.executeMatchSegment(ctx, segment, nodeContext)
+			if err != nil {
+				// MATCH error - chain breaks
+				chainBroken = true
+				continue
+			}
+
+			if matchedNode == nil {
+				// MATCH found nothing - chain breaks
+				chainBroken = true
+				continue
+			}
+
+			// Add matched node to context
+			if matchVarName != "" {
+				nodeContext[matchVarName] = matchedNode
+			}
+
+			// Check for MERGE relationship in this segment
+			mergeIdx := findKeywordIndex(segment, "MERGE")
+			if mergeIdx > 0 {
+				mergePart := strings.TrimSpace(segment[mergeIdx+5:])
+				if strings.Contains(mergePart, "-[") || strings.Contains(mergePart, "]-") {
+					// This is a relationship MERGE
+					err := e.executeMergeRelSegment(ctx, mergePart, nodeContext)
+					if err != nil {
+						// Log but don't fail - relationship might already exist
+					} else {
+						result.Stats.RelationshipsCreated++
+					}
+				}
+			}
+		} else if strings.HasPrefix(upperSeg, "RETURN") {
+			// RETURN segment: build final result
+			if chainBroken {
+				// Chain broken - return 0 rows
+				returnClause := strings.TrimSpace(segment[6:])
+				items := e.parseReturnItems(returnClause)
+				for _, item := range items {
+					if item.alias != "" {
+						result.Columns = append(result.Columns, item.alias)
+					} else {
+						result.Columns = append(result.Columns, item.expr)
+					}
+				}
+				// No rows - chain was broken
+				return result, nil
+			}
+
+			// Build result from context
+			returnClause := strings.TrimSpace(segment[6:])
+			items := e.parseReturnItems(returnClause)
+
+			row := make([]interface{}, len(items))
+			for i, item := range items {
+				if item.alias != "" {
+					result.Columns = append(result.Columns, item.alias)
+				} else {
+					result.Columns = append(result.Columns, item.expr)
+				}
+				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, relContext)
+			}
+			result.Rows = append(result.Rows, row)
+		}
+	}
+
+	return result, nil
+}
+
+// splitMergeChainSegments splits a MERGE...WITH...MATCH chain into segments.
+// Returns segments like: ["MERGE (e:Entry...) ON CREATE SET...", "MATCH (c:Cat...) MERGE (e)-[:REL]->(c)", "RETURN..."]
+func (e *StorageExecutor) splitMergeChainSegments(cypher string) []string {
+	var segments []string
+
+	// Find all WITH positions
+	var withPositions []int
+	searchPos := 0
+	for {
+		idx := findKeywordIndex(cypher[searchPos:], "WITH")
+		if idx == -1 {
+			break
+		}
+		// Check it's not "STARTS WITH" or "ENDS WITH"
+		actualPos := searchPos + idx
+		if actualPos > 6 {
+			before := strings.ToUpper(cypher[actualPos-6 : actualPos])
+			if strings.HasSuffix(strings.TrimSpace(before), "STARTS") || strings.HasSuffix(strings.TrimSpace(before), "ENDS") {
+				searchPos = actualPos + 4
+				continue
+			}
+		}
+		withPositions = append(withPositions, actualPos)
+		searchPos = actualPos + 4
+	}
+
+	// Find RETURN position
+	returnIdx := findKeywordIndex(cypher, "RETURN")
+
+	if len(withPositions) == 0 {
+		// No WITH clauses - return whole query
+		return []string{cypher}
+	}
+
+	// First segment: from start to first WITH
+	segments = append(segments, strings.TrimSpace(cypher[:withPositions[0]]))
+
+	// Middle segments: between WITH clauses
+	for i := 0; i < len(withPositions); i++ {
+		// Skip the WITH keyword and find the content after it
+		startPos := withPositions[i] + 4 // Skip "WITH"
+
+		// Find where this segment ends
+		var endPos int
+		if i+1 < len(withPositions) {
+			endPos = withPositions[i+1]
+		} else if returnIdx > startPos {
+			endPos = returnIdx
+		} else {
+			endPos = len(cypher)
+		}
+
+		// The segment after WITH might start with the variable name, then MATCH
+		segmentContent := strings.TrimSpace(cypher[startPos:endPos])
+
+		// Skip the variable part after WITH (e.g., "WITH e" -> skip "e")
+		// Find where MATCH or RETURN starts
+		matchIdx := findKeywordIndex(segmentContent, "MATCH")
+		if matchIdx > 0 {
+			// Add the MATCH segment
+			segments = append(segments, strings.TrimSpace(segmentContent[matchIdx:]))
+		} else if matchIdx == 0 {
+			segments = append(segments, segmentContent)
+		}
+	}
+
+	// Add RETURN segment if present
+	if returnIdx > 0 {
+		segments = append(segments, strings.TrimSpace(cypher[returnIdx:]))
+	}
+
+	return segments
+}
+
+// executeMergeNodeSegment executes the initial MERGE (node) part and returns the node and variable name.
+func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment string) (*storage.Node, string, error) {
+	// Parse: MERGE (varName:Label {props}) [ON CREATE SET ...] [ON MATCH SET ...]
+	mergeIdx := findKeywordIndex(segment, "MERGE")
+	if mergeIdx == -1 {
+		return nil, "", fmt.Errorf("MERGE not found in segment")
+	}
+
+	// Find the pattern end (ON CREATE, ON MATCH, or end of segment)
+	patternEnd := len(segment)
+	for _, keyword := range []string{"ON CREATE", "ON MATCH"} {
+		idx := findKeywordIndex(segment, keyword)
+		if idx > 0 && idx < patternEnd {
+			patternEnd = idx
+		}
+	}
+
+	pattern := strings.TrimSpace(segment[mergeIdx+5 : patternEnd])
+
+	// Parse the pattern
+	varName, labels, props, err := e.parseMergePattern(pattern)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Try to find existing node
+	var existingNode *storage.Node
+	if len(labels) > 0 && len(props) > 0 {
+		nodes, _ := e.storage.GetNodesByLabel(labels[0])
+		for _, n := range nodes {
+			matches := true
+			for key, val := range props {
+				if nodeVal, ok := n.Properties[key]; !ok || fmt.Sprintf("%v", nodeVal) != fmt.Sprintf("%v", val) {
+					matches = false
+					break
+				}
+			}
+			if matches {
+				existingNode = n
+				break
+			}
+		}
+	}
+
+	var node *storage.Node
+	if existingNode != nil {
+		node = existingNode
+		// Apply ON MATCH SET if present
+		onMatchIdx := findKeywordIndex(segment, "ON MATCH SET")
+		if onMatchIdx > 0 {
+			setEnd := len(segment)
+			onCreateIdx := findKeywordIndex(segment, "ON CREATE SET")
+			if onCreateIdx > onMatchIdx {
+				setEnd = onCreateIdx
+			}
+			setClause := strings.TrimSpace(segment[onMatchIdx+12 : setEnd])
+			e.applySetToNode(node, varName, setClause)
+			e.storage.UpdateNode(node)
+		}
+	} else {
+		// Create new node
+		node = &storage.Node{
+			ID:         storage.NodeID(fmt.Sprintf("node-%d", e.idCounter())),
+			Labels:     labels,
+			Properties: props,
+		}
+		e.storage.CreateNode(node)
+		e.notifyNodeCreated(string(node.ID))
+
+		// Apply ON CREATE SET if present
+		onCreateIdx := findKeywordIndex(segment, "ON CREATE SET")
+		if onCreateIdx > 0 {
+			setEnd := len(segment)
+			onMatchIdx := findKeywordIndex(segment, "ON MATCH SET")
+			if onMatchIdx > onCreateIdx {
+				setEnd = onMatchIdx
+			}
+			setClause := strings.TrimSpace(segment[onCreateIdx+13 : setEnd])
+			e.applySetToNode(node, varName, setClause)
+			e.storage.UpdateNode(node)
+		}
+	}
+
+	return node, varName, nil
+}
+
+// executeMatchSegment executes a MATCH segment and returns the matched node.
+func (e *StorageExecutor) executeMatchSegment(ctx context.Context, segment string, nodeContext map[string]*storage.Node) (*storage.Node, string, error) {
+	// Parse: MATCH (varName:Label {props}) [MERGE ...]
+	matchIdx := findKeywordIndex(segment, "MATCH")
+	if matchIdx == -1 {
+		return nil, "", fmt.Errorf("MATCH not found in segment")
+	}
+
+	// Find the pattern end (MERGE or end of segment)
+	patternEnd := len(segment)
+	mergeIdx := findKeywordIndex(segment, "MERGE")
+	if mergeIdx > 0 {
+		patternEnd = mergeIdx
+	}
+
+	pattern := strings.TrimSpace(segment[matchIdx+5 : patternEnd])
+
+	// Parse the node pattern
+	nodePattern := e.parseNodePattern(pattern)
+	if nodePattern.variable == "" && len(nodePattern.labels) == 0 {
+		return nil, "", fmt.Errorf("could not parse node pattern: %s", pattern)
+	}
+
+	// Check if variable is already bound
+	if boundNode, exists := nodeContext[nodePattern.variable]; exists {
+		return boundNode, nodePattern.variable, nil
+	}
+
+	// Find matching node
+	var nodes []*storage.Node
+	var err error
+	if len(nodePattern.labels) > 0 {
+		nodes, err = e.storage.GetNodesByLabel(nodePattern.labels[0])
+	} else {
+		nodes, err = e.storage.AllNodes()
+	}
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Filter by properties
+	for _, n := range nodes {
+		matches := true
+		for key, val := range nodePattern.properties {
+			if nodeVal, ok := n.Properties[key]; !ok || fmt.Sprintf("%v", nodeVal) != fmt.Sprintf("%v", val) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return n, nodePattern.variable, nil
+		}
+	}
+
+	// No match found
+	return nil, nodePattern.variable, nil
+}
+
+// executeMergeRelSegment executes a MERGE relationship segment like (e)-[:REL]->(c)
+func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern string, nodeContext map[string]*storage.Node) error {
+	// Parse relationship pattern: (startVar)-[:TYPE]->(endVar) or (startVar)-[:TYPE {props}]->(endVar)
+	pattern = strings.TrimSpace(pattern)
+
+	// Extract start node variable
+	startParen := strings.Index(pattern, "(")
+	if startParen == -1 {
+		return fmt.Errorf("invalid relationship pattern: missing start node")
+	}
+
+	endStartParen := strings.Index(pattern[startParen+1:], ")")
+	if endStartParen == -1 {
+		return fmt.Errorf("invalid relationship pattern: missing start node closing paren")
+	}
+	startVar := strings.TrimSpace(pattern[startParen+1 : startParen+1+endStartParen])
+
+	// Find the relationship part -[...]->
+	relStart := strings.Index(pattern, "-[")
+	relEnd := strings.Index(pattern, "]->")
+	if relEnd == -1 {
+		relEnd = strings.Index(pattern, "]-")
+	}
+	if relStart == -1 || relEnd == -1 {
+		return fmt.Errorf("invalid relationship pattern: missing relationship brackets")
+	}
+
+	relContent := pattern[relStart+2 : relEnd]
+
+	// Parse relationship type and properties
+	var relType string
+	relProps := make(map[string]interface{})
+
+	if colonIdx := strings.Index(relContent, ":"); colonIdx >= 0 {
+		afterColon := relContent[colonIdx+1:]
+		if braceIdx := strings.Index(afterColon, "{"); braceIdx > 0 {
+			relType = strings.TrimSpace(afterColon[:braceIdx])
+			// Parse properties (simplified)
+		} else {
+			relType = strings.TrimSpace(afterColon)
+		}
+	}
+
+	// Extract end node variable
+	// Find the last (var) pattern
+	lastParenStart := strings.LastIndex(pattern, "(")
+	lastParenEnd := strings.LastIndex(pattern, ")")
+	if lastParenStart == -1 || lastParenEnd == -1 || lastParenEnd < lastParenStart {
+		return fmt.Errorf("invalid relationship pattern: missing end node")
+	}
+	endVar := strings.TrimSpace(pattern[lastParenStart+1 : lastParenEnd])
+
+	// Look up nodes in context
+	startNode, startExists := nodeContext[startVar]
+	endNode, endExists := nodeContext[endVar]
+
+	if !startExists {
+		return fmt.Errorf("start node variable '%s' not in context", startVar)
+	}
+	if !endExists {
+		return fmt.Errorf("end node variable '%s' not in context", endVar)
+	}
+
+	// Check if relationship already exists
+	edges, _ := e.storage.GetOutgoingEdges(startNode.ID)
+	for _, edge := range edges {
+		if edge.Type == relType && edge.EndNode == endNode.ID {
+			// Relationship already exists
+			return nil
+		}
+	}
+
+	// Create the relationship
+	edge := &storage.Edge{
+		ID:         storage.EdgeID(fmt.Sprintf("edge-%d", e.idCounter())),
+		Type:       relType,
+		StartNode:  startNode.ID,
+		EndNode:    endNode.ID,
+		Properties: relProps,
+	}
+
+	return e.storage.CreateEdge(edge)
+}
+
+// executeMultipleMerges handles queries with multiple MERGE statements without WITH:
+//
+//	MERGE (e:Entry {key: 'x'})
+//	MERGE (f:Category {name: 'y'})
+//	MERGE (e)-[:REL]->(f)
+//	RETURN e.key, f.name
+//
+// Each MERGE is executed in sequence, building a context of bound variables.
+// Relationship MERGEs use variables from previous node MERGEs.
+func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Context to track bound variables
+	nodeContext := make(map[string]*storage.Node)
+	relContext := make(map[string]*storage.Edge)
+
+	// Split into MERGE segments
+	segments := e.splitMultipleMerges(cypher)
+
+	// Process each MERGE segment
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		upperSeg := strings.ToUpper(segment)
+
+		if strings.HasPrefix(upperSeg, "MERGE") {
+			mergeContent := strings.TrimSpace(segment[5:])
+
+			// Check if this is a relationship MERGE
+			if strings.Contains(mergeContent, "-[") || strings.Contains(mergeContent, "]-") {
+				// Relationship MERGE
+				err := e.executeMergeRelSegment(ctx, mergeContent, nodeContext)
+				if err != nil {
+					return nil, fmt.Errorf("relationship MERGE failed: %w", err)
+				}
+				result.Stats.RelationshipsCreated++
+			} else {
+				// Node MERGE
+				node, varName, err := e.executeMergeNodeSegment(ctx, segment)
+				if err != nil {
+					return nil, fmt.Errorf("node MERGE failed: %w", err)
+				}
+				if node != nil && varName != "" {
+					nodeContext[varName] = node
+				}
+			}
+		} else if strings.HasPrefix(upperSeg, "RETURN") {
+			// Build result from context
+			returnClause := strings.TrimSpace(segment[6:])
+			items := e.parseReturnItems(returnClause)
+
+			row := make([]interface{}, len(items))
+			for i, item := range items {
+				if item.alias != "" {
+					result.Columns = append(result.Columns, item.alias)
+				} else {
+					result.Columns = append(result.Columns, item.expr)
+				}
+				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, relContext)
+			}
+			result.Rows = append(result.Rows, row)
+		}
+	}
+
+	return result, nil
+}
+
+// splitMultipleMerges splits a query into MERGE and RETURN segments.
+func (e *StorageExecutor) splitMultipleMerges(cypher string) []string {
+	var segments []string
+
+	// Find all MERGE positions
+	var mergePositions []int
+	searchPos := 0
+	for {
+		idx := findKeywordIndex(cypher[searchPos:], "MERGE")
+		if idx == -1 {
+			break
+		}
+		mergePositions = append(mergePositions, searchPos+idx)
+		searchPos = searchPos + idx + 5
+	}
+
+	// Find RETURN position
+	returnIdx := findKeywordIndex(cypher, "RETURN")
+
+	// Build segments
+	for i, pos := range mergePositions {
+		var endPos int
+		if i+1 < len(mergePositions) {
+			endPos = mergePositions[i+1]
+		} else if returnIdx > pos {
+			endPos = returnIdx
+		} else {
+			endPos = len(cypher)
+		}
+		segments = append(segments, strings.TrimSpace(cypher[pos:endPos]))
+	}
+
+	// Add RETURN segment
+	if returnIdx > 0 {
+		segments = append(segments, strings.TrimSpace(cypher[returnIdx:]))
+	}
+
+	return segments
+}
+
 // parseMergePattern parses a MERGE pattern like "(n:Label {prop: value})"

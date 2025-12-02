@@ -697,6 +697,24 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 	// MERGE queries get special handling - they have their own ON CREATE SET / ON MATCH SET logic
 	if startsWithMerge {
+		// Check for MERGE ... WITH ... MATCH chain pattern (e.g., import script pattern)
+		withIdx := findKeywordIndex(cypher, "WITH")
+		if withIdx > 0 {
+			// Check for MATCH after WITH (this is the chained pattern)
+			afterWith := cypher[withIdx:]
+			if findKeywordIndex(afterWith, "MATCH") > 0 {
+				return e.executeMergeWithChain(ctx, cypher)
+			}
+		}
+		// Check for multiple MERGEs without WITH (e.g., MERGE (a) MERGE (b) MERGE (a)-[:REL]->(b))
+		firstMergeEnd := findKeywordIndex(cypher[5:], ")")
+		if firstMergeEnd > 0 {
+			afterFirstMerge := cypher[5+firstMergeEnd+1:]
+			secondMergeIdx := findKeywordIndex(afterFirstMerge, "MERGE")
+			if secondMergeIdx >= 0 {
+				return e.executeMultipleMerges(ctx, cypher)
+			}
+		}
 		return e.executeMerge(ctx, cypher)
 	}
 
