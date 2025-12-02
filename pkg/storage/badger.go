@@ -2083,8 +2083,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		return nil
 	})
 
-	fmt.Printf("🔍 Scanned %d nodes: %d with embeddings, %d internal, found: %v\n",
-		scanned, withEmbed, internal, result != nil)
+	// Only log when we find a node needing embedding (reduce log spam)
+	if result != nil {
+		fmt.Printf("🔍 Found node needing embedding (scanned %d, %d already embedded)\n",
+			scanned, withEmbed)
+	}
 
 	return result
 }

@@ -724,8 +724,10 @@ func (ew *EmbedWorker) createFileChunksWithEmbeddings(parentFile *storage.Node, 
 			fmt.Printf("   Note: HAS_CHUNK edge for chunk %d may already exist\n", i)
 		}
 
-		fmt.Printf("   ✓ Created FileChunk %d/%d with %d-dim embedding\n",
-			i+1, totalChunks, len(embeddings[i]))
+		// Log progress every 10 chunks to reduce spam
+		if (i+1)%10 == 0 || i+1 == totalChunks {
+			fmt.Printf("   ✓ Created %d/%d FileChunks\n", i+1, totalChunks)
+		}
 	}
 
 	return nil
