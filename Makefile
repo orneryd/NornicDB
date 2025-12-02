@@ -256,6 +256,58 @@ test:
 	go test ./...
 
 # ==============================================================================
+# Cross-Compilation (native binaries for other platforms)
+# ==============================================================================
+# Build from macOS for: Linux servers, Raspberry Pi, Windows, etc.
+# Note: CGO is disabled for cross-compilation (pure Go, no Metal/CUDA)
+
+.PHONY: cross-linux-amd64 cross-linux-arm64 cross-rpi cross-rpi-zero cross-windows cross-all
+
+# Linux x86_64 (standard servers, VPS, Docker hosts)
+cross-linux-amd64:
+	@echo "Building for Linux x86_64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/nornicdb-linux-amd64 ./cmd/nornicdb
+	@echo "✓ bin/nornicdb-linux-amd64"
+
+# Linux ARM64 (AWS Graviton, newer ARM servers, Jetson)
+cross-linux-arm64:
+	@echo "Building for Linux ARM64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-linux-arm64 ./cmd/nornicdb
+	@echo "✓ bin/nornicdb-linux-arm64"
+
+# Raspberry Pi 4/5, Pi 3B+ 64-bit, Orange Pi, etc.
+cross-rpi:
+	@echo "Building for Raspberry Pi (64-bit ARM)..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-rpi64 ./cmd/nornicdb
+	@echo "✓ bin/nornicdb-rpi64"
+
+# Raspberry Pi 2/3/Zero 2 W (32-bit ARMv7)
+cross-rpi32:
+	@echo "Building for Raspberry Pi (32-bit ARMv7)..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o bin/nornicdb-rpi32 ./cmd/nornicdb
+	@echo "✓ bin/nornicdb-rpi32"
+
+# Raspberry Pi 1/Zero/Zero W (ARMv6)
+cross-rpi-zero:
+	@echo "Building for Raspberry Pi Zero (ARMv6)..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -o bin/nornicdb-rpi-zero ./cmd/nornicdb
+	@echo "✓ bin/nornicdb-rpi-zero"
+
+# Windows x86_64
+cross-windows:
+	@echo "Building for Windows x86_64..."
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/nornicdb.exe ./cmd/nornicdb
+	@echo "✓ bin/nornicdb.exe"
+
+# Build all cross-compilation targets
+cross-all: cross-linux-amd64 cross-linux-arm64 cross-rpi cross-rpi32 cross-rpi-zero cross-windows
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║ Cross-compilation complete! Binaries in bin/                 ║"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	@ls -lh bin/nornicdb*
+
+# ==============================================================================
 # Utilities
 # ==============================================================================
 
@@ -280,7 +332,9 @@ images:
 	@echo "  $(LLAMA_CUDA)"
 
 clean:
-	rm -rf bin/nornicdb bin/nornicdb-headless bin/nornicdb.exe
+	rm -rf bin/nornicdb bin/nornicdb-headless bin/nornicdb.exe \
+		bin/nornicdb-linux-amd64 bin/nornicdb-linux-arm64 \
+		bin/nornicdb-rpi64 bin/nornicdb-rpi32 bin/nornicdb-rpi-zero
 
 help:
 	@echo "NornicDB Build System (detected arch: $(HOST_ARCH))"
@@ -290,6 +344,15 @@ help:
 	@echo "  make build-headless          Build native binary without UI"
 	@echo "  make build-localllm          Build with local LLM support"
 	@echo "  make build-localllm-headless Build headless with local LLM"
+	@echo ""
+	@echo "Cross-Compilation (from macOS to other platforms):"
+	@echo "  make cross-linux-amd64       Linux x86_64 (servers, VPS)"
+	@echo "  make cross-linux-arm64       Linux ARM64 (Graviton, Jetson)"
+	@echo "  make cross-rpi               Raspberry Pi 4/5 (64-bit)"
+	@echo "  make cross-rpi32             Raspberry Pi 2/3/Zero 2 W (32-bit)"
+	@echo "  make cross-rpi-zero          Raspberry Pi Zero/1 (ARMv6)"
+	@echo "  make cross-windows           Windows x86_64"
+	@echo "  make cross-all               Build ALL platforms"
 	@echo ""
 	@echo "Docker Build (local only):"
 	@echo "  make build-arm64-metal          Base image (BYOM)"

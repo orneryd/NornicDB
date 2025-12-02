@@ -10,6 +10,14 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/orneryd/Mimir/tree/main/nornicdb"><img src="https://img.shields.io/badge/github-orneryd%2FMimir-blue?logo=github" alt="GitHub"></a>
+  <a href="https://hub.docker.com/u/timothyswt"><img src="https://img.shields.io/badge/docker-ready-blue?logo=docker" alt="Docker"></a>
+  <a href="https://neo4j.com/"><img src="https://img.shields.io/badge/neo4j-compatible-008CC1?logo=neo4j" alt="Neo4j Compatible"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-%3E%3D1.21-00ADD8?logo=go" alt="Go Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> •
   <a href="#features">Features</a> •
   <a href="#docker-images">Docker</a> •
@@ -226,12 +234,16 @@ auto_links:
 
 ## Documentation
 
-| Guide                                             | Description             |
-| ------------------------------------------------- | ----------------------- |
-| [Functions Reference](docs/FUNCTIONS_INDEX.md)    | All 52 Cypher functions |
-| [Memory Decay](docs/functions/07_DECAY_SYSTEM.md) | Cognitive memory system |
-| [Docker Guide](docker/README.md)                  | Build & deployment      |
-| [Complete Examples](docs/COMPLETE_EXAMPLES.md)    | Real-world patterns     |
+| Guide                                                                      | Description                    |
+| -------------------------------------------------------------------------- | ------------------------------ |
+| [Getting Started](docs/getting-started/README.md)                          | Installation & quick start     |
+| [API Reference](docs/api-reference/README.md)                              | Cypher functions & procedures  |
+| [User Guides](docs/user-guides/README.md)                                  | Complete examples & patterns   |
+| [Performance](docs/performance/README.md)                                  | Benchmarks vs Neo4j            |
+| [Neo4j Migration](docs/neo4j-migration/README.md)                          | Compatibility & feature parity |
+| [Architecture](docs/architecture/README.md)                                | System design & internals      |
+| [Docker Guide](docker/README.md)                                           | Build & deployment             |
+| [Development](docs/development/README.md)                                  | Contributing & development     |
 
 ## Comparison
 
