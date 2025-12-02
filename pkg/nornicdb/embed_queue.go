@@ -617,7 +617,7 @@ func nodeHasLabel(labels []string, target string) bool {
 }
 
 // createFileChunksWithEmbeddings creates FileChunk:Node nodes for each chunk
-// with their own embeddings, EXACTLY like Mimir's FileIndexer.ts does.
+// with their own embeddings
 //
 // CRITICAL: Mimir stores embeddings as a PROPERTY called "embedding", not using
 // a native embedding field. The stats query uses `c.embedding IS NOT NULL`.
@@ -644,13 +644,13 @@ func nodeHasLabel(labels []string, target string) bool {
 //	    c.has_prev = $hasPrev
 //	MERGE (f)-[:HAS_CHUNK {index: $chunkIndex}]->(c)
 func (ew *EmbedWorker) createFileChunksWithEmbeddings(parentFile *storage.Node, chunks []string) error {
-	// Get file metadata exactly like Mimir does
+	// Get file metadata
 	filePath, _ := parentFile.Properties["path"].(string)
 	fileName, _ := parentFile.Properties["name"].(string)
 	parentFileID := string(parentFile.ID)
 
 	totalChunks := len(chunks)
-	fmt.Printf("📄 Creating %d FileChunk nodes for %s (exactly like Mimir)\n", totalChunks, filePath)
+	fmt.Printf("📄 Creating %d FileChunk nodes for %s\n", totalChunks, filePath)
 
 	// Embed all chunks at once for efficiency
 	embeddings, err := ew.embedder.EmbedBatch(ew.ctx, chunks)
@@ -658,7 +658,7 @@ func (ew *EmbedWorker) createFileChunksWithEmbeddings(parentFile *storage.Node, 
 		return fmt.Errorf("failed to embed chunks: %w", err)
 	}
 
-	// Create a FileChunk node for each chunk - EXACTLY like Mimir's FileIndexer.ts
+	// Create a FileChunk node for each chunk
 	for i, chunkText := range chunks {
 		// Generate chunk ID like Mimir does (based on parent + index)
 		chunkID := storage.NodeID(fmt.Sprintf("%s-chunk-%d", parentFileID, i))
@@ -708,7 +708,7 @@ func (ew *EmbedWorker) createFileChunksWithEmbeddings(parentFile *storage.Node, 
 			}
 		}
 
-		// Create HAS_CHUNK relationship with index property (exactly like Mimir)
+		// Create HAS_CHUNK relationship with index property
 		// Mimir: MERGE (f)-[:HAS_CHUNK {index: $chunkIndex}]->(c)
 		edge := &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("%s-HAS_CHUNK-%d", parentFileID, i)),

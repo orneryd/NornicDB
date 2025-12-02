@@ -280,7 +280,6 @@ func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 
 	// ==========================================================================
 	// Step 2: Create FileChunk nodes AND HAS_CHUNK relationships via Cypher
-	// EXACTLY like Mimir's FileIndexer.ts does it:
 	//   MATCH (f:File {path: $path})
 	//   MERGE (c:FileChunk:Node {id: $chunkId})
 	//   SET c.chunk_index = $chunkIndex, c.text = $text, ...
@@ -398,7 +397,7 @@ func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 	filesWithEmbeddings := []string{"file1", "file2", "file3"}
 	chunksWithEmbeddings := []string{"chunk1a", "chunk1b", "chunk2a", "chunk2b", "chunk3a", "chunk3b"}
 
-	// Set embeddings on files - EXACTLY like Mimir does for small files
+	// Set embeddings on files
 	// Mimir stores the actual embedding ARRAY as a property, not just a marker!
 	// From FileIndexer.ts: SET f.embedding = $embedding, f.embedding_dimensions = ...
 	for _, filePath := range []string{"/test/doc1.md", "/test/doc2.md", "/test/doc3.md"} {
