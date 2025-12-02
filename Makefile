@@ -293,13 +293,39 @@ cross-rpi-zero:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -o bin/nornicdb-rpi-zero ./cmd/nornicdb
 	@echo "✓ bin/nornicdb-rpi-zero"
 
-# Windows x86_64
+# Windows x86_64 (CPU only, no embeddings)
 cross-windows:
-	@echo "Building for Windows x86_64..."
+	@echo "Building for Windows x86_64 (CPU-only)..."
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/nornicdb.exe ./cmd/nornicdb
 	@echo "✓ bin/nornicdb.exe"
 
-# Build all cross-compilation targets
+# Windows native builds (must run on Windows)
+# See: build.bat for all Windows variants
+cross-windows-native:
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║ Windows Native Builds (run on Windows)                       ║"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "Variants available via build.bat:"
+	@echo ""
+	@echo "  CPU-only (no embeddings):"
+	@echo "    build.bat cpu              Smallest (~15MB)"
+	@echo ""
+	@echo "  CPU + Local Embeddings:"
+	@echo "    build.bat cpu-localllm     BYOM (~25MB)"
+	@echo "    build.bat cpu-bge          With BGE model (~425MB)"
+	@echo ""
+	@echo "  CUDA + Local Embeddings (requires NVIDIA GPU):"
+	@echo "    build.bat cuda             BYOM (~30MB)"
+	@echo "    build.bat cuda-bge         With BGE model (~430MB)"
+	@echo ""
+	@echo "Prerequisites:"
+	@echo "  - All: Go 1.23+"
+	@echo "  - localllm/bge: Pre-built llama.cpp libs (build.bat download-libs)"
+	@echo "  - cuda: CUDA Toolkit 12.x + VS2022"
+	@echo "  - bge: BGE model file (build.bat download-model)"
+
+# Build all cross-compilation targets (excludes Windows CUDA which needs native build)
 cross-all: cross-linux-amd64 cross-linux-arm64 cross-rpi cross-rpi32 cross-rpi-zero cross-windows
 	@echo ""
 	@echo "╔══════════════════════════════════════════════════════════════╗"
@@ -351,8 +377,9 @@ help:
 	@echo "  make cross-rpi               Raspberry Pi 4/5 (64-bit)"
 	@echo "  make cross-rpi32             Raspberry Pi 2/3/Zero 2 W (32-bit)"
 	@echo "  make cross-rpi-zero          Raspberry Pi Zero/1 (ARMv6)"
-	@echo "  make cross-windows           Windows x86_64"
-	@echo "  make cross-all               Build ALL platforms"
+	@echo "  make cross-windows           Windows x86_64 (CPU-only, cross-compile)"
+	@echo "  make cross-windows-native    Windows builds (see all variants)"
+	@echo "  make cross-all               Build ALL platforms (excl. Windows native)"
 	@echo ""
 	@echo "Docker Build (local only):"
 	@echo "  make build-arm64-metal          Base image (BYOM)"

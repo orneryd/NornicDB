@@ -1,0 +1,60 @@
+# llama.cpp Windows CUDA static library builder
+# Builds pre-compiled libraries for Windows x64 with CUDA support
+#
+# NOTE: This is primarily for CI/CD. Windows Docker containers with CUDA
+# require specific NVIDIA Windows container runtime support.
+#
+# For local builds, use: .\scripts\build-llama-cuda.ps1
+#
+# Build (requires Windows container mode):
+#   docker build -f docker/Dockerfile.llama-cuda-windows -t timothyswt/llama-cuda-libs-windows:b4785 .
+#
+# For GitHub Actions:
+#   See .github/workflows/build-llama-windows.yml
+
+# Using Windows Server Core with CUDA
+# Note: Requires host with NVIDIA GPU and Windows container support
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
+
+# Install Chocolatey for package management
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+RUN Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; \
+    iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+
+# Install build tools
+RUN choco install -y git cmake ninja visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# Note: CUDA Toolkit must be pre-installed on the host or use NVIDIA's CUDA Windows container image
+# For CI, consider using: mcr.microsoft.com/dotnet/framework/sdk with manual CUDA install
+
+ARG LLAMA_VERSION=b4785
+ARG CUDA_VERSION=12.6
+
+WORKDIR C:\\llama
+
+# Clone llama.cpp
+RUN git clone --depth 1 --branch $env:LLAMA_VERSION https://github.com/ggerganov/llama.cpp.git .
+
+# Patch log.cpp for MSVC compatibility
+RUN $content = Get-Content 'common\\log.cpp' -Raw; \
+    if ($content -notmatch '#include\s*<chrono>') { \
+        $content = $content -replace '(#include\s*<cstdio>)', "`$1`n#include <chrono>"; \
+        Set-Content 'common\\log.cpp' $content -NoNewline; \
+    }
+
+# Setup VS environment and build
+SHELL ["cmd", "/S", "/C"]
+RUN call "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLAMA_STATIC=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON && cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
+
+# Combine libraries
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop';"]
+RUN New-Item -ItemType Directory -Force -Path C:\output\lib, C:\output\include; \
+    Get-ChildItem -Path build -Recurse -Filter "*.lib" | Where-Object { $_.Name -match "llama|ggml" } | Copy-Item -Destination C:\output\lib; \
+    Copy-Item include\llama.h C:\output\include\; \
+    Copy-Item ggml\include\*.h C:\output\include\; \
+    Write-Host "Libraries:"; Get-ChildItem C:\output\lib
+
+# Output stage (minimal)
+FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
+COPY --from=builder C:\\output C:\\output

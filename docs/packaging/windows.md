@@ -10,11 +10,89 @@ NornicDB on Windows supports multiple distribution methods:
 
 All methods can optionally install NornicDB as a Windows Service that runs in the background.
 
-## Target Architecture
+## Build Variants
 
-| Architecture | Hardware | Binary |
-|--------------|----------|--------|
-| amd64 | Intel/AMD 64-bit | `nornicdb.exe` |
+NornicDB offers 5 Windows build variants to match different deployment needs:
+
+| Variant | Binary | Size | Embeddings | GPU | Use Case |
+|---------|--------|------|------------|-----|----------|
+| `cpu` | `nornicdb-cpu.exe` | ~15MB | None | ❌ | Smallest, use external embedding service |
+| `cpu-localllm` | `nornicdb-cpu-localllm.exe` | ~25MB | BYOM | ❌ | Resource-constrained, bring own model |
+| `cpu-bge` | `nornicdb-cpu-bge.exe` | ~425MB | Built-in | ❌ | Resource-constrained, ready to run |
+| `cuda` | `nornicdb-cuda.exe` | ~30MB | BYOM | ✅ | GPU-accelerated, bring own model |
+| `cuda-bge` | `nornicdb-cuda-bge.exe` | ~430MB | Built-in | ✅ | GPU-accelerated, ready to run |
+
+**BYOM** = Bring Your Own Model (place `.gguf` file in `models/` directory)
+
+## Quick Build Guide
+
+All builds use `build.bat` on Windows:
+
+```batch
+REM === FIRST TIME SETUP ===
+REM Download pre-built llama.cpp libraries (for localllm/cuda variants)
+build.bat download-libs
+
+REM Download BGE model (for bge variants, ~400MB)
+build.bat download-model
+
+REM === BUILD VARIANTS ===
+REM CPU-only (smallest, no embeddings)
+build.bat cpu
+
+REM CPU + local embeddings (bring your own model)
+build.bat cpu-localllm
+
+REM CPU + local embeddings + BGE model embedded
+build.bat cpu-bge
+
+REM CUDA + local embeddings (requires NVIDIA GPU)
+build.bat cuda
+
+REM CUDA + local embeddings + BGE model embedded  
+build.bat cuda-bge
+
+REM Build headless variant (no web UI)
+build.bat cuda headless
+
+REM Build ALL variants
+build.bat all
+```
+
+## Prerequisites by Variant
+
+| Variant | Go | llama.cpp libs | CUDA Toolkit | BGE Model |
+|---------|-----|----------------|--------------|-----------|
+| `cpu` | ✅ | ❌ | ❌ | ❌ |
+| `cpu-localllm` | ✅ | ✅ | ❌ | ❌ |
+| `cpu-bge` | ✅ | ✅ | ❌ | ✅ |
+| `cuda` | ✅ | ✅ (CUDA) | ✅ | ❌ |
+| `cuda-bge` | ✅ | ✅ (CUDA) | ✅ | ✅ |
+
+## Pre-Built llama.cpp Libraries
+
+For fast builds, use pre-built llama.cpp libraries instead of compiling from source (~15 min saved).
+
+### Option 1: Download Pre-Built (Recommended)
+
+```batch
+build.bat download-libs
+```
+
+### Option 2: Build Locally (requires VS2022 + CUDA)
+
+```powershell
+# Build CUDA-enabled llama.cpp libraries
+.\scripts\build-llama-cuda.ps1
+
+# Output: lib\llama\libllama_windows_amd64.lib
+```
+
+### Pre-Built Library Artifacts
+
+Available from GitHub Releases:
+- **URL**: `timothyswt/nornicdb/releases/download/libs-v1/`
+- **Files**: `libllama_windows_amd64.lib`, headers
 
 ## Method 1: MSI Installer (Recommended)
 
