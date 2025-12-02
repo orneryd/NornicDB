@@ -454,45 +454,65 @@ func averageEmbeddings(embeddings [][]float32) []float32 {
 }
 
 // buildEmbeddingText creates text for embedding from node properties.
-// The text will be chunked by the caller if it exceeds ChunkSize.
+// Stringifies all non-metadata properties into embeddable text.
 func buildEmbeddingText(properties map[string]interface{}) string {
 	var parts []string
 
-	// Priority fields for embedding (content-rich fields first)
-	priorityFields := []string{"title", "content", "description", "name", "text", "body", "summary", "path", "host_path"}
+	// Skip these metadata/internal fields
+	skipFields := map[string]bool{
+		"embedding":            true,
+		"has_embedding":        true,
+		"embedding_skipped":    true,
+		"embedding_model":      true,
+		"embedding_dimensions": true,
+		"embedded_at":          true,
+		"createdAt":            true,
+		"updatedAt":            true,
+		"id":                   true,
+	}
 
-	for _, field := range priorityFields {
-		if val, ok := properties[field]; ok {
-			if str, ok := val.(string); ok && str != "" {
-				parts = append(parts, str)
+	for key, val := range properties {
+		if skipFields[key] {
+			continue
+		}
+
+		// Convert value to string representation
+		var strVal string
+		switch v := val.(type) {
+		case string:
+			if v == "" {
+				continue
+			}
+			strVal = v
+		case []interface{}:
+			// Handle arrays (like tags)
+			strs := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					strs = append(strs, s)
+				}
+			}
+			if len(strs) == 0 {
+				continue
+			}
+			strVal = strings.Join(strs, ", ")
+		case bool:
+			strVal = fmt.Sprintf("%v", v)
+		case int, int64, float64:
+			strVal = fmt.Sprintf("%v", v)
+		default:
+			// For complex types, use JSON
+			if b, err := json.Marshal(v); err == nil {
+				strVal = string(b)
+			} else {
+				continue
 			}
 		}
+
+		parts = append(parts, fmt.Sprintf("%s: %s", key, strVal))
 	}
 
-	// Add type if present
-	if nodeType, ok := properties["type"].(string); ok && nodeType != "" {
-		parts = append(parts, "Type: "+nodeType)
-	}
-
-	// Add tags if present
-	if tags, ok := properties["tags"].([]interface{}); ok && len(tags) > 0 {
-		tagStrs := make([]string, 0, len(tags))
-		for _, t := range tags {
-			if s, ok := t.(string); ok {
-				tagStrs = append(tagStrs, s)
-			}
-		}
-		if len(tagStrs) > 0 {
-			parts = append(parts, "Tags: "+strings.Join(tagStrs, ", "))
-		}
-	}
-
-	// Add reasoning/rationale if present (important for memories)
-	if reasoning, ok := properties["reasoning"].(string); ok && reasoning != "" {
-		parts = append(parts, reasoning)
-	}
-
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n")
 }
 
 // chunkText splits text into chunks with overlap, trying to break at natural boundaries.
