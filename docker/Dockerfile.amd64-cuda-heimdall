@@ -1,4 +1,4 @@
-# NornicDB ARM64 Metal + Heimdall (Cognitive Guardian)
+# NornicDB AMD64 CUDA + Heimdall (Cognitive Guardian)
 # Self-contained build with local embedding AND Heimdall SLM support
 #
 # This image includes:
@@ -6,13 +6,15 @@
 # - Qwen2.5-0.5B-Instruct (Q4_K_M) for Heimdall (cognitive database guardian)
 #
 # Build:
-#   docker build -f docker/Dockerfile.arm64-metal-heimdall -t timothyswt/nornicdb-arm64-metal-bge-heimdall .
+#   docker build -f docker/Dockerfile.amd64-cuda-heimdall -t timothyswt/nornicdb-amd64-cuda-bge-heimdall .
 #
 # Run:
-#   docker run -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-arm64-metal-bge-heimdall
+#   docker run --gpus all -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data timothyswt/nornicdb-amd64-cuda-bge-heimdall
 #
 # This is a "batteries included" deployment - no additional model downloads required.
 # Heimdall provides: anomaly detection, runtime diagnosis, and memory curation via Bifrost chat.
+
+ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:b4785
 
 # =============================================================================
 # Stage 1: UI
@@ -25,46 +27,26 @@ COPY ui/ .
 RUN npm run build
 
 # =============================================================================
-# Stage 2: llama.cpp static library (ARM64)
+# Stage 2: Pre-built CUDA libs
 # =============================================================================
-FROM debian:bookworm-slim AS llama
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*
-
-ARG LLAMA_VERSION=b4535
-WORKDIR /llama
-RUN git clone --depth 1 --branch ${LLAMA_VERSION} https://github.com/ggerganov/llama.cpp.git . && \
-    cmake -B build \
-      -DLLAMA_STATIC=ON -DBUILD_SHARED_LIBS=OFF \
-      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF \
-      -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
-      -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" && \
-    cmake --build build --config Release -j$(nproc)
-
-# Combine static libs into single archive
-RUN mkdir -p /out && \
-    find build -name "*.a" -exec cp {} /out/ \; && \
-    echo "Libraries found:" && ls -la /out/*.a && \
-    echo "CREATE /out/libllama_combined.a" > /tmp/ar.mri && \
-    for lib in /out/lib*.a; do echo "ADDLIB $lib" >> /tmp/ar.mri; done && \
-    echo "SAVE" >> /tmp/ar.mri && \
-    echo "END" >> /tmp/ar.mri && \
-    cat /tmp/ar.mri && \
-    ar -M < /tmp/ar.mri && \
-    cp include/llama.h ggml/include/*.h /out/ && \
-    echo "Combined library:" && ls -lh /out/libllama_combined.a
+FROM ${LLAMA_CUDA_IMAGE} AS llama
 
 # =============================================================================
 # Stage 3: Go build
 # =============================================================================
-FROM golang:1.23-bookworm AS builder
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
+
+ENV GO_VERSION=1.23.4
+RUN apt-get update && apt-get install -y wget git gcc g++ libgomp1 && \
+    wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && rm go*.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}" CUDA_HOME=/usr/local/cuda
+
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
-
 # Copy llama artifacts
-COPY --from=llama /out/libllama_combined.a /build/lib/llama/libllama_linux_arm64.a
-COPY --from=llama /out/*.h /build/lib/llama/
+COPY --from=llama /output/lib/*.a /build/lib/llama/
+COPY --from=llama /output/include/*.h /build/lib/llama/
 
 # Go dependencies
 COPY go.mod go.sum ./
@@ -74,9 +56,9 @@ RUN go mod download
 COPY . .
 COPY --from=ui /ui/dist ./ui/dist
 
-# Build with full features (localllm for both embedding and SLM generation)
-RUN echo "Building NornicDB with Heimdall support..." && \
-    CGO_ENABLED=1 go build -tags=localllm \
+# Build with CUDA + localllm + heimdall
+RUN echo "Building with CUDA + localllm + heimdall..." && \
+    CGO_ENABLED=1 go build -tags "cuda localllm heimdall" \
       -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
       -o nornicdb ./cmd/nornicdb
 
@@ -87,13 +69,13 @@ RUN echo "Building APOC plugin..." && \
     echo "✓ Built plugin:" && ls -lh /build/apoc/built-plugins/*.so
 
 # =============================================================================
-# Stage 4: Runtime with embedded models
+# Stage 4: Runtime
 # =============================================================================
-FROM debian:bookworm-slim
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget && rm -rf /var/lib/apt/lists/* && \
+    ca-certificates tzdata wget libgomp1 && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /data /app/models
 
 COPY --from=builder /build/nornicdb /app/
@@ -101,53 +83,44 @@ COPY --from=builder /build/apoc/built-plugins /app/plugins/
 COPY docker/entrypoint.sh /app/
 RUN chmod +x /app/entrypoint.sh
 
-# Embed BOTH models: BGE-M3 (embeddings) and Qwen2.5-0.5B (Heimdall SLM)
-# Using BuildKit mount to avoid layer bloat during COPY
+# Embed both models: BGE-M3 for embeddings + Qwen for Heimdall
 RUN --mount=type=bind,source=models,target=/models,ro \
-    echo "=== Embedding models for batteries-included deployment ===" && \
-    # BGE-M3 embedding model (required)
+    echo "Embedding BGE-M3 model..." && \
     if [ -f /models/bge-m3.gguf ]; then \
       cp /models/bge-m3.gguf /app/models/ && \
       echo "✓ Embedded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))"; \
     else \
       echo "ERROR: models/bge-m3.gguf not found" && exit 1; \
     fi && \
-    # Qwen2.5-0.5B-Instruct for Heimdall (required for this build)
+    echo "Embedding Heimdall SLM model..." && \
     if [ -f /models/qwen2.5-0.5b-instruct-q4_k_m.gguf ]; then \
       cp /models/qwen2.5-0.5b-instruct-q4_k_m.gguf /app/models/ && \
       echo "✓ Embedded qwen2.5-0.5b-instruct-q4_k_m.gguf ($(du -h /app/models/qwen2.5-0.5b-instruct-q4_k_m.gguf | cut -f1))"; \
     else \
-      echo "ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found - required for Heimdall" && exit 1; \
+      echo "ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found" && exit 1; \
     fi && \
-    echo "=== Model embedding complete ===" && \
-    ls -lh /app/models/
+    echo "✓ Heimdall cognitive features enabled"
 
 EXPOSE 7474 7687
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --spider -q http://localhost:7474/health || exit 1
 
-# Environment configuration for Heimdall-enabled deployment
 ENV NORNICDB_DATA_DIR=/data \
     NORNICDB_HTTP_PORT=7474 \
     NORNICDB_BOLT_PORT=7687 \
-    # Embedding configuration
     NORNICDB_EMBEDDING_PROVIDER=local \
     NORNICDB_EMBEDDING_MODEL=bge-m3 \
     NORNICDB_EMBEDDING_DIMENSIONS=1024 \
     NORNICDB_MODELS_DIR=/app/models \
-    NORNICDB_EMBEDDING_GPU_LAYERS=0 \
-    # Heimdall configuration (cognitive guardian)
+    NORNICDB_EMBEDDING_GPU_LAYERS=-1 \
+    NORNICDB_NO_AUTH=true \
+    NORNICDB_GPU_ENABLED=true \
+    NORNICDB_PLUGINS_DIR=/app/plugins \
     NORNICDB_HEIMDALL_ENABLED=true \
     NORNICDB_HEIMDALL_MODEL=qwen2.5-0.5b-instruct-q4_k_m \
-    NORNICDB_HEIMDALL_GPU_LAYERS=-1 \
-    NORNICDB_HEIMDALL_MAX_TOKENS=512 \
-    NORNICDB_HEIMDALL_TEMPERATURE=0.1 \
-    NORNICDB_HEIMDALL_ANOMALY_DETECTION=true \
-    NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS=true \
-    NORNICDB_HEIMDALL_MEMORY_CURATION=false \
-    # General settings
-    NORNICDB_NO_AUTH=true \
-    NORNICDB_PLUGINS_DIR=/app/plugins
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
 
 ENTRYPOINT ["/app/entrypoint.sh"]

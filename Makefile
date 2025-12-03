@@ -47,6 +47,7 @@ IMAGE_ARM64_BGE_HEIMDALL := $(REGISTRY)/nornicdb-arm64-metal-bge-heimdall:$(VERS
 IMAGE_ARM64_HEADLESS := $(REGISTRY)/nornicdb-arm64-metal-headless:$(VERSION)
 IMAGE_AMD64 := $(REGISTRY)/nornicdb-amd64-cuda:$(VERSION)
 IMAGE_AMD64_BGE := $(REGISTRY)/nornicdb-amd64-cuda-bge:$(VERSION)
+IMAGE_AMD64_BGE_HEIMDALL := $(REGISTRY)/nornicdb-amd64-cuda-bge-heimdall:$(VERSION)
 IMAGE_AMD64_HEADLESS := $(REGISTRY)/nornicdb-amd64-cuda-headless:$(VERSION)
 IMAGE_AMD64_CPU := $(REGISTRY)/nornicdb-amd64-cpu:$(VERSION)
 IMAGE_AMD64_CPU_HEADLESS := $(REGISTRY)/nornicdb-amd64-cpu-headless:$(VERSION)
@@ -56,14 +57,14 @@ LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:b4785
 DOCKER_DIR := docker
 
 .PHONY: build-arm64-metal build-arm64-metal-bge build-arm64-metal-bge-heimdall build-arm64-metal-headless
-.PHONY: build-amd64-cuda build-amd64-cuda-bge build-amd64-cuda-headless
+.PHONY: build-amd64-cuda build-amd64-cuda-bge build-amd64-cuda-bge-heimdall build-amd64-cuda-headless
 .PHONY: build-amd64-cpu build-amd64-cpu-headless
 .PHONY: build-all build-arm64-all build-amd64-all
 .PHONY: push-arm64-metal push-arm64-metal-bge push-arm64-metal-bge-heimdall push-arm64-metal-headless
-.PHONY: push-amd64-cuda push-amd64-cuda-bge push-amd64-cuda-headless
+.PHONY: push-amd64-cuda push-amd64-cuda-bge push-amd64-cuda-bge-heimdall push-amd64-cuda-headless
 .PHONY: push-amd64-cpu push-amd64-cpu-headless
 .PHONY: deploy-arm64-metal deploy-arm64-metal-bge deploy-arm64-metal-bge-heimdall deploy-arm64-metal-headless
-.PHONY: deploy-amd64-cuda deploy-amd64-cuda-bge deploy-amd64-cuda-headless
+.PHONY: deploy-amd64-cuda deploy-amd64-cuda-bge deploy-amd64-cuda-bge-heimdall deploy-amd64-cuda-headless
 .PHONY: deploy-amd64-cpu deploy-amd64-cpu-headless
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda
@@ -86,13 +87,15 @@ build-arm64-metal-bge:
 	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg EMBED_MODEL=true -t $(IMAGE_ARM64_BGE) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-arm64-metal-bge-heimdall:
-	@echo "╔══════════════════════════════════════════════════════════════╗"
-	@echo "║ Building: $(IMAGE_ARM64_BGE_HEIMDALL) [BGE + Heimdall]"
-	@echo "║ 🛡️ Full cognitive features - batteries included!"
-	@echo "╚══════════════════════════════════════════════════════════════╝"
+	@echo "Building: $(IMAGE_ARM64_BGE_HEIMDALL) [BGE + Heimdall]"
 	@echo "Checking for required models..."
+ifeq ($(OS),Windows_NT)
+	@if not exist models\bge-m3.gguf (echo ERROR: models/bge-m3.gguf not found && exit /b 1)
+	@if not exist models\qwen2.5-0.5b-instruct-q4_k_m.gguf (echo ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found && exit /b 1)
+else
 	@test -f models/bge-m3.gguf || (echo "ERROR: models/bge-m3.gguf not found" && exit 1)
-	@test -f models/qwen2.5-1.5b-instruct-q4_k_m.gguf || (echo "ERROR: models/qwen2.5-1.5b-instruct-q4_k_m.gguf not found" && exit 1)
+	@test -f models/qwen2.5-0.5b-instruct-q4_k_m.gguf || (echo "ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found" && exit 1)
+endif
 	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 -t $(IMAGE_ARM64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.arm64-metal-heimdall .
 
 build-arm64-metal-headless:
@@ -112,6 +115,18 @@ build-amd64-cuda-bge:
 	@echo "║ Building: $(IMAGE_AMD64_BGE) [with BGE model]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
 	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+
+build-amd64-cuda-bge-heimdall:
+	@echo "Building: $(IMAGE_AMD64_BGE_HEIMDALL) [BGE + Heimdall]"
+	@echo "Checking for required models..."
+ifeq ($(OS),Windows_NT)
+	@if not exist models\bge-m3.gguf (echo ERROR: models/bge-m3.gguf not found && exit /b 1)
+	@if not exist models\qwen2.5-0.5b-instruct-q4_k_m.gguf (echo ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found && exit /b 1)
+else
+	@test -f models/bge-m3.gguf || (echo "ERROR: models/bge-m3.gguf not found" && exit 1)
+	@test -f models/qwen2.5-0.5b-instruct-q4_k_m.gguf || (echo "ERROR: models/qwen2.5-0.5b-instruct-q4_k_m.gguf not found" && exit 1)
+endif
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 -t $(IMAGE_AMD64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda-heimdall .
 
 build-amd64-cuda-headless:
 	@echo "╔══════════════════════════════════════════════════════════════╗"
@@ -176,6 +191,10 @@ push-amd64-cuda-bge:
 	@echo "→ Pushing $(IMAGE_AMD64_BGE)"
 	docker push $(IMAGE_AMD64_BGE)
 
+push-amd64-cuda-bge-heimdall:
+	@echo "→ Pushing $(IMAGE_AMD64_BGE_HEIMDALL)"
+	docker push $(IMAGE_AMD64_BGE_HEIMDALL)
+
 push-amd64-cuda-headless:
 	@echo "→ Pushing $(IMAGE_AMD64_HEADLESS)"
 	docker push $(IMAGE_AMD64_HEADLESS)
@@ -210,6 +229,10 @@ deploy-amd64-cuda: build-amd64-cuda push-amd64-cuda
 
 deploy-amd64-cuda-bge: build-amd64-cuda-bge push-amd64-cuda-bge
 	@echo "✓ Deployed $(IMAGE_AMD64_BGE)"
+
+deploy-amd64-cuda-bge-heimdall: build-amd64-cuda-bge-heimdall push-amd64-cuda-bge-heimdall
+	@echo "✓ Deployed $(IMAGE_AMD64_BGE_HEIMDALL)"
+	@echo "🛡️ Heimdall cognitive features enabled - access Bifrost at /bifrost"
 
 deploy-amd64-cuda-headless: build-amd64-cuda-headless push-amd64-cuda-headless
 	@echo "✓ Deployed $(IMAGE_AMD64_HEADLESS)"
