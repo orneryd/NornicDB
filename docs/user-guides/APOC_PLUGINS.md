@@ -1,48 +1,46 @@
-# APOC Plugin System
+# NornicDB Plugin System
 
-NornicDB includes a powerful APOC (Awesome Procedures On Cypher) plugin system that extends Cypher with additional functions for machine learning, text processing, data manipulation, and more.
+NornicDB features a powerful plugin system that extends Cypher with APOC (Awesome Procedures On Cypher) functions. The APOC plugin provides **964 functions** covering collections, text processing, math, graph algorithms, data import/export, and more.
 
 ## Overview
 
 The plugin system provides:
 
-- **Built-in Functions**: 60+ functions compiled into the binary (always available)
-- **Dynamic Plugins**: Drop `.so` files into a folder for automatic loading
-- **Configuration Control**: Enable/disable functions via config or environment variables
+- **Dynamic Plugin Loading**: Plugins are `.so` files loaded automatically at startup
+- **APOC Plugin**: Pre-built plugin with 964 functions included in all Docker images
+- **Custom Plugins**: Create your own plugins following the same interface
+- **Configuration Control**: Enable/disable via environment variables
 
 ## Quick Start
 
-### Using Built-in APOC Functions
+### Using APOC Functions
 
-All Docker images and builds include APOC functions out of the box:
+All Docker images include the APOC plugin pre-loaded:
 
 ```cypher
-// Text functions
-RETURN apoc.text.capitalize('hello world')  // "Hello world"
-RETURN apoc.text.camelCase('hello world')   // "helloWorld"
-
 // Collection functions
-RETURN apoc.coll.sum([1, 2, 3, 4, 5])        // 15
-RETURN apoc.coll.avg([1, 2, 3, 4, 5])        // 3.0
+RETURN apoc.coll.sum([1, 2, 3, 4, 5])           // 15
+RETURN apoc.coll.avg([1, 2, 3, 4, 5])           // 3.0
+RETURN apoc.coll.flatten([[1,2], [3,4]])        // [1,2,3,4]
+
+// Text functions
+RETURN apoc.text.capitalize('hello world')      // "Hello world"
+RETURN apoc.text.camelCase('hello_world')       // "helloWorld"
+RETURN apoc.text.levenshteinDistance('cat', 'bat')  // 1
 
 // Math functions
-RETURN apoc.math.sqrt(16)                    // 4.0
-RETURN apoc.math.round(3.7)                  // 4
-```
+RETURN apoc.math.sqrt(16)                       // 4.0
+RETURN apoc.math.sigmoid(0)                     // 0.5
 
-### Using Plugin Functions
+// Scoring functions
+RETURN apoc.scoring.cosine([1,0], [0,1])        // 0.0
+RETURN apoc.scoring.jaccard([1,2,3], [2,3,4])   // 0.5
 
-Plugin functions are automatically loaded from `.so` files:
+// Spatial functions
+RETURN apoc.spatial.haversineDistance(40.7128, -74.0060, 34.0522, -118.2437)
 
-```cypher
-// ML plugin functions
-RETURN apoc.ml.sigmoid(0)                    // 0.5
-RETURN apoc.ml.relu(-5)                      // 0
-RETURN apoc.ml.cosineSimilarity([1,0,0], [0,1,0])  // 0.0
-
-// Text plugin functions  
-RETURN apoc.text.slugify('Hello World!')     // "hello-world"
-RETURN apoc.text.levenshteinDistance('kitten', 'sitting')  // 3
+// Create functions
+RETURN apoc.create.uuid()                       // "550e8400-e29b-41d4-..."
 ```
 
 ## Configuration
@@ -50,17 +48,11 @@ RETURN apoc.text.levenshteinDistance('kitten', 'sitting')  // 3
 ### Environment Variables
 
 ```bash
-# Directory containing .so plugin files (default: empty = no external plugins)
-NORNICDB_APOC_PLUGINS_DIR=/app/plugins
+# Directory containing .so plugin files (default: /app/plugins in Docker)
+NORNICDB_PLUGINS_DIR=/app/plugins
 
-# Enable/disable entire APOC system
-NORNICDB_APOC_ENABLED=true
-
-# Enable/disable specific categories
-NORNICDB_APOC_COLL_ENABLED=true
-NORNICDB_APOC_TEXT_ENABLED=true
-NORNICDB_APOC_MATH_ENABLED=true
-NORNICDB_APOC_ML_ENABLED=true
+# Enable/disable plugin system
+NORNICDB_PLUGINS_ENABLED=true
 ```
 
 ### Docker Compose
@@ -70,71 +62,94 @@ services:
   nornicdb:
     image: timothyswt/nornicdb-arm64-metal:latest
     environment:
-      - NORNICDB_APOC_PLUGINS_DIR=/app/plugins
+      - NORNICDB_PLUGINS_DIR=/app/plugins
     volumes:
-      - ./my-plugins:/app/plugins  # Mount custom plugins
+      - ./custom-plugins:/app/plugins/custom  # Add custom plugins
 ```
 
-## Available Functions
+## Available Function Categories
 
-### Built-in Categories
+The APOC plugin includes **964 functions** across these categories:
 
-| Category | Functions | Description |
-|----------|-----------|-------------|
-| `apoc.coll` | sum, avg, min, max, sort, reverse, flatten, contains, union, intersection | Collection operations |
-| `apoc.text` | capitalize, camelCase, snakeCase, replace, split, join, distance | Text manipulation |
-| `apoc.math` | sqrt, pow, floor, ceil, round, abs, sin, cos, tan | Mathematical operations |
-| `apoc.date` | format, parse, currentTimestamp | Date/time handling |
-| `apoc.convert` | toFloat, toInteger, toBoolean, toString | Type conversion |
-| `apoc.json` | parse, stringify, validate | JSON operations |
-| `apoc.agg` | median, percentile, stdev | Aggregation functions |
-| `apoc.util` | md5, sha256, uuid | Utility functions |
-| `apoc.map` | merge, fromLists, values, keys | Map operations |
-
-### Plugin Categories
-
-| Plugin | Functions | Description |
-|--------|-----------|-------------|
-| `apoc.ml` | sigmoid, relu, softmax, cosineSimilarity, euclideanDistance | Machine learning |
-| `apoc.text` (plugin) | slugify, levenshteinDistance, jaroWinkler | Advanced text processing |
+| Category | Count | Description |
+|----------|-------|-------------|
+| `apoc.coll` | 46 | Collection operations (sum, avg, sort, flatten, union, etc.) |
+| `apoc.text` | 41 | Text manipulation (capitalize, replace, distance, regex, etc.) |
+| `apoc.math` | 45 | Mathematical operations (sqrt, trig, statistics, etc.) |
+| `apoc.convert` | 24 | Type conversion (toFloat, toJson, toList, etc.) |
+| `apoc.date` | 15 | Date/time handling (format, parse, add, etc.) |
+| `apoc.json` | 18 | JSON operations (parse, stringify, path, merge, etc.) |
+| `apoc.util` | 38 | Utilities (md5, sha256, uuid, compress, etc.) |
+| `apoc.agg` | 15 | Aggregation (median, percentile, stdev, histogram, etc.) |
+| `apoc.algo` | 9 | Graph algorithms (pageRank, dijkstra, etc.) |
+| `apoc.map` | 25 | Map operations (merge, flatten, groupBy, etc.) |
+| `apoc.create` | 19 | Node/relationship creation (node, relationship, uuid, etc.) |
+| `apoc.export` | 14 | Data export (json, csv, cypher, graphML, etc.) |
+| `apoc.import` | 19 | Data import (json, csv, xml, etc.) |
+| `apoc.load` | 29 | Data loading (json, csv, jdbc, s3, kafka, etc.) |
+| `apoc.log` | 25 | Logging (info, debug, warn, metrics, etc.) |
+| `apoc.node` | 34 | Node operations (degree, labels, properties, etc.) |
+| `apoc.nodes` | 22 | Multi-node operations (group, partition, connected, etc.) |
+| `apoc.rel` | 29 | Relationship operations (type, properties, weight, etc.) |
+| `apoc.refactor` | 20 | Graph refactoring (mergeNodes, renameLabel, etc.) |
+| `apoc.schema` | 30 | Schema operations (indexes, constraints, etc.) |
+| `apoc.meta` | 38 | Metadata (schema, stats, types, etc.) |
+| `apoc.neighbors` | 6 | Neighbor traversal (atHop, bfs, dfs, etc.) |
+| `apoc.path` | 9 | Path operations (expand, slice, etc.) |
+| `apoc.paths` | 21 | Path finding (shortest, all, kShortest, etc.) |
+| `apoc.periodic` | 10 | Periodic operations (iterate, commit, etc.) |
+| `apoc.search` | 29 | Search operations (fulltext, fuzzy, regex, etc.) |
+| `apoc.scoring` | 22 | Similarity scoring (cosine, jaccard, bm25, etc.) |
+| `apoc.spatial` | 19 | Spatial operations (distance, bearing, geohash, etc.) |
+| `apoc.stats` | 23 | Statistics (mean, median, correlation, etc.) |
+| `apoc.temporal` | 26 | Temporal operations (format, parse, duration, etc.) |
+| `apoc.trigger` | 24 | Trigger management (add, remove, enable, etc.) |
+| `apoc.warmup` | 15 | Cache warmup (run, nodes, relationships, etc.) |
+| `apoc.xml` | 23 | XML operations (parse, query, transform, etc.) |
+| `apoc.label` | 27 | Label operations (add, remove, exists, etc.) |
+| `apoc.lock` | 19 | Locking (nodes, relationships, etc.) |
+| `apoc.merge` | 17 | Merge operations (node, relationship, etc.) |
+| `apoc.hashing` | 18 | Hashing (md5, sha256, murmur, etc.) |
+| `apoc.graph` | 15 | Graph operations (fromData, validate, etc.) |
+| `apoc.diff` | 9 | Diff operations (nodes, maps, etc.) |
+| `apoc.cypher` | 16 | Cypher utilities (run, parallel, etc.) |
+| `apoc.bitwise` | 15 | Bitwise operations (and, or, xor, etc.) |
+| `apoc.atomic` | 9 | Atomic operations (add, update, etc.) |
+| `apoc.number` | 38 | Number formatting (format, parse, toHex, etc.) |
 
 ## Creating Custom Plugins
 
-### Plugin Structure
+### Plugin Interface
 
-Create a Go file that implements `PluginInterface`:
+Create a Go file that exports a `Plugin` variable implementing the interface:
 
 ```go
 // my_plugin.go
 package main
 
-// PluginInterface - must match exactly
-type PluginInterface interface {
-    Name() string
-    Version() string
-    Functions() map[string]PluginFunction
-}
+import "github.com/orneryd/nornicdb/apoc"
 
-type PluginFunction struct {
-    Handler     interface{}
-    Description string
-    Examples    []string
-}
-
-// Plugin is the exported symbol NornicDB will load
-var Plugin PluginInterface = MyPlugin{}
+// Plugin is the exported symbol NornicDB loads
+var Plugin = MyPlugin{}
 
 type MyPlugin struct{}
 
 func (p MyPlugin) Name() string    { return "myplugin" }
 func (p MyPlugin) Version() string { return "1.0.0" }
 
-func (p MyPlugin) Functions() map[string]PluginFunction {
-    return map[string]PluginFunction{
-        "hello": {
+func (p MyPlugin) Functions() map[string]apoc.FunctionInfo {
+    return map[string]apoc.FunctionInfo{
+        "apoc.myplugin.hello": {
             Handler:     Hello,
+            Category:    "myplugin",
             Description: "Returns a greeting",
             Examples:    []string{"apoc.myplugin.hello('World') => 'Hello, World!'"},
+        },
+        "apoc.myplugin.double": {
+            Handler:     Double,
+            Category:    "myplugin",
+            Description: "Doubles a number",
+            Examples:    []string{"apoc.myplugin.double(21) => 42"},
         },
     }
 }
@@ -142,104 +157,98 @@ func (p MyPlugin) Functions() map[string]PluginFunction {
 func Hello(name string) string {
     return "Hello, " + name + "!"
 }
+
+func Double(n float64) float64 {
+    return n * 2
+}
 ```
 
 ### Building Your Plugin
 
 ```bash
-# Build the plugin
-go build -buildmode=plugin -o apoc-myplugin.so my_plugin.go
+# Build the plugin (must use same Go version as NornicDB)
+go build -buildmode=plugin -o my-plugin.so my_plugin.go
 
 # Copy to plugins directory
-cp apoc-myplugin.so /path/to/nornicdb/plugins/
+cp my-plugin.so /path/to/nornicdb/plugins/
 ```
 
-### Supported Function Signatures
+### Using Your Plugin
 
-The plugin system supports these function signatures:
+After restarting NornicDB, your functions are available:
 
-```go
-// Single argument
-func(string) string
-func(float64) float64
-func([]float64) []float64
-
-// Two arguments
-func(string, string) string
-func(string, string) int
-func(string, string) float64
-func([]float64, []float64) float64
-
-// Collections
-func([]interface{}) float64
-func([]interface{}) interface{}
-func([]interface{}, interface{}) bool
+```cypher
+RETURN apoc.myplugin.hello('World')   // "Hello, World!"
+RETURN apoc.myplugin.double(21)       // 42
 ```
 
-## Building Plugins with Make
+## Startup Logs
+
+On startup, NornicDB logs loaded plugins:
+
+```
+🔌 Loading Plugins from /app/plugins...
+  ✓ apoc.so: 964 functions loaded (v1.0.0)
+  ✓ my-plugin.so: 2 functions loaded (v1.0.0)
+📦 Total: 966 plugin functions available
+```
+
+## Building the APOC Plugin
+
+From the NornicDB source:
 
 ```bash
-# Build all plugins
+# Build using Makefile
 make plugins
 
-# Build individual plugins
-make plugin-ml
-make plugin-text
-
-# Clean plugin artifacts
-make plugins-clean
-
-# List available plugins
-make plugins-list
+# Or manually
+cd apoc/plugin-src/apoc
+go build -buildmode=plugin -o ../../../apoc/built-plugins/apoc.so apoc_plugin.go
 ```
 
 ## Docker Image Plugin Locations
 
-All official Docker images include pre-built plugins:
+All official Docker images include the pre-built APOC plugin:
 
-| Image | Plugins Location |
-|-------|------------------|
-| `nornicdb-arm64-metal` | `/app/plugins/` |
-| `nornicdb-amd64-cuda` | `/app/plugins/` |
-| `nornicdb-amd64-cpu` | `/app/plugins/` |
+| Image | Plugins Location | Functions |
+|-------|------------------|-----------|
+| `nornicdb-arm64-metal` | `/app/plugins/apoc.so` | 964 |
+| `nornicdb-amd64-cuda` | `/app/plugins/apoc.so` | 964 |
+| `nornicdb-amd64-cpu` | `/app/plugins/apoc.so` | 964 |
 
 ## Troubleshooting
 
 ### Plugin Not Loading
 
-1. Check the plugin file exists and is readable:
+1. Check plugin file exists and is readable:
    ```bash
    ls -la /app/plugins/
    ```
 
-2. Verify the plugin was built with the same Go version:
+2. Verify Go version compatibility (plugins must be built with same Go version):
    ```bash
    go version
    ```
 
-3. Check NornicDB logs for plugin loading errors:
+3. Check logs for errors:
    ```bash
    docker logs nornicdb 2>&1 | grep -i plugin
    ```
 
 ### Function Not Found
 
-1. Verify the function is registered:
+1. Check if function exists:
    ```cypher
-   CALL apoc.help('functionname')
+   CALL apoc.help('coll.sum')
    ```
 
-2. Check if the category is enabled:
-   ```bash
-   echo $NORNICDB_APOC_ML_ENABLED
-   ```
+2. Verify plugin loaded at startup (check logs)
 
-### Plugin Interface Mismatch
+### Invalid ELF Header
 
-If you see "does not implement PluginInterface", ensure:
-- The `Plugin` variable is exported (capital P)
-- The `PluginInterface` type matches exactly
-- The `PluginFunction` struct has all required fields
+This error means the plugin was built for a different architecture:
+- Rebuild the plugin for the target architecture (arm64 vs amd64)
+- Ensure you're using `go build -buildmode=plugin` with matching platform
 
 ## Platform Support
 
@@ -249,19 +258,20 @@ If you see "does not implement PluginInterface", ensure:
 | Linux (arm64) | ✅ Full | Native Go plugin support |
 | macOS (arm64) | ✅ Full | Native Go plugin support |
 | macOS (amd64) | ✅ Full | Native Go plugin support |
-| Windows | ❌ None | Go plugins not supported on Windows |
+| Windows | ❌ None | Go plugins not supported |
 
-For Windows deployments, all APOC functions are available as built-in functions compiled into the binary.
+For Windows, build NornicDB with APOC functions compiled in (not as plugin).
 
 ## Performance
 
-- Plugin loading happens once at startup
+- Plugins load once at startup (~100ms for APOC)
 - Function calls have minimal overhead (direct function pointer)
-- Built-in functions and plugin functions have identical performance
+- No difference in performance between built-in and plugin functions
 
-## Security
+## Security Considerations
 
 - Plugins run with the same permissions as NornicDB
 - Only load plugins from trusted sources
-- Plugin code has full access to system resources
-- Consider using Docker volume mounts for plugin isolation
+- Plugin code has full system access
+- Use Docker volume mounts for isolation
+- Review plugin source code before deployment
