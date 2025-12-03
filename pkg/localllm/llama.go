@@ -1,4 +1,4 @@
-//go:build cgo && (darwin || linux)
+//go:build cgo && !nolocalllm && (darwin || linux)
 
 // Package localllm provides CGO bindings to llama.cpp for local GGUF model inference.
 //
@@ -543,10 +543,10 @@ type GenerationModel struct {
 // GenerationOptions configures generation model loading.
 type GenerationOptions struct {
 	ModelPath   string
-	ContextSize int  // Max context window (default: 2048)
-	BatchSize   int  // Processing batch size (default: 512)
-	Threads     int  // CPU threads (default: NumCPU/2)
-	GPULayers   int  // GPU offload (-1=auto, 0=CPU)
+	ContextSize int // Max context window (default: 2048)
+	BatchSize   int // Processing batch size (default: 512)
+	Threads     int // CPU threads (default: NumCPU/2)
+	GPULayers   int // GPU offload (-1=auto, 0=CPU)
 }
 
 // DefaultGenerationOptions returns sensible defaults for text generation.

@@ -40,16 +40,16 @@ RUN go mod download
 COPY . .
 COPY --from=ui /ui/dist ./ui/dist
 
-# Build WITHOUT localllm tag (no embedded embeddings)
+# Build WITHOUT localllm (no embedded embeddings)
 # CGO_ENABLED=1 required for plugin support
 RUN if [ "$HEADLESS" = "true" ]; then \
       echo "Building headless CPU-only (no UI, no localllm)..." && \
-      CGO_ENABLED=1 go build -tags "noui" \
+      CGO_ENABLED=1 go build -tags "noui,nolocalllm" \
         -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
         -o nornicdb ./cmd/nornicdb; \
     else \
       echo "Building CPU-only with UI (no localllm)..." && \
-      CGO_ENABLED=1 go build \
+      CGO_ENABLED=1 go build -tags "nolocalllm" \
         -ldflags="-s -w -X main.buildTime=$(date -u +%Y%m%d-%H%M%S)" \
         -o nornicdb ./cmd/nornicdb; \
     fi

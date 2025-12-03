@@ -1,4 +1,4 @@
-//go:build cgo && (darwin || linux)
+//go:build cgo && !nolocalllm && (darwin || linux)
 
 // Package heimdall provides the Heimdall cognitive guardian for NornicDB.
 // This file provides the CGO-enabled generator using localllm.
