@@ -5,6 +5,7 @@ package embed
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // LocalGGUFEmbedder is a stub for when localllm build tag is not set.
@@ -39,6 +40,21 @@ func (e *LocalGGUFEmbedder) Dimensions() int {
 // Model returns empty string (stub).
 func (e *LocalGGUFEmbedder) Model() string {
 	return ""
+}
+
+// EmbedderStats holds embedding statistics (stub).
+type EmbedderStats struct {
+	EmbedCount    int64     `json:"embed_count"`
+	ErrorCount    int64     `json:"error_count"`
+	PanicCount    int64     `json:"panic_count"`
+	LastEmbedTime time.Time `json:"last_embed_time"`
+	ModelName     string    `json:"model_name"`
+	ModelPath     string    `json:"model_path"`
+}
+
+// Stats returns empty stats (stub).
+func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
+	return EmbedderStats{}
 }
 
 // Close is a no-op (stub).

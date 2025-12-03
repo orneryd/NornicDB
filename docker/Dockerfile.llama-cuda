@@ -15,7 +15,9 @@ RUN git clone --depth 1 --branch ${LLAMA_VERSION} https://github.com/ggerganov/l
     cmake -B build \
       -DLLAMA_STATIC=ON -DBUILD_SHARED_LIBS=OFF \
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF \
-      -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON && \
+      -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON \
+      -DCMAKE_C_FLAGS="-fPIC" -DCMAKE_CXX_FLAGS="-fPIC" \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON && \
     cmake --build build --config Release -j$(nproc)
 
 # Combine and export
