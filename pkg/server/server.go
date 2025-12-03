@@ -1867,7 +1867,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Info metric with version
 	sb.WriteString("# HELP nornicdb_info Database information\n")
 	sb.WriteString("# TYPE nornicdb_info gauge\n")
-	sb.WriteString("nornicdb_info{version=\"0.1.4\",backend=\"badger\"} 1\n")
+	sb.WriteString("nornicdb_info{version=\"1.0.0\",backend=\"badger\"} 1\n")
 
 	// Set content type for Prometheus
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

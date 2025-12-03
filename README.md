@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.0-success" alt="Version 1.0.0">
   <a href="https://github.com/orneryd/Mimir/tree/main/nornicdb"><img src="https://img.shields.io/badge/github-orneryd%2FMimir-blue?logo=github" alt="GitHub"></a>
   <a href="https://hub.docker.com/u/timothyswt"><img src="https://img.shields.io/badge/docker-ready-blue?logo=docker" alt="Docker"></a>
   <a href="https://neo4j.com/"><img src="https://img.shields.io/badge/neo4j-compatible-008CC1?logo=neo4j" alt="Neo4j Compatible"></a>
@@ -23,6 +24,29 @@
   <a href="#docker-images">Docker</a> •
   <a href="#documentation">Docs</a>
 </p>
+
+---
+
+## 🐳 Get Started in 30 Seconds
+
+```bash
+# Apple Silicon (M1/M2/M3)
+docker pull timothyswt/nornicdb-arm64-metal-bge-heimdall:latest
+docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-arm64-metal-bge-heimdall
+
+# NVIDIA GPU (Linux)
+docker pull timothyswt/nornicdb-amd64-cuda-bge:latest
+docker run -d --gpus all -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-amd64-cuda-bge
+
+# CPU Only (Any Platform)
+docker pull timothyswt/nornicdb-amd64-cpu:latest
+docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-amd64-cpu
+```
+
+**Open [http://localhost:7474](http://localhost:7474)** — Admin UI with AI assistant ready to query your data.
 
 ---
 
@@ -171,14 +195,26 @@ Drop custom `.so` plugins into `/app/plugins/` for automatic loading. See the [A
 
 ## Docker Images
 
-| Image                           | Platform      | Size   | Model    | UI  |
-| ------------------------------- | ------------- | ------ | -------- | --- |
-| `nornicdb-arm64-metal`          | Apple Silicon | ~50MB  | BYOM     | ✓   |
-| `nornicdb-arm64-metal-bge`      | Apple Silicon | ~1.6GB | Included | ✓   |
-| `nornicdb-arm64-metal-headless` | Apple Silicon | ~40MB  | BYOM     | ✗   |
-| `nornicdb-amd64-cuda`           | NVIDIA GPU    | ~3GB   | BYOM     | ✓   |
-| `nornicdb-amd64-cuda-bge`       | NVIDIA GPU    | ~4.5GB | Included | ✓   |
-| `nornicdb-amd64-cuda-headless`  | NVIDIA GPU    | ~2.9GB | BYOM     | ✗   |
+All images available at [Docker Hub](https://hub.docker.com/u/timothyswt).
+
+### ARM64 (Apple Silicon)
+
+| Image | Size | Description |
+|-------|------|-------------|
+| `timothyswt/nornicdb-arm64-metal-bge-heimdall` | 1.1 GB | **Full** - Embeddings + AI Assistant |
+| `timothyswt/nornicdb-arm64-metal-bge` | 586 MB | **Standard** - With BGE-M3 embeddings |
+| `timothyswt/nornicdb-arm64-metal` | 148 MB | **Minimal** - Core database, BYOM |
+| `timothyswt/nornicdb-arm64-metal-headless` | 148 MB | **Headless** - API only, no UI |
+
+### AMD64 (Linux/Intel)
+
+| Image | Size | Description |
+|-------|------|-------------|
+| `timothyswt/nornicdb-amd64-cuda-bge` | ~4.5 GB | **GPU + Embeddings** - CUDA + BGE-M3 |
+| `timothyswt/nornicdb-amd64-cuda` | ~3 GB | **GPU** - CUDA acceleration, BYOM |
+| `timothyswt/nornicdb-amd64-cuda-headless` | ~2.9 GB | **GPU Headless** - API only |
+| `timothyswt/nornicdb-amd64-cpu` | ~500 MB | **CPU** - No GPU required |
+| `timothyswt/nornicdb-amd64-cpu-headless` | ~500 MB | **CPU Headless** - API only |
 
 **BYOM** = Bring Your Own Model (mount at `/app/models`)
 

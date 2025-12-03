@@ -5,6 +5,56 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2025-12-03
+
+### 🎉 First Stable Release
+
+NornicDB v1.0.0 marks the first production-ready release of the cognitive graph database.
+
+### Added
+- **Heimdall AI Assistant** - Built-in SLM for natural language database interaction
+  - Bifrost chat interface in the admin UI
+  - Plugin architecture for extending AI capabilities
+  - Action system for executing database operations via natural language
+  - BYOM (Bring Your Own Model) support for custom GGUF models
+- **Comprehensive Documentation** - 40+ guides covering all features
+- **Graph Traversal Guide** - Path queries and pattern matching
+- **Data Import/Export Guide** - Neo4j migration and backup procedures
+
+### Features
+- Neo4j-compatible Bolt protocol and Cypher queries
+- GPU-accelerated vector search (Metal/CUDA/OpenCL)
+- Hybrid search with RRF fusion (vector + BM25)
+- ACID transactions with WAL
+- Memory decay system for AI agent memory management
+- 62 Cypher functions with full documentation
+- Plugin system with APOC compatibility (983 functions)
+- Clustering support (Hot Standby, Raft, Multi-Region)
+- GDPR/HIPAA/SOC2 compliance features
+
+### Docker Images
+
+#### ARM64 (Apple Silicon)
+
+| Image | Description |
+|-------|-------------|
+| `timothyswt/nornicdb-arm64-metal-bge-heimdall` | **Full** - Database + Embeddings + AI Assistant |
+| `timothyswt/nornicdb-arm64-metal-bge` | **Standard** - Database + BGE-M3 Embeddings |
+| `timothyswt/nornicdb-arm64-metal` | **Minimal** - Core database with UI |
+| `timothyswt/nornicdb-arm64-metal-headless` | **Headless** - API only, no UI |
+
+#### AMD64 (Linux/Intel)
+
+| Image | Description |
+|-------|-------------|
+| `timothyswt/nornicdb-amd64-cuda` | **GPU** - CUDA acceleration |
+| `timothyswt/nornicdb-amd64-cuda-bge` | **GPU + Embeddings** - CUDA + BGE-M3 |
+| `timothyswt/nornicdb-amd64-cuda-headless` | **GPU Headless** - CUDA, API only |
+| `timothyswt/nornicdb-amd64-cpu` | **CPU** - No GPU required |
+| `timothyswt/nornicdb-amd64-cpu-headless` | **CPU Headless** - API only |
+
+---
+
 ## [0.1.4] - 2025-12-01
 
 ### Added
@@ -111,6 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **1.0.0** (2025-12-03) - 🎉 First stable release with Heimdall AI
 - **0.1.4** (2025-12-01) - Documentation reorganization
 - **0.1.3** (2025-11-25) - Complete API documentation
 - **0.1.2** (2025-11-20) - GPU acceleration and ML features
