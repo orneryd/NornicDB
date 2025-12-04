@@ -39,7 +39,7 @@ FROM ${LLAMA_CUDA_IMAGE} AS llama
 FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
 ARG HEADLESS=false
 
-ENV GO_VERSION=1.23.4
+ENV GO_VERSION=1.25.5
 RUN apt-get update && apt-get install -y wget git gcc g++ libgomp1 && \
     wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && rm go*.tar.gz

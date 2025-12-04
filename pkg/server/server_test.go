@@ -69,6 +69,9 @@ func setupTestServer(t *testing.T) (*Server, *auth.Authenticator) {
 	// Create server config
 	serverConfig := DefaultConfig()
 	serverConfig.Port = 0 // Use random port
+	// Enable CORS with wildcard for tests (not recommended for production)
+	serverConfig.EnableCORS = true
+	serverConfig.CORSOrigins = []string{"*"}
 
 	// Create server
 	server, err := New(db, authenticator, serverConfig)
@@ -183,8 +186,9 @@ func TestNew(t *testing.T) {
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
-	if config.Address != "0.0.0.0" {
-		t.Errorf("expected address '0.0.0.0', got %s", config.Address)
+	// SECURITY: Default should bind to localhost only (secure default)
+	if config.Address != "127.0.0.1" {
+		t.Errorf("expected address '127.0.0.1', got %s", config.Address)
 	}
 	if config.Port != 7474 {
 		t.Errorf("expected port 7474, got %d", config.Port)
@@ -195,8 +199,9 @@ func TestDefaultConfig(t *testing.T) {
 	if config.MaxRequestSize != 10*1024*1024 {
 		t.Errorf("expected max request size 10MB, got %d", config.MaxRequestSize)
 	}
-	if !config.EnableCORS {
-		t.Error("expected CORS enabled")
+	// SECURITY: CORS disabled by default (secure default)
+	if config.EnableCORS {
+		t.Error("expected CORS disabled by default for security")
 	}
 }
 
@@ -251,9 +256,11 @@ func TestHandleHealth(t *testing.T) {
 }
 
 func TestHandleStatus(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
 
-	resp := makeRequest(t, server, "GET", "/status", nil, "")
+	// Status endpoint now requires authentication
+	resp := makeRequest(t, server, "GET", "/status", nil, "Bearer "+token)
 
 	if resp.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.Code)
@@ -2087,5 +2094,402 @@ func TestServerStopTwice(t *testing.T) {
 	err = server.Stop(ctx)
 	if err != nil {
 		t.Errorf("second stop should be idempotent: %v", err)
+	}
+}
+
+// =============================================================================
+// CORS Security Tests
+// =============================================================================
+
+func TestCORSWildcardDoesNotSendCredentials(t *testing.T) {
+	// SECURITY TEST: When CORS origin is wildcard (*), we must NOT send
+	// Access-Control-Allow-Credentials header to prevent CSRF attacks.
+	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	config := nornicdb.DefaultConfig()
+	config.DecayEnabled = false
+	config.AsyncWritesEnabled = false
+
+	db, err := nornicdb.Open(tmpDir, config)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with wildcard CORS
+	serverConfig := DefaultConfig()
+	serverConfig.EnableCORS = true
+	serverConfig.CORSOrigins = []string{"*"}
+
+	server, err := New(db, nil, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	req := httptest.NewRequest("OPTIONS", "/", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+
+	recorder := httptest.NewRecorder()
+	server.buildRouter().ServeHTTP(recorder, req)
+
+	// Should have wildcard origin
+	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+		t.Errorf("expected wildcard origin, got %s", origin)
+	}
+
+	// CRITICAL: Should NOT have credentials header with wildcard
+	if creds := recorder.Header().Get("Access-Control-Allow-Credentials"); creds != "" {
+		t.Errorf("SECURITY VULNERABILITY: credentials header should NOT be sent with wildcard origin, got %s", creds)
+	}
+}
+
+func TestCORSSpecificOriginAllowsCredentials(t *testing.T) {
+	// When CORS has specific origins (not wildcard), credentials are safe to allow
+	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	config := nornicdb.DefaultConfig()
+	config.DecayEnabled = false
+	config.AsyncWritesEnabled = false
+
+	db, err := nornicdb.Open(tmpDir, config)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with specific CORS origins
+	serverConfig := DefaultConfig()
+	serverConfig.EnableCORS = true
+	serverConfig.CORSOrigins = []string{"http://trusted.com", "http://localhost:3000"}
+
+	server, err := New(db, nil, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	req := httptest.NewRequest("OPTIONS", "/", nil)
+	req.Header.Set("Origin", "http://trusted.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+
+	recorder := httptest.NewRecorder()
+	server.buildRouter().ServeHTTP(recorder, req)
+
+	// Should echo back the specific origin
+	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "http://trusted.com" {
+		t.Errorf("expected trusted.com origin, got %s", origin)
+	}
+
+	// Should allow credentials for specific origins
+	if creds := recorder.Header().Get("Access-Control-Allow-Credentials"); creds != "true" {
+		t.Errorf("expected credentials=true for specific origin, got %s", creds)
+	}
+}
+
+func TestCORSDisallowedOriginNoHeaders(t *testing.T) {
+	// When origin is not in allowed list, no CORS headers should be sent
+	tmpDir, err := os.MkdirTemp("", "nornicdb-cors-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	config := nornicdb.DefaultConfig()
+	config.DecayEnabled = false
+	config.AsyncWritesEnabled = false
+
+	db, err := nornicdb.Open(tmpDir, config)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with specific CORS origins (not including evil.com)
+	serverConfig := DefaultConfig()
+	serverConfig.EnableCORS = true
+	serverConfig.CORSOrigins = []string{"http://trusted.com"}
+
+	server, err := New(db, nil, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	req := httptest.NewRequest("OPTIONS", "/", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+
+	recorder := httptest.NewRecorder()
+	server.buildRouter().ServeHTTP(recorder, req)
+
+	// Should NOT have origin header for disallowed origins
+	if origin := recorder.Header().Get("Access-Control-Allow-Origin"); origin != "" {
+		t.Errorf("expected no origin header for disallowed origin, got %s", origin)
+	}
+}
+
+// =============================================================================
+// Rate Limiter Tests
+// =============================================================================
+
+func TestIPRateLimiter_AllowsWithinLimit(t *testing.T) {
+	rl := NewIPRateLimiter(10, 100, 5) // 10/min, 100/hour, burst 5
+	defer rl.Stop()
+
+	// Should allow requests within limit
+	for i := 0; i < 10; i++ {
+		if !rl.Allow("192.168.1.1") {
+			t.Errorf("request %d should be allowed within limit", i+1)
+		}
+	}
+}
+
+func TestIPRateLimiter_BlocksExcessRequests(t *testing.T) {
+	rl := NewIPRateLimiter(5, 100, 2) // 5/min, 100/hour, burst 2
+	defer rl.Stop()
+
+	// Use up the limit
+	for i := 0; i < 5; i++ {
+		rl.Allow("192.168.1.1")
+	}
+
+	// Next request should be blocked
+	if rl.Allow("192.168.1.1") {
+		t.Error("request exceeding limit should be blocked")
+	}
+}
+
+func TestIPRateLimiter_DifferentIPsAreSeparate(t *testing.T) {
+	rl := NewIPRateLimiter(3, 100, 1) // 3/min
+	defer rl.Stop()
+
+	// Use up limit for IP1
+	for i := 0; i < 3; i++ {
+		rl.Allow("192.168.1.1")
+	}
+
+	// IP2 should still be allowed
+	if !rl.Allow("192.168.1.2") {
+		t.Error("different IP should have separate limit")
+	}
+
+	// IP1 should be blocked
+	if rl.Allow("192.168.1.1") {
+		t.Error("IP1 should be rate limited")
+	}
+}
+
+func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nornicdb-ratelimit-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	config := nornicdb.DefaultConfig()
+	config.DecayEnabled = false
+	config.AsyncWritesEnabled = false
+
+	db, err := nornicdb.Open(tmpDir, config)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with rate limiting enabled
+	serverConfig := DefaultConfig()
+	serverConfig.RateLimitEnabled = true
+	serverConfig.RateLimitPerMinute = 2
+	serverConfig.RateLimitPerHour = 100
+	serverConfig.RateLimitBurst = 1
+
+	server, err := New(db, nil, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer server.rateLimiter.Stop()
+
+	router := server.buildRouter()
+
+	// First two requests should succeed
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if recorder.Code == http.StatusTooManyRequests {
+			t.Errorf("request %d should not be rate limited", i+1)
+		}
+	}
+
+	// Third request should be rate limited
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429 Too Many Requests, got %d", recorder.Code)
+	}
+
+	// Check Retry-After header
+	if retry := recorder.Header().Get("Retry-After"); retry == "" {
+		t.Error("expected Retry-After header on rate limited response")
+	}
+}
+
+func TestRateLimitMiddleware_SkipsHealthEndpoint(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nornicdb-ratelimit-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	config := nornicdb.DefaultConfig()
+	config.DecayEnabled = false
+	config.AsyncWritesEnabled = false
+
+	db, err := nornicdb.Open(tmpDir, config)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create server with very strict rate limiting
+	serverConfig := DefaultConfig()
+	serverConfig.RateLimitEnabled = true
+	serverConfig.RateLimitPerMinute = 1
+	serverConfig.RateLimitPerHour = 1
+	serverConfig.RateLimitBurst = 1
+
+	server, err := New(db, nil, serverConfig)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer server.rateLimiter.Stop()
+
+	router := server.buildRouter()
+
+	// Exhaust rate limit on regular endpoint
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	// Health endpoint should STILL work (not rate limited)
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest("GET", "/health", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		if recorder.Code == http.StatusTooManyRequests {
+			t.Error("health endpoint should not be rate limited")
+		}
+	}
+}
+
+// =============================================================================
+// Secure Default Configuration Tests
+// =============================================================================
+
+func TestDefaultConfig_SecureDefaults(t *testing.T) {
+	config := DefaultConfig()
+
+	// SECURITY: Default should bind to localhost only
+	if config.Address != "127.0.0.1" {
+		t.Errorf("expected default address 127.0.0.1, got %s", config.Address)
+	}
+
+	// SECURITY: Default CORS origins should be empty (explicit configuration required)
+	if len(config.CORSOrigins) != 0 {
+		t.Errorf("expected empty default CORS origins, got %v", config.CORSOrigins)
+	}
+
+	// SECURITY: CORS should be disabled by default - must be explicitly enabled with specific origins
+	if config.EnableCORS {
+		t.Error("expected EnableCORS=false by default for security")
+	}
+}
+
+// =============================================================================
+// Protected Endpoint Tests
+// =============================================================================
+
+func TestStatusEndpointRequiresAuth(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Request without auth should fail
+	resp := makeRequest(t, server, "GET", "/status", nil, "")
+
+	if resp.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for /status without auth, got %d", resp.Code)
+	}
+}
+
+func TestMetricsEndpointRequiresAuth(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Request without auth should fail
+	resp := makeRequest(t, server, "GET", "/metrics", nil, "")
+
+	if resp.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for /metrics without auth, got %d", resp.Code)
+	}
+}
+
+func TestHealthEndpointMinimalInfo(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	resp := makeRequest(t, server, "GET", "/health", nil, "")
+
+	if resp.Code != http.StatusOK {
+		t.Errorf("expected status 200 for /health, got %d", resp.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse health response: %v", err)
+	}
+
+	// Should only have minimal info
+	if _, hasEmbeddings := result["embeddings"]; hasEmbeddings {
+		t.Error("health endpoint should not expose embedding details")
+	}
+
+	// Should have status
+	if status, ok := result["status"].(string); !ok || status != "healthy" {
+		t.Errorf("expected status=healthy, got %v", result["status"])
+	}
+}
+
+func TestStatusEndpointWithAuth(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+
+	// Request with auth should succeed
+	resp := makeRequest(t, server, "GET", "/status", nil, "Bearer "+token)
+
+	if resp.Code != http.StatusOK {
+		t.Errorf("expected status 200 for /status with auth, got %d", resp.Code)
+	}
+}
+
+func TestMetricsEndpointWithAuth(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+
+	// Request with auth should succeed
+	resp := makeRequest(t, server, "GET", "/metrics", nil, "Bearer "+token)
+
+	if resp.Code != http.StatusOK {
+		t.Errorf("expected status 200 for /metrics with auth, got %d", resp.Code)
 	}
 }

@@ -303,22 +303,115 @@ type QueryResult struct {
 	Rows    [][]any
 }
 
+// BoltAuthenticator is the interface for authenticating Bolt protocol connections.
+// This supports Neo4j-compatible authentication schemes (basic auth with username/password).
+//
+// The Bolt protocol HELLO message contains authentication credentials:
+//   - scheme: "basic" (username/password) or "none" (anonymous)
+//   - principal: username
+//   - credentials: password
+//
+// Server-to-server clustering can use service accounts or API keys.
+//
+// Example Implementation:
+//
+//	type MyAuthenticator struct {
+//		auth *auth.Authenticator
+//	}
+//
+//	func (a *MyAuthenticator) Authenticate(scheme, principal, credentials string) (*BoltAuthResult, error) {
+//		if scheme == "none" && a.allowAnonymous {
+//			return &BoltAuthResult{Authenticated: true, Roles: []string{"viewer"}}, nil
+//		}
+//		if scheme != "basic" {
+//			return nil, fmt.Errorf("unsupported auth scheme: %s", scheme)
+//		}
+//		user, err := a.auth.ValidateCredentials(principal, credentials)
+//		if err != nil {
+//			return nil, err
+//		}
+//		roles := make([]string, len(user.Roles))
+//		for i, r := range user.Roles {
+//			roles[i] = string(r)
+//		}
+//		return &BoltAuthResult{
+//			Authenticated: true,
+//			Username:      principal,
+//			Roles:         roles,
+//		}, nil
+//	}
+type BoltAuthenticator interface {
+	// Authenticate validates credentials from the Bolt HELLO message.
+	// Returns auth result on success, error on failure.
+	// scheme: "basic" or "none"
+	// principal: username (empty for "none")
+	// credentials: password (empty for "none")
+	Authenticate(scheme, principal, credentials string) (*BoltAuthResult, error)
+}
+
+// BoltAuthResult contains the result of Bolt authentication.
+type BoltAuthResult struct {
+	Authenticated bool     // Whether authentication succeeded
+	Username      string   // Authenticated username
+	Roles         []string // User roles (admin, editor, viewer, etc.)
+}
+
+// HasRole checks if the auth result has a specific role.
+func (r *BoltAuthResult) HasRole(role string) bool {
+	for _, r2 := range r.Roles {
+		if r2 == role {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPermission checks if the auth result has a specific permission based on roles.
+// Maps to standard RBAC permissions:
+//   - admin: read, write, create, delete, admin, schema, user_manage
+//   - editor: read, write, create, delete
+//   - viewer: read
+func (r *BoltAuthResult) HasPermission(perm string) bool {
+	rolePerms := map[string][]string{
+		"admin":  {"read", "write", "create", "delete", "admin", "schema", "user_manage"},
+		"editor": {"read", "write", "create", "delete"},
+		"viewer": {"read"},
+	}
+	for _, role := range r.Roles {
+		if perms, ok := rolePerms[role]; ok {
+			for _, p := range perms {
+				if p == perm {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Config holds Bolt protocol server configuration.
 //
 // All settings have sensible defaults via DefaultConfig(). The configuration
 // follows Neo4j Bolt server conventions where applicable.
 //
+// Authentication:
+//   - Set Authenticator to enable auth (nil = no auth, accepts all)
+//   - RequireAuth: if true, connections without valid credentials are rejected
+//   - AllowAnonymous: if true, "none" auth scheme is accepted (viewer role)
+//
 // Example:
 //
-//	// Production configuration
+//	// Production configuration with auth
 //	config := &bolt.Config{
 //		Port:            7687,  // Standard Bolt port
 //		MaxConnections:  1000,  // High concurrency
 //		ReadBufferSize:  32768, // 32KB read buffer
 //		WriteBufferSize: 32768, // 32KB write buffer
+//		Authenticator:   myAuth,
+//		RequireAuth:     true,
 //	}
 //
-//	// Development configuration
+//	// Development configuration (no auth)
 //	config = bolt.DefaultConfig()
 //	config.Port = 7688 // Use different port
 type Config struct {
@@ -327,6 +420,11 @@ type Config struct {
 	ReadBufferSize  int
 	WriteBufferSize int
 	LogQueries      bool // Log all queries to stdout (for debugging)
+
+	// Authentication
+	Authenticator  BoltAuthenticator // Authentication handler (nil = no auth)
+	RequireAuth    bool              // Require authentication for all connections
+	AllowAnonymous bool              // Allow "none" auth scheme (grants viewer role)
 }
 
 // DefaultConfig returns Neo4j-compatible default Bolt server configuration.
@@ -681,6 +779,10 @@ type Session struct {
 	executor QueryExecutor
 	version  uint32
 
+	// Authentication state
+	authenticated bool            // Whether HELLO auth succeeded
+	authResult    *BoltAuthResult // Auth result with roles/permissions
+
 	// Transaction state
 	inTransaction bool
 	txMetadata    map[string]any // Transaction metadata from BEGIN
@@ -906,9 +1008,80 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) error {
 	}
 }
 
-// handleHello handles the HELLO message.
+// handleHello handles the HELLO message with authentication.
+// Neo4j HELLO message format:
+//
+//	HELLO { user_agent: String, scheme: String, principal: String, credentials: String, ... }
+//
+// Authentication schemes:
+//   - "none": Anonymous access (if AllowAnonymous is true)
+//   - "basic": Username/password authentication
+//
+// Server-to-server clustering uses the same auth mechanism with service accounts.
 func (s *Session) handleHello(data []byte) error {
-	// Parse HELLO to extract auth (we accept all for now)
+	// Parse HELLO message to extract authentication details
+	authParams, err := s.parseHelloAuth(data)
+	if err != nil {
+		return s.sendFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse HELLO: %v", err))
+	}
+
+	// Check if authentication is required
+	if s.server != nil && s.server.config.Authenticator != nil {
+		scheme := authParams["scheme"]
+		principal := authParams["principal"]
+		credentials := authParams["credentials"]
+
+		// Handle anonymous auth
+		if scheme == "none" || scheme == "" {
+			if !s.server.config.AllowAnonymous {
+				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required")
+			}
+			// Anonymous user gets viewer role
+			s.authenticated = true
+			s.authResult = &BoltAuthResult{
+				Authenticated: true,
+				Username:      "anonymous",
+				Roles:         []string{"viewer"},
+			}
+		} else if scheme == "basic" {
+			// Authenticate with provided credentials
+			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
+			if err != nil {
+				remoteAddr := "unknown"
+				if s.conn != nil {
+					remoteAddr = s.conn.RemoteAddr().String()
+				}
+				fmt.Printf("[BOLT] Auth failed for %q from %s: %v\n", principal, remoteAddr, err)
+				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Invalid credentials")
+			}
+			s.authenticated = true
+			s.authResult = result
+		} else {
+			return s.sendFailure("Neo.ClientError.Security.Unauthorized", fmt.Sprintf("Unsupported auth scheme: %s", scheme))
+		}
+	} else if s.server != nil && s.server.config.RequireAuth {
+		// Auth required but no authenticator configured - reject all
+		return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required but not configured")
+	} else {
+		// No auth configured - allow all (development mode)
+		s.authenticated = true
+		s.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "anonymous",
+			Roles:         []string{"admin"}, // Full access in dev mode
+		}
+	}
+
+	// Log successful auth
+	if s.server != nil && s.server.config.LogQueries {
+		remoteAddr := "unknown"
+		if s.conn != nil {
+			remoteAddr = s.conn.RemoteAddr().String()
+		}
+		fmt.Printf("[BOLT] Auth success: user=%s roles=%v from=%s\n",
+			s.authResult.Username, s.authResult.Roles, remoteAddr)
+	}
+
 	return s.sendSuccess(map[string]any{
 		"server":        "NornicDB/0.1.0",
 		"connection_id": "nornic-1",
@@ -916,12 +1089,91 @@ func (s *Session) handleHello(data []byte) error {
 	})
 }
 
+// parseHelloAuth parses authentication parameters from a HELLO message.
+// Returns a map with keys: scheme, principal, credentials
+func (s *Session) parseHelloAuth(data []byte) (map[string]string, error) {
+	result := map[string]string{
+		"scheme":      "",
+		"principal":   "",
+		"credentials": "",
+	}
+
+	if len(data) == 0 {
+		return result, nil
+	}
+
+	// HELLO is a structure: [extra: Map]
+	// First byte is marker for structure
+	marker := data[0]
+
+	// Check for tiny struct marker (0xB0-0xBF = struct with 0-15 fields)
+	// HELLO has signature 0x01 and one field (the extra map)
+	offset := 0
+	if marker >= 0xB0 && marker <= 0xBF {
+		offset = 2 // Skip struct marker and signature byte
+	} else {
+		// Try to find the map directly
+		offset = 0
+	}
+
+	if offset >= len(data) {
+		return result, nil
+	}
+
+	// Parse the extra map
+	extraMap, _, err := decodePackStreamMap(data, offset)
+	if err != nil {
+		return result, fmt.Errorf("failed to decode HELLO extra map: %w", err)
+	}
+
+	// Extract auth fields
+	if scheme, ok := extraMap["scheme"].(string); ok {
+		result["scheme"] = scheme
+	}
+	if principal, ok := extraMap["principal"].(string); ok {
+		result["principal"] = principal
+	}
+	if credentials, ok := extraMap["credentials"].(string); ok {
+		result["credentials"] = credentials
+	}
+
+	return result, nil
+}
+
 // handleRun handles the RUN message (execute Cypher).
 func (s *Session) handleRun(data []byte) error {
+	// Check authentication
+	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
+		return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Not authenticated")
+	}
+
 	// Parse PackStream to extract query and params
 	query, params, err := s.parseRunMessage(data)
 	if err != nil {
 		return s.sendFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse RUN message: %v", err))
+	}
+
+	// Classify query type once (used for auth and deferred flush)
+	upperQuery := strings.ToUpper(query)
+	isWrite := strings.Contains(upperQuery, "CREATE") ||
+		strings.Contains(upperQuery, "DELETE") ||
+		strings.Contains(upperQuery, "SET ") ||
+		strings.Contains(upperQuery, "MERGE") ||
+		strings.Contains(upperQuery, "REMOVE ")
+	isSchema := strings.Contains(upperQuery, "INDEX") ||
+		strings.Contains(upperQuery, "CONSTRAINT")
+
+	// Check permissions based on query type
+	if s.authResult != nil {
+		if isSchema && !s.authResult.HasPermission("schema") {
+			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Schema operations require schema permission")
+		}
+		if isWrite && !s.authResult.HasPermission("write") {
+			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Write operations require write permission")
+		}
+		if !s.authResult.HasPermission("read") {
+			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Read operations require read permission")
+		}
 	}
 
 	// Log query if enabled
@@ -930,10 +1182,14 @@ func (s *Session) handleRun(data []byte) error {
 		if s.conn != nil {
 			remoteAddr = s.conn.RemoteAddr().String()
 		}
+		user := "unknown"
+		if s.authResult != nil {
+			user = s.authResult.Username
+		}
 		if len(params) > 0 {
-			fmt.Printf("[BOLT] %s: %s (params: %v)\n", remoteAddr, truncateQuery(query, 200), params)
+			fmt.Printf("[BOLT] %s@%s: %s (params: %v)\n", user, remoteAddr, truncateQuery(query, 200), params)
 		} else {
-			fmt.Printf("[BOLT] %s: %s\n", remoteAddr, truncateQuery(query, 200))
+			fmt.Printf("[BOLT] %s@%s: %s\n", user, remoteAddr, truncateQuery(query, 200))
 		}
 	}
 
@@ -947,14 +1203,7 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendFailure("Neo.ClientError.Statement.SyntaxError", err.Error())
 	}
 
-	// Track if this was a write operation (for deferred flush)
-	// Uppercase once to avoid 5 separate allocations
-	upperQuery := strings.ToUpper(query)
-	isWrite := strings.Contains(upperQuery, "CREATE") ||
-		strings.Contains(upperQuery, "DELETE") ||
-		strings.Contains(upperQuery, "SET ") ||
-		strings.Contains(upperQuery, "MERGE") ||
-		strings.Contains(upperQuery, "REMOVE ")
+	// Track write operation for deferred flush
 	if isWrite {
 		s.pendingFlush = true
 	}

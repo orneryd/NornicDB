@@ -99,6 +99,7 @@ Features:
 	}
 	serveCmd.Flags().Int("bolt-port", getEnvInt("NORNICDB_BOLT_PORT", 7687), "Bolt protocol port (Neo4j compatible)")
 	serveCmd.Flags().Int("http-port", getEnvInt("NORNICDB_HTTP_PORT", 7474), "HTTP API port")
+	serveCmd.Flags().String("address", getEnvStr("NORNICDB_ADDRESS", "127.0.0.1"), "Bind address (127.0.0.1 for localhost only, 0.0.0.0 for all interfaces)")
 	serveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
 	serveCmd.Flags().String("load-export", getEnvStr("NORNICDB_LOAD_EXPORT", ""), "Load data from Mimir export directory on startup")
 	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "ollama"), "Embedding provider: local, ollama, openai")
@@ -186,6 +187,7 @@ Features:
 func runServe(cmd *cobra.Command, args []string) error {
 	boltPort, _ := cmd.Flags().GetInt("bolt-port")
 	httpPort, _ := cmd.Flags().GetInt("http-port")
+	address, _ := cmd.Flags().GetString("address")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	loadExport, _ := cmd.Flags().GetString("load-export")
 	embeddingProvider, _ := cmd.Flags().GetString("embedding-provider")
@@ -396,6 +398,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
+	serverConfig.Address = address
 	// MCP server configuration
 	serverConfig.MCPEnabled = mcpEnabled
 	// Pass embedding settings to server
@@ -441,14 +444,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("✅ NornicDB is ready!")
 	fmt.Println()
+	// Determine the display address for user-friendly output
+	displayAddr := address
+	if address == "0.0.0.0" {
+		displayAddr = "localhost" // 0.0.0.0 is all interfaces, show localhost for convenience
+	}
 	fmt.Println("Endpoints:")
-	fmt.Printf("  • HTTP API:     http://localhost:%d\n", httpPort)
-	fmt.Printf("  • Bolt:         bolt://localhost:%d\n", boltPort)
-	fmt.Printf("  • Health:       http://localhost:%d/health\n", httpPort)
-	fmt.Printf("  • Search:       POST http://localhost:%d/nornicdb/search\n", httpPort)
-	fmt.Printf("  • Cypher:       POST http://localhost:%d/db/neo4j/tx/commit\n", httpPort)
+	fmt.Printf("  • HTTP API:     http://%s:%d\n", displayAddr, httpPort)
+	fmt.Printf("  • Bolt:         bolt://%s:%d\n", displayAddr, boltPort)
+	fmt.Printf("  • Health:       http://%s:%d/health\n", displayAddr, httpPort)
+	fmt.Printf("  • Search:       POST http://%s:%d/nornicdb/search\n", displayAddr, httpPort)
+	fmt.Printf("  • Cypher:       POST http://%s:%d/db/neo4j/tx/commit\n", displayAddr, httpPort)
 	if mcpEnabled {
-		fmt.Printf("  • MCP:          http://localhost:%d/mcp\n", httpPort)
+		fmt.Printf("  • MCP:          http://%s:%d/mcp\n", displayAddr, httpPort)
 	}
 	fmt.Println()
 	if !noAuth {

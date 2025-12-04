@@ -93,7 +93,7 @@
 //
 //   - CORS support with configurable origins
 //   - Request size limits (default 10MB)
-//   - Rate limiting (planned)
+//   - IP-based rate limiting (configurable per-minute/per-hour limits)
 //   - Audit logging integration
 //   - Panic recovery middleware
 //   - TLS/HTTPS support
@@ -190,12 +190,14 @@ func embeddingCacheMemoryMB(cacheSize, dimensions int) int {
 //		TLSKeyFile:        "/etc/ssl/server.key",
 //	}
 //
-//	// Development configuration
+//	// Development configuration with CORS for local UI
 //	config = server.DefaultConfig()
 //	config.Port = 8080
-//	config.CORSOrigins = []string{"*"} // Allow all origins
+//	config.EnableCORS = true
+//	config.CORSOrigins = []string{"http://localhost:3000"} // Local dev UI only
 type Config struct {
-	// Address to bind to (default: "0.0.0.0")
+	// Address to bind to (default: "127.0.0.1" - localhost only for security)
+	// Set to "0.0.0.0" to listen on all interfaces (required for Docker/external access)
 	Address string
 	// Port to listen on (default: 7474)
 	Port int
@@ -207,12 +209,23 @@ type Config struct {
 	IdleTimeout time.Duration
 	// MaxRequestSize in bytes (default: 10MB)
 	MaxRequestSize int64
-	// EnableCORS for cross-origin requests
+	// EnableCORS for cross-origin requests (default: false for security)
 	EnableCORS bool
-	// CORSOrigins allowed (default: "*")
+	// CORSOrigins allowed origins (default: empty - must be explicitly configured)
+	// WARNING: Never use "*" with credentials - this is a CSRF vulnerability
 	CORSOrigins []string
 	// EnableCompression for responses
 	EnableCompression bool
+
+	// Rate Limiting Configuration (DoS protection)
+	// RateLimitEnabled enables IP-based rate limiting (default: true)
+	RateLimitEnabled bool
+	// RateLimitPerMinute max requests per IP per minute (default: 100)
+	RateLimitPerMinute int
+	// RateLimitPerHour max requests per IP per hour (default: 3000)
+	RateLimitPerHour int
+	// RateLimitBurst max burst size for short request spikes (default: 20)
+	RateLimitBurst int
 	// TLSCertFile for HTTPS
 	TLSCertFile string
 	// TLSKeyFile for HTTPS
@@ -292,15 +305,26 @@ type Config struct {
 //	server, err = server.New(db, auth, config)
 func DefaultConfig() *Config {
 	return &Config{
-		Address:           "0.0.0.0",
+		// SECURITY: Bind to localhost only by default - prevents external access
+		// Set Address to "0.0.0.0" for Docker/container deployments or external access
+		Address:           "127.0.0.1",
 		Port:              7474,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxRequestSize:    10 * 1024 * 1024, // 10MB
-		EnableCORS:        true,
-		CORSOrigins:       []string{"*"},
+		// SECURITY: CORS disabled by default - enable only for known origins
+		// To enable: config.EnableCORS = true; config.CORSOrigins = []string{"https://yourapp.com"}
+		// WARNING: Never use "*" with credentials in production (CSRF risk)
+		EnableCORS:        false,
+		CORSOrigins:       []string{}, // Must explicitly configure allowed origins
 		EnableCompression: true,
+
+		// Rate limiting enabled by default to prevent DoS attacks
+		RateLimitEnabled:   true,
+		RateLimitPerMinute: 100,  // 100 requests/minute per IP
+		RateLimitPerHour:   3000, // 3000 requests/hour per IP
+		RateLimitBurst:     20,   // Allow short bursts
 
 		// MCP server enabled by default
 		// Override: NORNICDB_MCP_ENABLED=false
@@ -388,6 +412,9 @@ type Server struct {
 	httpServer *http.Server
 	listener   net.Listener
 
+	// Rate limiter for DoS protection
+	rateLimiter *IPRateLimiter
+
 	mu      sync.RWMutex
 	closed  atomic.Bool
 	started time.Time
@@ -400,6 +427,120 @@ type Server struct {
 	// Slow query logging
 	slowQueryLogger *log.Logger
 	slowQueryCount  atomic.Int64
+}
+
+// IPRateLimiter provides IP-based rate limiting to prevent DoS attacks.
+type IPRateLimiter struct {
+	mu              sync.RWMutex
+	counters        map[string]*ipRateLimitCounter
+	perMinute       int
+	perHour         int
+	burst           int
+	cleanupInterval time.Duration
+	stopCleanup     chan struct{}
+}
+
+type ipRateLimitCounter struct {
+	mu          sync.Mutex
+	minuteCount int
+	hourCount   int
+	minuteReset time.Time
+	hourReset   time.Time
+}
+
+// NewIPRateLimiter creates a new IP-based rate limiter.
+func NewIPRateLimiter(perMinute, perHour, burst int) *IPRateLimiter {
+	rl := &IPRateLimiter{
+		counters:        make(map[string]*ipRateLimitCounter),
+		perMinute:       perMinute,
+		perHour:         perHour,
+		burst:           burst,
+		cleanupInterval: 10 * time.Minute,
+		stopCleanup:     make(chan struct{}),
+	}
+	// Start background cleanup of stale entries
+	go rl.cleanupLoop()
+	return rl
+}
+
+// Allow checks if a request from the given IP is allowed.
+func (rl *IPRateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	counter, exists := rl.counters[ip]
+	if !exists {
+		counter = &ipRateLimitCounter{
+			minuteReset: time.Now().Add(time.Minute),
+			hourReset:   time.Now().Add(time.Hour),
+		}
+		rl.counters[ip] = counter
+	}
+	rl.mu.Unlock()
+
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+
+	now := time.Now()
+
+	// Reset minute counter if needed
+	if now.After(counter.minuteReset) {
+		counter.minuteCount = 0
+		counter.minuteReset = now.Add(time.Minute)
+	}
+
+	// Reset hour counter if needed
+	if now.After(counter.hourReset) {
+		counter.hourCount = 0
+		counter.hourReset = now.Add(time.Hour)
+	}
+
+	// Check limits
+	if counter.minuteCount >= rl.perMinute {
+		return false
+	}
+	if counter.hourCount >= rl.perHour {
+		return false
+	}
+
+	// Increment counters
+	counter.minuteCount++
+	counter.hourCount++
+
+	return true
+}
+
+// cleanupLoop periodically removes stale IP entries to prevent memory leaks.
+func (rl *IPRateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(rl.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			rl.cleanup()
+		case <-rl.stopCleanup:
+			return
+		}
+	}
+}
+
+func (rl *IPRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for ip, counter := range rl.counters {
+		counter.mu.Lock()
+		// Remove if both counters have been reset (inactive for >1 hour)
+		if now.After(counter.hourReset) {
+			delete(rl.counters, ip)
+		}
+		counter.mu.Unlock()
+	}
+}
+
+// Stop stops the cleanup goroutine.
+func (rl *IPRateLimiter) Stop() {
+	close(rl.stopCleanup)
 }
 
 // New creates a new HTTP server with the given database, authenticator, and configuration.
@@ -603,12 +744,20 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		}
 	}
 
+	// Initialize rate limiter if enabled
+	var rateLimiter *IPRateLimiter
+	if config.RateLimitEnabled {
+		rateLimiter = NewIPRateLimiter(config.RateLimitPerMinute, config.RateLimitPerHour, config.RateLimitBurst)
+		log.Printf("✓ Rate limiting enabled: %d/min, %d/hour per IP", config.RateLimitPerMinute, config.RateLimitPerHour)
+	}
+
 	s := &Server{
 		config:          config,
 		db:              db,
 		auth:            authenticator,
 		mcpServer:       mcpServer,
 		heimdallHandler: heimdallHandler,
+		rateLimiter:     rateLimiter,
 	}
 
 	// Initialize slow query logger if file specified
@@ -707,6 +856,11 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
+	}
+
+	// Stop rate limiter cleanup goroutine
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
 	}
 
 	if s.httpServer != nil {
@@ -821,11 +975,14 @@ func (s *Server) buildRouter() http.Handler {
 	mux.HandleFunc("/db/", s.withAuth(s.handleDatabaseEndpoint, auth.PermRead))
 
 	// ==========================================================================
-	// Health/Status/Metrics Endpoints (no auth required)
+	// Health/Status/Metrics Endpoints
 	// ==========================================================================
+	// Health check is public (required for load balancers/k8s probes)
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/status", s.handleStatus)
-	mux.HandleFunc("/metrics", s.handleMetrics) // Prometheus-compatible metrics
+	// Status and metrics require authentication to prevent information disclosure
+	// These expose node counts, uptime, request stats that aid reconnaissance
+	mux.HandleFunc("/status", s.withAuth(s.handleStatus, auth.PermRead))
+	mux.HandleFunc("/metrics", s.withAuth(s.handleMetrics, auth.PermRead)) // Prometheus-compatible metrics
 
 	// ==========================================================================
 	// Authentication Endpoints (NornicDB additions)
@@ -913,8 +1070,9 @@ func (s *Server) buildRouter() http.Handler {
 		}, auth.PermRead))
 	}
 
-	// Wrap with middleware
+	// Wrap with middleware (order matters: outermost runs first)
 	handler := s.corsMiddleware(mux)
+	handler = s.rateLimitMiddleware(handler) // Rate limit after CORS preflight
 	handler = s.loggingMiddleware(handler)
 	handler = s.recoveryMiddleware(handler)
 	handler = s.metricsMiddleware(handler)
@@ -1020,24 +1178,35 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.config.EnableCORS {
 			origin := r.Header.Get("Origin")
-			if origin == "" {
-				origin = "*"
-			}
 
 			// Check if origin is allowed
 			allowed := false
+			isWildcard := false
 			for _, o := range s.config.CORSOrigins {
-				if o == "*" || o == origin {
+				if o == "*" {
+					allowed = true
+					isWildcard = true
+					break
+				}
+				if o == origin {
 					allowed = true
 					break
 				}
 			}
 
 			if allowed {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
+				// SECURITY: Never use wildcard with credentials - this is a CSRF vector
+				// When wildcard is configured, don't send credentials header
+				if isWildcard {
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+					// Deliberately NOT setting Allow-Credentials with wildcard
+				} else if origin != "" {
+					// Specific origin - safe to allow credentials
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-API-Key")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Max-Age", "86400")
 			}
 
@@ -1046,6 +1215,48 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rateLimitMiddleware applies IP-based rate limiting to prevent DoS attacks.
+// Returns 429 Too Many Requests when limits are exceeded.
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip rate limiting if disabled
+		if s.rateLimiter == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Skip rate limiting for health checks (k8s probes, load balancers)
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Extract client IP (handle proxies via X-Forwarded-For)
+		ip := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			// Take first IP in chain (original client)
+			if idx := strings.Index(forwarded, ","); idx > 0 {
+				ip = strings.TrimSpace(forwarded[:idx])
+			} else {
+				ip = strings.TrimSpace(forwarded)
+			}
+		} else if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			ip = realIP
+		}
+
+		// Check rate limit
+		if !s.rateLimiter.Allow(ip) {
+			w.Header().Set("Retry-After", "60")
+			s.writeNeo4jError(w, http.StatusTooManyRequests,
+				"Neo.ClientError.Request.TooManyRequests",
+				"Rate limit exceeded. Please slow down your requests.")
+			return
 		}
 
 		next.ServeHTTP(w, r)
@@ -1720,42 +1931,24 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		host = "localhost"
 	}
 
+	// Neo4j-compatible discovery response - minimal info to reduce reconnaissance surface
+	// Feature details moved to authenticated /status endpoint
 	response := map[string]interface{}{
 		"bolt_direct":   fmt.Sprintf("bolt://%s:7687", host),
 		"bolt_routing":  fmt.Sprintf("neo4j://%s:7687", host),
 		"transaction":   fmt.Sprintf("http://%s:%d/db/{databaseName}/tx", host, s.config.Port),
 		"neo4j_version": "5.0.0",
 		"neo4j_edition": "community",
-		// NornicDB extensions in separate namespace
-		"nornicdb": map[string]interface{}{
-			"version": "1.0.0",
-			"features": []string{
-				"memory_decay",
-				"auto_inference",
-				"vector_search",
-				"gdpr_compliance",
-			},
-		},
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	// Get embedding worker status
-	embedStatus := "disabled"
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
-		if embedStats.Running {
-			embedStatus = "processing"
-		} else {
-			embedStatus = "idle"
-		}
-	}
-
+	// Minimal health response - no operational details to reduce reconnaissance surface
+	// Detailed status available at authenticated /status endpoint
 	response := map[string]interface{}{
-		"status":     "healthy",
-		"time":       time.Now().Format(time.RFC3339),
-		"embeddings": embedStatus,
+		"status": "healthy",
 	}
 	s.writeJSON(w, http.StatusOK, response)
 }

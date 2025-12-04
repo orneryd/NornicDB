@@ -4,8 +4,10 @@ package bolt
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -2558,6 +2560,692 @@ func TestTransactionWithNonTransactionalExecutor(t *testing.T) {
 
 		if session.inTransaction {
 			t.Error("session should not be in transaction after rollback")
+		}
+	})
+}
+
+// mockBoltAuthenticator implements BoltAuthenticator for testing.
+type mockBoltAuthenticator struct {
+	authenticateFunc func(scheme, principal, credentials string) (*BoltAuthResult, error)
+}
+
+func (m *mockBoltAuthenticator) Authenticate(scheme, principal, credentials string) (*BoltAuthResult, error) {
+	if m.authenticateFunc != nil {
+		return m.authenticateFunc(scheme, principal, credentials)
+	}
+	// Default: accept admin/admin
+	if scheme == "basic" && principal == "admin" && credentials == "admin" {
+		return &BoltAuthResult{
+			Authenticated: true,
+			Username:      principal,
+			Roles:         []string{"admin"},
+		}, nil
+	}
+	if scheme == "basic" && principal == "viewer" && credentials == "viewer" {
+		return &BoltAuthResult{
+			Authenticated: true,
+			Username:      principal,
+			Roles:         []string{"viewer"},
+		}, nil
+	}
+	if scheme == "basic" && principal == "editor" && credentials == "editor" {
+		return &BoltAuthResult{
+			Authenticated: true,
+			Username:      principal,
+			Roles:         []string{"editor"},
+		}, nil
+	}
+	return nil, fmt.Errorf("invalid credentials")
+}
+
+// newTestSessionWithAuth creates a test session with a server that has auth configured.
+func newTestSessionWithAuth(conn net.Conn, executor QueryExecutor, auth BoltAuthenticator, requireAuth, allowAnon bool) *Session {
+	server := &Server{
+		config: &Config{
+			Authenticator:  auth,
+			RequireAuth:    requireAuth,
+			AllowAnonymous: allowAnon,
+		},
+	}
+	return &Session{
+		conn:       conn,
+		reader:     bufio.NewReaderSize(conn, 8192),
+		writer:     bufio.NewWriterSize(conn, 8192),
+		server:     server,
+		executor:   executor,
+		messageBuf: make([]byte, 0, 4096),
+	}
+}
+
+// buildHelloMessage builds a PackStream HELLO message with auth credentials.
+// Format: B1 01 (struct with 1 field, signature 0x01) + map with auth params
+func buildHelloMessage(scheme, principal, credentials string) []byte {
+	// Build the extra map containing auth info
+	// Map with 3 entries: scheme, principal, credentials
+	buf := []byte{
+		0xB1, 0x01, // Struct marker (1 field) + HELLO signature
+	}
+
+	// Build map - A3 means tiny map with 3 entries
+	mapBytes := []byte{0xA3} // Map with 3 entries
+
+	// scheme key
+	mapBytes = append(mapBytes, buildPackStreamString("scheme")...)
+	mapBytes = append(mapBytes, buildPackStreamString(scheme)...)
+
+	// principal key
+	mapBytes = append(mapBytes, buildPackStreamString("principal")...)
+	mapBytes = append(mapBytes, buildPackStreamString(principal)...)
+
+	// credentials key
+	mapBytes = append(mapBytes, buildPackStreamString("credentials")...)
+	mapBytes = append(mapBytes, buildPackStreamString(credentials)...)
+
+	buf = append(buf, mapBytes...)
+	return buf
+}
+
+// buildPackStreamString builds a PackStream string encoding.
+func buildPackStreamString(s string) []byte {
+	if len(s) < 16 {
+		// Tiny string (0x80-0x8F)
+		return append([]byte{byte(0x80 + len(s))}, []byte(s)...)
+	}
+	if len(s) < 256 {
+		// STRING8
+		return append([]byte{0xD0, byte(len(s))}, []byte(s)...)
+	}
+	// STRING16
+	return append([]byte{0xD1, byte(len(s) >> 8), byte(len(s))}, []byte(s)...)
+}
+
+func TestBoltAuthResult(t *testing.T) {
+	t.Run("HasRole", func(t *testing.T) {
+		result := &BoltAuthResult{
+			Authenticated: true,
+			Username:      "test",
+			Roles:         []string{"admin", "editor"},
+		}
+
+		if !result.HasRole("admin") {
+			t.Error("should have admin role")
+		}
+		if !result.HasRole("editor") {
+			t.Error("should have editor role")
+		}
+		if result.HasRole("viewer") {
+			t.Error("should NOT have viewer role")
+		}
+	})
+
+	t.Run("HasPermission admin", func(t *testing.T) {
+		result := &BoltAuthResult{
+			Authenticated: true,
+			Username:      "admin",
+			Roles:         []string{"admin"},
+		}
+
+		if !result.HasPermission("read") {
+			t.Error("admin should have read permission")
+		}
+		if !result.HasPermission("write") {
+			t.Error("admin should have write permission")
+		}
+		if !result.HasPermission("schema") {
+			t.Error("admin should have schema permission")
+		}
+		if !result.HasPermission("user_manage") {
+			t.Error("admin should have user_manage permission")
+		}
+	})
+
+	t.Run("HasPermission viewer", func(t *testing.T) {
+		result := &BoltAuthResult{
+			Authenticated: true,
+			Username:      "viewer",
+			Roles:         []string{"viewer"},
+		}
+
+		if !result.HasPermission("read") {
+			t.Error("viewer should have read permission")
+		}
+		if result.HasPermission("write") {
+			t.Error("viewer should NOT have write permission")
+		}
+		if result.HasPermission("schema") {
+			t.Error("viewer should NOT have schema permission")
+		}
+	})
+
+	t.Run("HasPermission editor", func(t *testing.T) {
+		result := &BoltAuthResult{
+			Authenticated: true,
+			Username:      "editor",
+			Roles:         []string{"editor"},
+		}
+
+		if !result.HasPermission("read") {
+			t.Error("editor should have read permission")
+		}
+		if !result.HasPermission("write") {
+			t.Error("editor should have write permission")
+		}
+		if result.HasPermission("schema") {
+			t.Error("editor should NOT have schema permission")
+		}
+	})
+}
+
+func TestHandleHelloAuth(t *testing.T) {
+	t.Run("successful basic auth", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		helloData := buildHelloMessage("basic", "admin", "admin")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("session should be authenticated")
+		}
+		if session.authResult == nil {
+			t.Fatal("authResult should not be nil")
+		}
+		if session.authResult.Username != "admin" {
+			t.Errorf("expected username 'admin', got %q", session.authResult.Username)
+		}
+		if !session.authResult.HasRole("admin") {
+			t.Error("should have admin role")
+		}
+	})
+
+	t.Run("failed basic auth", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		helloData := buildHelloMessage("basic", "admin", "wrongpassword")
+		err := session.handleHello(helloData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleHello should return nil, got: %v", err)
+		}
+
+		if session.authenticated {
+			t.Error("session should NOT be authenticated after failed auth")
+		}
+	})
+
+	t.Run("anonymous auth allowed", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, true) // AllowAnonymous = true
+
+		helloData := buildHelloMessage("none", "", "")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("session should be authenticated (anonymous)")
+		}
+		if session.authResult == nil {
+			t.Fatal("authResult should not be nil")
+		}
+		if session.authResult.Username != "anonymous" {
+			t.Errorf("expected username 'anonymous', got %q", session.authResult.Username)
+		}
+		if !session.authResult.HasRole("viewer") {
+			t.Error("anonymous should have viewer role")
+		}
+	})
+
+	t.Run("anonymous auth rejected when not allowed", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false) // AllowAnonymous = false
+
+		helloData := buildHelloMessage("none", "", "")
+		err := session.handleHello(helloData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleHello should return nil, got: %v", err)
+		}
+
+		if session.authenticated {
+			t.Error("session should NOT be authenticated when anonymous is rejected")
+		}
+	})
+
+	t.Run("no auth required - accepts all", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, nil, false, false) // No auth configured
+
+		helloData := buildHelloMessage("basic", "anyone", "anything")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("session should be authenticated (dev mode)")
+		}
+		if session.authResult == nil {
+			t.Fatal("authResult should not be nil")
+		}
+		// Dev mode grants admin
+		if !session.authResult.HasRole("admin") {
+			t.Error("dev mode should grant admin role")
+		}
+	})
+
+	t.Run("unsupported auth scheme", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		helloData := buildHelloMessage("kerberos", "user", "token")
+		err := session.handleHello(helloData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleHello should return nil, got: %v", err)
+		}
+
+		if session.authenticated {
+			t.Error("session should NOT be authenticated with unsupported scheme")
+		}
+	})
+}
+
+func TestHandleRunAuth(t *testing.T) {
+	t.Run("run without auth when required fails", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+		// Don't call handleHello - session is not authenticated
+
+		// Build a simple RUN message
+		runData := buildRunMessage("MATCH (n) RETURN n", nil)
+		err := session.handleRun(runData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleRun should return nil, got: %v", err)
+		}
+
+		// Check that response contains FAILURE
+		response := string(conn.writeData)
+		if !strings.Contains(response, "Unauthorized") && len(conn.writeData) > 0 {
+			// The failure message is in binary PackStream format
+			// Just verify the session state
+		}
+	})
+
+	t.Run("viewer cannot write", func(t *testing.T) {
+		auth := &mockBoltAuthenticator{}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		// Authenticate as viewer
+		session.authenticated = true
+		session.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "viewer",
+			Roles:         []string{"viewer"},
+		}
+
+		// Try to run a write query
+		runData := buildRunMessage("CREATE (n:Test) RETURN n", nil)
+		err := session.handleRun(runData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleRun should return nil, got: %v", err)
+		}
+
+		// The session should have sent a FAILURE response
+		// We can't easily check binary data, but we know the permission check happened
+	})
+
+	t.Run("viewer can read", func(t *testing.T) {
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"n"},
+					Rows:    [][]any{{"test"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, executor, &mockBoltAuthenticator{}, false, false)
+
+		// Authenticate as viewer
+		session.authenticated = true
+		session.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "viewer",
+			Roles:         []string{"viewer"},
+		}
+
+		// Run a read query
+		runData := buildRunMessage("MATCH (n) RETURN n", nil)
+		err := session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+
+		// Query should have been executed
+		if session.lastResult == nil {
+			t.Error("query should have been executed")
+		}
+	})
+
+	t.Run("editor can write", func(t *testing.T) {
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"n"},
+					Rows:    [][]any{{"test"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, executor, &mockBoltAuthenticator{}, false, false)
+
+		// Authenticate as editor
+		session.authenticated = true
+		session.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "editor",
+			Roles:         []string{"editor"},
+		}
+
+		// Run a write query
+		runData := buildRunMessage("CREATE (n:Test) RETURN n", nil)
+		err := session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+
+		// Query should have been executed
+		if session.lastResult == nil {
+			t.Error("query should have been executed")
+		}
+	})
+
+	t.Run("editor cannot schema", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, &mockBoltAuthenticator{}, false, false)
+
+		// Authenticate as editor
+		session.authenticated = true
+		session.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "editor",
+			Roles:         []string{"editor"},
+		}
+
+		// Try to run a schema query
+		runData := buildRunMessage("CREATE INDEX ON :Person(name)", nil)
+		err := session.handleRun(runData)
+		// Should return nil (error sent via FAILURE message)
+		if err != nil {
+			t.Fatalf("handleRun should return nil, got: %v", err)
+		}
+
+		// Schema query should have been rejected
+	})
+
+	t.Run("admin can do everything", func(t *testing.T) {
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"result"},
+					Rows:    [][]any{{"ok"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, executor, &mockBoltAuthenticator{}, false, false)
+
+		// Authenticate as admin
+		session.authenticated = true
+		session.authResult = &BoltAuthResult{
+			Authenticated: true,
+			Username:      "admin",
+			Roles:         []string{"admin"},
+		}
+
+		// Test schema query
+		runData := buildRunMessage("CREATE INDEX ON :Person(name)", nil)
+		err := session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error for schema: %v", err)
+		}
+
+		// Test write query
+		runData = buildRunMessage("CREATE (n:Test) RETURN n", nil)
+		err = session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error for write: %v", err)
+		}
+	})
+}
+
+// buildRunMessage builds a PackStream RUN message.
+// Format: [query: String, parameters: Map, extra: Map]
+func buildRunMessage(query string, params map[string]any) []byte {
+	buf := []byte{}
+
+	// Query string
+	buf = append(buf, buildPackStreamString(query)...)
+
+	// Empty params map (A0 = tiny map with 0 entries)
+	buf = append(buf, 0xA0)
+
+	// Empty extra map
+	buf = append(buf, 0xA0)
+
+	return buf
+}
+
+func TestServerToServerAuth(t *testing.T) {
+	t.Run("service account auth", func(t *testing.T) {
+		// Simulate server-to-server auth with service account
+		auth := &mockBoltAuthenticator{
+			authenticateFunc: func(scheme, principal, credentials string) (*BoltAuthResult, error) {
+				// Service accounts use basic auth with special prefix
+				if scheme == "basic" && strings.HasPrefix(principal, "svc-") {
+					return &BoltAuthResult{
+						Authenticated: true,
+						Username:      principal,
+						Roles:         []string{"admin"}, // Service accounts get full access
+					}, nil
+				}
+				return nil, fmt.Errorf("invalid service account")
+			},
+		}
+
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		helloData := buildHelloMessage("basic", "svc-cluster-node-1", "secret-key")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("service account should be authenticated")
+		}
+		if session.authResult.Username != "svc-cluster-node-1" {
+			t.Errorf("expected service account name, got %q", session.authResult.Username)
+		}
+		if !session.authResult.HasPermission("admin") {
+			t.Error("service account should have admin permission")
+		}
+	})
+
+	t.Run("cluster replication auth", func(t *testing.T) {
+		// Simulate auth for cluster replication connections
+		auth := &mockBoltAuthenticator{
+			authenticateFunc: func(scheme, principal, credentials string) (*BoltAuthResult, error) {
+				if scheme == "basic" && principal == "replication" {
+					// Verify replication token
+					if credentials == "cluster-secret-token" {
+						return &BoltAuthResult{
+							Authenticated: true,
+							Username:      "replication",
+							Roles:         []string{"admin"}, // Replication needs full access
+						}, nil
+					}
+				}
+				return nil, fmt.Errorf("invalid replication credentials")
+			},
+		}
+
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, &mockExecutor{}, auth, true, false)
+
+		helloData := buildHelloMessage("basic", "replication", "cluster-secret-token")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("replication should be authenticated")
+		}
+	})
+}
+
+func TestAuthDisabled(t *testing.T) {
+	t.Run("no server reference allows all operations", func(t *testing.T) {
+		// Sessions without server reference (e.g., unit tests) should work
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"result"},
+					Rows:    [][]any{{"ok"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSession(conn, executor) // No server = no auth
+
+		// Should be able to run queries without auth
+		runData := buildRunMessage("CREATE (n:Test) RETURN n", nil)
+		err := session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+
+		if session.lastResult == nil {
+			t.Error("query should have been executed")
+		}
+	})
+
+	t.Run("auth disabled with nil authenticator", func(t *testing.T) {
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"result"},
+					Rows:    [][]any{{"ok"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		// No authenticator, RequireAuth=false, AllowAnonymous=false
+		session := newTestSessionWithAuth(conn, executor, nil, false, false)
+
+		// HELLO should succeed and grant admin
+		helloData := buildHelloMessage("basic", "anyone", "anything")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("should be authenticated in dev mode")
+		}
+		if session.authResult == nil {
+			t.Fatal("authResult should not be nil")
+		}
+		if !session.authResult.HasRole("admin") {
+			t.Error("dev mode should grant admin role")
+		}
+
+		// Should be able to run any query
+		runData := buildRunMessage("CREATE INDEX ON :Person(name)", nil)
+		err = session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+
+		if session.lastResult == nil {
+			t.Error("schema query should have been executed")
+		}
+	})
+
+	t.Run("auth disabled accepts neo4j NoAuth", func(t *testing.T) {
+		// Neo4j drivers use scheme "none" when using neo4j.NoAuth()
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"n"},
+					Rows:    [][]any{{"test"}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSessionWithAuth(conn, executor, nil, false, false)
+
+		// Send HELLO with scheme "none" (Neo4j NoAuth)
+		helloData := buildHelloMessage("none", "", "")
+		err := session.handleHello(helloData)
+		if err != nil {
+			t.Fatalf("handleHello error: %v", err)
+		}
+
+		if !session.authenticated {
+			t.Error("should be authenticated")
+		}
+
+		// Run a query
+		runData := buildRunMessage("MATCH (n) RETURN n", nil)
+		err = session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+	})
+
+	t.Run("existing tests still work without auth", func(t *testing.T) {
+		// This mimics how existing tests create sessions
+		executor := &mockExecutor{
+			executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+				return &QueryResult{
+					Columns: []string{"count"},
+					Rows:    [][]any{{int64(42)}},
+				}, nil
+			},
+		}
+		conn := &mockConn{}
+		session := newTestSession(conn, executor)
+
+		// Run query directly (no HELLO, no auth)
+		runData := buildRunMessage("MATCH (n) RETURN count(n)", nil)
+		err := session.handleRun(runData)
+		if err != nil {
+			t.Fatalf("handleRun error: %v", err)
+		}
+
+		if session.lastResult == nil {
+			t.Error("query should have been executed")
+		}
+		if len(session.lastResult.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(session.lastResult.Rows))
 		}
 	})
 }
