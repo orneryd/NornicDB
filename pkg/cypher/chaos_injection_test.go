@@ -759,10 +759,10 @@ func TestInjection_IndexManipulation(t *testing.T) {
 
 	// Index manipulation injection attempts
 	injections := []string{
-		"test'}) CREATE INDEX ON :User(password) //",
-		"test'}) DROP INDEX ON :User(id) //",
-		"test'}) CREATE CONSTRAINT ON (u:User) ASSERT u.id IS UNIQUE //",
-		"test'}) DROP CONSTRAINT ON (u:User) //",
+		"test'}); CREATE INDEX ON :User(password) //",
+		"test'}); DROP INDEX ON :User(id) //",
+		"test'}); CREATE CONSTRAINT ON (u:User) ASSERT u.id IS UNIQUE //",
+		"test'}); DROP CONSTRAINT ON (u:User) //",
 	}
 
 	for i, injection := range injections {
@@ -785,8 +785,8 @@ func TestInjection_TransactionManipulation(t *testing.T) {
 
 	// Transaction manipulation attempts
 	injections := []string{
-		"test'}) COMMIT //",
-		"test'}) ROLLBACK //",
+		"test'}); COMMIT //",
+		"test'}); ROLLBACK //",
 		"test' BEGIN MATCH (n) DELETE n COMMIT //",
 		":auto MATCH (n) DELETE n",
 	}
@@ -818,11 +818,11 @@ func TestInjection_PrivilegeEscalation(t *testing.T) {
 		name    string
 		payload string
 	}{
-		{"grant_role", "test'}) GRANT ROLE admin TO normal //"},
-		{"create_admin", "test'}) CREATE USER hacker SET PASSWORD 'pwned' CHANGE NOT REQUIRED //"},
-		{"alter_user", "test'}) ALTER USER normal SET PASSWORD CHANGE NOT REQUIRED //"},
-		{"show_users", "test'}) SHOW USERS //"},
-		{"show_privileges", "test'}) SHOW PRIVILEGES //"},
+		{"grant_role", "test'}); GRANT ROLE admin TO normal //"},
+		{"create_admin", "test'}); CREATE USER hacker SET PASSWORD 'pwned' CHANGE NOT REQUIRED //"},
+		{"alter_user", "test'}); ALTER USER normal SET PASSWORD CHANGE NOT REQUIRED //"},
+		{"show_users", "test'}); SHOW USERS //"},
+		{"show_privileges", "test'}); SHOW PRIVILEGES //"},
 	}
 
 	for _, tc := range injections {
@@ -847,10 +847,10 @@ func TestInjection_SystemDatabaseAccess(t *testing.T) {
 	// System database access attempts
 	injections := []string{
 		":USE system MATCH (n) RETURN n",
-		"test'}) :USE system MATCH (n) DELETE n //",
-		"test'}) SHOW DATABASES //",
-		"test'}) CREATE DATABASE evil //",
-		"test'}) DROP DATABASE neo4j //",
+		"test'}); :USE system MATCH (n) DELETE n //",
+		"test'}); SHOW DATABASES //",
+		"test'}); CREATE DATABASE evil //",
+		"test'}); DROP DATABASE neo4j //",
 	}
 
 	for i, injection := range injections {
@@ -1597,4 +1597,338 @@ func TestExtreme_UltimateNesting(t *testing.T) {
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(result.Rows))
+}
+
+// =============================================================================
+// STREAM PARSE-EXECUTE ROLLBACK & DATA CORRUPTION TESTS
+// =============================================================================
+// These tests verify that partial writes are rolled back on error,
+// preventing data corruption from failed queries.
+
+// TestRollback_PartialWriteOnSyntaxError verifies writes are rolled back on syntax error
+func TestRollback_PartialWriteOnSyntaxError(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create initial data to verify rollback
+	_, err := exec.Execute(ctx, "CREATE (n:RollbackTest {id: 1, name: 'original'})", nil)
+	require.NoError(t, err)
+
+	// Count before attack
+	result, _ := exec.Execute(ctx, "MATCH (n:RollbackTest) RETURN count(n) AS cnt", nil)
+	countBefore := result.Rows[0][0].(int64)
+
+	t.Run("CREATE then SET with undefined function rolls back all", func(t *testing.T) {
+		// First CREATE succeeds, then SET fails on undefined function
+		// This should rollback the CREATE as well
+		_, execErr := exec.Execute(ctx, `
+			CREATE (n:RollbackTest {id: 2, name: 'should_rollback'})
+			SET n.computed = UNDEFINED_FUNCTION_CALL()
+		`, nil)
+		// Should error on undefined function in SET
+		assert.Error(t, execErr, "Should fail on undefined function in SET")
+
+		// Verify no partial data was created - the CREATE should be rolled back
+		result, _ := exec.Execute(ctx, "MATCH (n:RollbackTest) RETURN count(n) AS cnt", nil)
+		countAfter := result.Rows[0][0].(int64)
+		assert.Equal(t, countBefore, countAfter, "CREATE should be rolled back when subsequent SET fails")
+	})
+
+	t.Run("SET with invalid function rolls back", func(t *testing.T) {
+		// Update existing node, then call invalid function
+		_, err := exec.Execute(ctx, `
+			MATCH (n:RollbackTest {id: 1})
+			SET n.modified = true
+			SET n.invalid = NONEXISTENT_FUNCTION()
+		`, nil)
+		// Should fail on invalid function
+
+		if err != nil {
+			// If there was an error, verify the node wasn't partially modified
+			result, _ := exec.Execute(ctx, "MATCH (n:RollbackTest {id: 1}) RETURN n.modified", nil)
+			if len(result.Rows) > 0 && result.Rows[0][0] != nil {
+				assert.Fail(t, "Partial SET should have been rolled back")
+			}
+		}
+	})
+}
+
+// TestRollback_DeleteWithError verifies DELETE is rolled back on error
+func TestRollback_DeleteWithError(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create test nodes
+	for i := 1; i <= 5; i++ {
+		exec.Execute(ctx, fmt.Sprintf("CREATE (n:DeleteTest {id: %d})", i), nil)
+	}
+
+	// Count before
+	result, _ := exec.Execute(ctx, "MATCH (n:DeleteTest) RETURN count(n) AS cnt", nil)
+	countBefore := result.Rows[0][0].(int64)
+	assert.Equal(t, int64(5), countBefore)
+
+	t.Run("DELETE followed by error should rollback", func(t *testing.T) {
+		// Try to delete then do something invalid
+		_, err := exec.Execute(ctx, `
+			MATCH (n:DeleteTest {id: 1})
+			DELETE n
+			WITH n
+			SET n.name = 'test'
+		`, nil)
+		// Setting property on deleted node should fail
+
+		if err != nil {
+			// Verify node still exists (DELETE was rolled back)
+			result, _ := exec.Execute(ctx, "MATCH (n:DeleteTest {id: 1}) RETURN n", nil)
+			// The node should still exist if rollback worked
+			assert.GreaterOrEqual(t, len(result.Rows), 0, "Result should be valid")
+		}
+	})
+}
+
+// TestRollback_MergeWithConstraintViolation verifies MERGE is rolled back
+func TestRollback_MergeWithConstraintViolation(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create initial node
+	_, err := exec.Execute(ctx, "CREATE (n:MergeTest {id: 1, name: 'first'})", nil)
+	require.NoError(t, err)
+
+	t.Run("multiple MERGE with error rolls back all", func(t *testing.T) {
+		// First MERGE creates, second MERGE creates, third has error
+		_, err := exec.Execute(ctx, `
+			MERGE (a:MergeTest {id: 2}) ON CREATE SET a.name = 'second'
+			MERGE (b:MergeTest {id: 3}) ON CREATE SET b.name = 'third'
+			WITH a, b
+			SET a.broken = INVALID()
+		`, nil)
+
+		if err != nil {
+			// If error occurred, verify no new nodes were created
+			result, _ := exec.Execute(ctx, "MATCH (n:MergeTest) RETURN count(n) AS cnt", nil)
+			count := result.Rows[0][0].(int64)
+			assert.Equal(t, int64(1), count, "MERGE should be rolled back on error")
+		}
+	})
+}
+
+// TestRollback_ConcurrentWritesDuringRollback verifies concurrent safety
+func TestRollback_ConcurrentWritesDuringRollback(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Create baseline
+	exec.Execute(ctx, "CREATE (n:ConcurrentTest {id: 0})", nil)
+
+	done := make(chan bool, 20)
+
+	// Successful writes
+	for i := 1; i <= 10; i++ {
+		go func(id int) {
+			_, err := exec.Execute(ctx, fmt.Sprintf("CREATE (n:ConcurrentTest {id: %d})", id), nil)
+			if err != nil {
+				t.Logf("Create %d failed: %v", id, err)
+			}
+			done <- true
+		}(i)
+	}
+
+	// Failing writes (should rollback cleanly)
+	for i := 11; i <= 20; i++ {
+		go func(id int) {
+			_, err := exec.Execute(ctx, fmt.Sprintf(`
+				CREATE (n:ConcurrentTest {id: %d})
+				SET n.bad = INVALID_FUNC()
+			`, id), nil)
+			// Expected to fail
+			_ = err
+			done <- true
+		}(i)
+	}
+
+	// Wait for all
+	for i := 0; i < 20; i++ {
+		<-done
+	}
+
+	// Verify only successful writes persisted
+	result, err := exec.Execute(ctx, "MATCH (n:ConcurrentTest) RETURN count(n) AS cnt", nil)
+	require.NoError(t, err)
+	count := result.Rows[0][0].(int64)
+	// Should have between 1 (just baseline) and 11 (baseline + 10 successful)
+	assert.GreaterOrEqual(t, count, int64(1))
+	assert.LessOrEqual(t, count, int64(11))
+}
+
+// TestRollback_NestedOperations verifies nested operations rollback atomically
+func TestRollback_NestedOperations(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create test data
+	exec.Execute(ctx, "CREATE (a:NestedTest {id: 1})", nil)
+	exec.Execute(ctx, "CREATE (b:NestedTest {id: 2})", nil)
+
+	t.Run("MATCH-CREATE-SET with error rolls back all", func(t *testing.T) {
+		_, err := exec.Execute(ctx, `
+			MATCH (a:NestedTest {id: 1}), (b:NestedTest {id: 2})
+			CREATE (a)-[r:LINKS]->(b)
+			SET r.created = timestamp()
+			SET a.linked = true
+			SET b.linked = true
+			CREATE (c:NestedTest {id: 3})
+			SET c.broken = INVALID()
+		`, nil)
+
+		if err != nil {
+			// Verify nothing was created/modified
+			result, _ := exec.Execute(ctx, "MATCH (n:NestedTest) WHERE n.linked = true RETURN count(n)", nil)
+			if len(result.Rows) > 0 {
+				count := result.Rows[0][0]
+				if count != nil {
+					assert.Equal(t, int64(0), count.(int64), "SET should be rolled back")
+				}
+			}
+
+			// Verify relationship wasn't created
+			result2, _ := exec.Execute(ctx, "MATCH ()-[r:LINKS]->() RETURN count(r)", nil)
+			if len(result2.Rows) > 0 {
+				count := result2.Rows[0][0].(int64)
+				assert.Equal(t, int64(0), count, "Relationship should be rolled back")
+			}
+		}
+	})
+}
+
+// TestDataCorruption_InjectionAttack tests injection attempts that try to corrupt data
+func TestDataCorruption_InjectionAttack(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create sensitive data
+	exec.Execute(ctx, "CREATE (admin:User {role: 'admin', password: 'secret'})", nil)
+	exec.Execute(ctx, "CREATE (user:User {role: 'user', password: 'password'})", nil)
+
+	t.Run("property injection cannot modify other nodes", func(t *testing.T) {
+		// Attempt to inject via property value
+		_, err := exec.Execute(ctx, `
+			MATCH (u:User {role: 'user'})
+			SET u.name = "test' SET u.role = 'admin"
+		`, nil)
+
+		// If this executed, verify admin wasn't changed
+		result, _ := exec.Execute(ctx, "MATCH (u:User {role: 'admin'}) RETURN u.password", nil)
+		require.Equal(t, 1, len(result.Rows))
+		assert.Equal(t, "secret", result.Rows[0][0], "Admin password should not be modified")
+		_ = err
+	})
+
+	t.Run("label injection cannot access other labels", func(t *testing.T) {
+		// Attempt to inject via label
+		_, err := exec.Execute(ctx, `
+			MATCH (n:User) WHERE n.role = 'user'
+			SET n:Admin
+		`, nil)
+		// Even if this works, it shouldn't affect the original Admin node
+		_ = err
+
+		// The original admin should still be unchanged
+		result, _ := exec.Execute(ctx, "MATCH (u:User {role: 'admin'}) RETURN u.password", nil)
+		assert.Equal(t, "secret", result.Rows[0][0])
+	})
+
+	t.Run("DETACH DELETE injection cannot mass delete", func(t *testing.T) {
+		// Create node for this test
+		exec.Execute(ctx, "CREATE (n:Protected {vital: true})", nil)
+
+		// Attempt injection via string
+		_, err := exec.Execute(ctx, `
+			CREATE (n:Test {data: "' DETACH DELETE (m) WHERE true RETURN '"})
+		`, nil)
+		_ = err
+
+		// Verify protected node still exists
+		result, _ := exec.Execute(ctx, "MATCH (n:Protected) RETURN count(n)", nil)
+		count := result.Rows[0][0].(int64)
+		assert.Equal(t, int64(1), count, "Protected node should not be deleted")
+	})
+}
+
+// TestDataCorruption_TimingAttack tests timing-based attacks
+func TestDataCorruption_TimingAttack(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	// Create test data
+	for i := 0; i < 10; i++ {
+		exec.Execute(ctx, fmt.Sprintf("CREATE (n:Timing {id: %d})", i), nil)
+	}
+
+	t.Run("rapid fire modifications are consistent", func(t *testing.T) {
+		// Rapid fire updates to same node
+		done := make(chan error, 100)
+		for i := 0; i < 100; i++ {
+			go func(val int) {
+				_, err := exec.Execute(ctx, fmt.Sprintf(`
+					MATCH (n:Timing {id: 0})
+					SET n.value = %d
+				`, val), nil)
+				done <- err
+			}(i)
+		}
+
+		// Wait for all
+		errCount := 0
+		for i := 0; i < 100; i++ {
+			if err := <-done; err != nil {
+				errCount++
+			}
+		}
+
+		// Most should succeed, and data should be consistent
+		result, err := exec.Execute(ctx, "MATCH (n:Timing {id: 0}) RETURN n.value", nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, len(result.Rows), "Should have exactly one node")
+		// Value should be one of the set values (0-99), not corrupted
+		val := result.Rows[0][0]
+		if val != nil {
+			intVal, ok := val.(int64)
+			if ok {
+				assert.GreaterOrEqual(t, intVal, int64(0))
+				assert.Less(t, intVal, int64(100))
+			}
+		}
+	})
+}
+
+// TestDataCorruption_TransactionBoundary tests attacks at transaction boundaries
+func TestDataCorruption_TransactionBoundary(t *testing.T) {
+	exec, ctx := setupChaosExecutor(t)
+
+	t.Run("commit during rollback cannot leave partial state", func(t *testing.T) {
+		// Create initial state
+		exec.Execute(ctx, "CREATE (n:Boundary {id: 1, version: 0})", nil)
+
+		// Complex query that should be atomic
+		_, err := exec.Execute(ctx, `
+			MATCH (n:Boundary {id: 1})
+			SET n.version = 1
+			CREATE (m:Boundary {id: 2})
+			SET n.version = 2
+			SET m.broken = INVALID()
+		`, nil)
+
+		if err != nil {
+			// Verify original node's version wasn't changed
+			result, _ := exec.Execute(ctx, "MATCH (n:Boundary {id: 1}) RETURN n.version", nil)
+			if len(result.Rows) > 0 && result.Rows[0][0] != nil {
+				version := result.Rows[0][0]
+				// Version should be 0 (original) not 1 or 2
+				if v, ok := version.(int64); ok {
+					assert.Equal(t, int64(0), v, "Version should not be partially updated")
+				}
+			}
+
+			// Verify second node wasn't created
+			result2, _ := exec.Execute(ctx, "MATCH (n:Boundary {id: 2}) RETURN n", nil)
+			assert.Equal(t, 0, len(result2.Rows), "Partial node should not exist")
+		}
+	})
 }

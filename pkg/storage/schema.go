@@ -323,6 +323,7 @@ type RangeIndex struct {
 }
 
 // AddUniqueConstraint adds a unique constraint.
+// Stores in both uniqueConstraints (for value tracking) and constraints (for lookup by label).
 func (sm *SchemaManager) AddUniqueConstraint(name, label, property string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -333,12 +334,22 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string) error
 		return nil
 	}
 
+	// Add to uniqueConstraints (for value tracking during CheckUniqueConstraint)
 	sm.uniqueConstraints[key] = &UniqueConstraint{
 		Name:     name,
 		Label:    label,
 		Property: property,
 		values:   make(map[interface{}]NodeID),
 	}
+
+	// Also add to constraints map (for lookup by GetConstraintsForLabels in transactions)
+	constraint := Constraint{
+		Name:       name,
+		Label:      label,
+		Properties: []string{property},
+		Type:       ConstraintUnique,
+	}
+	sm.constraints[name] = constraint
 
 	return nil
 }

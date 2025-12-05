@@ -60,6 +60,13 @@ func DefaultAsyncEngineConfig() *AsyncEngineConfig {
 	}
 }
 
+// GetUnderlying returns the underlying storage engine.
+// This is used for transaction support when the underlying engine
+// supports ACID transactions (e.g., BadgerEngine).
+func (ae *AsyncEngine) GetUnderlying() Engine {
+	return ae.engine
+}
+
 // NewAsyncEngine wraps an engine with write-behind caching.
 func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 	if config == nil {
@@ -925,6 +932,15 @@ func (ae *AsyncEngine) Stats() (pendingWrites, totalFlushes int64) {
 	ae.mu.RLock()
 	defer ae.mu.RUnlock()
 	return ae.pendingWrites, ae.totalFlushes
+}
+
+// HasPendingWrites returns true if there are unflushed writes.
+// This is a cheap check that can be used to avoid unnecessary flush calls.
+func (ae *AsyncEngine) HasPendingWrites() bool {
+	ae.mu.RLock()
+	defer ae.mu.RUnlock()
+	return len(ae.nodeCache) > 0 || len(ae.edgeCache) > 0 ||
+		len(ae.deleteNodes) > 0 || len(ae.deleteEdges) > 0
 }
 
 // FindNodeNeedingEmbedding returns a node that needs embedding.

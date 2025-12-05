@@ -39,7 +39,7 @@ func TestCreateUniqueConstraint(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected constraint violation, got nil")
 	}
-	if !strings.Contains(err.Error(), "constraint violation") {
+	if !strings.Contains(strings.ToLower(err.Error()), "constraint violation") {
 		t.Errorf("Expected constraint violation error, got: %v", err)
 	}
 }
@@ -204,7 +204,7 @@ func TestIdempotentSchemaCreation(t *testing.T) {
 
 	// Create constraint twice - should not error with IF NOT EXISTS
 	query := "CREATE CONSTRAINT test_constraint IF NOT EXISTS FOR (n:Test) REQUIRE n.id IS UNIQUE"
-	
+
 	_, err := exec.Execute(ctx, query, nil)
 	if err != nil {
 		t.Fatalf("First constraint creation failed: %v", err)
@@ -266,10 +266,10 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name       string
-		query      string
-		wantDims   int
-		wantSimFn  string
+		name      string
+		query     string
+		wantDims  int
+		wantSimFn string
 	}{
 		{
 			name:      "WithOptions",
@@ -280,7 +280,7 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 		{
 			name:      "DefaultOptions",
 			query:     "CREATE VECTOR INDEX vec2 FOR (n:Node) ON (n.vec)",
-			wantDims:  1024, // default
+			wantDims:  1024,     // default
 			wantSimFn: "cosine", // default
 		},
 	}

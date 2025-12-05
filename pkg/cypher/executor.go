@@ -187,6 +187,7 @@ type StorageExecutor struct {
 	txContext *TransactionContext // Active transaction context
 	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
 	planCache *QueryPlanCache     // Parsed query plan cache
+	analyzer  *QueryAnalyzer      // Query analysis with AST caching
 
 	// Node lookup cache for MATCH patterns like (n:Label {prop: value})
 	// Key: "Label:{prop:value,...}", Value: *storage.Node
@@ -237,6 +238,7 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 		storage:         store,
 		cache:           NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
 		planCache:       NewQueryPlanCache(500),   // Cache 500 parsed query plans
+		analyzer:        NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
 		nodeLookupCache: make(map[string]*storage.Node, 1000),
 	}
 }
@@ -349,23 +351,47 @@ func queryDeletesNodes(query string) bool {
 //	}
 //
 // Supported Query Types:
-//   - CREATE: Node and relationship creation
-//   - MATCH: Pattern matching and traversal
-//   - MERGE: Upsert operations
-//   - DELETE: Node and relationship deletion
-//   - SET: Property updates
-//   - REMOVE: Property and label removal
-//   - RETURN: Result projection
-//   - WHERE: Filtering conditions
-//   - WITH: Query chaining
-//   - OPTIONAL MATCH: Left outer joins
+//
+//	Core Clauses:
+//	- MATCH: Pattern matching and traversal
+//	- OPTIONAL MATCH: Left outer joins (returns nulls for no matches)
+//	- CREATE: Node and relationship creation
+//	- MERGE: Upsert operations with ON CREATE SET / ON MATCH SET
+//	- DELETE / DETACH DELETE: Node and relationship deletion
+//	- SET: Property updates
+//	- REMOVE: Property and label removal
+//
+//	Projection & Chaining:
+//	- RETURN: Result projection with expressions, aliases, aggregations
+//	- WITH: Query chaining and intermediate aggregation
+//	- UNWIND: List expansion into rows
+//
+//	Filtering & Ordering:
+//	- WHERE: Filtering conditions (=, <>, <, >, <=, >=, IS NULL, IS NOT NULL, IN, CONTAINS, STARTS WITH, ENDS WITH, AND, OR, NOT)
+//	- ORDER BY: Result sorting (ASC/DESC)
+//	- SKIP / LIMIT: Pagination
+//
+//	Aggregation Functions:
+//	- COUNT, SUM, AVG, MIN, MAX, COLLECT
+//
+//	Procedures & Functions:
+//	- CALL: Procedure invocation (db.labels, db.propertyKeys, db.index.vector.*, etc.)
+//	- CALL {}: Subquery execution with UNION support
+//
+//	Advanced:
+//	- UNION / UNION ALL: Query composition
+//	- FOREACH: Iterative updates
+//	- LOAD CSV: Data import
+//	- EXPLAIN / PROFILE: Query analysis
+//	- SHOW: Schema introspection
+//
+//	Path Functions:
+//	- shortestPath / allShortestPaths
 //
 // Error Handling:
 //
 //	Returns detailed error messages for syntax errors, type mismatches,
-//
-
-// and execution failures with Neo4j-compatible error codes.
+//	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	// Normalize query
 	cypher = strings.TrimSpace(cypher)
@@ -390,25 +416,17 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Store params in context for handlers to use
 	ctx = context.WithValue(ctx, paramsKey, params)
 
-	// Check if query is read-only and cacheable (use original query for routing)
+	// Analyze query - uses cached analysis if available
+	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
+	// and caches it for repeated queries, avoiding redundant string parsing
+	info := e.analyzer.Analyze(cypher)
+
+	// For routing, we still need upperQuery for some handlers
+	// TODO: Migrate handlers to use QueryInfo directly
 	upperQuery := strings.ToUpper(cypher)
 
-	// Check for write operations that can appear after MATCH
-	hasWriteOperation := strings.Contains(upperQuery, "DELETE") ||
-		strings.Contains(upperQuery, "SET ") ||
-		strings.Contains(upperQuery, "REMOVE ") ||
-		strings.Contains(upperQuery, "CREATE") ||
-		strings.Contains(upperQuery, "MERGE")
-
-	isReadOnly := !hasWriteOperation && (strings.HasPrefix(upperQuery, "MATCH") ||
-		strings.HasPrefix(upperQuery, "CALL DB.") ||
-		strings.HasPrefix(upperQuery, "SHOW") ||
-		strings.HasPrefix(upperQuery, "EXPLAIN") ||
-		strings.HasPrefix(upperQuery, "PROFILE") ||
-		strings.HasPrefix(upperQuery, "RETURN"))
-
-	// Try cache for read-only queries
-	if isReadOnly && e.cache != nil {
+	// Try cache for read-only queries (using cached analysis)
+	if info.IsReadOnly && e.cache != nil {
 		if cached, found := e.cache.Get(cypher, params); found {
 			return cached, nil
 		}
@@ -419,12 +437,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 
-	// Check for EXPLAIN/PROFILE execution modes
-	mode, innerQuery := parseExecutionMode(cypher)
-	if mode == ModeExplain {
+	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)
+	if info.HasExplain {
+		_, innerQuery := parseExecutionMode(cypher)
 		return e.executeExplain(ctx, innerQuery)
 	}
-	if mode == ModeProfile {
+	if info.HasProfile {
+		_, innerQuery := parseExecutionMode(cypher)
 		return e.executeProfile(ctx, innerQuery)
 	}
 
@@ -439,28 +458,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	result, err := e.executeImplicitAsync(ctx, cypher, upperQuery)
 
 	// Cache successful read-only queries
-	if err == nil && isReadOnly && e.cache != nil {
-		// Determine TTL based on query type
+	if err == nil && info.IsReadOnly && e.cache != nil {
+		// Determine TTL based on query type (using cached analysis)
 		ttl := 60 * time.Second // Default: 60s for data queries
-		if strings.Contains(upperQuery, "CALL DB.") || strings.Contains(upperQuery, "SHOW") {
+		if info.HasCall || info.HasShow {
 			ttl = 300 * time.Second // 5 minutes for schema queries
 		}
 		e.cache.Put(cypher, params, result, ttl)
 	}
 
-	// Invalidate caches on write operations
-	if !isReadOnly {
+	// Invalidate caches on write operations (using cached analysis)
+	if info.IsWriteQuery {
 		// Only invalidate node lookup cache when NODES are deleted
 		// Relationship-only deletes (like benchmark CREATE rel DELETE rel) don't affect node cache
-		if strings.Contains(upperQuery, "DELETE") && queryDeletesNodes(cypher) {
+		if info.HasDelete && queryDeletesNodes(cypher) {
 			e.invalidateNodeLookupCache()
 		}
 
-		// Invalidate query result cache
+		// Invalidate query result cache using cached labels
 		if e.cache != nil {
-			affectedLabels := extractLabelsFromQuery(cypher)
-			if len(affectedLabels) > 0 {
-				e.cache.InvalidateLabels(affectedLabels)
+			if len(info.Labels) > 0 {
+				e.cache.InvalidateLabels(info.Labels)
 			} else {
 				e.cache.Invalidate()
 			}
@@ -470,33 +488,273 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	return result, err
 }
 
-// executeImplicitAsync executes a single query using AsyncEngine's write-behind cache.
-// This provides much better performance than executeImplicit by avoiding synchronous disk I/O.
-// For strict ACID guarantees, use explicit BEGIN/COMMIT transactions.
+// TransactionCapableEngine is an engine that supports ACID transactions.
+// Used for type assertion to wrap implicit writes in rollback-capable transactions.
+type TransactionCapableEngine interface {
+	BeginTransaction() (*storage.BadgerTransaction, error)
+}
+
+// executeImplicitAsync executes a single query using implicit transactions for writes.
+// For write operations, wraps execution in an implicit transaction that can be
+// rolled back on error, preventing partial data corruption from failed queries.
+// For strict ACID guarantees with durability, use explicit BEGIN/COMMIT transactions.
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
-	// Execute directly against storage (AsyncEngine) - no transaction wrapper
-	result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
-	if err != nil {
-		return nil, err
+	// Check if this is a write operation using cached analysis
+	info := e.analyzer.Analyze(cypher)
+	isWrite := info.IsWriteQuery
+
+	// For write operations, use implicit transaction for atomicity
+	// This ensures partial writes are rolled back on error
+	if isWrite {
+		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
-	// For write operations, flush AsyncEngine to ensure durability
-	// Skip if deferFlush is enabled (Bolt layer handles flushing)
-	if !e.deferFlush {
-		isWrite := strings.Contains(upperQuery, "CREATE") ||
-			strings.Contains(upperQuery, "DELETE") ||
-			strings.Contains(upperQuery, "SET") ||
-			strings.Contains(upperQuery, "MERGE") ||
-			strings.Contains(upperQuery, "REMOVE")
+	// Read-only operations don't need transaction wrapping
+	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+}
 
-		if isWrite {
-			if asyncEngine, ok := e.storage.(*storage.AsyncEngine); ok {
-				asyncEngine.Flush()
-			}
+// executeWithImplicitTransaction wraps a write query in an implicit transaction.
+// If any part of the query fails, all changes are rolled back atomically.
+// This prevents data corruption from partially executed queries.
+func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// Try to get a transaction-capable engine
+	var txEngine TransactionCapableEngine
+	var asyncEngine *storage.AsyncEngine
+
+	// Check if storage is transaction-capable (BadgerEngine, MemoryEngine, or AsyncEngine wrapping one)
+	if tc, ok := e.storage.(TransactionCapableEngine); ok {
+		txEngine = tc
+	} else if ae, ok := e.storage.(*storage.AsyncEngine); ok {
+		asyncEngine = ae
+		// AsyncEngine wraps another engine - get underlying
+		if tc, ok := ae.GetUnderlying().(TransactionCapableEngine); ok {
+			txEngine = tc
 		}
 	}
 
+	// If no transaction support, fall back to direct execution (legacy mode)
+	// This is less safe but maintains backward compatibility
+	if txEngine == nil {
+		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
+		if err != nil {
+			return nil, err
+		}
+		// Flush if needed
+		if !e.deferFlush {
+			if asyncEngine != nil {
+				asyncEngine.Flush()
+			}
+		}
+		return result, nil
+	}
+
+	// IMPORTANT: If using AsyncEngine with pending writes, flush its cache BEFORE
+	// starting the transaction. This ensures the BadgerTransaction can see all
+	// previously written data. Without this, MATCH queries in compound statements
+	// (MATCH...CREATE) would fail to find nodes in AsyncEngine's cache.
+	// We use HasPendingWrites() first as a cheap check to avoid unnecessary flushes.
+	if asyncEngine != nil && asyncEngine.HasPendingWrites() {
+		asyncEngine.Flush()
+	}
+
+	// Start implicit transaction
+	tx, err := txEngine.BeginTransaction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start implicit transaction: %w", err)
+	}
+
+	// Create a transactional wrapper that routes writes through the transaction
+	// CRITICAL: We pass the wrapper through context instead of modifying e.storage
+	// because e.storage modification is NOT thread-safe for concurrent executions.
+	txWrapper := &transactionStorageWrapper{tx: tx, underlying: e.storage}
+
+	// Execute with transaction wrapper via context
+	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
+
+	// Execute the query
+	result, execErr := e.executeWithoutTransaction(txCtx, cypher, upperQuery)
+
+	// Handle result
+	if execErr != nil {
+		// Rollback on any error - prevents partial data corruption
+		tx.Rollback()
+		return nil, execErr
+	}
+
+	// Commit successful transaction
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit implicit transaction: %w", err)
+	}
+
+	// Flush if needed for durability
+	if !e.deferFlush && asyncEngine != nil {
+		asyncEngine.Flush()
+	}
+
 	return result, nil
+}
+
+// ctxKeyTxStorage is the context key for transaction storage wrapper.
+type ctxKeyTxStorageType struct{}
+
+var ctxKeyTxStorage = ctxKeyTxStorageType{}
+
+// getStorage returns the storage to use for the current execution.
+// If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
+func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
+	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+		return txWrapper
+	}
+	return e.storage
+}
+
+// transactionStorageWrapper wraps a BadgerTransaction to implement storage.Engine
+// for use in implicit transaction execution. It routes writes through the transaction
+// (for atomicity/rollback) and reads through the underlying engine (for performance).
+type transactionStorageWrapper struct {
+	tx         *storage.BadgerTransaction
+	underlying storage.Engine // For read operations not supported by transaction
+}
+
+// Write operations - go through transaction for atomicity
+func (w *transactionStorageWrapper) CreateNode(node *storage.Node) error {
+	return w.tx.CreateNode(node)
+}
+
+func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
+	return w.tx.UpdateNode(node)
+}
+
+func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
+	return w.tx.DeleteNode(id)
+}
+
+func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
+	return w.tx.CreateEdge(edge)
+}
+
+func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
+	return w.tx.DeleteEdge(id)
+}
+
+// Read operations - transaction supports GetNode, forward others to underlying
+func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, error) {
+	return w.tx.GetNode(id)
+}
+
+func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+	return w.underlying.GetEdge(id)
+}
+
+func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
+	// BadgerTransaction doesn't have UpdateEdge, use underlying
+	return w.underlying.UpdateEdge(edge)
+}
+
+func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.Node, error) {
+	return w.underlying.GetNodesByLabel(label)
+}
+
+func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.Node, error) {
+	return w.underlying.GetFirstNodeByLabel(label)
+}
+
+func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return w.underlying.GetOutgoingEdges(nodeID)
+}
+
+func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return w.underlying.GetIncomingEdges(nodeID)
+}
+
+func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
+	return w.underlying.GetEdgesBetween(startID, endID)
+}
+
+func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
+	return w.underlying.GetEdgeBetween(startID, endID, edgeType)
+}
+
+func (w *transactionStorageWrapper) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
+	return w.underlying.GetEdgesByType(edgeType)
+}
+
+func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
+	return w.underlying.AllNodes()
+}
+
+func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
+	return w.underlying.AllEdges()
+}
+
+func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
+	return w.underlying.GetAllNodes()
+}
+
+func (w *transactionStorageWrapper) GetInDegree(nodeID storage.NodeID) int {
+	return w.underlying.GetInDegree(nodeID)
+}
+
+func (w *transactionStorageWrapper) GetOutDegree(nodeID storage.NodeID) int {
+	return w.underlying.GetOutDegree(nodeID)
+}
+
+func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
+	return w.underlying.GetSchema()
+}
+
+func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error {
+	// For bulk operations within transaction, create one by one
+	for _, node := range nodes {
+		if err := w.tx.CreateNode(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
+	for _, edge := range edges {
+		if err := w.tx.CreateEdge(edge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
+	for _, id := range ids {
+		if err := w.tx.DeleteNode(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+	for _, id := range ids {
+		if err := w.tx.DeleteEdge(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *transactionStorageWrapper) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+	return w.underlying.BatchGetNodes(ids)
+}
+
+func (w *transactionStorageWrapper) Close() error {
+	// Don't close underlying engine
+	return nil
+}
+
+func (w *transactionStorageWrapper) NodeCount() (int64, error) {
+	return w.underlying.NodeCount()
+}
+
+func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
+	return w.underlying.EdgeCount()
 }
 
 // tryFastPathCompoundQuery attempts to handle common compound query patterns

@@ -17,6 +17,8 @@ NORNICDB_ENV=development
 ## 📚 Documentation
 
 - **[HTTP Security Implementation](http-security.md)** - Complete implementation details
+- **[Query Cache Security](query-cache-security.md)** - Query analysis and caching security model
+- **[LLM & AST Security](llm-ast-security.md)** - Safe patterns for LLM integration and plugin security
 - **[Cluster Security](../operations/cluster-security.md)** - Multi-node authentication
 - **[Compliance Guide](../compliance/)** - GDPR, HIPAA, SOC2
 
@@ -33,6 +35,18 @@ All HTTP endpoints are automatically protected against:
 | **XSS**                | Script tag filtering, protocol validation      | ✅ Active |
 | **Header Injection**   | CRLF/null byte filtering                       | ✅ Active |
 | **Protocol Smuggling** | file://, gopher://, ftp:// blocked             | ✅ Active |
+
+### Query Analysis Security
+
+The query cache system uses conservative keyword detection:
+
+| Concern                        | Status        | Notes                              |
+| ------------------------------ | ------------- | ---------------------------------- |
+| **Write ops hidden as reads**  | ✅ Protected  | Not possible in valid Cypher       |
+| **Cache poisoning**            | ✅ Protected  | Keys include query + parameters    |
+| **Read ops marked as writes**  | ⚡ Accepted   | Performance impact only, not security |
+
+See **[Query Cache Security](query-cache-security.md)** for full details.
 
 ### Authentication & Authorization
 
