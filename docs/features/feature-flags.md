@@ -18,14 +18,16 @@ Complete reference for all feature flags in NornicDB. Feature flags allow you to
 | | Embedding Cache | ✅ Enabled (10K) | `NORNICDB_EMBEDDING_CACHE_SIZE` |
 | | Async Writes | ✅ Enabled | `NORNICDB_ASYNC_WRITES_ENABLED` |
 | | Async Flush Interval | 50ms | `NORNICDB_ASYNC_FLUSH_INTERVAL` |
-| **Auto-Integration** | | | |
-| | Cooldown Auto-Integration | ✅ Enabled | `NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED` |
-| | Evidence Auto-Integration | ✅ Enabled | `NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED` |
-| | Edge Provenance Auto-Integration | ✅ Enabled | `NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED` |
 | | Per-Node Config Auto-Integration | ✅ Enabled | `NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED` |
 | **Experimental** | | | |
 | | Kalman Filtering | ❌ Disabled | `NORNICDB_KALMAN_ENABLED` |
-| | Topology Link Prediction | ❌ Disabled | `NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED` |
+| | GPU K-Means Clustering | ❌ Disabled | `NORNICDB_GPU_CLUSTERING_ENABLED` |
+| | Auto-TLP (Automatic Relationship Inference) | ❌ Disabled | `NORNICDB_AUTO_TLP_ENABLED` |
+| **Auto-TLP-Integration (when Auto-TLP is enabled)** | | | |
+| | Edge Decay | ✅ Enabled | `NORNICDB_EDGE_DECAY_ENABLED` |
+| | Cooldown Auto-Integration | ✅ Enabled | `NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED` |
+| | Evidence Auto-Integration | ✅ Enabled | `NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED` |
+| | Edge Provenance Auto-Integration | ✅ Enabled | `NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED` |
 
 ---
 
@@ -546,38 +548,84 @@ defer cleanup()
 
 ---
 
-### Topology Link Prediction
+### Auto-TLP (Automatic Relationship Inference)
 
-**Purpose**: Graph-structure-based link prediction using topological algorithms (Common Neighbors, Jaccard, Adamic-Adar, etc.).
+**Purpose**: Automatically infer and materialize relationships based on graph structure and evidence.
 
-**Environment Variable**: `NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED`
+**Environment Variable**: `NORNICDB_AUTO_TLP_ENABLED`
 
 **Default**: ❌ Disabled
 
 ```bash
-# Enable topology link prediction
-export NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED=true
+# Enable automatic relationship inference
+export NORNICDB_AUTO_TLP_ENABLED=true
 ```
 
 **Go API**:
 ```go
 import "github.com/orneryd/nornicdb/pkg/config"
 
-// Check status
-if config.IsTopologyLinkPredictionEnabled() {
-    // Topology integration active in inference engine
+if config.IsAutoTLPEnabled() {
+    // Auto-TLP is active, relationships are inferred and materialized
 }
 
-// Toggle at runtime
-config.EnableTopologyLinkPrediction()
-config.DisableTopologyLinkPrediction()
-
-// Scoped enable for testing
-cleanup := config.WithTopologyLinkPredictionEnabled()
-defer cleanup()
+// Direct access to TLP engine
+engine.GetTLP().InferRelationship(src, dst, label, confidence)
 ```
 
-**Note**: The topology algorithms themselves (`CALL gds.linkPrediction.*`) are always available. This flag only controls automatic integration into the inference engine.
+---
+
+### GPU K-Means Clustering
+
+**Purpose**: Cluster embeddings using GPU acceleration for efficient similarity search and clustering.
+
+**Environment Variable**: `NORNICDB_GPU_CLUSTERING_ENABLED`
+
+**Default**: ❌ Disabled
+
+```bash
+# Enable GPU-accelerated clustering
+export NORNICDB_GPU_CLUSTERING_ENABLED=true
+```
+
+**Go API**:
+```go
+import "github.com/orneryd/nornicdb/pkg/config"
+
+if config.IsGPUClusteringEnabled() {
+    // GPU clustering is active
+}
+
+// Direct access to clustering engine
+engine.GetClusteringEngine().Cluster(embeddings)
+```
+
+---
+
+### Edge Decay
+
+**Purpose**: Automatically decay edge scores over time to prevent infinite growth and maintain relevance.
+
+**Environment Variable**: `NORNICDB_EDGE_DECAY_ENABLED`
+
+**Default**: ✅ Enabled
+
+```bash
+# Disable edge decay
+export NORNICDB_EDGE_DECAY_ENABLED=false
+```
+
+**Go API**:
+```go
+import "github.com/orneryd/nornicdb/pkg/config"
+
+if config.IsEdgeDecayEnabled() {
+    // Edge decay is active
+}
+
+// Direct access to decay engine
+engine.GetDecayEngine().ApplyDecay(graph)
+```
 
 ---
 
@@ -607,7 +655,9 @@ services:
       
       # Experimental - Disabled by default, uncomment to enable
       # NORNICDB_KALMAN_ENABLED: "true"
-      # NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED: "true"
+      # NORNICDB_AUTO_TLP_ENABLED: "true"
+      # NORNICDB_GPU_CLUSTERING_ENABLED: "true"
+      # NORNICDB_EDGE_DECAY_ENABLED: "false"
 ```
 
 ---
@@ -636,11 +686,15 @@ func main() {
     
     // Experimental features (disabled by default)
     println("Kalman:", status.KalmanEnabled)                      // false
-    println("Topology:", status.TopologyLinkPredictionEnabled)    // false
+    println("Auto-TLP:", status.AutoTLPEnabled)                  // false
+    println("GPU Clustering:", status.GPUClusteringEnabled)      // false
+    println("Edge Decay:", status.EdgeDecayEnabled)              // true
     
     // Runtime configuration
     config.EnableKalmanFiltering()
-    config.EnableTopologyLinkPrediction()
+    config.EnableAutoTLP()
+    config.EnableGPUClustering()
+    config.DisableEdgeDecay()
     
     // Disable specific feature if issues occur
     config.DisableCooldown()
@@ -687,7 +741,9 @@ status := config.GetFeatureStatus()
 // FeatureStatus struct
 type FeatureStatus struct {
     GlobalEnabled                bool // Kalman master switch
-    TopologyLinkPredictionEnabled bool
+    AutoTLPEnabled               bool
+    GPUClusteringEnabled         bool
+    EdgeDecayEnabled             bool
     EdgeProvenanceEnabled        bool
     CooldownEnabled              bool
     EvidenceBufferingEnabled     bool

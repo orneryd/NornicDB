@@ -25,19 +25,19 @@ func TestFeatureFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("topology_enable_disable", func(t *testing.T) {
-		if IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should start disabled")
+	t.Run("auto_tlp_enable_disable", func(t *testing.T) {
+		if IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should start disabled")
 		}
 
-		EnableTopologyAutoIntegration()
-		if !IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be enabled")
+		EnableAutoTLP()
+		if !IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be enabled")
 		}
 
-		DisableTopologyAutoIntegration()
-		if IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be disabled")
+		DisableAutoTLP()
+		if IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be disabled")
 		}
 	})
 
@@ -86,31 +86,31 @@ func TestFeatureFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("with_topology_enabled", func(t *testing.T) {
+	t.Run("with_auto_tlp_enabled", func(t *testing.T) {
 		ResetFeatureFlags()
 
-		cleanup := WithTopologyEnabled()
-		if !IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be enabled in scope")
+		cleanup := WithAutoTLPEnabled()
+		if !IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be enabled in scope")
 		}
 		cleanup()
 
-		if IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be disabled after cleanup")
+		if IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be disabled after cleanup")
 		}
 	})
 
-	t.Run("with_topology_disabled", func(t *testing.T) {
-		EnableTopologyAutoIntegration()
+	t.Run("with_auto_tlp_disabled", func(t *testing.T) {
+		EnableAutoTLP()
 
-		cleanup := WithTopologyDisabled()
-		if IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be disabled in scope")
+		cleanup := WithAutoTLPDisabled()
+		if IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be disabled in scope")
 		}
 		cleanup()
 
-		if !IsTopologyAutoIntegrationEnabled() {
-			t.Error("Topology should be re-enabled after cleanup")
+		if !IsAutoTLPEnabled() {
+			t.Error("Auto-TLP should be re-enabled after cleanup")
 		}
 	})
 

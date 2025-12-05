@@ -843,10 +843,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 		db.inference = inference.New(inferConfig)
 
-		// Wire up TopologyIntegration if feature flag is enabled
-		// This enables automatic topology-based relationship suggestions
+		// Wire up TopologyIntegration if Auto-TLP (Temporal Link Prediction) feature flag is enabled
+		// This enables automatic relationship creation based on similarity, co-access, etc.
 		// Note: Manual TLP via Cypher (CALL gds.linkPrediction.*) is always available
-		if featureflags.IsTopologyAutoIntegrationEnabled() {
+		if featureflags.IsAutoTLPEnabled() {
 			topoConfig := inference.DefaultTopologyConfig()
 			topoConfig.Enabled = true
 			topoConfig.Algorithm = "adamic_adar" // Best for social/knowledge graphs
@@ -856,7 +856,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 			topo := inference.NewTopologyIntegration(db.storage, topoConfig)
 			db.inference.SetTopologyIntegration(topo)
-			fmt.Println("✅ Topology auto-integration enabled (NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED=true)")
+			fmt.Println("✅ Auto-TLP enabled (NORNICDB_AUTO_TLP_ENABLED=true)")
 		}
 
 		// Wire up KalmanAdapter if feature flag is enabled

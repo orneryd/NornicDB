@@ -23,7 +23,7 @@
 // Environment variables (to ENABLE experimental features):
 //
 //	NORNICDB_KALMAN_ENABLED=true
-//	NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED=true
+//	NORNICDB_AUTO_TLP_ENABLED=true
 //	NORNICDB_GPU_CLUSTERING_ENABLED=true
 //	NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED=true
 //
@@ -50,8 +50,14 @@ const (
 	// EnvKalmanEnabled is the environment variable to enable Kalman filtering
 	EnvKalmanEnabled = "NORNICDB_KALMAN_ENABLED"
 
-	// EnvTopologyLinkPredictionEnabled is the environment variable to enable topology link prediction
-	EnvTopologyLinkPredictionEnabled = "NORNICDB_TOPOLOGY_LINK_PREDICTION_ENABLED"
+	// EnvAutoTLPEnabled is the environment variable to enable automatic TLP (Temporal Link Prediction)
+	// When enabled, the inference engine automatically creates relationships based on:
+	// - Semantic similarity (embedding distance)
+	// - Co-access patterns (nodes accessed together)
+	// - Temporal proximity (nodes in same session)
+	// - Transitive inference (A→B→C suggests A→C)
+	// DISABLED by default - enable with "true" or "1"
+	EnvAutoTLPEnabled = "NORNICDB_AUTO_TLP_ENABLED"
 
 	// EnvCooldownAutoIntegrationEnabled is the environment variable to enable automatic cooldown in inference
 	EnvCooldownAutoIntegrationEnabled = "NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED"
@@ -85,6 +91,10 @@ const (
 
 	// EnvGPUClusteringAutoIntegrationEnabled is the environment variable to enable automatic GPU clustering in inference
 	EnvGPUClusteringAutoIntegrationEnabled = "NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED"
+
+	// EnvEdgeDecayEnabled is the environment variable to enable automatic edge decay
+	// Auto-generated edges decay over time if not reinforced (accessed)
+	EnvEdgeDecayEnabled = "NORNICDB_EDGE_DECAY_ENABLED"
 
 	// FeatureKalmanDecay enables Kalman filtering for memory decay prediction
 	FeatureKalmanDecay = "kalman_decay"
@@ -166,12 +176,13 @@ var (
 	perNodeConfigAutoIntegrationEnabled  atomic.Bool
 	edgeProvenanceEnabled                atomic.Bool
 	cooldownEnabled                      atomic.Bool
-	evidenceBufferingEnabled                atomic.Bool
-	perNodeConfigEnabled                    atomic.Bool
-	walEnabled                              atomic.Bool
-	gpuClusteringEnabled                    atomic.Bool
-	gpuClusteringAutoIntegrationEnabled     atomic.Bool
-	featureFlags                            = make(map[string]bool)
+	evidenceBufferingEnabled             atomic.Bool
+	perNodeConfigEnabled                 atomic.Bool
+	walEnabled                           atomic.Bool
+	gpuClusteringEnabled                 atomic.Bool
+	gpuClusteringAutoIntegrationEnabled  atomic.Bool
+	edgeDecayEnabled                     atomic.Bool
+	featureFlags                         = make(map[string]bool)
 	featureFlagsMu                       sync.RWMutex
 	initOnce                             sync.Once
 )
@@ -183,7 +194,8 @@ func init() {
 		if env := os.Getenv(EnvKalmanEnabled); env == "true" || env == "1" {
 			kalmanEnabled.Store(true)
 		}
-		if env := os.Getenv(EnvTopologyLinkPredictionEnabled); env == "true" || env == "1" {
+		// Auto-TLP: DISABLED by default (creates relationships automatically)
+		if env := os.Getenv(EnvAutoTLPEnabled); env == "true" || env == "1" {
 			topologyLinkPredictionEnabled.Store(true)
 		}
 
@@ -258,6 +270,13 @@ func init() {
 		// Enable with "true" or "1"
 		if env := os.Getenv(EnvGPUClusteringAutoIntegrationEnabled); env == "true" || env == "1" {
 			gpuClusteringAutoIntegrationEnabled.Store(true)
+		}
+
+		// Edge Decay: ENABLED by default to clean up stale auto-generated edges
+		// Disable with "false" or "0" if you want edges to persist forever
+		edgeDecayEnabled.Store(true)
+		if env := os.Getenv(EnvEdgeDecayEnabled); env == "false" || env == "0" {
+			edgeDecayEnabled.Store(false)
 		}
 	})
 }
@@ -338,33 +357,35 @@ func IsFeatureEnabled(feature string) bool {
 	return enabled
 }
 
-// EnableTopologyAutoIntegration enables automatic topology integration.
-func EnableTopologyAutoIntegration() {
+// EnableAutoTLP enables automatic TLP (relationship inference).
+// When enabled, the system automatically creates relationships between nodes
+// based on semantic similarity, co-access patterns, and temporal proximity.
+func EnableAutoTLP() {
 	topologyLinkPredictionEnabled.Store(true)
 	EnableFeature(FeatureTopologyAutoIntegration)
 }
 
-// DisableTopologyAutoIntegration disables automatic topology integration.
-func DisableTopologyAutoIntegration() {
+// DisableAutoTLP disables automatic TLP (relationship inference).
+func DisableAutoTLP() {
 	topologyLinkPredictionEnabled.Store(false)
 	DisableFeature(FeatureTopologyAutoIntegration)
 }
 
-// IsTopologyAutoIntegrationEnabled returns true if automatic topology integration is enabled.
-// Note: This does NOT affect Cypher procedures - they are always available.
-func IsTopologyAutoIntegrationEnabled() bool {
+// IsAutoTLPEnabled returns true if automatic TLP is enabled.
+// Note: This does NOT affect Cypher procedures (CALL gds.linkPrediction.*) - they are always available.
+func IsAutoTLPEnabled() bool {
 	return topologyLinkPredictionEnabled.Load() || IsFeatureEnabled(FeatureTopologyAutoIntegration)
 }
 
-// WithTopologyEnabled temporarily enables topology and returns cleanup function.
+// WithAutoTLPEnabled temporarily enables Auto-TLP and returns cleanup function.
 // Useful for A/B testing in unit tests.
 //
 // Example:
 //
-//	cleanup := filter.WithTopologyEnabled()
+//	cleanup := featureflags.WithAutoTLPEnabled()
 //	defer cleanup()
-//	// ... test code with topology enabled ...
-func WithTopologyEnabled() func() {
+//	// ... test code with Auto-TLP enabled ...
+func WithAutoTLPEnabled() func() {
 	prev := topologyLinkPredictionEnabled.Load()
 	topologyLinkPredictionEnabled.Store(true)
 	EnableFeature(FeatureTopologyAutoIntegration)
@@ -376,8 +397,8 @@ func WithTopologyEnabled() func() {
 	}
 }
 
-// WithTopologyDisabled temporarily disables topology and returns cleanup function.
-func WithTopologyDisabled() func() {
+// WithAutoTLPDisabled temporarily disables Auto-TLP and returns cleanup function.
+func WithAutoTLPDisabled() func() {
 	prev := topologyLinkPredictionEnabled.Load()
 	topologyLinkPredictionEnabled.Store(false)
 	DisableFeature(FeatureTopologyAutoIntegration)
@@ -1032,5 +1053,40 @@ func WithGPUClusteringAutoIntegrationDisabled() func() {
 		if prev {
 			EnableFeature(FeatureGPUClusteringAutoIntegration)
 		}
+	}
+}
+
+// EnableEdgeDecay enables automatic edge decay for stale auto-generated edges.
+func EnableEdgeDecay() {
+	edgeDecayEnabled.Store(true)
+}
+
+// DisableEdgeDecay disables automatic edge decay.
+func DisableEdgeDecay() {
+	edgeDecayEnabled.Store(false)
+}
+
+// IsEdgeDecayEnabled returns true if edge decay is enabled.
+// When enabled, auto-generated edges decay over time and are deleted
+// when their confidence drops below the threshold.
+func IsEdgeDecayEnabled() bool {
+	return edgeDecayEnabled.Load()
+}
+
+// WithEdgeDecayEnabled temporarily enables edge decay and returns cleanup function.
+func WithEdgeDecayEnabled() func() {
+	prev := edgeDecayEnabled.Load()
+	edgeDecayEnabled.Store(true)
+	return func() {
+		edgeDecayEnabled.Store(prev)
+	}
+}
+
+// WithEdgeDecayDisabled temporarily disables edge decay and returns cleanup function.
+func WithEdgeDecayDisabled() func() {
+	prev := edgeDecayEnabled.Load()
+	edgeDecayEnabled.Store(false)
+	return func() {
+		edgeDecayEnabled.Store(prev)
 	}
 }

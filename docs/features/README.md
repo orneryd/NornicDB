@@ -15,6 +15,7 @@
 - **[Memory Decay](memory-decay.md)** - Time-based importance scoring
 - **[Vector Embeddings](vector-embeddings.md)** - Automatic embedding generation
 - **[GPU Acceleration](gpu-acceleration.md)** - 10-100x speedup
+- **[Auto-TLP](auto-tlp.md)** - Automatic relationship inference
 
 ### Configuration
 - **[Feature Flags](feature-flags.md)** - Runtime configuration
@@ -36,6 +37,7 @@ NornicDB provides three complementary search methods:
 - MCP tool integration
 - Memory decay simulation
 - Link prediction
+- Auto-TLP (automatic relationship inference)
 
 [Learn more about AI features →](mcp-integration.md)
 
@@ -87,6 +89,7 @@ ORDER BY n.decayScore DESC
 ## 📖 Feature Guides
 
 - **[APOC Functions](apoc-functions.md)** - 450+ collection, text, math, graph functions
+- **[Auto-TLP](auto-tlp.md)** - Automatic relationship inference
 - **[Feature Flags](feature-flags.md)** - Runtime configuration
 - **[Link Prediction](link-prediction.md)** - Predict missing relationships
 - **[MCP Integration](mcp-integration.md)** - AI agent tools
