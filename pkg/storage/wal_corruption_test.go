@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // =============================================================================
@@ -355,6 +357,9 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 
 // TestWALEntryIntegrity verifies full round-trip integrity.
 func TestWALEntryIntegrity(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
 	dir := t.TempDir()
 
 	cfg := &WALConfig{

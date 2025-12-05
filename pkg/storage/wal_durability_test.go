@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // =============================================================================
@@ -92,6 +94,9 @@ func TestSaveSnapshotSyncsDirectory(t *testing.T) {
 
 // TestBatchSequenceAssignedAtCommit verifies sequences are assigned at commit time.
 func TestBatchSequenceAssignedAtCommit(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
 	dir := t.TempDir()
 
 	cfg := &WALConfig{
@@ -146,6 +151,9 @@ func TestBatchSequenceAssignedAtCommit(t *testing.T) {
 
 // TestBatchMixedWithNonBatchOrdering verifies proper ordering of mixed operations.
 func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
 	dir := t.TempDir()
 
 	cfg := &WALConfig{
@@ -210,6 +218,9 @@ func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
 
 // TestBatchRollbackClearsEntries verifies rollback clears pending entries.
 func TestBatchRollbackClearsEntries(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
 	dir := t.TempDir()
 
 	cfg := &WALConfig{
@@ -278,6 +289,9 @@ func TestBatchEmptyCommit(t *testing.T) {
 
 // TestWALFullDurabilityPath tests full write-commit-recover path.
 func TestWALFullDurabilityPath(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
 	dir := t.TempDir()
 
 	// Create and write to WAL
