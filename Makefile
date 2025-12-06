@@ -527,7 +527,8 @@ plugins: plugin-check plugin-apoc
 	@echo "╚══════════════════════════════════════════════════════════════╝"
 	@ls -lh $(PLUGINS_DIR)/*.so 2>/dev/null || echo "No plugins found"
 	@echo ""
-	@echo "To use: NORNICDB_PLUGINS_DIR=$(PLUGINS_DIR) NORNICDB_MODELS_DIR=./models NORNICDB_EMBEDDING_PROVIDER=local ./bin/nornicdb serve --no-auth"
+	@echo "To use copy-paste the following:"
+	@echo "   NORNICDB_HEIMDALL_ENABLED=true NORNICDB_PLUGINS_DIR=$(PLUGINS_DIR) NORNICDB_MODELS_DIR=$(MODELS_DIR) NORNICDB_EMBEDDING_PROVIDER=local ./bin/nornicdb serve --no-auth "
 
 # Plugin source directory
 PLUGINS_SRC_DIR := apoc/plugin-src
