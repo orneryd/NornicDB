@@ -527,7 +527,7 @@ plugins: plugin-check plugin-apoc
 	@echo "╚══════════════════════════════════════════════════════════════╝"
 	@ls -lh $(PLUGINS_DIR)/*.so 2>/dev/null || echo "No plugins found"
 	@echo ""
-	@echo "To use: NORNICDB_PLUGINS_DIR=$(PLUGINS_DIR) ./nornicdb"
+	@echo "To use: NORNICDB_PLUGINS_DIR=$(PLUGINS_DIR) ./bin/nornicdb serve --no-auth"
 
 # Plugin source directory
 PLUGINS_SRC_DIR := apoc/plugin-src
