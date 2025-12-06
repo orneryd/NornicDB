@@ -71,7 +71,7 @@ DOCKER_DIR := docker
 # Model URLs and paths
 MODELS_DIR := models
 BGE_MODEL := $(MODELS_DIR)/bge-m3.gguf
-QWEN_MODEL := $(MODELS_DIR)/qwen2.5-0.5b-instruct-q4_k_m.gguf
+QWEN_MODEL := $(MODELS_DIR)/qwen2.5-0.5b-instruct.gguf
 BGE_URL := https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
 QWEN_URL := https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
 
@@ -356,9 +356,9 @@ build-ui:
 	@cd ui && npm install && npm run build
 	@echo "✓ UI built successfully"
 
-# Build NornicDB binary + APOC plugins (on supported platforms)
-build: build-ui build-binary build-plugins-if-supported
-	@echo "✓ Build complete: bin/nornicdb + plugins (if supported)"
+# Build NornicDB binary + APOC plugins + download models (on supported platforms)
+build: build-ui download-models build-binary build-plugins-if-supported
+	@echo "✓ Build complete: bin/nornicdb + plugins + models"
 
 # Check and build llama.cpp library if not present or outdated
 check-llama-lib:
@@ -518,7 +518,7 @@ else
 	@echo "Platform $(shell uname -s) supports Go plugins"
 endif
 
-# Build APOC plugin
+# Build all loadable plugins (APOC only - Heimdall is built-in)
 .PHONY: plugins
 plugins: plugin-check plugin-apoc
 	@echo ""
@@ -540,6 +540,9 @@ plugin-apoc: plugin-check
 	@echo "Building APOC plugin..."
 	cd $(PLUGINS_SRC_DIR)/apoc && go build -buildmode=plugin -o ../../../$(PLUGINS_DIR)/apoc.so apoc_plugin.go
 	@echo "Built: $(PLUGINS_DIR)/apoc.so"
+
+# Note: Heimdall is built-in to the binary (compiled directly, not a loadable .so)
+# Enable it with: NORNICDB_HEIMDALL_ENABLED=true
 
 # Clean plugins
 .PHONY: plugins-clean
