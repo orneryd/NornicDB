@@ -155,10 +155,20 @@ export function Browser() {
                 </div>
               </>
             )}
+             <button
+              type="button"
+              onClick={handleTriggerEmbed}
+              disabled={embedTriggering}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                embedData.stats?.running 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                  : 'bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune'
+              }`}
+              title={`Total embeddings: ${embedData.totalEmbeddings}${embedData.stats ? `, Session: ${embedData.stats.processed} processed, ${embedData.stats.failed} failed` : ''}`}
+            >Regenerate all Embeddings</button>
             {/* Embed Button */}
             <button
               type="button"
-              onClick={handleTriggerEmbed}
               disabled={embedTriggering}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 embedData.stats?.running 
