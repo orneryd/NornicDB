@@ -16,11 +16,10 @@ services:
       - NORNICDB_EMBEDDING_PROVIDER=local
       # - NORNICDB_EMBEDDING_API_URL=http://llama-server:8080
       # - NORNICDB_EMBEDDING_API_KEY=not-needed
-      - NORNICDB_EMBEDDING_MODEL=bge-m3
-      - NORNICDB_MODELS_DIR=/data/models
+      # - NORNICDB_EMBEDDING_MODEL=bge-m3
+      # - NORNICDB_MODELS_DIR=/data/models
       # # Authentication (disabled by default for dev)
       - NORNICDB_NO_AUTH=${NORNICDB_NO_AUTH:-true}
-      - NORNICDB_ADMIN_PASSWORD=${NEO4J_PASSWORD:-password}
       - NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED=true
       # Load export data on startup (disabled - starting fresh)
       - NORNICDB_LOAD_EXPORT=

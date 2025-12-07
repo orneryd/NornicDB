@@ -24,7 +24,6 @@ services:
       - NORNICDB_KMEANS_CLUSTERING_ENABLED=true
       - NORNICDB_EMBEDDING_PROVIDER=local
       - NORNICDB_NO_AUTH=${NORNICDB_NO_AUTH:-true}
-      - NORNICDB_ADMIN_PASSWORD=${NEO4J_PASSWORD:-password}
       - GOGC=50
     restart: unless-stopped
     healthcheck:

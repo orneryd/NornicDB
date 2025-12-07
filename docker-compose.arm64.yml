@@ -6,8 +6,8 @@ services:
       args:
         EMBED_MODEL: "true"  # Include bge-m3.gguf in image
       tags:
-        - timothyswt/nornicdb-arm64-metal-bge-heimdall:latest
-    image: timothyswt/nornicdb-arm64-metal-bge-heimdall:latest
+        - timothyswt/nornicdb-arm64-metal-bge:latest
+    image: timothyswt/nornicdb-arm64-metal-bge:latest
     container_name: nornicdb
     volumes:
       - ./data/movies-test:/data
@@ -21,10 +21,9 @@ services:
       # Embedding configuration - llama.cpp OpenAI-compatible API
       # - NORNICDB_HEIMDALL_ENABLED=true
       - NORNICDB_AUTO_TLP_ENABLED=false
-      - NORNICDB_KMEANS_CLUSTERING_ENABLED=true
+      # - NORNICDB_KMEANS_CLUSTERING_ENABLED=true
       - NORNICDB_EMBEDDING_PROVIDER=local
       - NORNICDB_NO_AUTH=${NORNICDB_NO_AUTH:-true}
-      - NORNICDB_ADMIN_PASSWORD=${NEO4J_PASSWORD:-password}
       - GOGC=50
     restart: unless-stopped
     healthcheck:
