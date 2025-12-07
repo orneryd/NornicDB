@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# NornicDB Post-Install Script
+# Runs after .pkg installation to set up user-specific files
+
+set -e
+
+# Get the actual user (not root, since installer runs as root)
+ACTUAL_USER="${USER}"
+if [ "$ACTUAL_USER" = "root" ]; then
+    ACTUAL_USER=$(ls -l /dev/console | awk '{print $3}')
+fi
+
+USER_HOME=$(eval echo ~$ACTUAL_USER)
+USER_UID=$(id -u $ACTUAL_USER)
+
+echo "Setting up NornicDB for user: $ACTUAL_USER"
+
+# Create user directories
+sudo -u $ACTUAL_USER mkdir -p "$USER_HOME/Library/Application Support/NornicDB"
+sudo -u $ACTUAL_USER mkdir -p "$USER_HOME/Library/LaunchAgents"
+
+# Create data and log directories (as root, will set ownership later)
+mkdir -p /usr/local/var/nornicdb/data
+mkdir -p /usr/local/var/log/nornicdb
+
+# Set ownership
+chown -R $ACTUAL_USER:staff /usr/local/var/nornicdb
+chown -R $ACTUAL_USER:staff /usr/local/var/log/nornicdb
+
+# Copy default config if it doesn't exist
+if [ ! -f "$USER_HOME/Library/Application Support/NornicDB/config.yaml" ]; then
+    # Config should be bundled in package, copy from Resources
+    RESOURCES_PATH="$2/Contents/Resources"
+    if [ -f "$RESOURCES_PATH/nornicdb.example.yaml" ]; then
+        sudo -u $ACTUAL_USER cp "$RESOURCES_PATH/nornicdb.example.yaml" \
+            "$USER_HOME/Library/Application Support/NornicDB/config.yaml"
+        echo "✓ Installed default configuration"
+    else
+        # Create minimal config
+        sudo -u $ACTUAL_USER cat > "$USER_HOME/Library/Application Support/NornicDB/config.yaml" << 'EOF'
+# NornicDB Configuration
+# Edit via Settings app (⌘,) or manually
+
+server:
+  port: 7687
+  host: "localhost"
+
+storage:
+  path: "/usr/local/var/nornicdb/data"
+
+embedding:
+  enabled: false
+  provider: "ollama"
+
+kmeans:
+  enabled: false
+
+auto_tlp:
+  enabled: false
+
+heimdall:
+  enabled: false
+EOF
+        echo "✓ Created minimal configuration"
+    fi
+fi
+
+# Install LaunchAgent (expand home directory)
+sudo -u $ACTUAL_USER cat > "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nornicdb.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/nornicdb</string>
+        <string>serve</string>
+        <string>--data-dir</string>
+        <string>/usr/local/var/nornicdb/data</string>
+        <string>--bolt-port</string>
+        <string>7687</string>
+        <string>--http-port</string>
+        <string>7474</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var/nornicdb</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/nornicdb/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/nornicdb/stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>$USER_HOME</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>Nice</key>
+    <integer>0</integer>
+</dict>
+</plist>
+EOF
+
+echo "✓ Installed LaunchAgent"
+
+# Load LaunchAgent as the user (not root)
+sudo -u $ACTUAL_USER launchctl load "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" 2>/dev/null || true
+echo "✓ Loaded service"
+
+# Install menu bar app LaunchAgent for auto-start
+sudo -u $ACTUAL_USER cat > "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nornicdb.menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>/Applications/NornicDB.app</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+EOF
+
+# Load the menu bar app LaunchAgent
+sudo -u $ACTUAL_USER launchctl load "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist" 2>/dev/null || true
+
+# Launch menu bar app immediately
+sudo -u $ACTUAL_USER open -a "/Applications/NornicDB.app" 2>/dev/null || true
+echo "✓ Launched menu bar app (will auto-start on login)"
+
+# Create welcome file to trigger first-run wizard
+sudo -u $ACTUAL_USER touch "$USER_HOME/Library/Application Support/NornicDB/.first_run"
+
+echo ""
+echo "✅ NornicDB installation complete!"
+echo ""
+echo "The menu bar app should now be running."
+echo "Look for the database icon in your menu bar (top right)."
+echo ""
+echo "First-time setup wizard will guide you through configuration."
+echo ""
+
+exit 0

@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# NornicDB Pre-Install Script
+# Runs before installation to gracefully stop existing installation
+
+set -e
+
+# Get the actual user (installer runs as root)
+ACTUAL_USER="${USER}"
+if [ "$ACTUAL_USER" = "root" ]; then
+    ACTUAL_USER=$(ls -l /dev/console | awk '{print $3}')
+fi
+
+USER_HOME=$(eval echo ~$ACTUAL_USER)
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  NornicDB Installer - Pre-Install"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Check if this is an upgrade or fresh install
+EXISTING_INSTALL=false
+if [ -f "/usr/local/bin/nornicdb" ] || [ -d "/Applications/NornicDB.app" ]; then
+    EXISTING_INSTALL=true
+    echo "📦 Existing installation detected"
+    echo "   This will be upgraded while preserving your data"
+    echo ""
+fi
+
+# Stop existing service if running
+if [ -f "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" ]; then
+    echo "🛑 Stopping NornicDB service..."
+    
+    # Try to stop gracefully
+    sudo -u $ACTUAL_USER launchctl stop com.nornicdb.server 2>/dev/null || true
+    sleep 1
+    
+    # Unload the service
+    sudo -u $ACTUAL_USER launchctl unload "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" 2>/dev/null || true
+    
+    echo "   ✓ Service stopped"
+fi
+
+# Quit menu bar app if running
+if pgrep -x "NornicDB" > /dev/null; then
+    echo "🛑 Quitting menu bar app..."
+    
+    # Try graceful quit first (sends quit event)
+    osascript -e 'tell application "NornicDB" to quit' 2>/dev/null || true
+    sleep 0.5
+    
+    # Force quit if still running
+    if pgrep -x "NornicDB" > /dev/null; then
+        killall NornicDB 2>/dev/null || true
+        sleep 0.5
+    fi
+    
+    echo "   ✓ App quit"
+fi
+
+# Verify everything is stopped
+if pgrep -x "nornicdb" > /dev/null 2>&1; then
+    echo "⚠️  Warning: nornicdb process still running, force stopping..."
+    killall -9 nornicdb 2>/dev/null || true
+fi
+
+if $EXISTING_INSTALL; then
+    echo ""
+    echo "💾 Preserving user data:"
+    echo "   ✓ Configuration files"
+    echo "   ✓ Database data"
+    echo "   ✓ Logs"
+fi
+
+echo ""
+echo "✅ Ready for installation"
+echo ""
+
+exit 0

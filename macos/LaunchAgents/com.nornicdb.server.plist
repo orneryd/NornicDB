@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service Identity -->
+    <key>Label</key>
+    <string>com.nornicdb.server</string>
+    
+    <!-- Program to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/nornicdb</string>
+        <string>serve</string>
+        <string>--data-dir</string>
+        <string>/usr/local/var/nornicdb/data</string>
+        <string>--bolt-port</string>
+        <string>7687</string>
+        <string>--http-port</string>
+        <string>7474</string>
+    </array>
+    
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var/nornicdb</string>
+    
+    <!-- Run at load (startup) -->
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <!-- Keep alive - restart if it crashes -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    
+    <!-- Restart throttle -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/nornicdb/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/nornicdb/stderr.log</string>
+    
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>~</string>
+    </dict>
+    
+    <!-- Process type -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    
+    <!-- Nice level (lower priority) -->
+    <key>Nice</key>
+    <integer>0</integer>
+</dict>
+</plist>

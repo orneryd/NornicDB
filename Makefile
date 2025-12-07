@@ -87,7 +87,7 @@ QWEN_URL := https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/
 .PHONY: deploy-amd64-cpu deploy-amd64-cpu-headless
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda
-.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless test clean images help
+.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless test clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-signed
 .PHONY: download-models download-bge download-qwen check-models
 
 # ==============================================================================
@@ -847,3 +847,120 @@ endif
 	@echo "  - Smallest image size"
 	@echo ""
 	@echo "Config: REGISTRY=name VERSION=tag make ..."
+
+# ==============================================================================
+# macOS Native Integration
+# ==============================================================================
+# Service installation, menu bar app, and distribution
+
+.PHONY: macos-menubar macos-install macos-uninstall macos-all macos-clean
+
+# Build the menu bar app (requires Xcode)
+macos-menubar:
+	@echo "Building macOS Menu Bar App..."
+ifeq ($(HOST_OS),darwin)
+	@echo "Architecture: $(HOST_ARCH)"
+	@mkdir -p macos/build
+	@cd macos/MenuBarApp && swiftc -o ../build/NornicDB NornicDBMenuBar.swift \
+		-framework SwiftUI \
+		-framework AppKit \
+		-target $(HOST_ARCH)-apple-macos12.0 \
+		-swift-version 5 \
+		-parse-as-library
+	@echo "Creating app bundle..."
+	@mkdir -p macos/build/NornicDB.app/Contents/MacOS
+	@mkdir -p macos/build/NornicDB.app/Contents/Resources
+	@mv macos/build/NornicDB macos/build/NornicDB.app/Contents/MacOS/
+	@echo "Generating app icon..."
+	@if [ -f "macos/Assets/NornicDB.icns" ]; then \
+		cp macos/Assets/NornicDB.icns macos/build/NornicDB.app/Contents/Resources/; \
+		echo "  ✓ Using custom icon"; \
+	elif command -v sips >/dev/null 2>&1 && [ -f "docs/assets/logos/nornicdb-logo.svg" ]; then \
+		mkdir -p macos/build/temp.iconset; \
+		for size in 16 32 128 256 512; do \
+			qlmanage -t -s $$size -o macos/build/temp.iconset docs/assets/logos/nornicdb-logo.svg >/dev/null 2>&1 || true; \
+		done; \
+		if [ -f "macos/build/temp.iconset/nornicdb-logo.svg.png" ]; then \
+			mv macos/build/temp.iconset/nornicdb-logo.svg.png macos/build/NornicDB.app/Contents/Resources/AppIcon.png; \
+		fi; \
+		rm -rf macos/build/temp.iconset; \
+		echo "  ✓ Generated icon from SVG"; \
+	else \
+		echo "  ⚠ Using SF Symbol icon (install librsvg for custom icon)"; \
+	fi
+	@echo '<?xml version="1.0" encoding="UTF-8"?>' > macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<plist version="1.0"><dict>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<key>CFBundleExecutable</key><string>NornicDB</string>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<key>CFBundleIdentifier</key><string>com.nornicdb.menubar</string>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<key>CFBundleName</key><string>NornicDB</string>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<key>CFBundleVersion</key><string>1.0.0</string>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@if [ -f "macos/build/NornicDB.app/Contents/Resources/NornicDB.icns" ]; then \
+		echo '<key>CFBundleIconFile</key><string>NornicDB</string>' >> macos/build/NornicDB.app/Contents/Info.plist; \
+	fi
+	@echo '<key>LSUIElement</key><true/>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '<key>NSHighResolutionCapable</key><true/>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo '</dict></plist>' >> macos/build/NornicDB.app/Contents/Info.plist
+	@echo "✅ Menu bar app built: macos/build/NornicDB.app"
+else
+	@echo "❌ Menu bar app can only be built on macOS"
+	@exit 1
+endif
+
+# Install NornicDB as a macOS service
+macos-install:
+	@echo "Installing NornicDB for macOS..."
+ifeq ($(HOST_OS),darwin)
+	@./macos/scripts/install.sh
+else
+	@echo "❌ macOS installation is only available on macOS"
+	@exit 1
+endif
+
+# Uninstall NornicDB from macOS
+macos-uninstall:
+	@echo "Uninstalling NornicDB from macOS..."
+ifeq ($(HOST_OS),darwin)
+	@./macos/scripts/uninstall.sh
+else
+	@echo "❌ This uninstaller is for macOS only"
+	@exit 1
+endif
+
+# Build everything and install (one command)
+macos-all: build macos-menubar macos-install
+	@echo "✅ NornicDB fully installed on macOS!"
+
+# Clean macOS build artifacts
+macos-clean:
+	@echo "Cleaning macOS build artifacts..."
+	@rm -rf macos/build
+	@echo "✅ Cleaned"
+
+# Create distributable .pkg installer (uses build-installer.sh)
+macos-package: build macos-menubar
+	@echo "Creating macOS package installer..."
+ifeq ($(HOST_OS),darwin)
+	@./macos/scripts/build-installer.sh
+else
+	@echo "❌ Package creation is only available on macOS"
+	@exit 1
+endif
+
+# Create signed .pkg for distribution (requires Apple Developer account)
+macos-package-signed: macos-package
+	@echo "Signing package..."
+ifeq ($(HOST_OS),darwin)
+	@if [ -z "$(SIGN_IDENTITY)" ]; then \
+		echo "❌ Error: SIGN_IDENTITY not set"; \
+		echo "   Usage: make macos-package-signed SIGN_IDENTITY='Developer ID Installer: Your Name'"; \
+		exit 1; \
+	fi
+	@productsign --sign "$(SIGN_IDENTITY)" \
+		dist/NornicDB-*-$(ARCH).pkg \
+		dist/NornicDB-*-$(ARCH)-signed.pkg
+	@echo "✅ Signed package created"
+else
+	@echo "❌ Signing is only available on macOS"
+	@exit 1
+endif
