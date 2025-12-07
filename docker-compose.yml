@@ -1,7 +1,7 @@
 services:
   nornicdb:
     build:
-      context: ./nornicdb
+      context: .
       dockerfile: docker/Dockerfile.arm64-metal
       args:
         EMBED_MODEL: "true"  # Include bge-m3.gguf in image
@@ -41,6 +41,10 @@ services:
           memory: 2GB
         reservations:
           memory: 1GB
+# devices:
+          #   - driver: nvidia
+          #     count: 1
+          #     capabilities: [gpu, compute, utility]
 
 networks:
   mcp_network:
