@@ -145,7 +145,6 @@ import (
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/gpu"
-	"github.com/orneryd/nornicdb/pkg/gpu/metal"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -580,19 +579,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil, fmt.Errorf("database required")
 	}
 
-	// Log GPU acceleration status on startup
-	if runtime.GOOS == "darwin" {
-		metal.PrintDeviceInfo()
-	} else {
-		// Check for GPU accelerator on other platforms
-		accel, err := gpu.NewAccelerator(nil)
-		if err == nil && accel != nil {
-			log.Printf("🟢 GPU Acceleration: Available (backend: %s)", accel.Backend())
-			accel.Release()
-		} else {
-			log.Println("🔴 GPU Acceleration: Not available (using CPU)")
-		}
-	}
+	// Note: GPU status is logged in main.go during GPU manager initialization
+	// This avoids duplicate logs and provides more detailed information
 
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server
@@ -689,17 +677,25 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			embedConfig.APIPath = "/api/embeddings"
 		}
 
-		// Use factory function for all providers
-		embedder, err := embed.NewEmbedder(embedConfig)
-		if err != nil {
-			if config.EmbeddingProvider == "local" {
-				log.Printf("⚠️  Local embedding model unavailable: %v", err)
-			} else {
-				log.Printf("⚠️  Embeddings endpoint unavailable (%s): %v", config.EmbeddingAPIURL, err)
+		// Initialize embeddings asynchronously to prevent startup blocking
+		// Local GGUF models can take 5-30 seconds to load (graph compilation)
+		log.Printf("🔄 Loading embedding model: %s (%s)...", embedConfig.Model, embedConfig.Provider)
+		log.Println("   → Server will start immediately, embeddings available after model loads")
+
+		go func() {
+			// Use factory function for all providers
+			embedder, err := embed.NewEmbedder(embedConfig)
+			if err != nil {
+				if config.EmbeddingProvider == "local" {
+					log.Printf("⚠️  Local embedding model unavailable: %v", err)
+				} else {
+					log.Printf("⚠️  Embeddings endpoint unavailable (%s): %v", config.EmbeddingAPIURL, err)
+				}
+				log.Println("   → Falling back to full-text search only")
+				// Don't set embedder - MCP server will use text search
+				return
 			}
-			log.Println("   → Falling back to full-text search only")
-			// Don't set embedder - MCP server will use text search
-		} else {
+
 			// Health check: test embedding before enabling
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_, healthErr := embedder.Embed(ctx, "health check")
@@ -712,28 +708,36 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					log.Printf("⚠️  Embeddings endpoint unavailable (%s): %v", config.EmbeddingAPIURL, healthErr)
 				}
 				log.Println("   → Falling back to full-text search only")
-			} else {
-				// Wrap with caching if enabled (default: 10K cache)
-				if config.EmbeddingCacheSize > 0 {
-					embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
-					log.Printf("✓ Embedding cache enabled: %d entries (~%dMB)",
-						config.EmbeddingCacheSize, embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
-				}
-
-				if config.EmbeddingProvider == "local" {
-					log.Printf("✓ Embeddings enabled: local GGUF (%s, %d dims)",
-						config.EmbeddingModel, config.EmbeddingDimensions)
-				} else {
-					log.Printf("✓ Embeddings enabled: %s (%s, %d dims)",
-						config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions)
-				}
-				if mcpServer != nil {
-					mcpServer.SetEmbedder(embedder)
-				}
-				// Share embedder with DB for auto-embed queue
-				db.SetEmbedder(embedder)
+				return
 			}
-		}
+
+			// Wrap with caching if enabled (default: 10K cache)
+			if config.EmbeddingCacheSize > 0 {
+				embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
+				log.Printf("✓ Embedding cache enabled: %d entries (~%dMB)",
+					config.EmbeddingCacheSize, embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
+			}
+
+			if config.EmbeddingProvider == "local" {
+				log.Printf("✅ Embeddings ready: local GGUF (%s, %d dims)",
+					config.EmbeddingModel, config.EmbeddingDimensions)
+			} else {
+				log.Printf("✅ Embeddings ready: %s (%s, %d dims)",
+					config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions)
+			}
+
+			if mcpServer != nil {
+				mcpServer.SetEmbedder(embedder)
+			}
+			// Share embedder with DB for auto-embed queue
+			// The embed worker will wait for this to be set before processing
+			db.SetEmbedder(embedder)
+		}()
+	}
+
+	// Log authentication status
+	if authenticator == nil || !authenticator.IsSecurityEnabled() {
+		log.Println("⚠️  Authentication disabled")
 	}
 
 	// Initialize rate limiter if enabled
@@ -1854,7 +1858,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	stats := s.db.EmbedQueueStats()
 	totalEmbeddings := s.db.EmbeddingCount()
-	
+
 	if stats == nil {
 		response := map[string]interface{}{
 			"enabled":          false,

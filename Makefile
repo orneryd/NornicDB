@@ -499,7 +499,29 @@ else
 endif
 
 test:
-	go test ./...
+ifeq ($(HOST_OS),windows)
+	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
+else
+	@set go test -p 1 -parallel 4 -timeout 30m ./...
+endif
+
+# Test with limited parallelism (useful on Windows with memory constraints)
+test-serial:
+ifeq ($(HOST_OS),windows)
+	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
+else
+	@set go test -p 1 -parallel 4 -timeout 30m ./...
+endif
+	
+
+# Test a specific package
+test-pkg:
+	@echo "Usage: make test-pkg PKG=./pkg/cypher"
+ifeq ($(HOST_OS),windows)
+	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -v -timeout 10m $(PKG)"
+else
+	@set go test -v -timeout 10m $(PKG)
+endif
 
 # ==============================================================================
 # Cross-Compilation (native binaries for other platforms)

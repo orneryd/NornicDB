@@ -72,6 +72,7 @@ func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 }
 
 // NewEmbedWorker creates a new async embedding worker.
+// If embedder is nil, the worker will wait for SetEmbedder() to be called.
 func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *EmbedWorkerConfig) *EmbedWorker {
 	if config == nil {
 		config = DefaultEmbedWorkerConfig()
@@ -95,6 +96,16 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
 	go ew.worker()
 
 	return ew
+}
+
+// SetEmbedder sets or updates the embedder (for async initialization).
+// This allows the worker to start before the model is loaded.
+func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+	ew.mu.Lock()
+	ew.embedder = embedder
+	ew.mu.Unlock()
+	// Trigger immediate processing now that embedder is available
+	ew.Trigger()
 }
 
 // SetOnEmbedded sets a callback to be called after a node is embedded.
@@ -161,6 +172,32 @@ func (ew *EmbedWorker) worker() {
 	defer ew.wg.Done()
 
 	fmt.Println("🧠 Embed worker started")
+
+	// Wait for embedder to be set (async model loading)
+	if ew.embedder == nil {
+		fmt.Println("⏳ Waiting for embedding model to load...")
+		for {
+			ew.mu.Lock()
+			hasEmbedder := ew.embedder != nil
+			closed := ew.closed
+			ew.mu.Unlock()
+
+			if hasEmbedder {
+				fmt.Println("✅ Embedding model loaded, worker active")
+				break
+			}
+			if closed {
+				return
+			}
+
+			select {
+			case <-ew.ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+				// Check again
+			}
+		}
+	}
 
 	// Short initial delay to let server start
 	time.Sleep(500 * time.Millisecond)

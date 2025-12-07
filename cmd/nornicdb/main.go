@@ -404,9 +404,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Println("   ✅ Admin user created (admin)")
 		}
-	} else {
-		fmt.Println("⚠️  Authentication disabled")
 	}
+	// Note: Auth status logged at server startup
 
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()

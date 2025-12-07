@@ -1004,10 +1004,14 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	}
 
 	if db.embedQueue != nil {
-		// Already set up
+		// Already created, just update embedder
+		db.embedQueue.SetEmbedder(embedder)
+		log.Printf("🧠 Embed worker activated with %s (%d dims)",
+			embedder.Model(), embedder.Dimensions())
 		return
 	}
 
+	// Create embed queue - worker will wait if embedder not ready yet
 	db.embedQueue = NewEmbedQueue(embedder, db.storage, db.embedWorkerConfig)
 	// Set callback to update search index after embedding
 	db.embedQueue.SetOnEmbedded(func(node *storage.Node) {

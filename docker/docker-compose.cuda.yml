@@ -13,7 +13,9 @@ services:
       - nornicdb-data:/data
       - ../models:/app/models
     environment:
-      NORNICDB_NO_AUTH: "true"
+      - NORNICDB_NO_AUTH=true
+      - NORNICDB_EMBEDDING_PROVIDER=local
+      - NORNICDB_HEIMDALL_ENABLED=true
     deploy:
       resources:
         reservations:
