@@ -86,8 +86,9 @@ RUN echo "Building APOC plugin..." && \
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 WORKDIR /app
 
+# Install gcc for CUDA stub compilation (graceful fallback when no GPU)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget libgomp1 && rm -rf /var/lib/apt/lists/* && \
+    ca-certificates tzdata wget libgomp1 gcc libc6-dev && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /data /app/models
 
 COPY --from=builder /build/nornicdb /app/

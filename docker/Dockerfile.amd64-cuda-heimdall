@@ -74,14 +74,16 @@ RUN echo "Building APOC plugin..." && \
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 WORKDIR /app
 
+# Install gcc for CUDA stub compilation (graceful fallback when no GPU)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget libgomp1 && rm -rf /var/lib/apt/lists/* && \
+    ca-certificates tzdata wget libgomp1 gcc libc6-dev && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /data /app/models
 
 COPY --from=builder /build/nornicdb /app/
 COPY --from=builder /build/apoc/built-plugins /app/plugins/
-COPY docker/entrypoint.sh /app/
-RUN chmod +x /app/entrypoint.sh
+COPY docker/entrypoint.sh /app/entrypoint-real.sh
+COPY docker/cuda-fallback-wrapper.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/entrypoint-real.sh
 
 # Embed both models: BGE-M3 for embeddings + Qwen for Heimdall
 RUN --mount=type=bind,source=models,target=/models,ro \
