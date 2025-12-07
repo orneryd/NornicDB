@@ -407,13 +407,59 @@ build-ui:
 
 # Build NornicDB binary + APOC plugins + download models (on supported platforms)
 build: build-ui download-models build-binary build-plugins-if-supported
-	@echo "✓ Build complete: bin/nornicdb + plugins + models"
+	@echo "==============================================================="
+	@echo " Build complete!"
+	@echo "==============================================================="
+ifeq ($(HOST_OS),windows)
+	@echo ""
+	@echo "Binary: bin\nornicdb.exe"
+	@echo "Models: models\bge-m3.gguf"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Quick start (recommended):"
+	@echo "       $$env:NORNICDB_EMBEDDING_PROVIDER='local'"
+	@echo "       .\bin\nornicdb.exe serve --no-auth"
+	@echo ""
+	@echo "  2. With Heimdall cognitive features:"
+	@echo "       $$env:NORNICDB_EMBEDDING_PROVIDER='local'"
+	@echo "       $$env:NORNICDB_HEIMDALL_ENABLED='true'"
+	@echo "       .\bin\nornicdb.exe serve --no-auth"
+	@echo ""
+	@echo "  3. Connect with Neo4j drivers:"
+	@echo "       bolt://localhost:7687"
+	@echo "       (authentication disabled with --no-auth)"
+	@echo ""
+	@echo "  Note: If WAL sync errors occur, try a different data location:"
+	@echo "        .\bin\nornicdb.exe serve --no-auth --data-dir C:\nornicdb-data"
+	@echo ""
+	@echo "  Example command to run with PowerShell:"
+	@echo "$$env:NORNICDB_EMBEDDING_PROVIDER='local';$$env:NORNICDB_MODELS_DIR='.\models'; .\bin\nornicdb.exe serve --no-auth "
+	@echo ""
+else
+	@echo ""
+	@echo "Binary: bin/nornicdb"
+	@echo "Models: models/bge-m3.gguf"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Run the database:"
+	@echo "       ./bin/nornicdb"
+	@echo ""
+	@echo "  2. Or run with custom config:"
+	@echo "       ./bin/nornicdb --config nornicdb.yaml"
+	@echo ""
+	@echo "  3. Connect with Neo4j drivers:"
+	@echo "       bolt://localhost:7687"
+	@echo "       Username: admin"
+	@echo "       Password: admin"
+	@echo ""
+endif
 
 # Check and build llama.cpp library if not present or outdated
 check-llama-lib:
 ifeq ($(HOST_OS),windows)
 	@if not exist "lib\llama\libllama_$(HOST_OS)_$(HOST_ARCH).a" ( \
 		echo WARNING: llama.cpp library not found, building... && \
+		if exist "%TEMP%\llama-cpp-build" rmdir /s /q "%TEMP%\llama-cpp-build" && \
 		powershell -ExecutionPolicy Bypass -File scripts\build-llama-cuda.ps1 \
 	) else ( \
 		echo llama.cpp library up to date \
@@ -431,7 +477,11 @@ else
 endif
 
 build-binary: check-llama-lib
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=1 && go build -tags "localllm" -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
+else
 	CGO_ENABLED=1 go build -tags localllm -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
+endif
 
 # Build plugins only if platform supports Go plugins (Linux/macOS, not Windows)
 build-plugins-if-supported:
@@ -442,14 +492,22 @@ else
 endif
 
 build-localllm: build-plugins-if-supported
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=1 && go build -tags "localllm" -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
+else
 	CGO_ENABLED=1 go build -tags localllm -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
+endif
 
 # Build without UI (headless mode)
 build-headless: build-plugins-if-supported
 	go build -tags noui -o bin/nornicdb-headless$(BIN_EXT) ./cmd/nornicdb
 
 build-localllm-headless: build-plugins-if-supported
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=1 && go build -tags "localllm noui" -o bin/nornicdb-headless$(BIN_EXT) ./cmd/nornicdb
+else
 	CGO_ENABLED=1 go build -tags "localllm noui" -o bin/nornicdb-headless$(BIN_EXT) ./cmd/nornicdb
+endif
 
 test:
 	go test ./...
@@ -465,38 +523,62 @@ test:
 # Linux x86_64 (standard servers, VPS, Docker hosts)
 cross-linux-amd64:
 	@echo "Building for Linux x86_64..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=amd64 && go build -o bin/nornicdb-linux-amd64 ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/nornicdb-linux-amd64 ./cmd/nornicdb
-	@echo "✓ bin/nornicdb-linux-amd64"
+endif
+	@echo "bin/nornicdb-linux-amd64"
 
 # Linux ARM64 (AWS Graviton, newer ARM servers, Jetson)
 cross-linux-arm64:
 	@echo "Building for Linux ARM64..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm64 && go build -o bin/nornicdb-linux-arm64 ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-linux-arm64 ./cmd/nornicdb
-	@echo "✓ bin/nornicdb-linux-arm64"
+endif
+	@echo "bin/nornicdb-linux-arm64"
 
 # Raspberry Pi 4/5, Pi 3B+ 64-bit, Orange Pi, etc.
 cross-rpi:
 	@echo "Building for Raspberry Pi (64-bit ARM)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm64 && go build -o bin/nornicdb-rpi64 ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-rpi64 ./cmd/nornicdb
-	@echo "✓ bin/nornicdb-rpi64"
+endif
+	@echo "bin/nornicdb-rpi64"
 
 # Raspberry Pi 2/3/Zero 2 W (32-bit ARMv7)
 cross-rpi32:
 	@echo "Building for Raspberry Pi (32-bit ARMv7)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm && set GOARM=7 && go build -o bin/nornicdb-rpi32 ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o bin/nornicdb-rpi32 ./cmd/nornicdb
-	@echo "✓ bin/nornicdb-rpi32"
+endif
+	@echo "bin/nornicdb-rpi32"
 
 # Raspberry Pi 1/Zero/Zero W (ARMv6)
 cross-rpi-zero:
 	@echo "Building for Raspberry Pi Zero (ARMv6)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm && set GOARM=6 && go build -o bin/nornicdb-rpi-zero ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -o bin/nornicdb-rpi-zero ./cmd/nornicdb
-	@echo "✓ bin/nornicdb-rpi-zero"
+endif
+	@echo "bin/nornicdb-rpi-zero"
 
 # Windows x86_64 (CPU only, no embeddings)
 cross-windows:
 	@echo "Building for Windows x86_64 (CPU-only)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=windows && set GOARCH=amd64 && go build -o bin/nornicdb.exe ./cmd/nornicdb
+else
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/nornicdb.exe ./cmd/nornicdb
-	@echo "✓ bin/nornicdb.exe"
+endif
+	@echo "bin/nornicdb.exe"
 
 # Windows native builds (must run on Windows)
 # See: build.bat for all Windows variants

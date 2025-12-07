@@ -1,19 +1,20 @@
-//go:build cgo && windows && cuda
+//go:build cgo && windows
 
 // Package localllm provides CGO bindings to llama.cpp for local GGUF model inference.
 //
-// This is the Windows CUDA implementation for GPU-accelerated embedding generation.
+// This is the Windows CPU-only implementation for embedding generation.
 //
-// CUDA Optimizations (NVIDIA GPU):
-//   - Flash attention for faster inference
-//   - Full model GPU offload by default
-//   - VRAM-optimized tensor placement
-//   - SIMD-optimized CPU fallback
+// Note: Windows builds use CPU-only due to MSVC/MinGW incompatibility.
+// For GPU acceleration, use Docker on Linux with CUDA support.
+//
+// CPU Optimizations:
+//   - AVX/AVX2/FMA SIMD instructions
+//   - Multi-threaded inference
+//   - Memory-mapped model loading
 //
 // Build Requirements:
-//   - CUDA Toolkit 12.x installed
-//   - Visual Studio 2022 Build Tools with MSVC
-//   - Pre-built libllama_windows_amd64.a with CUDA support
+//   - MinGW-w64 (GCC for Windows)
+//   - Pre-built libllama_windows_amd64.a (CPU-only)
 //
 // Example:
 //
@@ -29,21 +30,20 @@
 package localllm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../lib/llama/windows_amd64_cuda
+#cgo CFLAGS: -I${SRCDIR}/../../lib/llama
 
-// Windows with CUDA - link against all llama.cpp static libraries
-// Libraries built with MSVC: llama.lib, ggml-cuda.lib, ggml-cpu.lib, ggml-base.lib, ggml.lib, common.lib
-#cgo LDFLAGS: -L${SRCDIR}/../../lib/llama/windows_amd64_cuda
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/llama.lib
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/ggml-cuda.lib
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/ggml-cpu.lib
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/ggml-base.lib
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/ggml.lib
-#cgo LDFLAGS: ${SRCDIR}/../../lib/llama/windows_amd64_cuda/common.lib
+// Windows CPU-only - link against MinGW-built llama.cpp libraries
+// Libraries: All ggml/llama static libraries in correct order
+#cgo LDFLAGS: -L${SRCDIR}/../../lib/llama/windows_amd64_cuda/build/src
+#cgo LDFLAGS: -L${SRCDIR}/../../lib/llama/windows_amd64_cuda/build/ggml/src
+#cgo LDFLAGS: -L${SRCDIR}/../../lib/llama/windows_amd64_cuda/build/common
 
-// CUDA runtime and cuBLAS libraries from CUDA Toolkit
-#cgo LDFLAGS: -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/lib/x64"
-#cgo LDFLAGS: -lcudart -lcublas -lcublasLt -lcuda
+// Link libraries in dependency order (most dependent first)
+// Use -l:filename.a for files without lib prefix (ggml*.a)
+#cgo LDFLAGS: -lcommon -lllama -l:ggml.a -l:ggml-cpu.a -l:ggml-base.a
+
+// MinGW runtime libraries (OpenMP needed for parallel processing)
+#cgo LDFLAGS: -lstdc++ -lgomp -static-libgcc -static-libstdc++ -lm -lpthread
 
 #include <stdlib.h>
 #include <string.h>
@@ -111,9 +111,8 @@ struct llama_context* create_context(struct llama_model* model, int n_ctx, int n
     // Embedding models use bidirectional attention unlike causal LLMs
     params.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
 
-    // Flash attention - major speedup on CUDA
-    // Auto-detect best setting based on hardware and model
-    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+    // Flash attention - major speedup on CUDA (b7285+ uses flash_attn_type enum)
+    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 
     // logits_all removed in newer llama.cpp - controlled per-batch now
     // We set batch.logits[i] = 1 in embed() function instead
@@ -131,9 +130,9 @@ int tokenize(struct llama_model* model, const char* text, int text_len, int32_t*
 // Generate embedding with GPU acceleration
 int embed(struct llama_context* ctx, int32_t* tokens, int n_tokens, float* out, int n_embd) {
     // Clear memory before each embedding (not persistent for embeddings)
-    // KV cache API renamed to "memory" in b7285
-    // Second arg (true) clears the data
-    llama_memory_clear(llama_get_memory(ctx), 1);
+    // In b7285+, KV cache was replaced with memory API
+    llama_memory_t mem = llama_get_memory(ctx);
+    llama_memory_clear(mem, 1);
 
     // Create batch
     struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);

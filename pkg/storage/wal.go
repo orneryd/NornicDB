@@ -682,20 +682,9 @@ func verifyCRC32(data []byte, expected uint32) bool {
 	return crc32Checksum(data) == expected
 }
 
-// syncDir fsyncs a directory to ensure metadata changes (file creation, rename) are durable.
-// This is critical for crash recovery - without it, file operations may not survive a crash.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("wal: failed to open directory for sync: %w", err)
-	}
-	defer d.Close()
-
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("wal: failed to sync directory: %w", err)
-	}
-	return nil
-}
+// syncDir is implemented in platform-specific files:
+// - wal_sync_unix.go: Unix/Linux/macOS (uses os.Open + Sync)
+// - wal_sync_windows.go: Windows (no-op, NTFS handles this automatically)
 
 // Snapshot represents a point-in-time snapshot of the database.
 type Snapshot struct {

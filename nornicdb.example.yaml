@@ -22,7 +22,8 @@ server:
   # Authentication (Neo4j compatible format: username:password)
   # Default: disabled (set to "none" or leave unset)
   # To enable: set to "admin:admin" or use environment: NEO4J_AUTH=admin/admin
-  auth: "none" # disabled by default for easy development
+  # For development: "none" (same as --no-auth flag)
+  auth: "none" # disabled for development (same as --no-auth)
 
   # Enable TLS (optional)
   tls:
@@ -35,12 +36,13 @@ server:
 # =============================================================================
 gpu:
   # Enable GPU acceleration for vector search
+  # Set to false if using CPU-only mode
   enabled: true
 
   # Backend: auto, metal, cuda, opencl, vulkan, cpu
   # auto: Automatically detect best available backend
   # metal: Apple Silicon (M1/M2/M3)
-  # cuda: NVIDIA GPUs
+  # cuda: NVIDIA GPUs (Windows/Linux)
   # opencl: AMD GPUs (ROCm), some NVIDIA
   # vulkan: Cross-platform (experimental)
   # cpu: Fallback, no GPU
@@ -166,6 +168,86 @@ topology_link_prediction:
 
     # Log predictions for analysis (debug only)
     log_predictions: false
+
+# =============================================================================
+# Embedding Configuration (NornicDB-specific)
+# =============================================================================
+# Configure embedding provider for semantic search and auto-relationships
+embedding:
+  # Provider: local, ollama, openai, none
+  # local: Use locally embedded model (llama.cpp with GGUF models)
+  #        Requires models directory with .gguf embedding model
+  #        Set NORNICDB_EMBEDDING_PROVIDER=local
+  #        Set NORNICDB_MODELS_DIR=./models (or absolute path)
+  # ollama: Use Ollama service (requires Ollama running)
+  # openai: Use OpenAI API (requires API key)
+  # none: Disable embeddings (vector search unavailable)
+  provider: local
+
+  # Models directory (for local provider)
+  # Directory containing .gguf embedding models (e.g., bge-m3.gguf)
+  # Can be set via NORNICDB_MODELS_DIR environment variable
+  # Default: ./models
+  models_dir: ./models
+
+  # Local model configuration (when provider=local)
+  local:
+    # Model file name (inside models_dir)
+    # Default: bge-m3.gguf (BGE-M3 embedding model)
+    model_file: bge-m3.gguf
+
+    # Context size (tokens)
+    context_size: 512
+
+    # Batch size for embedding generation
+    batch_size: 512
+
+  # Ollama configuration (when provider=ollama)
+  ollama:
+    # Ollama API endpoint
+    endpoint: http://localhost:11434
+    
+    # Model name in Ollama
+    model: nomic-embed-text
+
+  # OpenAI configuration (when provider=openai)
+  openai:
+    # API key (or set OPENAI_API_KEY environment variable)
+    api_key: ""
+    
+    # Model name
+    model: text-embedding-3-small
+
+# =============================================================================
+# Heimdall Configuration (NornicDB Cognitive Extension)
+# =============================================================================
+# Heimdall adds cognitive capabilities: auto-relationships, link prediction,
+# memory decay, and intelligent graph evolution.
+#
+# Enable with: NORNICDB_HEIMDALL_ENABLED=true
+# Plugins: NORNICDB_HEIMDALL_PLUGINS_DIR=./plugins/heimdall/built-plugins
+heimdall:
+  # Enable Heimdall cognitive features
+  # Must also have embedding provider configured
+  enabled: true
+
+  # Heimdall plugins directory (optional extensions)
+  # Contains .so files (Linux/Mac) or .dll files (Windows, if supported)
+  # Set via NORNICDB_HEIMDALL_PLUGINS_DIR environment variable
+  plugins_dir: ./plugins/heimdall/built-plugins
+
+# =============================================================================
+# APOC Plugin Configuration (Neo4j Compatibility)
+# =============================================================================
+# APOC (Awesome Procedures on Cypher) compatibility layer
+# Provides Neo4j APOC procedures for compatibility
+#
+# Enable with: NORNICDB_PLUGINS_DIR=./apoc/built-plugins
+apoc:
+  # APOC plugins directory
+  # Contains .so files (Linux/Mac) - not supported on Windows
+  # Set via NORNICDB_PLUGINS_DIR environment variable
+  plugins_dir: ./apoc/built-plugins
 
 # =============================================================================
 # Search Configuration

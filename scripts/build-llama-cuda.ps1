@@ -1,20 +1,23 @@
-# Build llama.cpp static library for Windows with CUDA support
+# Build llama.cpp static library for Windows (CPU-only)
+#
+# Note: CUDA on Windows requires MSVC which is incompatible with MinGW CGO.
+# Windows builds use CPU-only for local embeddings. Docker/Linux builds support CUDA.
 #
 # Requirements:
-#   - CUDA Toolkit 12.x installed (nvcc in PATH)
-#   - Visual Studio 2022 with C++ Desktop development
+#   - MinGW-w64 (GCC for Windows)
 #   - CMake 3.24+
 #   - Git
+#   - Make (from MinGW or MSYS2)
 #
 # Usage:
-#   .\scripts\build-llama-cuda.ps1 [-Version b4535] [-Clean]
+#   .\scripts\build-llama-cuda.ps1 [-Version b7285] [-Clean]
 #
 # Output:
-#   lib\llama\libllama_windows_amd64.lib (static library with CUDA)
+#   lib\llama\libllama_windows_amd64.a (static library, CPU-only)
 #   lib\llama\llama.h, ggml*.h (headers)
 
 param(
-    [string]$Version = "b4785",  # Use newer version with MSVC chrono fix
+    [string]$Version = "b7285",  # Latest version with flash_attn_type and llama_memory API
     [switch]$Clean
 )
 
@@ -25,65 +28,37 @@ $OutDir = Join-Path $ProjectRoot "lib\llama"
 $TmpDir = Join-Path $env:TEMP "llama-cpp-build"
 $OriginalDir = Get-Location
 
-Write-Host "[BUILD] llama.cpp $Version for Windows with CUDA" -ForegroundColor Cyan
+Write-Host "[BUILD] llama.cpp $Version for Windows (CPU-only)" -ForegroundColor Cyan
 Write-Host "        Output: $OutDir"
 
-# Check for CUDA - try PATH first, then common install locations
-$nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
-if (-not $nvcc) {
-    # Try common CUDA install locations
-    $cudaPaths = @(
-        "$env:CUDA_PATH\bin",
-        "$env:CUDA_HOME\bin",
-        "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin",
-        "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin",
-        "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin",
-        "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin",
-        "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0\bin"
-    )
-    
-    foreach ($path in $cudaPaths) {
-        if (Test-Path "$path\nvcc.exe") {
-            $env:PATH = "$path;$env:PATH"
-            $nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
-            Write-Host "        Found CUDA at: $path" -ForegroundColor Yellow
-            break
-        }
-    }
-}
-
-if (-not $nvcc) {
-    Write-Host "[ERROR] CUDA Toolkit not found. Please install CUDA Toolkit and ensure nvcc is in PATH" -ForegroundColor Red
-    Write-Host "        Or set CUDA_PATH environment variable" -ForegroundColor Red
-    exit 1
-}
-$nvccOutput = & nvcc --version 2>&1 | Out-String
-if ($nvccOutput -match 'release (\d+\.\d+)') {
-    $cudaVersion = $Matches[1]
-} else {
-    $cudaVersion = "unknown"
-}
-Write-Host "        CUDA Version: $cudaVersion" -ForegroundColor Green
-
-# Check for Visual Studio
-$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vsWhere)) {
-    Write-Host "[ERROR] Visual Studio not found. Please install VS 2022 with C++ Desktop development" -ForegroundColor Red
-    exit 1
-}
-$vsPath = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if (-not $vsPath) {
-    Write-Host "[ERROR] Visual Studio C++ tools not found" -ForegroundColor Red
-    exit 1
-}
-Write-Host "        Visual Studio: $vsPath" -ForegroundColor Green
-
-# Always clean up temp directory from previous runs
+# Clean up any previous build directory
 if (Test-Path $TmpDir) {
-    Write-Host ""
     Write-Host "[CLEAN] Removing previous build directory..." -ForegroundColor Yellow
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }
+
+# Check for MinGW (required for compatibility with Go CGO)
+$gcc = Get-Command gcc -ErrorAction SilentlyContinue
+if (-not $gcc) {
+    Write-Host "[ERROR] MinGW not found. Please install MinGW-w64" -ForegroundColor Red
+    Write-Host "        Install via: choco install mingw" -ForegroundColor Red
+    Write-Host "        Or: https://www.mingw-w64.org/" -ForegroundColor Red
+    exit 1
+}
+$gccVersion = & gcc --version 2>&1 | Select-Object -First 1
+Write-Host "        GCC: $gccVersion" -ForegroundColor Green
+
+# Check for Make
+$make = Get-Command make -ErrorAction SilentlyContinue
+if (-not $make) {
+    Write-Host "[ERROR] Make not found. Please install make (from MinGW or MSYS2)" -ForegroundColor Red
+    Write-Host "        Install via: choco install make" -ForegroundColor Red
+    exit 1
+}
+Write-Host "        Make: Found" -ForegroundColor Green
+
+# Note: CURL support disabled for Windows (not needed for local model inference)
+Write-Host "        CURL: Disabled (not required for local models)" -ForegroundColor Yellow
 
 # Create directories
 if (-not (Test-Path $OutDir)) {
@@ -93,21 +68,50 @@ if (-not (Test-Path $TmpDir)) {
     New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 }
 
-# Verify temp directory was created
-if (-not (Test-Path $TmpDir)) {
-    Write-Host "[ERROR] Failed to create temp directory: $TmpDir" -ForegroundColor Red
-    exit 1
+# Clone or update llama.cpp
+Write-Host ""
+Set-Location $TmpDir
+
+# Clean build directory if it exists with wrong generator
+if (Test-Path "build\CMakeCache.txt") {
+    Write-Host "[CLEAN] Removing stale CMake cache..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force "build" -ErrorAction SilentlyContinue
 }
 
-# Clone llama.cpp
-Write-Host ""
-Write-Host "[CLONE] llama.cpp $Version..." -ForegroundColor Cyan
-Set-Location $TmpDir
-& git clone --depth 1 --branch $Version https://github.com/ggerganov/llama.cpp.git .
-if ($LASTEXITCODE -ne 0) { 
-    Write-Host "[ERROR] Git clone failed" -ForegroundColor Red
-    Set-Location $OriginalDir
-    exit 1
+# Check if this is already a git repo with the right version
+$isGitRepo = Test-Path ".git"
+$needsClone = $true
+
+if ($isGitRepo) {
+    Write-Host "[CHECK] Existing repo found, verifying version..." -ForegroundColor Cyan
+    $currentBranch = & git rev-parse --abbrev-ref HEAD 2>&1 | Out-String
+    $currentBranch = $currentBranch.Trim()
+    if ($currentBranch -eq $Version) {
+        Write-Host "        Already on $Version, using existing checkout" -ForegroundColor Green
+        $needsClone = $false
+    } else {
+        Write-Host "        Different version ($currentBranch), fetching $Version..." -ForegroundColor Yellow
+        Start-Process -FilePath "git" -ArgumentList "fetch","--depth","1","origin",$Version -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        Start-Process -FilePath "git" -ArgumentList "checkout",$Version -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        $checkBranch = & git rev-parse --abbrev-ref HEAD 2>&1 | Out-String
+        if ($checkBranch.Trim() -eq $Version -or $checkBranch.Trim() -eq "HEAD") {
+            Write-Host "        Switched to $Version" -ForegroundColor Green
+            $needsClone = $false
+        } else {
+            Write-Host "[WARN]  Could not switch versions, will use existing" -ForegroundColor Yellow
+            $needsClone = $false
+        }
+    }
+}
+
+if ($needsClone) {
+    Write-Host "[CLONE] llama.cpp $Version..." -ForegroundColor Cyan
+    & git clone --depth 1 --branch $Version https://github.com/ggerganov/llama.cpp.git .
+    if ($LASTEXITCODE -ne 0) { 
+        Write-Host "[ERROR] Git clone failed" -ForegroundColor Red
+        Set-Location $OriginalDir
+        exit 1
+    }
 }
 
 # Patch log.cpp to fix missing <chrono> include (MSVC build issue)
@@ -121,113 +125,114 @@ if (Test-Path $logCppPath) {
     }
 }
 
-# Setup MSVC environment and build
-Write-Host ""
-Write-Host "[BUILD] Building with CUDA support..." -ForegroundColor Cyan
+# Disable cpp-httplib build (not needed, causes MinGW issues)
+$httpCMakePath = Join-Path $TmpDir "vendor\cpp-httplib\CMakeLists.txt"
+if (Test-Path $httpCMakePath) {
+    Write-Host "[PATCH] Disabling cpp-httplib build (not needed for library)..." -ForegroundColor Yellow
+    # Replace the entire CMakeLists.txt with a minimal version
+    @"
+cmake_minimum_required(VERSION 3.14)
+project(cpp-httplib)
+# Disabled - not needed for static library build
+"@ | Set-Content $httpCMakePath -NoNewline
+}
 
-# Find vcvarsall.bat
-$vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-if (-not (Test-Path $vcvarsall)) {
-    Write-Host "[ERROR] vcvars64.bat not found at $vcvarsall" -ForegroundColor Red
+# Disable tools that depend on cpp-httplib
+$rootCMakePath = Join-Path $TmpDir "CMakeLists.txt"
+if (Test-Path $rootCMakePath) {
+    Write-Host "[PATCH] Disabling tools build (we only need the library)..." -ForegroundColor Yellow
+    $cmakeContent = Get-Content $rootCMakePath -Raw
+    # Comment out add_subdirectory(tools)
+    $cmakeContent = $cmakeContent -replace '(add_subdirectory\(tools\))', '# $1 # Disabled for library-only build'
+    # Comment out add_subdirectory(examples)
+    $cmakeContent = $cmakeContent -replace '(add_subdirectory\(examples\))', '# $1 # Disabled for library-only build'
+    $cmakeContent | Set-Content $rootCMakePath -NoNewline
+}
+
+# Build with MinGW (CPU-only)
+Write-Host ""
+Write-Host "[BUILD] Building with MinGW (CPU-only)..." -ForegroundColor Cyan
+
+# Configure with CMake
+Write-Host "        Configuring with CMake..." -ForegroundColor Yellow
+$cmakeArgs = @(
+    "-B", "build",
+    "-G", "MinGW Makefiles",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DLLAMA_STATIC=ON",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DLLAMA_BUILD_TESTS=OFF",
+    "-DLLAMA_BUILD_EXAMPLES=OFF",
+    "-DLLAMA_BUILD_SERVER=OFF",
+    "-DGGML_CUDA=OFF",
+    "-DLLAMA_CURL=OFF",
+    "-DGGML_NATIVE=ON",
+    "-DGGML_AVX=ON",
+    "-DGGML_AVX2=ON",
+    "-DGGML_FMA=ON",
+    "-DLLAMA_STANDALONE=OFF"
+)
+
+& cmake @cmakeArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] CMake configuration failed!" -ForegroundColor Red
     Set-Location $OriginalDir
     exit 1
 }
 
-# Create a batch script that sets up environment and runs cmake
-$buildScript = @"
-@echo off
-call "$vcvarsall"
-cd /d "$TmpDir"
-
-cmake -B build -G "Ninja" ^
-    -DCMAKE_BUILD_TYPE=Release ^
-    -DLLAMA_STATIC=ON ^
-    -DBUILD_SHARED_LIBS=OFF ^
-    -DLLAMA_BUILD_TESTS=OFF ^
-    -DLLAMA_BUILD_EXAMPLES=OFF ^
-    -DLLAMA_BUILD_SERVER=OFF ^
-    -DGGML_CUDA=ON ^
-    -DGGML_CUDA_FA_ALL_QUANTS=ON
-
-if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-
-cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
-if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-
-echo Build completed successfully!
-"@
-
-$buildScriptPath = Join-Path $TmpDir "build-cuda.cmd"
-$buildScript | Out-File -FilePath $buildScriptPath -Encoding ASCII
-
-# Run the build script
-Write-Host "        Running cmake with CUDA..." -ForegroundColor Yellow
-& cmd.exe /c $buildScriptPath
+# Build
+Write-Host "        Building with make..." -ForegroundColor Yellow
+& cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Build failed!" -ForegroundColor Red
     Set-Location $OriginalDir
     exit 1
 }
 
-# Find and combine static libraries
+Write-Host "        Build completed successfully!" -ForegroundColor Green
+
+# Copy all static libraries to output directory (preserving build structure)
 Write-Host ""
-Write-Host "[LIBS]  Creating combined library..." -ForegroundColor Cyan
+Write-Host "[LIBS]  Copying libraries..." -ForegroundColor Cyan
 
-$libFiles = Get-ChildItem -Path "$TmpDir\build" -Recurse -Filter "*.lib" | 
-    Where-Object { $_.Name -match "llama|ggml" }
-
-if ($libFiles.Count -eq 0) {
-    # Try .a files (MinGW/MSYS2 style)
-    $libFiles = Get-ChildItem -Path "$TmpDir\build" -Recurse -Filter "*.a" | 
-        Where-Object { $_.Name -match "llama|ggml" }
+# Create directory structure
+$buildOutDir = Join-Path $OutDir "windows_amd64_cuda"
+if (Test-Path $buildOutDir) {
+    Remove-Item -Recurse -Force $buildOutDir
 }
+New-Item -ItemType Directory -Force -Path $buildOutDir | Out-Null
+
+# Copy entire build directory (preserves library locations for linking)
+Write-Host "        Copying build tree..." -ForegroundColor Yellow
+Copy-Item -Recurse -Force "$TmpDir\build" $buildOutDir
+
+# Find all static libraries for verification
+$libFiles = Get-ChildItem -Path "$buildOutDir\build" -Recurse -Filter "*.a" | 
+    Where-Object { $_.Name -match "^(lib|ggml)" }
 
 if ($libFiles.Count -eq 0) {
-    Write-Host "[ERROR] No static libraries found in build directory" -ForegroundColor Red
+    Write-Host "[ERROR] No static libraries found" -ForegroundColor Red
     Set-Location $OriginalDir
     exit 1
 }
 
-Write-Host "        Found libraries:" -ForegroundColor Yellow
+Write-Host "        Copied libraries:" -ForegroundColor Yellow
 $libFiles | ForEach-Object { Write-Host "          - $($_.Name)" }
 
-$outputLib = Join-Path $OutDir "libllama_windows_amd64.lib"
+# Calculate total library size
+$totalSize = ($libFiles | Measure-Object -Property Length -Sum).Sum / 1MB
+Write-Host "        Total library size: $([math]::Round($totalSize, 1)) MB" -ForegroundColor Green
 
-# Check if we have .lib files (MSVC) or .a files (MinGW/GCC)
-$isLibFiles = $libFiles[0].Extension -eq ".lib"
-
-if ($isLibFiles) {
-    # Use lib.exe to combine MSVC .lib files - must run through vcvarsall
-    Write-Host "        Combining with lib.exe..." -ForegroundColor Yellow
-    
-    # Build the lib.exe command with all library paths
-    $libPaths = ($libFiles | ForEach-Object { "`"$($_.FullName)`"" }) -join " "
-    $libCmd = "lib.exe /OUT:`"$outputLib`" $libPaths"
-    
-    # Run lib.exe through VS Developer environment
-    $libBat = Join-Path $TmpDir "combine-libs.bat"
-    @"
-@echo off
-call "$vcvarsall" x64
-$libCmd
-"@ | Out-File -FilePath $libBat -Encoding ASCII
-    
-    & cmd.exe /c $libBat
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[WARN]  lib.exe failed, copying individual libraries instead" -ForegroundColor Yellow
-        # Copy all individual libraries to output dir
-        $libFiles | ForEach-Object {
-            Copy-Item $_.FullName $OutDir
-            Write-Host "          - $($_.Name)" -ForegroundColor Yellow
-        }
-    }
-} else {
-    # For .a files, just copy the main llama library
-    Write-Host "        Copying primary library..." -ForegroundColor Yellow
-    $primaryLib = $libFiles | Where-Object { $_.Name -match "libllama" } | Select-Object -First 1
-    if ($primaryLib) {
-        Copy-Item $primaryLib.FullName (Join-Path $OutDir "libllama_windows_amd64.a")
-        $outputLib = Join-Path $OutDir "libllama_windows_amd64.a"
+# Verify key libraries exist
+$requiredLibs = @("libllama.a", "ggml.a", "ggml-cpu.a", "ggml-base.a", "libcommon.a")
+foreach ($reqLib in $requiredLibs) {
+    $found = $libFiles | Where-Object { $_.Name -eq $reqLib }
+    if (-not $found) {
+        Write-Host "[ERROR] Required library $reqLib not found!" -ForegroundColor Red
+        Write-Host "        Available libraries:" -ForegroundColor Yellow
+        $libFiles | ForEach-Object { Write-Host "          - $($_.Name)" }
+        Set-Location $OriginalDir
+        exit 1
     }
 }
 
@@ -269,10 +274,14 @@ Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "[DONE]  Build complete!" -ForegroundColor Green
-Write-Host "        Library: $outputLib" -ForegroundColor White
+Write-Host "        Library: $outputLib (CPU-only)" -ForegroundColor White
 Write-Host "        Headers: llama.h, ggml*.h" -ForegroundColor White
 Write-Host ""
+Write-Host "[NOTE]  Windows builds are CPU-only" -ForegroundColor Yellow
+Write-Host "        For GPU acceleration, use Docker on Linux" -ForegroundColor Yellow
+Write-Host ""
 Write-Host "[NEXT]  Next steps:" -ForegroundColor Cyan
-Write-Host "        1. Run: .\build-cuda.bat" -ForegroundColor White
-Write-Host "        2. Place your .gguf model in a models directory" -ForegroundColor White
-Write-Host "        3. Set NORNICDB_EMBEDDING_PROVIDER=local" -ForegroundColor White
+Write-Host "        1. Run: make build" -ForegroundColor White
+Write-Host "        2. Download model: make download-bge" -ForegroundColor White
+Write-Host "        3. Set: `$env:NORNICDB_EMBEDDING_PROVIDER='local'" -ForegroundColor White
+Write-Host "        4. Run: .\bin\nornicdb.exe serve --no-auth" -ForegroundColor White
