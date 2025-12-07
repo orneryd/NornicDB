@@ -1,11 +1,11 @@
-# NornicDB CUDA - docker-compose -f docker/docker-compose.cuda.yml up
+# NornicDB CUDA Heimdall - docker-compose -f docker/docker-compose.cuda.yml up
 
 services:
   nornicdb:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.amd64-cuda
-    image: nornicdb-amd64-cuda
+      dockerfile: docker/Dockerfile.amd64-cuda-heimdall
+    image: timothyswt/nornicdb-amd64-cuda-bge-heimdall:latest
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -21,7 +21,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    restart: unless-stopped
 
 volumes:
   nornicdb-data:

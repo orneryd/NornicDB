@@ -186,8 +186,9 @@ int embed(struct llama_context* ctx, int32_t* tokens, int n_tokens, float* out, 
     }
     batch.n_tokens = n_tokens;
 
-    // Decode (this is where GPU compute happens)
-    if (llama_decode(ctx, batch) != 0) {
+    // Encode (for embedding models, use llama_encode not llama_decode)
+    // llama_decode is for causal/generation models, llama_encode is for BERT-style models
+    if (llama_encode(ctx, batch) != 0) {
         llama_batch_free(batch);
         return -1;
     }
