@@ -10,7 +10,7 @@ services:
     image: timothyswt/nornicdb-arm64-metal-bge-heimdall:latest
     container_name: nornicdb
     volumes:
-      - ./data/movies-test:/data
+      - ./data/test:/data
     ports:
       - "7474:7474" # HTTP API & Browser UI
       - "7687:7687" # Bolt protocol (Neo4j compatible)

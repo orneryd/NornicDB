@@ -806,27 +806,42 @@ func (ae *AsyncEngine) GetSchema() *SchemaManager {
 }
 
 func (ae *AsyncEngine) NodeCount() (int64, error) {
+	// Hold lock during entire operation to get consistent count
+	// This prevents race with flush which clears cache before writing to engine
+	ae.mu.RLock()
+	pendingCreates := int64(len(ae.nodeCache))
+	pendingDeletes := int64(len(ae.deleteNodes))
+	
 	count, err := ae.engine.NodeCount()
+	ae.mu.RUnlock()
+	
 	if err != nil {
 		return 0, err
 	}
-	ae.mu.RLock()
+	
 	// Adjust for pending creates and deletes
-	count += int64(len(ae.nodeCache))
-	count -= int64(len(ae.deleteNodes))
-	ae.mu.RUnlock()
+	count += pendingCreates
+	count -= pendingDeletes
 	return count, nil
 }
 
 func (ae *AsyncEngine) EdgeCount() (int64, error) {
+	// Hold lock during entire operation to get consistent count
+	// This prevents race with flush which clears cache before writing to engine
+	ae.mu.RLock()
+	pendingCreates := int64(len(ae.edgeCache))
+	pendingDeletes := int64(len(ae.deleteEdges))
+	
 	count, err := ae.engine.EdgeCount()
+	ae.mu.RUnlock()
+	
 	if err != nil {
 		return 0, err
 	}
-	ae.mu.RLock()
-	count += int64(len(ae.edgeCache))
-	count -= int64(len(ae.deleteEdges))
-	ae.mu.RUnlock()
+	
+	// Adjust for pending creates and deletes
+	count += pendingCreates
+	count -= pendingDeletes
 	return count, nil
 }
 
