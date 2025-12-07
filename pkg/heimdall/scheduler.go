@@ -96,14 +96,17 @@ func NewManager(cfg Config) (*Manager, error) {
 		gpuLayers = -1 // Auto
 	}
 
-	// Context and batch size - maxed out (no performance impact)
+	// Context and batch size - balanced for memory efficiency
+	// Heimdall produces structured JSON (~500-2000 tokens max), so 8K context is ample.
+	// Using 32K would allocate ~2.5GB GPU memory just for KV cache!
+	// Note: Token budgets in types.go allow up to 16K, but actual usage rarely exceeds 4K.
 	contextSize := cfg.ContextSize
 	if contextSize == 0 {
-		contextSize = 32768 // 32K max for qwen2.5-0.5b
+		contextSize = 8192 // 8K is plenty for structured JSON output
 	}
 	batchSize := cfg.BatchSize
 	if batchSize == 0 {
-		batchSize = 8192 // 8K max batch
+		batchSize = 2048 // Match typical prompt size
 	}
 
 	fmt.Printf("🛡️ Loading Heimdall model: %s\n", modelPath)
@@ -126,7 +129,7 @@ func NewManager(cfg Config) (*Manager, error) {
 
 	// Log token budget allocation
 	fmt.Printf("   Token budget: %dK context = %dK system + %dK user (multi-batch prefill)\n",
-		MaxContextTokens/1024, MaxSystemPromptTokens/1024, MaxUserMessageTokens/1024)
+		MaxContextTokens()/1024, MaxSystemPromptTokens()/1024, MaxUserMessageTokens()/1024)
 
 	return &Manager{
 		generator: generator,

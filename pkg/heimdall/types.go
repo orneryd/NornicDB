@@ -188,9 +188,9 @@ func DefaultConfig() Config {
 		BifrostEnabled:   false, // Bifrost follows Heimdall state
 		ModelsDir:        "",    // Empty = use NORNICDB_MODELS_DIR env var
 		Model:            "qwen2.5-0.5b-instruct",
-		ContextSize:      32768, // 32K max (no perf impact)
-		BatchSize:        8192,  // 8K max (no perf impact)
-		MaxTokens:        1024,  // 1K output (faster)
+		ContextSize:      8192, // 8K (memory efficient, saves ~2GB GPU RAM vs 32K)
+		BatchSize:        2048, // 2K batch size
+		MaxTokens:        1024, // 1K output (faster)
 		Temperature:      0.1,
 		GPULayers:        -1, // Auto
 		AnomalyDetection: true,
@@ -215,6 +215,9 @@ type FeatureFlagsSource interface {
 	GetHeimdallAnomalyDetection() bool
 	GetHeimdallRuntimeDiagnosis() bool
 	GetHeimdallMemoryCuration() bool
+	GetHeimdallMaxContextTokens() int
+	GetHeimdallMaxSystemTokens() int
+	GetHeimdallMaxUserTokens() int
 }
 
 // ConfigFromFeatureFlags creates Heimdall config from feature flags.
@@ -428,21 +431,74 @@ type PromptExample struct {
 	ActionJSON string // The JSON action Heimdall should output
 }
 
-// Token budget constants for Heimdall (16K context for efficiency)
+// Token budget constants for Heimdall - DEFAULT values (can be overridden via config)
+// These are used when config values are 0 or not provided.
+// Configure via environment variables:
+//   - NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS (default: 8192)
+//   - NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS (default: 6000)
+//   - NORNICDB_HEIMDALL_MAX_USER_TOKENS (default: 2000)
 const (
-	// MaxContextTokens is the total context window (16K for balanced performance)
-	MaxContextTokens = 16384
+	// DefaultMaxContextTokens is the default context window (8K for memory efficiency)
+	DefaultMaxContextTokens = 8192
 
-	// MaxSystemPromptTokens is reserved for system prompt (actions + instructions)
-	// This leaves ~4K for user message
-	MaxSystemPromptTokens = 12000
+	// DefaultMaxSystemPromptTokens is the default system prompt budget
+	DefaultMaxSystemPromptTokens = 6000
 
-	// MaxUserMessageTokens is reserved for the user's single-shot command
-	MaxUserMessageTokens = 4000
+	// DefaultMaxUserMessageTokens is the default user message budget
+	DefaultMaxUserMessageTokens = 2000
 
 	// TokensPerChar is a rough estimate (~4 chars per token for English)
 	TokensPerChar = 0.25
 )
+
+// TokenBudget holds the configurable token limits for prompt construction.
+// Use GetTokenBudget() to get the current budget from config.
+type TokenBudget struct {
+	MaxContext int // Total context window
+	MaxSystem  int // System prompt budget
+	MaxUser    int // User message budget
+}
+
+// tokenBudget is the active token budget (set via SetTokenBudget or defaults)
+var tokenBudget = TokenBudget{
+	MaxContext: DefaultMaxContextTokens,
+	MaxSystem:  DefaultMaxSystemPromptTokens,
+	MaxUser:    DefaultMaxUserMessageTokens,
+}
+
+// SetTokenBudget configures the token budget from feature flags.
+// Call this during initialization to apply config values.
+func SetTokenBudget(flags FeatureFlagsSource) {
+	if maxCtx := flags.GetHeimdallMaxContextTokens(); maxCtx > 0 {
+		tokenBudget.MaxContext = maxCtx
+	}
+	if maxSys := flags.GetHeimdallMaxSystemTokens(); maxSys > 0 {
+		tokenBudget.MaxSystem = maxSys
+	}
+	if maxUser := flags.GetHeimdallMaxUserTokens(); maxUser > 0 {
+		tokenBudget.MaxUser = maxUser
+	}
+}
+
+// GetTokenBudget returns the current token budget.
+func GetTokenBudget() TokenBudget {
+	return tokenBudget
+}
+
+// MaxContextTokens returns the configured max context tokens.
+func MaxContextTokens() int {
+	return tokenBudget.MaxContext
+}
+
+// MaxSystemPromptTokens returns the configured max system prompt tokens.
+func MaxSystemPromptTokens() int {
+	return tokenBudget.MaxSystem
+}
+
+// MaxUserMessageTokens returns the configured max user message tokens.
+func MaxUserMessageTokens() int {
+	return tokenBudget.MaxUser
+}
 
 // EstimateTokens provides a rough token count estimate for a string.
 // Uses ~4 chars per token which is typical for English text.
@@ -457,7 +513,7 @@ func EstimateTokens(text string) int {
 func (p *PromptContext) BuildFinalPrompt() string {
 	// Try full prompt first
 	fullPrompt := p.buildFullPrompt()
-	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens {
+	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens() {
 		return fullPrompt
 	}
 
@@ -590,17 +646,17 @@ func (p *PromptContext) ValidateTokenBudget() error {
 	systemTokens := p.EstimatedSystemTokens()
 	userTokens := EstimateTokens(p.UserMessage)
 
-	if systemTokens > MaxSystemPromptTokens {
+	if systemTokens > MaxSystemPromptTokens() {
 		return fmt.Errorf("system prompt too large: ~%d tokens (max %d). "+
 			"Reduce plugin instructions or examples",
-			systemTokens, MaxSystemPromptTokens)
+			systemTokens, MaxSystemPromptTokens())
 	}
 
 	totalTokens := systemTokens + userTokens
-	if totalTokens > MaxContextTokens {
+	if totalTokens > MaxContextTokens() {
 		return fmt.Errorf("total prompt too large: ~%d tokens (max %d). "+
 			"System: ~%d, User: ~%d. Try a shorter message",
-			totalTokens, MaxContextTokens, systemTokens, userTokens)
+			totalTokens, MaxContextTokens(), systemTokens, userTokens)
 	}
 
 	return nil
@@ -626,11 +682,11 @@ func (p *PromptContext) GetBudgetInfo() PromptBudgetInfo {
 		SystemTokens:    systemTokens,
 		UserTokens:      userTokens,
 		TotalTokens:     systemTokens + userTokens,
-		MaxSystem:       MaxSystemPromptTokens,
-		MaxUser:         MaxUserMessageTokens,
-		MaxTotal:        MaxContextTokens,
-		SystemAvailable: MaxSystemPromptTokens - systemTokens,
-		UserAvailable:   MaxUserMessageTokens - userTokens,
+		MaxSystem:       MaxSystemPromptTokens(),
+		MaxUser:         MaxUserMessageTokens(),
+		MaxTotal:        MaxContextTokens(),
+		SystemAvailable: MaxSystemPromptTokens() - systemTokens,
+		UserAvailable:   MaxUserMessageTokens() - userTokens,
 	}
 }
 

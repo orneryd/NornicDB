@@ -340,13 +340,16 @@ type FeatureFlagsConfig struct {
 	HeimdallGPULayers int
 
 	// Context size for Heimdall model (max tokens in context window)
-	// Default: 32768 (32K - maxed out, no performance impact)
-	// Environment: NORNICDB_HEIMDALL_CONTEXT_SIZE (default: 32768)
+	// This controls GPU memory usage for KV cache. Lower = less memory.
+	// Default: 8192 (8K) - memory efficient, saves ~2GB GPU RAM vs 32K
+	// For longer conversations, increase to 16384 or 32768
+	// Environment: NORNICDB_HEIMDALL_CONTEXT_SIZE (default: 8192)
 	HeimdallContextSize int
 
 	// Batch size for Heimdall model (tokens processed at once)
-	// Default: 8192 (8K - maxed out, no performance impact)
-	// Environment: NORNICDB_HEIMDALL_BATCH_SIZE (default: 8192)
+	// Should be <= ContextSize. Higher values may improve throughput.
+	// Default: 2048 (2K) - balanced for typical prompt sizes
+	// Environment: NORNICDB_HEIMDALL_BATCH_SIZE (default: 2048)
 	HeimdallBatchSize int
 
 	// Max tokens for Heimdall generation
@@ -368,6 +371,32 @@ type FeatureFlagsConfig struct {
 	// Enable Heimdall memory curation (experimental)
 	// Environment: NORNICDB_HEIMDALL_MEMORY_CURATION (default: false)
 	HeimdallMemoryCuration bool
+
+	// === Token Budget Settings for Heimdall Prompt Construction ===
+	// These control how the context window is partitioned between system prompt,
+	// user message, and generation output. Tune these if you see truncation or
+	// want to allow longer prompts/responses.
+	//
+	// Memory impact: Larger context = more GPU memory for KV cache
+	// - 8K context ≈ 200-400MB GPU RAM
+	// - 16K context ≈ 400-800MB GPU RAM
+	// - 32K context ≈ 800-1600MB GPU RAM
+
+	// Max context tokens for prompt validation (should match HeimdallContextSize)
+	// This is the total token budget for system + user + output combined.
+	// Environment: NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS (default: 8192)
+	HeimdallMaxContextTokens int
+
+	// Max tokens reserved for system prompt (actions + instructions + Cypher primer)
+	// The system prompt includes: action definitions, Cypher reference, and plugin context.
+	// Remaining context is split between user message and model output.
+	// Environment: NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS (default: 6000)
+	HeimdallMaxSystemTokens int
+
+	// Max tokens reserved for user message input
+	// Longer user messages (complex queries, multi-line inputs) need more budget.
+	// Environment: NORNICDB_HEIMDALL_MAX_USER_TOKENS (default: 2000)
+	HeimdallMaxUserTokens int
 }
 
 // Heimdall config getter methods for heimdall.FeatureFlagsSource interface
@@ -381,6 +410,9 @@ func (f *FeatureFlagsConfig) GetHeimdallTemperature() float32   { return f.Heimd
 func (f *FeatureFlagsConfig) GetHeimdallAnomalyDetection() bool { return f.HeimdallAnomalyDetection }
 func (f *FeatureFlagsConfig) GetHeimdallRuntimeDiagnosis() bool { return f.HeimdallRuntimeDiagnosis }
 func (f *FeatureFlagsConfig) GetHeimdallMemoryCuration() bool   { return f.HeimdallMemoryCuration }
+func (f *FeatureFlagsConfig) GetHeimdallMaxContextTokens() int  { return f.HeimdallMaxContextTokens }
+func (f *FeatureFlagsConfig) GetHeimdallMaxSystemTokens() int   { return f.HeimdallMaxSystemTokens }
+func (f *FeatureFlagsConfig) GetHeimdallMaxUserTokens() int     { return f.HeimdallMaxUserTokens }
 
 // LoadFromEnv loads configuration from environment variables.
 //
@@ -736,15 +768,20 @@ func LoadFromEnv() *Config {
 	// Opt-in cognitive database features - disabled by default
 	config.Features.HeimdallEnabled = getEnvBool("NORNICDB_HEIMDALL_ENABLED", false)
 	config.Features.HeimdallModel = getEnv("NORNICDB_HEIMDALL_MODEL", "qwen2.5-0.5b-instruct")
-	config.Features.HeimdallGPULayers = getEnvInt("NORNICDB_HEIMDALL_GPU_LAYERS", -1)        // -1 = auto
-	config.Features.HeimdallContextSize = getEnvInt("NORNICDB_HEIMDALL_CONTEXT_SIZE", 32768) // 32K max (no perf impact)
-	config.Features.HeimdallBatchSize = getEnvInt("NORNICDB_HEIMDALL_BATCH_SIZE", 8192)      // 8K max (no perf impact)
-	config.Features.HeimdallMaxTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_TOKENS", 1024)      // 1K output (faster)
+	config.Features.HeimdallGPULayers = getEnvInt("NORNICDB_HEIMDALL_GPU_LAYERS", -1)       // -1 = auto
+	config.Features.HeimdallContextSize = getEnvInt("NORNICDB_HEIMDALL_CONTEXT_SIZE", 8192) // 8K (memory efficient)
+	config.Features.HeimdallBatchSize = getEnvInt("NORNICDB_HEIMDALL_BATCH_SIZE", 2048)     // 2K batch size
+	config.Features.HeimdallMaxTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_TOKENS", 1024)     // 1K output (faster)
 	config.Features.HeimdallTemperature = float32(getEnvFloat("NORNICDB_HEIMDALL_TEMPERATURE", 0.1))
 	// Sub-features default to true when Heimdall is enabled
 	config.Features.HeimdallAnomalyDetection = getEnvBool("NORNICDB_HEIMDALL_ANOMALY_DETECTION", config.Features.HeimdallEnabled)
 	config.Features.HeimdallRuntimeDiagnosis = getEnvBool("NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS", config.Features.HeimdallEnabled)
 	config.Features.HeimdallMemoryCuration = getEnvBool("NORNICDB_HEIMDALL_MEMORY_CURATION", false) // Experimental
+
+	// Token budget settings for prompt construction
+	config.Features.HeimdallMaxContextTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS", 8192) // Match context size
+	config.Features.HeimdallMaxSystemTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS", 6000)   // System prompt budget
+	config.Features.HeimdallMaxUserTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_USER_TOKENS", 2000)       // User message budget
 
 	return config
 }

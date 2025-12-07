@@ -601,6 +601,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	globalConfig := nornicConfig.LoadFromEnv()
 	if globalConfig.Features.HeimdallEnabled {
 		log.Println("🛡️  Heimdall AI Assistant initializing...")
+		// Configure token budget from environment variables
+		heimdall.SetTokenBudget(&globalConfig.Features)
 		heimdallCfg := heimdall.ConfigFromFeatureFlags(&globalConfig.Features)
 		manager, err := heimdall.NewManager(heimdallCfg)
 		if err != nil {
