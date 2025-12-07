@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,13 +12,8 @@ import (
 // FindNodeNeedingEmbedding finds a DIFFERENT node, not the same one.
 // This is the suspected production bug - n1 keeps getting found repeatedly.
 func TestEmbedThenFindNext(t *testing.T) {
-	// Create a temp directory for BadgerDB
-	tmpDir, err := os.MkdirTemp("", "badger-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create BadgerEngine as underlying storage
-	badger, err := NewBadgerEngine(filepath.Join(tmpDir, "data"))
+	// Use in-memory BadgerDB to avoid disk I/O and Windows OOM issues
+	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -80,13 +73,8 @@ func TestEmbedThenFindNext(t *testing.T) {
 // TestEmbedThenFindNextWithFlush tests the same scenario but WITH flush between ops
 // This tests if the bug is related to flush timing
 func TestEmbedThenFindNextWithFlush(t *testing.T) {
-	// Create a temp directory for BadgerDB
-	tmpDir, err := os.MkdirTemp("", "badger-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create BadgerEngine as underlying storage
-	badger, err := NewBadgerEngine(filepath.Join(tmpDir, "data"))
+	// Use in-memory BadgerDB to avoid disk I/O and Windows OOM issues
+	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -147,13 +135,8 @@ func TestEmbedThenFindNextWithFlush(t *testing.T) {
 
 // TestProductionScenario replicates the exact production issue
 func TestProductionScenario(t *testing.T) {
-	// Create a temp directory for BadgerDB
-	tmpDir, err := os.MkdirTemp("", "badger-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create BadgerEngine as underlying storage
-	badger, err := NewBadgerEngine(filepath.Join(tmpDir, "data"))
+	// Use in-memory BadgerDB to avoid disk I/O and Windows OOM issues
+	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
 

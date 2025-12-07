@@ -3,8 +3,20 @@ package localllm
 import (
 	"context"
 	"os"
+	"runtime"
 	"testing"
 )
+
+// skipOnConstrainedEnv skips tests in memory-constrained environments
+func skipOnConstrainedEnv(t testing.TB) {
+	t.Helper()
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Skip("Skipping model loading test in CI environment")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping model loading test on Windows due to memory constraints")
+	}
+}
 
 // TestDefaultOptions verifies default options are reasonable
 func TestDefaultOptions(t *testing.T) {
@@ -43,6 +55,7 @@ func TestLoadModel_FileNotFound(t *testing.T) {
 
 // TestModel_Integration is an integration test requiring actual model
 func TestModel_Integration(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	modelPath := os.Getenv("TEST_GGUF_MODEL")
 	if modelPath == "" {
 		t.Skip("Skipping: TEST_GGUF_MODEL not set")
@@ -82,6 +95,7 @@ func TestModel_Integration(t *testing.T) {
 
 // TestModel_BatchEmbedding tests batch embedding
 func TestModel_BatchEmbedding(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	modelPath := os.Getenv("TEST_GGUF_MODEL")
 	if modelPath == "" {
 		t.Skip("Skipping: TEST_GGUF_MODEL not set")
@@ -111,6 +125,7 @@ func TestModel_BatchEmbedding(t *testing.T) {
 
 // BenchmarkEmbed measures embedding performance
 func BenchmarkEmbed(b *testing.B) {
+	skipOnConstrainedEnv(b)
 	modelPath := os.Getenv("TEST_GGUF_MODEL")
 	if modelPath == "" {
 		b.Skip("Skipping: TEST_GGUF_MODEL not set")

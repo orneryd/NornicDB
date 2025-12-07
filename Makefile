@@ -502,7 +502,7 @@ test:
 ifeq ($(HOST_OS),windows)
 	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
 else
-	@set go test -p 1 -parallel 4 -timeout 30m ./...
+	go test -timeout 30m ./...
 endif
 
 # Test with limited parallelism (useful on Windows with memory constraints)
@@ -510,7 +510,7 @@ test-serial:
 ifeq ($(HOST_OS),windows)
 	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
 else
-	@set go test -p 1 -parallel 4 -timeout 30m ./...
+	go test -p 1 -parallel 4 -timeout 30m ./...
 endif
 	
 
@@ -520,7 +520,7 @@ test-pkg:
 ifeq ($(HOST_OS),windows)
 	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -v -timeout 10m $(PKG)"
 else
-	@set go test -v -timeout 10m $(PKG)
+	go test -v -timeout 10m $(PKG)
 endif
 
 # ==============================================================================

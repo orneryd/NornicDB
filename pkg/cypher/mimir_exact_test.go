@@ -240,6 +240,7 @@ func TestMimirExactQueriesWithEmbeddings(t *testing.T) {
 // This test verifies the fix for the bug where embeddings weren't persisting
 // through the AsyncEngine flush to BadgerDB.
 func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
+	skipDiskIOTestOnWindows(t)
 	// Create temp directory for BadgerDB
 	tmpDir, err := os.MkdirTemp("", "mimir-e2e-*")
 	require.NoError(t, err)

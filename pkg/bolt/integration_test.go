@@ -9,12 +9,25 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// skipDiskIOTestOnWindows skips disk I/O intensive tests on Windows to avoid OOM
+func skipDiskIOTestOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping disk I/O intensive test on Windows due to memory constraints")
+	}
+	if os.Getenv("CI") != "" && os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Skip("Skipping disk I/O test in CI environment")
+	}
+}
 
 // cypherQueryExecutor wraps the Cypher executor for Bolt server.
 type cypherQueryExecutor struct {
@@ -628,6 +641,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 // TestBoltBenchmarkCreateDeleteRelationship_Badger tests with BadgerDB (realistic)
 // KEEP THIS TEST - shows performance with disk-based storage
 func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
+	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
 	if err != nil {

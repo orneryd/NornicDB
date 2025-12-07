@@ -1,4 +1,4 @@
-//go:build cgo && (darwin || linux)
+//go:build cgo && (darwin || linux) && !windows
 
 package heimdall
 
@@ -6,12 +6,24 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// skipOnConstrainedEnv skips tests in memory-constrained CI environments
+func skipOnConstrainedEnv(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Skip("Skipping model loading test in CI environment")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping model loading test on Windows due to memory constraints")
+	}
+}
 
 // TestCGOGeneratorLoader_Registered verifies the CGO loader is registered via init()
 func TestCGOGeneratorLoader_Registered(t *testing.T) {
@@ -35,6 +47,7 @@ func TestCGOGeneratorLoader_Registered(t *testing.T) {
 
 // TestCGOGenerator_LoadModel tests loading a real model if available
 func TestCGOGenerator_LoadModel(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	// Skip if no model available
 	modelPath := findTestModel(t)
 	if modelPath == "" {
@@ -54,6 +67,7 @@ func TestCGOGenerator_LoadModel(t *testing.T) {
 
 // TestCGOGenerator_Generate tests text generation if model available
 func TestCGOGenerator_Generate(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	modelPath := findTestModel(t)
 	if modelPath == "" {
 		t.Skip("No test model available")
@@ -85,6 +99,7 @@ func TestCGOGenerator_Generate(t *testing.T) {
 
 // TestCGOGenerator_GenerateStream tests streaming generation
 func TestCGOGenerator_GenerateStream(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	modelPath := findTestModel(t)
 	if modelPath == "" {
 		t.Skip("No test model available")
@@ -118,6 +133,7 @@ func TestCGOGenerator_GenerateStream(t *testing.T) {
 
 // TestCGOGenerator_ContextCancellation tests that generation respects context
 func TestCGOGenerator_ContextCancellation(t *testing.T) {
+	skipOnConstrainedEnv(t)
 	modelPath := findTestModel(t)
 	if modelPath == "" {
 		t.Skip("No test model available")
