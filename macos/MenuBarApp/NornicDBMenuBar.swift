@@ -288,13 +288,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func openConfig() {
-        let configPath = NSString(string: "~/Library/Application Support/NornicDB/config.yaml").expandingTildeInPath
+        let configPath = NSString(string: "~/.nornicdb/config.yaml").expandingTildeInPath
         NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
     }
     
     @objc func showLogs() {
-        let logPath = "/usr/local/var/log/nornicdb"
-        NSWorkspace.shared.open(URL(fileURLWithPath: logPath))
+        // Open both log files in Console.app for live viewing
+        let stderrLog = "/usr/local/var/log/nornicdb/stderr.log"
+        let stdoutLog = "/usr/local/var/log/nornicdb/stdout.log"
+        
+        // Try to open in Console.app first (native macOS log viewer)
+        if let consoleApp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Console") {
+            NSWorkspace.shared.open([URL(fileURLWithPath: stderrLog), URL(fileURLWithPath: stdoutLog)],
+                                   withApplicationAt: consoleApp,
+                                   configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            // Fallback: open in default text editor
+            NSWorkspace.shared.open(URL(fileURLWithPath: stderrLog))
+            NSWorkspace.shared.open(URL(fileURLWithPath: stdoutLog))
+        }
     }
     
     @objc func downloadModels() {

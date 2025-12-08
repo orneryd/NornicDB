@@ -67,7 +67,7 @@ embedding:
   enabled: false
   
   # Provider: "local" (GGUF), "ollama", or "openai"
-  provider: "ollama"
+  provider: "local"
   
   # Model name (depends on provider)
   model: "bge-m3"

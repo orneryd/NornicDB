@@ -192,7 +192,7 @@ embedding:
   #   local: GPU-accelerated local GGUF models (llama.cpp)
   #   ollama: Ollama API service
   #   openai: OpenAI API (requires API key)
-  provider: ollama
+  provider: local
 
   # Model name
   # Env: NORNICDB_EMBEDDING_MODEL

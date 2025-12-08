@@ -1170,8 +1170,8 @@ func LoadDefaults() *Config {
 	config.Memory.DecayEnabled = true
 	config.Memory.DecayInterval = time.Hour
 	config.Memory.ArchiveThreshold = 0.05
-	config.Memory.EmbeddingEnabled = false // Disabled by default - opt-in feature
-	config.Memory.EmbeddingProvider = "ollama"
+	config.Memory.EmbeddingEnabled = false    // Disabled by default - opt-in feature
+	config.Memory.EmbeddingProvider = "local" // Use local GGUF models by default
 	config.Memory.EmbeddingModel = "bge-m3"
 	config.Memory.EmbeddingAPIURL = "http://localhost:11434"
 	config.Memory.EmbeddingDimensions = 1024
