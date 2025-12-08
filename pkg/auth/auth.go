@@ -1277,6 +1277,74 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 	return token, nil
 }
 
+// GenerateAPIToken creates a stateless API token for the given user.
+// These tokens are for MCP servers and other API integrations.
+// The token is not stored; it's generated on-demand and validated by signature.
+//
+// Parameters:
+//   - user: The authenticated user requesting the token
+//   - subject: A descriptive label for the token (e.g., "my-mcp-server")
+//   - expiry: Token lifetime (0 = never expires)
+//
+// Returns the raw JWT token string.
+func (a *Authenticator) GenerateAPIToken(user *User, subject string, expiry time.Duration) (string, error) {
+	if len(a.config.JWTSecret) == 0 {
+		return "", ErrMissingSecret
+	}
+
+	now := time.Now().Unix()
+
+	// Convert roles to strings
+	roles := make([]string, len(user.Roles))
+	for i, r := range user.Roles {
+		roles[i] = string(r)
+	}
+
+	claims := JWTClaims{
+		Sub:      user.ID,
+		Email:    user.Email,
+		Username: user.Username,
+		Roles:    roles,
+		Iat:      now,
+	}
+
+	// Set expiration if provided
+	if expiry > 0 {
+		claims.Exp = now + int64(expiry.Seconds())
+	}
+
+	// Build JWT manually (header.payload.signature)
+	header := map[string]string{
+		"alg": "HS256",
+		"typ": "JWT",
+	}
+
+	headerJSON, _ := json.Marshal(header)
+	claimsJSON, _ := json.Marshal(claims)
+
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	// Sign with HMAC-SHA256
+	message := headerB64 + "." + claimsB64
+	mac := hmac.New(sha256.New, a.config.JWTSecret)
+	mac.Write([]byte(message))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	token := message + "." + signature
+
+	a.logAudit(AuditEvent{
+		Timestamp: time.Now(),
+		EventType: "api_token_generated",
+		Username:  user.Username,
+		UserID:    user.ID,
+		Success:   true,
+		Details:   fmt.Sprintf("API token generated for subject '%s', expiry=%v", subject, expiry),
+	})
+
+	return token, nil
+}
+
 // JWT Generation and Validation
 
 // generateJWT creates a JWT token for the user.

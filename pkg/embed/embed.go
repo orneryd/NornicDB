@@ -104,13 +104,18 @@ type Embedder interface {
 //		Timeout:    60 * time.Second,
 //	}
 type Config struct {
-	Provider   string        // ollama, openai
+	Provider   string        // ollama, openai, local
 	APIURL     string        // e.g., http://localhost:11434
 	APIPath    string        // e.g., /api/embeddings or /v1/embeddings
 	APIKey     string        // For OpenAI
 	Model      string        // e.g., mxbai-embed-large
 	Dimensions int           // Expected dimensions (for validation)
 	Timeout    time.Duration // Request timeout
+
+	// Local GGUF model settings (used when Provider="local")
+	ModelsDir      string        // Directory containing .gguf models (default: ./models)
+	GPULayers      int           // GPU offload layers: -1=auto, 0=CPU only
+	WarmupInterval time.Duration // Model warmup interval (0=disabled)
 }
 
 // DefaultOllamaConfig returns configuration for local Ollama with mxbai-embed-large.

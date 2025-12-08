@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Database, Search, Play, History, Terminal, 
   Network, HardDrive, Clock, Activity, ChevronRight,
-  Sparkles, X, Zap, Loader2, MessageCircle
+  Sparkles, X, Zap, Loader2, MessageCircle, Shield
 } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import { Bifrost } from '../../Bifrost';
@@ -34,6 +35,7 @@ export function Browser() {
   const [embedTriggering, setEmbedTriggering] = useState(false);
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
   const [showAIChat, setShowAIChat] = useState(false);
+  const navigate = useNavigate();
 
   // Fetch embed stats periodically
   useEffect(() => {
@@ -196,6 +198,16 @@ export function Browser() {
             >
               <MessageCircle className="w-4 h-4" />
               <span>AI Assistant</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/security')}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
+              title="Security & API Tokens"
+            >
+              <Shield className="w-4 h-4" />
+              <span>Security</span>
             </button>
 
             <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${connected ? 'bg-nornic-primary/20 status-connected' : 'bg-red-500/20'}`}>

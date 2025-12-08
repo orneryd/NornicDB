@@ -17,6 +17,8 @@
         <string>7687</string>
         <string>--http-port</string>
         <string>7474</string>
+        <string>--admin-password</string>
+        <string>admin</string>
     </array>
     
     <!-- Working directory -->

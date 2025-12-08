@@ -135,6 +135,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -266,6 +267,15 @@ type Config struct {
 	// Set to true for API-only deployments (e.g., embedded use, microservices)
 	// Env: NORNICDB_HEADLESS=true|false
 	Headless bool
+
+	// Plugins Configuration
+	// HeimdallPluginsDir is the directory for Heimdall plugins
+	// Env: NORNICDB_HEIMDALL_PLUGINS_DIR
+	HeimdallPluginsDir string
+
+	// Features configuration (passed from main config loading)
+	// This contains feature flags like HeimdallEnabled loaded from YAML/env
+	Features *nornicConfig.FeatureFlagsConfig
 }
 
 // DefaultConfig returns Neo4j-compatible default server configuration.
@@ -598,12 +608,20 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Heimdall - AI Assistant for Database Management
 	// ==========================================================================
 	var heimdallHandler *heimdall.Handler
-	globalConfig := nornicConfig.LoadFromEnv()
-	if globalConfig.Features.HeimdallEnabled {
+	// Use features config passed from main.go (which loads from YAML + env)
+	// Fall back to LoadFromEnv() if not provided (for backwards compatibility)
+	var featuresConfig *nornicConfig.FeatureFlagsConfig
+	if config.Features != nil {
+		featuresConfig = config.Features
+	} else {
+		globalConfig := nornicConfig.LoadFromEnv()
+		featuresConfig = &globalConfig.Features
+	}
+	if featuresConfig.HeimdallEnabled {
 		log.Println("🛡️  Heimdall AI Assistant initializing...")
 		// Configure token budget from environment variables
-		heimdall.SetTokenBudget(&globalConfig.Features)
-		heimdallCfg := heimdall.ConfigFromFeatureFlags(&globalConfig.Features)
+		heimdall.SetTokenBudget(featuresConfig)
+		heimdallCfg := heimdall.ConfigFromFeatureFlags(featuresConfig)
 		manager, err := heimdall.NewManager(heimdallCfg)
 		if err != nil {
 			log.Printf("⚠️  Heimdall initialization failed: %v", err)
@@ -629,10 +647,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			// Load plugins from Heimdall plugins directory
 			// Auto-detects plugin types: function plugins (APOC) and Heimdall plugins
 			// Example: watcher.so (Heimdall), custom subsystem plugins
-			pluginsDir := os.Getenv("NORNICDB_HEIMDALL_PLUGINS_DIR")
-			if pluginsDir != "" {
-				if err := nornicdb.LoadPluginsFromDir(pluginsDir, &subsystemCtx); err != nil {
-					log.Printf("   ⚠️  Failed to load plugins from %s: %v", pluginsDir, err)
+			if config.HeimdallPluginsDir != "" {
+				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
+					log.Printf("   ⚠️  Failed to load plugins from %s: %v", config.HeimdallPluginsDir, err)
 				}
 			}
 
@@ -988,6 +1005,7 @@ func (s *Server) buildRouter() http.Handler {
 	mux.HandleFunc("/auth/token", s.handleToken)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 	mux.HandleFunc("/auth/me", s.withAuth(s.handleMe, auth.PermRead))
+	mux.HandleFunc("/auth/api-token", s.withAuth(s.handleGenerateAPIToken, auth.PermAdmin)) // Admin only - generate API tokens
 
 	// User management (admin only)
 	mux.HandleFunc("/auth/users", s.withAuth(s.handleUsers, auth.PermUserManage))
@@ -1105,10 +1123,15 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			claims, err = s.handleBasicAuth(authHeader, r)
 		} else {
 			// Try Bearer/JWT token extraction
+			// Check both "nornicdb_token" (preferred) and "token" (legacy) cookies
+			cookieToken := getCookie(r, "nornicdb_token")
+			if cookieToken == "" {
+				cookieToken = getCookie(r, "token")
+			}
 			token := auth.ExtractToken(
 				authHeader,
 				r.Header.Get("X-API-Key"),
-				getCookie(r, "token"),
+				cookieToken,
 				r.URL.Query().Get("token"),
 				r.URL.Query().Get("api_key"),
 			)
@@ -2140,18 +2163,153 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set HTTP-only cookie for browser sessions (secure auth)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "nornicdb_token",
+		Value:    tokenResp.AccessToken,
+		Path:     "/",
+		HttpOnly: true,                    // Prevent XSS attacks
+		Secure:   r.TLS != nil,            // Secure only over HTTPS
+		SameSite: http.SameSiteStrictMode, // Prevent CSRF
+		MaxAge:   86400,                   // 24 hours
+	})
+
 	s.writeJSON(w, http.StatusOK, tokenResp)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	// For stateless JWT, logout is client-side (discard token)
-	// But we can audit the event
+	// Clear the auth cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "nornicdb_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1, // Delete cookie
+	})
+
+	// Audit the logout event
 	claims := getClaims(r)
 	if claims != nil {
 		s.logAudit(r, claims.Sub, "logout", true, "")
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+}
+
+// handleGenerateAPIToken generates a stateless API token for MCP servers.
+// Only admins can generate these tokens. The tokens inherit the user's roles
+// and are not stored - they are validated by signature on each request.
+func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		return
+	}
+
+	if s.auth == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		return
+	}
+
+	// Get the authenticated user's claims
+	claims := getClaims(r)
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		return
+	}
+
+	// Check if user has admin role
+	isAdmin := false
+	for _, role := range claims.Roles {
+		if role == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+	if !isAdmin {
+		s.writeError(w, http.StatusForbidden, "admin role required to generate API tokens", ErrForbidden)
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		Subject   string `json:"subject"`    // Label for the token (e.g., "my-mcp-server")
+		ExpiresIn string `json:"expires_in"` // Duration string (e.g., "24h", "7d", "365d", "0" for never)
+	}
+
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		return
+	}
+
+	if req.Subject == "" {
+		req.Subject = "api-token"
+	}
+
+	// Parse expiry duration
+	var expiry time.Duration
+	if req.ExpiresIn != "" && req.ExpiresIn != "0" && req.ExpiresIn != "never" {
+		// Handle special "d" suffix for days
+		expiresIn := req.ExpiresIn
+		if strings.HasSuffix(expiresIn, "d") {
+			days, err := strconv.Atoi(strings.TrimSuffix(expiresIn, "d"))
+			if err != nil {
+				s.writeError(w, http.StatusBadRequest, "invalid expires_in format", ErrBadRequest)
+				return
+			}
+			expiry = time.Duration(days) * 24 * time.Hour
+		} else {
+			var err error
+			expiry, err = time.ParseDuration(expiresIn)
+			if err != nil {
+				s.writeError(w, http.StatusBadRequest, "invalid expires_in format (use: 1h, 24h, 7d, 365d, 0 for never)", ErrBadRequest)
+				return
+			}
+		}
+	}
+
+	// Create a user object from claims for token generation
+	roles := make([]auth.Role, len(claims.Roles))
+	for i, r := range claims.Roles {
+		roles[i] = auth.Role(r)
+	}
+	user := &auth.User{
+		ID:       claims.Sub,
+		Username: claims.Username,
+		Email:    claims.Email,
+		Roles:    roles,
+	}
+
+	// Generate the API token
+	token, err := s.auth.GenerateAPIToken(user, req.Subject, expiry)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "failed to generate token", err)
+		return
+	}
+
+	// Calculate expiration time for response
+	var expiresAt *time.Time
+	if expiry > 0 {
+		t := time.Now().Add(expiry)
+		expiresAt = &t
+	}
+
+	response := struct {
+		Token     string     `json:"token"`
+		Subject   string     `json:"subject"`
+		ExpiresAt *time.Time `json:"expires_at,omitempty"`
+		ExpiresIn int64      `json:"expires_in,omitempty"` // seconds
+		Roles     []string   `json:"roles"`
+	}{
+		Token:     token,
+		Subject:   req.Subject,
+		ExpiresAt: expiresAt,
+		Roles:     claims.Roles,
+	}
+	if expiry > 0 {
+		response.ExpiresIn = int64(expiry.Seconds())
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 // handleAuthConfig returns auth configuration for the UI

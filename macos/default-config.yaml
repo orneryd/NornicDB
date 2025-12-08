@@ -1,0 +1,128 @@
+# =============================================================================
+# NornicDB Configuration for macOS
+# =============================================================================
+# 
+# This file is managed by the NornicDB menu bar app.
+# Edit via Settings (click menu bar icon → Settings, or press ⌘,)
+#
+# Configuration Precedence:
+#   1. Command-line flags (highest)
+#   2. Environment variables
+#   3. This config file
+#   4. Built-in defaults (lowest)
+#
+# Documentation: https://github.com/orneryd/nornicdb/docs
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SERVER SETTINGS
+# -----------------------------------------------------------------------------
+server:
+  # Bolt protocol port (Neo4j driver compatible)
+  # The menu bar app edits this as "port"
+  port: 7687
+  bolt_port: 7687
+  
+  # HTTP API port (Web UI and REST endpoints)
+  http_port: 7474
+  
+  # Bind address: "127.0.0.1" for localhost, "0.0.0.0" for all interfaces
+  host: "127.0.0.1"
+
+# -----------------------------------------------------------------------------
+# AUTHENTICATION
+# -----------------------------------------------------------------------------
+auth:
+  # Admin username
+  username: "admin"
+  
+  # Admin password (minimum 8 characters)
+  password: "password"
+  
+  # JWT secret for signing tokens (leave empty for auto-generation)
+  # Set a consistent value if you need tokens to persist across restarts
+  jwt_secret: ""
+
+# -----------------------------------------------------------------------------
+# DATA STORAGE
+# -----------------------------------------------------------------------------
+storage:
+  # Data directory for database files
+  path: "/usr/local/var/nornicdb/data"
+
+# -----------------------------------------------------------------------------
+# DATABASE
+# -----------------------------------------------------------------------------
+database:
+  # Encryption password for data at rest (leave empty to disable)
+  # If set, all data will be encrypted using this password
+  # WARNING: Keep this password safe - data cannot be recovered without it!
+  encryption_password: ""
+
+# -----------------------------------------------------------------------------
+# EMBEDDING (Vector Search)
+# -----------------------------------------------------------------------------
+embedding:
+  # Enable embedding generation for semantic search
+  enabled: false
+  
+  # Provider: "local" (GGUF), "ollama", or "openai"
+  provider: "ollama"
+  
+  # Model name (depends on provider)
+  model: "bge-m3"
+  
+  # API URL (for ollama/openai)
+  url: "http://localhost:11434"
+  
+  # Embedding dimensions (must match model)
+  dimensions: 1024
+
+# -----------------------------------------------------------------------------
+# K-MEANS CLUSTERING
+# -----------------------------------------------------------------------------
+kmeans:
+  # Enable K-means clustering for node organization
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# AUTO-TLP (Topology Link Prediction)
+# -----------------------------------------------------------------------------
+auto_tlp:
+  # Enable automatic link prediction
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# HEIMDALL (AI Assistant)
+# -----------------------------------------------------------------------------
+heimdall:
+  # Enable Heimdall AI assistant
+  enabled: false
+  
+  # Model for Heimdall (GGUF format) - don't include .gguf extension
+  model: "qwen2.5-0.5b-instruct"
+  
+  # Models directory
+  models_dir: "/usr/local/var/nornicdb/models"
+  
+  # GPU layers: -1 (auto), 0 (CPU only), >0 (specific layers)
+  gpu_layers: -1
+
+# -----------------------------------------------------------------------------
+# MEMORY DECAY
+# -----------------------------------------------------------------------------
+memory:
+  # Enable natural memory decay
+  decay_enabled: true
+  
+  # Decay recalculation interval
+  decay_interval: "1h"
+  
+  # Archive threshold (0.0-1.0)
+  archive_threshold: 0.05
+
+# -----------------------------------------------------------------------------
+# AUTO-START
+# -----------------------------------------------------------------------------
+# Note: Auto-start is managed by LaunchAgent, not this config file.
+# The menu bar app controls the LaunchAgent registration.

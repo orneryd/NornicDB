@@ -86,7 +86,7 @@ export function Login() {
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 bg-norse-stone border border-norse-rune rounded-lg text-white placeholder-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                    placeholder="neo4j"
+                    placeholder="admin"
                     required
                   />
                 </div>

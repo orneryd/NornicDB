@@ -339,6 +339,9 @@ type Config struct {
 	BoltPort int `yaml:"bolt_port"`
 	HTTPPort int `yaml:"http_port"`
 
+	// Plugins
+	PluginsDir string `yaml:"plugins_dir"` // Directory for APOC plugins
+
 	// Memory management
 	LowMemoryMode bool `yaml:"low_memory_mode"` // Use minimal RAM (for containers with limited memory)
 }
@@ -792,11 +795,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
 
-	// Load function plugins from configured directory (NORNICDB_PLUGINS_DIR)
+	// Load function plugins from configured directory
 	// Heimdall plugins will be loaded later by the server after Heimdall is initialized
-	pluginsDir := os.Getenv("NORNICDB_PLUGINS_DIR")
-	if pluginsDir != "" {
-		if err := LoadPluginsFromDir(pluginsDir, nil); err != nil {
+	if db.config.PluginsDir != "" {
+		if err := LoadPluginsFromDir(db.config.PluginsDir, nil); err != nil {
 			fmt.Printf("⚠️  Plugin loading warning: %v\n", err)
 		}
 	}
@@ -890,11 +892,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize encryption if enabled (AES-256-GCM with PBKDF2 key derivation)
 	if config.EncryptionEnabled {
-		// Get password from config or environment (env takes precedence for security)
+		// Get password from config (should be set via config file or env var)
 		password := config.EncryptionPassword
-		if envPass := os.Getenv("NORNICDB_ENCRYPTION_PASSWORD"); envPass != "" {
-			password = envPass
-		}
 
 		if password == "" {
 			// Clean up resources before returning error

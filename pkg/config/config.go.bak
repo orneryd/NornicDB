@@ -231,9 +231,6 @@ type MemoryConfig struct {
 	DecayInterval time.Duration
 	// ArchiveThreshold below which memories are archived
 	ArchiveThreshold float64
-	// EmbeddingEnabled controls whether embedding generation is active
-	// Env: NORNICDB_EMBEDDING_ENABLED
-	EmbeddingEnabled bool
 	// EmbeddingProvider (local, ollama, openai)
 	EmbeddingProvider string
 	// EmbeddingModel name
@@ -675,7 +672,7 @@ func legacyLoadFromEnv() *Config {
 	if authStr == "none" {
 		config.Auth.Enabled = false
 		config.Auth.InitialUsername = "admin"
-		config.Auth.InitialPassword = "password"
+		config.Auth.InitialPassword = "admin"
 	} else {
 		config.Auth.Enabled = true
 		// Try colon delimiter first (preferred format: admin:admin)
@@ -738,25 +735,11 @@ func legacyLoadFromEnv() *Config {
 	config.Memory.DecayEnabled = getEnvBool("NORNICDB_MEMORY_DECAY_ENABLED", true)
 	config.Memory.DecayInterval = getEnvDuration("NORNICDB_MEMORY_DECAY_INTERVAL", time.Hour)
 	config.Memory.ArchiveThreshold = getEnvFloat("NORNICDB_MEMORY_ARCHIVE_THRESHOLD", 0.05)
-	// Only override EmbeddingEnabled if env var is explicitly set
-	if v := os.Getenv("NORNICDB_EMBEDDING_ENABLED"); v != "" {
-		config.Memory.EmbeddingEnabled = v == "true" || v == "1"
-	}
-	if v := getEnv("NORNICDB_EMBEDDING_PROVIDER", ""); v != "" {
-		config.Memory.EmbeddingProvider = v
-	}
-	if v := getEnv("NORNICDB_EMBEDDING_MODEL", ""); v != "" {
-		config.Memory.EmbeddingModel = v
-	}
-	if v := getEnv("NORNICDB_EMBEDDING_API_URL", ""); v != "" {
-		config.Memory.EmbeddingAPIURL = v
-	}
-	if v := os.Getenv("NORNICDB_EMBEDDING_DIMENSIONS"); v != "" {
-		config.Memory.EmbeddingDimensions = getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024)
-	}
-	if v := os.Getenv("NORNICDB_EMBEDDING_CACHE_SIZE"); v != "" {
-		config.Memory.EmbeddingCacheSize = getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000)
-	}
+	config.Memory.EmbeddingProvider = getEnv("NORNICDB_EMBEDDING_PROVIDER", "ollama")
+	config.Memory.EmbeddingModel = getEnv("NORNICDB_EMBEDDING_MODEL", "bge-m3")
+	config.Memory.EmbeddingAPIURL = getEnv("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434")
+	config.Memory.EmbeddingDimensions = getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024)
+	config.Memory.EmbeddingCacheSize = getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000) // Default: 10K (~40MB)
 	config.Memory.AutoLinksEnabled = getEnvBool("NORNICDB_AUTO_LINKS_ENABLED", true)
 	config.Memory.AutoLinksSimilarityThreshold = getEnvFloat("NORNICDB_AUTO_LINKS_THRESHOLD", 0.82)
 
@@ -839,38 +822,18 @@ func legacyLoadFromEnv() *Config {
 	config.Features.TopologyABTestPercentage = getEnvInt("NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE", 50)
 
 	// Heimdall - the cognitive guardian feature flags
-	// Opt-in cognitive database features - only override if env var is explicitly set
-	if v := os.Getenv("NORNICDB_HEIMDALL_ENABLED"); v != "" {
-		config.Features.HeimdallEnabled = v == "true" || v == "1"
-	}
-	if v := getEnv("NORNICDB_HEIMDALL_MODEL", ""); v != "" {
-		config.Features.HeimdallModel = v
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_GPU_LAYERS"); v != "" {
-		config.Features.HeimdallGPULayers = getEnvInt("NORNICDB_HEIMDALL_GPU_LAYERS", -1)
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_CONTEXT_SIZE"); v != "" {
-		config.Features.HeimdallContextSize = getEnvInt("NORNICDB_HEIMDALL_CONTEXT_SIZE", 8192)
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_BATCH_SIZE"); v != "" {
-		config.Features.HeimdallBatchSize = getEnvInt("NORNICDB_HEIMDALL_BATCH_SIZE", 2048)
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_MAX_TOKENS"); v != "" {
-		config.Features.HeimdallMaxTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_TOKENS", 1024)
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_TEMPERATURE"); v != "" {
-		config.Features.HeimdallTemperature = float32(getEnvFloat("NORNICDB_HEIMDALL_TEMPERATURE", 0.1))
-	}
+	// Opt-in cognitive database features - disabled by default
+	config.Features.HeimdallEnabled = getEnvBool("NORNICDB_HEIMDALL_ENABLED", false)
+	config.Features.HeimdallModel = getEnv("NORNICDB_HEIMDALL_MODEL", "qwen2.5-0.5b-instruct")
+	config.Features.HeimdallGPULayers = getEnvInt("NORNICDB_HEIMDALL_GPU_LAYERS", -1)       // -1 = auto
+	config.Features.HeimdallContextSize = getEnvInt("NORNICDB_HEIMDALL_CONTEXT_SIZE", 8192) // 8K (memory efficient)
+	config.Features.HeimdallBatchSize = getEnvInt("NORNICDB_HEIMDALL_BATCH_SIZE", 2048)     // 2K batch size
+	config.Features.HeimdallMaxTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_TOKENS", 1024)     // 1K output (faster)
+	config.Features.HeimdallTemperature = float32(getEnvFloat("NORNICDB_HEIMDALL_TEMPERATURE", 0.1))
 	// Sub-features default to true when Heimdall is enabled
-	if v := os.Getenv("NORNICDB_HEIMDALL_ANOMALY_DETECTION"); v != "" {
-		config.Features.HeimdallAnomalyDetection = v == "true" || v == "1"
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS"); v != "" {
-		config.Features.HeimdallRuntimeDiagnosis = v == "true" || v == "1"
-	}
-	if v := os.Getenv("NORNICDB_HEIMDALL_MEMORY_CURATION"); v != "" {
-		config.Features.HeimdallMemoryCuration = v == "true" || v == "1"
-	}
+	config.Features.HeimdallAnomalyDetection = getEnvBool("NORNICDB_HEIMDALL_ANOMALY_DETECTION", config.Features.HeimdallEnabled)
+	config.Features.HeimdallRuntimeDiagnosis = getEnvBool("NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS", config.Features.HeimdallEnabled)
+	config.Features.HeimdallMemoryCuration = getEnvBool("NORNICDB_HEIMDALL_MEMORY_CURATION", false) // Experimental
 
 	// Token budget settings for prompt construction
 	config.Features.HeimdallMaxContextTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS", 8192) // Match context size
@@ -1164,7 +1127,6 @@ func LoadDefaults() *Config {
 	config.Memory.DecayEnabled = true
 	config.Memory.DecayInterval = time.Hour
 	config.Memory.ArchiveThreshold = 0.05
-	config.Memory.EmbeddingEnabled = false // Disabled by default - opt-in feature
 	config.Memory.EmbeddingProvider = "ollama"
 	config.Memory.EmbeddingModel = "bge-m3"
 	config.Memory.EmbeddingAPIURL = "http://localhost:11434"
@@ -1739,7 +1701,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if authStr == "none" {
 			config.Auth.Enabled = false
 			config.Auth.InitialUsername = "admin"
-			config.Auth.InitialPassword = "password"
+			config.Auth.InitialPassword = "admin"
 		} else {
 			config.Auth.Enabled = true
 			// Try colon delimiter first (preferred: admin:admin)
@@ -1780,9 +1742,6 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 
 	// === Embedding Settings ===
-	if yamlCfg.Embedding.Enabled {
-		config.Memory.EmbeddingEnabled = true
-	}
 	if yamlCfg.Embedding.Provider != "" {
 		config.Memory.EmbeddingProvider = yamlCfg.Embedding.Provider
 	}

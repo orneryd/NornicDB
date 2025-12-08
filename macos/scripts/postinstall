@@ -17,34 +17,46 @@ USER_UID=$(id -u $ACTUAL_USER)
 echo "Setting up NornicDB for user: $ACTUAL_USER"
 
 # Create user directories
-sudo -u $ACTUAL_USER mkdir -p "$USER_HOME/Library/Application Support/NornicDB"
+# Create config directories - use ~/.nornicdb to match server's FindConfigFile priority
+sudo -u $ACTUAL_USER mkdir -p "$USER_HOME/.nornicdb"
 sudo -u $ACTUAL_USER mkdir -p "$USER_HOME/Library/LaunchAgents"
 
-# Create data and log directories (as root, will set ownership later)
+# Create data, models, and log directories (as root, will set ownership later)
 mkdir -p /usr/local/var/nornicdb/data
+mkdir -p /usr/local/var/nornicdb/models
 mkdir -p /usr/local/var/log/nornicdb
 
 # Set ownership
 chown -R $ACTUAL_USER:staff /usr/local/var/nornicdb
 chown -R $ACTUAL_USER:staff /usr/local/var/log/nornicdb
 
+echo "  ✓ Created directories:"
+echo "    - /usr/local/var/nornicdb/data (database)"
+echo "    - /usr/local/var/nornicdb/models (AI models)"
+echo "    - /usr/local/var/log/nornicdb (logs)"
+
 # Copy default config if it doesn't exist
-if [ ! -f "$USER_HOME/Library/Application Support/NornicDB/config.yaml" ]; then
+if [ ! -f "$USER_HOME/.nornicdb/config.yaml" ]; then
     # Config should be bundled in package, copy from Resources
     RESOURCES_PATH="$2/Contents/Resources"
-    if [ -f "$RESOURCES_PATH/nornicdb.example.yaml" ]; then
+    if [ -f "$RESOURCES_PATH/default-config.yaml" ]; then
+        sudo -u $ACTUAL_USER cp "$RESOURCES_PATH/default-config.yaml" \
+            "$USER_HOME/.nornicdb/config.yaml"
+        echo "✓ Installed default configuration from package"
+    elif [ -f "$RESOURCES_PATH/nornicdb.example.yaml" ]; then
         sudo -u $ACTUAL_USER cp "$RESOURCES_PATH/nornicdb.example.yaml" \
-            "$USER_HOME/Library/Application Support/NornicDB/config.yaml"
-        echo "✓ Installed default configuration"
+            "$USER_HOME/.nornicdb/config.yaml"
+        echo "✓ Installed default configuration (fallback)"
     else
         # Create minimal config
-        sudo -u $ACTUAL_USER cat > "$USER_HOME/Library/Application Support/NornicDB/config.yaml" << 'EOF'
+        sudo -u $ACTUAL_USER cat > "$USER_HOME/.nornicdb/config.yaml" << 'EOF'
 # NornicDB Configuration
 # Edit via Settings app (⌘,) or manually
 
 server:
   port: 7687
   host: "localhost"
+  auth: "admin:admin"
 
 storage:
   path: "/usr/local/var/nornicdb/data"
@@ -155,7 +167,7 @@ sudo -u $ACTUAL_USER open -a "/Applications/NornicDB.app" 2>/dev/null || true
 echo "✓ Launched menu bar app (will auto-start on login)"
 
 # Create welcome file to trigger first-run wizard
-sudo -u $ACTUAL_USER touch "$USER_HOME/Library/Application Support/NornicDB/.first_run"
+sudo -u $ACTUAL_USER touch "$USER_HOME/.nornicdb/.first_run"
 
 echo ""
 echo "✅ NornicDB installation complete!"

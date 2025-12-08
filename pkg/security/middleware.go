@@ -2,10 +2,9 @@
 package security
 
 import (
-"fmt"
-"net/http"
-"os"
-"strings"
+	"fmt"
+	"net/http"
+	"strings"
 )
 
 // SecurityMiddleware wraps HTTP handlers with security validations.
@@ -14,19 +13,30 @@ type SecurityMiddleware struct {
 	allowHTTP     bool
 }
 
+// SecurityConfig holds security middleware configuration.
+// This is passed from the main config to avoid direct env var access.
+type SecurityConfig struct {
+	Environment string // "development", "production"
+	AllowHTTP   bool   // Allow non-TLS connections
+}
+
 // NewSecurityMiddleware creates a new security middleware instance.
+// Use NewSecurityMiddlewareWithConfig for production code.
 func NewSecurityMiddleware() *SecurityMiddleware {
-	env := strings.ToLower(os.Getenv("NODE_ENV"))
-	if env == "" {
-		env = strings.ToLower(os.Getenv("NORNICDB_ENV"))
+	return &SecurityMiddleware{
+		isDevelopment: true, // default to development for safety
+		allowHTTP:     true,
 	}
-	
-	isDevelopment := env == "development" || env == "dev"
-	allowHTTP := os.Getenv("NORNICDB_ALLOW_HTTP") == "true"
-	
+}
+
+// NewSecurityMiddlewareWithConfig creates a security middleware with explicit config.
+func NewSecurityMiddlewareWithConfig(cfg SecurityConfig) *SecurityMiddleware {
+	env := strings.ToLower(cfg.Environment)
+	isDevelopment := env == "development" || env == "dev" || env == ""
+
 	return &SecurityMiddleware{
 		isDevelopment: isDevelopment,
-		allowHTTP:     allowHTTP,
+		allowHTTP:     cfg.AllowHTTP,
 	}
 }
 

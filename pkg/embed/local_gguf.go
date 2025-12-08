@@ -34,7 +34,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,10 +97,10 @@ type LocalGGUFEmbedder struct {
 //	vec, _ := embedder.Embed(ctx, "semantic search")
 //	fmt.Printf("Dimensions: %d\n", len(vec)) // 1024
 func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
-	// Resolve model path: model name → /data/models/{name}.gguf
-	modelsDir := os.Getenv("NORNICDB_MODELS_DIR")
+	// Resolve model path: model name → {modelsDir}/{name}.gguf
+	modelsDir := config.ModelsDir
 	if modelsDir == "" {
-		modelsDir = "/data/models"
+		modelsDir = "./models" // default
 	}
 
 	modelPath := filepath.Join(modelsDir, config.Model+".gguf")
@@ -116,11 +115,9 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 
 	opts := localllm.DefaultOptions(modelPath)
 
-	// Configure GPU layers from environment
-	if gpuLayersStr := os.Getenv("NORNICDB_EMBEDDING_GPU_LAYERS"); gpuLayersStr != "" {
-		if gpuLayers, err := strconv.Atoi(gpuLayersStr); err == nil {
-			opts.GPULayers = gpuLayers
-		}
+	// Configure GPU layers from config (default: -1 = auto)
+	if config.GPULayers != 0 {
+		opts.GPULayers = config.GPULayers
 	}
 
 	fmt.Printf("🧠 Loading local embedding model: %s\n", modelPath)
@@ -149,11 +146,9 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 	}
 
 	// Start warmup goroutine to keep model in GPU memory
-	warmupInterval := 5 * time.Minute // Default: warmup every 5 minutes
-	if intervalStr := os.Getenv("NORNICDB_EMBEDDING_WARMUP_INTERVAL"); intervalStr != "" {
-		if d, err := time.ParseDuration(intervalStr); err == nil {
-			warmupInterval = d
-		}
+	warmupInterval := config.WarmupInterval
+	if warmupInterval == 0 {
+		warmupInterval = 5 * time.Minute // Default: warmup every 5 minutes
 	}
 
 	if warmupInterval > 0 {

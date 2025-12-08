@@ -44,9 +44,13 @@ chmod +x "$BUILD_DIR/root/usr/local/bin/nornicdb"
 
 cp -R "$PROJECT_ROOT/macos/build/NornicDB.app" "$BUILD_DIR/root/Applications/"
 
-# Copy resources
-if [ -f "$PROJECT_ROOT/nornicdb.example.yaml" ]; then
-    cp "$PROJECT_ROOT/nornicdb.example.yaml" "$BUILD_DIR/resources/"
+# Copy resources - use macOS-specific default config
+if [ -f "$PROJECT_ROOT/macos/default-config.yaml" ]; then
+    cp "$PROJECT_ROOT/macos/default-config.yaml" "$BUILD_DIR/resources/default-config.yaml"
+    echo "  ✓ Using macos/default-config.yaml"
+elif [ -f "$PROJECT_ROOT/nornicdb.example.yaml" ]; then
+    cp "$PROJECT_ROOT/nornicdb.example.yaml" "$BUILD_DIR/resources/default-config.yaml"
+    echo "  ✓ Using nornicdb.example.yaml as fallback"
 fi
 
 # Copy scripts

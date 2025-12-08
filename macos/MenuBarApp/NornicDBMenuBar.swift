@@ -7,8 +7,9 @@ struct NornicDBMenuBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        // Empty scene - we only use menu bar, no windows in the scene
-        WindowGroup {
+        // Use Settings scene instead of WindowGroup to avoid blank window
+        // The menu bar app manages its own windows via AppDelegate
+        Settings {
             EmptyView()
         }
     }
@@ -63,6 +64,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             statusText = "🟢 Running"
         case .stopped:
             statusText = "🔴 Stopped"
+        case .starting:
+            statusText = "🟡 Starting..."
         case .unknown:
             statusText = "⚪️ Unknown"
         }
@@ -152,6 +155,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 color = NSColor.systemGreen
             case .stopped:
                 color = NSColor.systemRed
+            case .starting:
+                color = NSColor.systemYellow
             case .unknown:
                 color = NSColor.systemGray
             }
@@ -225,8 +230,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func startServer() {
+        updateStatus(.starting)
         executeCommand("launchctl", args: ["start", "com.nornicdb.server"])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             self.checkHealth()
         }
     }
@@ -384,6 +390,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 enum ServerStatus {
     case running
     case stopped
+    case starting
     case unknown
 }
 
@@ -398,12 +405,22 @@ class ConfigManager: ObservableObject {
     @Published var portNumber: String = "7687"
     @Published var hostAddress: String = "localhost"
     
+    // Authentication settings
+    @Published var adminUsername: String = "admin"
+    @Published var adminPassword: String = "password"
+    @Published var jwtSecret: String = ""
+    
+    // Encryption settings
+    @Published var encryptionEnabled: Bool = false
+    @Published var encryptionPassword: String = ""
+    
     @Published var embeddingModel: String = "bge-m3.gguf"
     @Published var heimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
     @Published var availableModels: [String] = []
     
-    private let configPath = NSString(string: "~/Library/Application Support/NornicDB/config.yaml").expandingTildeInPath
-    private let firstRunPath = NSString(string: "~/Library/Application Support/NornicDB/.first_run").expandingTildeInPath
+    // Config path matches server's FindConfigFile priority: ~/.nornicdb/config.yaml
+    private let configPath = NSString(string: "~/.nornicdb/config.yaml").expandingTildeInPath
+    private let firstRunPath = NSString(string: "~/.nornicdb/.first_run").expandingTildeInPath
     private let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
     private let modelsPath = "/usr/local/var/nornicdb/models"
     
@@ -479,6 +496,64 @@ class ConfigManager: ObservableObject {
                 print("Loaded heimdall model: \(value)")
             }
         }
+        
+        // Load server settings (try both port and bolt_port)
+        if let serverPortSection = context.range(of: "server:.*?bolt_port:", options: .regularExpression) {
+            let start = serverPortSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                portNumber = value
+                print("Loaded bolt_port: \(value)")
+            }
+        } else if let serverPortSection = context.range(of: "server:.*?port:", options: .regularExpression) {
+            let start = serverPortSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                portNumber = value
+                print("Loaded port: \(value)")
+            }
+        }
+        
+        if let serverHostSection = context.range(of: "server:.*?host:", options: .regularExpression) {
+            let start = serverHostSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                hostAddress = value
+                print("Loaded host: \(value)")
+            }
+        }
+        
+        // Load auth settings
+        if let authSection = context.range(of: "auth:.*?username:", options: .regularExpression) {
+            let start = authSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                adminUsername = value
+                print("Loaded username: \(value)")
+            }
+        }
+        
+        if let authPasswordSection = context.range(of: "auth:.*?password:", options: .regularExpression) {
+            let start = authPasswordSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                adminPassword = value
+                print("Loaded password: [hidden]")
+            }
+        }
+        
+        if let jwtSection = context.range(of: "auth:.*?jwt_secret:", options: .regularExpression) {
+            let start = jwtSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                jwtSecret = value
+                print("Loaded JWT secret: [hidden]")
+            }
+        }
+        
+        // Load encryption settings
+        if let encryptionSection = context.range(of: "database:.*?encryption_password:", options: .regularExpression) {
+            let start = encryptionSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                encryptionPassword = value
+                encryptionEnabled = !value.isEmpty
+                print("Loaded encryption: \(encryptionEnabled ? "enabled" : "disabled")")
+            }
+        }
     }
     
     private func extractStringValue(from text: String, after index: String.Index) -> String? {
@@ -526,9 +601,24 @@ class ConfigManager: ObservableObject {
         content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: embeddingModel)
         content = updateYAMLStringValue(in: content, section: "heimdall", key: "model", value: heimdallModel)
         
-        // Update server settings
+        // Update server settings (update both port and bolt_port for compatibility)
         content = updateYAMLStringValue(in: content, section: "server", key: "port", value: portNumber)
+        content = updateYAMLStringValue(in: content, section: "server", key: "bolt_port", value: portNumber)
         content = updateYAMLStringValue(in: content, section: "server", key: "host", value: hostAddress)
+        
+        // Update auth settings
+        content = updateYAMLStringValue(in: content, section: "auth", key: "username", value: adminUsername)
+        content = updateYAMLStringValue(in: content, section: "auth", key: "password", value: adminPassword)
+        if !jwtSecret.isEmpty {
+            content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: jwtSecret)
+        }
+        
+        // Update encryption settings
+        if encryptionEnabled && !encryptionPassword.isEmpty {
+            content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: encryptionPassword)
+        } else {
+            content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: "")
+        }
         
         // Write back
         do {
@@ -588,6 +678,11 @@ class ConfigManager: ObservableObject {
         
         return result
     }
+    
+    func generateRandomSecret() -> String {
+        let characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+        return String((0..<32).map { _ in characters.randomElement()! })
+    }
 }
 
 // MARK: - Settings View
@@ -608,6 +703,11 @@ struct SettingsView: View {
     @State private var originalHostAddress: String = "localhost"
     @State private var originalEmbeddingModel: String = "bge-m3.gguf"
     @State private var originalHeimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
+    @State private var originalAdminUsername: String = "admin"
+    @State private var originalAdminPassword: String = "password"
+    @State private var originalJWTSecret: String = ""
+    @State private var originalEncryptionEnabled: Bool = false
+    @State private var originalEncryptionPassword: String = ""
     
     // Progress tracking
     @State private var isSaving: Bool = false
@@ -623,7 +723,12 @@ struct SettingsView: View {
                config.portNumber != originalPortNumber ||
                config.hostAddress != originalHostAddress ||
                config.embeddingModel != originalEmbeddingModel ||
-               config.heimdallModel != originalHeimdallModel
+               config.heimdallModel != originalHeimdallModel ||
+               config.adminUsername != originalAdminUsername ||
+               config.adminPassword != originalAdminPassword ||
+               config.jwtSecret != originalJWTSecret ||
+               config.encryptionEnabled != originalEncryptionEnabled ||
+               config.encryptionPassword != originalEncryptionPassword
     }
     
     var body: some View {
@@ -633,7 +738,8 @@ struct SettingsView: View {
                 Text("Features").tag(0)
                 Text("Server").tag(1)
                 Text("Models").tag(2)
-                Text("Startup").tag(3)
+                Text("Security").tag(3)
+                Text("Startup").tag(4)
             }
             .pickerStyle(.segmented)
             .padding()
@@ -645,7 +751,8 @@ struct SettingsView: View {
                 featuresTab.tag(0)
                 serverTab.tag(1)
                 modelsTab.tag(2)
-                startupTab.tag(3)
+                securityTab.tag(3)
+                startupTab.tag(4)
             }
             .tabViewStyle(.automatic)
             
@@ -712,6 +819,11 @@ struct SettingsView: View {
         originalHostAddress = config.hostAddress
         originalEmbeddingModel = config.embeddingModel
         originalHeimdallModel = config.heimdallModel
+        originalAdminUsername = config.adminUsername
+        originalAdminPassword = config.adminPassword
+        originalJWTSecret = config.jwtSecret
+        originalEncryptionEnabled = config.encryptionEnabled
+        originalEncryptionPassword = config.encryptionPassword
     }
     
     private func saveAndRestart() {
@@ -951,6 +1063,138 @@ struct SettingsView: View {
         }
     }
     
+    var securityTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Security Settings")
+                    .font(.title2)
+                    .bold()
+                
+                Text("Configure authentication and security for NornicDB")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Divider()
+                
+                // Admin Credentials
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Admin Credentials")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text("Username:")
+                            .frame(width: 120, alignment: .trailing)
+                        TextField("admin", text: $config.adminUsername)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    HStack {
+                        Text("Password:")
+                            .frame(width: 120, alignment: .trailing)
+                        SecureField("Enter password", text: $config.adminPassword)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    if config.adminPassword.count < 8 && !config.adminPassword.isEmpty {
+                        HStack {
+                            Spacer().frame(width: 120)
+                            Text("⚠️ Password must be at least 8 characters")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    
+                    Text("💡 These credentials are used to access the NornicDB web UI and API")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 120)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                // JWT Secret
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("JWT Secret")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text("Secret:")
+                            .frame(width: 120, alignment: .trailing)
+                        SecureField("Auto-generated if empty", text: $config.jwtSecret)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    HStack {
+                        Spacer().frame(width: 120)
+                        Button("Generate Random Secret") {
+                            config.jwtSecret = config.generateRandomSecret()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    
+                    Text("💡 The JWT secret is used to sign authentication tokens. Leave empty for auto-generation, or set a consistent value for tokens to persist across restarts.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 120)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                // Encryption
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Database Encryption")
+                        .font(.headline)
+                    
+                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                    
+                    if config.encryptionEnabled {
+                        HStack {
+                            Text("Encryption Key:")
+                                .frame(width: 120, alignment: .trailing)
+                            SecureField("Enter encryption password", text: $config.encryptionPassword)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .frame(maxWidth: 250)
+                        }
+                        
+                        HStack {
+                            Spacer().frame(width: 120)
+                            Button("Generate Strong Key") {
+                                config.encryptionPassword = config.generateRandomSecret()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        
+                        if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
+                            HStack {
+                                Spacer().frame(width: 120)
+                                Text("⚠️ Encryption key should be at least 16 characters")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+                    
+                    Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 0)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding()
+        }
+    }
+    
     var startupTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -1051,7 +1295,7 @@ struct FeatureToggle: View {
 struct FirstRunWizard: View {
     @ObservedObject var config: ConfigManager
     @State private var currentStep = 0
-    @State private var selectedPreset: ConfigPreset = .basic
+    @State private var selectedPreset: ConfigPreset = .standard  // Default to recommended
     let onComplete: () -> Void
     
     @State private var isDownloadingModels: Bool = false
@@ -1059,6 +1303,8 @@ struct FirstRunWizard: View {
     @State private var bgeModelExists: Bool = false
     @State private var qwenModelExists: Bool = false
     @State private var serverIsRunning: Bool = false
+    @State private var isSaving: Bool = false
+    @State private var saveProgress: String = ""
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1082,13 +1328,13 @@ struct FirstRunWizard: View {
             Divider()
             
             // Step Indicators
-            HStack(spacing: 20) {
-                ForEach(0..<3) { step in
+            HStack(spacing: 12) {
+                ForEach(0..<4) { step in
                     HStack(spacing: 8) {
                         ZStack {
                             Circle()
                                 .fill(currentStep >= step ? Color.blue : Color.gray.opacity(0.3))
-                                .frame(width: 30, height: 30)
+                                .frame(width: 32, height: 32)
                             
                             if currentStep > step {
                                 Image(systemName: "checkmark")
@@ -1105,9 +1351,11 @@ struct FirstRunWizard: View {
                             .font(.subheadline)
                             .fontWeight(currentStep == step ? .semibold : .regular)
                             .foregroundColor(currentStep >= step ? .primary : .secondary)
+                            .fixedSize(horizontal: true, vertical: false)  // Prevent text wrapping
                     }
+                    .fixedSize(horizontal: true, vertical: false)  // Keep HStack inline
                     
-                    if step < 2 {
+                    if step < 3 {
                         Rectangle()
                             .fill(currentStep > step ? Color.blue : Color.gray.opacity(0.3))
                             .frame(height: 2)
@@ -1115,7 +1363,7 @@ struct FirstRunWizard: View {
                     }
                 }
             }
-            .padding(.horizontal, 30)
+            .padding(.horizontal, 40)
             .padding(.vertical, 20)
             
             Divider()
@@ -1124,12 +1372,13 @@ struct FirstRunWizard: View {
             TabView(selection: $currentStep) {
                 welcomeStep.tag(0)
                 presetStep.tag(1)
-                confirmStep.tag(2)
+                securityStep.tag(2)
+                confirmStep.tag(3)
             }
             .tabViewStyle(.automatic)
             .onChange(of: currentStep) { newStep in
                 // Refresh model status when navigating to review step
-                if newStep == 2 {
+                if newStep == 3 {
                     checkModelFiles()
                 }
             }
@@ -1150,7 +1399,7 @@ struct FirstRunWizard: View {
                 
                 Spacer()
                 
-                if currentStep < 2 {
+                if currentStep < 3 {
                     Button("Next") {
                         withAnimation {
                             currentStep += 1
@@ -1167,7 +1416,7 @@ struct FirstRunWizard: View {
             }
             .padding()
         }
-        .frame(width: 600, height: 550)
+        .frame(width: 750, height: 688)  // 25% larger (600*1.25=750, 550*1.25=688)
         .onAppear {
             checkServerStatus()
         }
@@ -1176,8 +1425,9 @@ struct FirstRunWizard: View {
     private func stepLabel(for step: Int) -> String {
         switch step {
         case 0: return "Welcome"
-        case 1: return "Setup"
-        case 2: return "Review"
+        case 1: return "Features"
+        case 2: return "Security"
+        case 3: return "Review"
         default: return ""
         }
     }
@@ -1199,31 +1449,51 @@ struct FirstRunWizard: View {
     }
     
     private func saveAndStartServer() {
+        isSaving = true
+        saveProgress = "Applying settings..."
+        
         // Apply the selected preset
         applyPreset()
         
-        // Save configuration
-        if config.saveConfig() {
-            // Mark first run as complete
-            config.completeFirstRun()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            saveProgress = "Saving configuration..."
             
-            // Start or restart server
-            let task = Process()
-            task.launchPath = "/usr/bin/env"
-            
-            if serverIsRunning {
-                // Restart the server
-                task.arguments = ["launchctl", "kickstart", "-k", "gui/\(getuid())/com.nornicdb.server"]
+            // Save configuration
+            if config.saveConfig() {
+                // Mark first run as complete
+                config.completeFirstRun()
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    saveProgress = serverIsRunning ? "Restarting server..." : "Starting server..."
+                    
+                    // Start or restart server
+                    let task = Process()
+                    task.launchPath = "/usr/bin/env"
+                    
+                    if serverIsRunning {
+                        // Restart the server
+                        task.arguments = ["launchctl", "kickstart", "-k", "gui/\(getuid())/com.nornicdb.server"]
+                    } else {
+                        // Start the server
+                        task.arguments = ["launchctl", "start", "com.nornicdb.server"]
+                    }
+                    
+                    task.launch()
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        saveProgress = "Server started! Opening browser..."
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            isSaving = false
+                            onComplete()
+                        }
+                    }
+                }
             } else {
-                // Start the server
-                task.arguments = ["launchctl", "start", "com.nornicdb.server"]
-            }
-            
-            task.launch()
-            
-            // Wait a moment for the server to start, then close wizard
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                onComplete()
+                saveProgress = "Failed to save configuration"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    isSaving = false
+                }
             }
         }
     }
@@ -1287,10 +1557,140 @@ struct FirstRunWizard: View {
         }
     }
     
+    var securityStep: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                Text("Step 3: Security")
+                    .font(.headline)
+                
+                Text("Configure authentication and encryption")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                // Admin Credentials
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Admin Credentials")
+                        .font(.headline)
+                    
+                    Text("Set your admin credentials for accessing NornicDB")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    HStack {
+                        Text("Username:")
+                            .frame(width: 120, alignment: .trailing)
+                        TextField("admin", text: $config.adminUsername)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    HStack {
+                        Text("Password:")
+                            .frame(width: 120, alignment: .trailing)
+                        SecureField("Enter password", text: $config.adminPassword)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    if config.adminPassword.count < 8 && !config.adminPassword.isEmpty {
+                        HStack {
+                            Spacer().frame(width: 120)
+                            Text("⚠️ Password must be at least 8 characters")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    
+                    Text("💡 These credentials are used to access the NornicDB web UI and API")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 120)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                // JWT Secret
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("JWT Secret")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text("Secret:")
+                            .frame(width: 120, alignment: .trailing)
+                        SecureField("Auto-generated if empty", text: $config.jwtSecret)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(maxWidth: 250)
+                    }
+                    
+                    HStack {
+                        Spacer().frame(width: 120)
+                        Button("Generate Random Secret") {
+                            config.jwtSecret = config.generateRandomSecret()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    
+                    Text("💡 The JWT secret is used to sign authentication tokens. Leave empty for auto-generation, or set a consistent value for tokens to persist across restarts.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 120)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                // Encryption
+                VStack(alignment: .leading, spacing: 15) {
+                    Text("Database Encryption (Optional)")
+                        .font(.headline)
+                    
+                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                    
+                    if config.encryptionEnabled {
+                        HStack {
+                            Text("Encryption Key:")
+                                .frame(width: 120, alignment: .trailing)
+                            SecureField("Enter encryption password", text: $config.encryptionPassword)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .frame(maxWidth: 250)
+                        }
+                        
+                        HStack {
+                            Spacer().frame(width: 120)
+                            Button("Generate Strong Key") {
+                                config.encryptionPassword = config.generateRandomSecret()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        
+                        if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
+                            HStack {
+                                Spacer().frame(width: 120)
+                                Text("⚠️ Encryption key should be at least 16 characters")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+                    
+                    Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 0)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+            }
+            .padding()
+        }
+    }
+    
     var confirmStep: some View {
         ScrollView {
             VStack(spacing: 20) {
-                Text("Step 3: Review & Start")
+                Text("Step 4: Review & Start")
                     .font(.headline)
                 
                 Text("Here's what will be enabled:")
@@ -1304,6 +1704,65 @@ struct FirstRunWizard: View {
                     FeatureSummary(enabled: getPresetFeatures().heimdall, title: "Heimdall", icon: "eye.fill")
                 }
                 .padding()
+                
+                // Authentication Summary
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("🔐 Authentication")
+                        .font(.headline)
+                    
+                    HStack {
+                        Text("Username:")
+                            .foregroundColor(.secondary)
+                            .frame(width: 100, alignment: .trailing)
+                        Text(config.adminUsername)
+                            .fontWeight(.medium)
+                        Spacer()
+                    }
+                    
+                    HStack {
+                        Text("Password:")
+                            .foregroundColor(.secondary)
+                            .frame(width: 100, alignment: .trailing)
+                        Text(String(repeating: "•", count: config.adminPassword.count))
+                            .fontWeight(.medium)
+                        Spacer()
+                    }
+                    
+                    if !config.jwtSecret.isEmpty {
+                        HStack {
+                            Text("JWT Secret:")
+                                .foregroundColor(.secondary)
+                                .frame(width: 100, alignment: .trailing)
+                            Text("Custom (set)")
+                                .fontWeight(.medium)
+                                .foregroundColor(.green)
+                            Spacer()
+                        }
+                    }
+                    
+                    if config.encryptionEnabled {
+                        HStack {
+                            Text("Encryption:")
+                                .foregroundColor(.secondary)
+                                .frame(width: 100, alignment: .trailing)
+                            Text("Enabled ✓")
+                                .fontWeight(.medium)
+                                .foregroundColor(.green)
+                            Spacer()
+                        }
+                    }
+                    
+                    Text("💡 Go back to Step 2 (Setup) to change these settings")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                .padding(.horizontal)
                 
                 // Model Requirements Section
                 if needsModels() {

@@ -441,7 +441,7 @@ else
 	@echo "  3. Connect with Neo4j drivers:"
 	@echo "       bolt://localhost:7687"
 	@echo "       Username: admin"
-	@echo "       Password: admin"
+	@echo "       Password: password"
 	@echo ""
 endif
 
@@ -935,6 +935,11 @@ macos-all: build macos-menubar macos-install
 macos-clean:
 	@echo "Cleaning macOS build artifacts..."
 	@rm -rf macos/build
+	@if [ -d "dist/installer" ]; then \
+		echo "Removing installer artifacts (may require sudo)..."; \
+		chmod -R u+w dist/installer 2>/dev/null || true; \
+		rm -rf dist/installer 2>/dev/null || sudo rm -rf dist/installer; \
+	fi
 	@echo "✅ Cleaned"
 
 # Create distributable .pkg installer (uses build-installer.sh)

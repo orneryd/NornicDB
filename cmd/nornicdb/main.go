@@ -110,7 +110,7 @@ Features:
 	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), "Embedding cache size (0=disabled, default 10000)")
 	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), "GPU layers for local provider: -1=auto, 0=CPU only")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
-	serveCmd.Flags().String("admin-password", "admin", "Admin password (default: admin)")
+	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
 	serveCmd.Flags().Bool("mcp-enabled", getEnvBool("NORNICDB_MCP_ENABLED", true), "Enable MCP (Model Context Protocol) server for LLM tools")
 	// Parallel execution flags
 	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
@@ -219,7 +219,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	headless, _ := cmd.Flags().GetBool("headless")
 
 	// Apply memory configuration FIRST (before heavy allocations)
-	cfg := config.LoadFromEnv()
+	// First, try to load from config file, then fall back to environment variables
+	var cfg *config.Config
+	configPath := config.FindConfigFile()
+	if configPath != "" {
+		var err error
+		cfg, err = config.LoadFromFile(configPath)
+		if err != nil {
+			fmt.Printf("⚠️  Warning: failed to load config from %s: %v\n", configPath, err)
+			cfg = config.LoadFromEnv()
+		} else {
+			fmt.Printf("📄 Loaded config from: %s\n", configPath)
+		}
+	} else {
+		cfg = config.LoadFromEnv()
+	}
 
 	// Override with CLI flags if provided
 	if memoryLimit != "" {
@@ -261,7 +275,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   Bolt protocol:   bolt://localhost:%d\n", boltPort)
 	fmt.Printf("   HTTP API:        http://localhost:%d\n", httpPort)
 	if embeddingProvider == "local" {
-		modelsDir := os.Getenv("NORNICDB_MODELS_DIR")
+		modelsDir := cfg.Memory.ModelsDir
 		if modelsDir == "" {
 			modelsDir = "/data/models"
 		}
@@ -413,14 +427,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	serverConfig.Address = address
 	// MCP server configuration
 	serverConfig.MCPEnabled = mcpEnabled
-	// Pass embedding settings to server
-	serverConfig.EmbeddingEnabled = true
+	// Pass embedding settings to server (from loaded config)
+	serverConfig.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
 	serverConfig.EmbeddingProvider = embeddingProvider
 	serverConfig.EmbeddingAPIURL = embeddingURL
 	serverConfig.EmbeddingModel = embeddingModel
 	serverConfig.EmbeddingDimensions = embeddingDim
 	serverConfig.EmbeddingCacheSize = embeddingCache
 	serverConfig.Headless = headless
+	serverConfig.Features = &cfg.Features // Pass features loaded from YAML config
 
 	// Enable embedded UI from the ui package (unless headless mode)
 	if !headless {

@@ -1,358 +1,560 @@
+# =============================================================================
 # NornicDB Configuration
+# =============================================================================
 #
-# NornicDB is a high-performance drop-in replacement for Neo4j.
-# It receives pre-embedded nodes from Mimir - no embedding generation here.
+# This is the main configuration file for NornicDB - a high-performance,
+# Neo4j-compatible graph database with AI-native features.
 #
-# Environment variables take precedence over this file.
-# Use NORNIC_* prefix for environment variables.
+# CONFIGURATION PRECEDENCE (highest to lowest):
+#   1. Command-line flags (--bolt-port, --admin-password, etc.)
+#   2. Environment variables (NORNICDB_AUTH, NORNICDB_*, etc.)
+#   3. This config file
+#
+# CONFIG FILE SEARCH ORDER:
+#   1. ~/.nornicdb/config.yaml (user home - highest priority)
+#   2. Same directory as the nornicdb binary
+#   3. Current working directory
+#   4. ~/Library/Application Support/NornicDB/config.yaml (macOS)
+#   5. ~/.config/nornicdb/config.yaml (Linux XDG standard)
+#
+# DOCUMENTATION: https://github.com/orneryd/nornicdb/docs
+# =============================================================================
 
 # =============================================================================
-# Server Configuration
+# SERVER CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/getting-started/configuration.md
 # =============================================================================
 server:
-  # Bolt protocol port (Neo4j compatible)
+  # Bolt protocol port - Neo4j driver compatible
+  # Env: NORNICDB_BOLT_PORT
   bolt_port: 7687
 
-  # HTTP API port (Neo4j compatible)
+  # HTTP API port - Browser UI and REST endpoints
+  # Env: NORNICDB_HTTP_PORT
   http_port: 7474
 
-  # Data directory for persistence
+  # Bind address - "127.0.0.1" for localhost only, "0.0.0.0" for all interfaces
+  # Env: NORNICDB_BOLT_ADDRESS
+  host: "127.0.0.1"
+
+  # Data directory for persistence (BadgerDB files, WAL, snapshots)
+  # Env: NORNICDB_DATA_DIR
   data_dir: ./data
 
-  # Authentication (Neo4j compatible format: username:password)
-  # Default: disabled (set to "none" or leave unset)
-  # To enable: set to "admin:admin" or use environment: NEO4J_AUTH=admin/admin
-  # For development: "none" (same as --no-auth flag)
-  auth: "none" # disabled for development (same as --no-auth)
+  # Authentication credentials - Format: "username:password" or "none"
+  # Docs: https://github.com/orneryd/nornicdb/docs/security/authentication.md
+  # Env: NORNICDB_AUTH (uses "/" separator for Neo4j compatibility)
+  # Examples:
+  #   "admin:admin"     - Default credentials (change in production!)
+  #   "admin:SecureP@ss" - Custom password
+  #   "none"            - Disable authentication (development only)
+  auth: "admin:admin"
 
-  # Enable TLS (optional)
+  # Enable Bolt protocol server
+  # Env: NORNICDB_BOLT_ENABLED
+  bolt_enabled: true
+
+  # Enable HTTP API server  
+  # Env: NORNICDB_HTTP_ENABLED
+  http_enabled: true
+
+  # TLS/SSL Configuration
+  # Docs: https://github.com/orneryd/nornicdb/docs/security/tls.md
+  # Env: NORNICDB_BOLT_TLS_ENABLED, NORNICDB_TLS_DIR
   tls:
     enabled: false
-    cert_file: ""
-    key_file: ""
+    cert_file: ""  # Path to PEM certificate
+    key_file: ""   # Path to PEM private key
+    # base_directory: ""  # If set, looks for public.crt and private.key here
 
-# =============================================================================
-# GPU Configuration (NornicDB-specific)
-# =============================================================================
-gpu:
-  # Enable GPU acceleration for vector search
-  # Set to false if using CPU-only mode
-  enabled: true
-
-  # Backend: auto, metal, cuda, opencl, vulkan, cpu
-  # auto: Automatically detect best available backend
-  # metal: Apple Silicon (M1/M2/M3)
-  # cuda: NVIDIA GPUs (Windows/Linux)
-  # opencl: AMD GPUs (ROCm), some NVIDIA
-  # vulkan: Cross-platform (experimental)
-  # cpu: Fallback, no GPU
-  backend: auto
-
-  # Maximum VRAM usage (bytes, 0 = auto)
-  # Default: ~80% of available VRAM
-  max_vram_bytes: 0
-
-  # Batch size for GPU operations
-  batch_size: 1000
-
-# =============================================================================
-# Memory Decay Configuration (NornicDB-specific)
-# =============================================================================
-decay:
-  # Enable memory decay system
-  enabled: true
-
-  # Run decay every N hours
-  interval_hours: 24
-
-  # Memory types and their decay rates
-  types:
-    # Episodic: Personal events, experiences
-    # Fast initial decay, stabilizes over time
-    episodic:
-      enabled: true
-      initial_strength: 1.0
-      decay_rate: 0.1 # 10% per interval
-      min_strength: 0.1
-
-    # Semantic: Facts, concepts, knowledge
-    # Slow, steady decay
-    semantic:
-      enabled: true
-      initial_strength: 1.0
-      decay_rate: 0.02 # 2% per interval
-      min_strength: 0.3
-
-    # Procedural: Skills, how-to knowledge
-    # Very slow decay
-    procedural:
-      enabled: true
-      initial_strength: 1.0
-      decay_rate: 0.01 # 1% per interval
-      min_strength: 0.5
-
-# =============================================================================
-# Auto-Relationship Configuration (NornicDB-specific)
-# =============================================================================
-auto_relationships:
-  # Enable automatic relationship creation
-  enabled: true
-
-  # Minimum similarity threshold for auto-linking (0.0-1.0)
-  similarity_threshold: 0.85
-
-  # Maximum edges to auto-create per node
-  max_edges_per_node: 10
-
-  # Types of auto-relationships to create
-  types:
-    # Link nodes with similar embeddings
-    embedding_similarity: true
-
-    # Link nodes accessed together
-    co_access: true
-
-    # Link nodes created close in time
-    temporal_proximity: true
-
-# =============================================================================
-# Topological Link Prediction (Feature Flag - NornicDB-specific)
-# =============================================================================
-# Neo4j GDS-compatible topological link prediction
-#
-# IMPORTANT: Cypher procedures (CALL gds.linkPrediction.*) are ALWAYS available
-# This configuration only controls AUTOMATIC integration with inference engine
-#
-# Complements semantic inference with graph structure analysis
-topology_link_prediction:
-  # Master feature flag - enables/disables AUTOMATIC topology integration
-  # When false: Cypher procedures still work, but OnStore() won't use topology
-  # When true: OnStore() automatically blends topology + semantic suggestions
-  auto_integration_enabled: false # FEATURE FLAG: disabled by default (opt-in)
-
-  # Algorithm to use for topology scoring
-  # Options: adamic_adar, jaccard, common_neighbors,
-  #          resource_allocation, preferential_attachment, ensemble
-  # adamic_adar: Best all-around for most graphs (recommended)
-  # ensemble: Combines all 5 algorithms (slower, more robust)
-  algorithm: adamic_adar
-
-  # Top-K topology candidates to consider
-  top_k: 10
-
-  # Minimum topology score threshold (0.0-1.0)
-  # Lower = more suggestions, higher = fewer but more confident
-  min_score: 0.3
-
-  # Weight for topology vs semantic (0.0-1.0)
-  # 0.0 = pure semantic, 1.0 = pure topology
-  # 0.4 = 40% topology, 60% semantic (recommended balanced)
-  topology_weight: 0.4
-
-  # Graph cache refresh interval
-  # Higher = better performance, lower = more up-to-date
-  # 0 = rebuild on every prediction (safest, slowest)
-  # 100 = rebuild every 100 predictions (recommended)
-  graph_refresh_interval: 100
-
-  # A/B Testing support
-  # Allows running experiments comparing topology vs semantic-only
-  ab_testing:
-    # Enable A/B test mode (splits traffic)
+  # HTTPS Configuration (secure HTTP API)
+  # Env: NORNICDB_HTTPS_ENABLED, NORNICDB_HTTPS_PORT
+  https:
     enabled: false
+    port: 7473
 
-    # Percentage of requests to use topology (0-100)
-    # 50 = 50% get topology, 50% get semantic-only
-    # Used for gradual rollout and A/B testing
-    topology_percentage: 50
+  # HTTP bind address (separate from Bolt)
+  # Env: NORNICDB_HTTP_ADDRESS
+  http_address: "127.0.0.1"
 
-    # Log predictions for analysis (debug only)
-    log_predictions: false
+  # Runtime environment (development, production)
+  # Env: NORNICDB_ENV
+  # In production mode:
+  #   - Stricter security defaults
+  #   - No debug endpoints
+  #   - Optimized performance settings
+  environment: "development"
+
+  # Allow non-TLS HTTP connections
+  # Env: NORNICDB_ALLOW_HTTP
+  # Set to false in production to require HTTPS
+  allow_http: true
+
+  # Plugins directory for APOC functions
+  # Env: NORNICDB_PLUGINS_DIR
+  plugins_dir: "./plugins"
+
+  # Heimdall plugins directory
+  # Env: NORNICDB_HEIMDALL_PLUGINS_DIR
+  heimdall_plugins_dir: "./plugins/heimdall"
 
 # =============================================================================
-# Embedding Configuration (NornicDB-specific)
+# DATABASE CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/architecture/storage.md
 # =============================================================================
-# Configure embedding provider for semantic search and auto-relationships
+database:
+  # Data directory (alternative to server.data_dir)
+  # Env: NORNICDB_DATA_DIR
+  data_dir: ./data
+
+  # Default database name
+  # Env: NORNICDB_DEFAULT_DATABASE
+  default_database: nornicdb
+
+  # Read-only mode - prevents all write operations
+  # Env: NORNICDB_READ_ONLY
+  read_only: false
+
+  # Transaction timeout (Go duration: "30s", "1m", "5m")
+  # Env: NORNICDB_TRANSACTION_TIMEOUT
+  transaction_timeout: "30s"
+
+  # Maximum concurrent transactions
+  # Env: NORNICDB_MAX_TRANSACTIONS
+  max_concurrent_transactions: 1000
+
+  # Strict durability mode - immediate fsync for financial/critical data
+  # Docs: https://github.com/orneryd/nornicdb/docs/architecture/durability.md
+  # Env: NORNICDB_STRICT_DURABILITY
+  # WARNING: Significantly impacts write performance
+  strict_durability: false
+
+  # Encryption password for data-at-rest encryption
+  # Env: NORNICDB_ENCRYPTION_PASSWORD
+  # If empty, encryption is disabled. Set a strong password for production.
+  # Uses AES-256-GCM with PBKDF2 key derivation.
+  encryption_password: ""
+
+  # WAL (Write-Ahead Log) sync mode: "batch" or "immediate"
+  # Env: NORNICDB_WAL_SYNC_MODE
+  #   batch: Batches syncs for better performance (default)
+  #   immediate: Sync every write (slower but safer)
+  wal_sync_mode: "batch"
+
+  # WAL sync interval (for batch mode)
+  # Env: NORNICDB_WAL_SYNC_INTERVAL
+  wal_sync_interval: "100ms"
+
+# =============================================================================
+# STORAGE (Alias for database.data_dir)
+# =============================================================================
+storage:
+  path: ./data
+
+# =============================================================================
+# AUTHENTICATION (Dedicated auth configuration)
+# Docs: https://github.com/orneryd/nornicdb/docs/security/authentication.md
+# =============================================================================
+auth:
+  # Enable authentication (alternative to server.auth)
+  enabled: true
+
+  # Admin username
+  username: admin
+
+  # Admin password (minimum 8 characters recommended for security)
+  # Env: Use --admin-password flag or NORNICDB_AUTH
+  password: password
+
+  # Minimum password length requirement
+  # Env: NORNICDB_MIN_PASSWORD_LENGTH
+  min_password_length: 8
+
+  # JWT token expiry duration
+  # Env: NORNICDB_AUTH_TOKEN_EXPIRY
+  token_expiry: "24h"
+
+  # JWT signing secret (auto-generated if empty)
+  # Env: NORNICDB_AUTH_JWT_SECRET
+  # WARNING: Set a strong secret in production (32+ characters)
+  jwt_secret: ""
+
+# =============================================================================
+# EMBEDDING CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/features/embeddings.md
+# =============================================================================
 embedding:
-  # Provider: local, ollama, openai, none
-  # local: Use locally embedded model (llama.cpp with GGUF models)
-  #        Requires models directory with .gguf embedding model
-  #        Set NORNICDB_EMBEDDING_PROVIDER=local
-  #        Set NORNICDB_MODELS_DIR=./models (or absolute path)
-  # ollama: Use Ollama service (requires Ollama running)
-  # openai: Use OpenAI API (requires API key)
-  # none: Disable embeddings (vector search unavailable)
-  provider: local
-
-  # Models directory (for local provider)
-  # Directory containing .gguf embedding models (e.g., bge-m3.gguf)
-  # Can be set via NORNICDB_MODELS_DIR environment variable
-  # Default: ./models
-  models_dir: ./models
-
-  # Local model configuration (when provider=local)
-  local:
-    # Model file name (inside models_dir)
-    # Default: bge-m3.gguf (BGE-M3 embedding model)
-    model_file: bge-m3.gguf
-
-    # Context size (tokens)
-    context_size: 512
-
-    # Batch size for embedding generation
-    batch_size: 512
-
-  # Ollama configuration (when provider=ollama)
-  ollama:
-    # Ollama API endpoint
-    endpoint: http://localhost:11434
-    
-    # Model name in Ollama
-    model: nomic-embed-text
-
-  # OpenAI configuration (when provider=openai)
-  openai:
-    # API key (or set OPENAI_API_KEY environment variable)
-    api_key: ""
-    
-    # Model name
-    model: text-embedding-3-small
-
-# =============================================================================
-# Heimdall Configuration (NornicDB Cognitive Extension)
-# =============================================================================
-# Heimdall adds cognitive capabilities: auto-relationships, link prediction,
-# memory decay, and intelligent graph evolution.
-#
-# Enable with: NORNICDB_HEIMDALL_ENABLED=true
-# Plugins: NORNICDB_HEIMDALL_PLUGINS_DIR=./plugins/heimdall/built-plugins
-heimdall:
-  # Enable Heimdall cognitive features
-  # Must also have embedding provider configured
+  # Enable embedding generation for vector search
   enabled: true
 
-  # Heimdall plugins directory (optional extensions)
-  # Contains .so files (Linux/Mac) or .dll files (Windows, if supported)
-  # Set via NORNICDB_HEIMDALL_PLUGINS_DIR environment variable
-  plugins_dir: ./plugins/heimdall/built-plugins
+  # Provider: "local", "ollama", "openai"
+  # Env: NORNICDB_EMBEDDING_PROVIDER
+  #   local: GPU-accelerated local GGUF models (llama.cpp)
+  #   ollama: Ollama API service
+  #   openai: OpenAI API (requires API key)
+  provider: ollama
+
+  # Model name
+  # Env: NORNICDB_EMBEDDING_MODEL
+  #   local: bge-m3 (default GGUF model)
+  #   ollama: nomic-embed-text, bge-m3, etc.
+  #   openai: text-embedding-3-small, text-embedding-ada-002
+  model: bge-m3
+
+  # API URL (for ollama/openai providers)
+  # Env: NORNICDB_EMBEDDING_API_URL
+  url: "http://localhost:11434"
+
+  # API key (for openai provider)
+  # Env: NORNICDB_EMBEDDING_API_KEY
+  api_key: ""
+
+  # Embedding dimensions (must match model output)
+  # Env: NORNICDB_EMBEDDING_DIMENSIONS
+  #   bge-m3: 1024
+  #   nomic-embed-text: 768
+  #   text-embedding-3-small: 1536
+  dimensions: 1024
+
+  # Embedding cache size (number of cached embeddings)
+  # Env: NORNICDB_EMBEDDING_CACHE_SIZE
+  # 10000 entries ≈ 40MB memory
+  cache_size: 10000
+
+  # Models directory for local GGUF models
+  # Env: NORNICDB_MODELS_DIR
+  # Directory containing .gguf files for local embedding
+  models_dir: "./models"
+
+  # GPU layers for local embeddings
+  # Env: NORNICDB_EMBEDDING_GPU_LAYERS
+  #   -1: Auto (use all available GPU layers)
+  #    0: CPU only (no GPU offloading)
+  #   >0: Specific number of layers to offload
+  gpu_layers: -1
+
+  # Model warmup interval to keep in GPU memory
+  # Env: NORNICDB_EMBEDDING_WARMUP_INTERVAL
+  # Set to 0 to disable warmup
+  warmup_interval: "5m"
 
 # =============================================================================
-# APOC Plugin Configuration (Neo4j Compatibility)
+# MEMORY/DECAY CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/features/memory-decay.md
 # =============================================================================
-# APOC (Awesome Procedures on Cypher) compatibility layer
-# Provides Neo4j APOC procedures for compatibility
-#
-# Enable with: NORNICDB_PLUGINS_DIR=./apoc/built-plugins
-apoc:
-  # APOC plugins directory
-  # Contains .so files (Linux/Mac) - not supported on Windows
-  # Set via NORNICDB_PLUGINS_DIR environment variable
-  plugins_dir: ./apoc/built-plugins
-
-# =============================================================================
-# Search Configuration
-# =============================================================================
-search:
-  # RRF (Reciprocal Rank Fusion) settings
-  rrf:
-    # RRF constant (higher = more equal weight to lower ranks)
-    k: 60
-
-    # Default weight for vector search (0.0-1.0)
-    vector_weight: 0.6
-
-    # Default weight for BM25 search (0.0-1.0)
-    bm25_weight: 0.4
-
-    # Use adaptive weights based on query length
-    adaptive: true
-
-  # Properties indexed for full-text search
-  # Must match Mimir's Neo4j node_search fulltext index
-  fulltext_properties:
-    - content
-    - text
-    - title
-    - name
-    - description
-    - path
-    - workerRole
-    - requirements
-
-# =============================================================================
-# Parallel Execution Configuration (NornicDB-specific)
-# =============================================================================
-# Parallel execution significantly improves query performance on large datasets
-# by distributing work across multiple CPU cores.
-#
-# Performance: 3-4x speedup on large node sets (tested with 100K nodes)
-# Recommended for production workloads with >1000 nodes
-parallel:
-  # Enable parallel query execution globally
-  # Disabling reverts to sequential (single-threaded) execution
-  enabled: true
-
-  # Maximum number of worker goroutines
-  # 0 = auto (uses all available CPU cores, runtime.NumCPU())
-  # Set explicitly for container resource limits or testing
-  max_workers: 0
-
-  # Minimum batch size before parallelizing
-  # Below this threshold, sequential execution is used (overhead not worth it)
-  # Tune based on your typical query sizes:
-  #   - 500: Aggressive parallelization (more overhead, better for large queries)
-  #   - 1000: Balanced (recommended default)
-  #   - 2000: Conservative (less overhead, only parallelize large queries)
-  min_batch_size: 1000
-
-# =============================================================================
-# Memory Management Configuration (NornicDB-specific)
-# =============================================================================
-# Fine-grained control over Go's memory management to balance
-# performance vs memory usage for different deployment scenarios.
-#
-# Environment variables (override these settings):
-#   NORNICDB_MEMORY_LIMIT, NORNICDB_GC_PERCENT, NORNICDB_POOL_ENABLED,
-#   NORNICDB_QUERY_CACHE_SIZE, NORNICDB_QUERY_CACHE_TTL
 memory:
-  # Soft memory limit (GOMEMLIMIT)
-  # Examples: "2GB", "512MB", "0" (unlimited)
-  # Recommended: Set to 80% of container/system memory
-  # For 4GB container: "3GB"
-  limit: "0"  # Unlimited by default
+  # Enable natural memory decay (episodic/semantic/procedural)
+  # Env: NORNICDB_MEMORY_DECAY_ENABLED
+  decay_enabled: true
 
-  # GC aggressiveness (GOGC)
-  # 100 = default (GC when heap doubles)
-  # 50  = more frequent GC (lower memory, slightly more CPU)
-  # 20  = aggressive GC (lowest memory, more CPU overhead)
-  # 200 = less frequent GC (higher memory, better throughput)
-  # -1  = disable GC (use with caution!)
+  # Decay check interval
+  # Env: NORNICDB_MEMORY_DECAY_INTERVAL
+  decay_interval: "1h"
+
+  # Archive threshold (0.0-1.0) - nodes below this are archived
+  # Env: NORNICDB_MEMORY_ARCHIVE_THRESHOLD
+  archive_threshold: 0.05
+
+  # Enable automatic relationship inference
+  # Env: NORNICDB_AUTO_LINKS_ENABLED
+  auto_links_enabled: true
+
+  # Minimum similarity for auto-linking (0.0-1.0)
+  # Env: NORNICDB_AUTO_LINKS_THRESHOLD
+  auto_links_similarity_threshold: 0.82
+
+  # Runtime memory limit (e.g., "2GB", "512MB", "0" for unlimited)
+  # Env: NORNICDB_MEMORY_LIMIT
+  # Docs: https://github.com/orneryd/nornicdb/docs/operations/memory.md
+  runtime_limit: "0"
+
+  # GC aggressiveness (GOGC value)
+  # Env: NORNICDB_GC_PERCENT
+  # 100=default, lower=more frequent GC
   gc_percent: 100
 
-  # Object pooling for reduced allocations
-  # Reuses query result structures, reducing GC pressure
-  # Recommended: true for high-throughput workloads
+  # Enable object pooling for reduced allocations
+  # Env: NORNICDB_POOL_ENABLED
   pool_enabled: true
 
-  # Maximum objects per pool (memory leak prevention)
+  # Maximum pool size
+  # Env: NORNICDB_POOL_MAX_SIZE
   pool_max_size: 1000
 
-  # Query plan caching
-  # Avoids re-parsing identical Cypher queries
-  query_cache:
-    enabled: true
-    size: 1000      # Maximum cached query plans
-    ttl: "5m"       # Cache entry TTL
+  # Enable query plan caching
+  # Env: NORNICDB_QUERY_CACHE_ENABLED
+  query_cache_enabled: true
+
+  # Query cache size
+  # Env: NORNICDB_QUERY_CACHE_SIZE
+  query_cache_size: 1000
+
+  # Query cache TTL
+  # Env: NORNICDB_QUERY_CACHE_TTL
+  query_cache_ttl: "5m"
 
 # =============================================================================
-# Logging Configuration
+# EMBEDDING WORKER CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/features/embeddings.md#worker
+# =============================================================================
+embedding_worker:
+  # Scan interval for nodes needing embeddings
+  # Env: NORNICDB_EMBED_SCAN_INTERVAL
+  scan_interval: "15m"
+
+  # Batch processing delay
+  # Env: NORNICDB_EMBED_BATCH_DELAY
+  batch_delay: "500ms"
+
+  # Maximum retries for failed embeddings
+  # Env: NORNICDB_EMBED_MAX_RETRIES
+  max_retries: 3
+
+  # Text chunk size (tokens)
+  # Env: NORNICDB_EMBED_CHUNK_SIZE
+  chunk_size: 512
+
+  # Chunk overlap (tokens)
+  # Env: NORNICDB_EMBED_CHUNK_OVERLAP
+  chunk_overlap: 50
+
+# =============================================================================
+# K-MEANS CLUSTERING
+# Docs: https://github.com/orneryd/nornicdb/docs/features/kmeans.md
+# =============================================================================
+kmeans:
+  # Enable K-means clustering for node organization
+  enabled: false
+
+  # Minimum embeddings required before clustering activates
+  # Env: NORNICDB_KMEANS_MIN_EMBEDDINGS
+  # Default: 1000 embeddings minimum for meaningful clusters
+  min_embeddings: 1000
+
+# =============================================================================
+# KALMAN FILTER (Experimental)
+# Advanced prediction and smoothing for temporal data
+# =============================================================================
+kalman:
+  # Enable Kalman filter for inference smoothing
+  # Env: NORNICDB_KALMAN_ENABLED
+  enabled: false
+
+# =============================================================================
+# AUTO-TLP (Topology Link Prediction)
+# Docs: https://github.com/orneryd/nornicdb/docs/features/link-prediction.md
+# =============================================================================
+auto_tlp:
+  # Enable automatic topology-based link prediction
+  # Note: Cypher procedures (gds.linkPrediction.*) are always available
+  # This only controls automatic integration with inference engine
+  # Env: NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED
+  enabled: false
+
+  # Algorithm: adamic_adar, jaccard, common_neighbors, 
+  #            resource_allocation, preferential_attachment, ensemble
+  # Env: NORNICDB_TOPOLOGY_ALGORITHM
+  algorithm: "adamic_adar"
+
+  # Weight for topology vs semantic (0.0-1.0)
+  # Env: NORNICDB_TOPOLOGY_WEIGHT
+  weight: 0.4
+
+  # Top-K candidates to consider
+  # Env: NORNICDB_TOPOLOGY_TOPK
+  top_k: 10
+
+  # Minimum score threshold
+  # Env: NORNICDB_TOPOLOGY_MIN_SCORE
+  min_score: 0.3
+
+  # Graph cache refresh interval
+  # Env: NORNICDB_TOPOLOGY_GRAPH_REFRESH_INTERVAL
+  graph_refresh_interval: 100
+
+  # A/B testing for topology vs semantic-only
+  # Env: NORNICDB_TOPOLOGY_AB_TEST_ENABLED
+  ab_test_enabled: false
+
+  # Percentage of requests using topology (0-100)
+  # Env: NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE
+  ab_test_percentage: 50
+
+# =============================================================================
+# HEIMDALL AI GUARDIAN
+# Docs: https://github.com/orneryd/nornicdb/docs/features/heimdall.md
+# =============================================================================
+heimdall:
+  # Enable Heimdall cognitive features
+  # Env: NORNICDB_HEIMDALL_ENABLED
+  enabled: false
+
+  # Local SLM model file (GGUF format)
+  # Env: NORNICDB_HEIMDALL_MODEL
+  model: "qwen2.5-0.5b-instruct.gguf"
+
+  # GPU layers (-1=auto, 0=CPU only, >0=specific layers)
+  # Env: NORNICDB_HEIMDALL_GPU_LAYERS
+  gpu_layers: -1
+
+  # Context window size (tokens)
+  # Env: NORNICDB_HEIMDALL_CONTEXT_SIZE
+  context_size: 8192
+
+  # Batch size for inference
+  # Env: NORNICDB_HEIMDALL_BATCH_SIZE
+  batch_size: 2048
+
+  # Maximum output tokens
+  # Env: NORNICDB_HEIMDALL_MAX_TOKENS
+  max_tokens: 1024
+
+  # Temperature (0.0-2.0, lower=more deterministic)
+  # Env: NORNICDB_HEIMDALL_TEMPERATURE
+  temperature: 0.1
+
+  # Enable anomaly detection
+  # Env: NORNICDB_HEIMDALL_ANOMALY_DETECTION
+  anomaly_detection: false
+
+  # Enable runtime diagnosis
+  # Env: NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS
+  runtime_diagnosis: false
+
+  # Enable memory curation (experimental)
+  # Env: NORNICDB_HEIMDALL_MEMORY_CURATION
+  memory_curation: false
+
+  # Token budget settings
+  # Env: NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS
+  max_context_tokens: 8192
+  # Env: NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS
+  max_system_tokens: 6000
+  # Env: NORNICDB_HEIMDALL_MAX_USER_TOKENS
+  max_user_tokens: 2000
+
+# =============================================================================
+# COMPLIANCE SETTINGS
+# Docs: https://github.com/orneryd/nornicdb/docs/compliance/
+# =============================================================================
+compliance:
+  # --- Audit Logging ---
+  # Env: NORNICDB_AUDIT_ENABLED
+  audit_enabled: true
+
+  # Audit log file path
+  # Env: NORNICDB_AUDIT_LOG_PATH
+  audit_log_path: "./logs/audit.log"
+
+  # Audit log retention (days) - 2555 ≈ 7 years for SOC2
+  # Env: NORNICDB_AUDIT_RETENTION_DAYS
+  audit_retention_days: 2555
+
+  # --- Data Retention ---
+  # Env: NORNICDB_RETENTION_ENABLED
+  retention_enabled: false
+
+  # Retention policy in days (0=unlimited)
+  # Env: NORNICDB_RETENTION_POLICY_DAYS
+  retention_policy_days: 0
+
+  # Auto-delete expired data
+  # Env: NORNICDB_RETENTION_AUTO_DELETE
+  retention_auto_delete: false
+
+  # Roles exempt from retention policy
+  # Env: NORNICDB_RETENTION_EXEMPT_ROLES
+  retention_exempt_roles:
+    - admin
+
+  # --- Access Control ---
+  # Env: NORNICDB_ACCESS_CONTROL_ENABLED
+  access_control_enabled: true
+
+  # Session timeout
+  # Env: NORNICDB_SESSION_TIMEOUT
+  session_timeout: "30m"
+
+  # Maximum failed login attempts before lockout
+  # Env: NORNICDB_MAX_FAILED_LOGINS
+  max_failed_logins: 5
+
+  # Lockout duration after max failed logins
+  # Env: NORNICDB_LOCKOUT_DURATION
+  lockout_duration: "15m"
+
+  # --- Encryption ---
+  # Env: NORNICDB_ENCRYPTION_AT_REST
+  encryption_at_rest: false
+
+  # Env: NORNICDB_ENCRYPTION_IN_TRANSIT
+  encryption_in_transit: true
+
+  # Path to encryption key file
+  # Env: NORNICDB_ENCRYPTION_KEY_PATH
+  encryption_key_path: ""
+
+  # --- Data Subject Rights (GDPR) ---
+  # Env: NORNICDB_DATA_EXPORT_ENABLED
+  data_export_enabled: true
+
+  # Env: NORNICDB_DATA_ERASURE_ENABLED
+  data_erasure_enabled: true
+
+  # Env: NORNICDB_DATA_ACCESS_ENABLED
+  data_access_enabled: true
+
+  # --- Anonymization ---
+  # Env: NORNICDB_ANONYMIZATION_ENABLED
+  anonymization_enabled: true
+
+  # Method: pseudonymization, generalization, k_anonymity
+  # Env: NORNICDB_ANONYMIZATION_METHOD
+  anonymization_method: "pseudonymization"
+
+  # --- Consent ---
+  # Env: NORNICDB_CONSENT_REQUIRED
+  consent_required: false
+
+  # Env: NORNICDB_CONSENT_VERSIONING
+  consent_versioning: true
+
+  # Env: NORNICDB_CONSENT_AUDIT_TRAIL
+  consent_audit_trail: true
+
+  # --- Breach Detection ---
+  # Env: NORNICDB_BREACH_DETECTION_ENABLED
+  breach_detection_enabled: false
+
+  # Email for breach notifications
+  # Env: NORNICDB_BREACH_NOTIFY_EMAIL
+  breach_notify_email: ""
+
+  # Webhook URL for breach notifications
+  # Env: NORNICDB_BREACH_NOTIFY_WEBHOOK
+  breach_notify_webhook: ""
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# Docs: https://github.com/orneryd/nornicdb/docs/operations/logging.md
 # =============================================================================
 logging:
-  # Log level: debug, info, warn, error
-  level: info
+  # Log level: DEBUG, INFO, WARN, ERROR
+  # Env: NORNICDB_LOG_LEVEL
+  level: INFO
 
   # Log format: json, text
-  format: text
+  # Env: NORNICDB_LOG_FORMAT
+  format: json
 
-  # Log file (empty = stdout only)
-  file: ""
+  # Log output: stdout, file path
+  # Env: NORNICDB_LOG_OUTPUT
+  output: stdout
+
+  # Enable query logging
+  # Env: NORNICDB_QUERY_LOG_ENABLED
+  query_log_enabled: false
+
+  # Slow query threshold (queries slower than this are logged)
+  # Env: NORNICDB_SLOW_QUERY_THRESHOLD
+  slow_query_threshold: "5s"
