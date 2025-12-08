@@ -1,0 +1,502 @@
+================================================================================
+                    NornicDB for macOS - User Guide
+================================================================================
+
+Quick Start Guide for NornicDB Native Installation
+Version 1.0.0
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. Installation
+2. First-Run Setup
+3. Menu Bar Controls
+4. Settings
+5. Configuration Presets
+6. Security
+7. Command Line Usage
+8. Troubleshooting
+9. Getting Help
+
+================================================================================
+1. INSTALLATION
+================================================================================
+
+REQUIREMENTS:
+  - macOS 12.0 (Monterey) or later
+  - ~500 MB disk space (1+ GB with AI models)
+
+INSTALL STEPS:
+  1. Download NornicDB-1.0.0-arm64.pkg
+  2. Double-click the installer
+  3. Follow the installation prompts
+  4. Look for the NornicDB icon in your menu bar (top right of screen)
+
+That's it! NornicDB is now installed and running.
+
+================================================================================
+2. FIRST-RUN SETUP
+================================================================================
+
+After installation, a setup wizard will appear automatically.
+
+STEP 1: WELCOME
+  - Introduction to NornicDB
+  - Click "Next" to continue
+
+STEP 2: FEATURES (Choose Your Setup)
+  Three options available:
+
+  ○ BASIC
+    - Essential features only
+    - Neo4j compatibility
+    - Fast queries
+    - Low resource usage
+    - Best for: Simple graph database needs
+
+  ● STANDARD (Recommended) ⭐
+    - All basic features
+    - Vector embeddings
+    - K-Means clustering
+    - Best for: Most users, AI-enhanced queries
+
+  ○ ADVANCED
+    - All features enabled
+    - Heimdall AI guardian
+    - Auto-predictions
+    - Maximum performance
+    - Best for: Production workloads, AI applications
+
+STEP 3: SECURITY
+  Configure authentication and encryption:
+
+  Username:        admin (change recommended)
+  Password:        password (minimum 8 characters)
+  JWT Secret:      Auto-generated (or set your own)
+  
+  Optional: Enable database encryption
+  
+  Click "Generate Random Secret" for strong passwords
+  Click "Next" when done
+
+STEP 4: REVIEW & START
+  - Review your configuration
+  - Download AI models if needed (BGE-M3, Qwen2.5)
+  - Click "Save & Start Server"
+  
+  The wizard will close and NornicDB will start.
+
+================================================================================
+3. MENU BAR CONTROLS
+================================================================================
+
+Click the NornicDB icon in your menu bar (database icon at top of screen).
+
+STATUS INDICATORS:
+  🟢 Running      - Server is healthy and accessible
+  🔴 Stopped      - Server is not running  
+  🟡 Starting...  - Server is launching
+  ⚪️ Unknown      - Status cannot be determined
+
+MENU OPTIONS:
+
+  Open Web UI              Open NornicDB in browser (http://localhost:7474)
+  ────────────────────────
+  Start Server             Start the NornicDB service
+  Stop Server              Stop the NornicDB service
+  Restart Server           Restart with current configuration
+  ────────────────────────
+  Settings...              Open settings panel (or press ⌘,)
+  Download Models          Download AI models from HuggingFace
+  Open Models Folder       Browse installed AI models
+  ────────────────────────
+  Quit                     Exit menu bar app (server continues running)
+
+KEYBOARD SHORTCUT:
+  ⌘, (Command + Comma) = Open Settings
+
+================================================================================
+4. SETTINGS
+================================================================================
+
+Press ⌘, or click "Settings..." to configure NornicDB.
+
+The settings panel has 5 tabs:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ FEATURES TAB                                                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Toggle major features on/off:                                           │
+│                                                                          │
+│  ☑️ Enable Embeddings              Vector similarity search             │
+│  ☑️ Enable K-Means Clustering      Automatic grouping                   │
+│  ☐ Enable Auto-TLP                 Temporal link prediction             │
+│  ☑️ Enable Heimdall                AI guardian for security             │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ SERVER TAB                                                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Configure network settings:                                             │
+│                                                                          │
+│  Bolt Port:        7687           (Neo4j protocol)                      │
+│  HTTP Port:        7474           (Web UI and API)                      │
+│  Host Address:     0.0.0.0        (Bind to all interfaces)              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ MODELS TAB                                                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Select AI models for different features:                                │
+│                                                                          │
+│  Embedding Model:   bge-m3.gguf                                         │
+│  Heimdall Model:    qwen2.5-0.5b-instruct.gguf                          │
+│                                                                          │
+│  [Refresh List]     Rescan models directory                             │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ SECURITY TAB                                                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Configure authentication and encryption:                                │
+│                                                                          │
+│  Admin Username:    admin                                               │
+│  Admin Password:    ********                                            │
+│  JWT Secret:        ********************************                    │
+│                                                                          │
+│  [Generate Random Secret]                                               │
+│                                                                          │
+│  ☐ Enable Encryption at Rest                                            │
+│    Encryption Key:  ********************************                    │
+│                                                                          │
+│  [Generate Strong Key]                                                  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ STARTUP TAB                                                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Control startup behavior:                                               │
+│                                                                          │
+│  ☑️ Start at Login                Launch menu bar app when Mac boots    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+IMPORTANT:
+  All changes require a server restart to take effect.
+  Click "Save & Restart Server" to apply your changes.
+
+================================================================================
+5. CONFIGURATION PRESETS
+================================================================================
+
+BASIC PRESET
+  Features Enabled:
+    ✓ Neo4j compatibility
+    ✓ Fast Cypher queries
+    ✓ Low resource usage
+  
+  Features Disabled:
+    ✗ Embeddings
+    ✗ K-Means clustering
+    ✗ Auto-TLP
+    ✗ Heimdall
+  
+  Best For:
+    - Simple graph database applications
+    - Neo4j migration projects
+    - Resource-constrained environments
+    - Development and testing
+
+STANDARD PRESET (RECOMMENDED) ⭐
+  Features Enabled:
+    ✓ All Basic features
+    ✓ Vector embeddings
+    ✓ K-Means clustering
+  
+  Features Disabled:
+    ✗ Auto-TLP
+    ✗ Heimdall
+  
+  Best For:
+    - Most production workloads
+    - AI-enhanced queries
+    - Similarity search
+    - Content recommendation
+
+ADVANCED PRESET
+  Features Enabled:
+    ✓ All Standard features
+    ✓ Auto-TLP (temporal predictions)
+    ✓ Heimdall (AI guardian)
+  
+  Best For:
+    - Enterprise applications
+    - Maximum AI capabilities
+    - Security-critical systems
+    - Predictive analytics
+
+================================================================================
+6. SECURITY
+================================================================================
+
+CHANGE DEFAULT CREDENTIALS (IMPORTANT!)
+
+Default credentials are:
+  Username: admin
+  Password: password
+
+To change:
+  1. Open Settings (⌘,)
+  2. Go to Security tab
+  3. Update Username and Password
+  4. Click "Generate Random Secret" for JWT
+  5. Click "Save & Restart Server"
+
+ENABLE DATABASE ENCRYPTION
+
+To encrypt data at rest:
+  1. Open Settings → Security tab
+  2. Check "Enable Encryption at Rest"
+  3. Click "Generate Strong Key" (or enter your own 16+ character key)
+  4. SAVE THIS KEY SECURELY - data cannot be recovered without it!
+  5. Click "Save & Restart Server"
+
+⚠️  WARNING: If you lose your encryption key, your data is permanently lost!
+
+GENERATE API TOKENS (For MCP Servers, Automation)
+
+  1. Login to Web UI: http://localhost:7474
+  2. Navigate to: /security page
+  3. Enter Token Subject (e.g., "MCP Server")
+  4. Choose Expiry (1 hour, 1 day, 1 week, 30 days, never)
+  5. Click "Generate Token"
+  6. Copy token immediately (it won't be shown again)
+  7. Use in Authorization header: Bearer <token>
+
+================================================================================
+7. COMMAND LINE USAGE
+================================================================================
+
+NornicDB binary is installed at: /usr/local/bin/nornicdb
+
+BASIC COMMANDS:
+
+  Start server:
+    $ nornicdb serve
+
+  Start with custom config:
+    $ nornicdb serve --config ~/.nornicdb/config.yaml
+
+  Start with custom ports:
+    $ nornicdb serve --bolt-port 7687 --http-port 7474
+
+  Check version:
+    $ nornicdb version
+
+  View help:
+    $ nornicdb --help
+
+SERVICE MANAGEMENT (Advanced):
+
+  Check if service is running:
+    $ launchctl list | grep nornicdb
+
+  Start service manually:
+    $ launchctl start com.nornicdb.server
+
+  Stop service manually:
+    $ launchctl stop com.nornicdb.server
+
+  Restart service:
+    $ launchctl kickstart -k gui/$(id -u)/com.nornicdb.server
+
+  View logs:
+    $ tail -f /usr/local/var/log/nornicdb/stdout.log
+    $ tail -f /usr/local/var/log/nornicdb/stderr.log
+
+CONFIGURATION FILE:
+
+  Location: ~/.nornicdb/config.yaml
+  
+  Edit with:
+    $ nano ~/.nornicdb/config.yaml
+    
+  View current config:
+    $ cat ~/.nornicdb/config.yaml
+
+DIRECTORY STRUCTURE:
+
+  /usr/local/bin/nornicdb              Binary
+  /usr/local/var/nornicdb/data/        Database files
+  /usr/local/var/nornicdb/models/      AI models (.gguf)
+  /usr/local/var/log/nornicdb/         Log files
+  /Applications/NornicDB.app           Menu bar app
+  ~/.nornicdb/config.yaml              Configuration
+  ~/Library/LaunchAgents/              Auto-start configs
+
+================================================================================
+8. TROUBLESHOOTING
+================================================================================
+
+PROBLEM: Server won't start
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Check logs:
+     $ tail -n 50 /usr/local/var/log/nornicdb/stderr.log
+
+  2. Check if ports are in use:
+     $ lsof -i :7687
+     $ lsof -i :7474
+
+  3. Fix permissions:
+     $ sudo chown -R $(whoami) /usr/local/var/nornicdb
+
+  4. If all else fails, reset database (⚠️ destroys all data):
+     $ rm -rf /usr/local/var/nornicdb/data
+
+PROBLEM: Menu bar icon missing
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Check if app is running:
+     $ ps aux | grep NornicDB
+
+  2. Restart menu bar app:
+     $ killall NornicDB
+     $ open /Applications/NornicDB.app
+
+PROBLEM: Can't login to Web UI
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Verify credentials:
+     $ cat ~/.nornicdb/config.yaml | grep -A3 "^auth:"
+
+  2. Default credentials are:
+     Username: admin
+     Password: password
+
+  3. Reset to defaults by editing ~/.nornicdb/config.yaml:
+     auth:
+       username: "admin"
+       password: "password"
+     
+  4. Restart server from menu bar
+
+PROBLEM: Embeddings not working (selected "Basic")
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Check feature flags:
+     $ cat ~/.nornicdb/config.yaml | grep "enabled:"
+
+  2. Enable embeddings:
+     - Open Settings → Features tab
+     - Check ✅ "Enable Embeddings"
+     - Click "Save & Restart Server"
+
+PROBLEM: AI models not found
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Download models from menu bar:
+     - Click NornicDB icon → "Download Models"
+
+  2. Or manually download:
+     $ curl -L "https://huggingface.co/nornicAI/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf" \
+       -o /usr/local/var/nornicdb/models/bge-m3.gguf
+
+  3. Or rerun first-run wizard:
+     $ rm ~/.nornicdb/.first_run
+     $ open /Applications/NornicDB.app
+
+PROBLEM: Port already in use
+───────────────────────────────────────────────────────────────────────────
+SOLUTION:
+  1. Find what's using the port:
+     $ lsof -i :7687
+
+  2. Kill the process:
+     $ kill -9 <PID>
+
+  3. Or change NornicDB ports:
+     - Open Settings → Server tab
+     - Change "Bolt Port" or "HTTP Port"
+     - Click "Save & Restart Server"
+
+================================================================================
+9. GETTING HELP
+================================================================================
+
+DOCUMENTATION:
+  https://nornicdb.com/docs
+
+GITHUB ISSUES:
+  https://github.com/orneryd/nornicdb/issues
+
+DISCUSSIONS:
+  https://github.com/orneryd/nornicdb/discussions
+
+WHEN REPORTING ISSUES, INCLUDE:
+
+  1. macOS version:
+     $ sw_vers
+
+  2. NornicDB version:
+     $ nornicdb version
+
+  3. Server logs (last 50 lines):
+     $ tail -n 50 /usr/local/var/log/nornicdb/stderr.log
+
+  4. Configuration (redact passwords!):
+     $ cat ~/.nornicdb/config.yaml
+
+================================================================================
+QUICK REFERENCE
+================================================================================
+
+URLS:
+  Web UI:           http://localhost:7474
+  Bolt Protocol:    bolt://localhost:7687
+  Security Page:    http://localhost:7474/security
+
+DEFAULT CREDENTIALS:
+  Username:         admin
+  Password:         password
+  (Change these immediately!)
+
+KEY LOCATIONS:
+  Binary:           /usr/local/bin/nornicdb
+  Config:           ~/.nornicdb/config.yaml
+  Data:             /usr/local/var/nornicdb/data/
+  Logs:             /usr/local/var/log/nornicdb/
+  Models:           /usr/local/var/nornicdb/models/
+
+KEYBOARD SHORTCUTS:
+  ⌘,                Open Settings
+
+MENU BAR STATUSES:
+  🟢 Running        Server is healthy
+  🔴 Stopped        Server is not running
+  🟡 Starting...    Server is launching
+  ⚪️ Unknown        Status unknown
+
+UNINSTALL:
+  $ launchctl unload ~/Library/LaunchAgents/com.nornicdb.*.plist
+  $ rm ~/Library/LaunchAgents/com.nornicdb.*.plist
+  $ rm -rf /usr/local/var/nornicdb
+  $ rm -rf /usr/local/var/log/nornicdb
+  $ rm /usr/local/bin/nornicdb
+  $ rm -rf /Applications/NornicDB.app
+  $ rm -rf ~/.nornicdb
+
+================================================================================
+
+Thank you for using NornicDB!
+
+NornicDB is faster than Neo4j, easier to use, and AI-powered.
+
+For more information, visit: https://nornicdb.com
+
+================================================================================
