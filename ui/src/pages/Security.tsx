@@ -262,21 +262,24 @@ export function Security() {
 
             {/* Usage Example */}
             <div className="mt-4 pt-4 border-t border-slate-700">
-              <h3 className="text-sm font-semibold text-slate-400 mb-2">Usage Example (MCP Config)</h3>
+              <h3 className="text-sm font-semibold text-slate-400 mb-2">Usage Example (Claude Desktop / MCP Config)</h3>
               <pre className="bg-slate-900 rounded p-3 text-xs overflow-x-auto">
                 <code className="text-slate-300">{`{
   "mcpServers": {
     "nornicdb": {
-      "command": "npx",
-      "args": ["-y", "@nornicdb/mcp-server"],
-      "env": {
-        "NORNICDB_URL": "http://localhost:7474",
-        "NORNICDB_TOKEN": "${generatedToken.token.substring(0, 20)}..."
+      "url": "http://127.0.0.1:7474/mcp",
+      "name": "Knowledge Graph TODO MCP Server",
+      "description": "MCP server for TODO tracking with Graph-RAG memory system",
+      "headers": {
+        "Authorization": "Bearer ${generatedToken.token.substring(0, 40)}..."
       }
     }
   }
 }`}</code>
               </pre>
+              <p className="text-xs text-slate-500 mt-2">
+                For Claude Desktop: Add this to your <code className="text-slate-400">~/Library/Application Support/Claude/claude_desktop_config.json</code>
+              </p>
             </div>
           </div>
         )}

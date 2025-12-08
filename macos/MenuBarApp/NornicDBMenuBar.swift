@@ -1145,50 +1145,50 @@ struct SettingsView: View {
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(8)
                 
-                // Encryption
-                VStack(alignment: .leading, spacing: 15) {
-                    Text("Database Encryption")
-                        .font(.headline)
+                // // Encryption
+                // VStack(alignment: .leading, spacing: 15) {
+                //     Text("Database Encryption")
+                //         .font(.headline)
                     
-                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                //     Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
                     
-                    if config.encryptionEnabled {
-                        HStack {
-                            Text("Encryption Key:")
-                                .frame(width: 120, alignment: .trailing)
-                            SecureField("Enter encryption password", text: $config.encryptionPassword)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(maxWidth: 250)
-                        }
+                //     if config.encryptionEnabled {
+                //         HStack {
+                //             Text("Encryption Key:")
+                //                 .frame(width: 120, alignment: .trailing)
+                //             SecureField("Enter encryption password", text: $config.encryptionPassword)
+                //                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                //                 .frame(maxWidth: 250)
+                //         }
                         
-                        HStack {
-                            Spacer().frame(width: 120)
-                            Button("Generate Strong Key") {
-                                config.encryptionPassword = config.generateRandomSecret()
-                            }
-                            .buttonStyle(.bordered)
-                        }
+                //         HStack {
+                //             Spacer().frame(width: 120)
+                //             Button("Generate Strong Key") {
+                //                 config.encryptionPassword = config.generateRandomSecret()
+                //             }
+                //             .buttonStyle(.bordered)
+                //         }
                         
-                        if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
-                            HStack {
-                                Spacer().frame(width: 120)
-                                Text("⚠️ Encryption key should be at least 16 characters")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                    }
+                //         if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
+                //             HStack {
+                //                 Spacer().frame(width: 120)
+                //                 Text("⚠️ Encryption key should be at least 16 characters")
+                //                     .font(.caption)
+                //                     .foregroundColor(.orange)
+                //             }
+                //         }
+                //     }
                     
-                    Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 0)
-                }
-                .padding()
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
+                //     Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
+                //         .font(.caption2)
+                //         .foregroundColor(.secondary)
+                //         .padding(.leading, 0)
+                // }
+                // .padding()
+                // .background(Color.secondary.opacity(0.1))
+                // .cornerRadius(8)
                 
-                Spacer()
+                // Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding()
@@ -1641,47 +1641,47 @@ struct FirstRunWizard: View {
                 .cornerRadius(8)
                 
                 // Encryption
-                VStack(alignment: .leading, spacing: 15) {
-                    Text("Database Encryption (Optional)")
-                        .font(.headline)
+                // VStack(alignment: .leading, spacing: 15) {
+                //     Text("Database Encryption (Optional)")
+                //         .font(.headline)
                     
-                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                //     Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
                     
-                    if config.encryptionEnabled {
-                        HStack {
-                            Text("Encryption Key:")
-                                .frame(width: 120, alignment: .trailing)
-                            SecureField("Enter encryption password", text: $config.encryptionPassword)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(maxWidth: 250)
-                        }
+                //     if config.encryptionEnabled {
+                //         HStack {
+                //             Text("Encryption Key:")
+                //                 .frame(width: 120, alignment: .trailing)
+                //             SecureField("Enter encryption password", text: $config.encryptionPassword)
+                //                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                //                 .frame(maxWidth: 250)
+                //         }
                         
-                        HStack {
-                            Spacer().frame(width: 120)
-                            Button("Generate Strong Key") {
-                                config.encryptionPassword = config.generateRandomSecret()
-                            }
-                            .buttonStyle(.bordered)
-                        }
+                //         HStack {
+                //             Spacer().frame(width: 120)
+                //             Button("Generate Strong Key") {
+                //                 config.encryptionPassword = config.generateRandomSecret()
+                //             }
+                //             .buttonStyle(.bordered)
+                //         }
                         
-                        if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
-                            HStack {
-                                Spacer().frame(width: 120)
-                                Text("⚠️ Encryption key should be at least 16 characters")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                    }
+                //         if config.encryptionPassword.count < 16 && !config.encryptionPassword.isEmpty {
+                //             HStack {
+                //                 Spacer().frame(width: 120)
+                //                 Text("⚠️ Encryption key should be at least 16 characters")
+                //                     .font(.caption)
+                //                     .foregroundColor(.orange)
+                //             }
+                //         }
+                //     }
                     
-                    Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 0)
-                }
-                .padding()
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
+                //     Text("⚠️ Enabling encryption will protect your data at rest. Keep your encryption password safe — data cannot be recovered without it!")
+                //         .font(.caption2)
+                //         .foregroundColor(.secondary)
+                //         .padding(.leading, 0)
+                // }
+                // .padding()
+                // .background(Color.secondary.opacity(0.1))
+                // .cornerRadius(8)
             }
             .padding()
         }
