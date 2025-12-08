@@ -102,7 +102,7 @@ Features:
 	serveCmd.Flags().String("address", getEnvStr("NORNICDB_ADDRESS", "127.0.0.1"), "Bind address (127.0.0.1 for localhost only, 0.0.0.0 for all interfaces)")
 	serveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
 	serveCmd.Flags().String("load-export", getEnvStr("NORNICDB_LOAD_EXPORT", ""), "Load data from Mimir export directory on startup")
-	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "ollama"), "Embedding provider: local, ollama, openai")
+	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "local"), "Embedding provider: local, ollama, openai")
 	serveCmd.Flags().String("embedding-url", getEnvStr("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434"), "Embedding API URL (ollama/openai)")
 	serveCmd.Flags().String("embedding-key", getEnvStr("NORNICDB_EMBEDDING_API_KEY", ""), "Embeddings API Key (openai)")
 	serveCmd.Flags().String("embedding-model", getEnvStr("NORNICDB_EMBEDDING_MODEL", "bge-m3"), "Embedding model name")
@@ -575,7 +575,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 data_dir: ./data
 
 # Embedding settings
-embedding_provider: ollama
+embedding_provider: local
 embedding_api_url: http://localhost:11434
 embedding_model: bge-m3
 embedding_dimensions: 1024

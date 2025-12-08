@@ -240,7 +240,7 @@ type Config struct {
 	// Embedding Configuration (for vector search)
 	// EmbeddingEnabled turns on automatic embedding generation
 	EmbeddingEnabled bool
-	// EmbeddingProvider: "ollama" or "openai"
+	// EmbeddingProvider: "ollama" or "openai" or "local"
 	EmbeddingProvider string
 	// EmbeddingAPIURL is the base URL (e.g., http://localhost:11434)
 	EmbeddingAPIURL string

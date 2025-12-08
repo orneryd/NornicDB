@@ -65,7 +65,7 @@ storage:
 
 embedding:
   enabled: false
-  provider: "ollama"
+  provider: "local"
 
 kmeans:
   enabled: false

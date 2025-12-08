@@ -190,7 +190,7 @@ auth:
 
 embedding:
   enabled: true
-  provider: "ollama"
+  provider: "local"
   model: "bge-m3"
 
 kmeans:
