@@ -68,10 +68,11 @@ RUN echo "Building APOC plugin..." && \
     cd apoc/plugin-src/apoc && go build -buildmode=plugin -o ../../../apoc/built-plugins/apoc.so apoc_plugin.go && \
     echo "✓ Built plugin:" && ls -lh /build/apoc/built-plugins/*.so
 
-# Build Heimdall plugin
+# Build Heimdall plugin (must use same tags as main binary for CGO compatibility)
 RUN echo "Building Heimdall plugin..." && \
     mkdir -p plugins/heimdall/built-plugins && \
-    cd plugins/heimdall/plugin-src/watcher && go build -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go && \
+    cd plugins/heimdall/plugin-src/watcher && \
+    CGO_ENABLED=1 go build -tags "cuda localllm heimdall" -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go && \
     echo "✓ Built Heimdall plugin:" && ls -lh /build/plugins/heimdall/built-plugins/*.so
 
 # =============================================================================
