@@ -336,4 +336,4 @@ config.DecayArchiveThreshold = 0.05
 
 - **[Documentation](../index.md)** - Full documentation
 - **[GitHub Issues](https://github.com/orneryd/nornicdb/issues)** - Report bugs
-- **[Discussions](https://github.com/orneryd/nornicdb/discussions)** - Ask questions
+- **[Issues](https://github.com/orneryd/NornicDB/issues)** - Ask questions

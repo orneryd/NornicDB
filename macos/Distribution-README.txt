@@ -91,7 +91,7 @@ GETTING HELP
 
 User Guide:      macos/USER_GUIDE.md (included)
 Documentation:   https://github.com/orneryd/nornicdb/docs
-Community:       https://github.com/orneryd/nornicdb/discussions
+Community:       https://github.com/orneryd/NornicDB/issues
 Report Issues:   https://github.com/orneryd/nornicdb/issues
 
 ═══════════════════════════════════════════════════════════════

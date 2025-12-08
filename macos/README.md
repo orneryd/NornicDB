@@ -311,4 +311,4 @@ brew services start nornicdb
 
 - **Issues**: [GitHub Issues](https://github.com/orneryd/nornicdb/issues)
 - **Docs**: [Full Documentation](https://github.com/orneryd/nornicdb/docs)
-- **Discussions**: [GitHub Discussions](https://github.com/orneryd/nornicdb/discussions)
+- **Discussions**: [GitHub Issues](https://github.com/orneryd/NornicDB/issues)

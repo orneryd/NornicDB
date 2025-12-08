@@ -414,7 +414,7 @@ curl -L "https://huggingface.co/nornicAI/Qwen2.5-0.5B-Instruct-GGUF/resolve/main
 
 - **Documentation**: [https://nornicdb.com/docs](https://nornicdb.com/docs)
 - **GitHub Issues**: [https://github.com/orneryd/nornicdb/issues](https://github.com/orneryd/nornicdb/issues)
-- **Discussions**: [https://github.com/orneryd/nornicdb/discussions](https://github.com/orneryd/nornicdb/discussions)
+- **Discussions**: [https://github.com/orneryd/NornicDB/issues](https://github.com/orneryd/NornicDB/issues)
 
 When reporting issues, include:
 1. macOS version: `sw_vers`

@@ -225,7 +225,7 @@ NORNICDB_PLUGINS_DIR=apoc/built-plugins ./bin/nornicdb serve
 make plugins-clean
 ```
 
-See [APOC Plugin Guide](../user-guides/APOC_PLUGINS.md) for creating custom functions.
+See [APOC Plugin Guide](../features/plugin-system.md) for creating custom functions.
 
 ## Heimdall AI Assistant
 
@@ -253,6 +253,6 @@ See [Heimdall AI Assistant Guide](../user-guides/heimdall-ai-assistant.md) for d
 - **[Testing Guide](testing.md)** - How to write tests
 - **[Code Style](code-style.md)** - Code conventions
 - **[Heimdall Plugins](../user-guides/heimdall-plugins.md)** - Create custom AI actions
-- **[APOC Plugins](../user-guides/APOC_PLUGINS.md)** - Extend Cypher with custom functions
+- **[APOC Plugins](../features/plugin-system.md)** - Extend Cypher with custom functions
 - **[Contributing](../CONTRIBUTING.md)** - Contribution process
 

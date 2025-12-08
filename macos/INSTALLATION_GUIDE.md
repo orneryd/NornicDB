@@ -387,7 +387,7 @@ make build
 - **Documentation**: See [macos/README.md](README.md)
 - **Features**: See [macos/FEATURES.md](FEATURES.md)
 - **Issues**: [GitHub Issues](https://github.com/orneryd/nornicdb/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/orneryd/nornicdb/discussions)
+- **Discussions**: [GitHub Issues](https://github.com/orneryd/NornicDB/issues)
 
 ## Quick Reference
 

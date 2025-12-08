@@ -189,7 +189,7 @@ NornicDB weaves connections automatically:
 - **Memory footprint**: 100-500 MB vs 1-4 GB for Neo4j
 - **Cold start**: <1s vs 10-30s for Neo4j
 
-> See [full benchmark results](docs/BENCHMARK_RESULTS_VS_NEO4J.md) for detailed comparisons.
+> See [full benchmark results](docs/performance/benchmarks-vs-neo4j.md) for detailed comparisons.
 
 ### 🎯 Vector Search
 
@@ -244,7 +244,7 @@ RETURN apoc.ml.cosineSimilarity([1,0], [0,1])  // 0.0
 RETURN apoc.coll.sum([1, 2, 3, 4, 5])      // 15
 ```
 
-Drop custom `.so` plugins into `/app/plugins/` for automatic loading. See the [APOC Plugin Guide](docs/user-guides/APOC_PLUGINS.md).
+Drop custom `.so` plugins into `/app/plugins/` for automatic loading. See the [APOC Plugin Guide](docs/features/plugin-system.md).
 
 ## Docker Images
 

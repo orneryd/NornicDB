@@ -436,7 +436,7 @@ GITHUB ISSUES:
   https://github.com/orneryd/nornicdb/issues
 
 DISCUSSIONS:
-  https://github.com/orneryd/nornicdb/discussions
+  https://github.com/orneryd/NornicDB/issues
 
 WHEN REPORTING ISSUES, INCLUDE:
 

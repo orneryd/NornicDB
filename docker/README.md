@@ -330,7 +330,7 @@ docker run -d \
   timothyswt/nornicdb-arm64-metal:latest
 ```
 
-See [APOC Plugin Guide](../docs/user-guides/APOC_PLUGINS.md) for creating custom plugins.
+See [APOC Plugin Guide](../docs/features/plugin-system.md) for creating custom plugins.
 
 ---
 

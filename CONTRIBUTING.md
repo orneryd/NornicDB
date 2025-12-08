@@ -17,6 +17,6 @@ Please see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for detailed contributio
 
 ## Need Help?
 
-- Open a [discussion](https://github.com/orneryd/NornicDB/discussions)
+- Open a [issue](https://github.com/orneryd/NornicDB/issues)
 - Join our community (links in README.md)
 - Ask questions in [issues](https://github.com/orneryd/NornicDB/issues)

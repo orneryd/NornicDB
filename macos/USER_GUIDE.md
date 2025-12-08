@@ -287,7 +287,7 @@ Your data stays safe at `/usr/local/var/nornicdb/data` unless you manually delet
 ### Online Resources
 
 - **Documentation**: https://github.com/orneryd/nornicdb/docs
-- **Community**: https://github.com/orneryd/nornicdb/discussions
+- **Community**: https://github.com/orneryd/NornicDB/issues
 - **Report Issues**: https://github.com/orneryd/nornicdb/issues
 
 ### Quick Tips

@@ -335,7 +335,7 @@ Closes #123
 ### Getting Help
 
 - **GitHub Issues** - Bug reports and feature requests
-- **GitHub Discussions** - Questions and ideas
+- **GitHub Issues** - Questions and ideas
 - **Discord** - Real-time chat (coming soon)
 
 ### Reporting Bugs
@@ -369,6 +369,6 @@ Thank you for contributing to NornicDB! 🎉
 
 ---
 
-**Questions?** Open a [GitHub Discussion](https://github.com/orneryd/nornicdb/discussions)  
+**Questions?** Open a [GitHub Issue](https://github.com/orneryd/NornicDB/issues)  
 **Found a bug?** Open a [GitHub Issue](https://github.com/orneryd/nornicdb/issues)  
 **Want to chat?** Join our Discord (coming soon)
