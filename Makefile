@@ -861,9 +861,15 @@ macos-menubar:
 ifeq ($(HOST_OS),darwin)
 	@echo "Architecture: $(HOST_ARCH)"
 	@mkdir -p macos/build
-	@cd macos/MenuBarApp && swiftc -o ../build/NornicDB NornicDBMenuBar.swift \
+	@cd macos/MenuBarApp && swiftc -o ../build/NornicDB \
+		NornicDBMenuBar.swift \
+		FileIndexer.swift \
+		FileIndexerWindow.swift \
 		-framework SwiftUI \
 		-framework AppKit \
+		-framework Vision \
+		-framework NaturalLanguage \
+		-framework PDFKit \
 		-target $(HOST_ARCH)-apple-macos12.0 \
 		-swift-version 5 \
 		-parse-as-library

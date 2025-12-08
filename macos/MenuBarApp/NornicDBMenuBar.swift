@@ -1,6 +1,390 @@
 import SwiftUI
 import AppKit
 import Foundation
+import Security
+import NaturalLanguage
+
+// MARK: - Apple NLEmbedding HTTP Service
+
+/// Provides a local HTTP server that exposes Apple's NLEmbedding to the NornicDB server.
+/// Listens on port 7475 and provides /embed, /embed/batch, and /health endpoints.
+class AppleEmbeddingService {
+    static let shared = AppleEmbeddingService()
+    
+    private var server: HTTPServer?
+    private let port: UInt16 = 7475
+    private let embedding: NLEmbedding?
+    
+    private init() {
+        // Load English sentence embedding model
+        embedding = NLEmbedding.sentenceEmbedding(for: .english)
+        if embedding == nil {
+            print("⚠️ Apple NLEmbedding not available on this system")
+        }
+    }
+    
+    /// Start the embedding service
+    func start() {
+        guard embedding != nil else {
+            print("❌ Cannot start embedding service: NLEmbedding not available")
+            return
+        }
+        
+        server = HTTPServer(port: port)
+        server?.addHandler(path: "/health") { _ in
+            return HTTPResponse(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: "{\"status\":\"ok\",\"provider\":\"apple\",\"model\":\"NLEmbedding\"}"
+            )
+        }
+        
+        server?.addHandler(path: "/embed") { [weak self] request in
+            return self?.handleEmbed(request) ?? HTTPResponse(statusCode: 500, body: "Service unavailable")
+        }
+        
+        server?.addHandler(path: "/embed/batch") { [weak self] request in
+            return self?.handleEmbedBatch(request) ?? HTTPResponse(statusCode: 500, body: "Service unavailable")
+        }
+        
+        server?.start()
+        print("✅ Apple Embedding Service started on port \(port)")
+    }
+    
+    /// Stop the embedding service
+    func stop() {
+        server?.stop()
+        server = nil
+        print("⏹️ Apple Embedding Service stopped")
+    }
+    
+    /// Handle single embedding request
+    private func handleEmbed(_ request: HTTPRequest) -> HTTPResponse {
+        guard let embedding = self.embedding else {
+            return HTTPResponse(statusCode: 503, body: "{\"error\":\"NLEmbedding not available\"}")
+        }
+        
+        guard let body = request.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let text = json["text"] as? String else {
+            return HTTPResponse(statusCode: 400, body: "{\"error\":\"Missing 'text' field\"}")
+        }
+        
+        guard let vector = embedding.vector(for: text) else {
+            return HTTPResponse(statusCode: 500, body: "{\"error\":\"Failed to generate embedding\"}")
+        }
+        
+        let response: [String: Any] = ["embedding": vector]
+        guard let responseData = try? JSONSerialization.data(withJSONObject: response) else {
+            return HTTPResponse(statusCode: 500, body: "{\"error\":\"Failed to serialize response\"}")
+        }
+        
+        return HTTPResponse(
+            statusCode: 200,
+            headers: ["Content-Type": "application/json"],
+            body: String(data: responseData, encoding: .utf8) ?? "{}"
+        )
+    }
+    
+    /// Handle batch embedding request
+    private func handleEmbedBatch(_ request: HTTPRequest) -> HTTPResponse {
+        guard let embedding = self.embedding else {
+            return HTTPResponse(statusCode: 503, body: "{\"error\":\"NLEmbedding not available\"}")
+        }
+        
+        guard let body = request.body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let texts = json["texts"] as? [String] else {
+            return HTTPResponse(statusCode: 400, body: "{\"error\":\"Missing 'texts' field\"}")
+        }
+        
+        var embeddings: [[Double]] = []
+        for text in texts {
+            if let vector = embedding.vector(for: text) {
+                embeddings.append(vector)
+            } else {
+                embeddings.append([]) // Empty array for failed embeddings
+            }
+        }
+        
+        let response: [String: Any] = ["embeddings": embeddings]
+        guard let responseData = try? JSONSerialization.data(withJSONObject: response) else {
+            return HTTPResponse(statusCode: 500, body: "{\"error\":\"Failed to serialize response\"}")
+        }
+        
+        return HTTPResponse(
+            statusCode: 200,
+            headers: ["Content-Type": "application/json"],
+            body: String(data: responseData, encoding: .utf8) ?? "{}"
+        )
+    }
+}
+
+// MARK: - Simple HTTP Server (no external dependencies)
+
+/// Minimal HTTP server for the embedding service
+class HTTPServer {
+    private var socket: Int32 = -1
+    private let port: UInt16
+    private var isRunning = false
+    private var handlers: [String: (HTTPRequest) -> HTTPResponse] = [:]
+    private let queue = DispatchQueue(label: "com.nornicdb.embedding-server", qos: .userInitiated)
+    
+    init(port: UInt16) {
+        self.port = port
+    }
+    
+    func addHandler(path: String, handler: @escaping (HTTPRequest) -> HTTPResponse) {
+        handlers[path] = handler
+    }
+    
+    func start() {
+        queue.async { [weak self] in
+            self?.runServer()
+        }
+    }
+    
+    func stop() {
+        isRunning = false
+        if socket >= 0 {
+            close(socket)
+            socket = -1
+        }
+    }
+    
+    private func runServer() {
+        socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard socket >= 0 else {
+            print("❌ Failed to create socket")
+            return
+        }
+        
+        var opt: Int32 = 1
+        setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &opt, socklen_t(MemoryLayout<Int32>.size))
+        
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY
+        
+        let bindResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                bind(socket, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        
+        guard bindResult >= 0 else {
+            print("❌ Failed to bind to port \(port): \(String(cString: strerror(errno)))")
+            close(socket)
+            socket = -1
+            return
+        }
+        
+        guard listen(socket, 10) >= 0 else {
+            print("❌ Failed to listen on socket")
+            close(socket)
+            socket = -1
+            return
+        }
+        
+        isRunning = true
+        
+        while isRunning {
+            var clientAddr = sockaddr_in()
+            var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+            
+            let clientSocket = withUnsafeMutablePointer(to: &clientAddr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                    accept(socket, sockaddrPtr, &addrLen)
+                }
+            }
+            
+            guard clientSocket >= 0 else {
+                continue
+            }
+            
+            // Handle request in background
+            DispatchQueue.global().async { [weak self] in
+                self?.handleClient(clientSocket)
+            }
+        }
+    }
+    
+    private func handleClient(_ clientSocket: Int32) {
+        defer { close(clientSocket) }
+        
+        // Read request
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        let bytesRead = recv(clientSocket, &buffer, buffer.count, 0)
+        
+        guard bytesRead > 0 else { return }
+        
+        let requestData = Data(buffer[0..<bytesRead])
+        guard let requestString = String(data: requestData, encoding: .utf8) else { return }
+        
+        // Parse request
+        let request = parseHTTPRequest(requestString, data: requestData)
+        
+        // Find handler
+        let response: HTTPResponse
+        if let handler = handlers[request.path] {
+            response = handler(request)
+        } else {
+            response = HTTPResponse(statusCode: 404, body: "Not Found")
+        }
+        
+        // Send response
+        let responseString = "HTTP/1.1 \(response.statusCode) \(statusText(response.statusCode))\r\n" +
+            response.headers.map { "\($0.key): \($0.value)" }.joined(separator: "\r\n") +
+            "\r\nContent-Length: \(response.body.count)\r\n\r\n" +
+            response.body
+        
+        _ = responseString.withCString { ptr in
+            send(clientSocket, ptr, strlen(ptr), 0)
+        }
+    }
+    
+    private func parseHTTPRequest(_ string: String, data: Data) -> HTTPRequest {
+        let lines = string.components(separatedBy: "\r\n")
+        guard let firstLine = lines.first else {
+            return HTTPRequest(method: "GET", path: "/", headers: [:], body: nil)
+        }
+        
+        let parts = firstLine.components(separatedBy: " ")
+        let method = parts.count > 0 ? parts[0] : "GET"
+        let path = parts.count > 1 ? parts[1].components(separatedBy: "?")[0] : "/"
+        
+        var headers: [String: String] = [:]
+        var bodyStartIndex: Int?
+        
+        for (index, line) in lines.enumerated() {
+            if line.isEmpty {
+                bodyStartIndex = index + 1
+                break
+            }
+            if let colonIndex = line.firstIndex(of: ":") {
+                let key = String(line[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+                let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                headers[key] = value
+            }
+        }
+        
+        var body: Data?
+        if let startIndex = bodyStartIndex, startIndex < lines.count {
+            let bodyString = lines[startIndex...].joined(separator: "\r\n")
+            body = bodyString.data(using: .utf8)
+        }
+        
+        return HTTPRequest(method: method, path: path, headers: headers, body: body)
+    }
+    
+    private func statusText(_ code: Int) -> String {
+        switch code {
+        case 200: return "OK"
+        case 400: return "Bad Request"
+        case 404: return "Not Found"
+        case 500: return "Internal Server Error"
+        case 503: return "Service Unavailable"
+        default: return "Unknown"
+        }
+    }
+}
+
+struct HTTPRequest {
+    let method: String
+    let path: String
+    let headers: [String: String]
+    let body: Data?
+}
+
+struct HTTPResponse {
+    let statusCode: Int
+    var headers: [String: String] = ["Content-Type": "text/plain"]
+    var body: String = ""
+    
+    init(statusCode: Int, headers: [String: String] = ["Content-Type": "application/json"], body: String = "") {
+        self.statusCode = statusCode
+        self.headers = headers
+        self.body = body
+    }
+}
+
+// MARK: - Keychain Helper for Secure Token Storage
+
+class KeychainHelper {
+    static let shared = KeychainHelper()
+    
+    private let service = "com.nornicdb.menubar"
+    private let apiTokenAccount = "api_token"
+    
+    private init() {}
+    
+    /// Save API token to Keychain
+    func saveAPIToken(_ token: String) -> Bool {
+        // Delete existing token first
+        deleteAPIToken()
+        
+        guard let tokenData = token.data(using: .utf8) else { return false }
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: apiTokenAccount,
+            kSecValueData as String: tokenData,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        
+        if status == errSecSuccess {
+            print("✅ API token saved to Keychain")
+            return true
+        } else {
+            print("❌ Failed to save API token to Keychain: \(status)")
+            return false
+        }
+    }
+    
+    /// Retrieve API token from Keychain
+    func getAPIToken() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: apiTokenAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        if status == errSecSuccess,
+           let tokenData = result as? Data,
+           let token = String(data: tokenData, encoding: .utf8) {
+            return token
+        }
+        
+        return nil
+    }
+    
+    /// Delete API token from Keychain
+    @discardableResult
+    func deleteAPIToken() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: apiTokenAccount
+        ]
+        
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+    
+    /// Check if API token exists in Keychain
+    func hasAPIToken() -> Bool {
+        return getAPIToken() != nil
+    }
+}
 
 @main
 struct NornicDBMenuBarApp: App {
@@ -29,6 +413,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         
         // Load configuration
         configManager.loadConfig()
+        
+        // Start Apple Embedding Service (provides NLEmbedding via HTTP for the Go server)
+        // This allows "apple" embedding provider to work without downloading models
+        AppleEmbeddingService.shared.start()
         
         // Create menu bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -87,6 +475,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Open Config File", action: #selector(openConfig), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show Logs", action: #selector(showLogs), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem.separator())
+        
+        // Code Intelligence
+        menu.addItem(NSMenuItem(title: "Code Intelligence...", action: #selector(openCodeIntelligence), keyEquivalent: "i"))
         menu.addItem(NSMenuItem.separator())
         
         // Models
@@ -369,6 +761,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: modelsPath))
     }
     
+    @objc func openCodeIntelligence() {
+        FileIndexerWindowController.shared.showWindow()
+    }
+    
     @objc func showAbout() {
         let alert = NSAlert()
         alert.messageText = "NornicDB"
@@ -409,6 +805,8 @@ enum ServerStatus {
 // MARK: - Config Manager
 
 class ConfigManager: ObservableObject {
+    static let shared = ConfigManager()
+    
     @Published var embeddingsEnabled: Bool = false
     @Published var kmeansEnabled: Bool = false
     @Published var autoTLPEnabled: Bool = false
@@ -426,9 +824,21 @@ class ConfigManager: ObservableObject {
     @Published var encryptionEnabled: Bool = false
     @Published var encryptionPassword: String = ""
     
+    // API token is stored securely in Keychain via KeychainHelper
+    // Use getAPIToken() and setAPIToken() methods instead of direct access
+    
+    // Embedding provider: "local" (GGUF model), "apple" (NLEmbedding), "ollama"
+    @Published var embeddingProvider: String = "local"
     @Published var embeddingModel: String = "bge-m3.gguf"
     @Published var heimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
     @Published var availableModels: [String] = []
+    
+    // Available embedding providers
+    static let embeddingProviders = [
+        ("apple", "Apple Built-in (No download required)"),
+        ("local", "Local GGUF Model (High quality)"),
+        ("openai", "OpenAI Server (External)")
+    ]
     
     // Config path matches server's FindConfigFile priority: ~/.nornicdb/config.yaml
     private let configPath = NSString(string: "~/.nornicdb/config.yaml").expandingTildeInPath
@@ -489,6 +899,15 @@ class ConfigManager: ObservableObject {
             if let value = extractBoolValue(from: context, after: start) {
                 heimdallEnabled = value
                 print("Loaded heimdall enabled: \(value)")
+            }
+        }
+        
+        // Load embedding provider
+        if let providerSection = context.range(of: "embedding:.*?provider:", options: .regularExpression) {
+            let start = providerSection.upperBound
+            if let value = extractStringValue(from: context, after: start) {
+                embeddingProvider = value
+                print("Loaded embedding provider: \(value)")
             }
         }
         
@@ -553,7 +972,9 @@ class ConfigManager: ObservableObject {
             let start = jwtSection.upperBound
             if let value = extractStringValue(from: context, after: start) {
                 jwtSecret = value
-                print("Loaded JWT secret: [hidden]")
+                print("✅ Loaded JWT secret: \(value.prefix(8))... (length: \(value.count))")
+            } else {
+                print("⚠️ JWT secret field found but value is empty")
             }
         }
         
@@ -567,7 +988,9 @@ class ConfigManager: ObservableObject {
             let start = passwordSection.upperBound
             if let value = extractStringValue(from: context, after: start) {
                 encryptionPassword = value
-                print("Loaded encryption password: [hidden]")
+                print("✅ Loaded encryption password: \(value.prefix(8))... (length: \(value.count))")
+            } else {
+                print("⚠️ Encryption password field found but value is empty")
             }
         }
     }
@@ -629,6 +1052,9 @@ class ConfigManager: ObservableObject {
         content = updateYAMLValue(in: content, section: "auto_tlp", key: "enabled", value: autoTLPEnabled)
         content = updateYAMLValue(in: content, section: "heimdall", key: "enabled", value: heimdallEnabled)
         
+        // Update embedding provider
+        content = updateYAMLStringValue(in: content, section: "embedding", key: "provider", value: embeddingProvider)
+        
         // Update model selections
         content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: embeddingModel)
         content = updateYAMLStringValue(in: content, section: "heimdall", key: "model", value: heimdallModel)
@@ -642,24 +1068,33 @@ class ConfigManager: ObservableObject {
         content = updateYAMLStringValue(in: content, section: "auth", key: "username", value: adminUsername)
         content = updateYAMLStringValue(in: content, section: "auth", key: "password", value: adminPassword)
         
-        // Auto-generate JWT secret if empty
+        // Auto-generate JWT secret only if empty
+        print("💾 Saving JWT secret - current value length: \(jwtSecret.count)")
         if jwtSecret.isEmpty {
             jwtSecret = generateRandomSecret()
-            print("Auto-generated JWT secret")
+            print("🔑 Auto-generated NEW JWT secret (was empty)")
+        } else {
+            print("✅ Preserving existing JWT secret: \(jwtSecret.prefix(8))...")
         }
-        content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: jwtSecret)
+        // Only save JWT secret if we have one
+        if !jwtSecret.isEmpty {
+            content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: jwtSecret)
+        }
         
         // Update encryption settings
         content = updateYAMLValue(in: content, section: "database", key: "encryption_enabled", value: encryptionEnabled)
-        if encryptionEnabled {
-            // Auto-generate encryption password if empty
-            if encryptionPassword.isEmpty {
-                encryptionPassword = generateRandomSecret()
-                print("Auto-generated encryption password")
-            }
+        // Always preserve encryption password - don't clear it when disabled
+        print("💾 Saving encryption password - enabled: \(encryptionEnabled), current value length: \(encryptionPassword.count)")
+        if encryptionEnabled && encryptionPassword.isEmpty {
+            // Auto-generate encryption password only if enabling and empty
+            encryptionPassword = generateRandomSecret()
+            print("🔑 Auto-generated NEW encryption password (was empty, encryption enabled)")
+        } else if !encryptionPassword.isEmpty {
+            print("✅ Preserving existing encryption password: \(encryptionPassword.prefix(8))...")
+        }
+        // Save password regardless of enabled state (preserves existing passwords)
+        if !encryptionPassword.isEmpty {
             content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: encryptionPassword)
-        } else {
-            content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: "")
         }
         
         // Write back
@@ -738,6 +1173,160 @@ class ConfigManager: ObservableObject {
         let characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
         return String((0..<32).map { _ in characters.randomElement()! })
     }
+    
+    // MARK: - Server API Communication
+    
+    /// Get the base URL for API calls
+    var serverBaseURL: String {
+        return "http://\(hostAddress):7474"
+    }
+    
+    /// Get API token from Keychain
+    private func getAPIToken() -> String? {
+        return KeychainHelper.shared.getAPIToken()
+    }
+    
+    /// Save API token to Keychain
+    private func setAPIToken(_ token: String) {
+        _ = KeychainHelper.shared.saveAPIToken(token)
+    }
+    
+    /// Clear API token from Keychain
+    private func clearAPIToken() {
+        KeychainHelper.shared.deleteAPIToken()
+    }
+    
+    /// Obtain an API token from the server using admin credentials
+    func obtainAPIToken() async -> Bool {
+        guard let url = URL(string: "\(serverBaseURL)/auth/token") else {
+            print("Invalid server URL")
+            return false
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: String] = [
+            "username": adminUsername,
+            "password": adminPassword
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("Failed to obtain token: bad response")
+                return false
+            }
+            
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let token = json["token"] as? String {
+                setAPIToken(token)
+                print("Successfully obtained API token and saved to Keychain")
+                return true
+            }
+        } catch {
+            print("Failed to obtain token: \(error)")
+        }
+        return false
+    }
+    
+    /// Make an authenticated API request
+    private func makeAuthenticatedRequest(to endpoint: String, method: String = "POST", retryOnAuthFailure: Bool = true) async -> (success: Bool, message: String, data: [String: Any]?) {
+        // Ensure we have a token
+        var token = getAPIToken()
+        if token == nil {
+            let gotToken = await obtainAPIToken()
+            if !gotToken {
+                return (false, "Failed to authenticate with server", nil)
+            }
+            token = getAPIToken()
+        }
+        
+        guard let token = token,
+              let url = URL(string: "\(serverBaseURL)\(endpoint)") else {
+            return (false, "Invalid server URL or missing token", nil)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return (false, "Invalid response", nil)
+            }
+            
+            if httpResponse.statusCode == 200 {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let message = json?["message"] as? String ?? "Success"
+                return (true, message, json)
+            } else if (httpResponse.statusCode == 401 || httpResponse.statusCode == 403) && retryOnAuthFailure {
+                // Token expired, clear it and retry
+                clearAPIToken()
+                let gotToken = await obtainAPIToken()
+                if gotToken {
+                    return await makeAuthenticatedRequest(to: endpoint, method: method, retryOnAuthFailure: false)
+                }
+                return (false, "Authentication failed", nil)
+            } else {
+                return (false, "Server returned status \(httpResponse.statusCode)", nil)
+            }
+        } catch {
+            return (false, "Request failed: \(error.localizedDescription)", nil)
+        }
+    }
+    
+    /// Clear all embeddings (requires server restart or embed trigger after)
+    func clearEmbeddings() async -> (success: Bool, message: String) {
+        let result = await makeAuthenticatedRequest(to: "/nornicdb/embed/clear")
+        return (result.success, result.message)
+    }
+    
+    /// Trigger embedding regeneration for all nodes
+    func triggerEmbeddings() async -> (success: Bool, message: String) {
+        let result = await makeAuthenticatedRequest(to: "/nornicdb/embed/trigger")
+        return (result.success, result.message)
+    }
+    
+    /// Rebuild search indexes
+    func rebuildSearchIndex() async -> (success: Bool, message: String) {
+        let result = await makeAuthenticatedRequest(to: "/nornicdb/search/rebuild")
+        return (result.success, result.message)
+    }
+    
+    /// Get embedding stats
+    func getEmbeddingStats() async -> (success: Bool, message: String, stats: [String: Any]?) {
+        let result = await makeAuthenticatedRequest(to: "/nornicdb/embed/stats", method: "GET")
+        return (result.success, result.message, result.data)
+    }
+    
+    /// Full reset: clear embeddings, then trigger regeneration
+    func resetEmbeddings() async -> (success: Bool, message: String) {
+        // Step 1: Clear existing embeddings
+        let clearResult = await clearEmbeddings()
+        if !clearResult.success {
+            return clearResult
+        }
+        
+        // Step 2: Trigger regeneration
+        let triggerResult = await triggerEmbeddings()
+        if !triggerResult.success {
+            return (false, "Cleared embeddings but failed to trigger regeneration: \(triggerResult.message)")
+        }
+        
+        return (true, "Embeddings reset and regeneration started. This may take a while depending on data size.")
+    }
+    
+    /// Check if we have a valid API token stored
+    var hasStoredAPIToken: Bool {
+        return KeychainHelper.shared.hasAPIToken()
+    }
 }
 
 // MARK: - Settings View
@@ -756,6 +1345,7 @@ struct SettingsView: View {
     @State private var originalAutoStartEnabled: Bool = true
     @State private var originalPortNumber: String = "7687"
     @State private var originalHostAddress: String = "localhost"
+    @State private var originalEmbeddingProvider: String = "local"
     @State private var originalEmbeddingModel: String = "bge-m3.gguf"
     @State private var originalHeimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
     @State private var originalAdminUsername: String = "admin"
@@ -780,6 +1370,7 @@ struct SettingsView: View {
                config.autoStartEnabled != originalAutoStartEnabled ||
                config.portNumber != originalPortNumber ||
                config.hostAddress != originalHostAddress ||
+               config.embeddingProvider != originalEmbeddingProvider ||
                config.embeddingModel != originalEmbeddingModel ||
                config.heimdallModel != originalHeimdallModel ||
                config.adminUsername != originalAdminUsername ||
@@ -868,6 +1459,10 @@ struct SettingsView: View {
     }
     
     private func captureOriginalValues() {
+        // Reload config from file to ensure we have the latest values
+        config.loadConfig()
+        
+        // Capture current values as originals
         originalEmbeddingsEnabled = config.embeddingsEnabled
         originalKmeansEnabled = config.kmeansEnabled
         originalAutoTLPEnabled = config.autoTLPEnabled
@@ -875,6 +1470,7 @@ struct SettingsView: View {
         originalAutoStartEnabled = config.autoStartEnabled
         originalPortNumber = config.portNumber
         originalHostAddress = config.hostAddress
+        originalEmbeddingProvider = config.embeddingProvider
         originalEmbeddingModel = config.embeddingModel
         originalHeimdallModel = config.heimdallModel
         originalAdminUsername = config.adminUsername
@@ -1019,53 +1615,114 @@ struct SettingsView: View {
     var modelsTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("AI Models")
+                Text("AI Models & Providers")
                     .font(.headline)
                     .padding(.bottom, 5)
                 
-                Text("Select which models to use for embeddings and AI features. Download models first if none are available.")
+                Text("Select embedding provider and models for AI features.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 10)
                 
-                if config.availableModels.isEmpty {
-                    VStack(spacing: 15) {
-                        Text("⚠️ No models found")
-                            .font(.title3)
-                            .foregroundColor(.orange)
-                        
-                        Text("Download models from the menu:\nNornicDB → Download Models")
-                            .font(.body)
-                            .multilineTextAlignment(.center)
-                            .foregroundColor(.secondary)
-                        
-                        Button("Refresh Models List") {
-                            config.scanModels()
+                // Embedding Provider Selection
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Embedding Provider")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Picker("Provider", selection: $config.embeddingProvider) {
+                        ForEach(ConfigManager.embeddingProviders, id: \.0) { provider in
+                            Text(provider.1).tag(provider.0)
                         }
-                        .padding(.top, 10)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else {
-                    VStack(alignment: .leading, spacing: 20) {
-                        // Embedding Model Selection
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Embedding Model")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 400)
+                    
+                    // Provider-specific info
+                    Group {
+                        if config.embeddingProvider == "apple" {
+                            HStack(spacing: 8) {
+                                Image(systemName: "apple.logo")
+                                    .foregroundColor(.blue)
+                                Text("Uses macOS built-in NLEmbedding. No model download required!")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                            .padding(.vertical, 4)
+                        } else if config.embeddingProvider == "local" {
+                            HStack(spacing: 8) {
+                                Image(systemName: "cpu")
+                                    .foregroundColor(.orange)
+                                Text("Uses local GGUF model. Higher quality, requires model download.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        } else if config.embeddingProvider == "ollama" {
+                            HStack(spacing: 8) {
+                                Image(systemName: "server.rack")
+                                    .foregroundColor(.purple)
+                                Text("Requires Ollama server running locally.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
+                Divider()
+                
+                // Only show model selection if provider is "local"
+                if config.embeddingProvider == "local" {
+                    if config.availableModels.isEmpty {
+                        VStack(spacing: 15) {
+                            Text("⚠️ No models found")
+                                .font(.title3)
+                                .foregroundColor(.orange)
                             
-                            Text("Used for semantic search and vector embeddings")
-                                .font(.caption)
+                            Text("Download models from the menu:\nNornicDB → Download Models")
+                                .font(.body)
+                                .multilineTextAlignment(.center)
                                 .foregroundColor(.secondary)
                             
-                            Picker("Embedding Model", selection: $config.embeddingModel) {
-                                ForEach(config.availableModels, id: \.self) { model in
-                                    Text(model).tag(model)
-                                }
+                            Button("Refresh Models List") {
+                                config.scanModels()
                             }
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 400)
+                            .padding(.top, 10)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                    } else {
+                        VStack(alignment: .leading, spacing: 20) {
+                            // Embedding Model Selection
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Embedding Model")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                
+                                Text("Used for semantic search and vector embeddings")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Picker("Embedding Model", selection: $config.embeddingModel) {
+                                    ForEach(config.availableModels, id: \.self) { model in
+                                        Text(model).tag(model)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 400)
+                            }
+                        }
+                    }
+                }
+                
+                // Heimdall section (always show if models available)
+                if !config.availableModels.isEmpty {
+                    VStack(alignment: .leading, spacing: 20) {
                         
                         Divider()
                         
@@ -1115,11 +1772,104 @@ struct SettingsView: View {
                     }
                     .padding()
                 }
+                
+                Divider()
+                
+                // Embedding Management Section
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Embedding Management")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("If you change embedding provider or model, existing embeddings may become incompatible. Use these tools to regenerate them.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            isResettingEmbeddings = true
+                            resetEmbeddingsMessage = ""
+                            Task {
+                                let result = await config.resetEmbeddings()
+                                await MainActor.run {
+                                    isResettingEmbeddings = false
+                                    resetEmbeddingsMessage = result.message
+                                    resetEmbeddingsSuccess = result.success
+                                }
+                            }
+                        }) {
+                            HStack {
+                                if isResettingEmbeddings {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                }
+                                Text("Reset & Regenerate Embeddings")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isResettingEmbeddings)
+                        
+                        Button(action: {
+                            Task {
+                                let result = await config.getEmbeddingStats()
+                                await MainActor.run {
+                                    if result.success, let stats = result.stats {
+                                        let total = stats["total_nodes"] ?? 0
+                                        let withEmbed = stats["nodes_with_embeddings"] ?? 0
+                                        resetEmbeddingsMessage = "Stats: \(withEmbed)/\(total) nodes have embeddings"
+                                        resetEmbeddingsSuccess = true
+                                    } else {
+                                        resetEmbeddingsMessage = result.message
+                                        resetEmbeddingsSuccess = false
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "chart.bar")
+                                Text("Get Stats")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    
+                    if !resetEmbeddingsMessage.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: resetEmbeddingsSuccess ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                .foregroundColor(resetEmbeddingsSuccess ? .green : .orange)
+                            Text(resetEmbeddingsMessage)
+                                .font(.caption)
+                                .foregroundColor(resetEmbeddingsSuccess ? .green : .orange)
+                        }
+                        .padding(.top, 4)
+                    }
+                    
+                    if config.hasStoredAPIToken {
+                        HStack(spacing: 6) {
+                            Image(systemName: "key.fill")
+                                .foregroundColor(.green)
+                            Text("API token stored in Keychain")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+                .padding()
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding()
         }
     }
+    
+    // State for embedding reset
+    @State private var isResettingEmbeddings = false
+    @State private var resetEmbeddingsMessage = ""
+    @State private var resetEmbeddingsSuccess = false
     
     var securityTab: some View {
         ScrollView {
@@ -1502,7 +2252,13 @@ struct FirstRunWizard: View {
         }
         .frame(width: 750, height: 688)  // 25% larger (600*1.25=750, 550*1.25=688)
         .onAppear {
+            // Load existing config values first (preserves user's settings)
+            print("🎨 Wizard onAppear - loading config...")
+            print("  Before load - JWT: \(config.jwtSecret.count) chars, Encryption: \(config.encryptionPassword.count) chars")
+            config.loadConfig()
+            print("  After load - JWT: \(config.jwtSecret.count) chars, Encryption: \(config.encryptionPassword.count) chars")
             checkServerStatus()
+            checkModelFiles()
         }
     }
     
