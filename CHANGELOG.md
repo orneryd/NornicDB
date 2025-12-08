@@ -14,6 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Issue and PR templates
 - Migration guide for repository split
 
+## [1.0.1] - 2025-12-08
+
+### Added
+- macOS installer improvements: wizard-first startup, menu bar start/health wait, security tab, auto-generated JWT/encryption secrets, scrollable wizard, starting status indicator.
+- Menu bar app: ensures `~/.nornicdb/config.yaml` path, shows restart progress, auto-generates secrets if empty, saves auth/encryption correctly.
+- Docker ARM64 (Metal) image now builds and copies Heimdall plugin and sets `NORNICDB_HEIMDALL_PLUGINS_DIR`.
+- Legacy env compatibility for Neo4j env vars (auth, transaction timeout, data dir, default db, read-only, bolt/http ports).
+
+### Changed
+- Encryption: full-database Badger encryption, salt stored at `db.salt`, rejects missing password, clearer errors on wrong password; stats report AES-256 (BadgerDB).
+- Auth/JWT: server uses configured JWT secret (no hardcoded dev secret); cookie SameSite=Lax, 7d Max-Age.
+- Config defaults: password `password`, embedding provider `local`; strict durability forces WAL sync immediate/interval 0.
+- Tests updated and all passing (`go test ./...`).
+
+### Fixed
+- Prevent server autostart before wizard (plist created/loaded only after wizard save/start).
+- Heimdall env override test; flexible boolean parsing for read-only; duration parsing for legacy env names.
+
 ## [1.0.0] - 2024-12-06
 
 ### Changed
@@ -97,5 +115,6 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for contr
 
 ---
 
-[Unreleased]: https://github.com/orneryd/NornicDB/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/orneryd/NornicDB/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/orneryd/NornicDB/releases/tag/v1.0.1
 [1.0.0]: https://github.com/orneryd/NornicDB/releases/tag/v1.0.0
