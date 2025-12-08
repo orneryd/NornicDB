@@ -85,7 +85,7 @@ type Embedder interface {
 // Config holds embedding provider configuration.
 //
 // Fields:
-//   - Provider: "ollama" or "openai"
+//   - Provider: "ollama" or "openai" or "local"
 //   - APIURL: Base URL for API (e.g., http://localhost:11434)
 //   - APIPath: Endpoint path (e.g., /api/embeddings)
 //   - APIKey: Authentication key (OpenAI only)
