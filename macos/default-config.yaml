@@ -109,6 +109,17 @@ heimdall:
   gpu_layers: -1
 
 # -----------------------------------------------------------------------------
+# PLUGINS (APOC & Heimdall)
+# -----------------------------------------------------------------------------
+plugins:
+  # APOC plugins directory (extended Cypher functions)
+  # Full Edition installs plugins to /usr/local/share/nornicdb/plugins
+  dir: "/usr/local/share/nornicdb/plugins/apoc"
+  
+  # Heimdall plugins directory (AI integration)
+  heimdall_dir: "/usr/local/share/nornicdb/plugins/heimdall"
+
+# -----------------------------------------------------------------------------
 # MEMORY DECAY
 # -----------------------------------------------------------------------------
 memory:

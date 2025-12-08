@@ -87,7 +87,7 @@ QWEN_URL := https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/
 .PHONY: deploy-amd64-cpu deploy-amd64-cpu-headless
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda
-.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless test clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-signed
+.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless test clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
 .PHONY: download-models download-bge download-qwen check-models
 
 # ==============================================================================
@@ -942,29 +942,58 @@ macos-clean:
 	fi
 	@echo "✅ Cleaned"
 
-# Create distributable .pkg installer (uses build-installer.sh)
-macos-package: build macos-menubar
-	@echo "Creating macOS package installer..."
+# Create distributable .pkg installer
+# Builds BOTH lite and full versions by default
+macos-package: build macos-menubar plugins
+	@echo "Creating macOS package installers (Lite + Full)..."
 ifeq ($(HOST_OS),darwin)
-	@./macos/scripts/build-installer.sh
+	@./macos/scripts/build-installer.sh --both
 else
 	@echo "❌ Package creation is only available on macOS"
 	@exit 1
 endif
 
+# Create LITE package only (no plugins, smaller download)
+macos-package-lite: build macos-menubar
+	@echo "Creating macOS package installer (Lite Edition)..."
+ifeq ($(HOST_OS),darwin)
+	@./macos/scripts/build-installer.sh --lite
+else
+	@echo "❌ Package creation is only available on macOS"
+	@exit 1
+endif
+
+# Create FULL package only (with APOC + Heimdall plugins)
+macos-package-full: build macos-menubar plugins
+	@echo "Creating macOS package installer (Full Edition with plugins)..."
+ifeq ($(HOST_OS),darwin)
+	@./macos/scripts/build-installer.sh --full
+else
+	@echo "❌ Package creation is only available on macOS"
+	@exit 1
+endif
+
+# Alias for backwards compatibility
+macos-package-all: macos-package
+
 # Create signed .pkg for distribution (requires Apple Developer account)
+# Signs ALL unsigned packages (lite and full if they exist)
 macos-package-signed: macos-package
-	@echo "Signing package..."
+	@echo "Signing package(s)..."
 ifeq ($(HOST_OS),darwin)
 	@if [ -z "$(SIGN_IDENTITY)" ]; then \
 		echo "❌ Error: SIGN_IDENTITY not set"; \
 		echo "   Usage: make macos-package-signed SIGN_IDENTITY='Developer ID Installer: Your Name'"; \
 		exit 1; \
 	fi
-	@productsign --sign "$(SIGN_IDENTITY)" \
-		dist/NornicDB-*-$(ARCH).pkg \
-		dist/NornicDB-*-$(ARCH)-signed.pkg
-	@echo "✅ Signed package created"
+	@for pkg in dist/NornicDB-*-$(ARCH)-lite.pkg dist/NornicDB-*-$(ARCH)-full.pkg; do \
+		if [ -f "$$pkg" ]; then \
+			signed_pkg=$$(echo $$pkg | sed 's/\.pkg$$/-signed.pkg/'); \
+			echo "Signing $$pkg -> $$signed_pkg"; \
+			productsign --sign "$(SIGN_IDENTITY)" "$$pkg" "$$signed_pkg"; \
+		fi; \
+	done
+	@echo "✅ Signed package(s) created"
 else
 	@echo "❌ Signing is only available on macOS"
 	@exit 1

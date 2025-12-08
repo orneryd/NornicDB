@@ -269,6 +269,9 @@ type Config struct {
 	Headless bool
 
 	// Plugins Configuration
+	// PluginsDir is the directory for APOC/function plugins
+	// Env: NORNICDB_PLUGINS_DIR
+	PluginsDir string
 	// HeimdallPluginsDir is the directory for Heimdall plugins
 	// Env: NORNICDB_HEIMDALL_PLUGINS_DIR
 	HeimdallPluginsDir string
@@ -644,12 +647,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			// Register built-in actions (core system actions)
 			heimdall.InitBuiltinActions()
 
-			// Load plugins from Heimdall plugins directory
+			// Load plugins from configured directories
 			// Auto-detects plugin types: function plugins (APOC) and Heimdall plugins
-			// Example: watcher.so (Heimdall), custom subsystem plugins
-			if config.HeimdallPluginsDir != "" {
+			// APOC plugins provide Cypher functions, Heimdall plugins provide AI actions
+			if config.PluginsDir != "" {
+				if err := nornicdb.LoadPluginsFromDir(config.PluginsDir, &subsystemCtx); err != nil {
+					log.Printf("   ⚠️  Failed to load APOC plugins from %s: %v", config.PluginsDir, err)
+				}
+			}
+			if config.HeimdallPluginsDir != "" && config.HeimdallPluginsDir != config.PluginsDir {
 				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
-					log.Printf("   ⚠️  Failed to load plugins from %s: %v", config.HeimdallPluginsDir, err)
+					log.Printf("   ⚠️  Failed to load Heimdall plugins from %s: %v", config.HeimdallPluginsDir, err)
 				}
 			}
 

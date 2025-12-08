@@ -1109,6 +1109,12 @@ type YAMLConfig struct {
 		QueryLogEnabled    bool   `yaml:"query_log_enabled"`
 		SlowQueryThreshold string `yaml:"slow_query_threshold"`
 	} `yaml:"logging"`
+
+	// Plugins configuration
+	Plugins struct {
+		Dir         string `yaml:"dir"`          // APOC plugins directory
+		HeimdallDir string `yaml:"heimdall_dir"` // Heimdall plugins directory
+	} `yaml:"plugins"`
 }
 
 // LoadDefaults returns a Config with all built-in safe defaults.
@@ -2033,6 +2039,14 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
 			config.Logging.SlowQueryThreshold = d
 		}
+	}
+
+	// === Plugins Settings ===
+	if yamlCfg.Plugins.Dir != "" {
+		config.Server.PluginsDir = yamlCfg.Plugins.Dir
+	}
+	if yamlCfg.Plugins.HeimdallDir != "" {
+		config.Server.HeimdallPluginsDir = yamlCfg.Plugins.HeimdallDir
 	}
 
 	// Step 3: Apply environment variable overrides (higher priority than config file)

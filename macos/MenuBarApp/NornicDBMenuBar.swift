@@ -293,7 +293,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func showLogs() {
-        let logPath = "/usr/local/var/nornicdb"
+        let logPath = "/usr/local/var/log/nornicdb"
         NSWorkspace.shared.open(URL(fileURLWithPath: logPath))
     }
     

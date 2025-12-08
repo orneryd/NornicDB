@@ -436,6 +436,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	serverConfig.EmbeddingCacheSize = embeddingCache
 	serverConfig.Headless = headless
 	serverConfig.Features = &cfg.Features // Pass features loaded from YAML config
+	// Pass plugin directories from loaded config
+	serverConfig.PluginsDir = cfg.Server.PluginsDir
+	serverConfig.HeimdallPluginsDir = cfg.Server.HeimdallPluginsDir
 
 	// Enable embedded UI from the ui package (unless headless mode)
 	if !headless {
