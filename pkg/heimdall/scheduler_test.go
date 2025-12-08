@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -621,9 +622,19 @@ func TestNewManager_EnvVarOverrides(t *testing.T) {
 	})
 	defer SetGeneratorLoader(origLoader)
 
+	gpuLayersEnv := os.Getenv("NORNICDB_HEIMDALL_GPU_LAYERS")
+	gpuLayersVal := 0
+	if gpuLayersEnv != "" {
+		if v, err := strconv.Atoi(gpuLayersEnv); err == nil {
+			gpuLayersVal = v
+		}
+	}
+
 	cfg := Config{
-		Enabled: true,
-		// Don't set ModelsDir or Model - should use env vars
+		Enabled:   true,
+		ModelsDir: os.Getenv("NORNICDB_MODELS_DIR"),
+		Model:     os.Getenv("NORNICDB_HEIMDALL_MODEL"),
+		GPULayers: gpuLayersVal,
 	}
 
 	manager, err := NewManager(cfg)

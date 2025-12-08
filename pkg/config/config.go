@@ -1267,6 +1267,10 @@ func LoadDefaults() *Config {
 func applyEnvVars(config *Config) {
 	// Authentication - supports both "username:password" and "username/password" formats
 	authStr := getEnv("NORNICDB_AUTH", "")
+	// Backward compatibility: allow Neo4j env var
+	if authStr == "" {
+		authStr = getEnv("NEO4J_AUTH", "")
+	}
 	if authStr != "" {
 		if authStr == "none" {
 			config.Auth.Enabled = false
@@ -1300,15 +1304,25 @@ func applyEnvVars(config *Config) {
 	// Database settings
 	if v := getEnv("NORNICDB_DATA_DIR", ""); v != "" {
 		config.Database.DataDir = v
+	} else if v := getEnv("NEO4J_dbms_directories_data", ""); v != "" {
+		config.Database.DataDir = v
 	}
 	if v := getEnv("NORNICDB_DEFAULT_DATABASE", ""); v != "" {
 		config.Database.DefaultDatabase = v
+	} else if v := getEnv("NEO4J_dbms_default__database", ""); v != "" {
+		config.Database.DefaultDatabase = v
 	}
-	if getEnv("NORNICDB_READ_ONLY", "") == "true" {
+	// Flexible boolean parsing for read-only (supports legacy Neo4j env)
+	if getEnvBool("NORNICDB_READ_ONLY", false) || getEnvBool("NEO4J_dbms_read__only", false) {
 		config.Database.ReadOnly = true
 	}
 	if v := getEnvDuration("NORNICDB_TRANSACTION_TIMEOUT", 0); v > 0 {
 		config.Database.TransactionTimeout = v
+	} else {
+		// Backward compatibility: Neo4j env name
+		if v := getEnvDuration("NEO4J_dbms_transaction_timeout", 0); v > 0 {
+			config.Database.TransactionTimeout = v
+		}
 	}
 	if v := getEnvInt("NORNICDB_MAX_TRANSACTIONS", 0); v > 0 {
 		config.Database.MaxConcurrentTransactions = v
@@ -1324,11 +1338,19 @@ func applyEnvVars(config *Config) {
 		config.Database.WALSyncInterval = v
 	}
 
+	// If strict durability, enforce immediate WAL sync and interval 0 regardless of overrides
+	if config.Database.StrictDurability {
+		config.Database.WALSyncMode = "immediate"
+		config.Database.WALSyncInterval = 0
+	}
+
 	// Server settings - Bolt
 	if getEnv("NORNICDB_BOLT_ENABLED", "") == "false" {
 		config.Server.BoltEnabled = false
 	}
 	if v := getEnvInt("NORNICDB_BOLT_PORT", 0); v > 0 {
+		config.Server.BoltPort = v
+	} else if v := getEnvInt("NEO4J_dbms_connector_bolt_listen__address_port", 0); v > 0 {
 		config.Server.BoltPort = v
 	}
 	if v := getEnv("NORNICDB_BOLT_ADDRESS", ""); v != "" {
@@ -1347,6 +1369,8 @@ func applyEnvVars(config *Config) {
 		config.Server.HTTPEnabled = false
 	}
 	if v := getEnvInt("NORNICDB_HTTP_PORT", 0); v > 0 {
+		config.Server.HTTPPort = v
+	} else if v := getEnvInt("NEO4J_dbms_connector_http_listen__address_port", 0); v > 0 {
 		config.Server.HTTPPort = v
 	}
 	if v := getEnv("NORNICDB_HTTP_ADDRESS", ""); v != "" {

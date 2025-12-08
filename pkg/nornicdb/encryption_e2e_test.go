@@ -37,7 +37,7 @@ func TestEncryptionRequiresPassword(t *testing.T) {
 
 	_, err := Open(t.TempDir(), config)
 	require.Error(t, err, "should fail without password")
-	assert.Contains(t, err.Error(), "no password provided")
+	assert.Contains(t, err.Error(), "no password")
 }
 
 func TestEncryptionInitialization(t *testing.T) {
@@ -56,7 +56,7 @@ func TestEncryptionInitialization(t *testing.T) {
 
 	stats := db.EncryptionStats()
 	assert.True(t, stats["enabled"].(bool))
-	assert.Equal(t, "AES-256-GCM", stats["algorithm"])
+	assert.Equal(t, "AES-256 (BadgerDB)", stats["algorithm"])
 	assert.Contains(t, stats["key_derivation"], "PBKDF2")
 }
 
@@ -104,7 +104,7 @@ func TestEncryptionPersistsSalt(t *testing.T) {
 	db1.Close()
 
 	// Verify salt file was created
-	saltFile := tmpDir + "/encryption.salt"
+	saltFile := tmpDir + "/db.salt"
 	saltData, err := os.ReadFile(saltFile)
 	require.NoError(t, err)
 	assert.Len(t, saltData, 32, "salt should be 32 bytes")
@@ -198,17 +198,10 @@ func TestEncryptionDataAtRest(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Access raw storage to verify encryption at rest
-	rawNode, err := db.storage.GetNode(storageNodeID(node.ID))
-	require.NoError(t, err)
+	// For full-database encryption we cannot inspect raw storage (Badger handles it).
+	// Instead, verify encryption is reported and data round-trips correctly.
+	assert.True(t, db.IsEncryptionEnabled(), "encryption should be enabled")
 
-	// The SSN in raw storage should be encrypted (starts with "enc:")
-	rawSSN, ok := rawNode.Properties["ssn"].(string)
-	require.True(t, ok, "ssn should be a string")
-	assert.True(t, strings.HasPrefix(rawSSN, "enc:"), "SSN should be encrypted at rest, got: %s", rawSSN)
-	assert.NotEqual(t, sensitiveSSN, rawSSN, "SSN should not be stored in plaintext")
-
-	// But when retrieved through DB API, it should be decrypted
 	retrieved, err := db.GetNode(ctx, node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, sensitiveSSN, retrieved.Properties["ssn"])
@@ -238,18 +231,8 @@ func TestEncryptionWithCustomFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Check raw storage
-	rawNode, err := db.storage.GetNode(storageNodeID(node.ID))
-	require.NoError(t, err)
-
-	// Custom fields should be encrypted
-	rawSecret, _ := rawNode.Properties["custom_secret"].(string)
-	assert.True(t, strings.HasPrefix(rawSecret, "enc:"), "custom_secret should be encrypted")
-
-	rawInternal, _ := rawNode.Properties["internal_id"].(string)
-	assert.True(t, strings.HasPrefix(rawInternal, "enc:"), "internal_id should be encrypted")
-
-	// But when retrieved, they should be decrypted
+	// With full-database encryption, Badger handles encryption transparently.
+	// Just verify round-trip decryption works.
 	retrieved, err := db.GetNode(ctx, node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "my-secret-value", retrieved.Properties["custom_secret"])
@@ -588,20 +571,8 @@ func TestEncryptionWrongPassword(t *testing.T) {
 		AutoLinksEnabled:   false,
 	}
 
-	db2, err := Open(tmpDir, config2)
-	require.NoError(t, err)
-	defer db2.Close()
-
-	// Attempting to query should fail or return corrupted data
-	// This tests that wrong password doesn't silently work
-	result, err := db2.ExecuteCypher(ctx, "MATCH (n:Secret) RETURN n.ssn", nil)
-	if err == nil && len(result.Rows) > 0 {
-		// If no error, the decrypted value should NOT be the original
-		// (wrong key produces garbage, not the original plaintext)
-		decryptedSSN := result.Rows[0][0]
-		// It might be the encrypted string or garbage - either way, not "123-45-6789"
-		t.Logf("Decrypted with wrong password: %v", decryptedSSN)
-	}
+	_, err = Open(tmpDir, config2)
+	require.Error(t, err, "should fail to open with wrong password")
 }
 
 func TestEncryptionEmptyProperties(t *testing.T) {

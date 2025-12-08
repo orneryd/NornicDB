@@ -747,8 +747,13 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			fmt.Println("⚡ Using low-memory storage mode (reduced RAM usage)")
 		}
 
+		// Require password if encryption is enabled
+		if config.EncryptionEnabled && config.EncryptionPassword == "" {
+			return nil, fmt.Errorf("encryption is enabled but no password was provided")
+		}
+
 		// Enable BadgerDB-level encryption at rest if configured
-		if config.EncryptionEnabled && config.EncryptionPassword != "" {
+		if config.EncryptionEnabled {
 			// Load or generate salt for this database
 			saltFile := dataDir + "/db.salt"
 			var salt []byte

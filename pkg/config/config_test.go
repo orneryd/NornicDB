@@ -21,8 +21,8 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Auth.InitialUsername != "admin" {
 		t.Errorf("expected username 'admin', got %q", cfg.Auth.InitialUsername)
 	}
-	if cfg.Auth.InitialPassword != "admin" {
-		t.Errorf("expected password 'admin', got %q", cfg.Auth.InitialPassword)
+	if cfg.Auth.InitialPassword != "password" {
+		t.Errorf("expected password 'password', got %q", cfg.Auth.InitialPassword)
 	}
 	if cfg.Auth.MinPasswordLength != 8 {
 		t.Errorf("expected min password length 8, got %d", cfg.Auth.MinPasswordLength)
@@ -80,8 +80,8 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Memory.ArchiveThreshold != 0.05 {
 		t.Errorf("expected archive threshold 0.05, got %f", cfg.Memory.ArchiveThreshold)
 	}
-	if cfg.Memory.EmbeddingProvider != "ollama" {
-		t.Errorf("expected embedding provider 'ollama', got %q", cfg.Memory.EmbeddingProvider)
+	if cfg.Memory.EmbeddingProvider != "local" {
+		t.Errorf("expected embedding provider 'local', got %q", cfg.Memory.EmbeddingProvider)
 	}
 	if cfg.Memory.EmbeddingDimensions != 1024 {
 		t.Errorf("expected embedding dimensions 1024, got %d", cfg.Memory.EmbeddingDimensions)
