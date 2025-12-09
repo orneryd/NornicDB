@@ -1400,8 +1400,15 @@ func applyEnvVars(config *Config) {
 	}
 
 	// Database encryption
+	if getEnvBool("NORNICDB_ENCRYPTION_ENABLED", false) {
+		config.Database.EncryptionEnabled = true
+	}
 	if v := getEnv("NORNICDB_ENCRYPTION_PASSWORD", ""); v != "" {
 		config.Database.EncryptionPassword = v
+		// Auto-enable encryption if password is provided via env var
+		if config.Database.EncryptionPassword != "" {
+			config.Database.EncryptionEnabled = true
+		}
 	}
 
 	// Memory settings
@@ -1671,7 +1678,7 @@ func ApplyEnvVars(config *Config) {
 //	  auth: "admin:admin"  # Format: username:password or "none"
 //	embedding:
 //	  enabled: true
-//	  provider: "ollama"
+//	  provider: "local"
 //
 // The auth field supports both colon format (admin:admin) for consistency
 // and slash format (admin/password) for Neo4j compatibility.
@@ -1937,10 +1944,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 		config.Features.TopologyABTestPercentage = yamlCfg.AutoTLP.ABTestPercentage
 	}
 
-	// Heimdall settings
-	if yamlCfg.Heimdall.Enabled {
-		config.Features.HeimdallEnabled = true
-	}
+	// Heimdall settings - explicitly set enabled/disabled from YAML
+	config.Features.HeimdallEnabled = yamlCfg.Heimdall.Enabled
 	if yamlCfg.Heimdall.Model != "" {
 		config.Features.HeimdallModel = yamlCfg.Heimdall.Model
 	}

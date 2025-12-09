@@ -203,7 +203,7 @@ volumes:
 
 | Variable                      | Default | Description                               |
 | ----------------------------- | ------- | ----------------------------------------- |
-| `NORNICDB_PORT`               | `7474`  | HTTP server port                          |
+| `NORNICDB_HTTP_PORT`          | `7474`  | HTTP server port                          |
 | `NORNICDB_BOLT_PORT`          | `7687`  | Bolt protocol port                        |
 | `NORNICDB_DATA_DIR`           | `/data` | Data directory                            |
 | `NORNICDB_LOG_LEVEL`          | `info`  | Log level (debug, info, warn, error)      |

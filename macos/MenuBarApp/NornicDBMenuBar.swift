@@ -1,6 +1,350 @@
 import SwiftUI
 import AppKit
 import Foundation
+import Security
+
+// MARK: - Keychain Helper for Secure Secret Storage
+
+/// Keychain access result - distinguishes between "no value" and "access denied"
+enum KeychainResult {
+    case success(String)
+    case notFound
+    case accessDenied
+    case otherError(OSStatus)
+}
+
+/// Securely stores sensitive secrets (JWT, encryption password, API tokens) in macOS Keychain
+/// instead of plain text in config files.
+class KeychainHelper {
+    static let shared = KeychainHelper()
+    
+    private let service = "com.nornicdb.menubar"
+    
+    // Account names for different secrets
+    private let jwtSecretAccount = "jwt_secret"
+    private let encryptionPasswordAccount = "encryption_password"
+    private let apiTokenAccount = "api_token"
+    
+    // Track if user has denied access to specific secrets
+    private var accessDeniedForJWT = false
+    private var accessDeniedForEncryption = false
+    private var accessDeniedForAPIToken = false
+    
+    // Cache secrets after first successful load to avoid multiple prompts
+    private var cachedJWT: String?
+    private var cachedEncryption: String?
+    private var cachedAPIToken: String?
+    private var hasAttemptedJWTLoad = false
+    private var hasAttemptedEncryptionLoad = false
+    private var hasAttemptedAPITokenLoad = false
+    
+    private init() {}
+    
+    // MARK: - Access Status
+    
+    /// Check if Keychain access was denied for JWT secret
+    var isJWTAccessDenied: Bool { accessDeniedForJWT }
+    
+    /// Check if Keychain access was denied for encryption password
+    var isEncryptionAccessDenied: Bool { accessDeniedForEncryption }
+    
+    /// Check if Keychain access was denied for API token
+    var isAPITokenAccessDenied: Bool { accessDeniedForAPIToken }
+    
+    /// Reset access denied flag for JWT (to retry on next startup)
+    func resetJWTAccessDenied() { accessDeniedForJWT = false }
+    
+    /// Reset access denied flag for encryption (to retry on next startup)
+    func resetEncryptionAccessDenied() { accessDeniedForEncryption = false }
+    
+    /// Reset all access denied flags (for retry on startup)
+    func resetAllAccessDenied() {
+        accessDeniedForJWT = false
+        accessDeniedForEncryption = false
+        accessDeniedForAPIToken = false
+        hasAttemptedJWTLoad = false
+        hasAttemptedEncryptionLoad = false
+        hasAttemptedAPITokenLoad = false
+    }
+    
+    // MARK: - Generic Keychain Operations
+    
+    /// Save a secret to Keychain - ONLY if it doesn't already exist
+    /// This preserves secrets across reinstalls
+    private func saveSecret(_ secret: String, account: String, overwrite: Bool = false) -> Bool {
+        // Check if secret already exists in Keychain
+        let existingResult = getSecretWithStatus(account: account)
+        switch existingResult {
+        case .success(_):
+            if !overwrite {
+                print("🔐 Secret '\(account)' already exists in Keychain, preserving existing value")
+                return true // Return true since we have a valid secret
+            }
+        case .accessDenied:
+            print("🚫 Keychain access denied for '\(account)' - cannot save")
+            return false
+        case .notFound, .otherError(_):
+            break // Continue to save
+        }
+        
+        // Delete existing secret first (only if we're overwriting or it doesn't exist)
+        deleteSecret(account: account)
+        
+        guard !secret.isEmpty, let secretData = secret.data(using: .utf8) else { return false }
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: secretData,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        
+        if status == errSecSuccess {
+            print("✅ Secret '\(account)' saved to Keychain")
+            return true
+        } else if status == errSecAuthFailed || status == errSecUserCanceled || status == errSecInteractionNotAllowed {
+            print("🚫 Keychain access denied when saving '\(account)': \(status)")
+            return false
+        } else {
+            print("❌ Failed to save '\(account)' to Keychain: \(status)")
+            return false
+        }
+    }
+    
+    /// Retrieve a secret from Keychain with detailed status
+    private func getSecretWithStatus(account: String) -> KeychainResult {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        switch status {
+        case errSecSuccess:
+            if let secretData = result as? Data,
+               let secret = String(data: secretData, encoding: .utf8) {
+                return .success(secret)
+            }
+            return .otherError(status)
+        case errSecItemNotFound:
+            return .notFound
+        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
+            return .accessDenied
+        default:
+            return .otherError(status)
+        }
+    }
+    
+    /// Retrieve a secret from Keychain (simple interface)
+    private func getSecret(account: String) -> String? {
+        switch getSecretWithStatus(account: account) {
+        case .success(let secret):
+            return secret
+        default:
+            return nil
+        }
+    }
+    
+    /// Delete a secret from Keychain
+    @discardableResult
+    private func deleteSecret(account: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+    
+    // MARK: - JWT Secret
+    
+    /// Save JWT secret - won't overwrite if one already exists
+    func saveJWTSecret(_ secret: String) -> Bool {
+        let result = saveSecret(secret, account: jwtSecretAccount, overwrite: false)
+        if result {
+            cachedJWT = secret  // Update cache on successful save
+        } else {
+            // Check if it was an access denial or if secret already exists
+            let checkResult = getSecretWithStatus(account: jwtSecretAccount)
+            if case .accessDenied = checkResult {
+                accessDeniedForJWT = true
+            } else if case .success(let existing) = checkResult {
+                cachedJWT = existing  // Cache existing value
+            }
+        }
+        return result
+    }
+    
+    /// Save JWT secret - forces overwrite even if one exists (use when user explicitly changes it)
+    func updateJWTSecret(_ secret: String) -> Bool {
+        let result = saveSecret(secret, account: jwtSecretAccount, overwrite: true)
+        if result {
+            cachedJWT = secret  // Update cache
+        }
+        return result
+    }
+    
+    /// Get JWT secret with access tracking (cached after first access)
+    func getJWTSecret() -> String? {
+        // Return cached value if we already loaded it successfully
+        if let cached = cachedJWT {
+            return cached
+        }
+        
+        // Only attempt to load once per session to avoid multiple prompts
+        if hasAttemptedJWTLoad && accessDeniedForJWT {
+            return nil
+        }
+        
+        hasAttemptedJWTLoad = true
+        let result = getSecretWithStatus(account: jwtSecretAccount)
+        switch result {
+        case .success(let secret):
+            accessDeniedForJWT = false
+            cachedJWT = secret
+            return secret
+        case .accessDenied:
+            accessDeniedForJWT = true
+            print("🚫 Keychain access denied for JWT secret")
+            return nil
+        default:
+            return nil
+        }
+    }
+    
+    func deleteJWTSecret() -> Bool {
+        return deleteSecret(account: jwtSecretAccount)
+    }
+    
+    func hasJWTSecret() -> Bool {
+        return getJWTSecret() != nil
+    }
+    
+    // MARK: - Encryption Password
+    
+    /// Save encryption password - won't overwrite if one already exists
+    func saveEncryptionPassword(_ password: String) -> Bool {
+        let result = saveSecret(password, account: encryptionPasswordAccount, overwrite: false)
+        if result {
+            cachedEncryption = password  // Update cache on successful save
+        } else {
+            let checkResult = getSecretWithStatus(account: encryptionPasswordAccount)
+            if case .accessDenied = checkResult {
+                accessDeniedForEncryption = true
+            } else if case .success(let existing) = checkResult {
+                cachedEncryption = existing  // Cache existing value
+            }
+        }
+        return result
+    }
+    
+    /// Save encryption password - forces overwrite even if one exists (use when user explicitly changes it)
+    func updateEncryptionPassword(_ password: String) -> Bool {
+        let result = saveSecret(password, account: encryptionPasswordAccount, overwrite: true)
+        if result {
+            cachedEncryption = password  // Update cache
+        }
+        return result
+    }
+    
+    /// Get encryption password with access tracking (cached after first access)
+    func getEncryptionPassword() -> String? {
+        // Return cached value if we already loaded it successfully
+        if let cached = cachedEncryption {
+            return cached
+        }
+        
+        // Only attempt to load once per session to avoid multiple prompts
+        if hasAttemptedEncryptionLoad && accessDeniedForEncryption {
+            return nil
+        }
+        
+        hasAttemptedEncryptionLoad = true
+        let result = getSecretWithStatus(account: encryptionPasswordAccount)
+        switch result {
+        case .success(let secret):
+            accessDeniedForEncryption = false
+            cachedEncryption = secret
+            return secret
+        case .accessDenied:
+            accessDeniedForEncryption = true
+            print("🚫 Keychain access denied for encryption password")
+            return nil
+        default:
+            return nil
+        }
+    }
+    
+    func deleteEncryptionPassword() -> Bool {
+        return deleteSecret(account: encryptionPasswordAccount)
+    }
+    
+    func hasEncryptionPassword() -> Bool {
+        return getEncryptionPassword() != nil
+    }
+    
+    // MARK: - API Token
+    
+    /// Save API token - won't overwrite if one already exists
+    func saveAPIToken(_ token: String) -> Bool {
+        return saveSecret(token, account: apiTokenAccount, overwrite: false)
+    }
+    
+    /// Save API token - forces overwrite even if one exists
+    func updateAPIToken(_ token: String) -> Bool {
+        let result = saveSecret(token, account: apiTokenAccount, overwrite: true)
+        if result {
+            cachedAPIToken = token  // Update cache
+        }
+        return result
+    }
+    
+    /// Get API token with caching (cached after first access)
+    func getAPIToken() -> String? {
+        // Return cached value if we already loaded it successfully
+        if let cached = cachedAPIToken {
+            return cached
+        }
+        
+        // Only attempt to load once per session to avoid multiple prompts
+        if hasAttemptedAPITokenLoad && accessDeniedForAPIToken {
+            return nil
+        }
+        
+        hasAttemptedAPITokenLoad = true
+        let result = getSecretWithStatus(account: apiTokenAccount)
+        switch result {
+        case .success(let secret):
+            accessDeniedForAPIToken = false
+            cachedAPIToken = secret
+            return secret
+        case .accessDenied:
+            accessDeniedForAPIToken = true
+            print("🚫 Keychain access denied for API token")
+            return nil
+        default:
+            return nil
+        }
+    }
+    
+    func deleteAPIToken() -> Bool {
+        return deleteSecret(account: apiTokenAccount)
+    }
+    
+    func hasAPIToken() -> Bool {
+        return getAPIToken() != nil
+    }
+}
 
 @main
 struct NornicDBMenuBarApp: App {
@@ -414,7 +758,8 @@ class ConfigManager: ObservableObject {
     @Published var autoTLPEnabled: Bool = false
     @Published var heimdallEnabled: Bool = false
     @Published var autoStartEnabled: Bool = true
-    @Published var portNumber: String = "7687"
+    @Published var boltPortNumber: String = "7687"
+    @Published var httpPortNumber: String = "7474"
     @Published var hostAddress: String = "localhost"
     
     // Authentication settings
@@ -425,6 +770,7 @@ class ConfigManager: ObservableObject {
     // Encryption settings
     @Published var encryptionEnabled: Bool = false
     @Published var encryptionPassword: String = ""
+    @Published var encryptionKeychainAccessDenied: Bool = false  // Track if user denied Keychain access
     
     @Published var embeddingModel: String = "bge-m3.gguf"
     @Published var heimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
@@ -448,8 +794,24 @@ class ConfigManager: ObservableObject {
         // Scan available models first
         scanModels()
         
+        // Reset Keychain access denied flags at startup (to allow retry)
+        KeychainHelper.shared.resetAllAccessDenied()
+        
+        // FIRST: Load secrets from Keychain (preserved across reinstalls)
+        // This ensures existing secrets are never lost
+        if let keychainJWT = KeychainHelper.shared.getJWTSecret() {
+            jwtSecret = keychainJWT
+            print("🔐 Loaded JWT secret from Keychain (preserved across reinstall)")
+        } else if KeychainHelper.shared.isJWTAccessDenied {
+            print("⚠️ JWT Keychain access denied - will use config file value")
+        }
+        
+        // Only try to load encryption password if we expect it to exist
+        // (we'll do this after loading config to check if encryption was enabled)
+        
         guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
             print("Could not read config file at: \(configPath)")
+            // Even without config file, we may have Keychain secrets from previous install
             return
         }
         
@@ -459,116 +821,211 @@ class ConfigManager: ObservableObject {
         let lines = content.components(separatedBy: .newlines)
         let context = lines.joined(separator: "\n")
         
-        // Load feature enabled flags
-        if let embeddingSection = context.range(of: "embedding:.*?enabled:", options: .regularExpression) {
-            let start = embeddingSection.upperBound
-            if let value = extractBoolValue(from: context, after: start) {
-                embeddingsEnabled = value
-                print("Loaded embeddings enabled: \(value)")
+        // Load feature enabled flags - handle multi-line YAML
+        let embeddingSection = context.range(of: "embedding:")
+        if embeddingSection != nil {
+            let afterEmbedding = String(context[embeddingSection!.upperBound...])
+            if afterEmbedding.contains("enabled: true") || afterEmbedding.contains("enabled:true") {
+                embeddingsEnabled = true
+                print("✅ Loaded embeddings enabled: true")
+            } else if afterEmbedding.contains("enabled: false") || afterEmbedding.contains("enabled:false") {
+                embeddingsEnabled = false
+                print("✅ Loaded embeddings enabled: false")
             }
         }
         
-        if let kmeansSection = context.range(of: "kmeans:.*?enabled:", options: .regularExpression) {
-            let start = kmeansSection.upperBound
-            if let value = extractBoolValue(from: context, after: start) {
-                kmeansEnabled = value
-                print("Loaded kmeans enabled: \(value)")
+        let kmeansSection = context.range(of: "kmeans:")
+        if kmeansSection != nil {
+            let afterKmeans = String(context[kmeansSection!.upperBound...])
+            if afterKmeans.contains("enabled: true") || afterKmeans.contains("enabled:true") {
+                kmeansEnabled = true
+                print("✅ Loaded kmeans enabled: true")
+            } else if afterKmeans.contains("enabled: false") || afterKmeans.contains("enabled:false") {
+                kmeansEnabled = false
+                print("✅ Loaded kmeans enabled: false")
             }
         }
         
-        if let tlpSection = context.range(of: "auto_tlp:.*?enabled:", options: .regularExpression) {
-            let start = tlpSection.upperBound
-            if let value = extractBoolValue(from: context, after: start) {
-                autoTLPEnabled = value
-                print("Loaded auto_tlp enabled: \(value)")
+        let autoTLPSection = context.range(of: "auto_tlp:")
+        if autoTLPSection != nil {
+            let afterAutoTLP = String(context[autoTLPSection!.upperBound...])
+            if afterAutoTLP.contains("enabled: true") || afterAutoTLP.contains("enabled:true") {
+                autoTLPEnabled = true
+                print("✅ Loaded auto_tlp enabled: true")
+            } else if afterAutoTLP.contains("enabled: false") || afterAutoTLP.contains("enabled:false") {
+                autoTLPEnabled = false
+                print("✅ Loaded auto_tlp enabled: false")
             }
         }
         
-        if let heimdallSection = context.range(of: "heimdall:.*?enabled:", options: .regularExpression) {
-            let start = heimdallSection.upperBound
-            if let value = extractBoolValue(from: context, after: start) {
-                heimdallEnabled = value
-                print("Loaded heimdall enabled: \(value)")
+        let heimdallSectionVar = context.range(of: "heimdall:")
+        if heimdallSectionVar != nil {
+            let afterHeimdall = String(context[heimdallSectionVar!.upperBound...])
+            if afterHeimdall.contains("enabled: true") || afterHeimdall.contains("enabled:true") {
+                heimdallEnabled = true
+                print("✅ Loaded heimdall enabled: true")
+            } else if afterHeimdall.contains("enabled: false") || afterHeimdall.contains("enabled:false") {
+                heimdallEnabled = false
+                print("✅ Loaded heimdall enabled: false")
             }
         }
         
-        // Load model selections
-        if let embeddingModelSection = context.range(of: "embedding:.*?model:", options: .regularExpression) {
-            let start = embeddingModelSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                embeddingModel = value
-                print("Loaded embedding model: \(value)")
+        // Load model selections - handle multi-line YAML
+        if embeddingSection != nil {
+            let afterEmbedding = String(context[embeddingSection!.upperBound...])
+            if let modelRange = afterEmbedding.range(of: "model:") {
+                let start = modelRange.upperBound
+                if let value = extractStringValue(from: afterEmbedding, after: start) {
+                    embeddingModel = value
+                    print("✅ Loaded embedding model: \(value)")
+                }
             }
         }
         
-        if let heimdallModelSection = context.range(of: "heimdall:.*?model:", options: .regularExpression) {
-            let start = heimdallModelSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                heimdallModel = value
-                print("Loaded heimdall model: \(value)")
+        if heimdallSectionVar != nil {
+            let afterHeimdall = String(context[heimdallSectionVar!.upperBound...])
+            if let modelRange = afterHeimdall.range(of: "model:") {
+                let start = modelRange.upperBound
+                if let value = extractStringValue(from: afterHeimdall, after: start) {
+                    heimdallModel = value
+                    print("✅ Loaded heimdall model: \(value)")
+                }
             }
         }
         
-        // Load server settings (try both port and bolt_port)
-        if let serverPortSection = context.range(of: "server:.*?bolt_port:", options: .regularExpression) {
-            let start = serverPortSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                portNumber = value
-                print("Loaded bolt_port: \(value)")
+        // Load server settings - handle multi-line YAML
+        let serverSection = context.range(of: "server:")
+        if serverSection != nil {
+            let afterServer = String(context[serverSection!.upperBound...])
+            
+            // Load bolt_port and http_port
+            if let boltPortRange = afterServer.range(of: "bolt_port:") {
+                let start = boltPortRange.upperBound
+                if let value = extractStringValue(from: afterServer, after: start) {
+                    boltPortNumber = value
+                    print("✅ Loaded bolt_port: \(value)")
+                }
             }
-        } else if let serverPortSection = context.range(of: "server:.*?port:", options: .regularExpression) {
-            let start = serverPortSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                portNumber = value
-                print("Loaded port: \(value)")
+            
+            if let httpPortRange = afterServer.range(of: "http_port:") {
+                let start = httpPortRange.upperBound
+                if let value = extractStringValue(from: afterServer, after: start) {
+                    httpPortNumber = value
+                    print("✅ Loaded http_port: \(value)")
+                }
             }
-        }
-        
-        if let serverHostSection = context.range(of: "server:.*?host:", options: .regularExpression) {
-            let start = serverHostSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                hostAddress = value
-                print("Loaded host: \(value)")
-            }
-        }
-        
-        // Load auth settings
-        if let authSection = context.range(of: "auth:.*?username:", options: .regularExpression) {
-            let start = authSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                adminUsername = value
-                print("Loaded username: \(value)")
-            }
-        }
-        
-        if let authPasswordSection = context.range(of: "auth:.*?password:", options: .regularExpression) {
-            let start = authPasswordSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                adminPassword = value
-                print("Loaded password: [hidden]")
+            
+            if let hostRange = afterServer.range(of: "host:") {
+                let start = hostRange.upperBound
+                if let value = extractStringValue(from: afterServer, after: start) {
+                    hostAddress = value
+                    print("✅ Loaded host: \(value)")
+                }
             }
         }
         
-        if let jwtSection = context.range(of: "auth:.*?jwt_secret:", options: .regularExpression) {
-            let start = jwtSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                jwtSecret = value
-                print("Loaded JWT secret: [hidden]")
+        // Load auth settings - handle multi-line YAML
+        let authSection = context.range(of: "auth:")
+        if authSection != nil {
+            let afterAuth = String(context[authSection!.upperBound...])
+            
+            if let usernameRange = afterAuth.range(of: "username:") {
+                let start = usernameRange.upperBound
+                if let value = extractStringValue(from: afterAuth, after: start) {
+                    adminUsername = value
+                    print("✅ Loaded username: \(value)")
+                }
+            }
+            
+            if let passwordRange = afterAuth.range(of: "password:") {
+                let start = passwordRange.upperBound
+                if let value = extractStringValue(from: afterAuth, after: start) {
+                    adminPassword = value
+                    print("✅ Loaded password: [hidden]")
+                }
+            }
+            
+            // Load JWT secret from config file ONLY if not already loaded from Keychain
+            // This handles migration from old installs that stored secrets in config
+            if jwtSecret.isEmpty {
+                if let jwtRange = afterAuth.range(of: "jwt_secret:") {
+                    let start = jwtRange.upperBound
+                    if let value = extractStringValue(from: afterAuth, after: start),
+                       !value.hasPrefix("[stored-in-keychain]"),
+                       !value.isEmpty {
+                        jwtSecret = value
+                        print("📄 Loaded JWT secret from config (migrating to Keychain)")
+                        // Migrate to Keychain - saveJWTSecret won't overwrite if one exists
+                        _ = KeychainHelper.shared.saveJWTSecret(value)
+                    }
+                }
             }
         }
         
-        // Load encryption settings
-        if let enabledMatch = context.range(of: "database:.*?encryption_enabled:\\s*(true|false)", options: .regularExpression) {
-            let enabledValue = context[enabledMatch].contains("true")
-            encryptionEnabled = enabledValue
-            print("Loaded encryption enabled: \(encryptionEnabled)")
-        }
-        if let passwordSection = context.range(of: "database:.*?encryption_password:", options: .regularExpression) {
-            let start = passwordSection.upperBound
-            if let value = extractStringValue(from: context, after: start) {
-                encryptionPassword = value
-                print("Loaded encryption password: [hidden]")
+        // Load encryption settings - check multiple patterns
+        // Pattern 1: Look for encryption_enabled anywhere after database:
+        var configSaysEncryptionEnabled = false
+        let databaseSection = context.range(of: "database:")
+        if databaseSection != nil {
+            // Search for encryption_enabled: true/false after database: section
+            let afterDatabase = String(context[databaseSection!.upperBound...])
+            if afterDatabase.contains("encryption_enabled: true") || afterDatabase.contains("encryption_enabled:true") {
+                configSaysEncryptionEnabled = true
+                print("✅ Config says encryption enabled: true")
+            } else if afterDatabase.contains("encryption_enabled: false") || afterDatabase.contains("encryption_enabled:false") {
+                configSaysEncryptionEnabled = false
+                print("✅ Config says encryption enabled: false")
             }
+        }
+        
+        // NOW try to load encryption password from Keychain (only if encryption was/is enabled)
+        if configSaysEncryptionEnabled {
+            if let keychainEncryption = KeychainHelper.shared.getEncryptionPassword() {
+                encryptionPassword = keychainEncryption
+                encryptionEnabled = true
+                encryptionKeychainAccessDenied = false
+                print("🔐 Loaded encryption password from Keychain")
+            } else if KeychainHelper.shared.isEncryptionAccessDenied {
+                // User denied Keychain access - disable encryption and warn
+                print("🚫 Keychain access denied for encryption - disabling encryption")
+                encryptionEnabled = false
+                encryptionKeychainAccessDenied = true
+                encryptionPassword = ""
+            } else {
+                // No password in Keychain but encryption was enabled - try to load from config
+                encryptionEnabled = configSaysEncryptionEnabled
+            }
+        }
+        
+        // Load encryption password from config ONLY if not already loaded from Keychain
+        if encryptionPassword.isEmpty && !encryptionKeychainAccessDenied && databaseSection != nil {
+            let afterDatabase = String(context[databaseSection!.upperBound...])
+            if let passwordRange = afterDatabase.range(of: "encryption_password:") {
+                let start = passwordRange.upperBound
+                if let value = extractStringValue(from: afterDatabase, after: start),
+                   !value.hasPrefix("[stored-in-keychain]"),
+                   !value.isEmpty {
+                    encryptionPassword = value
+                    encryptionEnabled = true
+                    print("📄 Loaded encryption password from config (migrating to Keychain)")
+                    // Migrate to Keychain - saveEncryptionPassword won't overwrite if one exists
+                    if KeychainHelper.shared.saveEncryptionPassword(value) {
+                        print("✅ Migrated encryption password to Keychain")
+                    } else if KeychainHelper.shared.isEncryptionAccessDenied {
+                        // User denied Keychain access during migration - disable encryption
+                        print("🚫 Keychain access denied during migration - disabling encryption")
+                        encryptionEnabled = false
+                        encryptionKeychainAccessDenied = true
+                        encryptionPassword = ""
+                    }
+                }
+            }
+        }
+        
+        // If Keychain access was denied for encryption, make sure it's disabled
+        if encryptionKeychainAccessDenied {
+            encryptionEnabled = false
+            encryptionPassword = ""
         }
     }
     
@@ -633,33 +1090,65 @@ class ConfigManager: ObservableObject {
         content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: embeddingModel)
         content = updateYAMLStringValue(in: content, section: "heimdall", key: "model", value: heimdallModel)
         
-        // Update server settings (update both port and bolt_port for compatibility)
-        content = updateYAMLStringValue(in: content, section: "server", key: "port", value: portNumber)
-        content = updateYAMLStringValue(in: content, section: "server", key: "bolt_port", value: portNumber)
+        // Update server settings
+        content = updateYAMLStringValue(in: content, section: "server", key: "bolt_port", value: boltPortNumber)
+        content = updateYAMLStringValue(in: content, section: "server", key: "http_port", value: httpPortNumber)
         content = updateYAMLStringValue(in: content, section: "server", key: "host", value: hostAddress)
         
         // Update auth settings
         content = updateYAMLStringValue(in: content, section: "auth", key: "username", value: adminUsername)
         content = updateYAMLStringValue(in: content, section: "auth", key: "password", value: adminPassword)
         
-        // Auto-generate JWT secret if empty
+        // Auto-generate JWT secret only if empty, then save to Keychain
+        print("💾 Saving JWT secret - current value length: \(jwtSecret.count)")
         if jwtSecret.isEmpty {
-            jwtSecret = generateRandomSecret()
-            print("Auto-generated JWT secret")
+            jwtSecret = ConfigManager.generateRandomSecret()
+            print("🔑 Auto-generated NEW JWT secret (was empty)")
+        } else {
+            print("✅ Preserving existing JWT secret")
         }
-        content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: jwtSecret)
+        // Save JWT secret to Keychain (secure storage)
+        if KeychainHelper.shared.saveJWTSecret(jwtSecret) {
+            print("🔐 JWT secret saved to Keychain")
+            // Write placeholder to config file indicating it's in Keychain
+            content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: "[stored-in-keychain]")
+        } else {
+            // Fallback: save to config file if Keychain fails
+            print("⚠️ Keychain save failed, storing JWT in config file")
+            content = updateYAMLStringValue(in: content, section: "auth", key: "jwt_secret", value: jwtSecret)
+        }
         
         // Update encryption settings
-        content = updateYAMLValue(in: content, section: "database", key: "encryption_enabled", value: encryptionEnabled)
-        if encryptionEnabled {
+        // If Keychain access was denied, force encryption to be disabled
+        let effectiveEncryptionEnabled = encryptionEnabled && !encryptionKeychainAccessDenied
+        content = updateYAMLValue(in: content, section: "database", key: "encryption_enabled", value: effectiveEncryptionEnabled)
+        if effectiveEncryptionEnabled {
             // Auto-generate encryption password if empty
             if encryptionPassword.isEmpty {
-                encryptionPassword = generateRandomSecret()
-                print("Auto-generated encryption password")
+                encryptionPassword = ConfigManager.generateRandomSecret()
+                print("🔑 Auto-generated encryption password")
             }
-            content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: encryptionPassword)
+            // Save encryption password to Keychain (secure storage)
+            if KeychainHelper.shared.saveEncryptionPassword(encryptionPassword) {
+                print("🔐 Encryption password saved to Keychain")
+                // Write placeholder to config file indicating it's in Keychain
+                content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: "[stored-in-keychain]")
+            } else if KeychainHelper.shared.isEncryptionAccessDenied {
+                // User denied Keychain access - disable encryption for security
+                print("🚫 Keychain access denied - disabling encryption")
+                encryptionEnabled = false
+                encryptionKeychainAccessDenied = true
+                content = updateYAMLValue(in: content, section: "database", key: "encryption_enabled", value: false)
+                content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: "")
+            } else {
+                // Fallback: save to config file if Keychain fails for other reasons
+                print("⚠️ Keychain save failed, storing encryption password in config file")
+                content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: encryptionPassword)
+            }
         } else {
             content = updateYAMLStringValue(in: content, section: "database", key: "encryption_password", value: "")
+            // Clear from Keychain if encryption is disabled
+            _ = KeychainHelper.shared.deleteEncryptionPassword()
         }
         
         // Write back
@@ -734,7 +1223,7 @@ class ConfigManager: ObservableObject {
         return result
     }
     
-    func generateRandomSecret() -> String {
+    static func generateRandomSecret() -> String {
         let characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
         return String((0..<32).map { _ in characters.randomElement()! })
     }
@@ -754,7 +1243,8 @@ struct SettingsView: View {
     @State private var originalAutoTLPEnabled: Bool = false
     @State private var originalHeimdallEnabled: Bool = false
     @State private var originalAutoStartEnabled: Bool = true
-    @State private var originalPortNumber: String = "7687"
+    @State private var originalBoltPortNumber: String = "7687"
+    @State private var originalHttpPortNumber: String = "7474"
     @State private var originalHostAddress: String = "localhost"
     @State private var originalEmbeddingModel: String = "bge-m3.gguf"
     @State private var originalHeimdallModel: String = "qwen2.5-0.5b-instruct.gguf"
@@ -778,7 +1268,8 @@ struct SettingsView: View {
                config.autoTLPEnabled != originalAutoTLPEnabled ||
                config.heimdallEnabled != originalHeimdallEnabled ||
                config.autoStartEnabled != originalAutoStartEnabled ||
-               config.portNumber != originalPortNumber ||
+               config.boltPortNumber != originalBoltPortNumber ||
+               config.httpPortNumber != originalHttpPortNumber ||
                config.hostAddress != originalHostAddress ||
                config.embeddingModel != originalEmbeddingModel ||
                config.heimdallModel != originalHeimdallModel ||
@@ -868,12 +1359,17 @@ struct SettingsView: View {
     }
     
     private func captureOriginalValues() {
+        // Reload config from file to ensure we have the latest values
+        config.loadConfig()
+        
+        // Capture current values as originals
         originalEmbeddingsEnabled = config.embeddingsEnabled
         originalKmeansEnabled = config.kmeansEnabled
         originalAutoTLPEnabled = config.autoTLPEnabled
         originalHeimdallEnabled = config.heimdallEnabled
         originalAutoStartEnabled = config.autoStartEnabled
-        originalPortNumber = config.portNumber
+        originalBoltPortNumber = config.boltPortNumber
+        originalHttpPortNumber = config.httpPortNumber
         originalHostAddress = config.hostAddress
         originalEmbeddingModel = config.embeddingModel
         originalHeimdallModel = config.heimdallModel
@@ -893,23 +1389,41 @@ struct SettingsView: View {
             
             DispatchQueue.main.async {
                 if success {
-                    saveProgress = "Configuration saved. Restarting server..."
+                    saveProgress = "Updating service configuration..."
                     
-                    // Restart the server
-                    let task = Process()
-                    task.launchPath = "/usr/bin/env"
-                    task.arguments = ["launchctl", "kickstart", "-k", "gui/\(getuid())/com.nornicdb.server"]
-                    task.launch()
+                    // Update the LaunchAgent plist with current secrets from Keychain
+                    self.updateServerPlist()
                     
-                    // Wait for restart
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        saveProgress = "Server restarted successfully!"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.saveProgress = "Restarting server..."
                         
-                        // Close window after short delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            isSaving = false
-                            captureOriginalValues() // Update original values
-                            NSApp.keyWindow?.close()
+                        // Unload and reload to pick up new plist
+                        let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
+                        
+                        let unloadTask = Process()
+                        unloadTask.launchPath = "/usr/bin/env"
+                        unloadTask.arguments = ["launchctl", "unload", launchAgentPath]
+                        unloadTask.launch()
+                        unloadTask.waitUntilExit()
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            let loadTask = Process()
+                            loadTask.launchPath = "/usr/bin/env"
+                            loadTask.arguments = ["launchctl", "load", launchAgentPath]
+                            loadTask.launch()
+                            loadTask.waitUntilExit()
+                            
+                            // Wait for restart
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                self.saveProgress = "Server restarted successfully!"
+                                
+                                // Close window after short delay
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    self.isSaving = false
+                                    self.captureOriginalValues() // Update original values
+                                    NSApp.keyWindow?.close()
+                                }
+                            }
                         }
                     }
                 } else {
@@ -921,6 +1435,112 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+    
+    /// Updates the LaunchAgent plist with current configuration including secrets from Keychain
+    private func updateServerPlist() {
+        let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
+        let homeDir = NSString(string: "~").expandingTildeInPath
+        
+        // Get secrets from Keychain for environment variables
+        let jwtSecretEnv = KeychainHelper.shared.getJWTSecret() ?? config.jwtSecret
+        let encryptionPasswordEnv = config.encryptionEnabled ? (KeychainHelper.shared.getEncryptionPassword() ?? config.encryptionPassword) : ""
+        
+        // Build environment variables section with all settings
+        // Using env vars instead of CLI args allows config file to be the source of truth
+        var envVars = """
+                <key>PATH</key>
+                <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+                <key>HOME</key>
+                <string>\(homeDir)</string>
+                <key>NORNICDB_SERVER_BOLT_PORT</key>
+                <string>\(config.boltPortNumber)</string>
+                <key>NORNICDB_HTTP_PORT</key>
+                <string>\(config.httpPortNumber)</string>
+                <key>NORNICDB_SERVER_HOST</key>
+                <string>\(config.hostAddress)</string>
+                <key>NORNICDB_EMBEDDING_ENABLED</key>
+                <string>\(config.embeddingsEnabled ? "true" : "false")</string>
+                <key>NORNICDB_KMEANS_ENABLED</key>
+                <string>\(config.kmeansEnabled ? "true" : "false")</string>
+                <key>NORNICDB_AUTO_TLP_ENABLED</key>
+                <string>\(config.autoTLPEnabled ? "true" : "false")</string>
+                <key>NORNICDB_HEIMDALL_ENABLED</key>
+                <string>\(config.heimdallEnabled ? "true" : "false")</string>
+                <key>NORNICDB_PLUGINS_DIR</key>
+                <string>/usr/local/share/nornicdb/plugins</string>
+                <key>NORNICDB_HEIMDALL_PLUGINS_DIR</key>
+                <string>/usr/local/share/nornicdb/plugins/heimdall</string>
+        """
+        
+        // Add JWT secret if available (from Keychain)
+        if !jwtSecretEnv.isEmpty {
+            envVars += """
+            
+                    <key>NORNICDB_AUTH_JWT_SECRET</key>
+                    <string>\(jwtSecretEnv)</string>
+            """
+        }
+        
+        // Add encryption settings if encryption is enabled
+        if config.encryptionEnabled && !encryptionPasswordEnv.isEmpty {
+            envVars += """
+            
+                    <key>NORNICDB_ENCRYPTION_ENABLED</key>
+                    <string>true</string>
+                    <key>NORNICDB_ENCRYPTION_PASSWORD</key>
+                    <string>\(encryptionPasswordEnv)</string>
+            """
+        }
+        
+        // Create the plist content
+        let plistContent = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>com.nornicdb.server</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/usr/local/bin/nornicdb</string>
+                <string>serve</string>
+            </array>
+            <key>WorkingDirectory</key>
+            <string>/usr/local/var/nornicdb</string>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <dict>
+                <key>SuccessfulExit</key>
+                <false/>
+                <key>Crashed</key>
+                <true/>
+            </dict>
+            <key>ThrottleInterval</key>
+            <integer>30</integer>
+            <key>StandardOutPath</key>
+            <string>/usr/local/var/log/nornicdb/stdout.log</string>
+            <key>StandardErrorPath</key>
+            <string>/usr/local/var/log/nornicdb/stderr.log</string>
+            <key>EnvironmentVariables</key>
+            <dict>
+        \(envVars)
+            </dict>
+            <key>ProcessType</key>
+            <string>Interactive</string>
+            <key>Nice</key>
+            <integer>0</integer>
+        </dict>
+        </plist>
+        """
+        
+        do {
+            try plistContent.write(toFile: launchAgentPath, atomically: true, encoding: .utf8)
+            print("✅ Updated server plist with secrets from Keychain")
+        } catch {
+            print("❌ Failed to update server plist: \(error)")
         }
     }
     
@@ -982,13 +1602,28 @@ struct SettingsView: View {
                 
                 // Port setting
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Port Number")
+                    Text("Bolt Port")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    Text("The port NornicDB listens on (default: 7687)")
+                    Text("The Bolt protocol port (default: 7687)")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    TextField("7687", text: $config.portNumber)
+                    TextField("7687", text: $config.boltPortNumber)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 150)
+                }
+                .padding()
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.1)))
+                
+                // HTTP Port setting
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("HTTP Port")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("The HTTP API port (default: 7474)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("7474", text: $config.httpPortNumber)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 150)
                 }
@@ -1189,7 +1824,7 @@ struct SettingsView: View {
                     HStack {
                         Spacer().frame(width: 120)
                         Button("Generate Random Secret") {
-                            config.jwtSecret = config.generateRandomSecret()
+                            config.jwtSecret = ConfigManager.generateRandomSecret()
                         }
                         .buttonStyle(.bordered)
                     }
@@ -1208,7 +1843,59 @@ struct SettingsView: View {
                     Text("Database Encryption")
                         .font(.headline)
                     
-                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                    // Show warning if Keychain access was denied
+                    if config.encryptionKeychainAccessDenied {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Keychain access was denied. Encryption is disabled for security.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
+                        
+                        Button("Retry Keychain Access") {
+                            // Reset the access denied flag and try again
+                            KeychainHelper.shared.resetEncryptionAccessDenied()
+                            config.encryptionKeychainAccessDenied = false
+                            // User can now try enabling encryption again
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    
+                    Toggle("Enable Encryption at Rest", isOn: Binding(
+                        get: { config.encryptionEnabled },
+                        set: { newValue in
+                            if newValue && !config.encryptionEnabled {
+                                // User is enabling encryption - generate password and try Keychain
+                                if config.encryptionPassword.isEmpty {
+                                    config.encryptionPassword = ConfigManager.generateRandomSecret()
+                                    showEncryptionKey = true  // Show the generated key
+                                }
+                                // Try to save to Keychain - this will trigger the permission prompt
+                                if KeychainHelper.shared.saveEncryptionPassword(config.encryptionPassword) {
+                                    config.encryptionEnabled = true
+                                    config.encryptionKeychainAccessDenied = false
+                                    print("✅ Encryption password saved to Keychain")
+                                } else if KeychainHelper.shared.isEncryptionAccessDenied {
+                                    // User denied Keychain access
+                                    config.encryptionEnabled = false
+                                    config.encryptionKeychainAccessDenied = true
+                                    config.encryptionPassword = ""
+                                    print("🚫 User denied Keychain access - encryption disabled")
+                                } else {
+                                    // Some other error, but allow encryption anyway
+                                    config.encryptionEnabled = true
+                                    print("⚠️ Keychain save failed but allowing encryption")
+                                }
+                            } else {
+                                config.encryptionEnabled = newValue
+                            }
+                        }
+                    ))
+                    .disabled(config.encryptionKeychainAccessDenied)
                     
                     if config.encryptionEnabled {
                         HStack {
@@ -1246,8 +1933,10 @@ struct SettingsView: View {
                         HStack {
                             Spacer().frame(width: 120)
                             Button("Generate Strong Key") {
-                                config.encryptionPassword = config.generateRandomSecret()
+                                config.encryptionPassword = ConfigManager.generateRandomSecret()
                                 showEncryptionKey = true  // Show the newly generated key
+                                // Update Keychain with new password
+                                _ = KeychainHelper.shared.updateEncryptionPassword(config.encryptionPassword)
                             }
                             .buttonStyle(.bordered)
                         }
@@ -1502,7 +2191,10 @@ struct FirstRunWizard: View {
         }
         .frame(width: 750, height: 688)  // 25% larger (600*1.25=750, 550*1.25=688)
         .onAppear {
+            // Load existing config values first (preserves user's settings)
+            config.loadConfig()
             checkServerStatus()
+            checkModelFiles()
         }
     }
     
@@ -1566,7 +2258,58 @@ struct FirstRunWizard: View {
                         let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
                         let homeDir = NSString(string: "~").expandingTildeInPath
                         
-                        // Create the plist content
+                        // Get secrets from Keychain for environment variables
+                        let jwtSecretEnv = KeychainHelper.shared.getJWTSecret() ?? config.jwtSecret
+                        let encryptionPasswordEnv = config.encryptionEnabled ? (KeychainHelper.shared.getEncryptionPassword() ?? config.encryptionPassword) : ""
+                        
+                        // Build environment variables section with all settings
+                        // Using env vars instead of CLI args allows config file to be the source of truth
+                        var envVars = """
+                                <key>PATH</key>
+                                <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+                                <key>HOME</key>
+                                <string>\(homeDir)</string>
+                                <key>NORNICDB_SERVER_BOLT_PORT</key>
+                                <string>\(config.boltPortNumber)</string>
+                                <key>NORNICDB_HTTP_PORT</key>
+                                <string>\(config.httpPortNumber)</string>
+                                <key>NORNICDB_SERVER_HOST</key>
+                                <string>\(config.hostAddress)</string>
+                                <key>NORNICDB_EMBEDDING_ENABLED</key>
+                                <string>\(config.embeddingsEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_KMEANS_ENABLED</key>
+                                <string>\(config.kmeansEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_AUTO_TLP_ENABLED</key>
+                                <string>\(config.autoTLPEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_HEIMDALL_ENABLED</key>
+                                <string>\(config.heimdallEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_PLUGINS_DIR</key>
+                                <string>/usr/local/share/nornicdb/plugins</string>
+                                <key>NORNICDB_HEIMDALL_PLUGINS_DIR</key>
+                                <string>/usr/local/share/nornicdb/plugins/heimdall</string>
+                        """
+                        
+                        // Add JWT secret if available (from Keychain)
+                        if !jwtSecretEnv.isEmpty {
+                            envVars += """
+                            
+                                    <key>NORNICDB_AUTH_JWT_SECRET</key>
+                                    <string>\(jwtSecretEnv)</string>
+                            """
+                        }
+                        
+                        // Add encryption settings if encryption is enabled
+                        if config.encryptionEnabled && !encryptionPasswordEnv.isEmpty {
+                            envVars += """
+                            
+                                    <key>NORNICDB_ENCRYPTION_ENABLED</key>
+                                    <string>true</string>
+                                    <key>NORNICDB_ENCRYPTION_PASSWORD</key>
+                                    <string>\(encryptionPasswordEnv)</string>
+                            """
+                        }
+                        
+                        // Create the plist content with secrets as environment variables
                         let plistContent = """
                         <?xml version="1.0" encoding="UTF-8"?>
                         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1578,12 +2321,6 @@ struct FirstRunWizard: View {
                             <array>
                                 <string>/usr/local/bin/nornicdb</string>
                                 <string>serve</string>
-                                <string>--data-dir</string>
-                                <string>/usr/local/var/nornicdb/data</string>
-                                <string>--bolt-port</string>
-                                <string>7687</string>
-                                <string>--http-port</string>
-                                <string>7474</string>
                             </array>
                             <key>WorkingDirectory</key>
                             <string>/usr/local/var/nornicdb</string>
@@ -1604,10 +2341,7 @@ struct FirstRunWizard: View {
                             <string>/usr/local/var/log/nornicdb/stderr.log</string>
                             <key>EnvironmentVariables</key>
                             <dict>
-                                <key>PATH</key>
-                                <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-                                <key>HOME</key>
-                                <string>\(homeDir)</string>
+                        \(envVars)
                             </dict>
                             <key>ProcessType</key>
                             <string>Interactive</string>
@@ -1833,7 +2567,7 @@ struct FirstRunWizard: View {
                     HStack {
                         Spacer().frame(width: 120)
                         Button("Generate Random Secret") {
-                            config.jwtSecret = config.generateRandomSecret()
+                            config.jwtSecret = ConfigManager.generateRandomSecret()
                         }
                         .buttonStyle(.bordered)
                     }
@@ -1852,7 +2586,59 @@ struct FirstRunWizard: View {
                     Text("Database Encryption (Optional)")
                         .font(.headline)
                     
-                    Toggle("Enable Encryption at Rest", isOn: $config.encryptionEnabled)
+                    // Show warning if Keychain access was denied
+                    if config.encryptionKeychainAccessDenied {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Keychain access was denied. Encryption is disabled for security.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
+                        
+                        Button("Retry Keychain Access") {
+                            // Reset the access denied flag and try again
+                            KeychainHelper.shared.resetEncryptionAccessDenied()
+                            config.encryptionKeychainAccessDenied = false
+                            // User can now try enabling encryption again
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    
+                    Toggle("Enable Encryption at Rest", isOn: Binding(
+                        get: { config.encryptionEnabled },
+                        set: { newValue in
+                            if newValue && !config.encryptionEnabled {
+                                // User is enabling encryption - generate password and try Keychain
+                                if config.encryptionPassword.isEmpty {
+                                    config.encryptionPassword = ConfigManager.generateRandomSecret()
+                                    showEncryptionKey = true  // Show the generated key
+                                }
+                                // Try to save to Keychain - this will trigger the permission prompt
+                                if KeychainHelper.shared.saveEncryptionPassword(config.encryptionPassword) {
+                                    config.encryptionEnabled = true
+                                    config.encryptionKeychainAccessDenied = false
+                                    print("✅ Encryption password saved to Keychain")
+                                } else if KeychainHelper.shared.isEncryptionAccessDenied {
+                                    // User denied Keychain access
+                                    config.encryptionEnabled = false
+                                    config.encryptionKeychainAccessDenied = true
+                                    config.encryptionPassword = ""
+                                    print("🚫 User denied Keychain access - encryption disabled")
+                                } else {
+                                    // Some other error, but allow encryption anyway
+                                    config.encryptionEnabled = true
+                                    print("⚠️ Keychain save failed but allowing encryption")
+                                }
+                            } else {
+                                config.encryptionEnabled = newValue
+                            }
+                        }
+                    ))
+                    .disabled(config.encryptionKeychainAccessDenied)
                     
                     if config.encryptionEnabled {
                         HStack {
@@ -1890,8 +2676,10 @@ struct FirstRunWizard: View {
                         HStack {
                             Spacer().frame(width: 120)
                             Button("Generate Strong Key") {
-                                config.encryptionPassword = config.generateRandomSecret()
+                                config.encryptionPassword = ConfigManager.generateRandomSecret()
                                 showEncryptionKey = true  // Show the newly generated key
+                                // Update Keychain with new password
+                                _ = KeychainHelper.shared.updateEncryptionPassword(config.encryptionPassword)
                             }
                             .buttonStyle(.bordered)
                         }

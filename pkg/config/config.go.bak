@@ -1597,7 +1597,7 @@ func ApplyEnvVars(config *Config) {
 //	  auth: "admin:admin"  # Format: username:password or "none"
 //	embedding:
 //	  enabled: true
-//	  provider: "ollama"
+//	  provider: "local"
 //
 // The auth field supports both colon format (admin:admin) for consistency
 // and slash format (admin/password) for Neo4j compatibility.
