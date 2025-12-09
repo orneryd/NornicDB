@@ -239,6 +239,10 @@ func (ew *EmbedWorker) processUntilEmpty() {
 			// It returns false if there was nothing to process
 			didWork := ew.processNextBatch()
 			if !didWork {
+				// Queue appears empty - refresh index to catch any nodes added during processing
+				// This uses Badger's persistent index, so it's efficient (only adds missing nodes)
+				ew.refreshEmbeddingIndex()
+
 				// Queue is empty - fire callback if we processed anything and callback is set
 				if batchProcessed > 0 && ew.onQueueEmpty != nil {
 					// Fire and forget - run in background so we don't block the worker
@@ -413,6 +417,9 @@ func (ew *EmbedWorker) processNextBatch() bool {
 		ew.onEmbedded(node)
 	}
 
+	// Remove from pending embeddings index (O(1) operation)
+	ew.markNodeEmbedded(node.ID)
+
 	ew.mu.Lock()
 	ew.processed++
 	// Track this node as recently processed to prevent re-processing before DB commit is visible
@@ -440,6 +447,13 @@ type EmbeddingFinder interface {
 	FindNodeNeedingEmbedding() *storage.Node
 }
 
+// EmbeddingIndexManager is an optional interface for storage engines
+// that support efficient pending embeddings tracking via Badger secondary index.
+type EmbeddingIndexManager interface {
+	RefreshPendingEmbeddingsIndex() int
+	MarkNodeEmbedded(nodeID storage.NodeID)
+}
+
 // findNodeWithoutEmbedding finds a single node that needs embedding.
 // Uses efficient streaming iteration if available, falls back to AllNodes.
 func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
@@ -450,6 +464,21 @@ func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
 
 	// Fallback: use storage helper
 	return storage.FindNodeNeedingEmbedding(ew.storage)
+}
+
+// refreshEmbeddingIndex refreshes the pending embeddings index
+// to catch any nodes that were added during processing.
+func (ew *EmbedWorker) refreshEmbeddingIndex() {
+	if mgr, ok := ew.storage.(EmbeddingIndexManager); ok {
+		mgr.RefreshPendingEmbeddingsIndex()
+	}
+}
+
+// markNodeEmbedded removes a node from the pending embeddings index.
+func (ew *EmbedWorker) markNodeEmbedded(nodeID storage.NodeID) {
+	if mgr, ok := ew.storage.(EmbeddingIndexManager); ok {
+		mgr.MarkNodeEmbedded(nodeID)
+	}
 }
 
 // embedWithRetry embeds chunks with retry logic and averages if multiple chunks.

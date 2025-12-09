@@ -1802,7 +1802,10 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Database.EncryptionEnabled {
 		config.Database.EncryptionEnabled = true
 	}
-	if yamlCfg.Database.EncryptionPassword != "" {
+	// Only use YAML encryption password if it's a real value (not a placeholder)
+	if yamlCfg.Database.EncryptionPassword != "" &&
+		yamlCfg.Database.EncryptionPassword != "[stored-in-keychain]" &&
+		!strings.Contains(yamlCfg.Database.EncryptionPassword, "stored-in-keychain") {
 		config.Database.EncryptionPassword = yamlCfg.Database.EncryptionPassword
 	}
 
@@ -1849,7 +1852,11 @@ func LoadFromFile(configPath string) (*Config, error) {
 			config.Auth.TokenExpiry = d
 		}
 	}
-	if yamlCfg.Auth.JWTSecret != "" {
+	// Only use YAML JWT secret if it's a real value (not a placeholder)
+	// The placeholder "[stored-in-keychain]" indicates the secret is passed via env var
+	if yamlCfg.Auth.JWTSecret != "" &&
+		yamlCfg.Auth.JWTSecret != "[stored-in-keychain]" &&
+		!strings.Contains(yamlCfg.Auth.JWTSecret, "stored-in-keychain") {
 		config.Auth.JWTSecret = yamlCfg.Auth.JWTSecret
 	}
 

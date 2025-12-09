@@ -1061,8 +1061,55 @@ class ConfigManager: ObservableObject {
     }
     
     func saveConfig() -> Bool {
-        guard var content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
-            return false
+        // Try to read existing config, or create a new base template
+        var content: String
+        if let existingContent = try? String(contentsOfFile: configPath, encoding: .utf8) {
+            content = existingContent
+        } else {
+            // Create directory if needed
+            let configDir = NSString(string: "~/.nornicdb").expandingTildeInPath
+            try? FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+            
+            // Start with COMPLETE template including all sections
+            content = """
+            # NornicDB Configuration (Full Edition)
+            # Edit via Settings app (⌘,) or manually
+            
+            server:
+              port: 7687
+              host: localhost
+              bolt_port: 7687
+              http_port: 7474
+            
+            storage:
+              path: "/usr/local/var/nornicdb/data"
+            
+            database:
+              encryption_enabled: false
+              encryption_password: ""
+            
+            embedding:
+              enabled: false
+              model: ""
+              provider: "local"
+            
+            kmeans:
+              enabled: false
+            
+            heimdall:
+              enabled: false
+              model: ""
+            
+            auth:
+              username: "admin"
+              password: "password"
+              jwt_secret: ""
+            
+            auto_tlp:
+              enabled: false
+            
+            """
+            print("📝 Creating new config file at: \(configPath)")
         }
         
         // Ensure required sections exist
@@ -1079,6 +1126,41 @@ class ConfigManager: ObservableObject {
         database:
           encryption_enabled: false
           encryption_password: ""
+        """)
+        
+        content = ensureSectionExists(in: content, section: "embedding", defaultContent: """
+        
+        embedding:
+          enabled: false
+          model: ""
+          provider: "local"
+        """)
+        
+        content = ensureSectionExists(in: content, section: "kmeans", defaultContent: """
+        
+        kmeans:
+          enabled: false
+        """)
+        
+        content = ensureSectionExists(in: content, section: "heimdall", defaultContent: """
+        
+        heimdall:
+          enabled: false
+          model: ""
+        """)
+        
+        content = ensureSectionExists(in: content, section: "auto_tlp", defaultContent: """
+        
+        auto_tlp:
+          enabled: false
+        """)
+        
+        content = ensureSectionExists(in: content, section: "server", defaultContent: """
+        
+        server:
+          bolt_port: 7687
+          http_port: 7474
+          host: localhost
         """)
         
         // Update each feature setting
@@ -1186,7 +1268,8 @@ class ConfigManager: ObservableObject {
     }
     
     private func ensureSectionExists(in content: String, section: String, defaultContent: String) -> String {
-        // Check if section exists
+        // Check if section exists with proper YAML format (section name at start of line, followed by colon)
+        // Note: We look for the section at the start of a line (with optional leading whitespace for robustness)
         let pattern = "^\(section):"
         if let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) {
             let range = NSRange(content.startIndex..., in: content)
@@ -1444,6 +1527,13 @@ struct SettingsView: View {
         let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
         let homeDir = NSString(string: "~").expandingTildeInPath
         
+        // DEBUG: Print model values being used
+        print("🔧 updateServerPlist called with:")
+        print("   heimdallModel: '\(config.heimdallModel)'")
+        print("   embeddingModel: '\(config.embeddingModel)'")
+        print("   heimdallEnabled: \(config.heimdallEnabled)")
+        print("   embeddingsEnabled: \(config.embeddingsEnabled)")
+        
         // Get secrets from Keychain for environment variables
         let jwtSecretEnv = KeychainHelper.shared.getJWTSecret() ?? config.jwtSecret
         let encryptionPasswordEnv = config.encryptionEnabled ? (KeychainHelper.shared.getEncryptionPassword() ?? config.encryptionPassword) : ""
@@ -1469,6 +1559,12 @@ struct SettingsView: View {
                 <string>\(config.autoTLPEnabled ? "true" : "false")</string>
                 <key>NORNICDB_HEIMDALL_ENABLED</key>
                 <string>\(config.heimdallEnabled ? "true" : "false")</string>
+                <key>NORNICDB_HEIMDALL_MODEL</key>
+                <string>\(config.heimdallModel)</string>
+                <key>NORNICDB_EMBEDDING_MODEL</key>
+                <string>\(config.embeddingModel)</string>
+                <key>NORNICDB_MODELS_DIR</key>
+                <string>/usr/local/var/nornicdb/models</string>
                 <key>NORNICDB_PLUGINS_DIR</key>
                 <string>/usr/local/share/nornicdb/plugins</string>
                 <key>NORNICDB_HEIMDALL_PLUGINS_DIR</key>
@@ -2284,6 +2380,12 @@ struct FirstRunWizard: View {
                                 <string>\(config.autoTLPEnabled ? "true" : "false")</string>
                                 <key>NORNICDB_HEIMDALL_ENABLED</key>
                                 <string>\(config.heimdallEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_HEIMDALL_MODEL</key>
+                                <string>\(config.heimdallModel)</string>
+                                <key>NORNICDB_EMBEDDING_MODEL</key>
+                                <string>\(config.embeddingModel)</string>
+                                <key>NORNICDB_MODELS_DIR</key>
+                                <string>/usr/local/var/nornicdb/models</string>
                                 <key>NORNICDB_PLUGINS_DIR</key>
                                 <string>/usr/local/share/nornicdb/plugins</string>
                                 <key>NORNICDB_HEIMDALL_PLUGINS_DIR</key>

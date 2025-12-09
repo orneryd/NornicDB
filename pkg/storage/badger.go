@@ -27,7 +27,8 @@ const (
 	prefixLabelIndex    = byte(0x03) // label:labelName:nodeID -> []byte{}
 	prefixOutgoingIndex = byte(0x04) // outgoing:nodeID:edgeID -> []byte{}
 	prefixIncomingIndex = byte(0x05) // incoming:nodeID:edgeID -> []byte{}
-	prefixEdgeTypeIndex = byte(0x06) // edgetype:type:edgeID -> []byte{} (NEW: for fast type lookups)
+	prefixEdgeTypeIndex = byte(0x06) // edgetype:type:edgeID -> []byte{} (for fast type lookups)
+	prefixPendingEmbed  = byte(0x07) // pending_embed:nodeID -> []byte{} (nodes needing embedding)
 )
 
 // BadgerEngine provides persistent storage using BadgerDB.
@@ -597,6 +598,12 @@ func edgeTypeIndexPrefix(edgeType string) []byte {
 	return key
 }
 
+// pendingEmbedKey creates a key for the pending embeddings index.
+// Format: prefix + nodeID
+func pendingEmbedKey(nodeID NodeID) []byte {
+	return append([]byte{prefixPendingEmbed}, []byte(nodeID)...)
+}
+
 // extractEdgeIDFromIndexKey extracts the edgeID from an index key.
 // Format: prefix + nodeID + 0x00 + edgeID
 func extractEdgeIDFromIndexKey(key []byte) EdgeID {
@@ -715,6 +722,13 @@ func (b *BadgerEngine) CreateNode(node *Node) error {
 		for _, label := range node.Labels {
 			labelKey := labelIndexKey(label, node.ID)
 			if err := txn.Set(labelKey, []byte{}); err != nil {
+				return err
+			}
+		}
+
+		// Add to pending embeddings index if it needs embedding (atomic with node creation)
+		if len(node.Embedding) == 0 && NodeNeedsEmbedding(node) {
+			if err := txn.Set(pendingEmbedKey(node.ID), []byte{}); err != nil {
 				return err
 			}
 		}
@@ -841,6 +855,12 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 					return err
 				}
 			}
+			// Add to pending embeddings index if needed (same as CreateNode)
+			if len(node.Embedding) == 0 && NodeNeedsEmbedding(node) {
+				if err := txn.Set(pendingEmbedKey(node.ID), []byte{}); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		if err != nil {
@@ -879,6 +899,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			if err := txn.Set(labelIndexKey(label, node.ID), []byte{}); err != nil {
 				return err
 			}
+		}
+
+		// Manage pending embeddings index atomically
+		if len(node.Embedding) > 0 {
+			// Node has embedding - remove from pending index
+			txn.Delete(pendingEmbedKey(node.ID))
+		} else if NodeNeedsEmbedding(node) {
+			// Node needs embedding - ensure it's in pending index
+			txn.Set(pendingEmbedKey(node.ID), []byte{})
 		}
 
 		return nil
@@ -956,6 +985,9 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		if err := b.deleteEdgesWithPrefix(txn, inPrefix); err != nil {
 			return err
 		}
+
+		// Remove from pending embeddings index (if present)
+		txn.Delete(pendingEmbedKey(id))
 
 		// Delete the node
 		return txn.Delete(key)
@@ -2273,8 +2305,14 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 	return b.db.Size()
 }
 
-// FindNodeNeedingEmbedding iterates through nodes and returns the first one
-// without an embedding. Uses Badger's iterator to avoid loading all nodes.
+// FindNodeNeedingEmbedding returns a node that needs embedding.
+// Uses Badger's secondary index (prefixPendingEmbed) for O(1) lookup.
+//
+// This is highly optimized:
+// - O(1) to find next node (just seek to prefix and get first key)
+// - No in-memory index needed
+// - Persistent across restarts
+// - Atomic with node operations
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	b.mu.RLock()
 	if b.closed {
@@ -2283,65 +2321,140 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	}
 	b.mu.RUnlock()
 
-	var result *Node
-	scanned := 0
-	withEmbed := 0
-	internal := 0
+	var nodeID NodeID
 
+	// Find first node in pending embeddings index - O(1)
 	b.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 10 // Small batch
+		opts.PrefetchValues = false // Keys only
+		opts.PrefetchSize = 1
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			scanned++
-			item := it.Item()
-			err := item.Value(func(val []byte) error {
-				node, err := decodeNode(val)
-				if err != nil {
-					return nil // Skip invalid nodes
-				}
-
-				// Skip internal nodes for stats
-				for _, label := range node.Labels {
-					if len(label) > 0 && label[0] == '_' {
-						internal++
-						return nil
-					}
-				}
-
-				// Track nodes with embeddings for stats
-				if len(node.Embedding) > 0 {
-					withEmbed++
-					return nil
-				}
-
-				// Use helper to check if node needs embedding
-				if !NodeNeedsEmbedding(node) {
-					return nil
-				}
-
-				// Found one that needs embedding
-				result = node
-				return ErrIterationStopped // Custom error to break iteration
-			})
-			if err == ErrIterationStopped {
-				break
+		prefix := []byte{prefixPendingEmbed}
+		it.Seek(prefix)
+		if it.ValidForPrefix(prefix) {
+			// Extract nodeID from key (skip prefix byte)
+			key := it.Item().Key()
+			if len(key) > 1 {
+				nodeID = NodeID(key[1:])
 			}
 		}
 		return nil
 	})
 
-	// Only log when we find a node needing embedding (reduce log spam)
-	if result != nil {
-		fmt.Printf("🔍 Found node needing embedding (scanned %d, %d already embedded)\n",
-			scanned, withEmbed)
+	if nodeID == "" {
+		return nil // No nodes need embedding
 	}
 
-	return result
+	// Load the full node
+	node, err := b.GetNode(nodeID)
+	if err != nil || node == nil {
+		// Node was deleted - remove from pending index
+		b.MarkNodeEmbedded(nodeID)
+		// Try again with next node
+		return b.FindNodeNeedingEmbedding()
+	}
+
+	// Double-check it still needs embedding (may have been updated externally)
+	if len(node.Embedding) > 0 || !NodeNeedsEmbedding(node) {
+		b.MarkNodeEmbedded(nodeID)
+		// Try again with next node
+		return b.FindNodeNeedingEmbedding()
+	}
+
+	return node
+}
+
+// MarkNodeEmbedded removes a node from the pending embeddings index.
+// Call this after successfully embedding a node.
+func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
+	b.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete(pendingEmbedKey(nodeID))
+	})
+}
+
+// AddToPendingEmbeddings adds a node to the pending embeddings index.
+// Call this when creating a node that needs embedding.
+func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
+	b.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(pendingEmbedKey(nodeID), []byte{})
+	})
+}
+
+// PendingEmbeddingsCount returns the number of nodes waiting for embedding.
+// Note: This requires a scan of the pending index, so use sparingly.
+func (b *BadgerEngine) PendingEmbeddingsCount() int {
+	count := 0
+	b.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // Keys only - fast
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefix := []byte{prefixPendingEmbed}
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
+// InvalidatePendingEmbeddingsIndex is a no-op for Badger index.
+// The index is persistent and doesn't need invalidation.
+func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
+	// No-op - Badger index is persistent and self-maintaining
+}
+
+// RefreshPendingEmbeddingsIndex rebuilds the pending embeddings index.
+// This scans all nodes and adds any missing ones to the index.
+// Use this on startup or after bulk imports.
+func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
+	added := 0
+
+	b.db.Update(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = true
+		opts.PrefetchSize = 100
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefix := []byte{prefixNode}
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			item.Value(func(val []byte) error {
+				node, err := decodeNode(val)
+				if err != nil {
+					return nil
+				}
+
+				// Skip internal nodes
+				for _, label := range node.Labels {
+					if len(label) > 0 && label[0] == '_' {
+						return nil
+					}
+				}
+
+				// Check if needs embedding and not already in index
+				if len(node.Embedding) == 0 && NodeNeedsEmbedding(node) {
+					// Check if already in pending index
+					_, err := txn.Get(pendingEmbedKey(node.ID))
+					if err == badger.ErrKeyNotFound {
+						txn.Set(pendingEmbedKey(node.ID), []byte{})
+						added++
+					}
+				}
+				return nil
+			})
+		}
+		return nil
+	})
+
+	if added > 0 {
+		fmt.Printf("📊 Pending embeddings index refreshed: added %d nodes\n", added)
+	}
+	return added
 }
 
 // IterateNodes iterates through all nodes one at a time without loading all into memory.

@@ -338,7 +338,7 @@ func DefaultConfig() *Config {
 		// Rate limiting enabled by default to prevent DoS attacks
 		// High limits for high-performance local/development use
 		RateLimitEnabled:   false,
-		RateLimitPerMinute: 10000, // 10,000 requests/minute per IP (166/sec)
+		RateLimitPerMinute: 10000,  // 10,000 requests/minute per IP (166/sec)
 		RateLimitPerHour:   100000, // 100,000 requests/hour per IP
 		RateLimitBurst:     1000,   // Allow large bursts for batch operations
 
@@ -1834,7 +1834,7 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
 // Query params:
-//   - regenerate=true: Clear all existing embeddings first, then regenerate
+//   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
@@ -1849,17 +1849,38 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 	// Check if regenerate=true to clear existing embeddings first
 	regenerate := r.URL.Query().Get("regenerate") == "true"
-	var cleared int
+
 	if regenerate {
-		var err error
-		cleared, err = s.db.ClearAllEmbeddings()
-		if err != nil {
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", "Failed to clear embeddings: "+err.Error())
-			return
+		// Return 202 Accepted immediately - clearing happens in background
+		response := map[string]interface{}{
+			"accepted":   true,
+			"regenerate": true,
+			"message":    "Regeneration started - clearing embeddings and regenerating in background. Check /nornicdb/embed/stats for progress.",
 		}
+		s.writeJSON(w, http.StatusAccepted, response)
+
+		// Start background clearing and regeneration
+		go func() {
+			log.Printf("[EMBED] Starting background regeneration - clearing all embeddings...")
+			cleared, err := s.db.ClearAllEmbeddings()
+			if err != nil {
+				log.Printf("[EMBED] ❌ Failed to clear embeddings: %v", err)
+				return
+			}
+			log.Printf("[EMBED] ✅ Cleared %d embeddings - triggering regeneration", cleared)
+
+			// Trigger embedding worker to regenerate
+			ctx := context.Background()
+			if _, err := s.db.EmbedExisting(ctx); err != nil {
+				log.Printf("[EMBED] ❌ Failed to trigger embedding worker: %v", err)
+				return
+			}
+			log.Printf("[EMBED] 🚀 Embedding worker triggered for regeneration")
+		}()
+		return
 	}
 
-	// Check if already running
+	// Non-regenerate case: just trigger the worker (fast, synchronous is fine)
 	wasRunning := stats.Running
 
 	// Trigger (safe to call even if already running - just wakes up worker)
@@ -1873,9 +1894,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	stats = s.db.EmbedQueueStats()
 
 	var message string
-	if regenerate {
-		message = fmt.Sprintf("Cleared %d embeddings - regenerating all in background", cleared)
-	} else if wasRunning {
+	if wasRunning {
 		message = "Embedding worker already running - will continue processing"
 	} else {
 		message = "Embedding worker triggered - processing nodes in background"
@@ -1883,8 +1902,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"triggered":      true,
-		"regenerate":     regenerate,
-		"cleared":        cleared,
+		"regenerate":     false,
 		"already_active": wasRunning,
 		"message":        message,
 		"stats":          stats,

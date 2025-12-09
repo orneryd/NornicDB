@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,7 +104,12 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 		modelsDir = "./models" // default
 	}
 
-	modelPath := filepath.Join(modelsDir, config.Model+".gguf")
+	// Only add .gguf extension if not already present
+	modelFile := config.Model
+	if !strings.HasSuffix(modelFile, ".gguf") {
+		modelFile = modelFile + ".gguf"
+	}
+	modelPath := filepath.Join(modelsDir, modelFile)
 
 	// Check if file exists
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {

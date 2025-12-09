@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,16 +44,21 @@ func NewManager(cfg Config) (*Manager, error) {
 	if modelName == "" {
 		modelName = "qwen2.5-0.5b-instruct"
 	}
-	modelFile := modelName + ".gguf"
+	// Only add .gguf if not already present
+	modelFile := modelName
+	if !strings.HasSuffix(modelFile, ".gguf") {
+		modelFile = modelFile + ".gguf"
+	}
 
 	// Resolve model path - check where the actual model file exists
 	modelsDir := cfg.ModelsDir
 	if modelsDir == "" {
 		// Check common model locations - look for the actual model file
 		candidates := []string{
-			"/app/models",  // Docker container (embedded models)
-			"/data/models", // Mounted volume
-			"./models",     // Local development
+			"/usr/local/var/nornicdb/models", // macOS default (LaunchAgent)
+			"/app/models",                    // Docker container (embedded models)
+			"/data/models",                   // Mounted volume
+			"./models",                       // Local development
 		}
 		for _, dir := range candidates {
 			fullPath := filepath.Join(dir, modelFile)

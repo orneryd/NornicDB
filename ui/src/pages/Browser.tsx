@@ -35,6 +35,7 @@ export function Browser() {
   const [embedTriggering, setEmbedTriggering] = useState(false);
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
   const [showAIChat, setShowAIChat] = useState(false);
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const navigate = useNavigate();
 
   // Fetch embed stats periodically
@@ -159,15 +160,22 @@ export function Browser() {
             )}
              <button
               type="button"
-              onClick={handleTriggerEmbed}
-              disabled={embedTriggering}
+              onClick={() => setShowRegenerateConfirm(true)}
+              disabled={embedTriggering || embedData.stats?.running}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 embedData.stats?.running 
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
-                  : 'bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune'
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed' 
+                  : 'bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30'
               }`}
-              title={`Total embeddings: ${embedData.totalEmbeddings}${embedData.stats ? `, Session: ${embedData.stats.processed} processed, ${embedData.stats.failed} failed` : ''}`}
-            >Regenerate all Embeddings</button>
+              title={embedData.stats?.running ? 'Embedding in progress...' : 'Warning: This will clear and regenerate ALL embeddings'}
+            >
+              {embedData.stats?.running ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              <span>{embedData.stats?.running ? 'Regenerating...' : 'Regenerate all Embeddings'}</span>
+            </button>
             {/* Embed Button */}
             <button
               type="button"
@@ -660,6 +668,45 @@ export function Browser() {
 
       {/* AI Assistant Chat */}
       <Bifrost isOpen={showAIChat} onClose={() => setShowAIChat(false)} />
+
+      {/* Regenerate Embeddings Confirmation Dialog */}
+      {showRegenerateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-norse-deep border border-norse-rune rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-500/20 rounded-lg">
+                <Zap className="w-6 h-6 text-red-400" />
+              </div>
+              <h3 className="text-lg font-semibold text-white">Regenerate All Embeddings?</h3>
+            </div>
+            <p className="text-norse-silver mb-2">
+              This will <span className="text-red-400 font-medium">clear all existing embeddings</span> and regenerate them from scratch.
+            </p>
+            <p className="text-norse-silver text-sm mb-6">
+              This operation runs in the background. You have <span className="text-valhalla-gold">{embedData.totalEmbeddings.toLocaleString()}</span> embeddings that will be regenerated.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRegenerateConfirm(false)}
+                className="px-4 py-2 rounded-lg text-norse-silver hover:text-white hover:bg-norse-rune transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegenerateConfirm(false);
+                  handleTriggerEmbed();
+                }}
+                className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30 rounded-lg font-medium transition-all"
+              >
+                Yes, Regenerate All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
