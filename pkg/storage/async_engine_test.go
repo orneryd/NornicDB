@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -304,4 +305,205 @@ func TestAsyncEngine_DeleteNode(t *testing.T) {
 	count, err = async.NodeCount()
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), count)
+}
+
+// ============================================================================
+// StreamingEngine Tests
+// ============================================================================
+
+func TestAsyncEngine_StreamNodes(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	async := NewAsyncEngine(engine, &AsyncEngineConfig{
+		FlushInterval: 1 * time.Hour, // Don't auto-flush
+	})
+	defer async.Close()
+
+	ctx := context.Background()
+
+	// Create 100 nodes
+	for i := 0; i < 100; i++ {
+		err := async.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamAllNodes", func(t *testing.T) {
+		var count int
+		err := async.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, count, "Should stream all 100 nodes")
+	})
+
+	t.Run("StreamWithEarlyTermination", func(t *testing.T) {
+		var count int
+		err := async.StreamNodes(ctx, func(node *Node) error {
+			count++
+			if count >= 10 {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 10, count, "Should stop after 10 nodes")
+	})
+
+	t.Run("StreamAfterFlush", func(t *testing.T) {
+		// Flush to underlying engine
+		require.NoError(t, async.Flush())
+
+		var count int
+		err := async.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, count, "Should stream all 100 nodes after flush")
+	})
+
+	t.Run("StreamWithCacheAndEngine", func(t *testing.T) {
+		// Add more nodes to cache (not flushed yet)
+		for i := 100; i < 150; i++ {
+			err := async.CreateNode(&Node{
+				ID:     NodeID(fmt.Sprintf("node-%d", i)),
+				Labels: []string{"Test"},
+			})
+			require.NoError(t, err)
+		}
+
+		var count int
+		err := async.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 150, count, "Should stream 100 flushed + 50 cached = 150 nodes")
+	})
+
+	t.Run("StreamExcludesDeletedNodes", func(t *testing.T) {
+		// Delete some nodes
+		for i := 0; i < 10; i++ {
+			err := async.DeleteNode(NodeID(fmt.Sprintf("node-%d", i)))
+			require.NoError(t, err)
+		}
+
+		var count int
+		err := async.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 140, count, "Should stream 150 - 10 deleted = 140 nodes")
+	})
+}
+
+func TestAsyncEngine_StreamEdges(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	async := NewAsyncEngine(engine, &AsyncEngineConfig{
+		FlushInterval: 1 * time.Hour,
+	})
+	defer async.Close()
+
+	ctx := context.Background()
+
+	// Create nodes first
+	for i := 0; i < 10; i++ {
+		err := async.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	// Flush nodes
+	require.NoError(t, async.Flush())
+
+	// Create edges
+	for i := 0; i < 50; i++ {
+		err := async.CreateEdge(&Edge{
+			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
+			Type:      "CONNECTS",
+			StartNode: NodeID(fmt.Sprintf("node-%d", i%10)),
+			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%10)),
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamAllEdges", func(t *testing.T) {
+		var count int
+		err := async.StreamEdges(ctx, func(edge *Edge) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 50, count, "Should stream all 50 edges")
+	})
+
+	t.Run("StreamWithEarlyTermination", func(t *testing.T) {
+		var count int
+		err := async.StreamEdges(ctx, func(edge *Edge) error {
+			count++
+			if count >= 5 {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 5, count, "Should stop after 5 edges")
+	})
+}
+
+func TestAsyncEngine_StreamNodeChunks(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	async := NewAsyncEngine(engine, &AsyncEngineConfig{
+		FlushInterval: 1 * time.Hour,
+	})
+	defer async.Close()
+
+	ctx := context.Background()
+
+	// Create 100 nodes
+	for i := 0; i < 100; i++ {
+		err := async.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamInChunks", func(t *testing.T) {
+		var totalNodes int
+		var chunkCount int
+		err := async.StreamNodeChunks(ctx, 25, func(nodes []*Node) error {
+			chunkCount++
+			totalNodes += len(nodes)
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, totalNodes, "Should stream all 100 nodes")
+		assert.Equal(t, 4, chunkCount, "Should have 4 chunks of 25")
+	})
+}
+
+// TestAsyncEngine_ImplementsStreamingEngine verifies the interface is implemented
+func TestAsyncEngine_ImplementsStreamingEngine(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	async := NewAsyncEngine(engine, nil)
+	defer async.Close()
+
+	// This should compile - AsyncEngine implements StreamingEngine
+	var _ StreamingEngine = async
+	t.Log("AsyncEngine implements StreamingEngine interface")
 }

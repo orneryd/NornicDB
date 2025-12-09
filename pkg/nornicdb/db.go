@@ -943,6 +943,41 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Initialize search service (uses pre-computed embeddings from Mimir)
 	db.searchService = search.NewService(db.storage)
 
+	// Wire up storage event callbacks to keep search indexes synchronized
+	// Storage is the single source of truth - it notifies when changes happen
+	// This works whether storage is BadgerEngine directly or wrapped in AsyncEngine
+	var underlyingEngine storage.Engine = db.storage
+
+	// If storage is wrapped in AsyncEngine, get the underlying BadgerEngine
+	if asyncEngine, ok := db.storage.(*storage.AsyncEngine); ok {
+		underlyingEngine = asyncEngine.GetUnderlying()
+	}
+
+	// Set callbacks on the actual storage engine (where operations actually happen)
+	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
+		// When a node is created, automatically index it for search
+		notifier.OnNodeCreated(func(node *storage.Node) {
+			if err := db.searchService.IndexNode(node); err != nil {
+				// Log but don't fail - search indexing is best-effort
+				fmt.Printf("⚠️  Failed to index node %s: %v\n", node.ID, err)
+			}
+		})
+
+		// When a node is updated, re-index it for search
+		notifier.OnNodeUpdated(func(node *storage.Node) {
+			if err := db.searchService.IndexNode(node); err != nil {
+				fmt.Printf("⚠️  Failed to re-index node %s: %v\n", node.ID, err)
+			}
+		})
+
+		// When a node is deleted, remove it from search indexes
+		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
+			if err := db.searchService.RemoveNode(nodeID); err != nil {
+				fmt.Printf("⚠️  Failed to remove node %s from search indexes: %v\n", nodeID, err)
+			}
+		})
+	}
+
 	// Enable k-means clustering if feature flag is set
 	// This provides 10-50x speedup on large datasets (10K+ embeddings)
 	// Works with or without GPU (CPU fallback available)

@@ -29,6 +29,7 @@ package storage
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -2154,5 +2155,80 @@ func (w *WALEngine) IterateNodes(fn func(*Node) bool) error {
 	return fmt.Errorf("underlying engine does not support IterateNodes")
 }
 
+// ============================================================================
+// StreamingEngine Implementation
+// ============================================================================
+
+// StreamNodes implements StreamingEngine.StreamNodes by delegating to the underlying engine.
+func (w *WALEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
+	if streamer, ok := w.engine.(StreamingEngine); ok {
+		return streamer.StreamNodes(ctx, fn)
+	}
+	// Fallback: load all nodes
+	nodes, err := w.engine.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if err := fn(node); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// StreamEdges implements StreamingEngine.StreamEdges by delegating to the underlying engine.
+func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
+	if streamer, ok := w.engine.(StreamingEngine); ok {
+		return streamer.StreamEdges(ctx, fn)
+	}
+	// Fallback: load all edges
+	edges, err := w.engine.AllEdges()
+	if err != nil {
+		return err
+	}
+	for _, edge := range edges {
+		if err := fn(edge); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// StreamNodeChunks implements StreamingEngine.StreamNodeChunks by delegating to the underlying engine.
+func (w *WALEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
+	if streamer, ok := w.engine.(StreamingEngine); ok {
+		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
+	}
+	// Fallback: use StreamNodes to build chunks
+	chunk := make([]*Node, 0, chunkSize)
+	err := w.StreamNodes(ctx, func(node *Node) error {
+		chunk = append(chunk, node)
+		if len(chunk) >= chunkSize {
+			if err := fn(chunk); err != nil {
+				return err
+			}
+			chunk = make([]*Node, 0, chunkSize)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(chunk) > 0 {
+		return fn(chunk)
+	}
+	return nil
+}
+
 // Verify WALEngine implements Engine interface
 var _ Engine = (*WALEngine)(nil)
+
+// Verify WALEngine implements StreamingEngine interface
+var _ StreamingEngine = (*WALEngine)(nil)

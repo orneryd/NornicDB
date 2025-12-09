@@ -561,6 +561,12 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 
 	s.vectorIndex.Remove(string(nodeID))
 	s.fulltextIndex.Remove(string(nodeID))
+
+	// Also remove from cluster index if enabled
+	if s.clusterIndex != nil {
+		s.clusterIndex.Remove(string(nodeID))
+	}
+
 	return nil
 }
 

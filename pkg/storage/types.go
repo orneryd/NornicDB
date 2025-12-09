@@ -403,6 +403,50 @@ type Engine interface {
 	EdgeCount() (int64, error)
 }
 
+// NodeEventCallback is called when storage operations complete successfully.
+// This allows external services (like search indexes) to stay synchronized with storage.
+type NodeEventCallback func(node *Node)
+
+// NodeDeleteCallback is called when a node is successfully deleted from storage.
+type NodeDeleteCallback func(nodeID NodeID)
+
+// EdgeEventCallback is called when edge storage operations complete successfully.
+type EdgeEventCallback func(edge *Edge)
+
+// EdgeDeleteCallback is called when an edge is successfully deleted from storage.
+type EdgeDeleteCallback func(edgeID EdgeID)
+
+// StorageEventNotifier is an optional interface that storage engines can implement
+// to notify listeners of storage changes. This enables automatic synchronization
+// between storage and external services (search indexes, embeddings, caches, etc.).
+//
+// Events are fired AFTER the storage operation succeeds, ensuring consistency.
+//
+// Example:
+//
+//	if notifier, ok := engine.(storage.StorageEventNotifier); ok {
+//		notifier.OnNodeCreated(func(node *storage.Node) {
+//			searchService.IndexNode(node)
+//		})
+//		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
+//			searchService.RemoveNode(nodeID)
+//		})
+//		notifier.OnEdgeCreated(func(edge *storage.Edge) {
+//			graphAnalyzer.UpdateMetrics(edge)
+//		})
+//	}
+type StorageEventNotifier interface {
+	// Node events
+	OnNodeCreated(callback NodeEventCallback)
+	OnNodeUpdated(callback NodeEventCallback)
+	OnNodeDeleted(callback NodeDeleteCallback)
+
+	// Edge events
+	OnEdgeCreated(callback EdgeEventCallback)
+	OnEdgeUpdated(callback EdgeEventCallback)
+	OnEdgeDeleted(callback EdgeDeleteCallback)
+}
+
 // Neo4jExport represents the Neo4j JSON export format.
 // This is compatible with `neo4j-admin database dump` JSON output.
 type Neo4jExport struct {

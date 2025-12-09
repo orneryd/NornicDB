@@ -246,9 +246,10 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Extract pattern between MATCH and WHERE/RETURN
+	whereIdx := findKeywordNotInBrackets(upper, " WHERE ")
 	// Use findKeywordNotInBrackets to avoid matching WHERE inside list comprehensions like [x WHERE ...]
 	matchPart := cypher[5:] // Skip "MATCH"
-	whereIdx := findKeywordNotInBrackets(upper, " WHERE ")
+	// Note: whereIdx already defined above for fast-path count optimization
 	if whereIdx > 0 {
 		matchPart = cypher[5:whereIdx]
 	} else if returnIdx > 0 {
@@ -269,22 +270,78 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// Parse node pattern
 	nodePattern := e.parseNodePattern(matchPart)
 
-	// Get matching nodes
-	var nodes []*storage.Node
-	var err error
+	// FAST PATH: For simple node count queries like "MATCH (n) RETURN count(n)" or "MATCH (n:Label) RETURN count(n)"
+	// Use O(1) NodeCount() instead of loading all nodes into memory.
+	// This optimization ONLY applies to simple node patterns (not relationships - those are handled above)
+	if hasAggregation && whereIdx == -1 && len(returnItems) == 1 {
+		upperExpr := strings.ToUpper(strings.TrimSpace(returnItems[0].expr))
+		// Check for COUNT(*) or COUNT(variable) - not COUNT(n.property)
+		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(upperExpr, ")") {
+			inner := strings.TrimSpace(upperExpr[6 : len(upperExpr)-1])
+			// COUNT(*) or COUNT(n) where n is any variable - just count all nodes
+			if inner == "*" || !strings.Contains(inner, ".") {
+				var count int64
+				var err error
+				if len(nodePattern.labels) > 0 {
+					// Count nodes with specific label
+					nodes, err := e.storage.GetNodesByLabel(nodePattern.labels[0])
+					if err != nil {
+						return nil, fmt.Errorf("storage error: %w", err)
+					}
+					count = int64(len(nodes))
+				} else {
+					// Count all nodes - use O(1) NodeCount()
+					count, err = e.storage.NodeCount()
+					if err != nil {
+						return nil, fmt.Errorf("storage error: %w", err)
+					}
+				}
 
-	if len(nodePattern.labels) > 0 {
-		nodes, err = e.storage.GetNodesByLabel(nodePattern.labels[0])
-	} else {
-		nodes, err = e.storage.AllNodes()
+				// Return result directly
+				result.Rows = [][]interface{}{{count}}
+				return result, nil
+			}
+		}
 	}
+
+	// Parse SKIP and LIMIT early for streaming optimization
+	// Note: We can only use early termination when there's NO WHERE clause
+	// because WHERE filtering happens after loading nodes
+	skipIdx := findKeywordIndex(cypher, "SKIP")
+	skip := 0
+	if skipIdx > 0 {
+		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
+		if fields := strings.Fields(skipPart); len(fields) > 0 {
+			if s, err := strconv.Atoi(fields[0]); err == nil {
+				skip = s
+			}
+		}
+	}
+
+	limitIdx := findKeywordIndex(cypher, "LIMIT")
+	limit := -1
+	if limitIdx > 0 {
+		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
+		if fields := strings.Fields(limitPart); len(fields) > 0 {
+			if l, err := strconv.Atoi(fields[0]); err == nil {
+				limit = l
+			}
+		}
+	}
+
+	// Calculate streaming limit: need to load enough nodes for SKIP + LIMIT
+	// Only use streaming optimization when there's NO WHERE clause, NO ORDER BY, and NO aggregation
+	// (filtering and sorting invalidate early termination since they need all nodes)
+	hasOrderBy := findKeywordIndex(cypher, "ORDER") > 0
+	streamingLimit := -1
+	if whereIdx == -1 && !hasOrderBy && !hasAggregation && limit > 0 {
+		streamingLimit = skip + limit
+	}
+
+	// Get matching nodes using streaming optimization when possible
+	nodes, err := e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, streamingLimit)
 	if err != nil {
 		return nil, fmt.Errorf("storage error: %w", err)
-	}
-
-	// Apply property filter from MATCH pattern (e.g., {name: 'Alice'})
-	if len(nodePattern.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
 	}
 
 	// Apply WHERE filter if present
@@ -382,29 +439,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		nodes = e.orderNodes(nodes, nodePattern.variable, orderExpr)
 	}
 
-	// Parse SKIP (whitespace-tolerant)
-	skipIdx := findKeywordIndex(cypher, "SKIP")
-	skip := 0
-	if skipIdx > 0 {
-		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
-		if fields := strings.Fields(skipPart); len(fields) > 0 {
-			if s, err := strconv.Atoi(fields[0]); err == nil {
-				skip = s
-			}
-		}
-	}
-
-	// Parse LIMIT (whitespace-tolerant)
-	limitIdx := findKeywordIndex(cypher, "LIMIT")
-	limit := -1
-	if limitIdx > 0 {
-		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
-		if fields := strings.Fields(limitPart); len(fields) > 0 {
-			if l, err := strconv.Atoi(fields[0]); err == nil {
-				limit = l
-			}
-		}
-	}
+	// Note: skipIdx, skip, limitIdx and limit are already parsed earlier for streaming optimization
 
 	// Build result rows with SKIP and LIMIT
 	seen := make(map[string]bool) // For DISTINCT
@@ -3704,6 +3739,83 @@ func (e *StorageExecutor) resolveBindingItem(item returnItem, b binding) interfa
 	}
 
 	return nil
+}
+
+// collectNodesWithStreaming efficiently collects nodes from storage using streaming when possible.
+// This avoids loading all nodes into memory, which is critical for performance with large datasets.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - labels: Optional label filter (only nodes with this label)
+//   - properties: Optional property filters
+//   - limit: Maximum number of nodes to collect (-1 for unlimited)
+//
+// Returns collected nodes or error.
+func (e *StorageExecutor) collectNodesWithStreaming(
+	ctx context.Context,
+	labels []string,
+	properties map[string]interface{},
+	limit int,
+) ([]*storage.Node, error) {
+	// Determine if we can use streaming optimization
+	canStream := len(properties) == 0 // Can't filter properties inline yet
+
+	var nodes []*storage.Node
+	var err error
+
+	if canStream && limit > 0 {
+		// Use streaming with early termination for LIMIT queries
+		nodes = make([]*storage.Node, 0, limit)
+		if streamer, ok := e.storage.(storage.StreamingEngine); ok {
+			err = streamer.StreamNodes(ctx, func(node *storage.Node) error {
+				// Check label filter
+				if len(labels) > 0 {
+					hasLabel := false
+					for _, nodeLabel := range node.Labels {
+						if nodeLabel == labels[0] {
+							hasLabel = true
+							break
+						}
+					}
+					if !hasLabel {
+						return nil // Skip this node
+					}
+				}
+
+				nodes = append(nodes, node)
+				if len(nodes) >= limit {
+					return storage.ErrIterationStopped // Early termination
+				}
+				return nil
+			})
+			// ErrIterationStopped is expected
+			if err == storage.ErrIterationStopped {
+				err = nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			return nodes, nil
+		}
+		// Fall through to standard path if streaming not supported
+	}
+
+	// Standard path: load all nodes then filter
+	if len(labels) > 0 {
+		nodes, err = e.storage.GetNodesByLabel(labels[0])
+	} else {
+		nodes, err = e.storage.AllNodes()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply property filters
+	if len(properties) > 0 {
+		nodes = e.filterNodesByProperties(nodes, properties)
+	}
+
+	return nodes, nil
 }
 
 // executeCreate handles CREATE queries.

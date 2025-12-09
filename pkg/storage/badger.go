@@ -78,12 +78,141 @@ type BadgerEngine struct {
 	// Caches edges by type for O(1) lookup
 	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
 	edgeTypeCacheMu sync.RWMutex
+
+	// Cached counts for O(1) stats lookups (updated on create/delete)
+	// Eliminates expensive full table scans for node/edge counts
+	nodeCount atomic.Int64
+	edgeCount atomic.Int64
+
+	// Event callbacks for external coordination (search indexes, caches, etc.)
+	// These are fired AFTER storage operations succeed
+	onNodeCreated NodeEventCallback
+	onNodeUpdated NodeEventCallback
+	onNodeDeleted NodeDeleteCallback
+	onEdgeCreated EdgeEventCallback
+	onEdgeUpdated EdgeEventCallback
+	onEdgeDeleted EdgeDeleteCallback
+	callbackMu    sync.RWMutex
 }
 
 // IsInMemory returns true if the engine is running in memory-only mode.
 // In-memory mode is used for testing - there's no disk to fsync to.
 func (b *BadgerEngine) IsInMemory() bool {
 	return b.inMemory
+}
+
+// OnNodeCreated sets a callback to be invoked when nodes are created.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onNodeCreated = callback
+}
+
+// OnNodeUpdated sets a callback to be invoked when nodes are updated.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnNodeUpdated(callback NodeEventCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onNodeUpdated = callback
+}
+
+// OnNodeDeleted sets a callback to be invoked when nodes are deleted.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnNodeDeleted(callback NodeDeleteCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onNodeDeleted = callback
+}
+
+// OnEdgeCreated sets a callback to be invoked when edges are created.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnEdgeCreated(callback EdgeEventCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onEdgeCreated = callback
+}
+
+// OnEdgeUpdated sets a callback to be invoked when edges are updated.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnEdgeUpdated(callback EdgeEventCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onEdgeUpdated = callback
+}
+
+// OnEdgeDeleted sets a callback to be invoked when edges are deleted.
+// Implements StorageEventNotifier interface.
+func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onEdgeDeleted = callback
+}
+
+// notifyNodeCreated calls the registered callback if set.
+func (b *BadgerEngine) notifyNodeCreated(node *Node) {
+	b.callbackMu.RLock()
+	callback := b.onNodeCreated
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(node)
+	}
+}
+
+// notifyNodeUpdated calls the registered callback if set.
+func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
+	b.callbackMu.RLock()
+	callback := b.onNodeUpdated
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(node)
+	}
+}
+
+// notifyNodeDeleted calls the registered callback if set.
+func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
+	b.callbackMu.RLock()
+	callback := b.onNodeDeleted
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(nodeID)
+	}
+}
+
+// notifyEdgeCreated calls the registered callback if set.
+func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
+	b.callbackMu.RLock()
+	callback := b.onEdgeCreated
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(edge)
+	}
+}
+
+// notifyEdgeUpdated calls the registered callback if set.
+func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
+	b.callbackMu.RLock()
+	callback := b.onEdgeUpdated
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(edge)
+	}
+}
+
+// notifyEdgeDeleted calls the registered callback if set.
+func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
+	b.callbackMu.RLock()
+	callback := b.onEdgeDeleted
+	b.callbackMu.RUnlock()
+
+	if callback != nil {
+		callback(edgeID)
+	}
 }
 
 // BadgerOptions configures the BadgerDB engine.
@@ -330,13 +459,22 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	return &BadgerEngine{
+	engine := &BadgerEngine{
 		db:            db,
 		schema:        NewSchemaManager(),
 		inMemory:      opts.InMemory,
 		nodeCache:     make(map[NodeID]*Node, 10000), // Cache up to 10K hot nodes
 		edgeTypeCache: make(map[string][]*Edge, 100), // Cache edges by type for mutual queries
-	}, nil
+	}
+
+	// Initialize cached counts by scanning existing data (one-time cost)
+	// This enables O(1) stats lookups instead of O(N) scans on every request
+	if err := engine.initializeCounts(); err != nil {
+		db.Close() // Clean up on error
+		return nil, fmt.Errorf("failed to initialize counts: %w", err)
+	}
+
+	return engine, nil
 }
 
 // NewBadgerEngineInMemory creates an in-memory BadgerDB for testing.
@@ -597,6 +735,12 @@ func (b *BadgerEngine) CreateNode(node *Node) error {
 				b.schema.RegisterUniqueValue(label, propName, propValue, node.ID)
 			}
 		}
+
+		// Increment cached node count for O(1) stats lookups
+		b.nodeCount.Add(1)
+
+		// Notify listeners (e.g., search service) to index the new node
+		b.notifyNodeCreated(node)
 	}
 
 	return err
@@ -657,7 +801,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 	return node, err
 }
 
-// UpdateNode updates an existing node.
+// UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(node *Node) error {
 	if node == nil {
 		return ErrInvalidData
@@ -673,6 +817,9 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	b.mu.RUnlock()
 
+	// Track if this is an insert (new node) or update (existing node)
+	wasInsert := false
+
 	err := b.db.Update(func(txn *badger.Txn) error {
 		key := nodeKey(node.ID)
 
@@ -680,6 +827,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		item, err := txn.Get(key)
 		if err == badger.ErrKeyNotFound {
 			// Node doesn't exist - do an insert (upsert behavior)
+			wasInsert = true
 			data, err := encodeNode(node)
 			if err != nil {
 				return fmt.Errorf("failed to encode node: %w", err)
@@ -736,11 +884,21 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return nil
 	})
 
-	// Update cache on successful update
+	// Update cache on successful operation
 	if err == nil {
 		b.nodeCacheMu.Lock()
 		b.nodeCache[node.ID] = node
 		b.nodeCacheMu.Unlock()
+
+		if wasInsert {
+			// Increment count for new nodes (upsert as insert)
+			b.nodeCount.Add(1)
+			// Notify listeners about the new node
+			b.notifyNodeCreated(node)
+		} else {
+			// Notify listeners to re-index the updated node
+			b.notifyNodeUpdated(node)
+		}
 	}
 
 	return err
@@ -808,6 +966,12 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		b.nodeCacheMu.Lock()
 		delete(b.nodeCache, id)
 		b.nodeCacheMu.Unlock()
+
+		// Decrement cached node count for O(1) stats lookups
+		b.nodeCount.Add(-1)
+
+		// Notify listeners (e.g., search service) to remove from indexes
+		b.notifyNodeDeleted(id)
 	}
 
 	return err
@@ -919,6 +1083,12 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
 		b.InvalidateEdgeTypeCacheForType(edge.Type)
+
+		// Increment cached edge count for O(1) stats lookups
+		b.edgeCount.Add(1)
+
+		// Notify listeners (e.g., graph analyzers) about the new edge
+		b.notifyEdgeCreated(edge)
 	}
 
 	return err
@@ -973,7 +1143,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	}
 	b.mu.RUnlock()
 
-	return b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.Update(func(txn *badger.Txn) error {
 		key := edgeKey(edge.ID)
 
 		// Get existing edge
@@ -1029,6 +1199,13 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 		return txn.Set(key, data)
 	})
+
+	// Notify listeners on successful update
+	if err == nil {
+		b.notifyEdgeUpdated(edge)
+	}
+
+	return err
 }
 
 // DeleteEdge removes an edge.
@@ -1058,6 +1235,12 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	// Invalidate only this edge type (not entire cache)
 	if err == nil && edgeType != "" {
 		b.InvalidateEdgeTypeCacheForType(edgeType)
+
+		// Decrement cached edge count for O(1) stats lookups
+		b.edgeCount.Add(-1)
+
+		// Notify listeners (e.g., graph analyzers) about the deleted edge
+		b.notifyEdgeDeleted(id)
 	}
 
 	return err
@@ -1159,26 +1342,43 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	}
 	b.mu.RUnlock()
 
+	// Track which nodes were actually deleted for accurate counting
+	deletedCount := int64(0)
+	deletedIDs := make([]NodeID, 0, len(ids))
 	err := b.db.Update(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue // Skip invalid IDs
 			}
-			// Best effort - continue on ErrNotFound
-			if err := b.deleteNodeInTxn(txn, id); err != nil && err != ErrNotFound {
-				return err
+			err := b.deleteNodeInTxn(txn, id)
+			if err == nil {
+				deletedCount++                      // Successfully deleted
+				deletedIDs = append(deletedIDs, id) // Track for callbacks
+			} else if err != ErrNotFound {
+				return err // Actual error, abort transaction
 			}
+			// ErrNotFound is ignored (node didn't exist, no count change)
 		}
 		return nil
 	})
 
-	// Invalidate cache for deleted nodes
+	// Invalidate cache for deleted nodes and update count
 	if err == nil {
 		b.nodeCacheMu.Lock()
 		for _, id := range ids {
 			delete(b.nodeCache, id)
 		}
 		b.nodeCacheMu.Unlock()
+
+		// Decrement cached node count by actual number deleted (accurate)
+		if deletedCount > 0 {
+			b.nodeCount.Add(-deletedCount)
+		}
+
+		// Notify listeners (e.g., search service) for each deleted node
+		for _, id := range deletedIDs {
+			b.notifyNodeDeleted(id)
+		}
 	}
 
 	return err
@@ -1198,22 +1398,37 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 	}
 	b.mu.RUnlock()
 
+	// Track which edges were actually deleted for accurate counting
+	deletedCount := int64(0)
+	deletedIDs := make([]EdgeID, 0, len(ids))
 	err := b.db.Update(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue // Skip invalid IDs
 			}
-			// Best effort - continue on ErrNotFound
-			if err := b.deleteEdgeInTxn(txn, id); err != nil && err != ErrNotFound {
-				return err
+			err := b.deleteEdgeInTxn(txn, id)
+			if err == nil {
+				deletedCount++                      // Successfully deleted
+				deletedIDs = append(deletedIDs, id) // Track for callbacks
+			} else if err != ErrNotFound {
+				return err // Actual error, abort transaction
 			}
+			// ErrNotFound is ignored (edge didn't exist, no count change)
 		}
 		return nil
 	})
 
-	// Invalidate edge type cache on successful bulk delete
-	if err == nil && len(ids) > 0 {
+	// Invalidate edge type cache on successful bulk delete and update count
+	if err == nil && deletedCount > 0 {
 		b.InvalidateEdgeTypeCache()
+
+		// Decrement cached edge count by actual number deleted (accurate)
+		b.edgeCount.Add(-deletedCount)
+
+		// Notify listeners (e.g., graph analyzers) for each deleted edge
+		for _, id := range deletedIDs {
+			b.notifyEdgeDeleted(id)
+		}
 	}
 
 	return err
@@ -1775,6 +1990,14 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 				}
 			}
 		}
+
+		// Increment cached node count for O(1) stats lookups
+		b.nodeCount.Add(int64(len(nodes)))
+
+		// Notify listeners (e.g., search service) to index all new nodes
+		for _, node := range nodes {
+			b.notifyNodeCreated(node)
+		}
 	}
 
 	return err
@@ -1848,6 +2071,14 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 	// Invalidate edge type cache on successful bulk create
 	if err == nil && len(edges) > 0 {
 		b.InvalidateEdgeTypeCache()
+
+		// Increment cached edge count for O(1) stats lookups
+		b.edgeCount.Add(int64(len(edges)))
+
+		// Notify listeners (e.g., graph analyzers) for all new edges
+		for _, edge := range edges {
+			b.notifyEdgeCreated(edge)
+		}
 	}
 
 	return err
@@ -1916,6 +2147,48 @@ func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
 // NodeCount returns the total number of valid, decodable nodes.
 // This is consistent with AllNodes() - only counts nodes that can be successfully decoded.
 // Corrupted or incompatible node entries are not counted.
+// initializeCounts scans the database once to initialize the cached node and edge counts.
+// This is called only on engine startup to enable O(1) stats lookups.
+func (b *BadgerEngine) initializeCounts() error {
+	var nodeCount, edgeCount int64
+
+	err := b.db.View(func(txn *badger.Txn) error {
+		// Count nodes
+		nodeOpts := badger.DefaultIteratorOptions
+		nodeOpts.PrefetchValues = false // Only need keys for counting
+		nodeIt := txn.NewIterator(nodeOpts)
+		defer nodeIt.Close()
+
+		nodePrefix := []byte{prefixNode}
+		for nodeIt.Seek(nodePrefix); nodeIt.ValidForPrefix(nodePrefix); nodeIt.Next() {
+			nodeCount++
+		}
+
+		// Count edges
+		edgeOpts := badger.DefaultIteratorOptions
+		edgeOpts.PrefetchValues = false // Only need keys for counting
+		edgeIt := txn.NewIterator(edgeOpts)
+		defer edgeIt.Close()
+
+		edgePrefix := []byte{prefixEdge}
+		for edgeIt.Seek(edgePrefix); edgeIt.ValidForPrefix(edgePrefix); edgeIt.Next() {
+			edgeCount++
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Initialize atomic counters
+	b.nodeCount.Store(nodeCount)
+	b.edgeCount.Store(edgeCount)
+
+	return nil
+}
+
 func (b *BadgerEngine) NodeCount() (int64, error) {
 	b.mu.RLock()
 	if b.closed {
@@ -1924,30 +2197,9 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 	}
 	b.mu.RUnlock()
 
-	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true // Need values to validate decoding
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			// Only count if the node can be successfully decoded
-			// This matches AllNodes() behavior which skips decode errors
-			err := it.Item().Value(func(val []byte) error {
-				_, decodeErr := decodeNode(val)
-				return decodeErr
-			})
-			if err == nil {
-				count++
-			}
-			// Skip corrupted/incompatible entries (don't count them)
-		}
-		return nil
-	})
-
-	return count, err
+	// Return cached count for O(1) performance
+	// The counter is updated atomically on create/delete operations
+	return b.nodeCount.Load(), nil
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
@@ -1960,29 +2212,9 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 	}
 	b.mu.RUnlock()
 
-	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		prefix := []byte{prefixEdge}
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true // Need values to validate decoding
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			// Only count if the edge can be successfully decoded
-			err := it.Item().Value(func(val []byte) error {
-				_, decodeErr := decodeEdge(val)
-				return decodeErr
-			})
-			if err == nil {
-				count++
-			}
-			// Skip corrupted/incompatible entries (don't count them)
-		}
-		return nil
-	})
-
-	return count, err
+	// Return cached count for O(1) performance
+	// The counter is updated atomically on create/delete operations
+	return b.edgeCount.Load(), nil
 }
 
 // GetSchema returns the schema manager.

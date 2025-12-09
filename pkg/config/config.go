@@ -846,6 +846,18 @@ func legacyLoadFromEnv() *Config {
 	config.Features.TopologyABTestEnabled = getEnvBool("NORNICDB_TOPOLOGY_AB_TEST_ENABLED", false)
 	config.Features.TopologyABTestPercentage = getEnvInt("NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE", 50)
 
+	// K-Means clustering (maps to Kalman filtering)
+	// Env: NORNICDB_KMEANS_CLUSTERING_ENABLED (default: false)
+	if v := os.Getenv("NORNICDB_KMEANS_CLUSTERING_ENABLED"); v != "" {
+		config.Features.KalmanEnabled = v == "true" || v == "1"
+	}
+
+	// Auto-TLP (Temporal Link Prediction)
+	// Env: NORNICDB_AUTO_TLP_ENABLED (default: false)
+	if v := os.Getenv("NORNICDB_AUTO_TLP_ENABLED"); v != "" {
+		config.Features.TopologyAutoIntegrationEnabled = v == "true" || v == "1"
+	}
+
 	// Heimdall - the cognitive guardian feature flags
 	// Opt-in cognitive database features - only override if env var is explicitly set
 	if v := os.Getenv("NORNICDB_HEIMDALL_ENABLED"); v != "" {
@@ -1619,6 +1631,14 @@ func applyEnvVars(config *Config) {
 	}
 	if v := getEnvInt("NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE", 0); v > 0 {
 		config.Features.TopologyABTestPercentage = v
+	}
+	// K-Means clustering (maps to Kalman filtering) - used by macOS menu bar app
+	if getEnv("NORNICDB_KMEANS_CLUSTERING_ENABLED", "") == "true" {
+		config.Features.KalmanEnabled = true
+	}
+	// Auto-TLP (Temporal Link Prediction) - used by macOS menu bar app
+	if getEnv("NORNICDB_AUTO_TLP_ENABLED", "") == "true" {
+		config.Features.TopologyAutoIntegrationEnabled = true
 	}
 	if getEnv("NORNICDB_HEIMDALL_ENABLED", "") == "true" {
 		config.Features.HeimdallEnabled = true

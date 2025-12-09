@@ -1463,7 +1463,7 @@ struct SettingsView: View {
                 <string>\(config.hostAddress)</string>
                 <key>NORNICDB_EMBEDDING_ENABLED</key>
                 <string>\(config.embeddingsEnabled ? "true" : "false")</string>
-                <key>NORNICDB_KMEANS_ENABLED</key>
+                <key>NORNICDB_KMEANS_CLUSTERING_ENABLED</key>
                 <string>\(config.kmeansEnabled ? "true" : "false")</string>
                 <key>NORNICDB_AUTO_TLP_ENABLED</key>
                 <string>\(config.autoTLPEnabled ? "true" : "false")</string>
@@ -2278,7 +2278,7 @@ struct FirstRunWizard: View {
                                 <string>\(config.hostAddress)</string>
                                 <key>NORNICDB_EMBEDDING_ENABLED</key>
                                 <string>\(config.embeddingsEnabled ? "true" : "false")</string>
-                                <key>NORNICDB_KMEANS_ENABLED</key>
+                                <key>NORNICDB_KMEANS_CLUSTERING_ENABLED</key>
                                 <string>\(config.kmeansEnabled ? "true" : "false")</string>
                                 <key>NORNICDB_AUTO_TLP_ENABLED</key>
                                 <string>\(config.autoTLPEnabled ? "true" : "false")</string>

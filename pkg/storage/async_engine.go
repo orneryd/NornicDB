@@ -12,6 +12,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -873,7 +874,7 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 	// Hold lock during entire operation to get consistent count
 	// This prevents race with flush which clears cache before writing to engine
 	ae.mu.RLock()
-	
+
 	// Count pending creates, excluding in-flight nodes (already written to engine)
 	// In-flight nodes exist in BOTH nodeCache AND underlying engine temporarily,
 	// so we must not double-count them
@@ -884,14 +885,14 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 		}
 	}
 	pendingDeletes := int64(len(ae.deleteNodes))
-	
+
 	count, err := ae.engine.NodeCount()
 	ae.mu.RUnlock()
-	
+
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Adjust for pending creates and deletes
 	count += pendingCreates
 	count -= pendingDeletes
@@ -902,7 +903,7 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 	// Hold lock during entire operation to get consistent count
 	// This prevents race with flush which clears cache before writing to engine
 	ae.mu.RLock()
-	
+
 	// Count pending creates, excluding in-flight edges (already written to engine)
 	// In-flight edges exist in BOTH edgeCache AND underlying engine temporarily,
 	// so we must not double-count them
@@ -913,14 +914,14 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 		}
 	}
 	pendingDeletes := int64(len(ae.deleteEdges))
-	
+
 	count, err := ae.engine.EdgeCount()
 	ae.mu.RUnlock()
-	
+
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Adjust for pending creates and deletes
 	count += pendingCreates
 	count -= pendingDeletes
@@ -1167,5 +1168,157 @@ func (ae *AsyncEngine) IterateNodes(fn func(*Node) bool) error {
 	return nil
 }
 
+// ============================================================================
+// StreamingEngine Implementation
+// ============================================================================
+
+// StreamNodes implements StreamingEngine.StreamNodes by delegating to the underlying engine.
+// It merges cached nodes with the underlying stream for consistency.
+func (ae *AsyncEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
+	ae.mu.RLock()
+
+	// First, stream cached nodes (not yet flushed)
+	for id, node := range ae.nodeCache {
+		if ae.deleteNodes[id] {
+			continue // Skip if marked for deletion
+		}
+		ae.mu.RUnlock()
+		if err := fn(node); err != nil {
+			if err == ErrIterationStopped {
+				return nil // Normal early termination
+			}
+			return err
+		}
+		ae.mu.RLock()
+	}
+
+	// Build set of cached node IDs to skip in underlying stream
+	cachedIDs := make(map[NodeID]bool, len(ae.nodeCache))
+	for id := range ae.nodeCache {
+		cachedIDs[id] = true
+	}
+	deletedIDs := make(map[NodeID]bool, len(ae.deleteNodes))
+	for id := range ae.deleteNodes {
+		deletedIDs[id] = true
+	}
+	ae.mu.RUnlock()
+
+	// Then stream from underlying engine, skipping cached/deleted nodes
+	if streamer, ok := ae.engine.(StreamingEngine); ok {
+		return streamer.StreamNodes(ctx, func(node *Node) error {
+			// Skip if we already returned this from cache or it's deleted
+			if cachedIDs[node.ID] || deletedIDs[node.ID] {
+				return nil
+			}
+			return fn(node)
+		})
+	}
+
+	// Fallback: load all from underlying engine
+	nodes, err := ae.engine.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if cachedIDs[node.ID] || deletedIDs[node.ID] {
+			continue
+		}
+		if err := fn(node); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// StreamEdges implements StreamingEngine.StreamEdges by delegating to the underlying engine.
+func (ae *AsyncEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
+	ae.mu.RLock()
+
+	// First, stream cached edges
+	for id, edge := range ae.edgeCache {
+		if ae.deleteEdges[id] {
+			continue
+		}
+		ae.mu.RUnlock()
+		if err := fn(edge); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+		ae.mu.RLock()
+	}
+
+	// Build set of cached edge IDs
+	cachedIDs := make(map[EdgeID]bool, len(ae.edgeCache))
+	for id := range ae.edgeCache {
+		cachedIDs[id] = true
+	}
+	deletedIDs := make(map[EdgeID]bool, len(ae.deleteEdges))
+	for id := range ae.deleteEdges {
+		deletedIDs[id] = true
+	}
+	ae.mu.RUnlock()
+
+	// Stream from underlying engine
+	if streamer, ok := ae.engine.(StreamingEngine); ok {
+		return streamer.StreamEdges(ctx, func(edge *Edge) error {
+			if cachedIDs[edge.ID] || deletedIDs[edge.ID] {
+				return nil
+			}
+			return fn(edge)
+		})
+	}
+
+	// Fallback
+	edges, err := ae.engine.AllEdges()
+	if err != nil {
+		return err
+	}
+	for _, edge := range edges {
+		if cachedIDs[edge.ID] || deletedIDs[edge.ID] {
+			continue
+		}
+		if err := fn(edge); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// StreamNodeChunks implements StreamingEngine.StreamNodeChunks by using StreamNodes.
+// We always use StreamNodes (not delegate) to properly merge cache + underlying engine.
+func (ae *AsyncEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
+	// Always use our StreamNodes to properly handle cache + engine merging
+	chunk := make([]*Node, 0, chunkSize)
+	err := ae.StreamNodes(ctx, func(node *Node) error {
+		chunk = append(chunk, node)
+		if len(chunk) >= chunkSize {
+			if err := fn(chunk); err != nil {
+				return err
+			}
+			chunk = make([]*Node, 0, chunkSize)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	// Final partial chunk
+	if len(chunk) > 0 {
+		return fn(chunk)
+	}
+	return nil
+}
+
 // Verify AsyncEngine implements Engine interface
 var _ Engine = (*AsyncEngine)(nil)
+
+// Verify AsyncEngine implements StreamingEngine interface
+var _ StreamingEngine = (*AsyncEngine)(nil)

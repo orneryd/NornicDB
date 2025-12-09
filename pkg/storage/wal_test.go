@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1289,13 +1291,20 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 			walEngine.DisableAutoCompaction()
 		}()
 
-		// Find latest snapshot
+		// Find latest snapshot (filter for .json files only, not .tmp files)
 		files, err := os.ReadDir(snapshotDir)
 		require.NoError(t, err)
-		require.GreaterOrEqual(t, len(files), 1, "Should have at least one snapshot")
+
+		var jsonFiles []os.DirEntry
+		for _, f := range files {
+			if strings.HasSuffix(f.Name(), ".json") && !strings.HasSuffix(f.Name(), ".tmp") {
+				jsonFiles = append(jsonFiles, f)
+			}
+		}
+		require.GreaterOrEqual(t, len(jsonFiles), 1, "Should have at least one snapshot")
 
 		// Use the most recent snapshot
-		latestSnapshot := filepath.Join(snapshotDir, files[len(files)-1].Name())
+		latestSnapshot := filepath.Join(snapshotDir, jsonFiles[len(jsonFiles)-1].Name())
 
 		// Second session: recover from snapshot + WAL
 		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
@@ -1397,4 +1406,244 @@ func BenchmarkBatchWriter_Commit(b *testing.B) {
 		}
 		batch.Commit()
 	}
+}
+
+// ============================================================================
+// WALEngine StreamingEngine Tests
+// ============================================================================
+
+func TestWALEngine_StreamNodes(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	defer wal.Close()
+
+	walEngine := NewWALEngine(engine, wal)
+	ctx := context.Background()
+
+	// Create 100 nodes
+	for i := 0; i < 100; i++ {
+		err := walEngine.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamAllNodes", func(t *testing.T) {
+		var count int
+		err := walEngine.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, count, "Should stream all 100 nodes")
+	})
+
+	t.Run("StreamWithEarlyTermination", func(t *testing.T) {
+		var count int
+		err := walEngine.StreamNodes(ctx, func(node *Node) error {
+			count++
+			if count >= 10 {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 10, count, "Should stop after 10 nodes")
+	})
+}
+
+func TestWALEngine_StreamEdges(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	defer wal.Close()
+
+	walEngine := NewWALEngine(engine, wal)
+	ctx := context.Background()
+
+	// Create nodes first
+	for i := 0; i < 10; i++ {
+		err := walEngine.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	// Create edges
+	for i := 0; i < 50; i++ {
+		err := walEngine.CreateEdge(&Edge{
+			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
+			Type:      "CONNECTS",
+			StartNode: NodeID(fmt.Sprintf("node-%d", i%10)),
+			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%10)),
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamAllEdges", func(t *testing.T) {
+		var count int
+		err := walEngine.StreamEdges(ctx, func(edge *Edge) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 50, count, "Should stream all 50 edges")
+	})
+
+	t.Run("StreamWithEarlyTermination", func(t *testing.T) {
+		var count int
+		err := walEngine.StreamEdges(ctx, func(edge *Edge) error {
+			count++
+			if count >= 5 {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 5, count, "Should stop after 5 edges")
+	})
+}
+
+func TestWALEngine_StreamNodeChunks(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	defer wal.Close()
+
+	walEngine := NewWALEngine(engine, wal)
+	ctx := context.Background()
+
+	// Create 100 nodes
+	for i := 0; i < 100; i++ {
+		err := walEngine.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			Labels: []string{"Test"},
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamInChunks", func(t *testing.T) {
+		var totalNodes int
+		var chunkCount int
+		err := walEngine.StreamNodeChunks(ctx, 25, func(nodes []*Node) error {
+			chunkCount++
+			totalNodes += len(nodes)
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, totalNodes, "Should stream all 100 nodes")
+		assert.Equal(t, 4, chunkCount, "Should have 4 chunks of 25")
+	})
+}
+
+// TestWALEngine_ImplementsStreamingEngine verifies the interface is implemented
+func TestWALEngine_ImplementsStreamingEngine(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	defer wal.Close()
+
+	walEngine := NewWALEngine(engine, wal)
+
+	// This should compile - WALEngine implements StreamingEngine
+	var _ StreamingEngine = walEngine
+	t.Log("WALEngine implements StreamingEngine interface")
+}
+
+// TestFullStorageChain_Streaming tests streaming through the full storage chain:
+// AsyncEngine -> WALEngine -> BadgerEngine
+func TestFullStorageChain_Streaming(t *testing.T) {
+	config.EnableWAL()
+	defer config.DisableWAL()
+
+	dir := t.TempDir()
+
+	// Create the full storage chain
+	badgerEngine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	defer badgerEngine.Close()
+
+	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	defer wal.Close()
+
+	walEngine := NewWALEngine(badgerEngine, wal)
+
+	asyncEngine := NewAsyncEngine(walEngine, &AsyncEngineConfig{
+		FlushInterval: 1 * time.Hour, // Don't auto-flush
+	})
+	defer asyncEngine.Close()
+
+	ctx := context.Background()
+
+	// Create 100 nodes through the full chain
+	for i := 0; i < 100; i++ {
+		err := asyncEngine.CreateNode(&Node{
+			ID:     NodeID(fmt.Sprintf("chain-node-%d", i)),
+			Labels: []string{"ChainTest"},
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("StreamThroughFullChain", func(t *testing.T) {
+		var count int
+		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, count, "Should stream all 100 nodes through full chain")
+	})
+
+	t.Run("EarlyTerminationThroughFullChain", func(t *testing.T) {
+		var count int
+		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+			count++
+			if count >= 25 {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 25, count, "Should stop after 25 nodes")
+	})
+
+	t.Run("StreamAfterFlush", func(t *testing.T) {
+		require.NoError(t, asyncEngine.Flush())
+
+		var count int
+		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+			count++
+			return nil
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 100, count, "Should stream all 100 nodes after flush")
+	})
 }
