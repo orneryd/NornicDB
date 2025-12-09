@@ -368,12 +368,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var firstRunWindowController: NSWindowController?
     private var fileIndexerWindowController: NSWindowController?
     
+    // Apple Intelligence Embedding Server
+    @MainActor
+    lazy var embeddingServer: EmbeddingServer = {
+        let server = EmbeddingServer()
+        server.port = ConfigManager.appleEmbeddingPort
+        server.loadConfiguration()
+        return server
+    }()
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon - we only want menu bar presence
         NSApp.setActivationPolicy(.accessory)
         
         // Load configuration
         configManager.loadConfig()
+        
+        // Start Apple Intelligence embedding server if enabled
+        if configManager.useAppleIntelligence && configManager.embeddingsEnabled && AppleMLEmbedder.isAvailable() {
+            Task { @MainActor in
+                do {
+                    try self.embeddingServer.start()
+                    print("✅ Apple Intelligence embedding server auto-started (enabled in config)")
+                } catch {
+                    print("❌ Failed to auto-start embedding server: \(error)")
+                }
+            }
+        }
         
         // Create menu bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -397,6 +418,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     func applicationWillTerminate(_ notification: Notification) {
         healthCheckTimer?.invalidate()
+        // Stop Apple Intelligence embedding server if running
+        Task { @MainActor in
+            if self.embeddingServer.isRunning {
+                self.embeddingServer.stop()
+                print("🛑 Apple Intelligence embedding server stopped (app quit)")
+            }
+        }
     }
     
     @objc func showMenu() {
@@ -599,7 +627,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     @objc func openSettings() {
         if settingsWindowController == nil {
-            let settingsView = SettingsView(config: configManager)
+            let settingsView = SettingsView(config: configManager, appDelegate: self)
             let hostingController = NSHostingController(rootView: settingsView)
             
             let window = NSWindow(contentViewController: hostingController)
@@ -634,7 +662,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func showFirstRunWizard() {
-        let wizardView = FirstRunWizard(config: configManager) {
+        let wizardView = FirstRunWizard(config: configManager, appDelegate: self) {
             self.firstRunWindowController?.window?.close()
             self.firstRunWindowController = nil
         }
@@ -782,6 +810,11 @@ class ConfigManager: ObservableObject {
     @Published var httpPortNumber: String = "7474"
     @Published var hostAddress: String = "localhost"
     
+    // Apple Intelligence embeddings
+    @Published var useAppleIntelligence: Bool = false
+    static let appleEmbeddingPort: UInt16 = 11435
+    static let appleEmbeddingDimensions: Int = 512
+    
     // Authentication settings
     @Published var adminUsername: String = "admin"
     @Published var adminPassword: String = "password"
@@ -910,6 +943,13 @@ class ConfigManager: ObservableObject {
             if let model = getYAMLString(key: "model", from: embeddingSection) {
                 embeddingModel = model
                 print("✅ Loaded embedding model: \(model)")
+            }
+            
+            // Check if using Apple Intelligence (provider is "openai" with localhost:11435 URL)
+            if let provider = getYAMLString(key: "provider", from: embeddingSection),
+               let url = getYAMLString(key: "url", from: embeddingSection) {
+                useAppleIntelligence = provider == "openai" && url.contains("localhost:\(ConfigManager.appleEmbeddingPort)")
+                print("✅ Loaded use Apple Intelligence: \(useAppleIntelligence)")
             }
         }
         
@@ -1081,14 +1121,64 @@ class ConfigManager: ObservableObject {
           encryption_password: ""
         """)
         
+        content = ensureSectionExists(in: content, section: "embedding", defaultContent: """
+        
+        embedding:
+          enabled: false
+          provider: local
+          model: bge-m3.gguf
+          url: ""
+          dimensions: 1024
+        """)
+        
+        content = ensureSectionExists(in: content, section: "kmeans", defaultContent: """
+        
+        kmeans:
+          enabled: false
+        """)
+        
+        content = ensureSectionExists(in: content, section: "auto_tlp", defaultContent: """
+        
+        auto_tlp:
+          enabled: false
+        """)
+        
+        content = ensureSectionExists(in: content, section: "heimdall", defaultContent: """
+        
+        heimdall:
+          enabled: false
+          model: qwen2.5-0.5b-instruct.gguf
+        """)
+        
+        content = ensureSectionExists(in: content, section: "server", defaultContent: """
+        
+        server:
+          bolt_port: 7687
+          http_port: 7474
+          host: localhost
+        """)
+        
         // Update each feature setting
         content = updateYAMLValue(in: content, section: "embedding", key: "enabled", value: embeddingsEnabled)
         content = updateYAMLValue(in: content, section: "kmeans", key: "enabled", value: kmeansEnabled)
         content = updateYAMLValue(in: content, section: "auto_tlp", key: "enabled", value: autoTLPEnabled)
         content = updateYAMLValue(in: content, section: "heimdall", key: "enabled", value: heimdallEnabled)
         
-        // Update model selections
-        content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: embeddingModel)
+        // Update model selections and Apple Intelligence settings
+        if useAppleIntelligence {
+            // Configure NornicDB to use Apple Intelligence via local embedding server
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "provider", value: "openai")
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "url", value: "http://localhost:\(ConfigManager.appleEmbeddingPort)/v1/embeddings")
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: "apple-ml-embeddings")
+            content = updateYAMLIntValue(in: content, section: "embedding", key: "dimensions", value: ConfigManager.appleEmbeddingDimensions)
+        } else {
+            // Use the selected local model
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "provider", value: "local")
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "url", value: "")
+            content = updateYAMLStringValue(in: content, section: "embedding", key: "model", value: embeddingModel)
+            // Reset dimensions to default (will be auto-detected from model)
+            content = updateYAMLIntValue(in: content, section: "embedding", key: "dimensions", value: 1024)
+        }
         content = updateYAMLStringValue(in: content, section: "heimdall", key: "model", value: heimdallModel)
         
         // Update server settings
@@ -1204,8 +1294,31 @@ class ConfigManager: ObservableObject {
         
         if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
             let range = NSRange(content.startIndex..., in: content)
-            let replacement = "$1\(value)"
-            result = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+            if regex.firstMatch(in: content, options: [], range: range) != nil {
+                let replacement = "$1\(value)"
+                result = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+            } else {
+                // Key doesn't exist, add it to the section
+                result = addKeyToSection(in: content, section: section, key: key, value: value)
+            }
+        }
+        
+        return result
+    }
+    
+    private func updateYAMLIntValue(in content: String, section: String, key: String, value: Int) -> String {
+        var result = content
+        let pattern = "(\(section):(?:[^\n]*\n)*?\\s+\(key):\\s*)(?:\\d+)"
+        
+        if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
+            let range = NSRange(content.startIndex..., in: content)
+            if regex.firstMatch(in: content, options: [], range: range) != nil {
+                let replacement = "$1\(value)"
+                result = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+            } else {
+                // Key doesn't exist, add it to the section
+                result = addKeyToSection(in: content, section: section, key: key, value: "\(value)")
+            }
         }
         
         return result
@@ -1217,11 +1330,72 @@ class ConfigManager: ObservableObject {
         
         if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
             let range = NSRange(content.startIndex..., in: content)
-            let replacement = "$1\(value)"
-            result = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+            if regex.firstMatch(in: content, options: [], range: range) != nil {
+                let replacement = "$1\(value)"
+                result = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: replacement)
+            } else {
+                // Key doesn't exist, add it to the section
+                result = addKeyToSection(in: content, section: section, key: key, value: "\(value)")
+            }
         }
         
         return result
+    }
+    
+    /// Add a key-value pair to an existing YAML section
+    private func addKeyToSection(in content: String, section: String, key: String, value: String) -> String {
+        let lines = content.components(separatedBy: "\n")
+        var result: [String] = []
+        var foundSectionHeader = false
+        var sectionHeaderIndex = -1
+        var lastKeyInSectionIndex = -1
+        var inSection = false
+        
+        // First pass: find the section header and the last key in that section
+        for (index, line) in lines.enumerated() {
+            // Look for the exact section header (e.g., "embedding:" at start of line)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "\(section):" || line.hasPrefix("\(section):") && !line.hasPrefix(" ") && !line.hasPrefix("\t") {
+                foundSectionHeader = true
+                inSection = true
+                sectionHeaderIndex = index
+                lastKeyInSectionIndex = index // Default to header if no keys
+                continue
+            }
+            
+            if inSection {
+                // If line is indented and has a colon, it's a key in this section
+                let isIndented = line.hasPrefix("  ") || line.hasPrefix("\t")
+                let hasColon = line.contains(":")
+                let isEmpty = line.trimmingCharacters(in: .whitespaces).isEmpty
+                
+                if isIndented && hasColon {
+                    lastKeyInSectionIndex = index
+                }
+                // If we hit a non-indented, non-empty line, we've left the section
+                else if !isEmpty && !isIndented {
+                    inSection = false
+                }
+            }
+        }
+        
+        // If section doesn't exist, don't add orphaned keys
+        if !foundSectionHeader {
+            print("⚠️ Section '\(section)' not found, cannot add key '\(key)'")
+            return content
+        }
+        
+        // Second pass: build result with new key inserted after last key in section
+        for (index, line) in lines.enumerated() {
+            result.append(line)
+            
+            // Insert new key after the last key in the section
+            if index == lastKeyInSectionIndex {
+                result.append("  \(key): \(value)")
+            }
+        }
+        
+        return result.joined(separator: "\n")
     }
     
     static func generateRandomSecret() -> String {
@@ -1234,12 +1408,14 @@ class ConfigManager: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var config: ConfigManager
+    let appDelegate: AppDelegate
     @State private var showingSaveAlert = false
     @State private var saveSuccess = false
     @State private var selectedTab = 0
     
     // Track original values to detect changes
     @State private var originalEmbeddingsEnabled: Bool = false
+    @State private var originalUseAppleIntelligence: Bool = false
     @State private var originalKmeansEnabled: Bool = false
     @State private var originalAutoTLPEnabled: Bool = false
     @State private var originalHeimdallEnabled: Bool = false
@@ -1265,6 +1441,7 @@ struct SettingsView: View {
     // Check if there are unsaved changes
     var hasChanges: Bool {
         return config.embeddingsEnabled != originalEmbeddingsEnabled ||
+               config.useAppleIntelligence != originalUseAppleIntelligence ||
                config.kmeansEnabled != originalKmeansEnabled ||
                config.autoTLPEnabled != originalAutoTLPEnabled ||
                config.heimdallEnabled != originalHeimdallEnabled ||
@@ -1365,6 +1542,7 @@ struct SettingsView: View {
         
         // Capture current values as originals
         originalEmbeddingsEnabled = config.embeddingsEnabled
+        originalUseAppleIntelligence = config.useAppleIntelligence
         originalKmeansEnabled = config.kmeansEnabled
         originalAutoTLPEnabled = config.autoTLPEnabled
         originalHeimdallEnabled = config.heimdallEnabled
@@ -1391,6 +1569,29 @@ struct SettingsView: View {
             DispatchQueue.main.async {
                 if success {
                     saveProgress = "Updating service configuration..."
+                    
+                    // Manage Apple Intelligence Embedding Server
+                    // IMPORTANT: Must start and be ready BEFORE NornicDB restarts
+                    if config.useAppleIntelligence && config.embeddingsEnabled {
+                        if !appDelegate.embeddingServer.isRunning {
+                            saveProgress = "Starting Apple Intelligence..."
+                            do {
+                                try appDelegate.embeddingServer.start()
+                                print("✅ Apple Intelligence embedding server started")
+                                // Give server time to be fully ready
+                                Thread.sleep(forTimeInterval: 1.0)
+                            } catch {
+                                print("❌ Failed to start embedding server: \(error)")
+                            }
+                        }
+                    } else {
+                        // Stop embedding server if running
+                        if appDelegate.embeddingServer.isRunning {
+                            saveProgress = "Stopping Apple Intelligence..."
+                            appDelegate.embeddingServer.stop()
+                            print("🛑 Apple Intelligence embedding server stopped")
+                        }
+                    }
                     
                     // Update the LaunchAgent plist with current secrets from Keychain
                     self.updateServerPlist()
@@ -1463,6 +1664,16 @@ struct SettingsView: View {
                 <string>\(config.hostAddress)</string>
                 <key>NORNICDB_EMBEDDING_ENABLED</key>
                 <string>\(config.embeddingsEnabled ? "true" : "false")</string>
+                <key>NORNICDB_EMBEDDING_PROVIDER</key>
+                <string>\(config.useAppleIntelligence ? "openai" : "local")</string>
+                <key>NORNICDB_EMBEDDING_API_URL</key>
+                <string>\(config.useAppleIntelligence ? "http://localhost:\(ConfigManager.appleEmbeddingPort)/v1/embeddings" : "")</string>
+                <key>NORNICDB_EMBEDDING_MODEL</key>
+                <string>\(config.useAppleIntelligence ? "apple-ml-embeddings" : config.embeddingModel)</string>
+                <key>NORNICDB_EMBEDDING_DIMENSIONS</key>
+                <string>\(config.useAppleIntelligence ? "\(ConfigManager.appleEmbeddingDimensions)" : "1024")</string>
+                <key>NORNICDB_EMBEDDING_API_KEY</key>
+                <string>\(config.useAppleIntelligence ? "apple-local-dummy-key" : "")</string>
                 <key>NORNICDB_KMEANS_CLUSTERING_ENABLED</key>
                 <string>\(config.kmeansEnabled ? "true" : "false")</string>
                 <key>NORNICDB_AUTO_TLP_ENABLED</key>
@@ -1563,6 +1774,45 @@ struct SettingsView: View {
                     isEnabled: $config.embeddingsEnabled,
                     icon: "brain.head.profile"
                 )
+                
+                // Apple Intelligence toggle - only show if embeddings are enabled and available
+                if config.embeddingsEnabled && AppleMLEmbedder.isAvailable() {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "apple.logo")
+                                .font(.title2)
+                                .foregroundColor(.accentColor)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Use Apple Intelligence")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("On-device embeddings via Apple ML (512 dims)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Toggle("", isOn: $config.useAppleIntelligence)
+                                .toggleStyle(.switch)
+                        }
+                        
+                        if config.useAppleIntelligence {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                                Text("NornicDB will use local Apple ML for embeddings")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding()
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.1)))
+                }
                 
                 FeatureToggle(
                     title: "K-Means Clustering",
@@ -2067,6 +2317,7 @@ struct FeatureToggle: View {
 
 struct FirstRunWizard: View {
     @ObservedObject var config: ConfigManager
+    let appDelegate: AppDelegate
     @State private var currentStep = 0
     @State private var selectedPreset: ConfigPreset = .standard  // Default to recommended
     let onComplete: () -> Void
@@ -2240,6 +2491,22 @@ struct FirstRunWizard: View {
                 // Mark first run as complete
                 config.completeFirstRun()
                 
+                // Start Apple Intelligence embedding server if enabled
+                // IMPORTANT: Must start and be ready BEFORE NornicDB starts
+                if config.useAppleIntelligence && config.embeddingsEnabled && AppleMLEmbedder.isAvailable() {
+                    if !appDelegate.embeddingServer.isRunning {
+                        saveProgress = "Starting Apple Intelligence..."
+                        do {
+                            try appDelegate.embeddingServer.start()
+                            print("✅ Apple Intelligence embedding server started from wizard")
+                            // Give server time to be fully ready
+                            Thread.sleep(forTimeInterval: 1.0)
+                        } catch {
+                            print("❌ Failed to start embedding server from wizard: \(error)")
+                        }
+                    }
+                }
+                
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     saveProgress = serverIsRunning ? "Restarting server..." : "Starting server..."
                     
@@ -2278,6 +2545,16 @@ struct FirstRunWizard: View {
                                 <string>\(config.hostAddress)</string>
                                 <key>NORNICDB_EMBEDDING_ENABLED</key>
                                 <string>\(config.embeddingsEnabled ? "true" : "false")</string>
+                                <key>NORNICDB_EMBEDDING_PROVIDER</key>
+                                <string>\(config.useAppleIntelligence ? "openai" : "local")</string>
+                                <key>NORNICDB_EMBEDDING_API_URL</key>
+                                <string>\(config.useAppleIntelligence ? "http://localhost:\(ConfigManager.appleEmbeddingPort)/v1/embeddings" : "")</string>
+                                <key>NORNICDB_EMBEDDING_MODEL</key>
+                                <string>\(config.useAppleIntelligence ? "apple-ml-embeddings" : config.embeddingModel)</string>
+                                <key>NORNICDB_EMBEDDING_DIMENSIONS</key>
+                                <string>\(config.useAppleIntelligence ? "\(ConfigManager.appleEmbeddingDimensions)" : "1024")</string>
+                                <key>NORNICDB_EMBEDDING_API_KEY</key>
+                                <string>\(config.useAppleIntelligence ? "apple-local-dummy-key" : "")</string>
                                 <key>NORNICDB_KMEANS_CLUSTERING_ENABLED</key>
                                 <string>\(config.kmeansEnabled ? "true" : "false")</string>
                                 <key>NORNICDB_AUTO_TLP_ENABLED</key>
@@ -2788,8 +3065,115 @@ struct FirstRunWizard: View {
                 .cornerRadius(8)
                 .padding(.horizontal)
                 
-                // Model Requirements Section
-                if needsModels() {
+                // Apple Intelligence Option
+                if (selectedPreset == .standard || selectedPreset == .advanced) && AppleMLEmbedder.isAvailable() {
+                    Divider()
+                    
+                    VStack(alignment: .leading, spacing: 15) {
+                        Text("Embedding Provider")
+                            .font(.headline)
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            Button(action: {
+                                config.useAppleIntelligence = true
+                            }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "apple.logo")
+                                        .font(.title2)
+                                        .foregroundColor(.accentColor)
+                                        .frame(width: 30)
+                                    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Use Apple Intelligence")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        Text("On-device, privacy-first embeddings (512 dims)")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.green)
+                                                .font(.caption2)
+                                            Text("No download required • Zero cost • Private")
+                                                .font(.caption2)
+                                                .foregroundColor(.green)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if config.useAppleIntelligence {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.green)
+                                            .font(.title3)
+                                    }
+                                }
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(config.useAppleIntelligence ? Color.blue.opacity(0.1) : Color.gray.opacity(0.05))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(config.useAppleIntelligence ? Color.blue : Color.clear, lineWidth: 2)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            
+                            Button(action: {
+                                config.useAppleIntelligence = false
+                            }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "externaldrive.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.purple)
+                                        .frame(width: 30)
+                                    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Use Local GGUF Models")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        Text("Download BGE-M3 model (1024 dims)")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.down.circle.fill")
+                                                .foregroundColor(.orange)
+                                                .font(.caption2)
+                                            Text("~400MB download • Higher dimensions")
+                                                .font(.caption2)
+                                                .foregroundColor(.orange)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if !config.useAppleIntelligence {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.green)
+                                            .font(.title3)
+                                    }
+                                }
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(!config.useAppleIntelligence ? Color.purple.opacity(0.1) : Color.gray.opacity(0.05))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(!config.useAppleIntelligence ? Color.purple : Color.clear, lineWidth: 2)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding()
+                }
+                
+                // Model Requirements Section (only show if NOT using Apple Intelligence)
+                if needsModels() && !config.useAppleIntelligence {
                     Divider()
                     
                     VStack(spacing: 15) {
@@ -2897,6 +3281,11 @@ struct FirstRunWizard: View {
         }
         .onAppear {
             checkModelFiles()
+            
+            // Default to Apple Intelligence if available for Standard/Advanced presets
+            if AppleMLEmbedder.isAvailable() && (selectedPreset == .standard || selectedPreset == .advanced) {
+                config.useAppleIntelligence = true
+            }
         }
     }
     
@@ -3181,3 +3570,4 @@ struct ModelDownloadRow: View {
         )
     }
 }
+

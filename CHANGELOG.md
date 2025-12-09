@@ -14,6 +14,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Issue and PR templates
 - Migration guide for repository split
 
+## [1.0.3] - 2025-12-09
+
+### Added
+- **Streaming Query Optimization**: `MATCH (n) RETURN n LIMIT X` queries now use streaming with early termination instead of loading all nodes into memory
+  - `StreamingEngine` interface implemented in `AsyncEngine` and `WALEngine`
+  - Full storage chain support: AsyncEngine → WALEngine → BadgerEngine
+  - 100x+ faster LIMIT queries on large datasets (40K+ nodes)
+- **O(1) Stats Lookups**: `NodeCount()` and `EdgeCount()` now return cached atomic counters
+  - Eliminates O(N) full table scans for every stats/status API call
+  - `COUNT(n)` fast-path optimization for simple node count queries
+- **Storage Event System**: New `StorageEventNotifier` interface with 6 event callbacks
+  - `OnNodeCreated`, `OnNodeUpdated`, `OnNodeDeleted`
+  - `OnEdgeCreated`, `OnEdgeUpdated`, `OnEdgeDeleted`
+  - Search indexes automatically synchronized via event subscriptions
+  - Events fire from BadgerEngine (single source of truth)
+- Comprehensive streaming unit tests for all storage engine layers
+
+### Fixed
+- **UpdateNode Upsert Count**: Fixed `UpdateNode` not incrementing node count when inserting a new node (upsert behavior)
+- **WAL Test Race Condition**: Fixed flaky `auto_compaction_recoverable` test that could pick up `.tmp` snapshot files
+- **SKIP+LIMIT Streaming**: Fixed streaming optimization to account for both SKIP and LIMIT values
+
+### Changed
+- Node deletion callbacks now fire from storage layer (BadgerEngine) instead of being handled separately by AsyncEngine
+- Removed duplicate event handling code from AsyncEngine wrapper
+
 ## [1.0.2] - 2025-01-27
 
 ### Added

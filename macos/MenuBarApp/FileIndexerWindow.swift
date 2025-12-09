@@ -708,7 +708,7 @@ class FileWatchManager: ObservableObject {
            let results = json["results"] as? [[String: Any]],
            let data = results.first?["data"] as? [[String: Any]],
            let row = data.first?["row"] as? [String],
-           let lastModified = row.first,
+           let _ = row.first,
            let indexedDate = row.last {
             // If indexed after file was last modified, skip
             let fileModifiedDate = ISO8601DateFormatter().string(from: file.lastModified)

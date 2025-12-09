@@ -866,10 +866,13 @@ ifeq ($(HOST_OS),darwin)
 		NornicDBMenuBar.swift \
 		FileIndexer.swift \
 		FileIndexerWindow.swift \
+		AppleMLEmbedder.swift \
+		EmbeddingServer.swift \
 		-framework SwiftUI \
 		-framework AppKit \
 		-framework Vision \
 		-framework NaturalLanguage \
+		-framework Network \
 		-framework UniformTypeIdentifiers \
 		-framework PDFKit \
 		-target $(HOST_ARCH)-apple-macos12.0 \
