@@ -251,6 +251,9 @@ type Config struct {
 	// EmbeddingCacheSize is max embeddings to cache (0 = disabled, default: 10000)
 	// Each cached embedding uses ~4KB (1024 dims × 4 bytes)
 	EmbeddingCacheSize int
+	// EmbeddingAPIKey is the API key for authenticated embedding providers (OpenAI, Cloudflare Workers AI, etc.)
+	// Env: NORNICDB_EMBEDDING_API_KEY
+	EmbeddingAPIKey string
 
 	// Slow Query Logging Configuration
 	// SlowQueryEnabled turns on slow query logging (default: true)
@@ -686,6 +689,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		embedConfig := &embed.Config{
 			Provider:   config.EmbeddingProvider,
 			APIURL:     config.EmbeddingAPIURL,
+			APIKey:     config.EmbeddingAPIKey,
 			Model:      config.EmbeddingModel,
 			Dimensions: config.EmbeddingDimensions,
 			Timeout:    30 * time.Second,
