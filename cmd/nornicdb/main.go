@@ -443,6 +443,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	serverConfig.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
 	serverConfig.EmbeddingProvider = embeddingProvider
 	serverConfig.EmbeddingAPIURL = embeddingURL
+	serverConfig.EmbeddingAPIKey = embeddingKey
 	serverConfig.EmbeddingModel = embeddingModel
 	serverConfig.EmbeddingDimensions = embeddingDim
 	serverConfig.EmbeddingCacheSize = embeddingCache
