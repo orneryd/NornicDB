@@ -14,6 +14,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -384,6 +385,11 @@ func (ae *AsyncEngine) DeleteNode(id NodeID) error {
 	ae.mu.Lock()
 	defer ae.mu.Unlock()
 
+	// Check if already marked for deletion (idempotent)
+	if ae.deleteNodes[id] {
+		return nil
+	}
+
 	// Check if node is being flushed right now (in-flight)
 	isInFlight := ae.inFlightNodes[id]
 
@@ -408,7 +414,21 @@ func (ae *AsyncEngine) DeleteNode(id NodeID) error {
 		return nil
 	}
 
-	// Node exists in underlying engine (or will after in-flight flush) - mark for deletion
+	// If in-flight, it will exist in underlying engine after flush - mark for deletion
+	if isInFlight {
+		ae.deleteNodes[id] = true
+		ae.pendingWrites++
+		return nil
+	}
+
+	// Check if node actually exists in underlying engine before marking for deletion
+	// This prevents count going negative for non-existent nodes
+	if _, err := ae.engine.GetNode(id); err != nil {
+		// Node doesn't exist anywhere - nothing to delete
+		return ErrNotFound
+	}
+
+	// Node exists in underlying engine - mark for deletion
 	ae.deleteNodes[id] = true
 	ae.pendingWrites++
 	return nil
@@ -444,6 +464,11 @@ func (ae *AsyncEngine) DeleteEdge(id EdgeID) error {
 	ae.mu.Lock()
 	defer ae.mu.Unlock()
 
+	// Check if already marked for deletion (idempotent)
+	if ae.deleteEdges[id] {
+		return nil
+	}
+
 	// Check if edge is being flushed right now (in-flight)
 	isInFlight := ae.inFlightEdges[id]
 
@@ -461,7 +486,21 @@ func (ae *AsyncEngine) DeleteEdge(id EdgeID) error {
 		return nil
 	}
 
-	// Edge exists in underlying engine (or will after in-flight flush) - mark for deletion
+	// If in-flight, it will exist in underlying engine after flush - mark for deletion
+	if isInFlight {
+		ae.deleteEdges[id] = true
+		ae.pendingWrites++
+		return nil
+	}
+
+	// Check if edge actually exists in underlying engine before marking for deletion
+	// This prevents count going negative for non-existent edges
+	if _, err := ae.engine.GetEdge(id); err != nil {
+		// Edge doesn't exist anywhere - nothing to delete
+		return ErrNotFound
+	}
+
+	// Edge exists in underlying engine - mark for deletion
 	ae.deleteEdges[id] = true
 	ae.pendingWrites++
 	return nil
@@ -886,7 +925,7 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 	}
 	pendingDeletes := int64(len(ae.deleteNodes))
 
-	count, err := ae.engine.NodeCount()
+	engineCount, err := ae.engine.NodeCount()
 	ae.mu.RUnlock()
 
 	if err != nil {
@@ -894,8 +933,14 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 	}
 
 	// Adjust for pending creates and deletes
-	count += pendingCreates
-	count -= pendingDeletes
+	count := engineCount + pendingCreates - pendingDeletes
+
+	// Clamp to zero if negative (should never happen, log for debugging)
+	if count < 0 {
+		log.Printf("⚠️ [COUNT BUG] NodeCount went negative: engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
+			engineCount, pendingCreates, pendingDeletes, count)
+		return 0, nil
+	}
 	return count, nil
 }
 
@@ -915,7 +960,7 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 	}
 	pendingDeletes := int64(len(ae.deleteEdges))
 
-	count, err := ae.engine.EdgeCount()
+	engineCount, err := ae.engine.EdgeCount()
 	ae.mu.RUnlock()
 
 	if err != nil {
@@ -923,8 +968,14 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 	}
 
 	// Adjust for pending creates and deletes
-	count += pendingCreates
-	count -= pendingDeletes
+	count := engineCount + pendingCreates - pendingDeletes
+
+	// Clamp to zero if negative (should never happen, log for debugging)
+	if count < 0 {
+		log.Printf("⚠️ [COUNT BUG] EdgeCount went negative: engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
+			engineCount, pendingCreates, pendingDeletes, count)
+		return 0, nil
+	}
 	return count, nil
 }
 

@@ -206,6 +206,69 @@ func TestDetachDeleteStatsTracking(t *testing.T) {
 		assert.Equal(t, int64(1), nc, "After flush: 1 node (nodeB)")
 		assert.Equal(t, int64(0), ec, "After flush: 0 edges")
 	})
+
+	t.Run("delete_nonexistent_node_does_not_affect_count", func(t *testing.T) {
+		// This tests the critical fix: deleting a non-existent node should NOT
+		// decrement the count and cause it to go negative
+		engine := NewMemoryEngine()
+		asyncConfig := &AsyncEngineConfig{
+			FlushInterval: 100 * time.Millisecond,
+		}
+		asyncEngine := NewAsyncEngine(engine, asyncConfig)
+		defer asyncEngine.Close()
+
+		// Initial count should be 0
+		count, err := asyncEngine.NodeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Initial count should be 0")
+
+		// Try to delete a non-existent node
+		err = asyncEngine.DeleteNode("nonexistent_node_id")
+		assert.Equal(t, ErrNotFound, err, "Deleting non-existent node should return ErrNotFound")
+
+		// Count should still be 0, not -1
+		count, err = asyncEngine.NodeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Count should remain 0 after deleting non-existent node")
+
+		// Flush and verify
+		require.NoError(t, asyncEngine.Flush())
+
+		count, err = asyncEngine.NodeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Count should remain 0 after flush")
+	})
+
+	t.Run("delete_nonexistent_edge_does_not_affect_count", func(t *testing.T) {
+		// Similar test for edges
+		engine := NewMemoryEngine()
+		asyncConfig := &AsyncEngineConfig{
+			FlushInterval: 100 * time.Millisecond,
+		}
+		asyncEngine := NewAsyncEngine(engine, asyncConfig)
+		defer asyncEngine.Close()
+
+		// Initial count should be 0
+		count, err := asyncEngine.EdgeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Initial edge count should be 0")
+
+		// Try to delete a non-existent edge
+		err = asyncEngine.DeleteEdge("nonexistent_edge_id")
+		assert.Equal(t, ErrNotFound, err, "Deleting non-existent edge should return ErrNotFound")
+
+		// Count should still be 0
+		count, err = asyncEngine.EdgeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Edge count should remain 0 after deleting non-existent edge")
+
+		// Flush and verify
+		require.NoError(t, asyncEngine.Flush())
+
+		count, err = asyncEngine.EdgeCount()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), count, "Edge count should remain 0 after flush")
+	})
 }
 
 // TestBadgerEngineDetachDeleteStats tests the underlying BadgerEngine directly

@@ -2286,7 +2286,14 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 
 	// Return cached count for O(1) performance
 	// The counter is updated atomically on create/delete operations
-	return b.nodeCount.Load(), nil
+	count := b.nodeCount.Load()
+
+	// Clamp to zero if negative (should never happen, log for debugging)
+	if count < 0 {
+		log.Printf("⚠️ [COUNT BUG] BadgerEngine.NodeCount went negative: %d (clamping to 0)", count)
+		return 0, nil
+	}
+	return count, nil
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
@@ -2301,7 +2308,14 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 
 	// Return cached count for O(1) performance
 	// The counter is updated atomically on create/delete operations
-	return b.edgeCount.Load(), nil
+	count := b.edgeCount.Load()
+
+	// Clamp to zero if negative (should never happen, log for debugging)
+	if count < 0 {
+		log.Printf("⚠️ [COUNT BUG] BadgerEngine.EdgeCount went negative: %d (clamping to 0)", count)
+		return 0, nil
+	}
+	return count, nil
 }
 
 // GetSchema returns the schema manager.

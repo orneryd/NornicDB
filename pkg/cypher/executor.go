@@ -1395,20 +1395,23 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 			}
 
 			if detach {
-				// Delete all connected edges first
-				edges, _ := e.storage.GetOutgoingEdges(storage.NodeID(nodeID))
-				for _, edge := range edges {
-					e.storage.DeleteEdge(edge.ID)
-					result.Stats.RelationshipsDeleted++
+				// Count edges that will be deleted with the node (for stats)
+				// DeleteNode() automatically deletes connected edges and updates counts internally
+				// We just need to count them for the result stats
+				outgoingEdges, _ := e.storage.GetOutgoingEdges(storage.NodeID(nodeID))
+				incomingEdges, _ := e.storage.GetIncomingEdges(storage.NodeID(nodeID))
+				edgesCount := len(outgoingEdges) + len(incomingEdges)
+
+				// DeleteNode() handles edge deletion internally and updates internal counts
+				if err := e.storage.DeleteNode(storage.NodeID(nodeID)); err == nil {
+					result.Stats.NodesDeleted++
+					result.Stats.RelationshipsDeleted += edgesCount
 				}
-				edges, _ = e.storage.GetIncomingEdges(storage.NodeID(nodeID))
-				for _, edge := range edges {
-					e.storage.DeleteEdge(edge.ID)
-					result.Stats.RelationshipsDeleted++
+			} else {
+				// Non-detach delete - just delete the node (will fail if edges exist)
+				if err := e.storage.DeleteNode(storage.NodeID(nodeID)); err == nil {
+					result.Stats.NodesDeleted++
 				}
-			}
-			if err := e.storage.DeleteNode(storage.NodeID(nodeID)); err == nil {
-				result.Stats.NodesDeleted++
 			}
 		}
 	}

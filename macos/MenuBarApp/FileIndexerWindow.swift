@@ -441,6 +441,16 @@ class FileWatchManager: ObservableObject {
         // Stop watching
         stopWatching(folder.path)
         
+        // Delete all nodes from NornicDB in background
+        Task {
+            do {
+                try await deleteNodesForFolder(folder.path)
+            } catch {
+                print("⚠️  Failed to delete nodes for folder \(folder.path): \(error.localizedDescription)")
+                // Continue with removal even if DB cleanup fails
+            }
+        }
+        
         // Remove from list
         DispatchQueue.main.async {
             self.watchedFolders.removeAll { $0.id == folder.id }
@@ -448,9 +458,6 @@ class FileWatchManager: ObservableObject {
             self.saveFolders()
             self.updateStats()
         }
-        
-        // TODO: Remove nodes from NornicDB
-        // await deleteNodesForFolder(folder.path)
     }
     
     func refreshFolder(_ folder: IndexedFolder) {
@@ -764,21 +771,62 @@ class FileWatchManager: ObservableObject {
         }
     }
     
-    /// Delete all file nodes for a folder
+    /// Delete all file nodes and their chunks for a folder
     func deleteNodesForFolder(_ folderPath: String) async throws {
-        let query = """
+        // First, get count of nodes to be deleted for logging
+        let countQuery = """
         MATCH (f:File {folder_root: $folder_root})
-        DETACH DELETE f
+        OPTIONAL MATCH (f)-[:HAS_CHUNK]->(c)
+        RETURN count(DISTINCT f) as fileCount, count(DISTINCT c) as chunkCount
         """
         
-        let body: [String: Any] = [
+        let countBody: [String: Any] = [
             "statements": [
-                ["statement": query, "parameters": ["folder_root": folderPath]]
+                ["statement": countQuery, "parameters": ["folder_root": folderPath]]
             ]
         ]
         
-        let bodyData = try JSONSerialization.data(withJSONObject: body)
-        let _ = try await makeAuthenticatedRequest(to: "/db/neo4j/tx/commit", method: "POST", body: bodyData)
+        let countData = try JSONSerialization.data(withJSONObject: countBody)
+        let (countResponseData, _) = try await makeAuthenticatedRequest(to: "/db/neo4j/tx/commit", method: "POST", body: countData)
+        
+        var fileCount = 0
+        var chunkCount = 0
+        if let json = try? JSONSerialization.jsonObject(with: countResponseData) as? [String: Any],
+           let results = json["results"] as? [[String: Any]],
+           let data = results.first?["data"] as? [[String: Any]],
+           let row = data.first?["row"] as? [Int] {
+            fileCount = row[0]
+            chunkCount = row[1]
+        }
+        
+        print("🗑️  Deleting \(fileCount) File nodes and \(chunkCount) FileChunk nodes for folder: \(folderPath)")
+        
+        // Delete all File nodes and their associated FileChunk nodes
+        // DETACH DELETE on File removes HAS_CHUNK relationships
+        // Then explicitly delete orphaned FileChunk nodes
+        let deleteQuery = """
+        MATCH (f:File {folder_root: $folder_root})
+        OPTIONAL MATCH (f)-[:HAS_CHUNK]->(c)
+        WITH f, collect(c) as chunks
+        DETACH DELETE f
+        FOREACH (chunk IN chunks | DETACH DELETE chunk)
+        """
+        
+        let deleteBody: [String: Any] = [
+            "statements": [
+                ["statement": deleteQuery, "parameters": ["folder_root": folderPath]]
+            ]
+        ]
+        
+        let deleteData = try JSONSerialization.data(withJSONObject: deleteBody)
+        let (_, response) = try await makeAuthenticatedRequest(to: "/db/neo4j/tx/commit", method: "POST", body: deleteData)
+        
+        if response.statusCode == 200 {
+            print("✅ Successfully deleted all nodes for folder: \(folderPath)")
+        } else {
+            throw NSError(domain: "FileWatchManager", code: response.statusCode,
+                         userInfo: [NSLocalizedDescriptionKey: "Failed to delete nodes from NornicDB"])
+        }
     }
     
     /// Perform vector search
