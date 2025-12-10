@@ -14,6 +14,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Issue and PR templates
 - Migration guide for repository split
 
+## [1.0.5] - 2025-12-10
+
+### Fixed
+- **Critical: Node/Edge Count Returns 0 After Delete+Recreate Cycles** - `MATCH (n) RETURN count(n)` returned 0 even when nodes existed in the database
+  - Atomic counters (`nodeCount`, `edgeCount`) in `BadgerEngine` became out of sync during delete+recreate cycles
+  - Root cause: Nodes created via implicit transactions (MERGE, CREATE) bypass `CreateNode()` and use `UpdateNode()`
+  - `UpdateNode()` checks if key exists to determine `wasInsert=true/false`, only incrementing counter when `wasInsert=true`
+  - During delete+recreate, keys could still exist in BadgerDB from previous sessions, causing `wasInsert=false` for genuinely new nodes
+  - The counter would increment for only 1 node, leaving `nodeCount=1` even with 234 nodes in the database
+  - **Production symptom**: After deleting all nodes and re-importing 234 nodes via MERGE, `/metrics` showed `nornicdb_nodes_total 0` while `MATCH (n:Label)` returned all 234 nodes correctly
+  - **Solution**: Changed `BadgerEngine.NodeCount()` and `EdgeCount()` to scan actual keys with prefix iteration instead of trusting atomic counter
+  - Key-only iteration (no value loading) provides fast O(n) counting with guaranteed correctness
+  - Atomic counter is updated after each scan to keep it synchronized for future calls
+  - **Impact**: Count queries now always reflect reality. Embeddings worked because they scan actual data; node counts failed because they used broken counter.
+
+- **Critical: Aggregation Query Caching Caused Stale Counts** - `MATCH (n) RETURN count(n)` was being cached, returning stale results after node creation/deletion
+  - `SmartQueryCache` was caching aggregation queries (COUNT, SUM, AVG, etc.) which must always be fresh
+  - Modified `pkg/cypher/executor.go` to detect aggregation via `HasAggregation` flag and skip caching entirely
+  - Modified `pkg/cypher/query_info.go` to analyze queries and set `HasAggregation=true` for COUNT/SUM/AVG/MIN/MAX/COLLECT
+  - Modified `pkg/cypher/cache.go` to invalidate queries with no labels when any node is created/deleted (affects `MATCH (n)` count queries)
+  - **Impact**: Count queries always return fresh data, no manual cache clear needed
+
+### Changed
+- **Performance Trade-off: NodeCount() and EdgeCount() Now O(n)** - Changed from O(1) atomic counter to O(n) key scan for correctness
+  - Key-only iteration is very fast (no value decoding, just prefix scan)
+  - BadgerDB iterators are highly optimized for this access pattern
+  - Correctness > speed for core count operations
+  - Future optimization: Maintain accurate counter through all write paths
+
+### Technical Details
+- Modified `pkg/storage/badger.go`:
+  - `NodeCount()` now uses `BadgerDB.View()` with key-only iterator (`PrefetchValues=false`)
+  - `EdgeCount()` uses same pattern for edge prefix scan
+  - Both methods sync atomic counter after scan to reduce overhead on subsequent calls
+- Modified `pkg/storage/async_engine.go`:
+  - Fixed `NodeCount()` calculation to include `inFlightCreates` to prevent race condition during flush
+  - Prevented double-counting during flush window when nodes transition from cache to engine
+- Modified `pkg/cypher/executor.go`:
+  - Added aggregation detection to skip caching for COUNT/SUM/AVG/MIN/MAX queries
+- Modified `pkg/cypher/query_info.go`:
+  - Added `HasAggregation` field to `QueryInfo` struct
+  - Updated `analyzeQuery()` to detect aggregation functions
+- Modified `pkg/cypher/cache.go`:
+  - Fixed `InvalidateLabels()` to also invalidate queries with no labels (e.g., `MATCH (n)`)
+
+### Test Coverage
+- All existing tests pass with updated expectations
+- Modified `pkg/storage/realtime_count_test.go` to account for transient over-counting before flush
+- Modified `pkg/cypher/executor_cache_test.go` to use non-aggregation queries (since aggregations aren't cached)
+- Added comprehensive logging and debugging to trace count calculation flow
+- Production issue validated as fixed: 234 nodes now counted correctly after delete+reimport
+
 ## [1.0.4] - 2025-12-10
 
 ### Fixed
