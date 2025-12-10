@@ -852,7 +852,7 @@ func legacyLoadFromEnv() *Config {
 		config.Features.KalmanEnabled = v == "true" || v == "1"
 	}
 
-	// Auto-TLP (Temporal Link Prediction)
+	// Auto-TLP (Topological Link prediction)
 	// Env: NORNICDB_AUTO_TLP_ENABLED (default: false)
 	if v := os.Getenv("NORNICDB_AUTO_TLP_ENABLED"); v != "" {
 		config.Features.TopologyAutoIntegrationEnabled = v == "true" || v == "1"
@@ -1636,7 +1636,7 @@ func applyEnvVars(config *Config) {
 	if getEnv("NORNICDB_KMEANS_CLUSTERING_ENABLED", "") == "true" {
 		config.Features.KalmanEnabled = true
 	}
-	// Auto-TLP (Temporal Link Prediction) - used by macOS menu bar app
+	// Auto-TLP (Topological Link prediction) - used by macOS menu bar app
 	if getEnv("NORNICDB_AUTO_TLP_ENABLED", "") == "true" {
 		config.Features.TopologyAutoIntegrationEnabled = true
 	}

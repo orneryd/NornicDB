@@ -123,7 +123,7 @@ Click the menu bar icon to:
 3. Toggle features on/off:
    - **Embeddings** - Vector search capabilities
    - **K-Means** - Automatic clustering
-   - **Auto-TLP** - Temporal link prediction
+   - **Auto-TLP** - Topological Link prediction
    - **Heimdall** - AI monitoring
 4. Click **Save & Restart**
 5. Server restarts automatically with new config

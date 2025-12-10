@@ -49,7 +49,7 @@ The Settings window (`⌘,`) allows you to easily enable/disable major features:
 
 - **Embeddings** - Vector embeddings for semantic search
 - **K-Means Clustering** - Automatic node clustering and organization
-- **Auto-TLP** - Automatic temporal link prediction
+- **Auto-TLP** - Automatic Topological Link prediction
 - **Heimdall** - AI guardian with cognitive monitoring
 
 Changes are saved to your config file and the server automatically restarts to apply them.

@@ -53,7 +53,7 @@ Each feature can be toggled on/off with a single click:
 - Configurable cluster count
 
 **🕐 Auto-TLP**
-- Automatic temporal link prediction
+- Automatic Topological Link prediction
 - Predicts future relationships
 - Time-series analysis
 

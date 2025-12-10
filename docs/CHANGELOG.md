@@ -21,7 +21,7 @@ NornicDB v1.0.0 marks the first production-ready release of the cognitive graph 
   - Docker images now use `:7285` tag for CUDA libraries
   - Requires rebuilding all platform libraries
 
-- **Auto-TLP (Automatic Temporal Link Prediction)** - Automatic relationship inference
+- **Auto-TLP (Automatic Topological Link prediction)** - Automatic relationship inference
   - Embedding similarity-based edge creation
   - Co-access pattern detection
   - Temporal proximity association

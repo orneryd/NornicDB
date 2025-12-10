@@ -131,7 +131,7 @@ The settings panel has 5 tabs:
 │                                                                          │
 │  ☑️ Enable Embeddings              Vector similarity search             │
 │  ☑️ Enable K-Means Clustering      Automatic grouping                   │
-│  ☐ Enable Auto-TLP                 Temporal link prediction             │
+│  ☐ Enable Auto-TLP                 Topological Link prediction             │
 │  ☑️ Enable Heimdall                AI guardian for security             │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘

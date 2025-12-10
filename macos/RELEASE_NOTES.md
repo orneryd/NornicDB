@@ -137,7 +137,7 @@ Press **⌘,** or select **Settings...** from the menu to configure NornicDB.
 Toggle major features on/off:
 - ✅ **Enable Embeddings** - Vector similarity search
 - ✅ **Enable K-Means Clustering** - Automatic grouping
-- ✅ **Enable Auto-TLP** - Temporal link prediction
+- ✅ **Enable Auto-TLP** - Topological Link prediction
 - ✅ **Enable Heimdall** - AI guardian for security
 
 ### Server Tab

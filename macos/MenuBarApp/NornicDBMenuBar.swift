@@ -1899,7 +1899,7 @@ struct SettingsView: View {
                 
                 FeatureToggle(
                     title: "Auto-TLP",
-                    description: "Automatic temporal link prediction",
+                    description: "Automatic Topological Link prediction",
                     isEnabled: $config.autoTLPEnabled,
                     icon: "clock.arrow.circlepath"
                 )

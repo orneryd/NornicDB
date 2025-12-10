@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add an optional LLM-based quality control layer to Auto-TLP (Automatic Temporal Link Prediction) that validates relationship suggestions before they're created. This "Heimdall" layer uses a small, local instruction-tuned model to review TLP's algorithmic suggestions and can optionally suggest additional relationships.
+Add an optional LLM-based quality control layer to Auto-TLP (Automatic Topological Link prediction) that validates relationship suggestions before they're created. This "Heimdall" layer uses a small, local instruction-tuned model to review TLP's algorithmic suggestions and can optionally suggest additional relationships.
 
 ## Motivation
 

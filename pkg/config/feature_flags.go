@@ -50,7 +50,7 @@ const (
 	// EnvKalmanEnabled is the environment variable to enable Kalman filtering
 	EnvKalmanEnabled = "NORNICDB_KALMAN_ENABLED"
 
-	// EnvAutoTLPEnabled is the environment variable to enable automatic TLP (Temporal Link Prediction)
+	// EnvAutoTLPEnabled is the environment variable to enable automatic TLP (Topological Link prediction)
 	// When enabled, the inference engine automatically creates relationships based on:
 	// - Semantic similarity (embedding distance)
 	// - Co-access patterns (nodes accessed together)

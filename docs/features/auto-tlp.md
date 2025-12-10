@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Auto-TLP** (Automatic Temporal Link Prediction) is NornicDB's system for automatically inferring and materializing relationships between nodes based on multiple signals. When enabled, the inference engine observes node access patterns and creates `SIMILAR_TO`, `CO_ACCESSED`, and other relationship types automatically.
+**Auto-TLP** (Automatic Topological Link prediction) is NornicDB's system for automatically inferring and materializing relationships between nodes based on multiple signals. When enabled, the inference engine observes node access patterns and creates `SIMILAR_TO`, `CO_ACCESSED`, and other relationship types automatically.
 
 > ⚠️ **Disabled by Default**: Auto-TLP can create many edges automatically. Enable only when you want the system to actively build your knowledge graph.
 
