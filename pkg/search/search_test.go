@@ -685,6 +685,126 @@ func TestSearchService_RemoveNode(t *testing.T) {
 	}
 }
 
+// TestSearchService_RemoveNode_DecrementsEmbeddingCount verifies that removing a node
+// decrements the embedding count in stats. This is critical for ensuring that when nodes
+// are deleted via Cypher, the embedding count is updated correctly without requiring
+// a manual "regenerate" operation.
+func TestSearchService_RemoveNode_DecrementsEmbeddingCount(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+
+	svc := NewServiceWithDimensions(engine, 4) // 4-dimensional embeddings for test
+
+	// Initial state: no embeddings
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Should start with 0 embeddings")
+
+	// Create and index 3 nodes with embeddings
+	// Note: Node.Embedding is the struct field used by IndexNode, not Properties["embedding"]
+	nodes := []*storage.Node{
+		{
+			ID:         "node1",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Alice"},
+			Embedding:  []float32{1, 0, 0, 0},
+		},
+		{
+			ID:         "node2",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Bob"},
+			Embedding:  []float32{0, 1, 0, 0},
+		},
+		{
+			ID:         "node3",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Charlie"},
+			Embedding:  []float32{0, 0, 1, 0},
+		},
+	}
+
+	for _, node := range nodes {
+		require.NoError(t, engine.CreateNode(node))
+		require.NoError(t, svc.IndexNode(node))
+	}
+
+	// Verify all 3 nodes are indexed
+	assert.Equal(t, 3, svc.EmbeddingCount(), "Should have 3 embeddings after indexing")
+
+	// Remove node1
+	require.NoError(t, svc.RemoveNode("node1"))
+	assert.Equal(t, 2, svc.EmbeddingCount(), "Should have 2 embeddings after removing node1")
+
+	// Remove node2
+	require.NoError(t, svc.RemoveNode("node2"))
+	assert.Equal(t, 1, svc.EmbeddingCount(), "Should have 1 embedding after removing node2")
+
+	// Remove node3
+	require.NoError(t, svc.RemoveNode("node3"))
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Should have 0 embeddings after removing all nodes")
+
+	// Removing non-existent node should not affect count
+	require.NoError(t, svc.RemoveNode("non-existent"))
+	assert.Equal(t, 0, svc.EmbeddingCount(), "Count should remain 0 after removing non-existent node")
+}
+
+// TestSearchService_RemoveNode_OnlyRemovesTargetNode ensures RemoveNode is precise
+// and doesn't affect other nodes' embeddings.
+func TestSearchService_RemoveNode_OnlyRemovesTargetNode(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+
+	svc := NewServiceWithDimensions(engine, 4) // 4-dimensional embeddings for test
+
+	// Create distinct embeddings for easy search verification
+	// Note: Node.Embedding is the struct field used by IndexNode
+	node1 := &storage.Node{
+		ID:         "target-to-remove",
+		Labels:     []string{"Document"},
+		Properties: map[string]any{"content": "unique alpha content"},
+		Embedding:  []float32{1, 0, 0, 0},
+	}
+	node2 := &storage.Node{
+		ID:         "should-remain-1",
+		Labels:     []string{"Document"},
+		Properties: map[string]any{"content": "unique beta content"},
+		Embedding:  []float32{0, 1, 0, 0},
+	}
+	node3 := &storage.Node{
+		ID:         "should-remain-2",
+		Labels:     []string{"Document"},
+		Properties: map[string]any{"content": "unique gamma content"},
+		Embedding:  []float32{0, 0, 1, 0},
+	}
+
+	for _, node := range []*storage.Node{node1, node2, node3} {
+		require.NoError(t, engine.CreateNode(node))
+		require.NoError(t, svc.IndexNode(node))
+	}
+
+	assert.Equal(t, 3, svc.EmbeddingCount())
+
+	// Remove only the target node
+	require.NoError(t, svc.RemoveNode("target-to-remove"))
+
+	// Verify count decreased
+	assert.Equal(t, 2, svc.EmbeddingCount())
+
+	// Verify remaining nodes are still searchable
+	opts := DefaultSearchOptions()
+
+	// Search for remaining nodes by their unique content
+	response, err := svc.Search(context.Background(), "beta", nil, opts)
+	require.NoError(t, err)
+	found := false
+	for _, r := range response.Results {
+		if r.ID == "should-remain-1" {
+			found = true
+		}
+		// The removed node should NOT appear
+		assert.NotEqual(t, "target-to-remove", r.ID, "Removed node should not appear in results")
+	}
+	assert.True(t, found, "Remaining node 'should-remain-1' should be searchable")
+}
+
 // TestSearchService_HybridSearch tests the hybrid RRF search.
 func TestSearchService_HybridSearch(t *testing.T) {
 	engine := storage.NewMemoryEngine()

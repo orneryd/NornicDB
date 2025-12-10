@@ -951,15 +951,20 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Wire up storage event callbacks to keep search indexes synchronized
 	// Storage is the single source of truth - it notifies when changes happen
-	// This works whether storage is BadgerEngine directly or wrapped in AsyncEngine
+	// The storage chain can be: AsyncEngine -> WALEngine -> BadgerEngine
 	var underlyingEngine storage.Engine = db.storage
 
-	// If storage is wrapped in AsyncEngine, get the underlying BadgerEngine
-	if asyncEngine, ok := db.storage.(*storage.AsyncEngine); ok {
-		underlyingEngine = asyncEngine.GetUnderlying()
+	// Unwrap AsyncEngine if present
+	if asyncEngine, ok := underlyingEngine.(*storage.AsyncEngine); ok {
+		underlyingEngine = asyncEngine.GetEngine()
 	}
 
-	// Set callbacks on the actual storage engine (where operations actually happen)
+	// Unwrap WALEngine if present
+	if walEngine, ok := underlyingEngine.(*storage.WALEngine); ok {
+		underlyingEngine = walEngine.GetEngine()
+	}
+
+	// Set callbacks on the actual storage engine (BadgerEngine which implements StorageEventNotifier)
 	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
 		// When a node is created, automatically index it for search
 		notifier.OnNodeCreated(func(node *storage.Node) {
