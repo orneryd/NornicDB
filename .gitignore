@@ -42,7 +42,6 @@ Thumbs.db
 models/
 
 # Build artifacts
-nornicdb
 /nornicdb
 
 # llama.cpp built libraries (build from source via scripts/build-llama*.sh or .ps1)
