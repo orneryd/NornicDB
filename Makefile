@@ -860,7 +860,7 @@ macos-menubar:
 	@echo "Building macOS Menu Bar App..."
 ifeq ($(HOST_OS),darwin)
 	@echo "Architecture: $(HOST_ARCH)"
-	@rm -rf macos/build
+	@rm -rf macos/build 2>/dev/null || sudo rm -rf macos/build 2>/dev/null || true
 	@mkdir -p macos/build
 	@cd macos/MenuBarApp && swiftc -o ../build/NornicDB \
 		NornicDBMenuBar.swift \
@@ -945,7 +945,7 @@ macos-all: build macos-menubar macos-install
 # Clean macOS build artifacts
 macos-clean:
 	@echo "Cleaning macOS build artifacts..."
-	@rm -rf macos/build
+	@rm -rf macos/build 2>/dev/null || sudo rm -rf macos/build 2>/dev/null || true
 	@if [ -d "dist/installer" ]; then \
 		echo "Removing installer artifacts (may require sudo)..."; \
 		chmod -R u+w dist/installer 2>/dev/null || true; \
