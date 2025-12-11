@@ -4081,7 +4081,7 @@ skipArrayIndexing:
 	}
 
 	// ========================================
-	// Variable Reference - return whole node/rel
+	// Variable Reference - return whole node/rel/path
 	// ========================================
 	if node, ok := nodes[expr]; ok {
 		// Check if this is a scalar wrapper (pseudo-node created for YIELD variables)
@@ -4098,6 +4098,19 @@ skipArrayIndexing:
 			"_edgeId":    string(rel.ID),
 			"type":       rel.Type,
 			"properties": rel.Properties,
+		}
+	}
+	// Check if this is a path variable - return the PathResult as a map
+	// This allows path functions like length(path), relationships(path) to work after WITH
+	if paths != nil {
+		if pathResult, ok := paths[expr]; ok && pathResult != nil {
+			// Return path as a serializable structure that can be used later
+			return map[string]interface{}{
+				"_pathResult": pathResult, // Keep the PathResult for later use
+				"length":      pathResult.Length,
+				"nodes":       pathResult.Nodes,
+				"rels":        pathResult.Relationships,
+			}
 		}
 	}
 

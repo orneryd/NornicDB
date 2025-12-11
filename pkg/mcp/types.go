@@ -138,6 +138,20 @@ type SearchResult struct {
 	ContentPreview string                 `json:"content_preview,omitempty"`
 	Similarity     float64                `json:"similarity"`
 	Properties     map[string]interface{} `json:"properties,omitempty"`
+	// Related nodes discovered via graph traversal (only populated when depth > 1)
+	Related []RelatedNode `json:"related,omitempty"`
+}
+
+// RelatedNode represents a node connected to a search result via relationships.
+// Provides context about how nodes are connected in the knowledge graph.
+type RelatedNode struct {
+	ID           string   `json:"id"`
+	Type         string   `json:"type"`
+	Title        string   `json:"title,omitempty"`
+	Distance     int      `json:"distance"`             // Hops from the source node (1 = direct, 2 = two hops, etc.)
+	Relationship string   `json:"relationship"`         // Relationship type that connects to this node
+	Direction    string   `json:"direction,omitempty"`  // "outgoing", "incoming", or "both"
+	Path         []string `json:"path,omitempty"`       // Node IDs in the path (for depth > 1)
 }
 
 // LinkParams - Input for link tool

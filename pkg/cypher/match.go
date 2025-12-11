@@ -1245,10 +1245,28 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		Stats:   &QueryStats{},
 	}
 
+	// Extract path variable if pattern has assignment: path = (a)-[r]-(b)
+	pathVariable := ""
+	patternForParsing := pattern
+	if eqIdx := strings.Index(pattern, "="); eqIdx > 0 {
+		beforeEq := strings.TrimSpace(pattern[:eqIdx])
+		afterEq := strings.TrimSpace(pattern[eqIdx+1:])
+		// Path variable should be a simple identifier, and after = should start with (
+		if !strings.Contains(beforeEq, " ") && !strings.Contains(beforeEq, "(") && strings.HasPrefix(afterEq, "(") {
+			pathVariable = beforeEq
+			patternForParsing = afterEq
+		}
+	}
+
 	// Parse the traversal pattern
-	matches := e.parseTraversalPattern(pattern)
+	matches := e.parseTraversalPattern(patternForParsing)
 	if matches == nil {
-		return result, fmt.Errorf("invalid traversal pattern: %s", pattern)
+		return result, fmt.Errorf("invalid traversal pattern: %s", patternForParsing)
+	}
+
+	// Set the path variable in matches for buildPathContext to use
+	if pathVariable != "" {
+		matches.PathVariable = pathVariable
 	}
 
 	// Execute traversal to get all paths
@@ -1269,6 +1287,30 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 	// Extract WITH clause section
 	withSection := strings.TrimSpace(withAndReturn[4:returnIdx]) // Skip "WITH"
+
+	// Extract LIMIT/SKIP from WITH section (e.g., "WITH path, connected LIMIT 10")
+	var withLimitVal, withSkipVal int
+	upperWithSection := strings.ToUpper(withSection)
+	if idx := findKeywordNotInBrackets(upperWithSection, " LIMIT "); idx > 0 {
+		limitPart := strings.TrimSpace(withSection[idx+7:])
+		// Find end of LIMIT value (at SKIP or end)
+		endIdx := len(limitPart)
+		if skipIdx := findKeywordNotInBrackets(strings.ToUpper(limitPart), " SKIP "); skipIdx >= 0 && skipIdx < endIdx {
+			endIdx = skipIdx
+		}
+		withLimitVal, _ = strconv.Atoi(strings.TrimSpace(limitPart[:endIdx]))
+		withSection = strings.TrimSpace(withSection[:idx])
+		upperWithSection = strings.ToUpper(withSection)
+	}
+	if idx := findKeywordNotInBrackets(upperWithSection, " SKIP "); idx > 0 {
+		skipPart := strings.TrimSpace(withSection[idx+6:])
+		endIdx := len(skipPart)
+		if limIdx := findKeywordNotInBrackets(strings.ToUpper(skipPart), " LIMIT "); limIdx >= 0 && limIdx < endIdx {
+			endIdx = limIdx
+		}
+		withSkipVal, _ = strconv.Atoi(strings.TrimSpace(skipPart[:endIdx]))
+		withSection = strings.TrimSpace(withSection[:idx])
+	}
 
 	// Check for WHERE between WITH and RETURN (post-aggregation filter, like SQL HAVING)
 	var withClause string
@@ -1573,6 +1615,18 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		computedRows = filtered
 	}
 
+	// Apply WITH SKIP
+	if withSkipVal > 0 && withSkipVal < len(computedRows) {
+		computedRows = computedRows[withSkipVal:]
+	} else if withSkipVal >= len(computedRows) {
+		computedRows = []computedRow{}
+	}
+
+	// Apply WITH LIMIT
+	if withLimitVal > 0 && withLimitVal < len(computedRows) {
+		computedRows = computedRows[:withLimitVal]
+	}
+
 	// Parse RETURN items and build final result
 	returnItems := e.parseReturnItems(returnClause)
 	result.Columns = make([]string, len(returnItems))
@@ -1846,6 +1900,114 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 					}
 					return result
 				}
+			}
+		}
+
+		// For length(path), extract the path length from a path map
+		if matchFuncStartAndSuffix(expr, "length") {
+			inner := extractFuncArgs(expr, "length")
+			if val, ok := values[inner]; ok {
+				if pathMap, ok := val.(map[string]interface{}); ok {
+					if length, ok := pathMap["length"]; ok {
+						return length
+					}
+				}
+			}
+		}
+
+		// For relationships(path), extract the relationships from a path map
+		if matchFuncStartAndSuffix(expr, "relationships") {
+			inner := extractFuncArgs(expr, "relationships")
+			if val, ok := values[inner]; ok {
+				if pathMap, ok := val.(map[string]interface{}); ok {
+					if rels, ok := pathMap["rels"]; ok {
+						// Convert []*storage.Edge to []interface{} of maps
+						if edges, ok := rels.([]*storage.Edge); ok {
+							result := make([]interface{}, len(edges))
+							for i, edge := range edges {
+								result[i] = map[string]interface{}{
+									"_edgeId":    string(edge.ID),
+									"type":       edge.Type,
+									"properties": edge.Properties,
+								}
+							}
+							return result
+						}
+					}
+				}
+			}
+		}
+
+		// For size(list), get the count of elements in a list or variable
+		if matchFuncStartAndSuffix(expr, "size") {
+			inner := extractFuncArgs(expr, "size")
+			if val, ok := values[inner]; ok {
+				switch v := val.(type) {
+				case []interface{}:
+					return int64(len(v))
+				case []*storage.Node:
+					return int64(len(v))
+				case []*storage.Edge:
+					return int64(len(v))
+				case []string:
+					return int64(len(v))
+				case string:
+					return int64(len(v))
+				}
+			}
+			// Recursively evaluate the inner expression first
+			innerVal := e.evaluateExpressionFromValues(inner, values)
+			switch v := innerVal.(type) {
+			case []interface{}:
+				return int64(len(v))
+			case []*storage.Node:
+				return int64(len(v))
+			case []*storage.Edge:
+				return int64(len(v))
+			case []string:
+				return int64(len(v))
+			case string:
+				return int64(len(v))
+			}
+			return int64(0)
+		}
+	}
+
+	// Handle list comprehension [r IN relationships(path) | type(r)]
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") && strings.Contains(expr, " IN ") && strings.Contains(expr, " | ") {
+		inner := strings.TrimSpace(expr[1 : len(expr)-1])
+		inIdx := strings.Index(strings.ToUpper(inner), " IN ")
+		if inIdx > 0 {
+			// varName is the iterator variable (e.g., "r" in "[r IN ... | ...]")
+			_ = strings.TrimSpace(inner[:inIdx]) // varName - used for context if needed
+			rest := inner[inIdx+4:]
+			pipeIdx := strings.Index(rest, " | ")
+			if pipeIdx > 0 {
+				listExpr := strings.TrimSpace(rest[:pipeIdx])
+				transform := strings.TrimSpace(rest[pipeIdx+3:])
+
+				// Evaluate the list expression
+				list := e.evaluateExpressionFromValues(listExpr, values)
+				listVal, ok := list.([]interface{})
+				if !ok {
+					return []interface{}{}
+				}
+
+				result := make([]interface{}, len(listVal))
+				for i, item := range listVal {
+					// For type(r), extract the type from the relationship map
+					if matchFuncStartAndSuffix(transform, "type") {
+						if mapItem, ok := item.(map[string]interface{}); ok {
+							if relType, ok := mapItem["type"]; ok {
+								result[i] = relType
+								continue
+							}
+						}
+					}
+					// Fallback
+					result[i] = nil
+				}
+				return result
 			}
 		}
 	}

@@ -3028,8 +3028,21 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			if returnIdx > 0 {
 				patternPart := strings.TrimSpace(matchPart[:returnIdx])
 				returnPart := matchPart[returnIdx:]
-				// Add WHERE id(seed) = $param before RETURN (parameterized - safe from injection)
-				substitutedBody := "MATCH " + patternPart + " WHERE id(" + nodePattern.variable + ") = $" + seedIDParamName + " " + returnPart
+
+				// Check if there's already a WHERE clause in patternPart
+				whereIdx := findKeywordNotInBrackets(strings.ToUpper(patternPart), " WHERE ")
+				var substitutedBody string
+				seedFilter := "id(" + nodePattern.variable + ") = $" + seedIDParamName
+
+				if whereIdx > 0 {
+					// There's already a WHERE clause - append with AND
+					beforeWhere := patternPart[:whereIdx]
+					afterWhere := patternPart[whereIdx+7:] // Skip " WHERE "
+					substitutedBody = "MATCH " + beforeWhere + " WHERE " + seedFilter + " AND " + afterWhere + " " + returnPart
+				} else {
+					// No existing WHERE - add one
+					substitutedBody = "MATCH " + patternPart + " WHERE " + seedFilter + " " + returnPart
+				}
 
 				// Execute the substituted subquery with parameters
 				innerResult, err := e.Execute(ctx, substitutedBody, subqueryParams)

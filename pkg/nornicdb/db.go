@@ -2402,6 +2402,56 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
 	}, nil
 }
 
+// GetEdgesForNode returns all edges (both incoming and outgoing) for a given node.
+// This is useful for graph traversal and relationship inspection.
+func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.closed {
+		return nil, ErrClosed
+	}
+
+	if nodeID == "" {
+		return nil, ErrInvalidID
+	}
+
+	var edges []*GraphEdge
+	storageNodeID := storage.NodeID(nodeID)
+
+	// Get outgoing edges
+	outgoing, err := db.storage.GetOutgoingEdges(storageNodeID)
+	if err == nil {
+		for _, e := range outgoing {
+			edges = append(edges, &GraphEdge{
+				ID:         string(e.ID),
+				Source:     string(e.StartNode),
+				Target:     string(e.EndNode),
+				Type:       e.Type,
+				Properties: e.Properties,
+				CreatedAt:  e.CreatedAt,
+			})
+		}
+	}
+
+	// Get incoming edges
+	incoming, err := db.storage.GetIncomingEdges(storageNodeID)
+	if err == nil {
+		for _, e := range incoming {
+			edges = append(edges, &GraphEdge{
+				ID:         string(e.ID),
+				Source:     string(e.StartNode),
+				Target:     string(e.EndNode),
+				Type:       e.Type,
+				Properties: e.Properties,
+				CreatedAt:  e.CreatedAt,
+			})
+		}
+	}
+
+	return edges, nil
+}
+
 // CreateEdge creates a new edge.
 func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
 	db.mu.Lock()

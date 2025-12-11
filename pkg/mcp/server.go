@@ -609,7 +609,7 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 	}, nil
 }
 
-// handleDiscover implements the discover tool - semantic search.
+// handleDiscover implements the discover tool - semantic search with graph traversal.
 func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	query := getString(args, "query")
 	if query == "" {
@@ -621,6 +621,14 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 	// Note: RRF hybrid search scores are typically 0.01-0.05 range (not 0-1 cosine similarity)
 	// Use a low default threshold to include results, or set to 0 to return all
 	minScore := getFloat64(args, "min_similarity", 0.0)
+	// Depth for graph traversal (1-3, default 1 = no related nodes)
+	depth := getInt(args, "depth", 1)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > 3 {
+		depth = 3
+	}
 
 	method := "keyword"
 
@@ -640,14 +648,19 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 						}
 						content := getStringProp(r.Node.Properties, "content")
 						preview := truncateString(content, 200)
-						results = append(results, SearchResult{
+						result := SearchResult{
 							ID:             r.Node.ID,
 							Type:           getLabelType(r.Node.Labels),
 							Title:          getStringProp(r.Node.Properties, "title"),
 							ContentPreview: preview,
 							Similarity:     r.Score,
 							Properties:     sanitizePropertiesForLLM(r.Node.Properties),
-						})
+						}
+						// Add related nodes if depth > 1
+						if depth > 1 {
+							result.Related = s.getRelatedNodes(ctx, r.Node.ID, depth)
+						}
+						results = append(results, result)
 					}
 					return DiscoverResult{
 						Results: results,
@@ -665,14 +678,19 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 			for _, r := range dbResults {
 				content := getStringProp(r.Node.Properties, "content")
 				preview := truncateString(content, 200)
-				results = append(results, SearchResult{
+				result := SearchResult{
 					ID:             r.Node.ID,
 					Type:           getLabelType(r.Node.Labels),
 					Title:          getStringProp(r.Node.Properties, "title"),
 					ContentPreview: preview,
 					Similarity:     r.Score,
 					Properties:     sanitizePropertiesForLLM(r.Node.Properties),
-				})
+				}
+				// Add related nodes if depth > 1
+				if depth > 1 {
+					result.Related = s.getRelatedNodes(ctx, r.Node.ID, depth)
+				}
+				results = append(results, result)
 			}
 			return DiscoverResult{
 				Results: results,
@@ -1235,6 +1253,59 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 		}
 	}
 	return nil
+}
+
+// getRelatedNodes fetches related nodes up to the specified depth using graph traversal.
+// Returns a slice of RelatedNode with relationship information.
+func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
+	if depth <= 1 || s.db == nil {
+		return nil
+	}
+
+	// Use the database's Neighbors function for graph traversal
+	neighbors, err := s.db.Neighbors(ctx, nodeID, depth-1, "")
+	if err != nil || len(neighbors) == 0 {
+		return nil
+	}
+
+	var related []RelatedNode
+	for _, mem := range neighbors {
+		// Calculate distance (we don't have exact path info from Neighbors, so estimate based on depth)
+		distance := 1 // Default to 1 hop - Neighbors returns all within depth range
+
+		// Get the relationship type if possible by checking edges
+		relType := "relates_to" // Default fallback
+		direction := ""
+
+		// Try to get the actual relationship from edges
+		if s.db != nil {
+			edges, err := s.db.GetEdgesForNode(ctx, nodeID)
+			if err == nil {
+				for _, edge := range edges {
+					if edge.Source == nodeID && edge.Target == mem.ID {
+						relType = edge.Type
+						direction = "outgoing"
+						break
+					} else if edge.Target == nodeID && edge.Source == mem.ID {
+						relType = edge.Type
+						direction = "incoming"
+						break
+					}
+				}
+			}
+		}
+
+		related = append(related, RelatedNode{
+			ID:           mem.ID,
+			Type:         string(mem.Tier),
+			Title:        mem.Title,
+			Distance:     distance,
+			Relationship: relType,
+			Direction:    direction,
+		})
+	}
+
+	return related
 }
 
 // truncateString truncates a string to maxLen with ellipsis
