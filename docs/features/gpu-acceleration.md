@@ -35,6 +35,59 @@ If no GPU is available:
 
 ## Configuration
 
+### Backend selection environment variable
+
+You can explicitly request which GPU backend NornicDB should use by setting the `NORNICDB_GPU_BACKEND` environment variable. When unset the server will auto-detect an available backend.
+
+Accepted values:
+- `auto` (default) — automatically detect the best available backend
+- `vulkan` — use the Vulkan backend
+- `cuda` — use the CUDA backend (NVIDIA GPUs)
+- `metal` — use Apple's Metal backend (macOS/Apple Silicon)
+- `opencl` — use OpenCL when available
+- `cpu` — force CPU-only fallback
+
+If a requested backend is unavailable at runtime, NornicDB will fall back to a compatible backend or to CPU processing.
+
+Examples
+
+PowerShell (temporary for current process):
+
+```powershell
+$env:NORNICDB_GPU_BACKEND = 'vulkan'
+.\bin\nornicdb.exe serve
+```
+
+Unix shell:
+
+```bash
+export NORNICDB_GPU_BACKEND=vulkan
+./bin/nornicdb serve
+```
+
+Docker run example:
+
+```bash
+docker run -e NORNICDB_GPU_BACKEND=vulkan \
+  -p 7474:7474 -p 7687:7687 \
+  --device /dev/dri:/dev/dri \
+  timothyswt/nornicdb-amd64-vulkan:latest
+```
+
+docker-compose snippet:
+
+```yaml
+services:
+  nornicdb:
+    image: timothyswt/nornicdb-amd64-vulkan:latest
+    environment:
+      - NORNICDB_GPU_BACKEND=vulkan
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+Continue to the Docker section for platform-specific build/deploy examples.
+
 
 
 ### Docker with GPU

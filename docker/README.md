@@ -238,6 +238,65 @@ docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan
 docker build -f docker/Dockerfile.amd64-vulkan-heimdall --build-arg EMBED_MODEL=true -t nornicdb-amd64-vulkan-heimdall-bge .
 ```
 
+### Windows PowerShell build examples
+
+If you're on Windows (PowerShell), run the same `docker build` commands from the repository root. Example PowerShell commands:
+
+```powershell
+# Build base Vulkan image
+docker build -f docker/Dockerfile.amd64-vulkan -t nornicdb-amd64-vulkan .
+
+# Build Vulkan + Heimdall
+docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall .
+
+# Build with models embedded (ensure ./models contains required files)
+docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall-bge --build-arg EMBED_MODEL=true --progress=plain
+```
+
+### Model placement for `EMBED_MODEL`
+
+When building with `--build-arg EMBED_MODEL=true`, the Docker build context expects the model files to be available in a local `models/` directory at the repository root. Place these files before running the build:
+
+```powershell
+# From repo root (PowerShell)
+mkdir models -ErrorAction SilentlyContinue
+# Copy your models into ./models, e.g.:
+Copy-Item C:\path\to\bge-m3.gguf models\
+Copy-Item C:\path\to\qwen2.5-0.5b-instruct.gguf models\
+
+# Then run the build with EMBED_MODEL=true
+docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall-bge --build-arg EMBED_MODEL=true .
+```
+
+### Optional: Compile SPIR‑V shaders locally (advanced)
+
+The repository includes precompiled SPIR‑V shader binaries used by the Vulkan compute pipelines. If you need to recompile shaders (for local development or shader edits) you can use `glslc` from the Vulkan SDK.
+
+Windows (PowerShell) example:
+
+```powershell
+# Set VULKAN_SDK if not already set
+$env:VULKAN_SDK = 'C:\VulkanSDK\1.4.335.0'
+& "$env:VULKAN_SDK\Bin\glslc.exe" pkg/gpu/vulkan/shaders/cosine_similarity.comp -o pkg/gpu/vulkan/cosine_similarity.spv
+& "$env:VULKAN_SDK\Bin\glslc.exe" pkg/gpu/vulkan/shaders/normalize.comp -o pkg/gpu/vulkan/normalize.spv
+& "$env:VULKAN_SDK\Bin\glslc.exe" pkg/gpu/vulkan/shaders/topk.comp -o pkg/gpu/vulkan/topk.spv
+& "$env:VULKAN_SDK\Bin\glslc.exe" pkg/gpu/vulkan/shaders/topk_full.comp -o pkg/gpu/vulkan/topk_full.spv
+```
+
+Linux / macOS example:
+
+```bash
+glslc pkg/gpu/vulkan/shaders/cosine_similarity.comp -o pkg/gpu/vulkan/cosine_similarity.spv
+glslc pkg/gpu/vulkan/shaders/normalize.comp -o pkg/gpu/vulkan/normalize.spv
+glslc pkg/gpu/vulkan/shaders/topk.comp -o pkg/gpu/vulkan/topk.spv
+glslc pkg/gpu/vulkan/shaders/topk_full.comp -o pkg/gpu/vulkan/topk_full.spv
+```
+
+Notes:
+- `glslc` is included in the Vulkan SDK. On Windows it is typically under `C:\VulkanSDK\<version>\Bin\glslc.exe`.
+- After compiling, the `.spv` files must be placed in `pkg/gpu/vulkan/` so the build embeds them.
+
+
 ### Running Vulkan Images
 ```bash
 # Using docker-compose (recommended)
@@ -414,6 +473,7 @@ See [APOC Plugin Guide](../docs/features/plugin-system.md) for creating custom p
 | `NORNICDB_EMBEDDING_PROVIDER` | `local` | Embedding provider (local/ollama/openai/none) |
 | `NORNICDB_EMBEDDING_MODEL` | `models/bge-m3.gguf` | Embedding model path |
 | `NORNICDB_MODELS_DIR` | `/app/models` | Models directory |
+| `NORNICDB_GPU_BACKEND` | `-1` (CUDA) / `0` (Metal) | GPU layers for embeddings |
 | `NORNICDB_EMBEDDING_GPU_LAYERS` | `-1` (CUDA) / `0` (Metal) | GPU layers for embeddings |
 | `NORNICDB_HEIMDALL_ENABLED` | `false` | Enable Heimdall AI assistant |
 | `NORNICDB_HEIMDALL_MODEL` | `models/qwen2.5-0.5b-instruct-q4_k_m.gguf` | Heimdall LLM model path |
