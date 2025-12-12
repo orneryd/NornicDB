@@ -559,6 +559,11 @@ func (d *Device) findMemoryType(typeFilter uint32, properties uint32) (uint32, b
 
 // NewBuffer creates a new GPU buffer with data.
 func (d *Device) NewBuffer(data []float32) (*Buffer, error) {
+	// Check if device is initialized
+	if d.device == 0 {
+		return nil, ErrVulkanNotAvailable
+	}
+
 	if len(data) == 0 {
 		return nil, errors.New("vulkan: cannot create empty buffer")
 	}
@@ -637,6 +642,11 @@ func (d *Device) NewBuffer(data []float32) (*Buffer, error) {
 
 // NewEmptyBuffer creates an uninitialized GPU buffer.
 func (d *Device) NewEmptyBuffer(count uint64) (*Buffer, error) {
+	// Check if device is initialized
+	if d.device == 0 {
+		return nil, ErrVulkanNotAvailable
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -784,6 +794,11 @@ func (b *Buffer) writeFloat32(data []float32) error {
 // NormalizeVectors normalizes vectors in-place to unit length.
 // This is a CPU implementation as compute shaders require more setup.
 func (d *Device) NormalizeVectors(vectors *Buffer, n, dimensions uint32) error {
+	// Check if device is initialized
+	if d.device == 0 {
+		return ErrVulkanNotAvailable
+	}
+
 	data := vectors.ReadFloat32(int(n * dimensions))
 	if data == nil {
 		return ErrInvalidBuffer
@@ -823,6 +838,10 @@ func sqrt64(x float64) float64 {
 // This is a CPU implementation that uses GPU memory buffers.
 func (d *Device) CosineSimilarity(embeddings, query, scores *Buffer,
 	n, dimensions uint32, normalized bool) error {
+	// Check if device is initialized
+	if d.device == 0 {
+		return ErrVulkanNotAvailable
+	}
 
 	embData := embeddings.ReadFloat32(int(n * dimensions))
 	queryData := query.ReadFloat32(int(dimensions))
@@ -859,6 +878,11 @@ func (d *Device) CosineSimilarity(embeddings, query, scores *Buffer,
 
 // TopK finds the k highest scoring indices.
 func (d *Device) TopK(scores *Buffer, n, k uint32) ([]uint32, []float32, error) {
+	// Check if device is initialized
+	if d.device == 0 {
+		return nil, nil, ErrVulkanNotAvailable
+	}
+
 	scoreData := scores.ReadFloat32(int(n))
 	if scoreData == nil {
 		return nil, nil, ErrInvalidBuffer
@@ -892,6 +916,11 @@ func (d *Device) TopK(scores *Buffer, n, k uint32) ([]uint32, []float32, error) 
 
 // Search performs a complete similarity search.
 func (d *Device) Search(embeddings *Buffer, query []float32, n, dimensions uint32, k int, normalized bool) ([]SearchResult, error) {
+	// Check if device is initialized
+	if d.device == 0 {
+		return nil, ErrVulkanNotAvailable
+	}
+
 	if k <= 0 {
 		return nil, nil
 	}
