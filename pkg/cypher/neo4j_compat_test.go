@@ -253,6 +253,60 @@ LIMIT 5`
 			assert.Contains(t, err.Error(), "index", "Error should mention the missing index")
 		}
 	})
+
+	t.Run("node_search built-in index should work without creation", func(t *testing.T) {
+		// Create test data with searchable content
+		store.CreateNode(&storage.Node{
+			ID:     "test-memory-1",
+			Labels: []string{"Memory"},
+			Properties: map[string]interface{}{
+				"type":    "memory",
+				"title":   "Authentication System Design",
+				"content": "The authentication system uses JWT tokens for session management",
+			},
+		})
+		store.CreateNode(&storage.Node{
+			ID:     "test-memory-2",
+			Labels: []string{"Memory"},
+			Properties: map[string]interface{}{
+				"type":    "memory",
+				"title":   "Database Schema",
+				"content": "PostgreSQL database with user tables",
+			},
+		})
+
+		// This is the exact query pattern Mimir uses
+		query := `
+CALL db.index.fulltext.queryNodes('node_search', 'authentication')
+YIELD node, score
+RETURN node.id as id, node.title as title, score
+ORDER BY score DESC
+LIMIT 10`
+
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, "node_search index should work without explicit creation (Mimir compatibility)")
+		require.GreaterOrEqual(t, len(result.Rows), 1, "Should find at least one result")
+
+		// First result should be the authentication-related node
+		firstId := result.Rows[0][0]
+		assert.Equal(t, "test-memory-1", firstId, "Authentication node should be returned first")
+
+		// Score should be a positive BM25 value
+		score := result.Rows[0][2].(float64)
+		assert.Greater(t, score, 0.0, "Score should be positive BM25 value")
+	})
+
+	t.Run("default built-in index should also work", func(t *testing.T) {
+		query := `
+CALL db.index.fulltext.queryNodes('default', 'authentication')
+YIELD node, score
+RETURN node.id as id, score
+LIMIT 5`
+
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, "default index should work without explicit creation")
+		require.GreaterOrEqual(t, len(result.Rows), 1, "Should find results")
+	})
 }
 
 // ============================================================================

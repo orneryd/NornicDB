@@ -38,13 +38,16 @@ func toFloat32Slice(v interface{}) []float32 {
 }
 
 // yieldClause represents parsed YIELD information from a CALL statement.
-// Syntax: CALL procedure() YIELD var1, var2 AS alias WHERE condition
+// Syntax: CALL procedure() YIELD var1, var2 AS alias WHERE condition RETURN ... ORDER BY ... LIMIT n SKIP m
 type yieldClause struct {
 	items      []yieldItem // List of yielded items (possibly with aliases)
 	yieldAll   bool        // YIELD * - return all columns
 	where      string      // Optional WHERE condition after YIELD
 	hasReturn  bool        // Whether there's a RETURN clause after
 	returnExpr string      // The RETURN expression if present
+	orderBy    string      // ORDER BY clause (e.g., "score DESC")
+	limit      int         // LIMIT value (-1 if not specified)
+	skip       int         // SKIP value (-1 if not specified)
 }
 
 // yieldItem represents a single item in a YIELD clause
@@ -56,18 +59,32 @@ type yieldItem struct {
 // parseYieldClause extracts YIELD information from a CALL statement.
 // Handles: YIELD *, YIELD a, b, YIELD a AS x, b AS y, YIELD a WHERE a.score > 0.5
 func parseYieldClause(cypher string) *yieldClause {
-	upper := strings.ToUpper(cypher)
+	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
+	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
+	upper := strings.ToUpper(normalized)
 	yieldIdx := strings.Index(upper, " YIELD ")
 	if yieldIdx == -1 {
-		return nil
+		// Also try at start of string (no leading space needed)
+		if strings.HasPrefix(upper, "YIELD ") {
+			yieldIdx = -1 // Will be handled below
+		} else {
+			return nil
+		}
 	}
 
 	result := &yieldClause{
 		items: []yieldItem{},
+		limit: -1,
+		skip:  -1,
 	}
 
 	// Get everything after YIELD
-	afterYield := strings.TrimSpace(cypher[yieldIdx+7:])
+	var afterYield string
+	if yieldIdx == -1 {
+		afterYield = strings.TrimSpace(normalized[6:]) // After "YIELD "
+	} else {
+		afterYield = strings.TrimSpace(normalized[yieldIdx+7:])
+	}
 
 	// Check for YIELD *
 	trimmedYield := strings.TrimSpace(afterYield)
@@ -76,9 +93,12 @@ func parseYieldClause(cypher string) *yieldClause {
 		afterYield = strings.TrimSpace(afterYield[1:])
 	}
 
-	// Find WHERE and RETURN boundaries
+	// Find WHERE, RETURN, ORDER BY, LIMIT, SKIP boundaries
 	whereIdx := findKeywordIndexInContext(afterYield, "WHERE")
 	returnIdx := findKeywordIndexInContext(afterYield, "RETURN")
+	orderIdx := findKeywordIndexInContext(afterYield, "ORDER")
+	limitIdx := findKeywordIndexInContext(afterYield, "LIMIT")
+	skipIdx := findKeywordIndexInContext(afterYield, "SKIP")
 
 	// Extract WHERE clause if present
 	if whereIdx != -1 {
@@ -89,20 +109,140 @@ func parseYieldClause(cypher string) *yieldClause {
 		}
 	}
 
-	// Extract RETURN clause if present
+	// Extract RETURN clause if present (strip and parse ORDER BY, LIMIT, SKIP)
 	if returnIdx != -1 {
 		result.hasReturn = true
-		result.returnExpr = strings.TrimSpace(afterYield[returnIdx+6:])
+		returnPart := strings.TrimSpace(afterYield[returnIdx+6:])
+		
+		// Find ORDER BY, LIMIT, SKIP positions
+		orderIdx := findKeywordIndexInContext(returnPart, "ORDER")
+		limitIdx := findKeywordIndexInContext(returnPart, "LIMIT")
+		skipIdx := findKeywordIndexInContext(returnPart, "SKIP")
+		
+		// Find where RETURN items end
+		endIdx := len(returnPart)
+		if orderIdx != -1 {
+			endIdx = min(endIdx, orderIdx)
+		}
+		if limitIdx != -1 {
+			endIdx = min(endIdx, limitIdx)
+		}
+		if skipIdx != -1 {
+			endIdx = min(endIdx, skipIdx)
+		}
+		
+		result.returnExpr = strings.TrimSpace(returnPart[:endIdx])
+		
+		// Parse ORDER BY clause
+		if orderIdx != -1 {
+			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
+			orderEnd := len(returnPart)
+			if limitIdx != -1 && limitIdx > orderIdx {
+				orderEnd = min(orderEnd, limitIdx)
+			}
+			if skipIdx != -1 && skipIdx > orderIdx {
+				orderEnd = min(orderEnd, skipIdx)
+			}
+			orderPart := strings.TrimSpace(returnPart[orderIdx:orderEnd])
+			// Strip "ORDER BY" prefix
+			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
+				result.orderBy = strings.TrimSpace(orderPart[8:])
+			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
+				result.orderBy = strings.TrimSpace(orderPart[5:])
+			}
+		}
+		
+		// Parse LIMIT value
+		if limitIdx != -1 {
+			limitEnd := len(returnPart)
+			if skipIdx != -1 && skipIdx > limitIdx {
+				limitEnd = skipIdx
+			}
+			limitPart := strings.TrimSpace(returnPart[limitIdx+5 : limitEnd])
+			// Extract just the number
+			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
+			if n, err := strconv.Atoi(limitPart); err == nil {
+				result.limit = n
+			}
+		}
+		
+		// Parse SKIP value
+		if skipIdx != -1 {
+			skipEnd := len(returnPart)
+			if limitIdx != -1 && limitIdx > skipIdx {
+				skipEnd = limitIdx
+			}
+			skipPart := strings.TrimSpace(returnPart[skipIdx+4 : skipEnd])
+			// Extract just the number
+			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
+			if n, err := strconv.Atoi(skipPart); err == nil {
+				result.skip = n
+			}
+		}
+	} else {
+		// No RETURN clause - parse ORDER BY, LIMIT, SKIP directly from afterYield
+		// Parse ORDER BY clause
+		if orderIdx != -1 {
+			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
+			orderEnd := len(afterYield)
+			if limitIdx != -1 && limitIdx > orderIdx {
+				orderEnd = min(orderEnd, limitIdx)
+			}
+			if skipIdx != -1 && skipIdx > orderIdx {
+				orderEnd = min(orderEnd, skipIdx)
+			}
+			orderPart := strings.TrimSpace(afterYield[orderIdx:orderEnd])
+			// Strip "ORDER BY" prefix
+			if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER BY") {
+				result.orderBy = strings.TrimSpace(orderPart[8:])
+			} else if strings.HasPrefix(strings.ToUpper(orderPart), "ORDER") {
+				result.orderBy = strings.TrimSpace(orderPart[5:])
+			}
+		}
+		
+		// Parse LIMIT value
+		if limitIdx != -1 {
+			limitEnd := len(afterYield)
+			if skipIdx != -1 && skipIdx > limitIdx {
+				limitEnd = skipIdx
+			}
+			if orderIdx != -1 && orderIdx > limitIdx {
+				limitEnd = min(limitEnd, orderIdx)
+			}
+			limitPart := strings.TrimSpace(afterYield[limitIdx+5 : limitEnd])
+			// Extract just the number
+			limitPart = strings.TrimSpace(strings.Split(limitPart, " ")[0])
+			if n, err := strconv.Atoi(limitPart); err == nil {
+				result.limit = n
+			}
+		}
+		
+		// Parse SKIP value
+		if skipIdx != -1 {
+			skipEnd := len(afterYield)
+			if limitIdx != -1 && limitIdx > skipIdx {
+				skipEnd = limitIdx
+			}
+			if orderIdx != -1 && orderIdx > skipIdx {
+				skipEnd = min(skipEnd, orderIdx)
+			}
+			skipPart := strings.TrimSpace(afterYield[skipIdx+4 : skipEnd])
+			// Extract just the number
+			skipPart = strings.TrimSpace(strings.Split(skipPart, " ")[0])
+			if n, err := strconv.Atoi(skipPart); err == nil {
+				result.skip = n
+			}
+		}
 	}
 
 	// Parse yield items (if not YIELD *)
 	if !result.yieldAll {
-		// Get the items part (before WHERE or RETURN)
+		// Get the items part (before WHERE, RETURN, ORDER, LIMIT, SKIP)
 		itemsEnd := len(afterYield)
-		if whereIdx != -1 {
-			itemsEnd = whereIdx
-		} else if returnIdx != -1 {
-			itemsEnd = returnIdx
+		for _, idx := range []int{whereIdx, returnIdx, orderIdx, limitIdx, skipIdx} {
+			if idx != -1 && idx < itemsEnd {
+				itemsEnd = idx
+			}
 		}
 
 		itemsStr := strings.TrimSpace(afterYield[:itemsEnd])
@@ -249,7 +389,146 @@ func (e *StorageExecutor) applyYieldFilter(result *ExecuteResult, yield *yieldCl
 		result.Rows = newRows
 	}
 
+	// Apply RETURN clause transformation if present
+	// RETURN allows projecting properties from yielded values and renaming columns
+	// Example: YIELD node, score RETURN node.id as id, node.type, score
+	if yield.hasReturn && yield.returnExpr != "" {
+		var err error
+		result, err = e.applyReturnToYieldResult(result, yield.returnExpr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply ORDER BY if present
+	if yield.orderBy != "" {
+		result = e.applyOrderByToResult(result, yield.orderBy)
+	}
+
+	// Apply SKIP if present
+	if yield.skip > 0 && yield.skip < len(result.Rows) {
+		result.Rows = result.Rows[yield.skip:]
+	} else if yield.skip >= len(result.Rows) {
+		result.Rows = [][]interface{}{}
+	}
+
+	// Apply LIMIT if present
+	if yield.limit >= 0 && yield.limit < len(result.Rows) {
+		result.Rows = result.Rows[:yield.limit]
+	}
+
 	return result, nil
+}
+
+// applyReturnToYieldResult transforms procedure results based on a RETURN clause.
+// This handles property access (node.id), aliasing (AS), and expression evaluation.
+func (e *StorageExecutor) applyReturnToYieldResult(result *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+	// Parse RETURN items
+	returnItems := splitReturnExpressions(returnExpr)
+	if len(returnItems) == 0 {
+		return result, nil
+	}
+
+	// Build column index map for current result
+	colIndex := make(map[string]int)
+	for i, col := range result.Columns {
+		colIndex[col] = i
+	}
+
+	// Parse each return item to determine new columns and how to compute values
+	type returnItem struct {
+		expr  string // Original expression (e.g., "node.id", "score")
+		alias string // Column name in output (e.g., "id", "score")
+	}
+	var items []returnItem
+
+	for _, item := range returnItems {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+
+		ri := returnItem{expr: item, alias: item}
+
+		// Check for AS alias
+		upperItem := strings.ToUpper(item)
+		if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
+			ri.expr = strings.TrimSpace(item[:asIdx])
+			ri.alias = strings.TrimSpace(item[asIdx+4:])
+		}
+
+		items = append(items, ri)
+	}
+
+	// Build new columns
+	newColumns := make([]string, len(items))
+	for i, item := range items {
+		newColumns[i] = item.alias
+	}
+
+	// Transform each row
+	newRows := make([][]interface{}, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		// Build context with current row values
+		ctx := make(map[string]interface{})
+		for i, col := range result.Columns {
+			if i < len(row) {
+				ctx[col] = row[i]
+			}
+		}
+
+		// Evaluate each return expression
+		newRow := make([]interface{}, len(items))
+		for i, item := range items {
+			newRow[i] = e.evaluateReturnExprInContext(item.expr, ctx)
+		}
+		newRows = append(newRows, newRow)
+	}
+
+	return &ExecuteResult{
+		Columns: newColumns,
+		Rows:    newRows,
+		Stats:   result.Stats,
+	}, nil
+}
+
+// evaluateReturnExprInContext evaluates a RETURN expression in the context of yielded values.
+// Handles: direct references (score), property access (node.id), and functions.
+func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[string]interface{}) interface{} {
+	expr = strings.TrimSpace(expr)
+
+	// Direct reference to a yielded value
+	if val, ok := ctx[expr]; ok {
+		return val
+	}
+
+	// Property access: node.property
+	if strings.Contains(expr, ".") {
+		parts := strings.SplitN(expr, ".", 2)
+		if len(parts) == 2 {
+			varName := strings.TrimSpace(parts[0])
+			propName := strings.TrimSpace(parts[1])
+
+			if val, ok := ctx[varName]; ok {
+				// If the value is a map (node representation), extract property
+				if mapVal, ok := val.(map[string]interface{}); ok {
+					// Try direct property access
+					if propVal, ok := mapVal[propName]; ok {
+						return propVal
+					}
+					// Try in "properties" sub-map (Neo4j style)
+					if props, ok := mapVal["properties"].(map[string]interface{}); ok {
+						if propVal, ok := props[propName]; ok {
+							return propVal
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Return nil for unresolved expressions
+	return nil
 }
 
 // evaluateYieldWhere evaluates a WHERE condition in the context of YIELD variables.
@@ -1234,15 +1513,22 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*Execute
 		}
 	}
 
-	// Neo4j compatibility: error if index doesn't exist
-	// Only apply strict validation for explicitly named indexes (not "default")
-	if len(targetProperties) == 0 && indexName != "" && indexName != "default" {
+	// Known built-in index names that don't require explicit creation
+	// These use the default searchable properties for Mimir compatibility
+	builtInIndexes := map[string]bool{
+		"default":     true,
+		"node_search": true, // Used by Mimir's UnifiedSearchService
+	}
+
+	// Neo4j compatibility: error if index doesn't exist and isn't a built-in
+	if len(targetProperties) == 0 && indexName != "" && !builtInIndexes[indexName] {
 		return nil, fmt.Errorf("there is no such fulltext schema index: %s", indexName)
 	}
 
-	// Default searchable properties if no index config or using "default"
+	// Default searchable properties if no index config or using built-in index
+	// Includes Mimir-specific properties: path, workerRole, requirements
 	if len(targetProperties) == 0 {
-		targetProperties = []string{"content", "text", "title", "name", "description", "body", "summary"}
+		targetProperties = []string{"content", "text", "title", "name", "description", "body", "summary", "path", "workerRole", "requirements"}
 	}
 
 	// Parse query into terms (supports basic AND/OR/NOT)

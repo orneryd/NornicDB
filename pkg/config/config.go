@@ -267,6 +267,9 @@ type MemoryConfig struct {
 	// KmeansMinEmbeddings is minimum embeddings required for k-means clustering
 	// Env: NORNICDB_KMEANS_MIN_EMBEDDINGS (default: 1000)
 	KmeansMinEmbeddings int
+	// KmeansClusterInterval is how often to run k-means clustering (0 = disabled)
+	// Env: NORNICDB_KMEANS_CLUSTER_INTERVAL (default: 5m)
+	KmeansClusterInterval time.Duration
 
 	// === Runtime Memory Management (Go runtime tuning) ===
 
@@ -1204,6 +1207,7 @@ func LoadDefaults() *Config {
 	config.Memory.AutoLinksEnabled = true
 	config.Memory.AutoLinksSimilarityThreshold = 0.82
 	config.Memory.KmeansMinEmbeddings = 100
+	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
 	config.Memory.RuntimeLimitStr = "0"
 	config.Memory.RuntimeLimit = 0
 	config.Memory.GCPercent = 100
@@ -1463,6 +1467,9 @@ func applyEnvVars(config *Config) {
 	}
 	if v := getEnvInt("NORNICDB_KMEANS_MIN_EMBEDDINGS", 0); v > 0 {
 		config.Memory.KmeansMinEmbeddings = v
+	}
+	if v := getEnvDuration("NORNICDB_KMEANS_CLUSTER_INTERVAL", 0); v > 0 {
+		config.Memory.KmeansClusterInterval = v
 	}
 	if getEnv("NORNICDB_AUTO_LINKS_ENABLED", "") == "false" {
 		config.Memory.AutoLinksEnabled = false

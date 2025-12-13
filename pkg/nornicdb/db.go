@@ -344,6 +344,9 @@ type Config struct {
 
 	// Memory management
 	LowMemoryMode bool `yaml:"low_memory_mode"` // Use minimal RAM (for containers with limited memory)
+
+	// K-means clustering
+	KmeansClusterInterval time.Duration `yaml:"kmeans_cluster_interval"` // How often to run k-means (0 = disabled, default 15m)
 }
 
 // DefaultConfig returns sensible default configuration for NornicDB.
@@ -386,6 +389,7 @@ func DefaultConfig() *Config {
 		EncryptionPassword:           "",                    // Must be set if encryption enabled
 		BoltPort:                     7687,
 		HTTPPort:                     7474,
+		KmeansClusterInterval:        15 * time.Minute,      // Run k-means every 15 min (skips if no changes)
 	}
 }
 
@@ -439,6 +443,11 @@ type DB struct {
 	// Async embedding queue for auto-generating embeddings
 	embedQueue        *EmbedQueue
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
+
+	// K-means clustering timer (runs on schedule instead of trigger)
+	clusterTicker            *time.Ticker
+	clusterTickerStop        chan struct{}
+	lastClusteredEmbedCount  int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
 	encryptionEnabled bool
@@ -1065,17 +1074,15 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 		}
 	})
 
-	// Set callback to trigger k-means clustering when queue becomes empty
-	// This auto-clusters embeddings after batch processing completes
+	// Start timer-based k-means clustering instead of trigger-based
+	// This runs clustering on a schedule (default every 15 minutes) rather than after each batch
 	if featureflags.IsGPUClusteringEnabled() {
-		db.embedQueue.SetOnQueueEmpty(func(processedCount int) {
-			if db.searchService != nil && db.searchService.IsClusteringEnabled() {
-				log.Printf("🔬 Embedding batch complete (%d processed), triggering k-means clustering...", processedCount)
-				if err := db.searchService.TriggerClustering(); err != nil {
-					log.Printf("⚠️  K-means clustering skipped: %v", err)
-				}
-			}
-		})
+		interval := db.config.KmeansClusterInterval
+		if interval > 0 {
+			db.startClusteringTimer(interval)
+		} else {
+			log.Printf("🔬 K-means clustering enabled (manual trigger only, no timer)")
+		}
 	}
 
 	// Wire up Cypher executor to trigger embedding queue when nodes are created/updated
@@ -1153,6 +1160,9 @@ func (db *DB) Close() error {
 // closeInternal performs cleanup without requiring the lock.
 // Used during initialization failures and normal close.
 func (db *DB) closeInternal() error {
+	// Stop clustering timer first (before waiting for goroutines)
+	db.stopClusteringTimer()
+
 	// Wait for background goroutines to complete
 	db.bgWg.Wait()
 
@@ -1870,6 +1880,62 @@ func (db *DB) TriggerSearchClustering() error {
 	}
 
 	return db.searchService.TriggerClustering()
+}
+
+// startClusteringTimer starts a background timer that runs k-means clustering
+// at a regular interval. This is preferred over trigger-based clustering which
+// can cause performance issues when embeddings are created frequently.
+// Runs immediately on startup, then every interval thereafter (skipping if no changes).
+func (db *DB) startClusteringTimer(interval time.Duration) {
+	db.clusterTicker = time.NewTicker(interval)
+	db.clusterTickerStop = make(chan struct{})
+
+	db.bgWg.Add(1)
+	go func() {
+		defer db.bgWg.Done()
+		log.Printf("🔬 K-means clustering timer started (interval: %v)", interval)
+
+		// Helper to run clustering
+		runClustering := func() {
+			if db.searchService != nil && db.searchService.IsClusteringEnabled() {
+				currentCount := db.searchService.EmbeddingCount()
+				// Skip if no new embeddings since last clustering
+				if currentCount == db.lastClusteredEmbedCount && db.lastClusteredEmbedCount > 0 {
+					return // No changes, skip
+				}
+
+				if err := db.searchService.TriggerClustering(); err != nil {
+					log.Printf("⚠️  K-means clustering skipped: %v", err)
+				} else {
+					db.lastClusteredEmbedCount = currentCount
+					log.Printf("🔬 K-means clustering completed (%d embeddings)", currentCount)
+				}
+			}
+		}
+
+		// Run immediately on startup
+		runClustering()
+
+		// Then run on timer
+		for {
+			select {
+			case <-db.clusterTickerStop:
+				log.Printf("🔬 K-means clustering timer stopped")
+				return
+			case <-db.clusterTicker.C:
+				runClustering()
+			}
+		}
+	}()
+}
+
+// stopClusteringTimer stops the k-means clustering timer if running.
+func (db *DB) stopClusteringTimer() {
+	if db.clusterTicker != nil {
+		db.clusterTicker.Stop()
+		close(db.clusterTickerStop)
+		db.clusterTicker = nil
+	}
 }
 
 // SearchStats contains search service statistics.
