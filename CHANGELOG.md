@@ -5,14 +5,33 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+
+## [1.0.6] - 2025-12-12
 
 ### Added
-- GitHub Actions workflows for CI/CD
-- Automated Docker image building and publishing
-- Binary releases for multiple platforms
-- Issue and PR templates
-- Migration guide for repository split
+- Timer-based K-means clustering scheduler: runs immediately on startup and then periodically (configurable interval).
+- New configuration: `NORNICDB_KMEANS_CLUSTER_INTERVAL` (duration) to control the clustering interval. Default: `15m`.
+
+### Changed
+- Switched K-means clustering from an embed-queue trigger to a timer-based scheduler that skips runs when the embedding count has not changed since the last clustering.
+- DB lifecycle now starts the clustering ticker on open and stops it cleanly on close.
+
+### Fixed
+- Prevent excessive K-means executions (previously fired after each embedding) that caused UI slowness and frequent re-clustering.
+- Cypher `YIELD`/`RETURN` compatibility: allow `RETURN` after `YIELD` for property access (for example `CALL ... YIELD node RETURN node.id`) and ensure `ORDER BY`, `SKIP`, and `LIMIT` are correctly parsed and applied even when `RETURN` is absent.
+- Improved `YIELD` parsing and `applyYieldFilter` semantics (whitespace normalization, `YIELD *` support, return projection correctness).
+
+### Tests
+- Added `pkg/cypher/yield_return_test.go` with comprehensive tests for `YIELD`/`RETURN` combinations, `ORDER BY`, `SKIP`, `LIMIT`, and `YIELD *` behaviour.
+- Updated `pkg/cypher/neo4j_compat_test.go` for Neo4j compatibility cases.
+
+### Technical Details
+- Key files modified: `pkg/nornicdb/db.go`, `pkg/config/config.go`, `pkg/cypher/call.go`, `pkg/cypher/yield_return_test.go`.
+- The scheduler uses `searchService.EmbeddingCount()` and a `lastClusteredEmbedCount` guard to avoid unnecessary clustering runs.
+
+### Test Coverage
+- All package tests pass; example test output excerpts:
+
 
 ## [1.0.5] - 2025-12-10
 
@@ -269,6 +288,7 @@ The following changes occurred while NornicDB was part of the Mimir project. Ful
 
 ### Release Tags
 - `v1.0.0` - First standalone release (December 6, 2024)
+ - `v1.0.6` - 2025-12-12
 
 ### Pre-Split Versions
 Prior to v1.0.0, NornicDB was versioned as part of the Mimir project. The commit history includes all previous development work.
@@ -298,6 +318,7 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for contr
 
 ---
 
-[Unreleased]: https://github.com/orneryd/NornicDB/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/orneryd/NornicDB/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/orneryd/NornicDB/releases/tag/v1.0.6
 [1.0.1]: https://github.com/orneryd/NornicDB/releases/tag/v1.0.1
 [1.0.0]: https://github.com/orneryd/NornicDB/releases/tag/v1.0.0
