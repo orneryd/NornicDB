@@ -41,3 +41,7 @@ macos/
 docs/
 *.md
 !README.md
+data/
+data.old/
+neural/
+macos/

@@ -244,13 +244,12 @@ If you're on Windows (PowerShell), run the same `docker build` commands from the
 
 ```powershell
 # Build base Vulkan image
-docker build -f docker/Dockerfile.amd64-vulkan -t nornicdb-amd64-vulkan .
-
-# Build Vulkan + Heimdall
-docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall .
+docker build -f docker/Dockerfile.amd64-vulkan -t timothyswt/nornicdb-amd64-vulkan .
+# Build base Vulkan image
+docker build -f docker/Dockerfile.amd64-vulkan -t timothyswt/nornicdb-amd64-vulkan . --build-arg EMBED_MODEL=true .
 
 # Build with models embedded (ensure ./models contains required files)
-docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall-bge --build-arg EMBED_MODEL=true --progress=plain
+docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t timothyswt/nornicdb-amd64-vulkan-bge-heimdall --build-arg EMBED_MODEL=true .
 ```
 
 ### Model placement for `EMBED_MODEL`
@@ -265,7 +264,7 @@ Copy-Item C:\path\to\bge-m3.gguf models\
 Copy-Item C:\path\to\qwen2.5-0.5b-instruct.gguf models\
 
 # Then run the build with EMBED_MODEL=true
-docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-heimdall-bge --build-arg EMBED_MODEL=true .
+docker build -f docker/Dockerfile.amd64-vulkan-heimdall -t nornicdb-amd64-vulkan-bge-heimdall .
 ```
 
 ### Optional: Compile SPIR‑V shaders locally (advanced)

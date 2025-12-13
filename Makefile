@@ -63,6 +63,9 @@ IMAGE_AMD64_BGE_HEIMDALL := $(REGISTRY)/nornicdb-amd64-cuda-bge-heimdall:$(VERSI
 IMAGE_AMD64_HEADLESS := $(REGISTRY)/nornicdb-amd64-cuda-headless:$(VERSION)
 IMAGE_AMD64_CPU := $(REGISTRY)/nornicdb-amd64-cpu:$(VERSION)
 IMAGE_AMD64_CPU_HEADLESS := $(REGISTRY)/nornicdb-amd64-cpu-headless:$(VERSION)
+IMAGE_AMD64_VULKAN := $(REGISTRY)/nornicdb-amd64-vulkan:$(VERSION)
+IMAGE_AMD64_VULKAN_BGE := $(REGISTRY)/nornicdb-amd64-vulkan-bge:$(VERSION)
+IMAGE_AMD64_VULKAN_HEADLESS := $(REGISTRY)/nornicdb-amd64-vulkan-headless:$(VERSION)
 LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:b7285
 
 # Dockerfiles
@@ -78,6 +81,7 @@ QWEN_URL := https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/
 .PHONY: build-arm64-metal build-arm64-metal-bge build-arm64-metal-bge-heimdall build-arm64-metal-headless
 .PHONY: build-amd64-cuda build-amd64-cuda-bge build-amd64-cuda-bge-heimdall build-amd64-cuda-headless
 .PHONY: build-amd64-cpu build-amd64-cpu-headless
+.PHONY: build-amd64-vulkan build-amd64-vulkan-bge build-amd64-vulkan-headless
 .PHONY: build-all build-arm64-all build-amd64-all
 .PHONY: push-arm64-metal push-arm64-metal-bge push-arm64-metal-bge-heimdall push-arm64-metal-headless
 .PHONY: push-amd64-cuda push-amd64-cuda-bge push-amd64-cuda-bge-heimdall push-amd64-cuda-headless
@@ -85,6 +89,7 @@ QWEN_URL := https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/
 .PHONY: deploy-arm64-metal deploy-arm64-metal-bge deploy-arm64-metal-bge-heimdall deploy-arm64-metal-headless
 .PHONY: deploy-amd64-cuda deploy-amd64-cuda-bge deploy-amd64-cuda-bge-heimdall deploy-amd64-cuda-headless
 .PHONY: deploy-amd64-cpu deploy-amd64-cpu-headless
+.PHONY: deploy-amd64-vulkan deploy-amd64-vulkan-bge deploy-amd64-vulkan-headless
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda
 .PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless test clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
@@ -264,12 +269,31 @@ build-amd64-cpu-headless:
 	@echo "╚══════════════════════════════════════════════════════════════╝"
 	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg HEADLESS=true -t $(IMAGE_AMD64_CPU_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-cpu .
 
+# AMD64 Vulkan (any GPU: NVIDIA/AMD/Intel)
+build-amd64-vulkan:
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║ Building: $(IMAGE_AMD64_VULKAN) [Vulkan GPU, BYOM]"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 -t $(IMAGE_AMD64_VULKAN) -f $(DOCKER_DIR)/Dockerfile.amd64-vulkan .
+
+build-amd64-vulkan-bge: download-bge
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║ Building: $(IMAGE_AMD64_VULKAN_BGE) [Vulkan + BGE model]"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_VULKAN_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-vulkan .
+
+build-amd64-vulkan-headless:
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║ Building: $(IMAGE_AMD64_VULKAN_HEADLESS) [Vulkan, headless]"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg HEADLESS=true -t $(IMAGE_AMD64_VULKAN_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-vulkan .
+
 # Build both variants for an architecture
 build-arm64-all: build-arm64-metal build-arm64-metal-bge build-arm64-metal-headless
 	@echo "✓ Built all ARM64 Metal images"
 
-build-amd64-all: build-amd64-cuda build-amd64-cuda-bge build-amd64-cuda-headless build-amd64-cpu build-amd64-cpu-headless
-	@echo "✓ Built all AMD64 images (CUDA + CPU)"
+build-amd64-all: build-amd64-cuda build-amd64-cuda-bge build-amd64-cuda-headless build-amd64-cpu build-amd64-cpu-headless build-amd64-vulkan build-amd64-vulkan-bge build-amd64-vulkan-headless
+	@echo "✓ Built all AMD64 images (CUDA + CPU + Vulkan)"
 
 # Build based on detected host architecture
 build-all:
@@ -325,6 +349,18 @@ push-amd64-cpu-headless:
 	@echo "→ Pushing $(IMAGE_AMD64_CPU_HEADLESS)"
 	docker push $(IMAGE_AMD64_CPU_HEADLESS)
 
+push-amd64-vulkan:
+	@echo "→ Pushing $(IMAGE_AMD64_VULKAN)"
+	docker push $(IMAGE_AMD64_VULKAN)
+
+push-amd64-vulkan-bge:
+	@echo "→ Pushing $(IMAGE_AMD64_VULKAN_BGE)"
+	docker push $(IMAGE_AMD64_VULKAN_BGE)
+
+push-amd64-vulkan-headless:
+	@echo "→ Pushing $(IMAGE_AMD64_VULKAN_HEADLESS)"
+	docker push $(IMAGE_AMD64_VULKAN_HEADLESS)
+
 # ==============================================================================
 # Deploy (Build + Push)
 # ==============================================================================
@@ -361,12 +397,21 @@ deploy-amd64-cpu: build-amd64-cpu push-amd64-cpu
 deploy-amd64-cpu-headless: build-amd64-cpu-headless push-amd64-cpu-headless
 	@echo "✓ Deployed $(IMAGE_AMD64_CPU_HEADLESS)"
 
+deploy-amd64-vulkan: build-amd64-vulkan push-amd64-vulkan
+	@echo "✓ Deployed $(IMAGE_AMD64_VULKAN)"
+
+deploy-amd64-vulkan-bge: build-amd64-vulkan-bge push-amd64-vulkan-bge
+	@echo "✓ Deployed $(IMAGE_AMD64_VULKAN_BGE)"
+
+deploy-amd64-vulkan-headless: build-amd64-vulkan-headless push-amd64-vulkan-headless
+	@echo "✓ Deployed $(IMAGE_AMD64_VULKAN_HEADLESS)"
+
 # Deploy both variants for an architecture (including headless)
 deploy-arm64-all: deploy-arm64-metal deploy-arm64-metal-bge deploy-arm64-metal-headless
 	@echo "✓ Deployed all ARM64 Metal images"
 
-deploy-amd64-all: deploy-amd64-cuda deploy-amd64-cuda-bge deploy-amd64-cuda-headless deploy-amd64-cpu deploy-amd64-cpu-headless
-	@echo "✓ Deployed all AMD64 images (CUDA + CPU)"
+deploy-amd64-all: deploy-amd64-cuda deploy-amd64-cuda-bge deploy-amd64-cuda-headless deploy-amd64-cpu deploy-amd64-cpu-headless deploy-amd64-vulkan deploy-amd64-vulkan-bge deploy-amd64-vulkan-headless
+	@echo "✓ Deployed all AMD64 images (CUDA + CPU + Vulkan)"
 
 # Deploy based on detected host architecture
 deploy-all:

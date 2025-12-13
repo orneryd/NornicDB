@@ -16,7 +16,6 @@ NornicDB leverages GPU acceleration for:
 |---------|----------|-------------|
 | Metal | macOS (Apple Silicon) | Excellent |
 | CUDA | NVIDIA GPUs | Excellent |
-| OpenCL | AMD/Intel GPUs | Good |
 | Vulkan | Cross-platform | Good |
 | CPU | Fallback | Baseline |
 
@@ -44,7 +43,6 @@ Accepted values:
 - `vulkan` — use the Vulkan backend
 - `cuda` — use the CUDA backend (NVIDIA GPUs)
 - `metal` — use Apple's Metal backend (macOS/Apple Silicon)
-- `opencl` — use OpenCL when available
 - `cpu` — force CPU-only fallback
 
 If a requested backend is unavailable at runtime, NornicDB will fall back to a compatible backend or to CPU processing.
