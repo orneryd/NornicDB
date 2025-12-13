@@ -46,6 +46,12 @@ type EmbedWorker struct {
 
 	// Track nodes we've already logged as skipped (to avoid log spam)
 	loggedSkip map[string]bool
+
+	// Debounce state for k-means clustering trigger
+	clusterDebounceTimer   *time.Timer
+	clusterDebounceMu      sync.Mutex
+	pendingClusterCount    int  // Accumulated count for debounced callback
+	clusterDebounceRunning bool // Whether a debounce timer is active
 }
 
 // EmbedWorkerConfig holds configuration for the embedding worker.
@@ -58,16 +64,22 @@ type EmbedWorkerConfig struct {
 	// Text chunking settings (matches Mimir: MIMIR_EMBEDDINGS_CHUNK_SIZE, MIMIR_EMBEDDINGS_CHUNK_OVERLAP)
 	ChunkSize    int // Max characters per chunk (default: 512)
 	ChunkOverlap int // Characters to overlap between chunks (default: 50)
+
+	// Debounce settings for k-means clustering trigger
+	ClusterDebounceDelay time.Duration // How long to wait after last embedding before triggering k-means (default: 30s)
+	ClusterMinBatchSize  int           // Minimum embeddings processed before triggering k-means (default: 10)
 }
 
 // DefaultEmbedWorkerConfig returns sensible defaults.
 func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 	return &EmbedWorkerConfig{
-		ScanInterval: 15 * time.Minute,       // Scan for missed nodes every 15 minutes
-		BatchDelay:   500 * time.Millisecond, // Delay between processing nodes
-		MaxRetries:   3,
-		ChunkSize:    512,
-		ChunkOverlap: 50,
+		ScanInterval:         15 * time.Minute,       // Scan for missed nodes every 15 minutes
+		BatchDelay:           500 * time.Millisecond, // Delay between processing nodes
+		MaxRetries:           3,
+		ChunkSize:            512,
+		ChunkOverlap:         50,
+		ClusterDebounceDelay: 30 * time.Second, // Wait 30s after last embedding before k-means
+		ClusterMinBatchSize:  10,              // Need at least 10 embeddings to trigger k-means
 	}
 }
 
@@ -209,9 +221,67 @@ func (ew *EmbedWorker) Close() {
 	ew.closed = true
 	ew.mu.Unlock()
 
+	// Stop any pending debounce timer
+	ew.clusterDebounceMu.Lock()
+	if ew.clusterDebounceTimer != nil {
+		ew.clusterDebounceTimer.Stop()
+		ew.clusterDebounceTimer = nil
+	}
+	ew.clusterDebounceMu.Unlock()
+
 	ew.cancel()
 	close(ew.trigger)
 	ew.wg.Wait()
+}
+
+// scheduleClusteringDebounced accumulates embedding counts and debounces the k-means trigger.
+// This prevents constant re-clustering when embeddings trickle in one at a time.
+// The callback will fire after ClusterDebounceDelay of inactivity, if MinBatchSize is met.
+func (ew *EmbedWorker) scheduleClusteringDebounced(processedCount int) {
+	ew.clusterDebounceMu.Lock()
+	defer ew.clusterDebounceMu.Unlock()
+
+	// Accumulate the count
+	ew.pendingClusterCount += processedCount
+
+	// Cancel existing timer if any
+	if ew.clusterDebounceTimer != nil {
+		ew.clusterDebounceTimer.Stop()
+	}
+
+	// Get debounce delay from config (default 30s)
+	delay := ew.config.ClusterDebounceDelay
+	if delay == 0 {
+		delay = 30 * time.Second
+	}
+
+	// Get minimum batch size from config (default 10)
+	minBatch := ew.config.ClusterMinBatchSize
+	if minBatch == 0 {
+		minBatch = 10
+	}
+
+	// Schedule new timer
+	ew.clusterDebounceRunning = true
+	ew.clusterDebounceTimer = time.AfterFunc(delay, func() {
+		ew.clusterDebounceMu.Lock()
+		count := ew.pendingClusterCount
+		ew.pendingClusterCount = 0
+		ew.clusterDebounceRunning = false
+		ew.clusterDebounceTimer = nil
+		ew.clusterDebounceMu.Unlock()
+
+		// Only trigger if we have enough embeddings
+		if count >= minBatch && ew.onQueueEmpty != nil {
+			fmt.Printf("🔬 Debounced k-means trigger: %d embeddings processed (waited %.0fs for more)\n", count, delay.Seconds())
+			ew.onQueueEmpty(count)
+		} else if count > 0 && count < minBatch {
+			fmt.Printf("⏸️  Skipping k-means: only %d embeddings (min batch: %d)\n", count, minBatch)
+		}
+	})
+
+	fmt.Printf("⏳ K-means debounce: %d pending embeddings, will trigger in %.0fs if no more arrive\n",
+		ew.pendingClusterCount, delay.Seconds())
 }
 
 // worker runs the embedding loop.
@@ -274,7 +344,7 @@ func (ew *EmbedWorker) worker() {
 }
 
 // processUntilEmpty keeps processing nodes until no more need embeddings.
-// When the queue becomes empty, it fires the onQueueEmpty callback if set.
+// When the queue becomes empty, it schedules a debounced k-means clustering trigger.
 func (ew *EmbedWorker) processUntilEmpty() {
 	batchProcessed := 0
 	for {
@@ -290,11 +360,9 @@ func (ew *EmbedWorker) processUntilEmpty() {
 				// This uses Badger's persistent index, so it's efficient (only adds missing nodes)
 				ew.refreshEmbeddingIndex()
 
-				// Queue is empty - fire callback if we processed anything and callback is set
+				// Queue is empty - schedule debounced k-means callback if we processed anything
 				if batchProcessed > 0 && ew.onQueueEmpty != nil {
-					// Fire and forget - run in background so we don't block the worker
-					processedCount := batchProcessed
-					go ew.onQueueEmpty(processedCount)
+					ew.scheduleClusteringDebounced(batchProcessed)
 				}
 				return // No more nodes to process
 			}

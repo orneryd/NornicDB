@@ -1525,6 +1525,290 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 	return result, nil
 }
 
+// executeCreateSet handles CREATE ... SET queries (Neo4j compatibility).
+// Neo4j allows SET immediately after CREATE to set additional properties
+// on newly created nodes/relationships.
+// Example: CREATE (n:Node {id: 'test'}) SET n.content = 'value' RETURN n
+func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters AFTER routing to avoid keyword detection issues
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Normalize whitespace for index finding (newlines/tabs become spaces)
+	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
+
+	// Find clause boundaries
+	setIdx := findKeywordIndex(normalized, "SET")
+	returnIdx := findKeywordIndex(normalized, "RETURN")
+
+	if setIdx < 0 {
+		return nil, fmt.Errorf("SET clause not found in CREATE...SET query")
+	}
+
+	// Extract CREATE part (everything before SET)
+	createPart := strings.TrimSpace(normalized[:setIdx])
+
+	// Extract SET part (between SET and RETURN, or end)
+	var setPart string
+	if returnIdx > 0 {
+		setPart = strings.TrimSpace(normalized[setIdx+4 : returnIdx])
+	} else {
+		setPart = strings.TrimSpace(normalized[setIdx+4:])
+	}
+
+	// Pre-validate SET assignments BEFORE executing CREATE
+	// This ensures we fail fast and don't create nodes that would be orphaned
+	if !strings.Contains(setPart, "+=") {
+		assignments := e.splitSetAssignmentsRespectingBrackets(setPart)
+		if err := e.validateSetAssignments(assignments); err != nil {
+			return nil, err
+		}
+	}
+
+	// Execute CREATE first and get references to created entities
+	createResult, createdNodes, createdEdges, err := e.executeCreateWithRefs(ctx, createPart)
+	if err != nil {
+		return nil, fmt.Errorf("CREATE failed in CREATE...SET: %w", err)
+	}
+	result.Stats.NodesCreated = createResult.Stats.NodesCreated
+	result.Stats.RelationshipsCreated = createResult.Stats.RelationshipsCreated
+
+	// Check for property merge operator: n += $properties
+	if strings.Contains(setPart, "+=") {
+		// Handle property merge on created entities
+		err := e.applySetMergeToCreated(setPart, createdNodes, createdEdges, result)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Handle regular SET assignments
+		// Split SET clause into individual assignments
+		assignments := e.splitSetAssignmentsRespectingBrackets(setPart)
+
+		for _, assignment := range assignments {
+			assignment = strings.TrimSpace(assignment)
+			if assignment == "" {
+				continue
+			}
+
+			// Parse assignment: var.property = value
+			eqIdx := strings.Index(assignment, "=")
+			if eqIdx == -1 {
+				// Could be a label assignment like "n:Label"
+				colonIdx := strings.Index(assignment, ":")
+				if colonIdx > 0 {
+					varName := strings.TrimSpace(assignment[:colonIdx])
+					newLabel := strings.TrimSpace(assignment[colonIdx+1:])
+					if node, exists := createdNodes[varName]; exists {
+						// Add label to existing node
+						if !containsString(node.Labels, newLabel) {
+							node.Labels = append(node.Labels, newLabel)
+							if err := e.storage.UpdateNode(node); err != nil {
+								return nil, fmt.Errorf("failed to add label: %w", err)
+							}
+							result.Stats.LabelsAdded++
+						}
+					}
+				}
+				continue
+			}
+
+			leftSide := strings.TrimSpace(assignment[:eqIdx])
+			rightSide := strings.TrimSpace(assignment[eqIdx+1:])
+
+			// Parse variable.property
+			dotIdx := strings.Index(leftSide, ".")
+			if dotIdx == -1 {
+				return nil, fmt.Errorf("invalid SET assignment (expected var.property): %s", assignment)
+			}
+
+			varName := strings.TrimSpace(leftSide[:dotIdx])
+			propName := strings.TrimSpace(leftSide[dotIdx+1:])
+
+			// Note: Function validation is already done in validateSetAssignments()
+			// which runs before CREATE to ensure rollback safety
+
+			// Parse the value
+			value := e.parseValue(rightSide)
+
+			// Apply to created node or edge
+			if node, exists := createdNodes[varName]; exists {
+				node.Properties[propName] = value
+				if err := e.storage.UpdateNode(node); err != nil {
+					return nil, fmt.Errorf("failed to update node property: %w", err)
+				}
+				result.Stats.PropertiesSet++
+			} else if edge, exists := createdEdges[varName]; exists {
+				edge.Properties[propName] = value
+				if err := e.storage.UpdateEdge(edge); err != nil {
+					return nil, fmt.Errorf("failed to update edge property: %w", err)
+				}
+				result.Stats.PropertiesSet++
+			} else {
+				return nil, fmt.Errorf("unknown variable in SET clause: %s", varName)
+			}
+		}
+	}
+
+	// Handle RETURN clause
+	if returnIdx > 0 {
+		returnPart := strings.TrimSpace(normalized[returnIdx+6:])
+
+		// Parse return items
+		returnItems := splitReturnExpressions(returnPart)
+		for _, item := range returnItems {
+			item = strings.TrimSpace(item)
+			alias := item
+
+			// Check for alias
+			upperItem := strings.ToUpper(item)
+			if asIdx := strings.Index(upperItem, " AS "); asIdx > 0 {
+				alias = strings.TrimSpace(item[asIdx+4:])
+				item = strings.TrimSpace(item[:asIdx])
+			}
+
+			result.Columns = append(result.Columns, alias)
+
+			// Resolve the value
+			if node, exists := createdNodes[item]; exists {
+				if len(result.Rows) == 0 {
+					result.Rows = append(result.Rows, []interface{}{})
+				}
+				result.Rows[0] = append(result.Rows[0], node)
+			} else if edge, exists := createdEdges[item]; exists {
+				if len(result.Rows) == 0 {
+					result.Rows = append(result.Rows, []interface{}{})
+				}
+				result.Rows[0] = append(result.Rows[0], edge)
+			} else {
+				// Could be an expression or property access
+				if len(result.Rows) == 0 {
+					result.Rows = append(result.Rows, []interface{}{})
+				}
+				result.Rows[0] = append(result.Rows[0], nil)
+			}
+		}
+	} else {
+		// No RETURN clause - return created entities by default
+		for _, node := range createdNodes {
+			if len(result.Columns) == 0 {
+				result.Columns = append(result.Columns, "node")
+			}
+			if len(result.Rows) == 0 {
+				result.Rows = append(result.Rows, []interface{}{})
+			}
+			result.Rows[0] = append(result.Rows[0], node)
+		}
+	}
+
+	return result, nil
+}
+
+// applySetMergeToCreated applies SET += property merge to created entities.
+func (e *StorageExecutor) applySetMergeToCreated(setPart string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) error {
+	// Parse: n += {prop: value, ...}
+	parts := strings.SplitN(setPart, "+=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid SET += syntax")
+	}
+
+	varName := strings.TrimSpace(parts[0])
+	propsStr := strings.TrimSpace(parts[1])
+
+	// Parse the properties map
+	props := e.parseMapLiteral(propsStr)
+	if props == nil {
+		return fmt.Errorf("failed to parse properties in SET +=")
+	}
+
+	// Apply to node or edge
+	if node, exists := createdNodes[varName]; exists {
+		for k, v := range props {
+			node.Properties[k] = v
+			result.Stats.PropertiesSet++
+		}
+		if err := e.storage.UpdateNode(node); err != nil {
+			return fmt.Errorf("failed to update node: %w", err)
+		}
+	} else if edge, exists := createdEdges[varName]; exists {
+		for k, v := range props {
+			edge.Properties[k] = v
+			result.Stats.PropertiesSet++
+		}
+		if err := e.storage.UpdateEdge(edge); err != nil {
+			return fmt.Errorf("failed to update edge: %w", err)
+		}
+	} else {
+		return fmt.Errorf("unknown variable in SET +=: %s", varName)
+	}
+
+	return nil
+}
+
+// containsString checks if a slice contains a string.
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSetAssignments pre-validates SET clause assignments before executing CREATE
+// This ensures we fail fast on invalid function calls, preventing orphaned nodes
+func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
+	// Known Cypher functions
+	knownFunctions := map[string]bool{
+		"COALESCE": true, "TOSTRING": true, "TOINT": true, "TOFLOAT": true,
+		"TOBOOLEAN": true, "TOLOWER": true, "TOUPPER": true, "TRIM": true,
+		"SIZE": true, "LENGTH": true, "ABS": true, "CEIL": true, "FLOOR": true,
+		"ROUND": true, "RAND": true, "SQRT": true, "SIGN": true, "LOG": true,
+		"LOG10": true, "EXP": true, "SIN": true, "COS": true, "TAN": true,
+		"DATE": true, "DATETIME": true, "TIME": true, "TIMESTAMP": true,
+		"DURATION": true, "LOCALDATETIME": true, "LOCALTIME": true,
+		"HEAD": true, "LAST": true, "TAIL": true, "KEYS": true, "LABELS": true,
+		"TYPE": true, "ID": true, "ELEMENTID": true, "PROPERTIES": true,
+		"POINT": true, "DISTANCE": true, "REPLACE": true, "SUBSTRING": true,
+		"LEFT": true, "RIGHT": true, "SPLIT": true, "REVERSE": true,
+		"LTRIM": true, "RTRIM": true, "COLLECT": true, "RANGE": true,
+	}
+
+	for _, assignment := range assignments {
+		assignment = strings.TrimSpace(assignment)
+		if assignment == "" {
+			continue
+		}
+
+		// Parse assignment: var.property = value or var:Label
+		eqIdx := strings.Index(assignment, "=")
+		if eqIdx == -1 {
+			// Could be a label assignment like "n:Label" - these are valid
+			continue
+		}
+
+		rightSide := strings.TrimSpace(assignment[eqIdx+1:])
+
+		// Check if right side looks like a function call
+		if strings.Contains(rightSide, "(") && strings.HasSuffix(strings.TrimSpace(rightSide), ")") {
+			// Extract function name (before first parenthesis)
+			parenIdx := strings.Index(rightSide, "(")
+			funcName := strings.ToUpper(strings.TrimSpace(rightSide[:parenIdx]))
+			if !knownFunctions[funcName] {
+				return fmt.Errorf("unknown function: %s", funcName)
+			}
+		}
+	}
+	return nil
+}
+
 // executeMerge handles MERGE queries with ON CREATE SET / ON MATCH SET support.
 // This implements Neo4j-compatible MERGE semantics:
 // 1. Try to find an existing node matching the pattern

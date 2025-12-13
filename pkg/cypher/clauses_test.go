@@ -698,6 +698,12 @@ func TestCallDbIndexFulltextQueryNodes(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
+	// Create the fulltext index first (Neo4j compatibility)
+	_, err := e.Execute(ctx, "CALL db.index.fulltext.createNodeIndex('node_search', ['Document'], ['content', 'title'])", nil)
+	if err != nil {
+		t.Fatalf("Failed to create fulltext index: %v", err)
+	}
+
 	// Create nodes with searchable content
 	store.CreateNode(&storage.Node{
 		ID:     "doc-1",
@@ -733,6 +739,12 @@ func TestCallDbIndexFulltextQueryNoMatch(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
+
+	// Create the fulltext index first (Neo4j compatibility)
+	_, err := e.Execute(ctx, "CALL db.index.fulltext.createNodeIndex('node_search', ['Document'], ['content'])", nil)
+	if err != nil {
+		t.Fatalf("Failed to create fulltext index: %v", err)
+	}
 
 	store.CreateNode(&storage.Node{
 		ID:         "doc-1",

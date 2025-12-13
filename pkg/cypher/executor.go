@@ -969,6 +969,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
 	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
 
+	// NEO4J COMPAT: Handle CREATE ... SET pattern (e.g., CREATE (n) SET n.x = 1)
+	// Neo4j allows SET immediately after CREATE without requiring MATCH
+	if startsWithCreate && hasSet && !hasOnCreateSet && !hasOnMatchSet {
+		return e.executeCreateSet(ctx, cypher)
+	}
+
 	// Only route to executeSet if it's a MATCH ... SET or standalone SET
 	if hasSet && !hasOnCreateSet && !hasOnMatchSet {
 		return e.executeSet(ctx, cypher)
@@ -981,7 +987,15 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	// Compound queries: MATCH ... OPTIONAL MATCH ...
+	// But NOT when there's a WITH clause before OPTIONAL MATCH (that's handled by executeMatchWithOptionalMatch)
 	if startsWithMatch && optionalMatchIdx > 0 {
+		// Check if there's a WITH clause BEFORE OPTIONAL MATCH
+		// If so, route to the specialized handler that processes WITH first
+		withBeforeOptional := findKeywordIndex(cypher[:optionalMatchIdx], "WITH")
+		if withBeforeOptional > 0 {
+			// WITH comes before OPTIONAL MATCH - route to executeMatchWithOptionalMatch
+			return e.executeMatchWithOptionalMatch(ctx, cypher)
+		}
 		return e.executeCompoundMatchOptionalMatch(ctx, cypher)
 	}
 

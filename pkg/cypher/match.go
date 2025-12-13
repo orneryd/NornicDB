@@ -2075,6 +2075,13 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		return e.executeMatchWithUnwind(ctx, cypher)
 	}
 
+	// Check for OPTIONAL MATCH between WITH and RETURN - delegate to specialized handler
+	// This handles patterns like: MATCH (n) WITH n, x WHERE ... OPTIONAL MATCH (n)-[:REL]-(m) RETURN ...
+	optMatchIdx := findKeywordIndex(cypher[withIdx:], "OPTIONAL MATCH")
+	if optMatchIdx > 0 {
+		return e.executeMatchWithOptionalMatch(ctx, cypher)
+	}
+
 	// Extract MATCH part (before WITH)
 	matchPart := strings.TrimSpace(cypher[5:withIdx]) // Skip "MATCH"
 
@@ -2746,6 +2753,433 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	return result, nil
+}
+
+// executeMatchWithOptionalMatch handles MATCH ... WITH ... WHERE ... OPTIONAL MATCH ... RETURN queries
+// This is a Neo4j compatibility feature that processes WITH clause filtering before OPTIONAL MATCH
+func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Find clause boundaries
+	withIdx := findKeywordIndex(cypher, "WITH")
+	optMatchIdx := findKeywordIndex(cypher, "OPTIONAL MATCH")
+	returnIdx := findKeywordIndex(cypher, "RETURN")
+
+	if withIdx == -1 || optMatchIdx == -1 || returnIdx == -1 {
+		return nil, fmt.Errorf("WITH, OPTIONAL MATCH, and RETURN clauses required")
+	}
+
+	// Extract MATCH part (before WITH)
+	matchPart := strings.TrimSpace(cypher[5:withIdx]) // Skip "MATCH"
+
+	// Check for WHERE clause between MATCH and WITH
+	matchWhereIdx := findKeywordIndex(matchPart, "WHERE")
+	var matchWhereClause string
+	var nodePatternPart string
+
+	if matchWhereIdx > 0 {
+		nodePatternPart = strings.TrimSpace(matchPart[:matchWhereIdx])
+		matchWhereClause = strings.TrimSpace(matchPart[matchWhereIdx+5:])
+	} else {
+		nodePatternPart = matchPart
+	}
+
+	// Parse node pattern
+	nodePattern := e.parseNodePattern(nodePatternPart)
+
+	// Get matching nodes
+	var nodes []*storage.Node
+	var err error
+	if len(nodePattern.labels) > 0 {
+		nodes, err = e.storage.GetNodesByLabel(nodePattern.labels[0])
+	} else {
+		nodes, err = e.storage.AllNodes()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage error: %w", err)
+	}
+
+	// Apply property filter from MATCH pattern
+	if len(nodePattern.properties) > 0 {
+		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+	}
+
+	// Apply WHERE clause filter from MATCH if present
+	if matchWhereClause != "" {
+		nodes = e.filterNodesByWhereClause(nodes, matchWhereClause, nodePattern.variable)
+	}
+
+	// Extract WITH clause section (between WITH and OPTIONAL MATCH)
+	withSection := strings.TrimSpace(cypher[withIdx+4 : optMatchIdx])
+
+	// Check for WHERE after WITH (filters WITH results)
+	var withClause string
+	var postWithWhere string
+
+	postWhereIdx := findKeywordIndex(withSection, "WHERE")
+	if postWhereIdx > 0 {
+		withClause = strings.TrimSpace(withSection[:postWhereIdx])
+		postWithWhere = strings.TrimSpace(withSection[postWhereIdx+5:])
+	} else {
+		withClause = withSection
+	}
+
+	// Parse WITH items
+	withItems := e.splitWithItems(withClause)
+
+	// Build computed values for each node from WITH clause
+	type computedRow struct {
+		node   *storage.Node
+		values map[string]interface{}
+	}
+	var computedRows []computedRow
+
+	for _, node := range nodes {
+		nodeMap := map[string]*storage.Node{nodePattern.variable: node}
+		values := make(map[string]interface{})
+
+		for _, item := range withItems {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+
+			upperItem := strings.ToUpper(item)
+			asIdx := strings.Index(upperItem, " AS ")
+			var alias string
+			var expr string
+			if asIdx > 0 {
+				expr = strings.TrimSpace(item[:asIdx])
+				alias = strings.TrimSpace(item[asIdx+4:])
+			} else {
+				expr = item
+				alias = item
+			}
+
+			// Evaluate the expression
+			if expr == nodePattern.variable {
+				values[alias] = node
+			} else if strings.HasPrefix(expr, nodePattern.variable+".") {
+				propName := expr[len(nodePattern.variable)+1:]
+				values[alias] = node.Properties[propName]
+			} else {
+				// Try to evaluate as numeric or expression
+				values[alias] = e.evaluateExpressionWithContext(expr, nodeMap, nil)
+			}
+		}
+
+		computedRows = append(computedRows, computedRow{node: node, values: values})
+	}
+
+	// Apply WHERE filter after WITH (filters computed rows)
+	if postWithWhere != "" {
+		var filteredRows []computedRow
+		for _, cr := range computedRows {
+			if e.evaluateWithWhereCondition(postWithWhere, cr.values) {
+				filteredRows = append(filteredRows, cr)
+			}
+		}
+		computedRows = filteredRows
+	}
+
+	// Extract OPTIONAL MATCH pattern (between OPTIONAL MATCH and RETURN)
+	optMatchPattern := strings.TrimSpace(cypher[optMatchIdx+14 : returnIdx])
+
+	// Check for WHERE in OPTIONAL MATCH section
+	optMatchWhereIdx := findKeywordIndex(optMatchPattern, "WHERE")
+	var optMatchWhereClause string
+	if optMatchWhereIdx > 0 {
+		optMatchWhereClause = strings.TrimSpace(optMatchPattern[optMatchWhereIdx+5:])
+		optMatchPattern = strings.TrimSpace(optMatchPattern[:optMatchWhereIdx])
+	}
+
+	// Parse OPTIONAL MATCH relationship pattern
+	relPattern := e.parseOptionalRelPattern(optMatchPattern)
+
+	// Build result with left outer join semantics
+	type joinedRow struct {
+		computedValues map[string]interface{}
+		relatedNode    *storage.Node
+		relationship   *storage.Edge
+	}
+	var joinedRows []joinedRow
+
+	for idx, cr := range computedRows {
+		// Find the node in the computed values (the one we're joining from)
+		var sourceNode *storage.Node
+		for _, v := range cr.values {
+			if node, ok := v.(*storage.Node); ok {
+				sourceNode = node
+				break
+			}
+		}
+
+		if sourceNode == nil {
+			// No node to join from - add row with nils
+			joinedRows = append(joinedRows, joinedRow{
+				computedValues: cr.values,
+				relatedNode:    nil,
+				relationship:   nil,
+			})
+			continue
+		}
+
+		// Try to find related nodes via the relationship
+		relatedNodes := e.findRelatedNodes(sourceNode, relPattern)
+
+		if len(relatedNodes) == 0 {
+			// No match - add row with null for the optional part (left outer join)
+			joinedRows = append(joinedRows, joinedRow{
+				computedValues: cr.values,
+				relatedNode:    nil,
+				relationship:   nil,
+			})
+		} else {
+			// Add a row for each match
+			addedAny := false
+			for _, related := range relatedNodes {
+				// Apply optional WHERE filter on related node
+				if optMatchWhereClause != "" {
+					// Simple property filter
+					if related.node != nil && !e.nodeMatchesWhereClause(related.node, optMatchWhereClause, relPattern.targetVar) {
+						continue
+					}
+				}
+				joinedRows = append(joinedRows, joinedRow{
+					computedValues: cr.values,
+					relatedNode:    related.node,
+					relationship:   related.edge,
+				})
+				addedAny = true
+			}
+			// If all related nodes were filtered out, add a null row
+			if !addedAny {
+				joinedRows = append(joinedRows, joinedRow{
+					computedValues: cr.values,
+					relatedNode:    nil,
+					relationship:   nil,
+				})
+			}
+		}
+		_ = idx // Suppress unused variable warning
+	}
+
+	// Extract RETURN clause
+	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
+
+	// Remove ORDER BY, SKIP, LIMIT from return clause
+	returnEnd := len(returnClause)
+	for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+			returnEnd = idx
+		}
+	}
+	returnExpr := strings.TrimSpace(returnClause[:returnEnd])
+
+	// Parse RETURN items
+	returnItems := e.parseReturnItems(returnExpr)
+
+	// Build result
+	result := &ExecuteResult{
+		Columns: make([]string, len(returnItems)),
+		Rows:    make([][]interface{}, 0),
+	}
+
+	for i, item := range returnItems {
+		if item.alias != "" {
+			result.Columns[i] = item.alias
+		} else {
+			result.Columns[i] = item.expr
+		}
+	}
+
+	// Build result rows
+	for _, jr := range joinedRows {
+		row := make([]interface{}, len(returnItems))
+
+		// Build context for expression evaluation
+		nodeMap := make(map[string]*storage.Node)
+		edgeMap := make(map[string]*storage.Edge)
+
+		// Add nodes from computed values
+		for varName, varVal := range jr.computedValues {
+			if node, ok := varVal.(*storage.Node); ok {
+				nodeMap[varName] = node
+			}
+		}
+
+		// Add related node if present
+		if jr.relatedNode != nil && relPattern.targetVar != "" {
+			nodeMap[relPattern.targetVar] = jr.relatedNode
+		}
+
+		// Add relationship if present
+		if jr.relationship != nil && relPattern.relVar != "" {
+			edgeMap[relPattern.relVar] = jr.relationship
+		}
+
+		for i, item := range returnItems {
+			expr := item.expr
+
+			// Handle CASE expressions
+			if isCaseExpression(expr) {
+				row[i] = e.evaluateCaseExpression(expr, nodeMap, edgeMap)
+				continue
+			}
+
+			// Handle COALESCE
+			if strings.HasPrefix(strings.ToUpper(expr), "COALESCE(") {
+				row[i] = e.evaluateCoalesceInContext(expr, nodeMap, edgeMap, jr.computedValues)
+				continue
+			}
+
+			// Check computed values first
+			if val, ok := jr.computedValues[expr]; ok {
+				row[i] = val
+				continue
+			}
+
+			// Handle property access
+			if strings.Contains(expr, ".") && !strings.Contains(expr, "(") {
+				parts := strings.SplitN(expr, ".", 2)
+				varName := parts[0]
+				propName := parts[1]
+
+				if node, ok := nodeMap[varName]; ok && node != nil {
+					row[i] = node.Properties[propName]
+					continue
+				}
+				// Node is nil (from OPTIONAL MATCH)
+				row[i] = nil
+				continue
+			}
+
+			// Check node map
+			if node, ok := nodeMap[expr]; ok {
+				row[i] = node
+				continue
+			}
+
+			// Check edge map
+			if edge, ok := edgeMap[expr]; ok {
+				row[i] = edge
+				continue
+			}
+
+			// Try expression evaluation
+			row[i] = e.evaluateExpressionWithContext(expr, nodeMap, edgeMap)
+		}
+
+		result.Rows = append(result.Rows, row)
+	}
+
+	// Apply ORDER BY, SKIP, LIMIT
+	orderByIdx := findKeywordIndex(cypher, "ORDER")
+	if orderByIdx > 0 {
+		orderStart := orderByIdx + 5
+		for orderStart < len(cypher) && isWhitespace(cypher[orderStart]) {
+			orderStart++
+		}
+		if orderStart+2 <= len(cypher) && strings.EqualFold(cypher[orderStart:orderStart+2], "BY") {
+			orderStart += 2
+		}
+		orderPart := cypher[orderStart:]
+		endIdx := len(orderPart)
+		for _, kw := range []string{"SKIP", "LIMIT"} {
+			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
+				endIdx = idx
+			}
+		}
+		orderExpr := strings.TrimSpace(orderPart[:endIdx])
+		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
+	}
+
+	skipIdx := findKeywordIndex(cypher, "SKIP")
+	skip := 0
+	if skipIdx > 0 {
+		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
+		skipPart = strings.Fields(skipPart)[0]
+		if s, err := strconv.Atoi(skipPart); err == nil {
+			skip = s
+		}
+	}
+
+	limitIdx := findKeywordIndex(cypher, "LIMIT")
+	limit := -1
+	if limitIdx > 0 {
+		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
+		limitPart = strings.Fields(limitPart)[0]
+		if l, err := strconv.Atoi(limitPart); err == nil {
+			limit = l
+		}
+	}
+
+	if skip > 0 || limit >= 0 {
+		startIdx := skip
+		if startIdx > len(result.Rows) {
+			startIdx = len(result.Rows)
+		}
+		endIdx := len(result.Rows)
+		if limit >= 0 && startIdx+limit < endIdx {
+			endIdx = startIdx + limit
+		}
+		result.Rows = result.Rows[startIdx:endIdx]
+	}
+
+	return result, nil
+}
+
+// evaluateCoalesceInContext evaluates COALESCE function with node and computed value context
+func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[string]*storage.Node, edgeMap map[string]*storage.Edge, computedValues map[string]interface{}) interface{} {
+	// Extract arguments from COALESCE(arg1, arg2, ...)
+	innerStart := strings.Index(expr, "(")
+	innerEnd := strings.LastIndex(expr, ")")
+	if innerStart == -1 || innerEnd == -1 {
+		return nil
+	}
+	inner := expr[innerStart+1 : innerEnd]
+
+	// Split arguments
+	args := e.splitFunctionArgs(inner)
+
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+
+		// Check computed values
+		if val, ok := computedValues[arg]; ok && val != nil {
+			return val
+		}
+
+		// Handle property access
+		if strings.Contains(arg, ".") {
+			parts := strings.SplitN(arg, ".", 2)
+			varName := parts[0]
+			propName := parts[1]
+
+			if node, ok := nodeMap[varName]; ok && node != nil {
+				if propVal := node.Properties[propName]; propVal != nil {
+					return propVal
+				}
+			}
+			continue
+		}
+
+		// Check node map
+		if node, ok := nodeMap[arg]; ok && node != nil {
+			return node
+		}
+
+		// Literal value
+		if strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'") {
+			return arg[1 : len(arg)-1]
+		}
+	}
+
+	return nil
+}
+
+// nodeMatchesWhereClause checks if a node matches a simple WHERE clause
+func (e *StorageExecutor) nodeMatchesWhereClause(node *storage.Node, whereClause string, varName string) bool {
+	// Use the standard WHERE evaluation with node and variable name
+	return e.evaluateWhere(node, varName, whereClause)
 }
 
 // evaluateSumArithmetic handles expressions like SUM(n.a) + SUM(n.b)

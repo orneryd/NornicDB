@@ -1234,7 +1234,13 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*Execute
 		}
 	}
 
-	// Default searchable properties if no index config
+	// Neo4j compatibility: error if index doesn't exist
+	// Only apply strict validation for explicitly named indexes (not "default")
+	if len(targetProperties) == 0 && indexName != "" && indexName != "default" {
+		return nil, fmt.Errorf("there is no such fulltext schema index: %s", indexName)
+	}
+
+	// Default searchable properties if no index config or using "default"
 	if len(targetProperties) == 0 {
 		targetProperties = []string{"content", "text", "title", "name", "description", "body", "summary"}
 	}
