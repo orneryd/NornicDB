@@ -75,9 +75,56 @@ docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
 docker pull timothyswt/nornicdb-amd64-headless:latest
 docker run -d --gpus all -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
   timothyswt/nornicdb-amd64-cpu-headless
+
+docker pull timothyswt/nornicdb-amd64-vulkan:latest
+docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-amd64-vulkan:latest
+
+docker pull timothyswt/nornicdb-amd64-vulkan-bge:latest
+docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-amd64-vulkan-bge:latest
+
+docker pull timothyswt/nornicdb-amd64-vulkan-headless:latest
+docker run -d -p 7474:7474 -p 7687:7687 -v nornicdb-data:/data \
+  timothyswt/nornicdb-amd64-vulkan-headless:latest
 ```
 
 **Open [http://localhost:7474](http://localhost:7474)** — Admin UI with AI assistant ready to query your data.
+
+
+# Build It Yourself! — NornicDB
+
+Below are copy-pastable commands and prerequisites to build NornicDB for the supported targets (Docker images, local binaries, cross-compiles and Raspberry Pi). These instructions reflect the `Makefile` targets in this repository.
+
+---
+
+## Prerequisites
+
+- Go 1.23+ (for builds and cross-compilation)
+- Docker (for image builds)
+- curl (for model downloads)
+- GNU make
+- For localllm / BGE (local embeddings): a working `llama.cpp` build — see `scripts/build-llama.sh`
+- For CUDA builds on Linux/Windows: NVIDIA drivers + CUDA Toolkit (12.x recommended)
+- For Vulkan builds on Linux: Vulkan runtime & drivers for your GPU (AMD/NVIDIA/Intel)
+- On macOS (Apple Silicon): Docker + `--platform linux/arm64` is used for arm64 images (Metal GPU acceleration implemented in the image)
+- Optional: `gh` CLI if you want to create GitHub releases
+
+Model files:
+- BGE: `models/bge-m3.gguf` (Makefile target `make download-bge` will download it)
+- Qwen: `models/qwen2.5-0.5b-instruct.gguf` (Makefile target `make download-qwen` will download it)
+
+---
+
+## Common Make flags
+- Force no cache: `NO_CACHE=1`
+- Set registry (default `timothyswt`): `REGISTRY=yourdockerid`
+- Set tag version (default `latest`): `VERSION=1.0.6`
+
+
+
+# [DIY INSTRUCTIONS](DIY.md)
+
 
 ---
 
