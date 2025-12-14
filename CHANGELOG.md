@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.0.7] - 2025-12-14
+
+### Added
+- Documentation: added `DIY.md` with Vulkan/Makefile build instructions and targets.
+
+### Changed
+- Makefile and docs: added and documented AMD64 Vulkan build targets and related instructions.
+
+### Fixed
+- Neo4j compatibility: return `*storage.Node` and `*storage.Edge` directly from Cypher query results with correct Bolt protocol serialization and property access handling. (commit bc38eb3)
+- Neo4j compatibility: improved integer handling in Cypher/driver interoperability. (commit ef8f07e)
+
+### Technical Details
+- Commits included: `bc38eb3` (node/edge return serialization), `ef8f07e` (integer compatibility), `f24825a`/`436ce36` (docs/Makefile Vulkan targets and `DIY.md`).
+
 ## [1.0.6] - 2025-12-12
 
 ### Added
