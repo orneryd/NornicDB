@@ -159,12 +159,56 @@ wal, err := storage.NewWAL("/data/wal", cfg)
 
 ## Crash Recovery
 
-NornicDB includes robust crash recovery regardless of sync mode:
+NornicDB includes robust crash recovery regardless of sync mode with multiple layers of corruption prevention:
 
-1. **Atomic WAL Writes**: Length-prefixed binary format detects partial writes
-2. **CRC32-C Checksums**: Hardware-accelerated corruption detection
-3. **Transaction Rollback**: Incomplete transactions are rolled back
-4. **Auto-Compaction**: Periodic snapshots for fast recovery
+### WAL Record Format (v2)
+
+Each WAL entry uses an atomic binary format designed to detect any form of corruption:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         WAL RECORD FORMAT (v2)                           │
+├──────────┬─────────┬────────┬─────────────┬────────┬──────────┬─────────┤
+│ Magic    │ Version │ Length │ Payload     │ CRC32  │ Trailer  │ Padding │
+│ "WALE"   │   2     │ uint32 │ JSON bytes  │ uint32 │ 8 bytes  │ 0-7 B   │
+│ 4 bytes  │ 1 byte  │ 4 bytes│ N bytes     │ 4 bytes│ canary   │ align   │
+└──────────┴─────────┴────────┴─────────────┴────────┴──────────┴─────────┘
+                                                          ↑          ↑
+                                              0xDEADBEEFFEEDFACE    8-byte
+                                              detects incomplete   prevents
+                                                  writes          torn headers
+```
+
+### Corruption Prevention Layers
+
+1. **Magic Header (`WALE`)**: Validates record boundaries and format detection
+2. **Version Byte**: Forward/backward compatibility between WAL versions
+3. **Length Prefix**: Detects truncated payloads from partial writes
+4. **CRC32-C Checksum**: Hardware-accelerated detection of bit flips and corruption
+5. **Trailer Canary (`0xDEADBEEFFEEDFACE`)**: Confirms complete write - if missing or wrong, the write was interrupted
+6. **8-Byte Alignment**: Prevents torn headers on sector boundaries (512B/4KB sectors)
+7. **Transaction Rollback**: Incomplete transactions are automatically rolled back on recovery
+
+### How Each Layer Protects Your Data
+
+| Failure Mode | Detection Mechanism |
+|--------------|---------------------|
+| Crash mid-header write | Partial magic or missing length |
+| Crash mid-payload write | Length mismatch or truncated read |
+| Crash after payload, before CRC | Missing CRC bytes detected |
+| Crash after CRC, before trailer | Missing trailer canary |
+| Bit flip in payload | CRC32-C mismatch |
+| Sector-aligned torn write | 8-byte alignment ensures atomic header |
+| Incomplete transaction | Missing commit marker triggers rollback |
+
+### Recovery Behavior
+
+On startup, NornicDB scans the WAL and:
+
+1. ✅ **Commits complete entries** - All layers validated
+2. ⚠️ **Skips incomplete entries** - Detected via missing trailer/CRC
+3. 🔄 **Rolls back partial transactions** - No commit marker found
+4. 🔁 **Regenerates embeddings** - Corrupted embedding entries skipped (safe to regenerate)
 
 The sync mode only affects **how much data** might be lost on crash:
 

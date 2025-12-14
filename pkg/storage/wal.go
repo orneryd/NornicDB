@@ -61,12 +61,13 @@ const (
 
 // Common WAL errors
 var (
-	ErrWALClosed         = errors.New("wal: closed")
-	ErrWALCorrupted      = errors.New("wal: corrupted entry")
-	ErrWALPartialWrite   = errors.New("wal: partial write detected")
-	ErrWALChecksumFailed = errors.New("wal: checksum verification failed")
-	ErrSnapshotFailed    = errors.New("wal: snapshot creation failed")
-	ErrRecoveryFailed    = errors.New("wal: recovery failed")
+	ErrWALClosed          = errors.New("wal: closed")
+	ErrWALCorrupted       = errors.New("wal: corrupted entry")
+	ErrWALPartialWrite    = errors.New("wal: partial write detected")
+	ErrWALChecksumFailed  = errors.New("wal: checksum verification failed")
+	ErrWALMissingTrailer  = errors.New("wal: missing or invalid trailer (incomplete write)")
+	ErrSnapshotFailed     = errors.New("wal: snapshot creation failed")
+	ErrRecoveryFailed     = errors.New("wal: recovery failed")
 )
 
 // WAL format constants for atomic writes
@@ -76,11 +77,34 @@ const (
 	walMagic uint32 = 0x454C4157 // "WALE" in little-endian
 
 	// walFormatVersion for future format changes
-	walFormatVersion uint8 = 1
+	// v1: original format (magic + version + length + payload + crc)
+	// v2: corruption-proof format with trailer canary and 8-byte alignment
+	walFormatVersion uint8 = 2
+
+	// walTrailer is written after every record to detect incomplete writes.
+	// If a crash occurs mid-write, the trailer will be missing or corrupted.
+	// This pattern (0xDEADBEEFFEEDFACE) is:
+	// - Unlikely to appear in real data
+	// - Easy to spot in hex dumps
+	// - A well-known debug/sentinel pattern
+	// Inspired by etcd bug #6191 where torn writes corrupted the WAL.
+	walTrailer uint64 = 0xDEADBEEFFEEDFACE
+
+	// walAlignment ensures record headers never straddle sector boundaries.
+	// Since disk sectors (512B) and pages (4KB) are multiples of 8,
+	// an 8-byte aligned header cannot be torn across physical boundaries.
+	// This makes "torn headers" mathematically impossible.
+	walAlignment int64 = 8
 
 	// Maximum entry size (16MB) to prevent memory exhaustion on corrupt data
 	walMaxEntrySize uint32 = 16 * 1024 * 1024
 )
+
+// alignUp rounds n up to the nearest multiple of walAlignment (8 bytes).
+// This ensures WAL records start at aligned offsets, preventing torn headers.
+func alignUp(n int64) int64 {
+	return (n + walAlignment - 1) &^ (walAlignment - 1)
+}
 
 // WALEntry represents a single write-ahead log entry.
 // Each mutating operation is recorded as an entry before execution.
@@ -355,13 +379,22 @@ func (w *WAL) Append(op OperationType, data interface{}) error {
 	// Calculate CRC of the entire entry (not just data)
 	entryCRC := crc32Checksum(entryBytes)
 
-	// Write atomically: magic + version + length + payload + crc
+	// Write atomically: magic + version + length + payload + crc + trailer + padding
+	// Format v2 adds trailer canary and 8-byte alignment for corruption-proof writes.
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// Calculate record size with trailer and alignment padding
+	// Header: magic(4) + version(1) + length(4) = 9 bytes
+	// Body: payload(N) + crc(4) + trailer(8)
+	headerSize := 4 + 1 + 4
+	bodySize := len(entryBytes) + 4 + 8
+	rawRecordLen := int64(headerSize + bodySize)
+	alignedRecordLen := alignUp(rawRecordLen)
+	paddingLen := alignedRecordLen - rawRecordLen
+
 	// Build the complete record in memory first
-	recordLen := 4 + 1 + 4 + len(entryBytes) + 4 // magic + version + length + payload + crc
-	record := make([]byte, recordLen)
+	record := make([]byte, alignedRecordLen)
 
 	offset := 0
 	// Magic bytes
@@ -378,6 +411,15 @@ func (w *WAL) Append(op OperationType, data interface{}) error {
 	offset += len(entryBytes)
 	// CRC of payload
 	binary.LittleEndian.PutUint32(record[offset:], entryCRC)
+	offset += 4
+	// Trailer canary - marks record as fully written
+	binary.LittleEndian.PutUint64(record[offset:], walTrailer)
+	offset += 8
+	// Zero-fill padding for alignment (already zeroed by make, but explicit)
+	for i := int64(0); i < paddingLen; i++ {
+		record[offset] = 0
+		offset++
+	}
 
 	// Write the complete record in one call
 	if _, err := w.writer.Write(record); err != nil {
@@ -385,7 +427,7 @@ func (w *WAL) Append(op OperationType, data interface{}) error {
 	}
 
 	w.entries.Add(1)
-	w.bytes.Add(int64(recordLen))
+	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
 	w.lastEntryTime.Store(time.Now().UnixNano())
 
@@ -616,9 +658,15 @@ func (b *BatchWriter) Commit() error {
 		// Calculate CRC of entire entry
 		entryCRC := crc32Checksum(entryBytes)
 
-		// Build atomic record: magic + version + length + payload + crc
-		recordLen := 4 + 1 + 4 + len(entryBytes) + 4
-		record := make([]byte, recordLen)
+		// Build atomic record: magic + version + length + payload + crc + trailer + padding
+		// Format v2 with corruption-proof trailer and 8-byte alignment
+		headerSize := 4 + 1 + 4
+		bodySize := len(entryBytes) + 4 + 8
+		rawRecordLen := int64(headerSize + bodySize)
+		alignedRecordLen := alignUp(rawRecordLen)
+		paddingLen := alignedRecordLen - rawRecordLen
+
+		record := make([]byte, alignedRecordLen)
 
 		offset := 0
 		binary.LittleEndian.PutUint32(record[offset:], walMagic)
@@ -630,6 +678,15 @@ func (b *BatchWriter) Commit() error {
 		copy(record[offset:], entryBytes)
 		offset += len(entryBytes)
 		binary.LittleEndian.PutUint32(record[offset:], entryCRC)
+		offset += 4
+		// Trailer canary - marks record as fully written
+		binary.LittleEndian.PutUint64(record[offset:], walTrailer)
+		offset += 8
+		// Zero-fill padding for alignment
+		for i := int64(0); i < paddingLen; i++ {
+			record[offset] = 0
+			offset++
+		}
 
 		// Write complete record
 		if _, err := b.wal.writer.Write(record); err != nil {
@@ -638,7 +695,7 @@ func (b *BatchWriter) Commit() error {
 
 		b.wal.entries.Add(1)
 		b.wal.totalWrites.Add(1)
-		totalBytes += int64(recordLen)
+		totalBytes += alignedRecordLen
 	}
 
 	// Single sync at the end
@@ -862,7 +919,7 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	tmpWriter := bufio.NewWriterSize(tmpFile, 64*1024)
 	var bytesWritten int64
 
-	// Write kept entries using atomic format
+	// Write kept entries using atomic format (v2: with trailer canary and 8-byte alignment)
 	for _, entry := range keptEntries {
 		// Serialize entry
 		entryBytes, err := json.Marshal(&entry)
@@ -876,9 +933,14 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		// Calculate CRC of entire entry
 		entryCRC := crc32Checksum(entryBytes)
 
-		// Build atomic record: magic + version + length + payload + crc
-		recordLen := 4 + 1 + 4 + len(entryBytes) + 4
-		record := make([]byte, recordLen)
+		// Build atomic record: magic + version + length + payload + crc + trailer + padding
+		// Calculate aligned record size for 8-byte alignment
+		headerSize := 4 + 1 + 4                     // magic + version + length
+		bodySize := len(entryBytes) + 4 + 8        // payload + crc + trailer
+		rawRecordLen := int64(headerSize + bodySize)
+		alignedRecordLen := alignUp(rawRecordLen)
+		paddingLen := alignedRecordLen - rawRecordLen
+		record := make([]byte, alignedRecordLen)
 
 		offset := 0
 		binary.LittleEndian.PutUint32(record[offset:], walMagic)
@@ -890,6 +952,15 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		copy(record[offset:], entryBytes)
 		offset += len(entryBytes)
 		binary.LittleEndian.PutUint32(record[offset:], entryCRC)
+		offset += 4
+		// Write trailer canary to detect incomplete writes
+		binary.LittleEndian.PutUint64(record[offset:], walTrailer)
+		offset += 8
+		// Zero-fill alignment padding (already zeroed by make, but explicit for clarity)
+		for i := int64(0); i < paddingLen; i++ {
+			record[offset] = 0
+			offset++
+		}
 
 		if _, err := tmpWriter.Write(record); err != nil {
 			tmpFile.Close()
@@ -897,7 +968,7 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to write entry seq %d: %w", entry.Sequence, err)
 		}
-		bytesWritten += int64(recordLen)
+		bytesWritten += alignedRecordLen
 	}
 
 	// Flush and sync temp WAL
@@ -993,7 +1064,8 @@ func ReadWALEntries(walPath string) ([]WALEntry, error) {
 }
 
 // readAtomicWALEntries reads entries in the new atomic format.
-// Format: [magic:4][version:1][length:4][payload:N][crc:4]
+// Format v1: [magic:4][version:1][length:4][payload:N][crc:4]
+// Format v2: [magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
 func readAtomicWALEntries(file *os.File) ([]WALEntry, error) {
 	var entries []WALEntry
 	var skippedEmbeddings int
@@ -1079,6 +1151,46 @@ func readAtomicWALEntries(file *os.File) ([]WALEntry, error) {
 			}
 			return nil, fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
 				ErrWALChecksumFailed, storedCRC, computedCRC, getLastSeq(entries))
+		}
+
+		// Version 2+: Read and verify trailer canary
+		if version >= 2 {
+			trailerBuf := make([]byte, 8)
+			n, err = io.ReadFull(reader, trailerBuf)
+			if err == io.ErrUnexpectedEOF || n != 8 {
+				// Missing trailer = incomplete write
+				partialWriteDetected = true
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("wal: failed to read trailer: %w", err)
+			}
+
+			// Verify trailer canary
+			storedTrailer := binary.LittleEndian.Uint64(trailerBuf)
+			if storedTrailer != walTrailer {
+				// Trailer mismatch indicates incomplete/corrupted write
+				partialWriteDetected = true
+				break
+			}
+
+			// Skip alignment padding
+			// Record size so far: header(9) + payload(N) + crc(4) + trailer(8)
+			rawRecordLen := int64(9 + payloadLen + 4 + 8)
+			alignedRecordLen := alignUp(rawRecordLen)
+			paddingLen := alignedRecordLen - rawRecordLen
+			if paddingLen > 0 {
+				paddingBuf := make([]byte, paddingLen)
+				_, err = io.ReadFull(reader, paddingBuf)
+				if err == io.ErrUnexpectedEOF {
+					// Missing padding = incomplete write (rare edge case)
+					partialWriteDetected = true
+					break
+				}
+				if err != nil {
+					return nil, fmt.Errorf("wal: failed to read padding: %w", err)
+				}
+			}
 		}
 
 		// Decode entry
