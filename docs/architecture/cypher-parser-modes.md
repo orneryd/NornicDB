@@ -183,10 +183,6 @@ make antlr-generate
 | `pkg/cypher/antlr/` | ANTLR parser implementation |
 | `pkg/cypher/antlr/*.g4` | ANTLR grammar files |
 
-## Future: Hybrid Mode
-
-A hybrid mode that uses Nornic for execution speed while building ANTLR AST in the background for LLM features is planned but not yet implemented.
-
 ---
 
 **TL;DR:** Use `nornic` (default) for production. Use `antlr` only for development/debugging when you need detailed error messages.
