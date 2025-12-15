@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WAL Hardening**: Added trailer canary and 8-byte alignment for improved durability
   - New tests and documentation in `docs/operations/durability.md`
 - **Search Optimizations Documentation**: Comprehensive guide at `docs/performance/searching.md`
-- **Protocol Plugin Architecture Proposal**: Design doc at `docs/architecture/protocol-plugin-architecture.md`
 - **Cypher Parser Modes Documentation**: Architecture doc at `docs/architecture/cypher-parser-modes.md`
 
 ### Changed
