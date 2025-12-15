@@ -508,9 +508,11 @@ make cross-all             # All platforms
 - [x] Memory decay system
 - [x] GPU acceleration (Metal, CUDA)
 - [x] Vector & full-text search
-- [ ] Auto-relationship engine
-- [ ] HNSW vector index
-- [ ] Clustering support
+- [X] Auto-relationship engine
+- [X] HNSW vector index
+- [x] Metadata/Property Indexing
+- [x] SIMD Implementation
+- [x] Clustering support
 
 ## License
 

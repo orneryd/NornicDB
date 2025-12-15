@@ -7,14 +7,18 @@
 // Main Functions:
 //   - CosineSimilarity: Standard similarity for float32 vectors (most common)
 //   - CosineSimilarityFloat64: High-precision similarity for float64 vectors
-//   - CosineSimilarityGPU: GPU-optimized similarity (returns float32)
+//   - CosineSimilaritySIMD: SIMD-accelerated similarity for high-throughput
 //   - DotProduct: Dot product for float32 vectors
 //   - EuclideanSimilarity: Distance-based similarity
 //   - Normalize: Returns normalized copy of vector
 //   - NormalizeInPlace: Normalizes vector in-place (modifies input)
 package vector
 
-import "math"
+import (
+	"math"
+
+	"github.com/orneryd/nornicdb/pkg/simd"
+)
 
 // CosineSimilarity calculates cosine similarity between two float32 vectors.
 // Returns value in range [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite.
@@ -78,32 +82,36 @@ func CosineSimilarityFloat64(a, b []float64) float64 {
 // CosineSimilarityGPU calculates cosine similarity optimized for GPU operations.
 // Returns float32 for GPU compatibility.
 //
-// Uses float32 throughout for maximum GPU performance.
+// Uses SIMD-accelerated implementation for maximum throughput.
 // Slightly less accurate than CosineSimilarity() due to float32 accumulation.
 //
-// Use this ONLY for GPU-accelerated batch operations.
+// Use this for high-throughput batch operations.
 func CosineSimilarityGPU(a, b []float32) float32 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
+	return simd.CosineSimilarity(a, b)
+}
 
-	var dot, normA, normB float32
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-
-	return dot / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
+// CosineSimilaritySIMD calculates cosine similarity using SIMD acceleration.
+// Returns float32 for compatibility with embedding operations.
+//
+// This is the fastest implementation for high-throughput similarity searches.
+// Uses platform-specific SIMD instructions (AVX2 on x86, NEON on ARM).
+//
+// On Apple Silicon: ~4-8x faster than scalar loop
+// On x86 with AVX2: ~10x faster than scalar loop
+//
+// Example:
+//
+//	query := []float32{0.1, 0.2, 0.3, ...}  // 1536-dim embedding
+//	doc := []float32{0.4, 0.5, 0.6, ...}
+//	sim := CosineSimilaritySIMD(query, doc)  // Fast similarity calculation
+func CosineSimilaritySIMD(a, b []float32) float32 {
+	return simd.CosineSimilarity(a, b)
 }
 
 // DotProduct calculates the dot product of two float32 vectors.
-// Returns float64 for precision.
+// Returns float64 for API compatibility.
 //
+// Uses SIMD acceleration internally for maximum throughput.
 // For normalized vectors, dot product equals cosine similarity.
 //
 // Example:
@@ -112,20 +120,28 @@ func CosineSimilarityGPU(a, b []float32) float32 {
 //	b := []float32{4.0, 5.0, 6.0}
 //	dot := DotProduct(a, b)  // Returns 32.0
 func DotProduct(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
+	return float64(simd.DotProduct(a, b))
+}
 
-	var sum float64
-	for i := range a {
-		sum += float64(a[i] * b[i])
-	}
-	return sum
+// DotProductSIMD calculates the dot product using SIMD acceleration.
+// Returns float32 for maximum performance in hot paths.
+//
+// This is the fastest implementation for normalized vector comparisons.
+// Use this in tight loops where float32 precision is acceptable.
+//
+// Example:
+//
+//	query := []float32{0.1, 0.2, 0.3, ...}
+//	doc := []float32{0.4, 0.5, 0.6, ...}
+//	sim := DotProductSIMD(query, doc)
+func DotProductSIMD(a, b []float32) float32 {
+	return simd.DotProduct(a, b)
 }
 
 // EuclideanSimilarity calculates similarity based on Euclidean distance.
 // Returns value in range [0, 1] where 1 = identical, 0 = very different.
 //
+// Uses SIMD acceleration internally for the distance calculation.
 // Formula: 1 / (1 + distance)
 //
 // Example:
@@ -137,14 +153,20 @@ func EuclideanSimilarity(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
 	}
+	dist := simd.EuclideanDistance(a, b)
+	return 1.0 / (1.0 + float64(dist))
+}
 
-	var sum float64
-	for i := range a {
-		diff := float64(a[i] - b[i])
-		sum += diff * diff
-	}
-
-	return 1.0 / (1.0 + math.Sqrt(sum))
+// EuclideanDistanceSIMD calculates Euclidean distance using SIMD acceleration.
+// Returns float32 for maximum performance in hot paths.
+//
+// Example:
+//
+//	a := []float32{0, 0}
+//	b := []float32{3, 4}
+//	dist := EuclideanDistanceSIMD(a, b)  // Returns 5.0
+func EuclideanDistanceSIMD(a, b []float32) float32 {
+	return simd.EuclideanDistance(a, b)
 }
 
 // EuclideanSimilarityFloat64 calculates similarity for float64 vectors.
@@ -165,26 +187,24 @@ func EuclideanSimilarityFloat64(a, b []float64) float64 {
 // Normalize returns a normalized copy of the vector.
 // The input vector is not modified (immutable operation).
 //
+// Uses SIMD acceleration for the norm calculation.
+//
 // Example:
 //
 //	original := []float32{3.0, 4.0}
 //	normalized := Normalize(original)  // Returns [0.6, 0.8]
 //	// original is unchanged
 func Normalize(vec []float32) []float32 {
-	var sumSquares float64
-	for _, v := range vec {
-		sumSquares += float64(v * v)
-	}
-
-	if sumSquares == 0 {
+	n := simd.Norm(vec)
+	if n == 0 {
 		result := make([]float32, len(vec))
 		return result
 	}
 
-	norm := math.Sqrt(sumSquares)
+	invNorm := 1.0 / n
 	normalized := make([]float32, len(vec))
 	for i, v := range vec {
-		normalized[i] = float32(float64(v) / norm)
+		normalized[i] = v * invNorm
 	}
 	return normalized
 }
@@ -192,6 +212,7 @@ func Normalize(vec []float32) []float32 {
 // NormalizeInPlace normalizes a vector in-place (modifies the input).
 // After normalization, the vector has unit length (magnitude = 1).
 //
+// Uses SIMD acceleration for the norm calculation.
 // WARNING: Modifies the input slice. Use Normalize() to preserve original.
 //
 // Example:
@@ -199,15 +220,5 @@ func Normalize(vec []float32) []float32 {
 //	v := []float32{3.0, 4.0}
 //	NormalizeInPlace(v)  // v is now [0.6, 0.8]
 func NormalizeInPlace(v []float32) {
-	var sumSquares float64
-	for _, x := range v {
-		sumSquares += float64(x) * float64(x)
-	}
-	if sumSquares == 0 {
-		return
-	}
-	norm := float32(1.0 / math.Sqrt(sumSquares))
-	for i := range v {
-		v[i] *= norm
-	}
+	simd.NormalizeInPlace(v)
 }

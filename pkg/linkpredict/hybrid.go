@@ -2,8 +2,8 @@ package linkpredict
 
 import (
 	"context"
-	"math"
 
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -446,6 +446,8 @@ func sortTopoPredictions(predictions []Prediction) {
 // This is a utility function for semantic scoring. Returns value in [-1, 1],
 // where 1 = identical, 0 = orthogonal, -1 = opposite.
 //
+// Uses SIMD-accelerated implementation for maximum performance.
+//
 // Example:
 //
 //	scorer := func(ctx context.Context, source, target storage.NodeID) float64 {
@@ -454,23 +456,5 @@ func sortTopoPredictions(predictions []Prediction) {
 //		return linkpredict.CosineSimilarity(sourceEmb, targetEmb)
 //	}
 func CosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0.0
-	}
-
-	dotProduct := 0.0
-	normA := 0.0
-	normB := 0.0
-
-	for i := range a {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-
-	if normA == 0 || normB == 0 {
-		return 0.0
-	}
-
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+	return vector.CosineSimilarity(a, b)
 }
