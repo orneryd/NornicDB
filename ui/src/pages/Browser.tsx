@@ -712,17 +712,25 @@ function JsonPreview({ data, expanded = false }: { data: unknown; expanded?: boo
   if (typeof data === 'number') return <span className="json-number">{data}</span>;
   if (typeof data === 'boolean') return <span className="json-boolean">{String(data)}</span>;
   if (Array.isArray(data)) {
-    if (!expanded && data.length > 3) {
-      return <span className="text-norse-silver">[{data.length} items]</span>;
+    if (expanded) {
+      return (
+        <pre className="text-xs text-norse-silver bg-norse-shadow/50 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      );
     }
-    return <span className="text-norse-silver">[...]</span>;
+    return <span className="text-norse-silver">[{data.length} items]</span>;
   }
   if (typeof data === 'object') {
-    const keys = Object.keys(data);
-    if (!expanded && keys.length > 3) {
-      return <span className="text-norse-silver">{'{'}...{keys.length} props{'}'}</span>;
+    if (expanded) {
+      return (
+        <pre className="text-xs text-norse-silver bg-norse-shadow/50 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      );
     }
-    return <span className="text-norse-silver">{'{'}...{'}'}</span>;
+    const keys = Object.keys(data);
+    return <span className="text-norse-silver">{'{'}...{keys.length} props{'}'}</span>;
   }
   return <span>{String(data)}</span>;
 }

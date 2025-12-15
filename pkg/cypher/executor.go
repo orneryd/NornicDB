@@ -1852,6 +1852,8 @@ func (e *StorageExecutor) parseRemoveProperties(removePart string) []string {
 // smartSplitReturnItems splits a RETURN clause by commas, but respects:
 // - CASE/END boundaries
 // - Parentheses (function calls)
+// - Curly braces (map projections like n { .*, key: value })
+// - Square brackets (list literals)
 // - String literals
 // smartSplitReturnItems splits RETURN items by comma, respecting strings, parentheses, and CASE/END.
 // Properly handles UTF-8 encoded strings with multi-byte characters.
@@ -1861,6 +1863,8 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	var inString bool
 	var stringChar rune
 	var parenDepth int
+	var braceDepth int
+	var bracketDepth int
 	var caseDepth int
 
 	runes := []rune(returnPart)
@@ -1910,6 +1914,30 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 			continue
 		}
 
+		// Track curly braces (map projections)
+		if ch == '{' {
+			braceDepth++
+			current.WriteRune(ch)
+			continue
+		}
+		if ch == '}' {
+			braceDepth--
+			current.WriteRune(ch)
+			continue
+		}
+
+		// Track square brackets (list literals)
+		if ch == '[' {
+			bracketDepth++
+			current.WriteRune(ch)
+			continue
+		}
+		if ch == ']' {
+			bracketDepth--
+			current.WriteRune(ch)
+			continue
+		}
+
 		// Track CASE/END keywords (using byte positions for substring comparison)
 		if bytePos+4 <= len(returnPart) && upper[bytePos:bytePos+4] == "CASE" {
 			// Check if CASE is a word boundary
@@ -1937,8 +1965,8 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 			}
 		}
 
-		// Split on comma only if we're not inside parens, CASE, or strings
-		if ch == ',' && parenDepth == 0 && caseDepth == 0 {
+		// Split on comma only if we're not inside parens, braces, brackets, CASE, or strings
+		if ch == ',' && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && caseDepth == 0 {
 			result = append(result, current.String())
 			current.Reset()
 			continue

@@ -2288,6 +2288,32 @@ func TestParseReturnItemsWithAlias(t *testing.T) {
 	assert.Equal(t, "val", result.Columns[0])
 }
 
+func TestParseReturnItemsMapProjectionWithAlias(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Test that map projection syntax n { .*, key: value } AS n is parsed correctly
+	// The comma inside {} should NOT split the return items
+	params := map[string]interface{}{
+		"props": map[string]interface{}{
+			"name":      "TestNode",
+			"value":     float64(42),
+			"embedding": []float64{0.1, 0.2, 0.3},
+		},
+	}
+
+	result, err := exec.Execute(ctx, "CREATE (n:Node $props) RETURN n { .*, embedding: null } AS n", params)
+	require.NoError(t, err)
+
+	// Should have exactly 1 column named "n", not 2 columns
+	assert.Len(t, result.Columns, 1, "Should have exactly 1 column, not split on comma inside {}")
+	assert.Equal(t, "n", result.Columns[0], "Column should be named 'n' from AS alias")
+
+	// Should have 1 row
+	assert.Len(t, result.Rows, 1)
+}
+
 func TestParseReturnItemsOrderByLimit(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)
