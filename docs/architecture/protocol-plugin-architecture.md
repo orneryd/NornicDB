@@ -812,7 +812,7 @@ plugins:
 
 ## Implementation Phases
 
-### Phase 1: Plugin Infrastructure (2-3 weeks)
+### Phase 1: Plugin Infrastructure 
 - [ ] Define `ProtocolPlugin` and `QueryLanguagePlugin` interfaces
 - [ ] Implement plugin loader (Go plugins + gRPC for external)
 - [ ] Refactor Bolt server (`pkg/bolt`) as a plugin
@@ -820,14 +820,14 @@ plugins:
 - [ ] Plugin configuration via `nornicdb.yaml`
 - [ ] Plugin lifecycle management (init, start, stop, health)
 
-### Phase 2: AST Formalization (1-2 weeks)
+### Phase 2: AST Formalization 
 - [ ] Export existing AST types from `pkg/cypher/ast_builder.go` as public API
 - [ ] Document AST structure for plugin authors
 - [ ] Create AST validation helpers
 - [ ] Add AST → Cypher string serialization (for debugging/logging)
 - [ ] Ensure QueryCache works with plugin-generated ASTs
 
-### Phase 3: MongoDB Protocol (4-6 weeks)
+### Phase 3: MongoDB Protocol
 - [ ] MongoDB Wire Protocol implementation (OP_MSG, OP_QUERY)
 - [ ] MQL → AST translator for CRUD operations
   - [ ] `find()` → `ASTClauseMatch` + `ASTClauseReturn`
@@ -842,7 +842,7 @@ plugins:
 - [ ] `$vectorSearch` → `ASTClauseCall` with vector procedures
 - [ ] MongoDB driver compatibility tests (Node.js, Python, Go)
 
-### Phase 4: Additional Protocols (Optional)
+### Phase 4: Additional Protocols
 - [ ] PostgreSQL Wire Protocol (SQL → AST)
 - [ ] GraphQL endpoint (schema-first, resolvers → AST)
 - [ ] Redis Protocol (for key-value access patterns)
