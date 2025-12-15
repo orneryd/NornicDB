@@ -128,3 +128,129 @@ func NormalizeInPlace(v []float32) {
 func Info() RuntimeInfo {
 	return runtimeInfo()
 }
+
+// BatchCosineSimilarity computes cosine similarity between a query vector
+// and a batch of embedding vectors. Automatically uses Metal GPU if available
+// on macOS, otherwise falls back to CPU SIMD.
+//
+// This is the recommended function for searching embedding collections.
+//
+// Parameters:
+//   - embeddings: Contiguous array of [num_vectors × dimensions] float32
+//   - query: Single query vector of [dimensions] float32
+//   - scores: Output array of [num_vectors] float32 similarity scores
+//
+// Example:
+//
+//	embeddings := make([]float32, 1000*768) // 1000 vectors of 768 dimensions
+//	query := make([]float32, 768)
+//	scores := make([]float32, 1000)
+//	simd.BatchCosineSimilarity(embeddings, query, scores)
+func BatchCosineSimilarity(embeddings []float32, query []float32, scores []float32) {
+	dimensions := len(query)
+	if dimensions == 0 {
+		return
+	}
+	numVectors := len(embeddings) / dimensions
+	if numVectors == 0 || len(scores) < numVectors {
+		return
+	}
+
+	// Try Metal GPU first (auto-detects availability)
+	if err := BatchCosineSimilarityMetal(embeddings, query, scores); err == nil {
+		return
+	}
+
+	// Fall back to CPU SIMD
+	for i := 0; i < numVectors; i++ {
+		start := i * dimensions
+		end := start + dimensions
+		scores[i] = CosineSimilarity(embeddings[start:end], query)
+	}
+}
+
+// BatchDotProduct computes dot product between a query vector and a batch of vectors.
+// Automatically uses Metal GPU if available, otherwise falls back to CPU SIMD.
+//
+// Parameters:
+//   - embeddings: Contiguous array of [num_vectors × dimensions] float32
+//   - query: Single query vector of [dimensions] float32
+//   - results: Output array of [num_vectors] float32 dot products
+func BatchDotProduct(embeddings []float32, query []float32, results []float32) {
+	dimensions := len(query)
+	if dimensions == 0 {
+		return
+	}
+	numVectors := len(embeddings) / dimensions
+	if numVectors == 0 || len(results) < numVectors {
+		return
+	}
+
+	// Try Metal GPU first
+	if err := BatchDotProductMetal(embeddings, query, results); err == nil {
+		return
+	}
+
+	// Fall back to CPU SIMD
+	for i := 0; i < numVectors; i++ {
+		start := i * dimensions
+		end := start + dimensions
+		results[i] = DotProduct(embeddings[start:end], query)
+	}
+}
+
+// BatchEuclideanDistance computes Euclidean distance between a query vector
+// and a batch of vectors. Automatically uses Metal GPU if available,
+// otherwise falls back to CPU SIMD.
+//
+// Parameters:
+//   - embeddings: Contiguous array of [num_vectors × dimensions] float32
+//   - query: Single query vector of [dimensions] float32
+//   - distances: Output array of [num_vectors] float32 distances
+func BatchEuclideanDistance(embeddings []float32, query []float32, distances []float32) {
+	dimensions := len(query)
+	if dimensions == 0 {
+		return
+	}
+	numVectors := len(embeddings) / dimensions
+	if numVectors == 0 || len(distances) < numVectors {
+		return
+	}
+
+	// Try Metal GPU first
+	if err := BatchEuclideanDistanceMetal(embeddings, query, distances); err == nil {
+		return
+	}
+
+	// Fall back to CPU SIMD
+	for i := 0; i < numVectors; i++ {
+		start := i * dimensions
+		end := start + dimensions
+		distances[i] = EuclideanDistance(embeddings[start:end], query)
+	}
+}
+
+// BatchNormalize normalizes a batch of vectors in-place.
+// Automatically uses Metal GPU if available, otherwise falls back to CPU SIMD.
+//
+// Parameters:
+//   - vectors: Contiguous array of [num_vectors × dimensions] float32
+//   - numVectors: Number of vectors
+//   - dimensions: Dimension of each vector
+func BatchNormalize(vectors []float32, numVectors, dimensions int) {
+	if numVectors == 0 || dimensions == 0 || len(vectors) < numVectors*dimensions {
+		return
+	}
+
+	// Try Metal GPU first
+	if err := BatchNormalizeMetal(vectors, numVectors, dimensions); err == nil {
+		return
+	}
+
+	// Fall back to CPU SIMD
+	for i := 0; i < numVectors; i++ {
+		start := i * dimensions
+		end := start + dimensions
+		NormalizeInPlace(vectors[start:end])
+	}
+}
