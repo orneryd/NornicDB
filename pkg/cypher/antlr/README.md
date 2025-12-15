@@ -1,27 +1,39 @@
 # ANTLR Cypher Parser for NornicDB
 
+This package provides an ANTLR-based OpenCypher parser as an alternative to NornicDB's fast inline (Nornic) parser.
+
+> **See also:** [Cypher Parser Modes](../../docs/architecture/cypher-parser-modes.md) for full architecture documentation and benchmarks.
+
+## Quick Start
+
+```bash
+# Run entire test suite with ANTLR parser
+make antlr-test
+
+# Regenerate parser from grammar files
+make antlr-generate
+```
 
 ## Makefile Targets
 
 **From root directory:**
 
-```
+```bash
+make antlr-test      # Run ENTIRE test suite with ANTLR parser
 make antlr-generate  # Regenerate parser from .g4 grammar files
-make antlr-test      # Run ANTLR parser tests
 make antlr-clean     # Clean generated files and JAR
+make test-parsers    # Run cypher tests with both parsers
 ```
 
 **From pkg/cypher/antlr/:**
 
-```
+```bash
 make generate  # Download ANTLR JAR + regenerate
 make download  # Download ANTLR JAR only
 make test      # Run tests
 make clean     # Clean all
 make help      # Show help
 ```
-
-This package provides an ANTLR-based OpenCypher parser as an alternative to NornicDB's fast inline parser.
 
 ## When to Use
 
