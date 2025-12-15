@@ -2,66 +2,65 @@
 
 package simd
 
-import "math"
+import (
+	"math"
 
-// Pure Go fallback implementations for platforms without SIMD support.
-// These implementations are based on github.com/viterin/vek's pure Go code.
+	"github.com/viterin/vek/vek32"
+)
+
+// Generic fallback implementations using viterin/vek library.
+// On platforms without AVX2/NEON, vek32 uses optimized pure Go implementations
+// that are still faster than naive loops due to better memory access patterns.
 
 func dotProduct(a, b []float32) float32 {
-	sum := float32(0)
-	for i := range a {
-		sum += a[i] * b[i]
+	if len(a) == 0 {
+		return 0
 	}
-	return sum
+	return vek32.Dot(a, b)
 }
 
 func cosineSimilarity(a, b []float32) float32 {
-	dot := float32(0)
-	normA := float32(0)
-	normB := float32(0)
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
+	if len(a) == 0 {
 		return 0
 	}
-	return dot / float32(math.Sqrt(float64(normA*normB)))
+	// vek32.CosineSimilarity returns NaN for zero vectors, we want 0
+	result := vek32.CosineSimilarity(a, b)
+	if math.IsNaN(float64(result)) {
+		return 0
+	}
+	return result
 }
 
 func euclideanDistance(a, b []float32) float32 {
-	sum := float32(0)
-	for i := range a {
-		diff := a[i] - b[i]
-		sum += diff * diff
+	if len(a) == 0 {
+		return 0
 	}
-	return float32(math.Sqrt(float64(sum)))
+	return vek32.Distance(a, b)
 }
 
 func norm(v []float32) float32 {
-	sum := float32(0)
-	for i := range v {
-		sum += v[i] * v[i]
+	if len(v) == 0 {
+		return 0
 	}
-	return float32(math.Sqrt(float64(sum)))
+	return vek32.Norm(v)
 }
 
 func normalizeInPlace(v []float32) {
-	n := norm(v)
+	if len(v) == 0 {
+		return
+	}
+	n := vek32.Norm(v)
 	if n == 0 {
 		return
 	}
-	invNorm := 1.0 / n
-	for i := range v {
-		v[i] *= invNorm
-	}
+	vek32.DivNumber_Inplace(v, n)
 }
 
 func runtimeInfo() RuntimeInfo {
+	info := vek32.Info()
 	return RuntimeInfo{
 		Implementation: ImplGeneric,
-		Features:       []string{},
-		Accelerated:    false,
+		Features:       info.CPUFeatures,
+		Accelerated:    info.Acceleration,
 	}
 }
