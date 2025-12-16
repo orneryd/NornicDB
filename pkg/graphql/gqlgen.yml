@@ -1,0 +1,150 @@
+# gqlgen configuration for NornicDB GraphQL API
+# Documentation: https://gqlgen.com/config/
+
+# Path to the generated code
+schema:
+  - schema/*.graphql
+
+# Where to put the generated runtime/exec code
+exec:
+  filename: generated/generated.go
+  package: generated
+
+# Where to put generated model types (we'll use custom models mostly)
+model:
+  filename: models/models_gen.go
+  package: models
+
+# Where to put the resolver implementations  
+resolver:
+  layout: follow-schema
+  dir: resolvers
+  package: resolvers
+  filename_template: "{name}.resolvers.go"
+
+# Add autobind for common types to avoid duplication
+autobind:
+  - "github.com/orneryd/nornicdb/pkg/graphql/models"
+
+# Model mappings - map GraphQL types to Go types
+models:
+  # Scalar mappings
+  ID:
+    model:
+      - github.com/99designs/gqlgen/graphql.ID
+  DateTime:
+    model:
+      - github.com/99designs/gqlgen/graphql.Time
+  JSON:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.JSON
+  FloatArray:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.FloatArray
+  
+  # Core types - use our custom models
+  Node:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.Node
+  Relationship:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.Relationship
+  SimilarNode:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SimilarNode
+  
+  # Search types
+  SearchResult:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SearchResult
+  SearchResponse:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SearchResponse
+  SearchOptions:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SearchOptions
+  
+  # Cypher types
+  CypherResult:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.CypherResult
+  CypherStats:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.CypherStats
+  CypherInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.CypherInput
+  
+  # Stats types
+  DatabaseStats:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.DatabaseStats
+  LabelStats:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.LabelStats
+  RelationshipTypeStats:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.RelationshipTypeStats
+  GraphSchema:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.GraphSchema
+  SchemaConstraint:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SchemaConstraint
+  
+  # Input types
+  CreateNodeInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.CreateNodeInput
+  UpdateNodeInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.UpdateNodeInput
+  CreateRelationshipInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.CreateRelationshipInput
+  UpdateRelationshipInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.UpdateRelationshipInput
+  BulkCreateNodesInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.BulkCreateNodesInput
+  BulkCreateRelationshipsInput:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.BulkCreateRelationshipsInput
+  
+  # Result types
+  BulkCreateResult:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.BulkCreateResult
+  BulkDeleteResult:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.BulkDeleteResult
+  EmbeddingStatus:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.EmbeddingStatus
+  DecayResult:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.DecayResult
+  Subgraph:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.Subgraph
+  
+  # Enums - use Go types
+  MemoryTier:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.MemoryTier
+  RelationshipDirection:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.RelationshipDirection
+  SearchSortBy:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SearchSortBy
+  SearchMethod:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SearchMethod
+  SortOrder:
+    model:
+      - github.com/orneryd/nornicdb/pkg/graphql/models.SortOrder
+
+# Skip generation for types we implement manually
+omit_slice_element_pointers: true

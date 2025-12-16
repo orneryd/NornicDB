@@ -134,6 +134,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -146,10 +147,12 @@ import (
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/security"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Errors for HTTP operations.
@@ -424,6 +427,9 @@ type Server struct {
 
 	// Heimdall - AI assistant for database management
 	heimdallHandler *heimdall.Handler
+
+	// GraphQL handler for GraphQL API
+	graphqlHandler *graphql.Handler
 
 	httpServer *http.Server
 	listener   net.Listener
@@ -799,6 +805,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		auth:            authenticator,
 		mcpServer:       mcpServer,
 		heimdallHandler: heimdallHandler,
+		graphqlHandler:  graphql.NewHandler(db),
 		rateLimiter:     rateLimiter,
 	}
 
@@ -1114,6 +1121,23 @@ func (s *Server) buildRouter() http.Handler {
 		mux.HandleFunc("/api/bifrost/events", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 			s.heimdallHandler.ServeHTTP(w, r)
 		}, auth.PermRead))
+	}
+
+	// ==========================================================================
+	// GraphQL API Endpoints
+	// ==========================================================================
+	// Routes: /graphql (query/mutation), /graphql/playground (GraphQL IDE)
+	// GraphQL provides a flexible query language for accessing NornicDB
+	if s.graphqlHandler != nil {
+		// GraphQL endpoint - read access required for queries
+		mux.HandleFunc("/graphql", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+			s.graphqlHandler.ServeHTTP(w, r)
+		}, auth.PermRead))
+		// GraphQL Playground - interactive IDE (read access required)
+		mux.HandleFunc("/graphql/playground", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+			s.graphqlHandler.Playground().ServeHTTP(w, r)
+		}, auth.PermRead))
+		log.Println("📊 GraphQL API enabled at /graphql")
 	}
 
 	// Wrap with middleware (order matters: outermost runs first)
@@ -1638,9 +1662,10 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		}
 
 		for i, row := range result.Rows {
+			convertedRow := s.convertRowToNeo4jFormat(row)
 			qr.Data[i] = ResultRow{
-				Row:  row,
-				Meta: s.generateRowMeta(row),
+				Row:  convertedRow,
+				Meta: s.generateRowMeta(convertedRow),
 			}
 		}
 
@@ -1667,19 +1692,214 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	s.writeJSON(w, status, response)
 }
 
-// generateRowMeta generates metadata for each value in a row
+// convertRowToNeo4jFormat converts each value in a row to Neo4j-compatible format.
+// This ensures nodes and edges use elementId and have filtered properties.
+func (s *Server) convertRowToNeo4jFormat(row []interface{}) []interface{} {
+	converted := make([]interface{}, len(row))
+	for i, val := range row {
+		converted[i] = s.convertValueToNeo4jFormat(val)
+	}
+	return converted
+}
+
+// convertValueToNeo4jFormat converts a single value to Neo4j HTTP format.
+// Handles storage.Node, storage.Edge, maps, and slices recursively.
+func (s *Server) convertValueToNeo4jFormat(val interface{}) interface{} {
+	if val == nil {
+		return nil
+	}
+
+	switch v := val.(type) {
+	case *storage.Node:
+		return s.nodeToNeo4jHTTPFormat(v)
+	case *storage.Edge:
+		return s.edgeToNeo4jHTTPFormat(v)
+	case map[string]interface{}:
+		// Check if this is already a converted node (has elementId)
+		if _, hasElementId := v["elementId"]; hasElementId {
+			return v
+		}
+		// Check if this looks like a node map (has _nodeId or id + labels)
+		if nodeId, hasNodeId := v["_nodeId"]; hasNodeId {
+			return s.mapNodeToNeo4jHTTPFormat(nodeId, v)
+		}
+		if nodeId, hasId := v["id"]; hasId {
+			if _, hasLabels := v["labels"]; hasLabels {
+				return s.mapNodeToNeo4jHTTPFormat(nodeId, v)
+			}
+		}
+		// Regular map - convert nested values
+		result := make(map[string]interface{}, len(v))
+		for k, vv := range v {
+			result[k] = s.convertValueToNeo4jFormat(vv)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, vv := range v {
+			result[i] = s.convertValueToNeo4jFormat(vv)
+		}
+		return result
+	default:
+		return val
+	}
+}
+
+// nodeToNeo4jHTTPFormat converts a storage.Node to Neo4j HTTP API format.
+// Neo4j format: {"elementId": "4:db:id", "labels": [...], "properties": {...}}
+func (s *Server) nodeToNeo4jHTTPFormat(node *storage.Node) map[string]interface{} {
+	if node == nil {
+		return nil
+	}
+
+	elementId := fmt.Sprintf("4:nornicdb:%s", node.ID)
+
+	// Filter properties - remove only embedding arrays, keep metadata
+	props := s.filterNodeProperties(node.Properties)
+
+	return map[string]interface{}{
+		"elementId":  elementId,
+		"labels":     node.Labels,
+		"properties": props,
+	}
+}
+
+// mapNodeToNeo4jHTTPFormat converts a map representation to Neo4j HTTP format.
+func (s *Server) mapNodeToNeo4jHTTPFormat(nodeId interface{}, m map[string]interface{}) map[string]interface{} {
+	elementId := fmt.Sprintf("4:nornicdb:%v", nodeId)
+
+	// Extract labels
+	var labels []string
+	if l, ok := m["labels"].([]string); ok {
+		labels = l
+	} else if l, ok := m["labels"].([]interface{}); ok {
+		labels = make([]string, len(l))
+		for i, v := range l {
+			if s, ok := v.(string); ok {
+				labels[i] = s
+			}
+		}
+	}
+
+	// Extract and filter properties
+	var props map[string]interface{}
+	if p, ok := m["properties"].(map[string]interface{}); ok {
+		props = s.filterNodeProperties(p)
+	} else {
+		// Properties might be at top level - collect them
+		props = make(map[string]interface{})
+		for k, v := range m {
+			// Skip metadata fields
+			if k == "id" || k == "_nodeId" || k == "labels" || k == "properties" || k == "elementId" || k == "embedding" {
+				continue
+			}
+			if !s.isEmbeddingArrayProperty(k, v) {
+				props[k] = v
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"elementId":  elementId,
+		"labels":     labels,
+		"properties": props,
+	}
+}
+
+// edgeToNeo4jHTTPFormat converts a storage.Edge to Neo4j HTTP API format.
+func (s *Server) edgeToNeo4jHTTPFormat(edge *storage.Edge) map[string]interface{} {
+	if edge == nil {
+		return nil
+	}
+
+	elementId := fmt.Sprintf("5:nornicdb:%s", edge.ID)
+	startElementId := fmt.Sprintf("4:nornicdb:%s", edge.StartNode)
+	endElementId := fmt.Sprintf("4:nornicdb:%s", edge.EndNode)
+
+	return map[string]interface{}{
+		"elementId":           elementId,
+		"type":                edge.Type,
+		"startNodeElementId": startElementId,
+		"endNodeElementId":   endElementId,
+		"properties":          edge.Properties,
+	}
+}
+
+// filterNodeProperties filters out embedding arrays but keeps embedding metadata.
+// Removes: embedding (array), embeddings, vector, vectors, chunk_embedding, etc.
+// Keeps: embedding_model, embedding_dimensions, has_embedding, embedded_at
+func (s *Server) filterNodeProperties(props map[string]interface{}) map[string]interface{} {
+	if props == nil {
+		return make(map[string]interface{})
+	}
+
+	filtered := make(map[string]interface{}, len(props))
+	for k, v := range props {
+		if s.isEmbeddingArrayProperty(k, v) {
+			continue
+		}
+		filtered[k] = v
+	}
+	return filtered
+}
+
+// isEmbeddingArrayProperty returns true if this property is an embedding array
+// that should be filtered from HTTP responses (too large to serialize).
+// Returns false for embedding metadata like embedding_model, has_embedding, etc.
+func (s *Server) isEmbeddingArrayProperty(key string, value interface{}) bool {
+	lowerKey := strings.ToLower(key)
+
+	// These are the actual embedding vector properties that contain large arrays
+	arrayProps := map[string]bool{
+		"embedding":        true,
+		"embeddings":       true,
+		"vector":           true,
+		"vectors":          true,
+		"_embedding":       true,
+		"_embeddings":      true,
+		"chunk_embedding":  true,
+		"chunk_embeddings": true,
+	}
+
+	if !arrayProps[lowerKey] {
+		return false
+	}
+
+	// Only filter if the value is actually an array/slice (not metadata)
+	if value == nil {
+		return false
+	}
+
+	// Check if it's a slice/array type
+	rv := reflect.ValueOf(value)
+	kind := rv.Kind()
+	return kind == reflect.Slice || kind == reflect.Array
+}
+
+// generateRowMeta generates Neo4j-compatible metadata for each value in a row.
+// Neo4j meta format: {"id": 123, "type": "node", "deleted": false, "elementId": "4:db:id"}
 func (s *Server) generateRowMeta(row []interface{}) []interface{} {
 	meta := make([]interface{}, len(row))
 	for i, val := range row {
 		switch v := val.(type) {
 		case map[string]interface{}:
-			// Could be a node or relationship
-			if id, ok := v["id"]; ok {
+			// Check for elementId (Neo4j format node/edge)
+			if elementId, ok := v["elementId"].(string); ok {
+				// Determine if it's a node or relationship based on elementId prefix
+				entityType := "node"
+				if strings.HasPrefix(elementId, "5:") {
+					entityType = "relationship"
+				}
+				// Extract numeric ID from elementId (4:nornicdb:uuid -> hash to int)
+				idPart := strings.TrimPrefix(elementId, "4:nornicdb:")
+				idPart = strings.TrimPrefix(idPart, "5:nornicdb:")
+				numericId := s.hashStringToInt64(idPart)
+
 				meta[i] = map[string]interface{}{
-					"id":        id,
-					"elementId": fmt.Sprintf("4:nornicdb:%v", id),
-					"type":      "node",
+					"id":        numericId,
+					"type":      entityType,
 					"deleted":   false,
+					"elementId": elementId,
 				}
 			} else {
 				meta[i] = nil
@@ -1689,6 +1909,19 @@ func (s *Server) generateRowMeta(row []interface{}) []interface{} {
 		}
 	}
 	return meta
+}
+
+// hashStringToInt64 converts a string ID to an int64 for Neo4j compatibility.
+// Neo4j drivers expect numeric IDs in metadata.
+func (s *Server) hashStringToInt64(id string) int64 {
+	var hash int64
+	for _, c := range id {
+		hash = hash*31 + int64(c)
+	}
+	if hash < 0 {
+		hash = -hash
+	}
+	return hash
 }
 
 // generateBookmark generates a bookmark for causal consistency
@@ -1738,7 +1971,8 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 				Data:    make([]ResultRow, len(result.Rows)),
 			}
 			for i, row := range result.Rows {
-				qr.Data[i] = ResultRow{Row: row, Meta: s.generateRowMeta(row)}
+				convertedRow := s.convertRowToNeo4jFormat(row)
+				qr.Data[i] = ResultRow{Row: convertedRow, Meta: s.generateRowMeta(convertedRow)}
 			}
 			response.Results = append(response.Results, qr)
 		}
@@ -1790,7 +2024,8 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 			Data:    make([]ResultRow, len(result.Rows)),
 		}
 		for i, row := range result.Rows {
-			qr.Data[i] = ResultRow{Row: row, Meta: s.generateRowMeta(row)}
+			convertedRow := s.convertRowToNeo4jFormat(row)
+			qr.Data[i] = ResultRow{Row: convertedRow, Meta: s.generateRowMeta(convertedRow)}
 		}
 		response.Results = append(response.Results, qr)
 	}
