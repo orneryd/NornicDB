@@ -2818,6 +2818,13 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 	}
 
 	log.Printf("✓ Cleared embeddings from %d nodes", cleared)
+
+	// Refresh the pending embeddings index so nodes get re-processed
+	added := b.RefreshPendingEmbeddingsIndex()
+	if added > 0 {
+		log.Printf("📊 Added %d nodes to pending embeddings queue", added)
+	}
+
 	return cleared, nil
 }
 

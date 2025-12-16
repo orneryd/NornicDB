@@ -79,7 +79,7 @@ func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 		ChunkSize:            512,
 		ChunkOverlap:         50,
 		ClusterDebounceDelay: 30 * time.Second, // Wait 30s after last embedding before k-means
-		ClusterMinBatchSize:  10,              // Need at least 10 embeddings to trigger k-means
+		ClusterMinBatchSize:  10,               // Need at least 10 embeddings to trigger k-means
 	}
 }
 
@@ -319,8 +319,11 @@ func (ew *EmbedWorker) worker() {
 	// Short initial delay to let server start
 	time.Sleep(500 * time.Millisecond)
 
-	// Immediate scan on startup for any existing nodes needing embedding
+	// Refresh the pending embeddings index on startup to catch any nodes
+	// that need embedding (e.g., after restart, bulk import, or cleared embeddings)
 	fmt.Println("🔍 Initial scan for nodes needing embeddings...")
+	ew.refreshEmbeddingIndex()
+
 	ew.processUntilEmpty()
 
 	ticker := time.NewTicker(ew.config.ScanInterval)

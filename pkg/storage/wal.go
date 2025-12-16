@@ -61,13 +61,13 @@ const (
 
 // Common WAL errors
 var (
-	ErrWALClosed          = errors.New("wal: closed")
-	ErrWALCorrupted       = errors.New("wal: corrupted entry")
-	ErrWALPartialWrite    = errors.New("wal: partial write detected")
-	ErrWALChecksumFailed  = errors.New("wal: checksum verification failed")
-	ErrWALMissingTrailer  = errors.New("wal: missing or invalid trailer (incomplete write)")
-	ErrSnapshotFailed     = errors.New("wal: snapshot creation failed")
-	ErrRecoveryFailed     = errors.New("wal: recovery failed")
+	ErrWALClosed         = errors.New("wal: closed")
+	ErrWALCorrupted      = errors.New("wal: corrupted entry")
+	ErrWALPartialWrite   = errors.New("wal: partial write detected")
+	ErrWALChecksumFailed = errors.New("wal: checksum verification failed")
+	ErrWALMissingTrailer = errors.New("wal: missing or invalid trailer (incomplete write)")
+	ErrSnapshotFailed    = errors.New("wal: snapshot creation failed")
+	ErrRecoveryFailed    = errors.New("wal: recovery failed")
 )
 
 // WAL format constants for atomic writes
@@ -935,8 +935,8 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 		// Build atomic record: magic + version + length + payload + crc + trailer + padding
 		// Calculate aligned record size for 8-byte alignment
-		headerSize := 4 + 1 + 4                     // magic + version + length
-		bodySize := len(entryBytes) + 4 + 8        // payload + crc + trailer
+		headerSize := 4 + 1 + 4             // magic + version + length
+		bodySize := len(entryBytes) + 4 + 8 // payload + crc + trailer
 		rawRecordLen := int64(headerSize + bodySize)
 		alignedRecordLen := alignUp(rawRecordLen)
 		paddingLen := alignedRecordLen - rawRecordLen
@@ -2257,6 +2257,21 @@ func (w *WALEngine) FindNodeNeedingEmbedding() *Node {
 		return finder.FindNodeNeedingEmbedding()
 	}
 	return nil
+}
+
+// RefreshPendingEmbeddingsIndex delegates to underlying engine if it supports it.
+func (w *WALEngine) RefreshPendingEmbeddingsIndex() int {
+	if mgr, ok := w.engine.(interface{ RefreshPendingEmbeddingsIndex() int }); ok {
+		return mgr.RefreshPendingEmbeddingsIndex()
+	}
+	return 0
+}
+
+// MarkNodeEmbedded delegates to underlying engine if it supports it.
+func (w *WALEngine) MarkNodeEmbedded(nodeID NodeID) {
+	if mgr, ok := w.engine.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+		mgr.MarkNodeEmbedded(nodeID)
+	}
 }
 
 // IterateNodes delegates to underlying engine if it supports streaming iteration.
