@@ -39,7 +39,7 @@ Thumbs.db
 *.tmp
 
 # Models directory (downloaded at build time)
-models/
+models/*
 
 # Build artifacts
 /nornicdb
