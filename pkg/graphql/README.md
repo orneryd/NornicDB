@@ -21,6 +21,8 @@ GraphQL is enabled by default. The endpoints are:
 
 Navigate to `http://localhost:7474/playground` to access the interactive GraphQL Playground with full schema introspection and auto-complete.
 
+- **NOTE:** Must add headers `{ "Authorization": "Bearer asdfsgagsaga....."}` to your http headers in the playground to use authentication!
+
 ## Schema Overview
 
 ### Core Types
@@ -35,12 +37,21 @@ type Node {
   updatedAt: DateTime
   hasEmbedding: Boolean!
   embeddingDimensions: Int!
-  
+
   # Traversal
-  relationships(types: [String!], direction: RelationshipDirection, limit: Int): [Relationship!]!
+  relationships(
+    types: [String!]
+    direction: RelationshipDirection
+    limit: Int
+  ): [Relationship!]!
   outgoing(types: [String!], limit: Int): [Relationship!]!
   incoming(types: [String!], limit: Int): [Relationship!]!
-  neighbors(direction: RelationshipDirection, relationshipTypes: [String!], labels: [String!], limit: Int): [Node!]!
+  neighbors(
+    direction: RelationshipDirection
+    relationshipTypes: [String!]
+    labels: [String!]
+    limit: Int
+  ): [Node!]!
   similar(limit: Int, threshold: Float): [SimilarNode!]!
 }
 
@@ -74,7 +85,10 @@ query Stats {
     relationshipCount
     embeddedNodeCount
     uptimeSeconds
-    labels { label count }
+    labels {
+      label
+      count
+    }
   }
 }
 
@@ -108,14 +122,12 @@ query Labels {
 ```graphql
 # Create a node
 mutation CreatePerson {
-  createNode(input: {
-    labels: ["Person"]
-    properties: {
-      name: "Alice Smith"
-      age: 30
-      email: "alice@example.com"
+  createNode(
+    input: {
+      labels: ["Person"]
+      properties: { name: "Alice Smith", age: 30, email: "alice@example.com" }
     }
-  }) {
+  ) {
     id
     labels
     properties
@@ -124,27 +136,35 @@ mutation CreatePerson {
 
 # Create a relationship
 mutation CreateKnows {
-  createRelationship(input: {
-    startNodeId: "alice-id"
-    endNodeId: "bob-id"
-    type: "KNOWS"
-    properties: { since: "2024-01-01" }
-  }) {
+  createRelationship(
+    input: {
+      startNodeId: "alice-id"
+      endNodeId: "bob-id"
+      type: "KNOWS"
+      properties: { since: "2024-01-01" }
+    }
+  ) {
     id
     type
-    startNode { id }
-    endNode { id }
+    startNode {
+      id
+    }
+    endNode {
+      id
+    }
   }
 }
 
 # Bulk create nodes
 mutation BulkCreate {
-  bulkCreateNodes(input: {
-    nodes: [
-      { labels: ["Person"], properties: { name: "Alice" } }
-      { labels: ["Person"], properties: { name: "Bob" } }
-    ]
-  }) {
+  bulkCreateNodes(
+    input: {
+      nodes: [
+        { labels: ["Person"], properties: { name: "Alice" } }
+        { labels: ["Person"], properties: { name: "Bob" } }
+      ]
+    }
+  ) {
     created
     skipped
     errors
@@ -157,13 +177,16 @@ mutation BulkCreate {
 ```graphql
 # Hybrid search (vector + BM25)
 query Search {
-  search(query: "software engineer", options: {
-    limit: 10
-    labels: ["Person"]
-    method: HYBRID
-  }) {
+  search(
+    query: "software engineer"
+    options: { limit: 10, labels: ["Person"], method: HYBRID }
+  ) {
     results {
-      node { id labels properties }
+      node {
+        id
+        labels
+        properties
+      }
       score
       rrfScore
       vectorRank
@@ -178,7 +201,11 @@ query Search {
 # Find similar nodes
 query FindSimilar {
   similar(nodeId: "node-id", limit: 5, threshold: 0.7) {
-    node { id labels properties }
+    node {
+      id
+      labels
+      properties
+    }
     similarity
   }
 }
@@ -189,9 +216,11 @@ query FindSimilar {
 ```graphql
 # Execute Cypher queries
 query CypherQuery {
-  cypher(input: {
-    statement: "MATCH (p:Person)-[:WORKS_AT]->(c:Company) RETURN p.name, c.name LIMIT 10"
-  }) {
+  cypher(
+    input: {
+      statement: "MATCH (p:Person)-[:WORKS_AT]->(c:Company) RETURN p.name, c.name LIMIT 10"
+    }
+  ) {
     columns
     rows
     rowCount
@@ -200,10 +229,12 @@ query CypherQuery {
 
 # Cypher with parameters
 query CypherWithParams {
-  cypher(input: {
-    statement: "MATCH (p:Person) WHERE p.age > $minAge RETURN p"
-    parameters: { minAge: 25 }
-  }) {
+  cypher(
+    input: {
+      statement: "MATCH (p:Person) WHERE p.age > $minAge RETURN p"
+      parameters: { minAge: 25 }
+    }
+  ) {
     columns
     rows
   }
@@ -211,10 +242,12 @@ query CypherWithParams {
 
 # Cypher mutations
 mutation CypherCreate {
-  executeCypher(input: {
-    statement: "CREATE (n:Person {name: $name}) RETURN n"
-    parameters: { name: "Charlie" }
-  }) {
+  executeCypher(
+    input: {
+      statement: "CREATE (n:Person {name: $name}) RETURN n"
+      parameters: { name: "Charlie" }
+    }
+  ) {
     rowCount
   }
 }
@@ -230,11 +263,18 @@ query NodeWithRelationships {
     labels
     outgoing(limit: 10) {
       type
-      endNode { id labels properties }
+      endNode {
+        id
+        labels
+        properties
+      }
     }
     incoming(limit: 10) {
       type
-      startNode { id labels }
+      startNode {
+        id
+        labels
+      }
     }
   }
 }
@@ -260,8 +300,20 @@ query Neighborhood {
     depth: 2
     labels: ["Person", "Company"]
   ) {
-    nodes { id labels }
-    relationships { id type startNode { id } endNode { id } }
+    nodes {
+      id
+      labels
+    }
+    relationships {
+      id
+      type
+      startNode {
+        id
+      }
+      endNode {
+        id
+      }
+    }
   }
 }
 ```
@@ -271,10 +323,9 @@ query Neighborhood {
 ```graphql
 # Update node properties
 mutation UpdatePerson {
-  updateNode(input: {
-    id: "node-id"
-    properties: { age: 31, title: "Senior Engineer" }
-  }) {
+  updateNode(
+    input: { id: "node-id", properties: { age: 31, title: "Senior Engineer" } }
+  ) {
     id
     properties
   }
@@ -363,9 +414,9 @@ curl -X POST http://localhost:7474/graphql \
 ### JavaScript/TypeScript
 
 ```typescript
-const response = await fetch('/graphql', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+const response = await fetch("/graphql", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     query: `
       query GetNode($id: ID!) {
@@ -376,8 +427,8 @@ const response = await fetch('/graphql', {
         }
       }
     `,
-    variables: { id: 'node-123' }
-  })
+    variables: { id: "node-123" },
+  }),
 });
 
 const { data, errors } = await response.json();
