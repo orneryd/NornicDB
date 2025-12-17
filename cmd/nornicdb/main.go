@@ -360,6 +360,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.EncryptionEnabled = cfg.Database.EncryptionEnabled
 	dbConfig.EncryptionPassword = cfg.Database.EncryptionPassword
 
+	// Async write settings from config
+	dbConfig.AsyncWritesEnabled = cfg.Database.AsyncWritesEnabled
+	dbConfig.AsyncFlushInterval = cfg.Database.AsyncFlushInterval
+	dbConfig.AsyncMaxNodeCacheSize = cfg.Database.AsyncMaxNodeCacheSize
+	dbConfig.AsyncMaxEdgeCacheSize = cfg.Database.AsyncMaxEdgeCacheSize
+
 	// Open database
 	fmt.Println("📂 Opening database...")
 	db, err := nornicdb.Open(dataDir, dbConfig)

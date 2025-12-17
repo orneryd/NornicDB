@@ -161,6 +161,31 @@ type DatabaseConfig struct {
 	// Required when EncryptionEnabled is true. Use a strong password in production.
 	// Env: NORNICDB_ENCRYPTION_PASSWORD
 	EncryptionPassword string
+
+	// === Async Write Settings ===
+	// These control the async write-behind cache for better throughput.
+
+	// AsyncWritesEnabled enables async writes for faster performance.
+	// Writes return immediately after caching; flushed to disk in background.
+	// Env: NORNICDB_ASYNC_WRITES_ENABLED (default: true)
+	AsyncWritesEnabled bool
+
+	// AsyncFlushInterval controls how often pending writes are flushed.
+	// Smaller = more consistent, larger = better throughput.
+	// Env: NORNICDB_ASYNC_FLUSH_INTERVAL (default: 50ms)
+	AsyncFlushInterval time.Duration
+
+	// AsyncMaxNodeCacheSize is the max nodes to buffer before forcing a flush.
+	// Prevents unbounded memory growth during bulk inserts.
+	// Set to 0 for unlimited (not recommended for bulk operations).
+	// Env: NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE (default: 50000)
+	AsyncMaxNodeCacheSize int
+
+	// AsyncMaxEdgeCacheSize is the max edges to buffer before forcing a flush.
+	// Prevents unbounded memory growth during bulk inserts.
+	// Set to 0 for unlimited (not recommended for bulk operations).
+	// Env: NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE (default: 100000)
+	AsyncMaxEdgeCacheSize int
 }
 
 // ServerConfig holds server settings.
@@ -1180,6 +1205,10 @@ func LoadDefaults() *Config {
 	config.Database.WALSyncMode = "batch"
 	config.Database.WALSyncInterval = 100 * time.Millisecond
 	config.Database.EncryptionPassword = "" // disabled by default
+	config.Database.AsyncWritesEnabled = true
+	config.Database.AsyncFlushInterval = 50 * time.Millisecond
+	config.Database.AsyncMaxNodeCacheSize = 50000  // ~35MB assuming 700 bytes/node
+	config.Database.AsyncMaxEdgeCacheSize = 100000 // ~50MB assuming 500 bytes/edge
 
 	// Server defaults - Bolt
 	config.Server.BoltEnabled = true
@@ -1371,6 +1400,22 @@ func applyEnvVars(config *Config) {
 	if config.Database.StrictDurability {
 		config.Database.WALSyncMode = "immediate"
 		config.Database.WALSyncInterval = 0
+	}
+
+	// Async write settings
+	if getEnv("NORNICDB_ASYNC_WRITES_ENABLED", "true") == "false" {
+		config.Database.AsyncWritesEnabled = false
+	} else {
+		config.Database.AsyncWritesEnabled = true
+	}
+	if v := getEnvDuration("NORNICDB_ASYNC_FLUSH_INTERVAL", 0); v > 0 {
+		config.Database.AsyncFlushInterval = v
+	}
+	if v := getEnvInt("NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE", -1); v >= 0 {
+		config.Database.AsyncMaxNodeCacheSize = v
+	}
+	if v := getEnvInt("NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE", -1); v >= 0 {
+		config.Database.AsyncMaxEdgeCacheSize = v
 	}
 
 	// Server settings - Bolt

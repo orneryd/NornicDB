@@ -409,6 +409,14 @@ decay:
 auto_links:
   enabled: true
   similarity_threshold: 0.82
+
+# === Async Write Settings ===
+# These control the async write-behind cache for better throughput
+async_writes:
+  enabled: true                    # Enable async writes (default: true)
+  flush_interval: 50ms            # How often to flush pending writes
+  max_node_cache_size: 50000      # Max nodes to buffer before forcing flush
+  max_edge_cache_size: 100000     # Max edges to buffer before forcing flush
 ```
 
 ## Use Cases

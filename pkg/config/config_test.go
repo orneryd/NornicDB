@@ -864,6 +864,11 @@ func clearEnvVars(t *testing.T) {
 		"NORNICDB_STRICT_DURABILITY",
 		"NORNICDB_WAL_SYNC_MODE",
 		"NORNICDB_WAL_SYNC_INTERVAL",
+		// Async write settings
+		"NORNICDB_ASYNC_WRITES_ENABLED",
+		"NORNICDB_ASYNC_FLUSH_INTERVAL",
+		"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE",
+		"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -881,4 +886,171 @@ func containsSubstringHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestLoadFromEnv_AsyncWriteDefaults tests that async write defaults are loaded correctly.
+func TestLoadFromEnv_AsyncWriteDefaults(t *testing.T) {
+	clearEnvVars(t)
+
+	cfg := LoadFromEnv()
+
+	// Async write defaults
+	if !cfg.Database.AsyncWritesEnabled {
+		t.Error("expected AsyncWritesEnabled to be true by default")
+	}
+	if cfg.Database.AsyncFlushInterval != 50*time.Millisecond {
+		t.Errorf("expected AsyncFlushInterval 50ms, got %v", cfg.Database.AsyncFlushInterval)
+	}
+	if cfg.Database.AsyncMaxNodeCacheSize != 50000 {
+		t.Errorf("expected AsyncMaxNodeCacheSize 50000, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+	}
+	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
+		t.Errorf("expected AsyncMaxEdgeCacheSize 100000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	}
+}
+
+// TestLoadFromEnv_AsyncWriteSettings tests async write env var overrides.
+func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "disable async writes",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_WRITES_ENABLED": "false",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncWritesEnabled {
+					t.Error("expected AsyncWritesEnabled to be false")
+				}
+			},
+		},
+		{
+			name: "enable async writes explicitly",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_WRITES_ENABLED": "true",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if !cfg.Database.AsyncWritesEnabled {
+					t.Error("expected AsyncWritesEnabled to be true")
+				}
+			},
+		},
+		{
+			name: "custom flush interval",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_FLUSH_INTERVAL": "100ms",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncFlushInterval != 100*time.Millisecond {
+					t.Errorf("expected AsyncFlushInterval 100ms, got %v", cfg.Database.AsyncFlushInterval)
+				}
+			},
+		},
+		{
+			name: "custom flush interval seconds",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_FLUSH_INTERVAL": "2s",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncFlushInterval != 2*time.Second {
+					t.Errorf("expected AsyncFlushInterval 2s, got %v", cfg.Database.AsyncFlushInterval)
+				}
+			},
+		},
+		{
+			name: "custom node cache size",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE": "10000",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncMaxNodeCacheSize != 10000 {
+					t.Errorf("expected AsyncMaxNodeCacheSize 10000, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+				}
+			},
+		},
+		{
+			name: "custom edge cache size",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE": "25000",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncMaxEdgeCacheSize != 25000 {
+					t.Errorf("expected AsyncMaxEdgeCacheSize 25000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+				}
+			},
+		},
+		{
+			name: "zero cache size (unlimited)",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE": "0",
+				"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE": "0",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncMaxNodeCacheSize != 0 {
+					t.Errorf("expected AsyncMaxNodeCacheSize 0, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+				}
+				if cfg.Database.AsyncMaxEdgeCacheSize != 0 {
+					t.Errorf("expected AsyncMaxEdgeCacheSize 0, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+				}
+			},
+		},
+		{
+			name: "all async settings combined",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_WRITES_ENABLED":      "true",
+				"NORNICDB_ASYNC_FLUSH_INTERVAL":      "25ms",
+				"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE": "5000",
+				"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE": "8000",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if !cfg.Database.AsyncWritesEnabled {
+					t.Error("expected AsyncWritesEnabled to be true")
+				}
+				if cfg.Database.AsyncFlushInterval != 25*time.Millisecond {
+					t.Errorf("expected AsyncFlushInterval 25ms, got %v", cfg.Database.AsyncFlushInterval)
+				}
+				if cfg.Database.AsyncMaxNodeCacheSize != 5000 {
+					t.Errorf("expected AsyncMaxNodeCacheSize 5000, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+				}
+				if cfg.Database.AsyncMaxEdgeCacheSize != 8000 {
+					t.Errorf("expected AsyncMaxEdgeCacheSize 8000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnvVars(t)
+
+			// Set test env vars
+			for k, v := range tt.envVars {
+				os.Setenv(k, v)
+			}
+
+			cfg := LoadFromEnv()
+			tt.validate(t, cfg)
+		})
+	}
+}
+
+// TestLoadDefaults_AsyncWriteValues tests that LoadDefaults returns correct async write values.
+func TestLoadDefaults_AsyncWriteValues(t *testing.T) {
+	cfg := LoadDefaults()
+
+	if !cfg.Database.AsyncWritesEnabled {
+		t.Error("expected AsyncWritesEnabled to be true in defaults")
+	}
+	if cfg.Database.AsyncFlushInterval != 50*time.Millisecond {
+		t.Errorf("expected AsyncFlushInterval 50ms in defaults, got %v", cfg.Database.AsyncFlushInterval)
+	}
+	if cfg.Database.AsyncMaxNodeCacheSize != 50000 {
+		t.Errorf("expected AsyncMaxNodeCacheSize 50000 in defaults, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+	}
+	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
+		t.Errorf("expected AsyncMaxEdgeCacheSize 100000 in defaults, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	}
 }

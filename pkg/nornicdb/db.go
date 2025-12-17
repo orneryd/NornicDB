@@ -327,8 +327,10 @@ type Config struct {
 	ParallelMinBatchSize int  `yaml:"parallel_min_batch_size"` // Min items before parallelizing (default: 1000)
 
 	// Async writes (eventual consistency)
-	AsyncWritesEnabled bool          `yaml:"async_writes_enabled"` // Enable async writes for faster performance
-	AsyncFlushInterval time.Duration `yaml:"async_flush_interval"` // How often to flush pending writes (default: 50ms)
+	AsyncWritesEnabled   bool          `yaml:"async_writes_enabled"`     // Enable async writes for faster performance
+	AsyncFlushInterval   time.Duration `yaml:"async_flush_interval"`     // How often to flush pending writes (default: 50ms)
+	AsyncMaxNodeCacheSize int          `yaml:"async_max_node_cache_size"` // Max nodes to buffer before forcing flush (default: 50000, 0=unlimited)
+	AsyncMaxEdgeCacheSize int          `yaml:"async_max_edge_cache_size"` // Max edges to buffer before forcing flush (default: 100000, 0=unlimited)
 
 	// Encryption (data-at-rest) - AES-256 full database encryption
 	// Disabled by default for performance. Enable for HIPAA/GDPR/SOC2 compliance.
@@ -386,6 +388,8 @@ func DefaultConfig() *Config {
 		ParallelMinBatchSize:         1000,                  // Parallelize for 1000+ items
 		AsyncWritesEnabled:           true,                  // Enable async writes for eventual consistency (faster writes)
 		AsyncFlushInterval:           50 * time.Millisecond, // Flush pending writes every 50ms
+		AsyncMaxNodeCacheSize:        50000,                 // Buffer up to 50K nodes before forcing flush (~35MB)
+		AsyncMaxEdgeCacheSize:        100000,                // Buffer up to 100K edges before forcing flush (~50MB)
 		EncryptionEnabled:            false,                 // Encryption disabled by default (opt-in)
 		EncryptionPassword:           "",                    // Must be set if encryption enabled
 		BoltPort:                     7687,
@@ -850,10 +854,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Optionally wrap with AsyncEngine for faster writes (eventual consistency)
 		if config.AsyncWritesEnabled {
 			asyncConfig := &storage.AsyncEngineConfig{
-				FlushInterval: config.AsyncFlushInterval,
+				FlushInterval:    config.AsyncFlushInterval,
+				MaxNodeCacheSize: config.AsyncMaxNodeCacheSize,
+				MaxEdgeCacheSize: config.AsyncMaxEdgeCacheSize,
 			}
 			db.storage = storage.NewAsyncEngine(walEngine, asyncConfig)
-			fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v)\n", dataDir, config.AsyncFlushInterval)
+			if config.AsyncMaxNodeCacheSize > 0 || config.AsyncMaxEdgeCacheSize > 0 {
+				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v, node cache: %d, edge cache: %d)\n",
+					dataDir, config.AsyncFlushInterval, config.AsyncMaxNodeCacheSize, config.AsyncMaxEdgeCacheSize)
+			} else {
+				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v)\n", dataDir, config.AsyncFlushInterval)
+			}
 		} else {
 			db.storage = walEngine
 			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync)\n", dataDir)

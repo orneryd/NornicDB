@@ -1286,7 +1286,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 			}
 
 			// Wait for snapshot
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 
 			walEngine.DisableAutoCompaction()
 		}()

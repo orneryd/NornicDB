@@ -900,7 +900,8 @@ func TestSearchService_VectorSearchOnly(t *testing.T) {
 
 	// Search with only query embedding (no text query)
 	opts := DefaultSearchOptions()
-	opts.MinSimilarity = 0.5
+	minSim := 0.5
+	opts.MinSimilarity = &minSim
 	queryEmbedding := []float32{1, 0, 0, 0}
 
 	response, err := svc.Search(context.Background(), "", queryEmbedding, opts)

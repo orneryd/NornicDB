@@ -47,10 +47,12 @@ type AsyncEngine struct {
 	labelIndex map[string]map[NodeID]bool
 
 	// Background flush
-	flushInterval time.Duration
-	flushTicker   *time.Ticker
-	stopChan      chan struct{}
-	wg            sync.WaitGroup
+	flushInterval    time.Duration
+	flushTicker      *time.Ticker
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	maxNodeCacheSize int
+	maxEdgeCacheSize int
 
 	// Stats
 	pendingWrites int64
@@ -63,12 +65,28 @@ type AsyncEngineConfig struct {
 	// Smaller = more consistent, larger = better throughput.
 	// Default: 50ms
 	FlushInterval time.Duration
+
+	// MaxNodeCacheSize is the maximum number of nodes to buffer before forcing a flush.
+	// When this limit is reached, CreateNode will block and flush synchronously.
+	// This prevents unbounded memory growth during bulk inserts.
+	// Set to 0 for unlimited (not recommended for bulk operations).
+	// Default: 50000 (50K nodes, ~35MB assuming 700 bytes/node)
+	MaxNodeCacheSize int
+
+	// MaxEdgeCacheSize is the maximum number of edges to buffer before forcing a flush.
+	// When this limit is reached, CreateEdge will block and flush synchronously.
+	// This prevents unbounded memory growth during bulk inserts.
+	// Set to 0 for unlimited (not recommended for bulk operations).
+	// Default: 100000 (100K edges, ~50MB assuming 500 bytes/edge)
+	MaxEdgeCacheSize int
 }
 
 // DefaultAsyncEngineConfig returns sensible defaults.
 func DefaultAsyncEngineConfig() *AsyncEngineConfig {
 	return &AsyncEngineConfig{
-		FlushInterval: 50 * time.Millisecond,
+		FlushInterval:    50 * time.Millisecond,
+		MaxNodeCacheSize: 50000,  // 50K nodes (~35MB)
+		MaxEdgeCacheSize: 100000, // 100K edges (~50MB)
 	}
 }
 
@@ -86,18 +104,20 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 	}
 
 	ae := &AsyncEngine{
-		engine:        engine,
-		nodeCache:     make(map[NodeID]*Node),
-		edgeCache:     make(map[EdgeID]*Edge),
-		deleteNodes:   make(map[NodeID]bool),
-		deleteEdges:   make(map[EdgeID]bool),
-		inFlightNodes: make(map[NodeID]bool),
-		inFlightEdges: make(map[EdgeID]bool),
-		updateNodes:   make(map[NodeID]bool),
-		updateEdges:   make(map[EdgeID]bool),
-		labelIndex:    make(map[string]map[NodeID]bool),
-		flushInterval: config.FlushInterval,
-		stopChan:      make(chan struct{}),
+		engine:           engine,
+		nodeCache:        make(map[NodeID]*Node),
+		edgeCache:        make(map[EdgeID]*Edge),
+		deleteNodes:      make(map[NodeID]bool),
+		deleteEdges:      make(map[EdgeID]bool),
+		inFlightNodes:    make(map[NodeID]bool),
+		inFlightEdges:    make(map[EdgeID]bool),
+		updateNodes:      make(map[NodeID]bool),
+		updateEdges:      make(map[EdgeID]bool),
+		labelIndex:       make(map[string]map[NodeID]bool),
+		flushInterval:    config.FlushInterval,
+		maxNodeCacheSize: config.MaxNodeCacheSize,
+		maxEdgeCacheSize: config.MaxEdgeCacheSize,
+		stopChan:         make(chan struct{}),
 	}
 
 	// Start background flush goroutine
@@ -355,6 +375,17 @@ func (ae *AsyncEngine) GetEngine() Engine {
 
 // CreateNode adds to cache and returns immediately.
 func (ae *AsyncEngine) CreateNode(node *Node) error {
+	// Check cache size limit BEFORE acquiring lock to avoid deadlock
+	// If cache is full, flush synchronously to make room
+	if ae.maxNodeCacheSize > 0 {
+		ae.mu.RLock()
+		cacheSize := len(ae.nodeCache)
+		ae.mu.RUnlock()
+		if cacheSize >= ae.maxNodeCacheSize {
+			ae.Flush() // Synchronous flush - blocks until complete
+		}
+	}
+
 	ae.mu.Lock()
 	defer ae.mu.Unlock()
 
@@ -460,6 +491,17 @@ func (ae *AsyncEngine) DeleteNode(id NodeID) error {
 
 // CreateEdge adds to cache and returns immediately.
 func (ae *AsyncEngine) CreateEdge(edge *Edge) error {
+	// Check cache size limit BEFORE acquiring lock to avoid deadlock
+	// If cache is full, flush synchronously to make room
+	if ae.maxEdgeCacheSize > 0 {
+		ae.mu.RLock()
+		cacheSize := len(ae.edgeCache)
+		ae.mu.RUnlock()
+		if cacheSize >= ae.maxEdgeCacheSize {
+			ae.Flush() // Synchronous flush - blocks until complete
+		}
+	}
+
 	ae.mu.Lock()
 	defer ae.mu.Unlock()
 

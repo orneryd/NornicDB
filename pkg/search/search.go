@@ -155,8 +155,9 @@ type SearchOptions struct {
 	// Limit is the maximum number of results to return
 	Limit int
 
-	// MinSimilarity is the minimum similarity threshold for vector search
-	MinSimilarity float64
+	// MinSimilarity is the minimum similarity threshold for vector search.
+	// nil = use service default, otherwise use the provided value.
+	MinSimilarity *float64
 
 	// Types filters results by node type (labels)
 	Types []string
@@ -184,7 +185,7 @@ type SearchOptions struct {
 func DefaultSearchOptions() *SearchOptions {
 	return &SearchOptions{
 		Limit:          50,
-		MinSimilarity:  0.5,
+		MinSimilarity:  nil, // nil = use service default or 0.5 fallback
 		RRFK:           60,
 		VectorWeight:   1.0,
 		BM25Weight:     1.0,
@@ -195,6 +196,14 @@ func DefaultSearchOptions() *SearchOptions {
 		RerankTopK:     100,
 		RerankMinScore: 0.0,
 	}
+}
+
+// GetMinSimilarity returns the MinSimilarity value, or the fallback if nil.
+func (o *SearchOptions) GetMinSimilarity(fallback float64) float64 {
+	if o.MinSimilarity != nil {
+		return *o.MinSimilarity
+	}
+	return fallback
 }
 
 // Service provides unified hybrid search with automatic index management.
@@ -239,7 +248,8 @@ type Service struct {
 
 	// defaultMinSimilarity is the minimum cosine similarity threshold for vector search.
 	// Apple Intelligence embeddings produce scores in 0.2-0.8 range, bge-m3/mxbai produce 0.7-0.99.
-	// Configurable via SetDefaultMinSimilarity(). Default: 0.0 (let RRF handle relevance)
+	// Configurable via SetDefaultMinSimilarity(). Default: -1 (not set, use SearchOptions default)
+	// Set to 0.0 to let RRF handle relevance filtering.
 	defaultMinSimilarity float64
 }
 
@@ -352,6 +362,7 @@ func NewServiceWithDimensions(engine storage.Engine, dimensions int) *Service {
 		vectorIndex:                NewVectorIndex(dimensions),
 		fulltextIndex:              NewFulltextIndex(),
 		minEmbeddingsForClustering: DefaultMinEmbeddingsForClustering,
+		defaultMinSimilarity:       -1, // -1 = not set, use SearchOptions default
 	}
 }
 
@@ -536,6 +547,21 @@ func (s *Service) GetDefaultMinSimilarity() float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.defaultMinSimilarity
+}
+
+// resolveMinSimilarity returns the MinSimilarity to use for a search.
+// Priority: explicit opts value > service default > hardcoded fallback (0.5)
+func (s *Service) resolveMinSimilarity(opts *SearchOptions) *float64 {
+	fallback := 0.5 // hardcoded fallback
+	if opts != nil && opts.MinSimilarity != nil {
+		return opts.MinSimilarity
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.defaultMinSimilarity >= 0 {
+		return &s.defaultMinSimilarity
+	}
+	return &fallback
 }
 
 // ClusterStats returns k-means clustering statistics.
@@ -729,14 +755,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		opts = DefaultSearchOptions()
 	}
 
-	// Apply service-configured MinSimilarity if not explicitly set in opts
-	// This allows the service to override the default based on embedding model
-	s.mu.RLock()
-	if s.defaultMinSimilarity >= 0 && opts.MinSimilarity == 0.5 {
-		// 0.5 is the hardcoded default - override with service config
-		opts.MinSimilarity = s.defaultMinSimilarity
-	}
-	s.mu.RUnlock()
+	// Set resolved value back for downstream use
+	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 
 	// If no embedding provided, fall back to full-text only
 	if len(embedding) == 0 {
@@ -791,7 +811,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 				numClustersToSearch, len(vectorResults), time.Since(searchStart))
 		} else {
 			// Fall back to brute force on cluster search failure
-			vectorResults, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.MinSimilarity)
+			vectorResults, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
 			if err != nil {
 				return nil, err
 			}
@@ -800,7 +820,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		}
 	} else {
 		// Standard brute-force vector search
-		vectorResults, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.MinSimilarity)
+		vectorResults, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
 		if err != nil {
 			return nil, err
 		}
@@ -1231,13 +1251,13 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 				numClustersToSearch, len(results), time.Since(searchStart))
 		} else {
 			// Fall back to brute force
-			results, err = s.vectorIndex.Search(ctx, embedding, opts.Limit*2, opts.MinSimilarity)
+			results, err = s.vectorIndex.Search(ctx, embedding, opts.Limit*2, opts.GetMinSimilarity(0.5))
 			log.Printf("[K-MEANS] 🔍 SEARCH | mode=brute_force_fallback reason=%v candidates=%d duration=%v",
 				clusterErr, len(results), time.Since(searchStart))
 		}
 	} else {
 		// Standard brute-force vector search
-		results, err = s.vectorIndex.Search(ctx, embedding, opts.Limit*2, opts.MinSimilarity)
+		results, err = s.vectorIndex.Search(ctx, embedding, opts.Limit*2, opts.GetMinSimilarity(0.5))
 		// Only log if clustering is enabled but not yet clustered (helps debugging)
 		if s.clusterEnabled && s.clusterIndex != nil {
 			log.Printf("[K-MEANS] 🔍 SEARCH | mode=brute_force reason=not_yet_clustered candidates=%d duration=%v",

@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+- **Configurable Async Write Settings**: New configuration options for async write-behind cache
+  - `NORNICDB_ASYNC_WRITES_ENABLED` (default: true) - Enable/disable async writes
+  - `NORNICDB_ASYNC_FLUSH_INTERVAL` (default: 50ms) - Control flush frequency
+  - `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` (default: 50000) - Limit memory usage for node cache
+  - `NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE` (default: 100000) - Limit memory usage for edge cache
+- **Configurable Minimum Similarity**: Added `SetDefaultMinSimilarity()` and `GetDefaultMinSimilarity()` methods to search service
+  - Apple Intelligence compatibility with lower similarity thresholds
+  - Per-search override via `SearchOptions.MinSimilarity`
+- **Enhanced Async Engine**: Improved cache configuration with size limits and memory management
+- **Comprehensive Testing**: Added `async_engine_cache_config_test.go` with 362 lines of test coverage
+
+### Changed
+- **Search Service**: Refactored similarity resolution with configurable defaults and explicit fallback
+- **Async Engine**: Enhanced with memory limits and configurable cache sizes to prevent unbounded growth
+- **Configuration**: Extended with async write settings for better performance tuning
+
+### Performance
+- **Memory Management**: Prevents unbounded memory growth during bulk operations via cache size limits
+- **Write Throughput**: Configurable async flush intervals for balancing consistency vs throughput
+
+### Technical Details
+- New methods: `Service.SetDefaultMinSimilarity()`, `Service.GetDefaultMinSimilarity()`
+- Enhanced `AsyncEngine` with configurable cache bounds
+- Extended `Config` struct with async write settings
+- 172 lines of new configuration tests
+- Improved WAL test reliability (increased sleep timing)
+
 ## [1.0.8] - 2025-12-15
 
 ### Added

@@ -22,7 +22,7 @@ func TestDefaultOllamaConfig(t *testing.T) {
 	if config.APIPath != "/api/embeddings" {
 		t.Errorf("expected /api/embeddings, got %s", config.APIPath)
 	}
-	if config.Model != "mxbai-embed-large" {
+	if config.Model != "bge-m3" {
 		t.Errorf("expected mxbai-embed-large, got %s", config.Model)
 	}
 	if config.Dimensions != 1024 {
