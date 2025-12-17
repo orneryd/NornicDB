@@ -136,8 +136,8 @@ DELETE /db/{name}/tx/{id}       - Rollback transaction
 ```
 POST /auth/token                - Get JWT token
 GET  /auth/me                   - Current user info
-GET  /nornicdb/search           - Hybrid search
-GET  /nornicdb/similar          - Vector similarity
+POST  /nornicdb/search           - Hybrid search
+POST  /nornicdb/similar          - Vector similarity
 GET  /admin/stats               - System statistics
 GET  /admin/gpu                 - GPU status
 POST /gdpr/export               - GDPR data export
