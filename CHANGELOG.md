@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [Latest Changes]
 
 ### Added
 - **Configurable Async Write Settings**: New configuration options for async write-behind cache
@@ -35,6 +35,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended `Config` struct with async write settings
 - 172 lines of new configuration tests
 - Improved WAL test reliability (increased sleep timing)
+
+## [1.0.9] - 2025-12-16 - GraphQL API & Neo4j Compatibility Improvements
+
+Features:
+- Add full GraphQL API with gqlgen (schema, resolvers, introspection)
+- GraphQL endpoints: /graphql, /graphql/playground
+- Complete CRUD mutations (createNode, updateNode, deleteNode, merge, bulk ops)
+- GraphQL queries: search, similar, cypher, stats, schema, labels
+- Admin mutations: triggerEmbedding, rebuildSearchIndex, runDecay, clearAll
+
+Fixes:
+- Fix Cypher map projection returns without explicit AS aliases
+- Fix aggregation query alias handling in RETURN clauses
+- Fix embed queue pending embeddings index tracking
+- Improve Neo4j driver compatibility in UI Browser responses
+
+Tests:
+- Add GraphQL resolver and handler tests
+- Add storage pending embeddings index tests
+- Add node needs embedding tests
+- Add Cypher return alias tests
+
+Docs:
+- Add GraphQL README with usage examples
+- Add QUERIES.md with sample GraphQL operations
+
 
 ## [1.0.8] - 2025-12-15
 
