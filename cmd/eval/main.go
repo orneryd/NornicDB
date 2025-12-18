@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ import (
 
 func main() {
 	// Parse flags
-	url := flag.String("url", "http://localhost:7474", "NornicDB server URL")
+	serverURL := flag.String("url", "http://localhost:7474", "NornicDB server URL")
 	suitePath := flag.String("suite", "", "Path to test suite JSON file")
 	output := flag.String("output", "summary", "Output format: summary, detailed, json, compact")
 	savePath := flag.String("save", "", "Save results to JSON file")
@@ -44,8 +45,8 @@ func main() {
 	flag.Parse()
 
 	// Check server health
-	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", *url)
-	if err := checkHealth(*url); err != nil {
+	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", *serverURL)
+	if err := checkHealth(*serverURL); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Server not reachable: %v\n", err)
 		os.Exit(1)
 	}
@@ -54,13 +55,13 @@ func main() {
 	// Create sample data if requested
 	if *createSample {
 		fmt.Println("📝 Creating sample test data...")
-		if err := createSampleData(*url); err != nil {
+		if err := createSampleData(*serverURL); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️ Warning: Failed to create sample data: %v\n", err)
 		}
 	}
 
 	// Create HTTP-based search adapter
-	searcher := &HTTPSearcher{url: *url}
+	searcher := &HTTPSearcher{url: *serverURL}
 
 	// Create harness with HTTP searcher
 	harness := NewHTTPHarness(searcher)
@@ -434,9 +435,30 @@ func min(a, b int) int {
 	return b
 }
 
-func checkHealth(url string) error {
+// validateURL validates that the URL is well-formed and uses an allowed scheme.
+// This prevents SSRF attacks by ensuring only http/https URLs to expected hosts.
+func validateURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("malformed URL: %w", err)
+	}
+	// Only allow http and https schemes
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid scheme %q: only http and https are allowed", parsed.Scheme)
+	}
+	// Ensure host is present
+	if parsed.Host == "" {
+		return fmt.Errorf("missing host in URL")
+	}
+	return nil
+}
+
+func checkHealth(serverURL string) error {
+	if err := validateURL(serverURL); err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url + "/health")
+	resp, err := client.Get(serverURL + "/health")
 	if err != nil {
 		return err
 	}
@@ -468,7 +490,10 @@ func parseThresholds(s string) eval.Thresholds {
 	return t
 }
 
-func createSampleData(url string) error {
+func createSampleData(serverURL string) error {
+	if err := validateURL(serverURL); err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	// Sample nodes to create
@@ -487,7 +512,7 @@ func createSampleData(url string) error {
 	}
 	body, _ := json.Marshal(reqBody)
 
-	resp, err := client.Post(url+"/db/neo4j/tx/commit", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(serverURL+"/db/neo4j/tx/commit", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

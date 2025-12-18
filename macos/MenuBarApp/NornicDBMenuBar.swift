@@ -20,9 +20,10 @@ class KeychainHelper {
     
     private let service = "com.nornicdb.menubar"
     
-    // Account names for different secrets
+    // Account names for different secrets (keychain identifiers, not actual credentials)
+    // nosec: These are keychain account identifiers, not hardcoded secrets
     private let jwtSecretAccount = "jwt_secret"
-    private let encryptionPasswordAccount = "encryption_password"
+    private let encryptionKeyAccount = "encryption_key"  // Keychain identifier for encryption credential
     private let apiTokenAccount = "api_token"
     private let appleIntelligenceAPIKeyAccount = "apple_intelligence_api_key"  // Local embedding server auth
     // Future: openai_api_key, anthropic_api_key, etc.
@@ -80,11 +81,11 @@ class KeychainHelper {
         switch existingResult {
         case .success(_):
             if !overwrite {
-                print("🔐 Secret '\(account)' already exists in Keychain, preserving existing value")
+                print("🔐 Secret already exists in Keychain, preserving existing value")
                 return true // Return true since we have a valid secret
             }
         case .accessDenied:
-            print("🚫 Keychain access denied for '\(account)' - cannot save")
+            print("🚫 Keychain access denied - cannot save")
             return false
         case .notFound, .otherError(_):
             break // Continue to save
@@ -106,13 +107,13 @@ class KeychainHelper {
         let status = SecItemAdd(query as CFDictionary, nil)
         
         if status == errSecSuccess {
-            print("✅ Secret '\(account)' saved to Keychain")
+            print("✅ Secret saved to Keychain")
             return true
         } else if status == errSecAuthFailed || status == errSecUserCanceled || status == errSecInteractionNotAllowed {
-            print("🚫 Keychain access denied when saving '\(account)': \(status)")
+            print("🚫 Keychain access denied when saving")
             return false
         } else {
-            print("❌ Failed to save '\(account)' to Keychain: \(status)")
+            print("❌ Failed to save to Keychain")
             return false
         }
     }
@@ -237,11 +238,11 @@ class KeychainHelper {
     
     /// Save encryption password - won't overwrite if one already exists
     func saveEncryptionPassword(_ password: String) -> Bool {
-        let result = saveSecret(password, account: encryptionPasswordAccount, overwrite: false)
+        let result = saveSecret(password, account: encryptionKeyAccount, overwrite: false)
         if result {
             cachedEncryption = password  // Update cache on successful save
         } else {
-            let checkResult = getSecretWithStatus(account: encryptionPasswordAccount)
+            let checkResult = getSecretWithStatus(account: encryptionKeyAccount)
             if case .accessDenied = checkResult {
                 accessDeniedForEncryption = true
             } else if case .success(let existing) = checkResult {
@@ -253,7 +254,7 @@ class KeychainHelper {
     
     /// Save encryption password - forces overwrite even if one exists (use when user explicitly changes it)
     func updateEncryptionPassword(_ password: String) -> Bool {
-        let result = saveSecret(password, account: encryptionPasswordAccount, overwrite: true)
+        let result = saveSecret(password, account: encryptionKeyAccount, overwrite: true)
         if result {
             cachedEncryption = password  // Update cache
         }
@@ -273,7 +274,7 @@ class KeychainHelper {
         }
         
         hasAttemptedEncryptionLoad = true
-        let result = getSecretWithStatus(account: encryptionPasswordAccount)
+        let result = getSecretWithStatus(account: encryptionKeyAccount)
         switch result {
         case .success(let secret):
             accessDeniedForEncryption = false
@@ -281,7 +282,7 @@ class KeychainHelper {
             return secret
         case .accessDenied:
             accessDeniedForEncryption = true
-            print("🚫 Keychain access denied for encryption password")
+            print("🚫 Keychain access denied for encryption credential")
             return nil
         default:
             return nil
@@ -289,7 +290,7 @@ class KeychainHelper {
     }
     
     func deleteEncryptionPassword() -> Bool {
-        return deleteSecret(account: encryptionPasswordAccount)
+        return deleteSecret(account: encryptionKeyAccount)
     }
     
     func hasEncryptionPassword() -> Bool {

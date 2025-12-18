@@ -16,6 +16,11 @@ import (
 
 // MD5 computes MD5 hash of a value.
 //
+// SECURITY NOTE: MD5 is cryptographically weak and should NOT be used for
+// password hashing or security-critical applications. This function exists
+// for Neo4j APOC compatibility and data fingerprinting use cases only.
+// For secure hashing, use SHA256 or stronger algorithms.
+//
 // Example:
 //
 //	apoc.hashing.md5('hello') => '5d41402abc4b2a76b9719d911017c592'
@@ -26,6 +31,11 @@ func MD5(value interface{}) string {
 }
 
 // SHA1 computes SHA1 hash of a value.
+//
+// SECURITY NOTE: SHA1 is cryptographically weak and should NOT be used for
+// password hashing or security-critical applications. This function exists
+// for Neo4j APOC compatibility and data fingerprinting use cases only.
+// For secure hashing, use SHA256 or stronger algorithms.
 //
 // Example:
 //

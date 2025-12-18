@@ -212,13 +212,16 @@ func (e *LocalGGUFEmbedder) embedWithRecovery(ctx context.Context, text string) 
 
 			err = fmt.Errorf("PANIC in llama.cpp embedding (recovered): %v\nStack trace:\n%s", r, stackTrace)
 
-			// Log detailed error for diagnostics
+			// Log error summary for diagnostics (without exposing stack trace)
 			fmt.Printf("🔴 EMBEDDING PANIC RECOVERED:\n")
 			fmt.Printf("   Error: %v\n", r)
 			fmt.Printf("   Text length: %d\n", len(text))
 			fmt.Printf("   Model: %s\n", e.modelName)
 			fmt.Printf("   Total panics: %d\n", e.panicCount.Load())
-			fmt.Printf("   Stack trace:\n%s\n", stackTrace)
+			// Stack trace logged only in debug mode to prevent info exposure
+			if os.Getenv("NORNICDB_DEBUG") == "true" {
+				fmt.Printf("   Stack trace:\n%s\n", stackTrace)
+			}
 		}
 	}()
 

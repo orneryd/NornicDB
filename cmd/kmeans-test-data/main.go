@@ -512,7 +512,12 @@ func downloadWikiMovies(outputDir string, maxCount int) ([]TextData, error) {
 
 // parseTMDBCSV parses the TMDB CSV file
 func parseTMDBCSV(filename string, maxCount int) ([]TextData, error) {
-	file, err := os.Open(filename)
+	// Sanitize path to prevent path traversal attacks
+	cleanPath := filepath.Clean(filename)
+	if strings.Contains(cleanPath, "..") {
+		return nil, fmt.Errorf("invalid path: directory traversal not allowed")
+	}
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return nil, err
 	}

@@ -1374,10 +1374,14 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				// Log panic
-				buf := make([]byte, 4096)
-				n := runtime.Stack(buf, false)
-				fmt.Printf("PANIC: %v\n%s\n", err, buf[:n])
+				// Log panic summary (without stack trace to prevent info exposure)
+				fmt.Printf("PANIC: %v\n", err)
+				// Stack trace only in debug mode
+				if os.Getenv("NORNICDB_DEBUG") == "true" {
+					buf := make([]byte, 4096)
+					n := runtime.Stack(buf, false)
+					fmt.Printf("Stack trace:\n%s\n", buf[:n])
+				}
 
 				s.errorCount.Add(1)
 				s.writeError(w, http.StatusInternalServerError, "internal server error", ErrInternalError)
