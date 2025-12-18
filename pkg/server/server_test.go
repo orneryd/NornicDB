@@ -199,9 +199,9 @@ func TestDefaultConfig(t *testing.T) {
 	if config.MaxRequestSize != 10*1024*1024 {
 		t.Errorf("expected max request size 10MB, got %d", config.MaxRequestSize)
 	}
-	// SECURITY: CORS disabled by default (secure default)
-	if config.EnableCORS {
-		t.Error("expected CORS disabled by default for security")
+	// SECURITY: CORS enabled by default for ease of use
+	if config.EnableCORS == false {
+		t.Error("expected CORS enabled by default for ease of use")
 	}
 }
 
