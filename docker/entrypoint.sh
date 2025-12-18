@@ -6,10 +6,10 @@ set -e
 # Check for GPU availability
 if [ -f "/usr/bin/nvidia-smi" ] || [ -f "/usr/local/cuda/bin/nvidia-smi" ]; then
     if nvidia-smi >/dev/null 2>&1; then
-        echo "Ã¢Å“â€œ CUDA GPU detected"
+        echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ CUDA GPU detected"
         export LD_PRELOAD=""
     else
-        echo "Ã¢Å¡Â Ã¯Â¸Â  CUDA libraries found but no GPU detected - disabling CUDA"
+        echo "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â  CUDA libraries found but no GPU detected - disabling CUDA"
         # Prevent CUDA library loading by unsetting CUDA variables
         unset CUDA_VISIBLE_DEVICES
         unset NVIDIA_VISIBLE_DEVICES
@@ -17,7 +17,7 @@ if [ -f "/usr/bin/nvidia-smi" ] || [ -f "/usr/local/cuda/bin/nvidia-smi" ]; then
         export NORNICDB_EMBEDDING_PROVIDER="${NORNICDB_EMBEDDING_PROVIDER:-openai}"
     fi
 else
-    echo "Ã¢â€žÂ¹Ã¯Â¸Â  No CUDA libraries detected - running in CPU mode"
+    echo "ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¹ÃƒÂ¯Ã‚Â¸Ã‚Â  No CUDA libraries detected - running in CPU mode"
 fi
 
 # Build command line args from environment

@@ -1,0 +1,19 @@
+# Force LF line endings for shell scripts (prevents Docker "not found" errors)
+*.sh text eol=lf
+docker/*.sh text eol=lf
+scripts/*.sh text eol=lf
+
+# Force LF for Dockerfiles
+Dockerfile* text eol=lf
+docker/Dockerfile* text eol=lf
+
+# Keep Windows batch files with CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files
+*.gguf binary
+*.so binary
+*.a binary
+*.dll binary
+*.exe binary
