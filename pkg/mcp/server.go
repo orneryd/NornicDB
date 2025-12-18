@@ -113,7 +113,6 @@ func DefaultServerConfig() *ServerConfig {
 		WriteTimeout:     60 * time.Second,
 		MaxRequestSize:   10 * 1024 * 1024, // 10MB
 		EnableCORS:       true,
-		CORSOrigins:      []string{"*"},
 		EmbeddingEnabled: false, // Disabled by default, set Embedder externally
 	}
 }
