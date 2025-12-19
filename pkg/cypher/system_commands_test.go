@@ -102,6 +102,34 @@ func (m *mockDatabaseManager) GetDatabaseLimits(databaseName string) (interface{
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
+func (m *mockDatabaseManager) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockDatabaseManager) DropCompositeDatabase(name string) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockDatabaseManager) AddConstituent(compositeName string, constituent interface{}) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockDatabaseManager) RemoveConstituent(compositeName string, alias string) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockDatabaseManager) GetCompositeConstituents(compositeName string) ([]interface{}, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockDatabaseManager) ListCompositeDatabases() []DatabaseInfoInterface {
+	return []DatabaseInfoInterface{}
+}
+
+func (m *mockDatabaseManager) IsCompositeDatabase(name string) bool {
+	return false
+}
+
 func TestSystemCommands_CreateDatabase(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)

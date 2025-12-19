@@ -233,6 +233,14 @@ type DatabaseManagerInterface interface {
 	ResolveDatabase(nameOrAlias string) (string, error)
 	SetDatabaseLimits(databaseName string, limits interface{}) error
 	GetDatabaseLimits(databaseName string) (interface{}, error)
+	// Composite database methods
+	CreateCompositeDatabase(name string, constituents []interface{}) error
+	DropCompositeDatabase(name string) error
+	AddConstituent(compositeName string, constituent interface{}) error
+	RemoveConstituent(compositeName string, alias string) error
+	GetCompositeConstituents(compositeName string) ([]interface{}, error)
+	ListCompositeDatabases() []DatabaseInfoInterface
+	IsCompositeDatabase(name string) bool
 }
 
 // DatabaseInfoInterface provides database metadata without importing multidb.
@@ -1157,6 +1165,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		// Schema commands - constraints and indexes (check more specific patterns first)
 		// Must be at start (position 0) to be a standalone clause
 		return e.executeSchemaCommand(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE") == 0:
+		// System command: CREATE COMPOSITE DATABASE (check before CREATE DATABASE)
+		// Must be at start (position 0) to be a standalone clause
+		return e.executeCreateCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE") == 0:
 		// System command: CREATE DATABASE (check before generic CREATE)
 		// Must be at start (position 0) to be a standalone clause
@@ -1182,6 +1194,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case findKeywordIndex(cypher, "RETURN") == 0:
 		// Must be at start (position 0) to be a standalone clause
 		return e.executeReturn(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "DROP", "COMPOSITE DATABASE") == 0:
+		// System command: DROP COMPOSITE DATABASE (check before DROP DATABASE)
+		// Must be at start (position 0) to be a standalone clause
+		return e.executeDropCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "DROP", "DATABASE") == 0:
 		// System command: DROP DATABASE (check before generic DROP)
 		// Must be at start (position 0) to be a standalone clause
@@ -1229,6 +1245,14 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
 		// Must be at start (position 0) to be a standalone clause
 		return e.executeShowFunctions(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "COMPOSITE DATABASES") == 0:
+		// System command: SHOW COMPOSITE DATABASES (check before SHOW DATABASES)
+		// Must be at start (position 0) to be a standalone clause
+		return e.executeShowCompositeDatabases(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS") == 0:
+		// System command: SHOW CONSTITUENTS
+		// Must be at start (position 0) to be a standalone clause
+		return e.executeShowConstituents(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "DATABASES") == 0:
 		// System command: SHOW DATABASES (plural - check before singular)
 		// Must be at start (position 0) to be a standalone clause
@@ -1244,6 +1268,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		// Must be at start (position 0) to be a standalone clause
 		// Handles flexible whitespace: "SHOW ALIASES", "SHOW\tALIASES", "SHOW\nALIASES", etc.
 		return e.executeShowAliases(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE DATABASE") == 0:
+		// System command: ALTER COMPOSITE DATABASE (check before ALTER DATABASE)
+		// Must be at start (position 0) to be a standalone clause
+		return e.executeAlterCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE") == 0:
 		// System command: ALTER DATABASE SET LIMIT
 		// Must be at start (position 0) to be a standalone clause
@@ -1401,7 +1429,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	upper := strings.ToUpper(cypher)
 
 	// Check for valid starting keyword (including EXPLAIN/PROFILE prefixes)
-	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE"}
+	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER"}
 	hasValidStart := false
 	for _, start := range validStarts {
 		if strings.HasPrefix(upper, start) {
@@ -1410,7 +1438,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 	if !hasValidStart {
-		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, etc.)")
+		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, etc.)")
 	}
 
 	// Check balanced parentheses

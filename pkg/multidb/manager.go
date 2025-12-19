@@ -57,16 +57,17 @@ type DatabaseManager struct {
 
 // DatabaseInfo holds metadata about a database.
 type DatabaseInfo struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy string    `json:"created_by,omitempty"`
-	Status    string    `json:"status"` // "online", "offline"
-	Type      string    `json:"type"`   // "standard", "system"
-	IsDefault bool      `json:"is_default"`
-	NodeCount int64     `json:"node_count,omitempty"` // Cached, may be stale
-	UpdatedAt time.Time `json:"updated_at"`
-	Aliases   []string  `json:"aliases,omitempty"` // Database aliases (Neo4j-compatible)
-	Limits    *Limits   `json:"limits,omitempty"`  // Resource limits
+	Name         string           `json:"name"`
+	CreatedAt    time.Time        `json:"created_at"`
+	CreatedBy    string           `json:"created_by,omitempty"`
+	Status       string           `json:"status"` // "online", "offline"
+	Type         string           `json:"type"`   // "standard", "system"
+	IsDefault    bool             `json:"is_default"`
+	NodeCount    int64            `json:"node_count,omitempty"` // Cached, may be stale
+	UpdatedAt    time.Time        `json:"updated_at"`
+	Aliases      []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
+	Limits       *Limits          `json:"limits,omitempty"`       // Resource limits
+	Constituents []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
 }
 
 // Config holds DatabaseManager configuration.
@@ -281,9 +282,65 @@ func (m *DatabaseManager) GetStorage(name string) (storage.Engine, error) {
 		return nil, ErrDatabaseOffline
 	}
 
-	// Create namespaced engine
+	// Handle composite databases differently
+	if info.Type == "composite" {
+		// Build constituent engines map
+		constituents := make(map[string]storage.Engine)
+		constituentNames := make(map[string]string)
+		accessModes := make(map[string]string)
+
+		for _, ref := range info.Constituents {
+			// Resolve actual database name (might be an alias)
+			actualName, err := m.resolveDatabaseInternal(ref.DatabaseName)
+			if err != nil {
+				return nil, fmt.Errorf("constituent database '%s' not found: %w", ref.DatabaseName, err)
+			}
+
+			// Get storage for constituent
+			constituentStorage, err := m.getStorageInternal(actualName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get storage for constituent '%s': %w", ref.DatabaseName, err)
+			}
+
+			constituents[ref.Alias] = constituentStorage
+			constituentNames[ref.Alias] = actualName
+			accessModes[ref.Alias] = ref.AccessMode
+		}
+
+		// Create composite engine
+		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
+		// Note: We don't cache composite engines the same way as they're lightweight wrappers
+		return compositeEngine, nil
+	}
+
+	// Create namespaced engine for standard databases
 	// Note: Limit enforcement is handled separately via LimitChecker
 	// which is created on-demand when needed (not stored here)
+	engine := storage.NewNamespacedEngine(m.inner, name)
+	m.engines[name] = engine
+
+	return engine, nil
+}
+
+// getStorageInternal gets storage for a database without resolving aliases.
+// Must be called with lock held.
+func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error) {
+	// Check cache first
+	if engine, exists := m.engines[name]; exists {
+		return engine, nil
+	}
+
+	// Validate database exists
+	info, exists := m.databases[name]
+	if !exists {
+		return nil, ErrDatabaseNotFound
+	}
+
+	if info.Status != "online" {
+		return nil, ErrDatabaseOffline
+	}
+
+	// Create namespaced engine
 	engine := storage.NewNamespacedEngine(m.inner, name)
 	m.engines[name] = engine
 

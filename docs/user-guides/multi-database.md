@@ -297,11 +297,120 @@ Limits are **fully persisted** to disk as part of database metadata:
 - **Performance Protection**: Prevent slow queries from affecting other databases
 - **Compliance**: Enforce data retention limits
 
+## Composite Databases
+
+Composite databases (similar to Neo4j Fabric) allow you to create a virtual database that spans multiple physical databases. Queries against a composite database transparently access data from all constituent databases, providing a unified view without explicit database references.
+
+### Creating Composite Databases
+
+```cypher
+-- Create a composite database with multiple constituents
+CREATE COMPOSITE DATABASE analytics
+  ALIAS tenant_a FOR DATABASE tenant_a
+  ALIAS tenant_b FOR DATABASE tenant_b
+  ALIAS tenant_c FOR DATABASE tenant_c
+```
+
+### Querying Composite Databases
+
+Once created, you can query a composite database just like any other database:
+
+```cypher
+-- Switch to composite database
+:USE analytics
+
+-- Query across all constituents
+MATCH (n:Person)
+RETURN count(n)  -- Counts across all tenant databases
+
+-- Create nodes (routed to appropriate constituent)
+CREATE (n:Person {name: "Alice", tenant_id: "a"})
+
+-- Match across all constituents
+MATCH (n:Person)
+WHERE n.tenant_id = "a"
+RETURN n
+```
+
+### Managing Composite Databases
+
+```cypher
+-- Show all composite databases
+SHOW COMPOSITE DATABASES
+
+-- Show constituents of a composite database
+SHOW CONSTITUENTS FOR COMPOSITE DATABASE analytics
+
+-- Drop a composite database
+DROP COMPOSITE DATABASE analytics
+```
+
+**Note:** Dropping a composite database does not affect the constituent databases - they remain intact.
+
+### Constituent Management
+
+```cypher
+-- Add a constituent to an existing composite database
+ALTER COMPOSITE DATABASE analytics
+  ADD ALIAS tenant_d FOR DATABASE tenant_d
+
+-- Remove a constituent
+ALTER COMPOSITE DATABASE analytics
+  DROP ALIAS tenant_c
+```
+
+### Use Cases
+
+- **Analytics Across Tenants**: Aggregate data from multiple tenant databases
+- **Unified Reporting**: Generate reports across multiple databases as if they were one
+- **Data Federation**: Query distributed data transparently
+- **Multi-Region Queries**: Access data from databases in different regions
+
+### Schema Merging
+
+Composite databases automatically merge schemas (constraints and indexes) from all constituent databases:
+
+```cypher
+-- Each constituent can have its own indexes and constraints
+-- In tenant_a:
+CREATE INDEX ON :Person(name)
+CREATE CONSTRAINT unique_person_email ON (p:Person) ASSERT p.email IS UNIQUE
+
+-- In tenant_b:
+CREATE INDEX ON :Company(name)
+CREATE INDEX ON :Company(country, city)
+
+-- Querying the composite database shows all merged schemas
+SHOW INDEXES  -- Shows indexes from all constituents
+SHOW CONSTRAINTS  -- Shows constraints from all constituents
+```
+
+**Schema Merging Details:**
+- **Constraints**: All constraint types (UNIQUE, NODE_KEY, EXISTS) are merged from all constituents
+- **Indexes**: All index types are merged:
+  - Property indexes (single property)
+  - Composite indexes (multiple properties)
+  - Full-text indexes
+  - Vector indexes
+  - Range indexes
+- **Deduplication**: If multiple constituents have indexes/constraints with the same name, only one is shown in the merged schema
+- **Metadata Only**: The merged schema shows metadata only - actual indexed data remains in constituent databases
+
+### How It Works
+
+1. **Query Routing**: Queries are automatically routed to relevant constituents based on labels and properties
+2. **Result Merging**: Results from all constituents are merged transparently (duplicates removed by ID)
+3. **Write Routing**: Write operations are routed to the appropriate constituent based on routing rules
+4. **Schema Merging**: Constraints and indexes from all constituents are merged into a unified schema view
+
+### Limitations
+
+- **Local Constituents Only**: Currently only supports local databases (remote constituents planned for future)
+- **No Distributed Transactions**: Writes to multiple constituents are not atomic
+- **Routing Configuration**: Advanced routing rules are not yet user-configurable (uses default hash-based routing)
+
 ## Limitations (v1)
 
-- ❌ Cross-database queries (not supported)
-
-**Future Features:** See [Multi-Database Future Features Plan](../architecture/MULTI_DB_FUTURE_FEATURES.md) for implementation plans for cross-database queries.
 
 ## See Also
 

@@ -137,6 +137,34 @@ func (m *aliasTestDatabaseManager) GetDatabaseLimits(databaseName string) (inter
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *aliasTestDatabaseManager) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *aliasTestDatabaseManager) DropCompositeDatabase(name string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *aliasTestDatabaseManager) AddConstituent(compositeName string, constituent interface{}) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *aliasTestDatabaseManager) RemoveConstituent(compositeName string, alias string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *aliasTestDatabaseManager) GetCompositeConstituents(compositeName string) ([]interface{}, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *aliasTestDatabaseManager) ListCompositeDatabases() []DatabaseInfoInterface {
+	return []DatabaseInfoInterface{}
+}
+
+func (m *aliasTestDatabaseManager) IsCompositeDatabase(name string) bool {
+	return false
+}
+
 type aliasTestDatabaseInfo struct {
 	info *multidb.DatabaseInfo
 }

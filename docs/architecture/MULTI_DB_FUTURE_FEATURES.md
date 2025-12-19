@@ -9,819 +9,491 @@ This document outlines the implementation plan for advanced multi-database featu
 
 ## Table of Contents
 
-1. [Cross-Database Queries](#cross-database-queries)
-2. [Database Aliases](#database-aliases) - ✅ **IMPLEMENTED**
-3. [Per-Database Resource Limits](#per-database-resource-limits) - ✅ **IMPLEMENTED**
+1. [Composite Databases](#composite-databases) - Future Enhancement
+2. [Completed Features](#completed-features) - ✅ **IMPLEMENTED**
 
 ---
 
-## Cross-Database Queries
+## Composite Databases
+
+**Status:** ✅ **IMPLEMENTED** (v1.2)  
+**Priority:** Medium  
+**Estimated Effort:** 20-30 days
 
 ### Overview
 
-Enable Cypher queries that can access and join data from multiple databases within a single query. This allows users to query across tenant boundaries for analytics, reporting, or administrative purposes.
+Composite Databases (also known as Neo4j Fabric) enable creating a virtual database that spans multiple physical databases. Unlike cross-database queries which require explicit database references in each query, composite databases provide a unified view where queries appear to operate on a single database, while transparently accessing data from multiple constituent databases.
+
+**This feature supersedes the need for explicit cross-database querying** by providing a cleaner, more intuitive abstraction layer.
+
+**See [Multi-Database User Guide](../user-guides/multi-database.md#composite-databases) for usage instructions.**
+
+### Key Concepts
+
+1. **Composite Database**: A virtual database that doesn't store data itself
+2. **Constituent Databases**: Physical databases that contain the actual data
+3. **Database Aliases**: References from composite database to constituent databases
+4. **Transparent Querying**: Queries against composite database automatically access all constituents
 
 ### Use Cases
 
-- **Analytics**: Aggregate data across all tenants
-- **Administration**: Find patterns across databases
-- **Reporting**: Generate cross-tenant reports
-- **Data Migration**: Copy data between databases
+- **Analytics Across Tenants**: Aggregate data from multiple tenant databases without explicit database references
+- **Unified Reporting**: Generate reports across multiple databases as if they were one
+- **Data Federation**: Query distributed data across multiple databases transparently
+- **Multi-Region Queries**: Access data from databases in different regions/locations
+- **Legacy Migration**: Gradually migrate data while maintaining unified access
 
 ### Design Approach
 
-#### Option 1: Explicit Database References (Recommended)
+#### Composite Database Structure
 
-Allow explicit database references in Cypher queries:
+```go
+type CompositeDatabaseInfo struct {
+    Name            string              // Composite database name
+    Type            string              // "composite"
+    Constituents    []ConstituentRef    // List of constituent databases
+    CreatedAt       time.Time
+    UpdatedAt       time.Time
+}
 
-```cypher
-// Query across multiple databases
-MATCH (n:Person) FROM DATABASE tenant_a
-MATCH (m:Person) FROM DATABASE tenant_b
-WHERE n.name = m.name
-RETURN n, m
-
-// Join across databases
-MATCH (a:Customer) FROM DATABASE tenant_a
-MATCH (b:Order) FROM DATABASE tenant_b
-WHERE a.id = b.customer_id
-RETURN a, b
+type ConstituentRef struct {
+    Alias           string  // Alias name within composite database
+    DatabaseName    string  // Actual database name (or alias)
+    Type            string  // "local" or "remote" (future)
+    AccessMode      string  // "read", "write", "read_write"
+}
 ```
 
-**Advantages:**
-- Explicit and clear
-- Easy to understand
-- Good security model (explicit access)
-- Neo4j-compatible syntax
+#### Query Execution Flow
 
-**Disadvantages:**
-- More verbose syntax
-- Requires query parser changes
-
-#### Option 2: Database Variables
-
-Use variables to reference databases:
-
-```cypher
-USE DATABASE tenant_a AS db1, tenant_b AS db2
-MATCH (n:Person) IN db1
-MATCH (m:Person) IN db2
-WHERE n.name = m.name
-RETURN n, m
-```
-
-**Advantages:**
-- Cleaner syntax for multiple databases
-- Reusable database references
-
-**Disadvantages:**
-- More complex parser
-- Less intuitive
+1. **Query Routing**: Identify which constituents are needed for the query
+2. **Parallel Execution**: Execute query against relevant constituents in parallel
+3. **Result Merging**: Combine results from all constituents
+4. **Transparent Return**: Return unified results as if from single database
 
 ### Implementation Strategy
 
-#### Phase 1: Query Parser Extensions
+#### Phase 1: Composite Database Management
 
-**File:** `pkg/cypher/parser.go`
+**Files:** `pkg/multidb/composite.go` (new), `pkg/multidb/manager.go`
 
-1. **Extend AST** to support database references:
+1. **Composite Database Storage**:
    ```go
-   type DatabaseRef struct {
-       Name      string
-       Alias     string  // Optional alias
+   // Store composite database metadata in system database
+   type CompositeDatabaseInfo struct {
+       Name         string
+       Type         string  // "composite"
+       Constituents []ConstituentRef
+       CreatedAt    time.Time
+       UpdatedAt    time.Time
    }
    
-   type MatchClause struct {
-       Database *DatabaseRef  // Optional database reference
-       Pattern  Pattern
-       Where    *WhereClause
+   // Add to DatabaseInfo
+   type DatabaseInfo struct {
+       Name          string
+       Type          string  // "standard", "system", "composite"
+       Constituents  []ConstituentRef  // Only for composite type
+       // ... existing fields
    }
    ```
 
-2. **Parse database references**:
-   - `FROM DATABASE name` clause
-   - `IN DATABASE name` clause
-   - Support in MATCH, CREATE, MERGE, DELETE, SET
+2. **Management Commands**:
+   ```cypher
+   -- Create composite database
+   CREATE COMPOSITE DATABASE analytics
+     ALIAS tenant_a FOR DATABASE tenant_a
+     ALIAS tenant_b FOR DATABASE tenant_b
+     ALIAS tenant_c FOR DATABASE tenant_c
+   
+   -- Add constituent to existing composite
+   ALTER COMPOSITE DATABASE analytics
+     ADD ALIAS tenant_d FOR DATABASE tenant_d
+   
+   -- Remove constituent
+   ALTER COMPOSITE DATABASE analytics
+     DROP ALIAS tenant_c
+   
+   -- Drop composite database
+   DROP COMPOSITE DATABASE analytics
+   
+   -- Show composite databases
+   SHOW COMPOSITE DATABASES
+   SHOW CONSTITUENTS FOR COMPOSITE DATABASE analytics
+   ```
 
-#### Phase 2: Multi-Database Executor
+#### Phase 2: Composite Database Executor
 
-**File:** `pkg/cypher/multi_db_executor.go` (new)
+**File:** `pkg/cypher/composite_executor.go` (new)
 
-1. **Cross-Database Query Planner**:
+1. **Composite Query Executor**:
    ```go
-   type CrossDatabaseExecutor struct {
-       dbManager *multidb.DatabaseManager
-       executors map[string]*StorageExecutor  // Per-database executors
+   type CompositeExecutor struct {
+       dbManager     *multidb.DatabaseManager
+       compositeInfo *CompositeDatabaseInfo
+       executors     sync.Map  // map[string]*StorageExecutor per constituent
    }
    
-   func (e *CrossDatabaseExecutor) ExecuteCrossDB(
+   func (e *CompositeExecutor) Execute(
        ctx context.Context,
-       query *Query,
+       query string,
+       params map[string]interface{},
    ) (*ExecuteResult, error) {
-       // 1. Identify all databases referenced in query
-       databases := e.extractDatabaseRefs(query)
+       // 1. Analyze query to determine which constituents are needed
+       constituents := e.analyzeQuery(query)
        
-       // 2. Execute sub-queries per database
-       results := make(map[string]*ExecuteResult)
-       for dbName, subQuery := range e.splitByDatabase(query) {
-           executor := e.getExecutor(dbName)
-           results[dbName], _ = executor.Execute(ctx, subQuery, params)
-       }
+       // 2. Execute query against each constituent in parallel
+       results := e.executeParallel(ctx, constituents, query, params)
        
-       // 3. Merge results (join, union, etc.)
+       // 3. Merge results based on query type
        return e.mergeResults(results, query)
    }
    ```
 
-2. **Result Merging**:
-   - **UNION**: Combine results from multiple databases
-   - **JOIN**: Match nodes/edges across databases by properties
-   - **AGGREGATION**: Aggregate across databases (COUNT, SUM, etc.)
+2. **Query Analysis**:
+   - **Label-based routing**: Route queries to constituents based on labels
+   - **Property-based routing**: Route based on property values (e.g., tenant_id)
+   - **Full scan**: Query all constituents if routing is ambiguous
 
-#### Phase 3: Security & Access Control
+3. **Result Merging Strategies**:
+   - **UNION**: Combine all results (MATCH queries)
+   - **AGGREGATION**: Sum/Count across constituents (COUNT, SUM, etc.)
+   - **DISTINCT**: Remove duplicates across constituents
+   - **ORDER BY**: Sort merged results
+   - **LIMIT**: Apply limit after merging
 
-1. **Database Access Permissions**:
+#### Phase 3: Query Routing & Optimization
+
+**File:** `pkg/cypher/composite_router.go` (new)
+
+1. **Routing Strategies**:
    ```go
-   type DatabasePermission struct {
-       Database string
-       User     string
-       Access   []string  // ["read", "write", "cross_db"]
+   type RoutingStrategy interface {
+       RouteQuery(query *Query, constituents []ConstituentRef) []string
+   }
+   
+   // Label-based routing: route to constituents that have nodes with specific labels
+   type LabelRouting struct {
+       labelMap map[string][]string  // label -> constituent aliases
+   }
+   
+   // Property-based routing: route based on property values
+   type PropertyRouting struct {
+       property string
+       valueMap map[interface{}]string  // property value -> constituent alias
+   }
+   
+   // Full scan: query all constituents
+   type FullScanRouting struct{}
+   ```
+
+2. **Routing Configuration**:
+   ```cypher
+   -- Configure label-based routing
+   ALTER COMPOSITE DATABASE analytics
+     SET ROUTING LABEL Person TO tenant_a, tenant_b
+     SET ROUTING LABEL Order TO tenant_c
+   
+   -- Configure property-based routing
+   ALTER COMPOSITE DATABASE analytics
+     SET ROUTING PROPERTY tenant_id
+       WHERE tenant_id = 'a' TO tenant_a
+       WHERE tenant_id = 'b' TO tenant_b
+   ```
+
+#### Phase 4: Write Operations
+
+1. **Write Routing**:
+   - Route writes to appropriate constituent based on routing rules
+   - Support explicit constituent selection: `CREATE (n:Person) IN tenant_a`
+   - Default routing when ambiguous
+
+2. **Transaction Handling**:
+   - Single-constituent transactions: Normal ACID guarantees
+   - Multi-constituent transactions: Two-phase commit (future enhancement)
+
+#### Phase 5: Performance Optimization
+
+1. **Parallel Execution**:
+   ```go
+   func (e *CompositeExecutor) executeParallel(
+       ctx context.Context,
+       constituents []string,
+       query string,
+       params map[string]interface{},
+   ) map[string]*ExecuteResult {
+       var wg sync.WaitGroup
+       results := make(map[string]*ExecuteResult)
+       errors := make(map[string]error)
+       
+       for _, alias := range constituents {
+           wg.Add(1)
+           go func(alias string) {
+               defer wg.Done()
+               executor := e.getExecutor(alias)
+               result, err := executor.Execute(ctx, query, params)
+               if err != nil {
+                   errors[alias] = err
+               } else {
+                   results[alias] = result
+               }
+           }(alias)
+       }
+       
+       wg.Wait()
+       return results
    }
    ```
 
-2. **Query Validation**:
-   - Check user has access to all referenced databases
-   - Enforce read-only for cross-database queries (optional)
-   - Log cross-database queries for audit
-
-#### Phase 4: Performance Optimization
-
-1. **Parallel Execution**:
-   - Execute queries against multiple databases in parallel
-   - Use goroutines for concurrent database access
-   - Merge results efficiently
-
 2. **Caching**:
-   - Cache cross-database query results
-   - Invalidate on database updates
+   - Cache routing decisions
+   - Cache query results per constituent
+   - Invalidate on constituent updates
 
 3. **Query Optimization**:
-   - Push filters down to individual databases
-   - Minimize data transfer between databases
-   - Use indexes from each database
+   - Push filters down to constituents
+   - Use indexes from each constituent
+   - Minimize data transfer
 
 ### Example Implementation
 
 ```go
-// pkg/cypher/multi_db_executor.go
+// pkg/multidb/composite.go
 
-type CrossDatabaseExecutor struct {
-    dbManager *multidb.DatabaseManager
-    executors sync.Map  // map[string]*StorageExecutor
+type CompositeDatabaseManager struct {
+    dbManager *DatabaseManager
+    composites map[string]*CompositeDatabaseInfo
+    mu sync.RWMutex
 }
 
-func (e *CrossDatabaseExecutor) ExecuteCrossDB(
+func (m *CompositeDatabaseManager) CreateCompositeDatabase(
+    name string,
+    constituents []ConstituentRef,
+) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    
+    // Validate name
+    if m.dbManager.Exists(name) {
+        return ErrDatabaseExists
+    }
+    
+    // Validate all constituents exist
+    for _, ref := range constituents {
+        if !m.dbManager.Exists(ref.DatabaseName) {
+            return fmt.Errorf("constituent database '%s' not found", ref.DatabaseName)
+        }
+    }
+    
+    // Create composite database info
+    info := &DatabaseInfo{
+        Name: name,
+        Type: "composite",
+        Constituents: constituents,
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
+        Status: "online",
+    }
+    
+    // Store in system database
+    return m.dbManager.persistDatabaseInfo(info)
+}
+
+func (m *CompositeDatabaseManager) GetCompositeStorage(
+    name string,
+) (storage.Engine, error) {
+    m.mu.RLock()
+    info, exists := m.composites[name]
+    m.mu.RUnlock()
+    
+    if !exists {
+        return nil, ErrDatabaseNotFound
+    }
+    
+    // Return composite engine that routes to constituents
+    return NewCompositeEngine(m.dbManager, info), nil
+}
+```
+
+```go
+// pkg/cypher/composite_executor.go
+
+type CompositeExecutor struct {
+    dbManager     *multidb.DatabaseManager
+    compositeInfo *multidb.CompositeDatabaseInfo
+    router        *CompositeRouter
+    executors     sync.Map  // map[string]*StorageExecutor
+}
+
+func (e *CompositeExecutor) Execute(
     ctx context.Context,
     query string,
     params map[string]interface{},
 ) (*ExecuteResult, error) {
-    // Parse query to extract database references
+    // Parse query
     ast, err := e.parseQuery(query)
     if err != nil {
         return nil, err
     }
     
-    // Get all referenced databases
-    databases := e.extractDatabases(ast)
+    // Determine which constituents to query
+    constituents := e.router.RouteQuery(ast, e.compositeInfo.Constituents)
     
-    // Validate access
-    if err := e.validateAccess(ctx, databases); err != nil {
-        return nil, err
+    if len(constituents) == 0 {
+        return &ExecuteResult{Rows: []map[string]interface{}{}}, nil
     }
     
     // Execute in parallel
-    var wg sync.WaitGroup
-    results := make(map[string]*ExecuteResult)
-    errors := make(map[string]error)
-    
-    for _, dbName := range databases {
-        wg.Add(1)
-        go func(db string) {
-            defer wg.Done()
-            executor := e.getExecutor(db)
-            subQuery := e.extractSubQuery(ast, db)
-            result, err := executor.Execute(ctx, subQuery, params)
-            if err != nil {
-                errors[db] = err
-            } else {
-                results[db] = result
-            }
-        }(dbName)
-    }
-    
-    wg.Wait()
-    
-    // Check for errors
-    if len(errors) > 0 {
-        return nil, fmt.Errorf("cross-database query failed: %v", errors)
-    }
+    results := e.executeParallel(ctx, constituents, query, params)
     
     // Merge results
     return e.mergeResults(results, ast)
 }
+
+func (e *CompositeExecutor) mergeResults(
+    results map[string]*ExecuteResult,
+    ast *QueryAST,
+) (*ExecuteResult, error) {
+    // Determine merge strategy based on query type
+    if ast.HasAggregation {
+        return e.mergeAggregation(results, ast)
+    }
+    
+    // Union merge for regular queries
+    var allRows []map[string]interface{}
+    for _, result := range results {
+        allRows = append(allRows, result.Rows...)
+    }
+    
+    // Apply DISTINCT if needed
+    if ast.HasDistinct {
+        allRows = e.deduplicate(allRows)
+    }
+    
+    // Apply ORDER BY
+    if ast.OrderBy != nil {
+        e.sortRows(allRows, ast.OrderBy)
+    }
+    
+    // Apply LIMIT
+    if ast.Limit > 0 {
+        if int64(len(allRows)) > ast.Limit {
+            allRows = allRows[:ast.Limit]
+        }
+    }
+    
+    return &ExecuteResult{Rows: allRows}, nil
+}
 ```
 
 ### Testing Strategy
 
 1. **Unit Tests**:
-   - Query parsing with database references
-   - Result merging (union, join, aggregation)
-   - Access control validation
+   - Composite database creation/deletion
+   - Constituent management
+   - Query routing logic
+   - Result merging (union, aggregation, distinct)
+   - Write routing
 
 2. **Integration Tests**:
-   - Cross-database MATCH queries
-   - Cross-database CREATE (if allowed)
-   - Performance with multiple databases
+   - Queries against composite database
+   - Multi-constituent queries
+   - Write operations
+   - Routing strategies
+   - Performance with multiple constituents
 
 3. **E2E Tests**:
-   - Real-world cross-database analytics queries
-   - Large-scale data across databases
+   - Real-world analytics queries
+   - Large-scale data across constituents
+   - Concurrent access patterns
+   - Failure scenarios (constituent offline)
 
 ### Security Considerations
 
-- **Access Control**: Users must have explicit permission for cross-database queries
-- **Audit Logging**: Log all cross-database queries
-- **Read-Only Mode**: Option to restrict cross-database queries to read-only
-- **Rate Limiting**: Prevent abuse of cross-database queries
+- **Access Control**: Composite database inherits permissions from constituents
+- **Audit Logging**: Log all composite database queries
+- **Constituent Access**: Users must have access to all constituents
+- **Write Restrictions**: Option to restrict composite databases to read-only
+- **Rate Limiting**: Apply rate limits across all constituents
 
 ### Performance Considerations
 
-- **Parallel Execution**: Critical for performance
-- **Result Size Limits**: Prevent memory exhaustion
-- **Query Timeout**: Set reasonable timeouts for cross-database queries
-- **Index Usage**: Leverage indexes from each database
+- **Parallel Execution**: Critical for performance with multiple constituents
+- **Result Size Limits**: Prevent memory exhaustion when merging large results
+- **Query Timeout**: Set reasonable timeouts for composite queries
+- **Routing Efficiency**: Minimize unnecessary constituent queries
+- **Caching**: Cache routing decisions and results
+- **Index Usage**: Leverage indexes from each constituent
+
+### Limitations (v1)
+
+- **Local Only**: Only local databases as constituents (remote support future)
+- **No Cross-Constituent Relationships**: Cannot create relationships across constituents
+- **Simple Merging**: Basic union/aggregation merging (advanced joins future)
+- **No Distributed Transactions**: Multi-constituent writes are best-effort
+
+### Future Enhancements
+
+1. **Remote Constituents**: Support databases in other NornicDB instances
+2. **Advanced Routing**: More sophisticated routing strategies
+3. **Distributed Transactions**: Two-phase commit for multi-constituent writes
+4. **Cross-Constituent Relationships**: Virtual relationships across constituents
+5. **Query Optimization**: More advanced query planning and optimization
 
 ### Estimated Effort
 
-- **Parser Extensions**: 2-3 days
-- **Multi-Database Executor**: 5-7 days
-- **Security & Access Control**: 2-3 days
-- **Testing**: 3-4 days
-- **Total**: ~12-17 days
+- **Composite Database Management**: 3-4 days
+- **Composite Executor**: 5-7 days
+- **Query Routing**: 3-4 days
+- **Result Merging**: 3-4 days
+- **Write Operations**: 2-3 days
+- **Performance Optimization**: 2-3 days
+- **Testing**: 4-5 days
+- **Total**: ~22-30 days
+
+### Comparison with Cross-Database Queries
+
+| Feature | Cross-Database Queries | Composite Databases |
+|---------|------------------------|---------------------|
+| **Syntax** | Explicit `FROM DATABASE` clauses | Transparent, single database view |
+| **Complexity** | Verbose, requires database references | Clean, intuitive |
+| **Use Case** | Ad-hoc cross-database queries | Regular analytics/reporting |
+| **Performance** | Similar (both parallel execution) | Similar |
+| **Security** | Explicit access per query | Configured once per composite |
+| **Maintenance** | Query-level changes | Database-level configuration |
+
+**Recommendation**: Implement Composite Databases instead of explicit cross-database queries. Composite databases provide a cleaner abstraction and better user experience for the primary use cases (analytics, reporting).
 
 ---
 
-## Database Aliases
+## Completed Features
 
-**Status:** ✅ **IMPLEMENTED** (v1.2)  
+### ✅ Database Aliases (v1.2)
+
+**Status:** ✅ **IMPLEMENTED**  
 **See:** [Multi-Database User Guide - Database Aliases](../user-guides/multi-database.md#database-aliases)
 
-### Overview
+Database aliases allow creating alternate names for databases, enabling easier database management and migration scenarios.
 
-Allow creating alternate names (aliases) for databases, enabling easier database management and migration scenarios.
+**Features:**
+- CREATE/DROP/SHOW ALIAS commands
+- Alias resolution integrated into all routing points (Bolt, HTTP, Cypher)
+- Alias persistence in database metadata
+- Validation and conflict detection
 
-**✅ This feature is now fully implemented and available for use.**
+### ✅ Per-Database Resource Limits (v1.2)
 
-### Use Cases
-
-- **Database Renaming**: Create alias while migrating to new name
-- **Environment Mapping**: `prod` → `production_v2`
-- **Version Management**: `current` → `v1.2.3`
-- **Simplified Access**: `main` → `tenant_primary_2024`
-
-### Design Approach
-
-#### Alias Storage
-
-Store aliases in the system database metadata:
-
-```go
-type DatabaseInfo struct {
-    Name        string
-    Aliases     []string  // NEW: List of aliases
-    // ... existing fields
-}
-```
-
-#### Alias Resolution
-
-Resolve aliases to actual database names at query time:
-
-```go
-func (m *DatabaseManager) ResolveDatabase(nameOrAlias string) (string, error) {
-    // Check if it's an actual database name
-    if m.Exists(nameOrAlias) {
-        return nameOrAlias, nil
-    }
-    
-    // Check if it's an alias
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-    
-    for dbName, info := range m.databases {
-        for _, alias := range info.Aliases {
-            if alias == nameOrAlias {
-                return dbName, nil
-            }
-        }
-    }
-    
-    return "", ErrDatabaseNotFound
-}
-```
-
-### Implementation Strategy
-
-#### Phase 1: Alias Storage
-
-**File:** `pkg/multidb/manager.go`
-
-1. **Add Aliases to DatabaseInfo**:
-   ```go
-   type DatabaseInfo struct {
-       Name        string
-       Aliases     []string  // NEW
-       // ... existing fields
-   }
-   ```
-
-2. **Update Metadata Persistence**:
-   - Include aliases in JSON serialization
-   - Load aliases on startup
-
-#### Phase 2: Alias Management Commands
-
-**File:** `pkg/cypher/executor.go`
-
-1. **CREATE ALIAS**:
-   ```cypher
-   CREATE ALIAS main FOR DATABASE tenant_primary_2024
-   ```
-
-2. **DROP ALIAS**:
-   ```cypher
-   DROP ALIAS main
-   ```
-
-3. **SHOW ALIASES**:
-   ```cypher
-   SHOW ALIASES
-   SHOW ALIASES FOR DATABASE tenant_a
-   ```
-
-#### Phase 3: Alias Resolution
-
-**Files:** `pkg/multidb/manager.go`, `pkg/server/server.go`, `pkg/bolt/server.go`
-
-1. **Update GetStorage()**:
-   ```go
-   func (m *DatabaseManager) GetStorage(nameOrAlias string) (storage.Engine, error) {
-       // Resolve alias first
-       actualName, err := m.ResolveDatabase(nameOrAlias)
-       if err != nil {
-           return nil, err
-       }
-       
-       // Use existing logic with actual name
-       return m.getStorageInternal(actualName)
-   }
-   ```
-
-2. **Update All Routing**:
-   - HTTP API: `/db/{database}/tx/commit` - resolve alias
-   - Bolt Protocol: HELLO message `db` parameter - resolve alias
-   - Cypher: `:USE database` - resolve alias
-
-#### Phase 4: Validation & Constraints
-
-1. **Alias Validation**:
-   - Alias must be unique across all databases
-   - Alias cannot conflict with existing database names
-   - Alias cannot be reserved names (`system`, `nornic`)
-
-2. **Circular Reference Prevention**:
-   - Alias cannot point to another alias (only direct database names)
-   - Validate on alias creation
-
-### Example Implementation
-
-```go
-// pkg/multidb/manager.go
-
-// CreateAlias creates an alias for a database.
-func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-    
-    // Validate database exists
-    info, exists := m.databases[databaseName]
-    if !exists {
-        return ErrDatabaseNotFound
-    }
-    
-    // Validate alias doesn't exist
-    if m.Exists(alias) {
-        return fmt.Errorf("alias '%s' conflicts with existing database", alias)
-    }
-    
-    // Check if alias is already used
-    for _, dbInfo := range m.databases {
-        for _, existingAlias := range dbInfo.Aliases {
-            if existingAlias == alias {
-                return fmt.Errorf("alias '%s' already exists", alias)
-            }
-        }
-    }
-    
-    // Validate alias name
-    if err := m.validateAliasName(alias); err != nil {
-        return err
-    }
-    
-    // Add alias
-    info.Aliases = append(info.Aliases, alias)
-    info.UpdatedAt = time.Now()
-    
-    return m.persistMetadata()
-}
-
-// ResolveDatabase resolves an alias or database name to the actual database name.
-func (m *DatabaseManager) ResolveDatabase(nameOrAlias string) (string, error) {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-    
-    // Check if it's an actual database name
-    if _, exists := m.databases[nameOrAlias]; exists {
-        return nameOrAlias, nil
-    }
-    
-    // Check if it's an alias
-    for dbName, info := range m.databases {
-        for _, alias := range info.Aliases {
-            if alias == nameOrAlias {
-                return dbName, nil
-            }
-        }
-    }
-    
-    return "", ErrDatabaseNotFound
-}
-```
-
-### Testing Strategy
-
-1. **Unit Tests**:
-   - Alias creation and deletion
-   - Alias resolution
-   - Alias validation (conflicts, reserved names)
-   - Circular reference prevention
-
-2. **Integration Tests**:
-   - Using aliases in Cypher queries
-   - Using aliases in Bolt protocol
-   - Using aliases in HTTP API
-   - Alias persistence across restarts
-
-### Security Considerations
-
-- **Access Control**: Aliases inherit permissions from the target database
-- **Audit Logging**: Log alias creation/deletion
-- **Reserved Names**: Prevent aliasing system databases
-
-### Estimated Effort
-
-- **Alias Storage**: 1 day
-- **Alias Management Commands**: 2 days
-- **Alias Resolution**: 2 days
-- **Testing**: 2 days
-- **Total**: ~7 days
-
----
-
-## Per-Database Resource Limits
-
-**Status:** ✅ **IMPLEMENTED** (v1.2)  
+**Status:** ✅ **IMPLEMENTED**  
 **See:** [Multi-Database User Guide - Resource Limits](../user-guides/multi-database.md#per-database-resource-limits)
 
-### Overview
+Per-database resource limits enable administrators to set resource limits per database, preventing any single database from consuming excessive resources.
 
-Enable administrators to set resource limits per database, preventing any single database from consuming excessive resources.
-
-**✅ This feature is now fully implemented and available for use.**
-
-### Use Cases
-
-- **Fair Resource Allocation**: Ensure no tenant monopolizes resources
-- **Cost Control**: Limit storage per tenant
-- **Performance Protection**: Prevent slow queries from affecting other databases
-- **Compliance**: Enforce data retention limits
-
-### Resource Types to Limit
-
-1. **Storage Limits**:
-   - Max nodes per database
-   - Max edges per database
-   - Max storage size (bytes)
-
-2. **Query Limits**:
-   - Max query execution time
-   - Max results returned
-   - Max concurrent queries
-
-3. **Connection Limits**:
-   - Max concurrent connections
-   - Max connections per user
-
-4. **Rate Limits**:
-   - Max queries per second
-   - Max writes per second
-
-### Design Approach
-
-#### Limit Configuration
-
-```go
-type DatabaseLimits struct {
-    // Storage limits
-    MaxNodes      int64
-    MaxEdges      int64
-    MaxStorageBytes int64
-    
-    // Query limits
-    MaxQueryTime     time.Duration
-    MaxResults        int64
-    MaxConcurrentQueries int
-    
-    // Connection limits
-    MaxConnections   int
-    
-    // Rate limits
-    MaxQueriesPerSecond int
-    MaxWritesPerSecond  int
-}
-
-type DatabaseInfo struct {
-    Name        string
-    Limits      *DatabaseLimits  // NEW: Resource limits
-    // ... existing fields
-}
-```
-
-#### Limit Enforcement Points
-
-1. **Storage Limits**: Enforce in `CreateNode()` / `CreateEdge()`
-2. **Query Limits**: Enforce in query executor
-3. **Connection Limits**: Enforce in Bolt/HTTP server
-4. **Rate Limits**: Enforce in request handlers
-
-### Implementation Strategy
-
-#### Phase 1: Limit Configuration
-
-**File:** `pkg/multidb/limits.go` (new)
-
-1. **Define Limit Types**:
-   ```go
-   type DatabaseLimits struct {
-       Storage    StorageLimits
-       Query      QueryLimits
-       Connection ConnectionLimits
-       Rate       RateLimits
-   }
-   
-   type StorageLimits struct {
-       MaxNodes      int64
-       MaxEdges      int64
-       MaxBytes      int64
-   }
-   ```
-
-2. **Default Limits**:
-   ```go
-   func DefaultLimits() *DatabaseLimits {
-       return &DatabaseLimits{
-           Storage: StorageLimits{
-               MaxNodes: 0,  // 0 = unlimited
-               MaxEdges: 0,
-               MaxBytes: 0,
-           },
-           Query: QueryLimits{
-               MaxQueryTime: 30 * time.Second,
-               MaxResults: 10000,
-               MaxConcurrentQueries: 10,
-           },
-           // ...
-       }
-   }
-   ```
-
-#### Phase 2: Limit Storage
-
-**File:** `pkg/multidb/manager.go`
-
-1. **Add Limits to DatabaseInfo**:
-   ```go
-   type DatabaseInfo struct {
-       Name        string
-       Limits      *DatabaseLimits
-       // ... existing fields
-   }
-   ```
-
-2. **Limit Management Commands**:
-   ```cypher
-   ALTER DATABASE tenant_a SET LIMIT max_nodes = 1000000
-   ALTER DATABASE tenant_a SET LIMIT max_query_time = '60s'
-   SHOW LIMITS FOR DATABASE tenant_a
-   ```
-
-#### Phase 3: Limit Enforcement
-
-**Files:** `pkg/storage/namespaced.go`, `pkg/cypher/executor.go`, `pkg/server/server.go`
-
-1. **Storage Enforcement**:
-   ```go
-   // In NamespacedEngine.CreateNode()
-   func (n *NamespacedEngine) CreateNode(node *Node) error {
-       // Check limits
-       if err := n.checkStorageLimits(); err != nil {
-           return err
-       }
-       
-       return n.inner.CreateNode(node)
-   }
-   
-   func (n *NamespacedEngine) checkStorageLimits() error {
-       limits := n.getLimits()
-       if limits == nil {
-           return nil  // No limits
-       }
-       
-       nodeCount, _ := n.NodeCount()
-       if limits.MaxNodes > 0 && nodeCount >= limits.MaxNodes {
-           return ErrStorageLimitExceeded
-       }
-       
-       return nil
-   }
-   ```
-
-2. **Query Enforcement**:
-   ```go
-   // In StorageExecutor.Execute()
-   func (e *StorageExecutor) Execute(ctx context.Context, query string, params map[string]interface{}) (*ExecuteResult, error) {
-       // Check query limits
-       if err := e.checkQueryLimits(ctx); err != nil {
-           return nil, err
-       }
-       
-       // Execute with timeout
-       ctx, cancel := context.WithTimeout(ctx, e.getMaxQueryTime())
-       defer cancel()
-       
-       // ... execute query
-   }
-   ```
-
-3. **Connection Enforcement**:
-   ```go
-   // In Bolt Server
-   func (s *Server) handleHello(ctx context.Context, conn *Connection, msg map[string]interface{}) error {
-       dbName := s.getDatabaseName(msg)
-       
-       // Check connection limit
-       if err := s.checkConnectionLimit(dbName); err != nil {
-           return err
-       }
-       
-       // ... continue
-   }
-   ```
-
-#### Phase 4: Limit Monitoring
-
-1. **Usage Tracking**:
-   ```go
-   type DatabaseUsage struct {
-       NodeCount      int64
-       EdgeCount      int64
-       StorageBytes   int64
-       ActiveQueries  int
-       ActiveConnections int
-       QueriesPerSecond float64
-   }
-   
-   func (m *DatabaseManager) GetUsage(dbName string) (*DatabaseUsage, error) {
-       // Query current usage
-   }
-   ```
-
-2. **Monitoring Endpoints**:
-   ```
-   GET /db/{database}/limits
-   GET /db/{database}/usage
-   ```
-
-### Example Implementation
-
-```go
-// pkg/multidb/limits.go
-
-type DatabaseLimits struct {
-    Storage    StorageLimits
-    Query      QueryLimits
-    Connection ConnectionLimits
-    Rate       RateLimits
-}
-
-type StorageLimits struct {
-    MaxNodes int64
-    MaxEdges int64
-    MaxBytes int64
-}
-
-type QueryLimits struct {
-    MaxQueryTime        time.Duration
-    MaxResults          int64
-    MaxConcurrentQueries int
-}
-
-// EnforceStorageLimits checks if storage operations are within limits.
-func (m *DatabaseManager) EnforceStorageLimits(
-    dbName string,
-    operation string,  // "create_node", "create_edge"
-) error {
-    info, err := m.GetDatabase(dbName)
-    if err != nil {
-        return err
-    }
-    
-    if info.Limits == nil {
-        return nil  // No limits
-    }
-    
-    // Get current usage
-    usage, err := m.GetUsage(dbName)
-    if err != nil {
-        return err
-    }
-    
-    // Check limits
-    limits := info.Limits.Storage
-    if limits.MaxNodes > 0 && operation == "create_node" {
-        if usage.NodeCount >= limits.MaxNodes {
-            return ErrStorageLimitExceeded
-        }
-    }
-    
-    if limits.MaxEdges > 0 && operation == "create_edge" {
-        if usage.EdgeCount >= limits.MaxEdges {
-            return ErrStorageLimitExceeded
-        }
-    }
-    
-    return nil
-}
-```
-
-### Testing Strategy
-
-1. **Unit Tests**:
-   - Limit configuration and validation
-   - Limit enforcement (storage, query, connection)
-   - Usage tracking
-
-2. **Integration Tests**:
-   - Creating nodes/edges when at limit
-   - Query timeout enforcement
-   - Connection limit enforcement
-   - Rate limiting
-
-3. **E2E Tests**:
-   - Real-world limit scenarios
-   - Performance under limits
-
-### Security Considerations
-
-- **Admin Only**: Only administrators can set limits
-- **Audit Logging**: Log all limit violations
-- **Graceful Degradation**: Return clear error messages when limits exceeded
-
-### Performance Considerations
-
-- **Efficient Checking**: Cache usage statistics
-- **Minimal Overhead**: Limit checks should be fast
-- **Batch Operations**: Check limits once per batch
-
-### Estimated Effort
-
-- **Limit Configuration**: 2 days
-- **Storage Enforcement**: 3 days
-- **Query Enforcement**: 2 days
-- **Connection Enforcement**: 2 days
-- **Monitoring & Usage Tracking**: 3 days
-- **Testing**: 3 days
-- **Total**: ~15 days
+**Features:**
+- Storage limits (max nodes, edges, bytes)
+- Query limits (max query time, results, concurrent queries)
+- Connection limits (max connections)
+- Rate limits (max queries/writes per second)
+- Limit enforcement at runtime
+- Limit configuration and persistence
 
 ---
 
@@ -837,25 +509,57 @@ func (m *DatabaseManager) EnforceStorageLimits(
 2. **Per-Database Resource Limits** - ✅ **IMPLEMENTED** (v1.2)
    - Limit configuration and storage implemented
    - Limits persisted in database metadata
-   - Note: Limit enforcement is implemented but may require additional work for full production use
+   - Enforcement implemented with comprehensive unit tests
 
-### Remaining Work
+### Completed ✅
 
-3. **Cross-Database Queries** (12-17 days) - Complex, lower priority
-   - Most complex feature
-   - Security implications
-   - Performance challenges
-   - Lower immediate value
+3. **Composite Databases** - ✅ **IMPLEMENTED** (v1.2)
+   - Provides unified view across multiple databases
+   - Supersedes need for explicit cross-database queries
+   - Better user experience for analytics/reporting use cases
+   - Foundation for future distributed database features
+   - See [Multi-Database User Guide](../user-guides/multi-database.md#composite-databases) for usage
 
 ### Dependencies
 
-- **Cross-Database Queries**: Can use aliases in queries (aliases are now available)
+- **Composite Databases**: Requires Database Aliases (✅ available) for constituent references
 
 ---
 
 ## Configuration Examples
 
-### Database Aliases
+### Composite Databases
+
+```cypher
+-- Create composite database for analytics
+CREATE COMPOSITE DATABASE analytics
+  ALIAS tenant_a FOR DATABASE tenant_a
+  ALIAS tenant_b FOR DATABASE tenant_b
+  ALIAS tenant_c FOR DATABASE tenant_c
+
+-- Query composite database (transparent access to all constituents)
+USE DATABASE analytics
+MATCH (n:Person)
+RETURN count(n)  -- Counts across all tenant databases
+
+-- Configure routing
+ALTER COMPOSITE DATABASE analytics
+  SET ROUTING LABEL Person TO tenant_a, tenant_b
+  SET ROUTING LABEL Order TO tenant_c
+
+-- Add new constituent
+ALTER COMPOSITE DATABASE analytics
+  ADD ALIAS tenant_d FOR DATABASE tenant_d
+
+-- Show composite database info
+SHOW COMPOSITE DATABASES
+SHOW CONSTITUENTS FOR COMPOSITE DATABASE analytics
+
+-- Drop composite database
+DROP COMPOSITE DATABASE analytics
+```
+
+### Database Aliases (Implemented)
 
 ```cypher
 -- Create alias
@@ -874,7 +578,7 @@ SHOW ALIASES
 SHOW ALIASES FOR DATABASE tenant_primary_2024
 ```
 
-### Resource Limits
+### Resource Limits (Implemented)
 
 ```cypher
 -- Set storage limits
@@ -901,31 +605,9 @@ SHOW LIMITS FOR DATABASE tenant_a
 SHOW USAGE FOR DATABASE tenant_a
 ```
 
-### Cross-Database Queries
-
-```cypher
--- Query across databases
-MATCH (n:Person) FROM DATABASE tenant_a
-MATCH (m:Person) FROM DATABASE tenant_b
-WHERE n.email = m.email
-RETURN n, m
-
--- Aggregate across databases
-MATCH (n:Order) FROM DATABASE tenant_a
-MATCH (m:Order) FROM DATABASE tenant_b
-RETURN count(n) + count(m) as total_orders
-
--- Join across databases
-MATCH (c:Customer) FROM DATABASE tenant_a
-MATCH (o:Order) FROM DATABASE tenant_b
-WHERE c.id = o.customer_id
-RETURN c, o
-```
-
 ---
 
 ## See Also
 
 - [Multi-Database User Guide](../user-guides/multi-database.md) - Current multi-database features
 - [Multi-Database Implementation Spec](MULTI_DB_IMPLEMENTATION_SPEC.md) - Current implementation details
-

@@ -394,10 +394,9 @@ session = driver.session(database="tenant_a")
 | Configuration precedence | CLI > Env > File > Default | ✅ | Implemented |
 | Backwards compatibility | N/A | ✅ | Existing code works |
 | Automatic migration | N/A | ✅ | Automatic on upgrade |
-| Cross-DB queries | ❌ | ❌ | Not supported in neo44j. future in NornicDB |
-| Database aliases | ✅ | ✅  | Fully implemented |
-| Composite DBs | ✅ | ❌ | Future |
-| Per-DB limits | ✅ |  ✅ | Fully implemented |
+| Database aliases | ✅ | ✅ | Fully implemented |
+| Composite DBs | ✅ | ✅ | Fully implemented |
+| Per-DB limits | ✅ | ✅ | Fully implemented |
 
 ### Backwards Compatibility
 

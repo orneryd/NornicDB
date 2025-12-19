@@ -27,4 +27,7 @@ var (
 	ErrQueryLimitExceeded      = errors.New("query limit exceeded")
 	ErrConnectionLimitExceeded = errors.New("connection limit exceeded")
 	ErrRateLimitExceeded       = errors.New("rate limit exceeded")
+	ErrNotCompositeDatabase    = errors.New("database is not a composite database")
+	ErrConstituentNotFound     = errors.New("constituent not found")
+	ErrDuplicateConstituent    = errors.New("duplicate constituent alias")
 )

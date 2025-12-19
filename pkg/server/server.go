@@ -1575,6 +1575,89 @@ func (a *databaseManagerAdapter) GetDatabaseLimits(databaseName string) (interfa
 	return a.manager.GetDatabaseLimits(databaseName)
 }
 
+func (a *databaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	// Convert []interface{} to []multidb.ConstituentRef
+	refs := make([]multidb.ConstituentRef, len(constituents))
+	for i, c := range constituents {
+		ref, ok := c.(multidb.ConstituentRef)
+		if !ok {
+			// Try to convert from map
+			if m, ok := c.(map[string]interface{}); ok {
+				ref = multidb.ConstituentRef{
+					Alias:        getString(m, "alias"),
+					DatabaseName: getString(m, "database_name"),
+					Type:         getString(m, "type"),
+					AccessMode:   getString(m, "access_mode"),
+				}
+			} else {
+				return fmt.Errorf("invalid constituent type at index %d", i)
+			}
+		}
+		refs[i] = ref
+	}
+	return a.manager.CreateCompositeDatabase(name, refs)
+}
+
+func (a *databaseManagerAdapter) DropCompositeDatabase(name string) error {
+	return a.manager.DropCompositeDatabase(name)
+}
+
+func (a *databaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {
+	var ref multidb.ConstituentRef
+	if m, ok := constituent.(map[string]interface{}); ok {
+		ref = multidb.ConstituentRef{
+			Alias:        getString(m, "alias"),
+			DatabaseName: getString(m, "database_name"),
+			Type:         getString(m, "type"),
+			AccessMode:   getString(m, "access_mode"),
+		}
+	} else if r, ok := constituent.(multidb.ConstituentRef); ok {
+		ref = r
+	} else {
+		return fmt.Errorf("invalid constituent type")
+	}
+	return a.manager.AddConstituent(compositeName, ref)
+}
+
+func (a *databaseManagerAdapter) RemoveConstituent(compositeName string, alias string) error {
+	return a.manager.RemoveConstituent(compositeName, alias)
+}
+
+func (a *databaseManagerAdapter) GetCompositeConstituents(compositeName string) ([]interface{}, error) {
+	constituents, err := a.manager.GetCompositeConstituents(compositeName)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]interface{}, len(constituents))
+	for i, c := range constituents {
+		result[i] = c
+	}
+	return result, nil
+}
+
+func (a *databaseManagerAdapter) ListCompositeDatabases() []cypher.DatabaseInfoInterface {
+	dbs := a.manager.ListCompositeDatabases()
+	result := make([]cypher.DatabaseInfoInterface, len(dbs))
+	for i, db := range dbs {
+		result[i] = &databaseInfoAdapter{info: db}
+	}
+	return result
+}
+
+func (a *databaseManagerAdapter) IsCompositeDatabase(name string) bool {
+	return a.manager.IsCompositeDatabase(name)
+}
+
+// Helper function to get string from map
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // databaseInfoAdapter wraps multidb.DatabaseInfo to implement
 // cypher.DatabaseInfoInterface.
 type databaseInfoAdapter struct {
