@@ -5012,3 +5012,71 @@ func TestWhereLabelWithAndCondition(t *testing.T) {
 		assert.Equal(t, "Charlie", result.Rows[0][0])
 	})
 }
+
+// TestUseCommand tests :USE command handling (Neo4j browser/shell compatibility)
+func TestUseCommand(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	t.Run(":USE command with CREATE statements", func(t *testing.T) {
+		// Test :USE command followed by multiple CREATE statements
+		// This mimics Neo4j browser behavior where :USE switches database context
+		query := `:USE test_db_a
+CREATE (alice:Person {name: "Alice", id: "a1", db: "test_db_a"})
+CREATE (bob:Person {name: "Bob", id: "a2", db: "test_db_a"})
+CREATE (company:Company {name: "Acme Corp", id: "a3", db: "test_db_a"})
+CREATE (alice)-[:WORKS_FOR]->(company)
+CREATE (bob)-[:WORKS_FOR]->(company)
+RETURN alice, bob, company`
+
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, ":USE command should be stripped and query should execute")
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1, "should return one row with alice, bob, company")
+
+		// Verify nodes were created
+		countResult, err := exec.Execute(ctx, "MATCH (n) RETURN count(n) as count", nil)
+		require.NoError(t, err)
+		require.Len(t, countResult.Rows, 1)
+		assert.Equal(t, int64(3), countResult.Rows[0][0], "should have 3 nodes (alice, bob, company)")
+
+		// Verify relationships were created
+		relResult, err := exec.Execute(ctx, "MATCH ()-[r:WORKS_FOR]->() RETURN count(r) as count", nil)
+		require.NoError(t, err)
+		require.Len(t, relResult.Rows, 1)
+		assert.Equal(t, int64(2), relResult.Rows[0][0], "should have 2 WORKS_FOR relationships")
+	})
+
+	t.Run(":USE command alone returns success", func(t *testing.T) {
+		// :USE without any query should return success (database switching handled at API layer)
+		result, err := exec.Execute(ctx, ":USE test_db", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"database"}, result.Columns)
+		assert.Len(t, result.Rows, 1)
+		assert.Equal(t, "switched", result.Rows[0][0])
+	})
+
+	t.Run(":USE with lowercase", func(t *testing.T) {
+		// Test :use (lowercase) is also recognized
+		result, err := exec.Execute(ctx, `:use test_db
+CREATE (n:Test {name: "test"})
+RETURN n.name`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, "test", result.Rows[0][0])
+	})
+
+	t.Run(":USE with whitespace", func(t *testing.T) {
+		// Test :USE with extra whitespace
+		result, err := exec.Execute(ctx, `:USE  test_db  
+CREATE (n:Test {name: "test2"})
+RETURN n.name`, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, "test2", result.Rows[0][0])
+	})
+}

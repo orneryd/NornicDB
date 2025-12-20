@@ -468,6 +468,44 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, fmt.Errorf("empty query")
 	}
 
+	// Handle :USE command (Neo4j browser/shell compatibility)
+	// :USE database_name switches database context and should be stripped from query
+	// The actual database switching is handled at the API layer, but we need to
+	// recognize and strip :USE commands for compatibility
+	if strings.HasPrefix(cypher, ":USE") || strings.HasPrefix(cypher, ":use") {
+		// Extract :USE command and remaining query
+		lines := strings.Split(cypher, "\n")
+		var remainingLines []string
+		useCommandFound := false
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if !useCommandFound && (strings.HasPrefix(trimmed, ":USE") || strings.HasPrefix(trimmed, ":use")) {
+				useCommandFound = true
+				// Skip this line
+				continue
+			}
+			// Collect all other lines (including empty lines for formatting)
+			remainingLines = append(remainingLines, line)
+		}
+
+		if useCommandFound {
+			// Reconstruct query without :USE command
+			cypher = strings.Join(remainingLines, "\n")
+			cypher = strings.TrimSpace(cypher)
+			if cypher == "" {
+				// Only :USE command, no actual query - return success
+				return &ExecuteResult{
+					Columns: []string{"database"},
+					Rows:    [][]interface{}{{"switched"}},
+				}, nil
+			}
+		}
+	} else if strings.HasPrefix(cypher, ":") {
+		// Starts with : but not :USE - return helpful error
+		return nil, fmt.Errorf("unknown command: %s (only :USE is supported)", strings.Split(cypher, "\n")[0])
+	}
+
 	// Validate basic syntax
 	if err := e.validateSyntax(cypher); err != nil {
 		return nil, err
@@ -1429,7 +1467,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	upper := strings.ToUpper(cypher)
 
 	// Check for valid starting keyword (including EXPLAIN/PROFILE prefixes)
-	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER"}
+	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER", "USE"}
 	hasValidStart := false
 	for _, start := range validStarts {
 		if strings.HasPrefix(upper, start) {
@@ -1438,7 +1476,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 	if !hasValidStart {
-		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, etc.)")
+		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, etc.)")
 	}
 
 	// Check balanced parentheses
