@@ -10,7 +10,7 @@ import (
 
 // QueryNode fetches a single node by ID
 func (r *queryResolver) queryNode(ctx context.Context, id string) (*models.Node, error) {
-	node, err := r.DB.GetNode(ctx, id)
+	node, err := r.getNode(ctx, id)
 	if err != nil {
 		return nil, nil // Return nil for not found
 	}
@@ -21,7 +21,7 @@ func (r *queryResolver) queryNode(ctx context.Context, id string) (*models.Node,
 func (r *queryResolver) queryNodes(ctx context.Context, ids []string) ([]models.Node, error) {
 	result := make([]models.Node, 0, len(ids))
 	for _, id := range ids {
-		node, err := r.DB.GetNode(ctx, id)
+		node, err := r.getNode(ctx, id)
 		if err != nil {
 			continue
 		}
@@ -46,7 +46,7 @@ func (r *queryResolver) queryAllNodes(ctx context.Context, labels []string, limi
 		label = labels[0]
 	}
 
-	nodes, err := r.DB.ListNodes(ctx, label, lim+off, 0)
+	nodes, err := r.listNodes(ctx, label, lim+off, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -75,19 +75,19 @@ func (r *queryResolver) queryNodesByLabel(ctx context.Context, label string, lim
 // QueryNodeCount returns the count of nodes
 func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int, error) {
 	if label != nil {
-		nodes, err := r.DB.ListNodes(ctx, *label, 10000, 0)
+		nodes, err := r.listNodes(ctx, *label, 10000, 0)
 		if err != nil {
 			return 0, err
 		}
 		return len(nodes), nil
 	}
-	stats := r.DB.Stats()
+	stats := r.stats()
 	return int(stats.NodeCount), nil
 }
 
 // QueryRelationship fetches a single relationship by ID
 func (r *queryResolver) queryRelationship(ctx context.Context, id string) (*models.Relationship, error) {
-	edge, err := r.DB.GetEdge(ctx, id)
+	edge, err := r.getEdge(ctx, id)
 	if err != nil {
 		return nil, nil
 	}
@@ -110,7 +110,7 @@ func (r *queryResolver) queryAllRelationships(ctx context.Context, types []strin
 		relType = types[0]
 	}
 
-	edges, err := r.DB.ListEdges(ctx, relType, lim+off, 0)
+	edges, err := r.listEdges(ctx, relType, lim+off, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func (r *queryResolver) queryRelationshipsByType(ctx context.Context, typeArg st
 
 // QueryRelationshipsBetween fetches relationships between two nodes
 func (r *queryResolver) queryRelationshipsBetween(ctx context.Context, startNodeID string, endNodeID string) ([]models.Relationship, error) {
-	edges, err := r.DB.GetEdgesForNode(ctx, startNodeID)
+	edges, err := r.getEdgesForNode(ctx, startNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,13 +155,13 @@ func (r *queryResolver) queryRelationshipsBetween(ctx context.Context, startNode
 // QueryRelationshipCount returns the count of relationships
 func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *string) (int, error) {
 	if typeArg != nil {
-		edges, err := r.DB.ListEdges(ctx, *typeArg, 10000, 0)
+		edges, err := r.listEdges(ctx, *typeArg, 10000, 0)
 		if err != nil {
 			return 0, err
 		}
 		return len(edges), nil
 	}
-	stats := r.DB.Stats()
+	stats := r.stats()
 	return int(stats.EdgeCount), nil
 }
 
@@ -251,7 +251,7 @@ func (r *queryResolver) querySearchByProperty(ctx context.Context, key string, v
 		lim = *limit
 	}
 
-	result, err := r.DB.ExecuteCypher(ctx, cypher, map[string]interface{}{
+	result, err := r.executeCypher(ctx, cypher, map[string]interface{}{
 		"value": value,
 		"limit": lim,
 	})
@@ -264,7 +264,7 @@ func (r *queryResolver) querySearchByProperty(ctx context.Context, key string, v
 		if len(row) > 0 {
 			if nodeMap, ok := row[0].(map[string]interface{}); ok {
 				if id, ok := nodeMap["id"].(string); ok {
-					node, err := r.DB.GetNode(ctx, id)
+					node, err := r.getNode(ctx, id)
 					if err == nil {
 						nodes = append(nodes, *dbNodeToModel(node))
 					}
@@ -282,7 +282,7 @@ func (r *queryResolver) queryCypher(ctx context.Context, input models.CypherInpu
 		params[k] = v
 	}
 
-	result, err := r.DB.ExecuteCypher(ctx, input.Statement, params)
+	result, err := r.executeCypher(ctx, input.Statement, params)
 	if err != nil {
 		return nil, err
 	}
@@ -296,13 +296,13 @@ func (r *queryResolver) queryCypher(ctx context.Context, input models.CypherInpu
 
 // QueryStats returns database statistics
 func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, error) {
-	stats := r.DB.Stats()
+	stats := r.stats()
 
-	labels, _ := r.DB.GetLabels(ctx)
+	labels, _ := r.getLabels(ctx)
 	labelStats := make([]*models.LabelStats, 0, len(labels))
 	for _, label := range labels {
 		// Use Cypher COUNT for accurate label counts
-		result, err := r.DB.ExecuteCypher(ctx, fmt.Sprintf("MATCH (n:%s) RETURN count(n) as cnt", label), nil)
+		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH (n:%s) RETURN count(n) as cnt", label), nil)
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {
@@ -314,11 +314,11 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		labelStats = append(labelStats, &models.LabelStats{Label: label, Count: count})
 	}
 
-	relTypes, _ := r.DB.GetRelationshipTypes(ctx)
+	relTypes, _ := r.getRelationshipTypes(ctx)
 	typeStats := make([]*models.RelationshipTypeStats, 0, len(relTypes))
 	for _, typ := range relTypes {
 		// Use Cypher COUNT for accurate relationship counts
-		result, err := r.DB.ExecuteCypher(ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r) as cnt", typ), nil)
+		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r) as cnt", typ), nil)
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {
@@ -348,8 +348,8 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 
 // QuerySchema returns the graph schema
 func (r *queryResolver) querySchema(ctx context.Context) (*models.GraphSchema, error) {
-	labels, _ := r.DB.GetLabels(ctx)
-	relTypes, _ := r.DB.GetRelationshipTypes(ctx)
+	labels, _ := r.getLabels(ctx)
+	relTypes, _ := r.getRelationshipTypes(ctx)
 
 	return &models.GraphSchema{
 		NodeLabels:               labels,
@@ -362,12 +362,12 @@ func (r *queryResolver) querySchema(ctx context.Context) (*models.GraphSchema, e
 
 // QueryLabels returns all labels
 func (r *queryResolver) queryLabels(ctx context.Context) ([]string, error) {
-	return r.DB.GetLabels(ctx)
+	return r.getLabels(ctx)
 }
 
 // QueryRelationshipTypes returns all relationship types
 func (r *queryResolver) queryRelationshipTypes(ctx context.Context) ([]string, error) {
-	return r.DB.GetRelationshipTypes(ctx)
+	return r.getRelationshipTypes(ctx)
 }
 
 // QueryShortestPath finds shortest path between nodes
@@ -390,7 +390,7 @@ func (r *queryResolver) queryShortestPath(ctx context.Context, startNodeID strin
 				path := []models.Node{}
 				current := endNodeID
 				for current != "" {
-					node, err := r.DB.GetNode(ctx, current)
+					node, err := r.getNode(ctx, current)
 					if err != nil {
 						break
 					}
@@ -400,7 +400,7 @@ func (r *queryResolver) queryShortestPath(ctx context.Context, startNodeID strin
 				return path, nil
 			}
 
-			edges, err := r.DB.GetEdgesForNode(ctx, nodeID)
+			edges, err := r.getEdgesForNode(ctx, nodeID)
 			if err != nil {
 				continue
 			}
@@ -478,7 +478,7 @@ func (r *queryResolver) queryNeighborhood(ctx context.Context, nodeID string, de
 			}
 			visited[nid] = true
 
-			node, err := r.DB.GetNode(ctx, nid)
+			node, err := r.getNode(ctx, nid)
 			if err != nil {
 				continue
 			}
@@ -503,7 +503,7 @@ func (r *queryResolver) queryNeighborhood(ctx context.Context, nodeID string, de
 
 			collectedNodes = append(collectedNodes, dbNodeToModel(node))
 
-			edges, err := r.DB.GetEdgesForNode(ctx, nid)
+			edges, err := r.getEdgesForNode(ctx, nid)
 			if err != nil {
 				continue
 			}

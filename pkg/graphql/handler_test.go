@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,9 +26,20 @@ func testDB(t *testing.T) *nornicdb.DB {
 	return db
 }
 
+// testDBManager creates a DatabaseManager for testing
+func testDBManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
+	t.Helper()
+	inner := db.GetStorage()
+	manager, err := multidb.NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { manager.Close() })
+	return manager
+}
+
 func TestNewHandler(t *testing.T) {
 	db := testDB(t)
-	handler := NewHandler(db)
+	dbManager := testDBManager(t, db)
+	handler := NewHandler(db, dbManager)
 
 	assert.NotNil(t, handler)
 	assert.NotNil(t, handler.server)
@@ -36,7 +48,8 @@ func TestNewHandler(t *testing.T) {
 
 func TestHandler_ServeHTTP(t *testing.T) {
 	db := testDB(t)
-	handler := NewHandler(db)
+	dbManager := testDBManager(t, db)
+	handler := NewHandler(db, dbManager)
 
 	t.Run("handles introspection query", func(t *testing.T) {
 		query := `{"query": "{ __schema { types { name } } }"}`
@@ -201,7 +214,8 @@ func TestHandler_ServeHTTP(t *testing.T) {
 
 func TestHandler_Playground(t *testing.T) {
 	db := testDB(t)
-	handler := NewHandler(db)
+	dbManager := testDBManager(t, db)
+	handler := NewHandler(db, dbManager)
 
 	t.Run("returns playground handler", func(t *testing.T) {
 		playground := handler.Playground()
@@ -221,7 +235,8 @@ func TestHandler_Playground(t *testing.T) {
 
 func TestGraphQL_EndToEnd(t *testing.T) {
 	db := testDB(t)
-	handler := NewHandler(db)
+	dbManager := testDBManager(t, db)
+	handler := NewHandler(db, dbManager)
 
 	// Create nodes
 	createPerson := func(name string) string {

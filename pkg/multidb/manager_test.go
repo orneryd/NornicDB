@@ -237,6 +237,253 @@ func TestDatabaseManager_DropDatabase_Default_Allowed(t *testing.T) {
 	assert.False(t, manager.Exists("nornic"))
 }
 
+// TestDatabaseManager_DropDatabase_DeletesNodesAndEdges verifies that dropping
+// a database actually deletes all nodes and edges from the underlying storage.
+// This is a critical test to ensure DeleteByPrefix works correctly.
+func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	defer inner.Close()
+
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	defer manager.Close()
+
+	// Create a test database
+	dbName := "test_db"
+	err = manager.CreateDatabase(dbName)
+	require.NoError(t, err)
+
+	// Get namespaced storage for the database
+	store, err := manager.GetStorage(dbName)
+	require.NoError(t, err)
+
+	// Create multiple nodes in the database
+	node1 := &storage.Node{
+		ID:     storage.NodeID("node1"),
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name": "Alice",
+			"age":  30,
+		},
+	}
+	err = store.CreateNode(node1)
+	require.NoError(t, err)
+
+	node2 := &storage.Node{
+		ID:     storage.NodeID("node2"),
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name": "Bob",
+			"age":  25,
+		},
+	}
+	err = store.CreateNode(node2)
+	require.NoError(t, err)
+
+	node3 := &storage.Node{
+		ID:     storage.NodeID("node3"),
+		Labels: []string{"Company"},
+		Properties: map[string]any{
+			"name": "Acme Corp",
+		},
+	}
+	err = store.CreateNode(node3)
+	require.NoError(t, err)
+
+	// Create edges between nodes
+	edge1 := &storage.Edge{
+		ID:        storage.EdgeID("edge1"),
+		StartNode: storage.NodeID("node1"),
+		EndNode:   storage.NodeID("node3"),
+		Type:      "WORKS_FOR",
+		Properties: map[string]any{
+			"since": "2020-01-01",
+		},
+	}
+	err = store.CreateEdge(edge1)
+	require.NoError(t, err)
+
+	edge2 := &storage.Edge{
+		ID:        storage.EdgeID("edge2"),
+		StartNode: storage.NodeID("node2"),
+		EndNode:   storage.NodeID("node3"),
+		Type:      "WORKS_FOR",
+		Properties: map[string]any{
+			"since": "2021-01-01",
+		},
+	}
+	err = store.CreateEdge(edge2)
+	require.NoError(t, err)
+
+	// Verify nodes exist in the database
+	nodes, err := store.AllNodes()
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(nodes), "Should have 3 nodes before drop")
+
+	edges, err := store.AllEdges()
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(edges), "Should have 2 edges before drop")
+
+	// Verify nodes exist in underlying storage (with namespace prefix)
+	// The actual IDs in storage should be prefixed: "test_db:node1", etc.
+	prefixedNode1ID := storage.NodeID(dbName + ":node1")
+	prefixedNode2ID := storage.NodeID(dbName + ":node2")
+	prefixedNode3ID := storage.NodeID(dbName + ":node3")
+
+	_, err = inner.GetNode(prefixedNode1ID)
+	require.NoError(t, err, "Node1 should exist in underlying storage")
+
+	_, err = inner.GetNode(prefixedNode2ID)
+	require.NoError(t, err, "Node2 should exist in underlying storage")
+
+	_, err = inner.GetNode(prefixedNode3ID)
+	require.NoError(t, err, "Node3 should exist in underlying storage")
+
+	// Verify edges exist in underlying storage (with namespace prefix)
+	prefixedEdge1ID := storage.EdgeID(dbName + ":edge1")
+	prefixedEdge2ID := storage.EdgeID(dbName + ":edge2")
+
+	_, err = inner.GetEdge(prefixedEdge1ID)
+	require.NoError(t, err, "Edge1 should exist in underlying storage")
+
+	_, err = inner.GetEdge(prefixedEdge2ID)
+	require.NoError(t, err, "Edge2 should exist in underlying storage")
+
+	// Count total nodes in underlying storage (should include our 3 nodes)
+	allNodesBefore, err := inner.AllNodes()
+	require.NoError(t, err)
+	initialNodeCount := len(allNodesBefore)
+	assert.GreaterOrEqual(t, initialNodeCount, 3, "Underlying storage should have at least 3 nodes")
+
+	// Count total edges in underlying storage
+	allEdgesBefore, err := inner.AllEdges()
+	require.NoError(t, err)
+	initialEdgeCount := len(allEdgesBefore)
+	assert.GreaterOrEqual(t, initialEdgeCount, 2, "Underlying storage should have at least 2 edges")
+
+	// Drop the database
+	err = manager.DropDatabase(dbName)
+	require.NoError(t, err)
+
+	// Verify database is gone from metadata
+	assert.False(t, manager.Exists(dbName))
+
+	// Verify nodes are deleted from underlying storage
+	_, err = inner.GetNode(prefixedNode1ID)
+	assert.Error(t, err, "Node1 should be deleted from underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	_, err = inner.GetNode(prefixedNode2ID)
+	assert.Error(t, err, "Node2 should be deleted from underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	_, err = inner.GetNode(prefixedNode3ID)
+	assert.Error(t, err, "Node3 should be deleted from underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	// Verify edges are deleted from underlying storage
+	_, err = inner.GetEdge(prefixedEdge1ID)
+	assert.Error(t, err, "Edge1 should be deleted from underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	_, err = inner.GetEdge(prefixedEdge2ID)
+	assert.Error(t, err, "Edge2 should be deleted from underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	// Verify node count decreased
+	allNodesAfter, err := inner.AllNodes()
+	require.NoError(t, err)
+	finalNodeCount := len(allNodesAfter)
+	assert.Equal(t, initialNodeCount-3, finalNodeCount, "Node count should decrease by 3 after drop")
+
+	// Verify edge count decreased
+	allEdgesAfter, err := inner.AllEdges()
+	require.NoError(t, err)
+	finalEdgeCount := len(allEdgesAfter)
+	assert.Equal(t, initialEdgeCount-2, finalEdgeCount, "Edge count should decrease by 2 after drop")
+
+	// Verify we can't access the database storage anymore
+	_, err = manager.GetStorage(dbName)
+	assert.Error(t, err)
+	assert.Equal(t, ErrDatabaseNotFound, err)
+}
+
+// TestDatabaseManager_NodeNamespacePrefix verifies that nodes created in a database
+// get the proper namespace prefix. This ensures database isolation works correctly.
+func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	defer inner.Close()
+
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	defer manager.Close()
+
+	// Create a test database
+	dbName := "test_db"
+	err = manager.CreateDatabase(dbName)
+	require.NoError(t, err)
+
+	// Get namespaced storage for the database
+	store, err := manager.GetStorage(dbName)
+	require.NoError(t, err)
+
+	// Create a node through the namespaced storage
+	nodeID := storage.NodeID("test-node-1")
+	node := &storage.Node{
+		ID:     nodeID,
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name": "Test Person",
+		},
+	}
+	err = store.CreateNode(node)
+	require.NoError(t, err)
+
+	// Verify the node exists in the namespaced storage
+	retrieved, err := store.GetNode(nodeID)
+	require.NoError(t, err)
+	assert.Equal(t, "Test Person", retrieved.Properties["name"])
+
+	// Verify the underlying storage has the prefixed ID
+	prefixedID := storage.NodeID(dbName + ":" + string(nodeID))
+	prefixedNode, err := inner.GetNode(prefixedID)
+	require.NoError(t, err)
+	assert.Equal(t, prefixedID, prefixedNode.ID, "Node ID should be prefixed in underlying storage")
+	assert.Equal(t, "Test Person", prefixedNode.Properties["name"])
+
+	// Verify the unprefixed ID does NOT exist in underlying storage
+	_, err = inner.GetNode(nodeID)
+	assert.Error(t, err, "Unprefixed node ID should not exist in underlying storage")
+	assert.Equal(t, storage.ErrNotFound, err)
+
+	// Verify AllNodes in namespaced storage only returns this node
+	allNodes, err := store.AllNodes()
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(allNodes), "Namespaced storage should only see 1 node")
+	assert.Equal(t, nodeID, allNodes[0].ID, "Node ID should be unprefixed in namespaced view")
+
+	// Verify the node is NOT visible in default database
+	defaultStore, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+	defaultNodes, err := defaultStore.AllNodes()
+	require.NoError(t, err)
+	// Filter out system nodes
+	nonSystemNodes := []*storage.Node{}
+	for _, n := range defaultNodes {
+		isSystem := false
+		for _, label := range n.Labels {
+			if label == "_System" {
+				isSystem = true
+				break
+			}
+		}
+		if !isSystem {
+			nonSystemNodes = append(nonSystemNodes, n)
+		}
+	}
+	assert.Equal(t, 0, len(nonSystemNodes), "Default database should not see nodes from test_db")
+}
+
 func TestDatabaseManager_GetStorage(t *testing.T) {
 	inner := storage.NewMemoryEngine()
 	defer inner.Close()

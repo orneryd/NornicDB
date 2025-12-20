@@ -1583,6 +1583,14 @@ func (db *DB) GetDecayInfo() *DecayInfo {
 	}
 }
 
+// GetCypherExecutor returns the Cypher executor for this database.
+// This is used by GraphQL and other integrations that need direct access to the executor.
+func (db *DB) GetCypherExecutor() *cypher.StorageExecutor {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.cypherExecutor
+}
+
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()

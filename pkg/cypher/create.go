@@ -1045,6 +1045,14 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		nodes    []*storage.Node
 	}, 0)
 
+	// Extract WHERE clause from matchPart if present (applies to all patterns)
+	var whereClause string
+	whereIdx := findKeywordIndex(matchPart, "WHERE")
+	if whereIdx > 0 {
+		whereClause = strings.TrimSpace(matchPart[whereIdx+5:]) // Skip "WHERE"
+		matchPart = strings.TrimSpace(matchPart[:whereIdx])     // Remove WHERE from matchPart
+	}
+
 	// Split by MATCH keyword to handle comma-separated patterns in MATCH
 	// Uses pre-compiled matchKeywordPattern from regex_patterns.go
 	matchClauses := matchKeywordPattern.Split(matchPart, -1)
@@ -1053,11 +1061,6 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
 			continue
-		}
-
-		// Handle WHERE clause if present
-		if whereIdx := strings.Index(strings.ToUpper(clause), " WHERE "); whereIdx > 0 {
-			clause = clause[:whereIdx]
 		}
 
 		// Split by comma but respect parentheses
@@ -1147,6 +1150,27 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 	// Build cartesian product of all pattern matches
 	allCombinations := e.buildCartesianProduct(patternMatches)
 
+	// Apply WHERE clause filtering to cartesian product if present
+	if whereClause != "" {
+		var filtered []map[string]*storage.Node
+		for _, combination := range allCombinations {
+			// Check if this combination matches the WHERE clause
+			// WHERE clause can reference multiple variables, so we need to evaluate it
+			// with all variables in the combination
+			matches := true
+			for varName, node := range combination {
+				if !e.evaluateWhere(node, varName, whereClause) {
+					matches = false
+					break
+				}
+			}
+			if matches {
+				filtered = append(filtered, combination)
+			}
+		}
+		allCombinations = filtered
+	}
+
 	// If no combinations, fall back to using existing nodeVars
 	if len(allCombinations) == 0 {
 		allCombinations = []map[string]*storage.Node{nodeVars}
@@ -1215,8 +1239,17 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			}
 		}
 
-		// Copy created nodes back to nodeVars for cross-reference within same query
+		// Copy created nodes AND matched nodes back to nodeVars for RETURN clause
 		for k, v := range combinedNodeVars {
+			nodeVars[k] = v
+		}
+	}
+
+	// Ensure all matched nodes from last combination are in nodeVars for RETURN
+	// (in case there were multiple combinations, use the last one)
+	if len(allCombinations) > 0 {
+		lastCombination := allCombinations[len(allCombinations)-1]
+		for k, v := range lastCombination {
 			nodeVars[k] = v
 		}
 	}
@@ -1296,11 +1329,20 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			}
 
 			// Find node variable that matches
+			// Check if expression contains the variable (for function calls like id(a))
+			found = false
 			for varName, node := range nodeVars {
-				if strings.HasPrefix(item.expr, varName) {
+				// Check if expression starts with variable (property access) or contains it (function calls)
+				if strings.HasPrefix(item.expr, varName) || strings.Contains(item.expr, "("+varName+")") || strings.Contains(item.expr, "("+varName+" ") {
 					row[i] = e.resolveReturnItem(item, varName, node)
+					found = true
 					break
 				}
+			}
+			if !found {
+				// Expression doesn't match any variable - might be a literal or complex expression
+				// Try to evaluate it with empty context (will return nil if can't evaluate)
+				row[i] = e.evaluateExpressionWithContext(item.expr, nodeVars, edgeVars)
 			}
 		}
 		result.Rows = [][]interface{}{row}

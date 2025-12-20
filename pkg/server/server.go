@@ -837,7 +837,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		auth:            authenticator,
 		mcpServer:       mcpServer,
 		heimdallHandler: heimdallHandler,
-		graphqlHandler:  graphql.NewHandler(db),
+		graphqlHandler:  graphql.NewHandler(db, dbManager),
 		rateLimiter:     rateLimiter,
 	}
 
@@ -2087,7 +2087,29 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 						effectiveDbName = parts[1]
 					}
 					foundUse = true
-					// Skip :USE line
+					// Check if there's more content on this line after :USE command
+					// Format: ":USE dbname rest of query"
+					useIndex := strings.Index(trimmed, ":USE")
+					if useIndex == -1 {
+						useIndex = strings.Index(strings.ToUpper(trimmed), ":USE")
+					}
+					if useIndex >= 0 {
+						// Find where :USE command ends (after database name)
+						afterUse := trimmed[useIndex+4:] // Skip ":USE"
+						afterUse = strings.TrimSpace(afterUse)
+						// Extract database name and remaining query
+						fields := strings.Fields(afterUse)
+						if len(fields) > 0 {
+							// Database name is first field, rest is the query
+							if len(fields) > 1 {
+								remainingQuery := strings.Join(fields[1:], " ")
+								if remainingQuery != "" {
+									remainingLines = append(remainingLines, remainingQuery)
+								}
+							}
+						}
+					}
+					// Skip the :USE line itself (already processed)
 					continue
 				}
 				remainingLines = append(remainingLines, line)
@@ -2841,6 +2863,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 	dbStats := s.db.Stats()
 
+	// Get database count (all databases across the system)
+	databaseCount := 0
+	if s.dbManager != nil {
+		databases := s.dbManager.ListDatabases()
+		databaseCount = len(databases)
+	}
+
 	// Build embedding info
 	embedInfo := map[string]interface{}{
 		"enabled": false,
@@ -2867,8 +2896,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"active":         stats.ActiveRequests,
 		},
 		"database": map[string]interface{}{
-			"nodes": dbStats.NodeCount,
-			"edges": dbStats.EdgeCount,
+			"nodes":     dbStats.NodeCount, // Global count across all databases
+			"edges":     dbStats.EdgeCount, // Global count across all databases
+			"databases": databaseCount,     // Number of databases
 		},
 		"embeddings": embedInfo,
 	}

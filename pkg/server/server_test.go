@@ -18,6 +18,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -293,6 +294,112 @@ func TestHandleStatus(t *testing.T) {
 	}
 	if status["database"] == nil {
 		t.Error("missing 'database' field")
+	}
+
+	// Verify database stats structure
+	dbStats, ok := status["database"].(map[string]interface{})
+	if !ok {
+		t.Fatal("'database' field is not a map")
+	}
+
+	// Check for required fields
+	if dbStats["nodes"] == nil {
+		t.Error("missing 'nodes' field in database stats")
+	}
+	if dbStats["edges"] == nil {
+		t.Error("missing 'edges' field in database stats")
+	}
+	if dbStats["databases"] == nil {
+		t.Error("missing 'databases' field in database stats")
+	}
+
+	// Verify database count is a number
+	dbCount, ok := dbStats["databases"].(float64)
+	if !ok {
+		t.Errorf("'databases' field should be a number, got %T", dbStats["databases"])
+	}
+	if dbCount < 1 {
+		t.Errorf("expected at least 1 database (default + system), got %v", dbCount)
+	}
+}
+
+// TestMetaField_NodeMetadata verifies that the meta field is properly populated
+// for nodes and relationships, and null for primitive values (Neo4j compatibility).
+func TestMetaField_NodeMetadata(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+
+	// Create a node and return it
+	resp := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]interface{}{
+		"statements": []map[string]interface{}{
+			{"statement": "CREATE (n:Person {name: 'TestPerson'}) RETURN n"},
+		},
+	}, "Bearer "+token)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var result TransactionResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Len(t, result.Results, 1)
+	require.Len(t, result.Results[0].Data, 1)
+
+	row := result.Results[0].Data[0]
+	
+	// Verify meta field exists and has correct length
+	require.NotNil(t, row.Meta, "meta field should always be present")
+	require.Len(t, row.Meta, 1, "meta should have one element per column")
+
+	// Verify meta contains node metadata
+	metaItem := row.Meta[0]
+	require.NotNil(t, metaItem, "meta[0] should not be nil for a node")
+
+	metaMap, ok := metaItem.(map[string]interface{})
+	require.True(t, ok, "meta[0] should be a map for a node")
+	
+	// Verify required metadata fields
+	require.Contains(t, metaMap, "id", "meta should contain 'id' field")
+	require.Contains(t, metaMap, "type", "meta should contain 'type' field")
+	require.Contains(t, metaMap, "elementId", "meta should contain 'elementId' field")
+	require.Contains(t, metaMap, "deleted", "meta should contain 'deleted' field")
+
+	// Verify type is "node"
+	require.Equal(t, "node", metaMap["type"], "type should be 'node'")
+	require.Equal(t, false, metaMap["deleted"], "deleted should be false")
+
+	// Verify elementId format
+	elementId, ok := metaMap["elementId"].(string)
+	require.True(t, ok, "elementId should be a string")
+	require.True(t, strings.HasPrefix(elementId, "4:nornicdb:"), "elementId should start with '4:nornicdb:'")
+}
+
+// TestMetaField_PrimitiveValues verifies that meta field is null for primitive values.
+func TestMetaField_PrimitiveValues(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+
+	// Return primitive values (like SHOW DATABASES does)
+	resp := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]interface{}{
+		"statements": []map[string]interface{}{
+			{"statement": "RETURN 'test' as name, 123 as count, true as active"},
+		},
+	}, "Bearer "+token)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var result TransactionResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Len(t, result.Results, 1)
+	require.Len(t, result.Results[0].Data, 1)
+
+	row := result.Results[0].Data[0]
+	
+	// Verify meta field exists and has correct length
+	require.NotNil(t, row.Meta, "meta field should always be present")
+	require.Len(t, row.Meta, 3, "meta should have one element per column")
+
+	// Verify all meta values are null for primitive values
+	for i, metaItem := range row.Meta {
+		require.Nil(t, metaItem, "meta[%d] should be null for primitive values", i)
 	}
 }
 

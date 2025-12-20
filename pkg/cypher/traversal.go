@@ -1436,7 +1436,30 @@ func (e *StorageExecutor) filterPathsByWhere(paths []PathResult, matches *Traver
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
 func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathContext) bool {
+	whereClause = strings.TrimSpace(whereClause)
 	upperClause := strings.ToUpper(whereClause)
+
+	// Handle parenthesized expressions - strip outer parens and recurse
+	if strings.HasPrefix(whereClause, "(") && strings.HasSuffix(whereClause, ")") {
+		// Verify these are matching outer parens, not separate groups
+		depth := 0
+		isOuterParen := true
+		for i, ch := range whereClause {
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+			}
+			// If depth goes to 0 before the last char, these aren't outer parens
+			if depth == 0 && i < len(whereClause)-1 {
+				isOuterParen = false
+				break
+			}
+		}
+		if isOuterParen {
+			return e.evaluateWhereOnPath(whereClause[1:len(whereClause)-1], context)
+		}
+	}
 
 	// Handle AND conditions
 	if idx := strings.Index(upperClause, " AND "); idx > 0 {
@@ -1498,8 +1521,16 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 }
 
 // evaluatePathValue parses a literal value from a WHERE clause expression.
+// Note: Parameters should already be substituted by this point, but we handle
+// them here as a fallback in case substitution didn't happen.
 func (e *StorageExecutor) evaluatePathValue(expr string) interface{} {
 	expr = strings.TrimSpace(expr)
+
+	// Handle parameters (should already be substituted by executeMatch before reaching here)
+	// If we see a $ parameter here, it means substitution failed - return as-is
+	if strings.HasPrefix(expr, "$") {
+		return expr // Return as-is if no substitution available
+	}
 
 	// Handle quoted strings
 	if len(expr) >= 2 {

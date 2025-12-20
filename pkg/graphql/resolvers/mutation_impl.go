@@ -9,7 +9,7 @@ import (
 
 // MutationCreateNode creates a new node
 func (r *mutationResolver) mutationCreateNode(ctx context.Context, input models.CreateNodeInput) (*models.Node, error) {
-	node, err := r.DB.CreateNode(ctx, input.Labels, map[string]interface{}(input.Properties))
+	node, err := r.createNode(ctx, input.Labels, map[string]interface{}(input.Properties))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node: %w", err)
 	}
@@ -19,7 +19,7 @@ func (r *mutationResolver) mutationCreateNode(ctx context.Context, input models.
 // MutationUpdateNode updates an existing node
 func (r *mutationResolver) mutationUpdateNode(ctx context.Context, input models.UpdateNodeInput) (*models.Node, error) {
 	props := map[string]interface{}(input.Properties)
-	node, err := r.DB.UpdateNode(ctx, input.ID, props)
+	node, err := r.updateNode(ctx, input.ID, props)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update node: %w", err)
 	}
@@ -28,7 +28,7 @@ func (r *mutationResolver) mutationUpdateNode(ctx context.Context, input models.
 
 // MutationDeleteNode deletes a node
 func (r *mutationResolver) mutationDeleteNode(ctx context.Context, id string) (bool, error) {
-	if err := r.DB.DeleteNode(ctx, id); err != nil {
+	if err := r.deleteNode(ctx, id); err != nil {
 		return false, fmt.Errorf("failed to delete node: %w", err)
 	}
 	return true, nil
@@ -41,7 +41,7 @@ func (r *mutationResolver) mutationBulkCreateNodes(ctx context.Context, input mo
 	var errors []string
 
 	for _, nodeInput := range input.Nodes {
-		_, err := r.DB.CreateNode(ctx, nodeInput.Labels, map[string]interface{}(nodeInput.Properties))
+		_, err := r.createNode(ctx, nodeInput.Labels, map[string]interface{}(nodeInput.Properties))
 		if err != nil {
 			errors = append(errors, err.Error())
 			skipped++
@@ -63,7 +63,7 @@ func (r *mutationResolver) mutationBulkDeleteNodes(ctx context.Context, ids []st
 	var notFound []string
 
 	for _, id := range ids {
-		if err := r.DB.DeleteNode(ctx, id); err != nil {
+		if err := r.deleteNode(ctx, id); err != nil {
 			notFound = append(notFound, id)
 		} else {
 			deleted++
@@ -103,14 +103,14 @@ func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []strin
 	}
 
 	query := fmt.Sprintf("MATCH (n:%s) WHERE %s RETURN n LIMIT 1", label, whereClause)
-	result, err := r.DB.ExecuteCypher(ctx, query, params)
+	result, err := r.executeCypher(ctx, query, params)
 	if err == nil && len(result.Rows) > 0 {
 		// Update existing node - Rows is [][]interface{}
 		row := result.Rows[0]
 		if len(row) > 0 {
 			if nodeData, ok := row[0].(map[string]interface{}); ok {
 				if id, ok := nodeData["id"].(string); ok {
-					node, err := r.DB.UpdateNode(ctx, id, setProps)
+					node, err := r.updateNode(ctx, id, setProps)
 					if err != nil {
 						return nil, err
 					}
@@ -129,7 +129,7 @@ func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []strin
 		allProps[k] = v
 	}
 
-	node, err := r.DB.CreateNode(ctx, labels, allProps)
+	node, err := r.createNode(ctx, labels, allProps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node: %w", err)
 	}
@@ -138,7 +138,7 @@ func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []strin
 
 // MutationCreateRelationship creates a new relationship
 func (r *mutationResolver) mutationCreateRelationship(ctx context.Context, input models.CreateRelationshipInput) (*models.Relationship, error) {
-	edge, err := r.DB.CreateEdge(ctx, input.StartNodeID, input.EndNodeID, input.Type, map[string]interface{}(input.Properties))
+	edge, err := r.createEdge(ctx, input.StartNodeID, input.EndNodeID, input.Type, map[string]interface{}(input.Properties))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create relationship: %w", err)
 	}
@@ -148,7 +148,7 @@ func (r *mutationResolver) mutationCreateRelationship(ctx context.Context, input
 // MutationUpdateRelationship updates an existing relationship
 func (r *mutationResolver) mutationUpdateRelationship(ctx context.Context, input models.UpdateRelationshipInput) (*models.Relationship, error) {
 	// Get existing edge first
-	edge, err := r.DB.GetEdge(ctx, input.ID)
+	edge, err := r.getEdge(ctx, input.ID)
 	if err != nil {
 		return nil, fmt.Errorf("relationship not found: %w", err)
 	}
@@ -161,11 +161,11 @@ func (r *mutationResolver) mutationUpdateRelationship(ctx context.Context, input
 	}
 
 	// Delete and recreate since there's no UpdateEdge
-	if err := r.DB.DeleteEdge(ctx, input.ID); err != nil {
+	if err := r.deleteEdge(ctx, input.ID); err != nil {
 		return nil, fmt.Errorf("failed to delete old relationship: %w", err)
 	}
 
-	newEdge, err := r.DB.CreateEdge(ctx, edge.Source, edge.Target, edge.Type, edge.Properties)
+	newEdge, err := r.createEdge(ctx, edge.Source, edge.Target, edge.Type, edge.Properties)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create updated relationship: %w", err)
 	}
@@ -174,7 +174,7 @@ func (r *mutationResolver) mutationUpdateRelationship(ctx context.Context, input
 
 // MutationDeleteRelationship deletes a relationship
 func (r *mutationResolver) mutationDeleteRelationship(ctx context.Context, id string) (bool, error) {
-	if err := r.DB.DeleteEdge(ctx, id); err != nil {
+	if err := r.deleteEdge(ctx, id); err != nil {
 		return false, fmt.Errorf("failed to delete relationship: %w", err)
 	}
 	return true, nil
@@ -187,7 +187,7 @@ func (r *mutationResolver) mutationBulkCreateRelationships(ctx context.Context, 
 	var errors []string
 
 	for _, relInput := range input.Relationships {
-		_, err := r.DB.CreateEdge(ctx, relInput.StartNodeID, relInput.EndNodeID, relInput.Type, map[string]interface{}(relInput.Properties))
+		_, err := r.createEdge(ctx, relInput.StartNodeID, relInput.EndNodeID, relInput.Type, map[string]interface{}(relInput.Properties))
 		if err != nil {
 			errors = append(errors, err.Error())
 			skipped++
@@ -209,7 +209,7 @@ func (r *mutationResolver) mutationBulkDeleteRelationships(ctx context.Context, 
 	var notFound []string
 
 	for _, id := range ids {
-		if err := r.DB.DeleteEdge(ctx, id); err != nil {
+		if err := r.deleteEdge(ctx, id); err != nil {
 			notFound = append(notFound, id)
 		} else {
 			deleted++
@@ -225,19 +225,19 @@ func (r *mutationResolver) mutationBulkDeleteRelationships(ctx context.Context, 
 // MutationMergeRelationship merges a relationship
 func (r *mutationResolver) mutationMergeRelationship(ctx context.Context, startNodeID string, endNodeID string, typeArg string, properties models.JSON) (*models.Relationship, error) {
 	// Try to find existing edge
-	edges, err := r.DB.GetEdgesForNode(ctx, startNodeID)
+	edges, err := r.getEdgesForNode(ctx, startNodeID)
 	if err == nil {
 		for _, edge := range edges {
 			if edge.Target == endNodeID && edge.Type == typeArg {
 				// Update existing - delete and recreate
-				if err := r.DB.DeleteEdge(ctx, edge.ID); err != nil {
+				if err := r.deleteEdge(ctx, edge.ID); err != nil {
 					return nil, err
 				}
 				mergedProps := edge.Properties
 				for k, v := range properties {
 					mergedProps[k] = v
 				}
-				newEdge, err := r.DB.CreateEdge(ctx, startNodeID, endNodeID, typeArg, mergedProps)
+				newEdge, err := r.createEdge(ctx, startNodeID, endNodeID, typeArg, mergedProps)
 				if err != nil {
 					return nil, err
 				}
@@ -247,7 +247,7 @@ func (r *mutationResolver) mutationMergeRelationship(ctx context.Context, startN
 	}
 
 	// Create new
-	edge, err := r.DB.CreateEdge(ctx, startNodeID, endNodeID, typeArg, map[string]interface{}(properties))
+	edge, err := r.createEdge(ctx, startNodeID, endNodeID, typeArg, map[string]interface{}(properties))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create relationship: %w", err)
 	}
@@ -261,7 +261,7 @@ func (r *mutationResolver) mutationExecuteCypher(ctx context.Context, input mode
 		params[k] = v
 	}
 
-	result, err := r.DB.ExecuteCypher(ctx, input.Statement, params)
+	result, err := r.executeCypher(ctx, input.Statement, params)
 	if err != nil {
 		return nil, fmt.Errorf("cypher execution failed: %w", err)
 	}
@@ -339,7 +339,7 @@ func (r *mutationResolver) mutationClearAll(ctx context.Context, confirmPhrase s
 	}
 
 	// Clear all nodes and edges using Cypher
-	_, err := r.DB.ExecuteCypher(ctx, "MATCH (n) DETACH DELETE n", nil)
+	_, err := r.executeCypher(ctx, "MATCH (n) DETACH DELETE n", nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to clear database: %w", err)
 	}

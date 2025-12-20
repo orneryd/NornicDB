@@ -8,7 +8,7 @@ import (
 
 // NodeRelationships returns relationships for a node
 func (r *nodeResolver) nodeRelationships(ctx context.Context, obj *models.Node, types []string, direction *models.RelationshipDirection, limit *int) ([]models.Relationship, error) {
-	edges, err := r.DB.GetEdgesForNode(ctx, obj.ID)
+	edges, err := r.getEdgesForNode(ctx, obj.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (r *nodeResolver) nodeIncoming(ctx context.Context, obj *models.Node, types
 
 // NodeNeighbors returns neighboring nodes
 func (r *nodeResolver) nodeNeighbors(ctx context.Context, obj *models.Node, direction *models.RelationshipDirection, relationshipTypes []string, labels []string, limit *int) ([]models.Node, error) {
-	edges, err := r.DB.GetEdgesForNode(ctx, obj.ID)
+	edges, err := r.getEdgesForNode(ctx, obj.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (r *nodeResolver) nodeNeighbors(ctx context.Context, obj *models.Node, dire
 		}
 		seen[neighborID] = true
 
-		neighbor, err := r.DB.GetNode(ctx, neighborID)
+		neighbor, err := r.getNode(ctx, neighborID)
 		if err != nil {
 			continue
 		}

@@ -8,7 +8,7 @@ import (
 
 // RelationshipStartNode returns the start node
 func (r *relationshipResolver) relationshipStartNode(ctx context.Context, obj *models.Relationship) (*models.Node, error) {
-	node, err := r.DB.GetNode(ctx, obj.StartNodeID)
+	node, err := r.getNode(ctx, obj.StartNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -17,7 +17,7 @@ func (r *relationshipResolver) relationshipStartNode(ctx context.Context, obj *m
 
 // RelationshipEndNode returns the end node
 func (r *relationshipResolver) relationshipEndNode(ctx context.Context, obj *models.Relationship) (*models.Node, error) {
-	node, err := r.DB.GetNode(ctx, obj.EndNodeID)
+	node, err := r.getNode(ctx, obj.EndNodeID)
 	if err != nil {
 		return nil, err
 	}
