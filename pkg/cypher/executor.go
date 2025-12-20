@@ -470,18 +470,26 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Handle :USE command (Neo4j browser/shell compatibility)
 	// :USE database_name switches database context and should be stripped from query
-	// The actual database switching is handled at the API layer, but we need to
-	// recognize and strip :USE commands for compatibility
+	// The actual database switching is handled at the API layer by checking context
 	if strings.HasPrefix(cypher, ":USE") || strings.HasPrefix(cypher, ":use") {
 		// Extract :USE command and remaining query
 		lines := strings.Split(cypher, "\n")
 		var remainingLines []string
 		useCommandFound := false
+		var useDatabaseName string
 
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if !useCommandFound && (strings.HasPrefix(trimmed, ":USE") || strings.HasPrefix(trimmed, ":use")) {
 				useCommandFound = true
+				// Extract database name from :USE command
+				// Format: :USE database_name or :USE  database_name (with whitespace)
+				parts := strings.Fields(trimmed)
+				if len(parts) >= 2 {
+					useDatabaseName = parts[1]
+					// Store database name in context for server to switch
+					ctx = context.WithValue(ctx, ctxKeyUseDatabase, useDatabaseName)
+				}
 				// Skip this line
 				continue
 			}
@@ -765,6 +773,22 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 type ctxKeyTxStorageType struct{}
 
 var ctxKeyTxStorage = ctxKeyTxStorageType{}
+
+// ctxKeyUseDatabase is the context key for :USE database switching.
+// When :USE database_name is detected, the database name is stored in context
+// so the server can switch to that database before executing the query.
+type ctxKeyUseDatabaseType struct{}
+
+var ctxKeyUseDatabase = ctxKeyUseDatabaseType{}
+
+// GetUseDatabaseFromContext extracts the database name from :USE command if present in context.
+// Returns empty string if no :USE command was found.
+func GetUseDatabaseFromContext(ctx context.Context) string {
+	if dbName, ok := ctx.Value(ctxKeyUseDatabase).(string); ok {
+		return dbName
+	}
+	return ""
+}
 
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
@@ -1099,6 +1123,15 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		createIdx = findKeywordIndex(cypher, "CREATE")
 		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
+		// Check for multiple CREATE statements (e.g., CREATE (a) CREATE (b) CREATE (a)-[:REL]->(b))
+		firstCreateEnd := findKeywordIndex(cypher[6:], ")")
+		if firstCreateEnd > 0 {
+			afterFirstCreate := cypher[6+firstCreateEnd+1:]
+			secondCreateIdx := findKeywordIndex(afterFirstCreate, "CREATE")
+			if secondCreateIdx >= 0 {
+				return e.executeMultipleCreates(ctx, cypher)
+			}
+		}
 		// Only search for WITH/DELETE if query starts with CREATE
 		withIdx = findKeywordIndex(cypher, "WITH")
 		if withIdx > 0 {
@@ -2246,10 +2279,17 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 		returnPart = returnPart[:limitIdx]
 	}
 
-	// Handle ORDER BY clause
-	orderIdx := strings.Index(upper, "ORDER")
-	if orderIdx > 0 {
-		returnPart = returnPart[:orderIdx]
+	// Handle ORDER BY clause - use whitespace-tolerant helper to avoid matching "order_id"
+	// This is a safety check; most callers should already strip ORDER BY before calling parseReturnItems
+	orderIdx := findKeywordIndex(returnPart, "ORDER")
+	if orderIdx >= 0 {
+		// Found "ORDER" - check if it's followed by "BY" (not part of "order_id")
+		afterOrder := strings.TrimSpace(returnPart[orderIdx+5:]) // Skip "ORDER"
+		if strings.HasPrefix(strings.ToUpper(afterOrder), "BY") {
+			// This is "ORDER BY" - strip it
+			returnPart = strings.TrimSpace(returnPart[:orderIdx])
+		}
+		// If it's just "ORDER" without "BY", leave it (might be a variable name)
 	}
 
 	// Split by comma, but respect CASE/END boundaries and parentheses

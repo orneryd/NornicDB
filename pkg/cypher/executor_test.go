@@ -5080,3 +5080,81 @@ RETURN n.name`, nil)
 		assert.Equal(t, "test2", result.Rows[0][0])
 	})
 }
+
+// TestPropertyAccessInMatch verifies that property access works correctly in MATCH queries
+func TestPropertyAccessInMatch(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	defer store.Close()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// First, test parseReturnItems directly
+	returnClause := "n.order_id as order_id, n.amount as amount"
+	returnItems := exec.parseReturnItems(returnClause)
+	t.Logf("parseReturnItems returned %d items for %q", len(returnItems), returnClause)
+	for i, item := range returnItems {
+		t.Logf("  Item %d: expr=%q, alias=%q", i, item.expr, item.alias)
+	}
+	require.Len(t, returnItems, 2, "should parse 2 return items")
+	require.Equal(t, "n.order_id", returnItems[0].expr, "first item expression should be n.order_id")
+	require.Equal(t, "order_id", returnItems[0].alias, "first item alias should be order_id")
+	require.Equal(t, "n.amount", returnItems[1].expr, "second item expression should be n.amount")
+	require.Equal(t, "amount", returnItems[1].alias, "second item alias should be amount")
+
+	// Create a node with properties
+	_, err := exec.Execute(ctx, `CREATE (order:Order {order_id: "ORD-001", amount: 1000, db: "test_db"}) RETURN order`, nil)
+	require.NoError(t, err)
+
+	// Verify node was created with properties
+	verifyResult, err := exec.Execute(ctx, `MATCH (n:Order) RETURN n, properties(n) as props`, nil)
+	require.NoError(t, err)
+	require.NotNil(t, verifyResult)
+	require.Len(t, verifyResult.Rows, 1, "should find the Order node")
+	if len(verifyResult.Rows) > 0 && len(verifyResult.Rows[0]) >= 2 {
+		if props, ok := verifyResult.Rows[0][1].(map[string]interface{}); ok {
+			t.Logf("Order node properties: %+v", props)
+			require.Contains(t, props, "order_id", "Order node should have order_id property")
+			require.Contains(t, props, "amount", "Order node should have amount property")
+		}
+	}
+
+	// Test property access in MATCH query
+	query := `MATCH (n:Order) RETURN n.order_id as order_id, n.amount as amount`
+	t.Logf("Testing query: %q", query)
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	t.Logf("Result columns: %+v", result.Columns)
+	t.Logf("Result rows: %+v", result.Rows)
+	require.Len(t, result.Columns, 2, "should have 2 columns: order_id and amount")
+	require.Len(t, result.Rows, 1, "should have 1 row")
+	if len(result.Rows) > 0 {
+		require.Len(t, result.Rows[0], 2, "row should have 2 values")
+		t.Logf("Returned row: %+v", result.Rows[0])
+	}
+
+	// Verify properties are accessible
+	orderID, ok := result.Rows[0][0].(string)
+	require.True(t, ok, "order_id should be a string")
+	assert.Equal(t, "ORD-001", orderID, "order_id should be ORD-001")
+
+	// Amount can be int64 or float64 depending on how it was parsed
+	var amountValue interface{}
+	var amountFloat float64
+	var amountInt int64
+	if f, ok := result.Rows[0][1].(float64); ok {
+		amountValue = f
+		amountFloat = f
+	} else if i, ok := result.Rows[0][1].(int64); ok {
+		amountValue = i
+		amountInt = i
+	} else {
+		t.Fatalf("amount should be int64 or float64, got %T: %v", result.Rows[0][1], result.Rows[0][1])
+	}
+	require.NotNil(t, amountValue, "amount should not be nil")
+	if amountFloat > 0 {
+		assert.Equal(t, float64(1000), amountFloat, "amount should be 1000")
+	} else {
+		assert.Equal(t, int64(1000), amountInt, "amount should be 1000")
+	}
+}

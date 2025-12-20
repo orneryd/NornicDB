@@ -180,6 +180,7 @@ RETURN alice, bob, company
 
 ```cypher
 -- Query all nodes in test_db_a
+:USE test_db_a
 MATCH (n)
 RETURN n.name as name, labels(n) as labels, n.db as db
 ORDER BY n.name
@@ -191,6 +192,7 @@ ORDER BY n.name
 
 ```cypher
 -- Query relationships
+:USE test_db_a
 MATCH (p:Person)-[r:WORKS_FOR]->(c:Company)
 RETURN p.name as person, c.name as company, type(r) as relationship
 ```
@@ -200,6 +202,7 @@ RETURN p.name as person, c.name as company, type(r) as relationship
 
 ```cypher
 -- Count nodes by label
+:USE test_db_a
 MATCH (n)
 RETURN labels(n)[0] as label, count(n) as count
 ORDER BY label
@@ -241,6 +244,7 @@ SHOW DATABASES
 -- Note: In Cypher Shell, use :USE test_db_b
 
 -- Create nodes in test_db_b
+:USE test_db_b
 CREATE (charlie:Person {name: "Charlie", id: "b1", db: "test_db_b"})
 CREATE (diana:Person {name: "Diana", id: "b2", db: "test_db_b"})
 CREATE (order:Order {order_id: "ORD-001", amount: 1000, db: "test_db_b"})
@@ -272,6 +276,7 @@ RETURN charlie, diana, order
 
 ```cypher
 -- Query all nodes in test_db_b
+:USE test_db_b
 MATCH (n)
 RETURN n.name as name, n.order_id as order_id, labels(n) as labels, n.db as db
 ORDER BY n.name
@@ -283,6 +288,7 @@ ORDER BY n.name
 
 ```cypher
 -- Query relationships
+:USE test_db_b
 MATCH (p:Person)-[r:PLACED]->(o:Order)
 RETURN p.name as person, o.order_id as order, type(r) as relationship
 ```
@@ -292,6 +298,7 @@ RETURN p.name as person, o.order_id as order, type(r) as relationship
 
 ```cypher
 -- Count nodes by label
+:USE test_db_b
 MATCH (n)
 RETURN labels(n)[0] as label, count(n) as count
 ORDER BY label

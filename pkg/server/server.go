@@ -1949,6 +1949,32 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	claims := getClaims(r)
 	hasError := false
 
+	// Extract :USE command from first statement if present
+	// This allows multi-statement queries like:
+	//   :USE test_db_b
+	//   CREATE (n:Person {name: "Alice"})
+	//   CREATE (m:Person {name: "Bob"})
+	// All statements will use the database specified in :USE
+	actualDbName := dbName
+	useDbName := ""
+	if len(req.Statements) > 0 {
+		firstStmt := strings.TrimSpace(req.Statements[0].Statement)
+		if strings.HasPrefix(firstStmt, ":USE") || strings.HasPrefix(firstStmt, ":use") {
+			lines := strings.Split(req.Statements[0].Statement, "\n")
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, ":USE") || strings.HasPrefix(trimmed, ":use") {
+					parts := strings.Fields(trimmed)
+					if len(parts) >= 2 {
+						useDbName = parts[1]
+						actualDbName = useDbName
+					}
+					break
+				}
+			}
+		}
+	}
+
 	for _, stmt := range req.Statements {
 		if hasError {
 			// Skip remaining statements after error (rollback semantics)
@@ -1967,22 +1993,42 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
+		// Use the database from :USE if it was specified, otherwise use dbName from URL
+		effectiveDbName := actualDbName
+
 		// Check if database exists before attempting to get executor
-		if !s.dbManager.Exists(dbName) {
+		if !s.dbManager.Exists(effectiveDbName) {
 			response.Errors = append(response.Errors, QueryError{
 				Code:    "Neo.ClientError.Database.DatabaseNotFound",
-				Message: fmt.Sprintf("Database '%s' not found", dbName),
+				Message: fmt.Sprintf("Database '%s' not found", effectiveDbName),
 			})
 			hasError = true
 			continue
 		}
 
-		// Get executor for the specified database
-		executor, err := s.getExecutorForDatabase(dbName)
+		// Strip :USE command from statement if present (only needed for first statement)
+		queryStatement := stmt.Statement
+		if useDbName != "" && (strings.HasPrefix(strings.TrimSpace(stmt.Statement), ":USE") || strings.HasPrefix(strings.TrimSpace(stmt.Statement), ":use")) {
+			lines := strings.Split(stmt.Statement, "\n")
+			var remainingLines []string
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, ":USE") || strings.HasPrefix(trimmed, ":use") {
+					// Skip :USE line
+					continue
+				}
+				remainingLines = append(remainingLines, line)
+			}
+			queryStatement = strings.Join(remainingLines, "\n")
+			queryStatement = strings.TrimSpace(queryStatement)
+		}
+
+		// Get executor for the specified database (or the one from :USE command)
+		executor, err := s.getExecutorForDatabase(effectiveDbName)
 		if err != nil {
 			response.Errors = append(response.Errors, QueryError{
 				Code:    "Neo.ClientError.Database.General",
-				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
+				Message: fmt.Sprintf("Failed to access database '%s': %v", effectiveDbName, err),
 			})
 			hasError = true
 			continue
@@ -1990,7 +2036,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 
 		// Track query execution time for slow query logging
 		queryStart := time.Now()
-		result, err := executor.Execute(r.Context(), stmt.Statement, stmt.Parameters)
+		result, err := executor.Execute(r.Context(), queryStatement, stmt.Parameters)
 		queryDuration := time.Since(queryStart)
 
 		// Log slow queries

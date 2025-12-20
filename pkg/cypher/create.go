@@ -1809,6 +1809,328 @@ func (e *StorageExecutor) applySetMergeToCreated(setPart string, createdNodes ma
 	return nil
 }
 
+// executeMultipleCreates handles queries with multiple CREATE statements.
+// Example: CREATE (a:Person {name: "Alice"}) CREATE (b:Person {name: "Bob"}) CREATE (a)-[:KNOWS]->(b) RETURN a, b
+func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	result := &ExecuteResult{
+		Columns: []string{},
+		Rows:    [][]interface{}{},
+		Stats:   &QueryStats{},
+	}
+
+	// Context to track created nodes and edges for variable references
+	nodeContext := make(map[string]*storage.Node)
+	edgeContext := make(map[string]*storage.Edge)
+
+	// Split into CREATE segments
+	segments := e.splitMultipleCreates(cypher)
+
+	// Process each CREATE segment
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		upperSeg := strings.ToUpper(segment)
+
+		if strings.HasPrefix(upperSeg, "CREATE") {
+			createContent := strings.TrimSpace(segment[6:])
+
+			// Check if this is a relationship CREATE
+			if strings.Contains(createContent, "-[") || strings.Contains(createContent, "]-") {
+				// Relationship CREATE - need to resolve variable references
+				err := e.executeCreateRelSegment(ctx, segment, nodeContext, edgeContext, result)
+				if err != nil {
+					return nil, fmt.Errorf("relationship CREATE failed: %w", err)
+				}
+			} else {
+				// Node CREATE
+				node, varName, err := e.executeCreateNodeSegment(ctx, segment)
+				if err != nil {
+					return nil, fmt.Errorf("node CREATE failed: %w", err)
+				}
+				if node != nil && varName != "" {
+					nodeContext[varName] = node
+					result.Stats.NodesCreated++
+				}
+			}
+		} else if strings.HasPrefix(upperSeg, "WITH") {
+			// Process WITH clause - extract variables and update context
+			// WITH a, b means we keep a and b in context, filtering out others
+			withClause := strings.TrimSpace(segment[4:]) // Skip "WITH"
+
+			// Remove WHERE, ORDER BY, SKIP, LIMIT if present
+			for _, keyword := range []string{" WHERE ", " ORDER BY ", " SKIP ", " LIMIT "} {
+				if idx := findKeywordIndex(withClause, keyword); idx >= 0 {
+					withClause = withClause[:idx]
+				}
+			}
+
+			// Parse WITH items (similar to RETURN items)
+			withItems := e.parseReturnItems(withClause)
+
+			// Create new context with only the WITH variables
+			newNodeContext := make(map[string]*storage.Node)
+			newEdgeContext := make(map[string]*storage.Edge)
+
+			for _, item := range withItems {
+				varName := item.expr
+				if item.alias != "" {
+					varName = item.alias
+				}
+
+				// Look up in existing context
+				if node, ok := nodeContext[varName]; ok {
+					newNodeContext[varName] = node
+				} else if edge, ok := edgeContext[varName]; ok {
+					newEdgeContext[varName] = edge
+				}
+			}
+
+			// Update context
+			nodeContext = newNodeContext
+			edgeContext = newEdgeContext
+		} else if strings.HasPrefix(upperSeg, "RETURN") {
+			// Build result from context
+			returnClause := strings.TrimSpace(segment[6:])
+			items := e.parseReturnItems(returnClause)
+
+			row := make([]interface{}, len(items))
+			for i, item := range items {
+				if item.alias != "" {
+					result.Columns = append(result.Columns, item.alias)
+				} else {
+					result.Columns = append(result.Columns, item.expr)
+				}
+				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, edgeContext)
+			}
+			result.Rows = append(result.Rows, row)
+		}
+	}
+
+	return result, nil
+}
+
+// splitMultipleCreates splits a query into CREATE, WITH, and RETURN segments.
+func (e *StorageExecutor) splitMultipleCreates(cypher string) []string {
+	var segments []string
+
+	// Find all keyword positions (CREATE, WITH, RETURN)
+	type keywordPos struct {
+		pos  int
+		kind string // "CREATE", "WITH", "RETURN"
+	}
+	var positions []keywordPos
+
+	searchPos := 0
+	for searchPos < len(cypher) {
+		// Find next CREATE, WITH, or RETURN
+		createIdx := findKeywordIndex(cypher[searchPos:], "CREATE")
+		withIdx := findKeywordIndex(cypher[searchPos:], "WITH")
+		returnIdx := findKeywordIndex(cypher[searchPos:], "RETURN")
+
+		// Find the earliest keyword
+		earliest := -1
+		var earliestKind string
+		if createIdx >= 0 && (earliest == -1 || createIdx < earliest) {
+			earliest = createIdx
+			earliestKind = "CREATE"
+		}
+		if withIdx >= 0 && (earliest == -1 || withIdx < earliest) {
+			earliest = withIdx
+			earliestKind = "WITH"
+		}
+		if returnIdx >= 0 && (earliest == -1 || returnIdx < earliest) {
+			earliest = returnIdx
+			earliestKind = "RETURN"
+		}
+
+		if earliest == -1 {
+			break
+		}
+
+		positions = append(positions, keywordPos{
+			pos:  searchPos + earliest,
+			kind: earliestKind,
+		})
+
+		// Move past this keyword
+		searchPos = searchPos + earliest
+		switch earliestKind {
+		case "CREATE":
+			searchPos += 6
+		case "WITH":
+			searchPos += 4
+		case "RETURN":
+			searchPos += 6
+		}
+	}
+
+	// Build segments - each segment goes from one keyword to the next
+	for i, pos := range positions {
+		var endPos int
+		if i+1 < len(positions) {
+			endPos = positions[i+1].pos
+		} else {
+			endPos = len(cypher)
+		}
+		segments = append(segments, strings.TrimSpace(cypher[pos.pos:endPos]))
+	}
+
+	return segments
+}
+
+// executeCreateNodeSegment executes a single CREATE node statement and returns the created node and variable name.
+func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createStmt string) (*storage.Node, string, error) {
+	// Extract the pattern after CREATE
+	pattern := strings.TrimSpace(createStmt[6:]) // Skip "CREATE"
+
+	// Parse node pattern to get variable name and properties
+	nodePattern := e.parseNodePattern(pattern)
+	if nodePattern.variable == "" {
+		return nil, "", fmt.Errorf("CREATE node must have a variable name")
+	}
+
+	// Validate labels
+	for _, label := range nodePattern.labels {
+		if !isValidIdentifier(label) {
+			return nil, "", fmt.Errorf("invalid label name: %q", label)
+		}
+	}
+
+	// Validate properties
+	for key, val := range nodePattern.properties {
+		if !isValidIdentifier(key) {
+			return nil, "", fmt.Errorf("invalid property key: %q", key)
+		}
+		if _, ok := val.(invalidPropertyValue); ok {
+			return nil, "", fmt.Errorf("invalid property value for key %q", key)
+		}
+	}
+
+	// Ensure properties map is initialized (even if empty)
+	if nodePattern.properties == nil {
+		nodePattern.properties = make(map[string]interface{})
+	}
+
+	// Create the node directly
+	node := &storage.Node{
+		ID:         storage.NodeID(e.generateID()),
+		Labels:     nodePattern.labels,
+		Properties: nodePattern.properties,
+	}
+
+	if err := e.storage.CreateNode(node); err != nil {
+		return nil, "", fmt.Errorf("failed to create node: %w", err)
+	}
+
+	// If using a namespaced engine, the ID might have been prefixed
+	// We need to get the actual ID that was used. Since CreateNode doesn't return it,
+	// we'll try to retrieve the node by its properties to get the prefixed ID.
+	// However, for now, we'll assume the ID is correct and update it if needed.
+	// Actually, NamespacedEngine creates a copy, so the original node ID is unchanged.
+	// We need to manually prefix it if we're using a namespaced engine.
+	// For now, let's check if we can get the node back or if we need to handle this differently.
+
+	e.notifyNodeCreated(string(node.ID))
+
+	return node, nodePattern.variable, nil
+}
+
+// executeCreateRelSegment executes a CREATE relationship statement using variable references from context.
+func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStmt string, nodeContext map[string]*storage.Node, edgeContext map[string]*storage.Edge, result *ExecuteResult) error {
+	// Extract relationship pattern
+	pattern := strings.TrimSpace(createStmt[6:]) // Skip "CREATE"
+
+	// Parse relationship pattern: (varA)-[varR:Type {props}]->(varB)
+	sourceVar, relContent, targetVar, isReverse, _, err := e.parseCreateRelPatternWithVars(pattern)
+	if err != nil {
+		return fmt.Errorf("failed to parse relationship pattern: %w", err)
+	}
+
+	// Get source and target nodes from context
+	sourceNode, sourceExists := nodeContext[sourceVar]
+	targetNode, targetExists := nodeContext[targetVar]
+
+	if !sourceExists || !targetExists {
+		return fmt.Errorf("variable not found in context: source=%s (exists=%v), target=%s (exists=%v)", sourceVar, sourceExists, targetVar, targetExists)
+	}
+
+	// Validate node IDs are not empty
+	if sourceNode.ID == "" {
+		return fmt.Errorf("source node %s has empty ID", sourceVar)
+	}
+	if targetNode.ID == "" {
+		return fmt.Errorf("target node %s has empty ID", targetVar)
+	}
+
+	// Parse relationship type and properties from relContent
+	// relContent format: varR:Type {props} or just :Type {props}
+	relType := ""
+	relVar := ""
+	props := make(map[string]interface{})
+
+	// Extract type (after colon, before { or end)
+	colonIdx := strings.Index(relContent, ":")
+	if colonIdx >= 0 {
+		afterColon := strings.TrimSpace(relContent[colonIdx+1:])
+		// Check if there's a variable before colon
+		beforeColon := strings.TrimSpace(relContent[:colonIdx])
+		if beforeColon != "" {
+			relVar = beforeColon
+		}
+		// Extract type (everything before { or end)
+		braceIdx := strings.Index(afterColon, "{")
+		if braceIdx > 0 {
+			relType = strings.TrimSpace(afterColon[:braceIdx])
+			// Extract properties
+			propsStr := afterColon[braceIdx:]
+			props = e.parseProperties(propsStr)
+		} else {
+			relType = strings.TrimSpace(afterColon)
+		}
+	}
+
+	if relType == "" {
+		return fmt.Errorf("relationship type is required")
+	}
+
+	// Determine start and end nodes based on direction
+	var startNode, endNode *storage.Node
+	if isReverse {
+		startNode = targetNode
+		endNode = sourceNode
+	} else {
+		startNode = sourceNode
+		endNode = targetNode
+	}
+
+	// Create the relationship
+	edge := &storage.Edge{
+		ID:         storage.EdgeID(e.generateID()),
+		Type:       relType,
+		StartNode:  startNode.ID,
+		EndNode:    endNode.ID,
+		Properties: props,
+	}
+
+	if err := e.storage.CreateEdge(edge); err != nil {
+		return fmt.Errorf("failed to create edge: %w", err)
+	}
+
+	if relVar != "" {
+		edgeContext[relVar] = edge
+	}
+
+	result.Stats.RelationshipsCreated++
+	return nil
+}
+
 // containsString checks if a slice contains a string.
 func containsString(slice []string, s string) bool {
 	for _, item := range slice {

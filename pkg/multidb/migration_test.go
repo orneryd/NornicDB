@@ -415,3 +415,94 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-node", string(retrieved.ID))
 }
+
+// TestMigration_AddsDbProperty verifies that migrated nodes get the db property set
+func TestMigration_AddsDbProperty(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	defer inner.Close()
+
+	// Create unprefixed node (simulating pre-multi-db data)
+	oldNode := &storage.Node{
+		ID:     storage.NodeID("legacy-node"),
+		Labels: []string{"Legacy"},
+		Properties: map[string]any{
+			"name": "Legacy Node",
+			// No db property
+		},
+	}
+	err := inner.CreateNode(oldNode)
+	require.NoError(t, err)
+
+	// Create DatabaseManager - this should trigger migration
+	config := &Config{
+		DefaultDatabase:  "nornic",
+		SystemDatabase:   "system",
+		MaxDatabases:     0,
+		AllowDropDefault: false,
+	}
+	manager, err := NewDatabaseManager(inner, config)
+	require.NoError(t, err)
+	defer manager.Close()
+
+	// Verify migration completed
+	assert.True(t, manager.isMigrationComplete())
+
+	// Get default database storage
+	store, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+
+	// Retrieve migrated node
+	retrieved, err := store.GetNode(storage.NodeID("legacy-node"))
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-node", string(retrieved.ID))
+
+	// Verify db property was added during migration
+	dbValue, exists := retrieved.Properties["db"]
+	require.True(t, exists, "migrated node should have db property")
+	assert.Equal(t, "nornic", dbValue, "db property should be set to default database name")
+}
+
+// TestEnsureDefaultDatabaseProperty verifies that ensureDefaultDatabaseProperty adds db property
+func TestEnsureDefaultDatabaseProperty(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	defer inner.Close()
+
+	config := &Config{
+		DefaultDatabase:  "nornic",
+		SystemDatabase:   "system",
+		MaxDatabases:     0,
+		AllowDropDefault: false,
+	}
+	manager, err := NewDatabaseManager(inner, config)
+	require.NoError(t, err)
+	defer manager.Close()
+
+	// Get default database storage
+	store, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+
+	// Create a node without db property (simulating old data)
+	node := &storage.Node{
+		ID:     storage.NodeID("test-node"),
+		Labels: []string{"Test"},
+		Properties: map[string]any{
+			"name": "Test Node",
+			// No db property
+		},
+	}
+	err = store.CreateNode(node)
+	require.NoError(t, err)
+
+	// Call ensureDefaultDatabaseProperty
+	err = manager.ensureDefaultDatabaseProperty()
+	require.NoError(t, err)
+
+	// Retrieve the node
+	retrieved, err := store.GetNode(storage.NodeID("test-node"))
+	require.NoError(t, err)
+
+	// Verify db property was added
+	dbValue, exists := retrieved.Properties["db"]
+	require.True(t, exists, "node should have db property after ensureDefaultDatabaseProperty")
+	assert.Equal(t, "nornic", dbValue, "db property should be set to default database name")
+}

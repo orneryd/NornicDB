@@ -2624,7 +2624,27 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		for _, cr := range computedRows {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
-				if val, ok := cr.values[item.expr]; ok {
+				// First try to find by expression (e.g., "cnt")
+				// Trim the expression to handle any whitespace issues
+				exprKey := strings.TrimSpace(item.expr)
+				var val interface{}
+				var found bool
+				if val, found = cr.values[exprKey]; !found && item.alias != "" {
+					// If not found and there's an alias, try the alias
+					aliasKey := strings.TrimSpace(item.alias)
+					val, found = cr.values[aliasKey]
+				}
+				// If still not found, try case-insensitive lookup (fallback)
+				if !found {
+					for k, v := range cr.values {
+						if strings.EqualFold(k, exprKey) {
+							val = v
+							found = true
+							break
+						}
+					}
+				}
+				if found {
 					row[i] = val
 				} else {
 					// Build node map for evaluation
@@ -2638,10 +2658,15 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 					// Check if this is a property access on a node variable (e.g., n.name)
 					if strings.Contains(item.expr, ".") && !strings.Contains(item.expr, "(") {
 						parts := strings.SplitN(item.expr, ".", 2)
-						varName := parts[0]
-						propName := parts[1]
+						varName := strings.TrimSpace(parts[0])
+						propName := strings.TrimSpace(parts[1])
 						if node, ok := nodeMap[varName]; ok {
-							row[i] = node.Properties[propName]
+							if val, ok := node.Properties[propName]; ok {
+								row[i] = val
+								continue
+							}
+							// Property doesn't exist - return nil explicitly
+							row[i] = nil
 							continue
 						}
 					}

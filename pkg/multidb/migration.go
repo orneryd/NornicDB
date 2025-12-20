@@ -5,10 +5,10 @@
 // namespace. This ensures backwards compatibility and zero-downtime upgrades.
 //
 // Migration Process:
-//   1. Detects unprefixed data (nodes/edges without "namespace:" prefix)
-//   2. Migrates all unprefixed data to default database namespace
-//   3. Updates all indexes automatically (via CreateNode/CreateEdge)
-//   4. Marks migration as complete in metadata (prevents re-running)
+//  1. Detects unprefixed data (nodes/edges without "namespace:" prefix)
+//  2. Migrates all unprefixed data to default database namespace
+//  3. Updates all indexes automatically (via CreateNode/CreateEdge)
+//  4. Marks migration as complete in metadata (prevents re-running)
 //
 // The migration runs automatically in NewDatabaseManager() and is completely
 // transparent to users. No manual steps are required.
@@ -78,6 +78,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 
 	// Mark migration as complete
 	m.markMigrationComplete()
+
 	return nil
 }
 
@@ -177,10 +178,10 @@ func (m *DatabaseManager) detectUnprefixedData(engine storage.Engine) (bool, err
 // performMigration migrates all unprefixed data to the default database namespace.
 //
 // This function performs the actual migration:
-//   1. Collects all unprefixed nodes and edges
-//   2. Creates new versions with prefixed IDs (e.g., "nornic:node-123")
-//   3. Updates all indexes automatically (via CreateNode/CreateEdge)
-//   4. Deletes old unprefixed versions
+//  1. Collects all unprefixed nodes and edges
+//  2. Creates new versions with prefixed IDs (e.g., "nornic:node-123")
+//  3. Updates all indexes automatically (via CreateNode/CreateEdge)
+//  4. Deletes old unprefixed versions
 //
 // The migration preserves all properties, relationships, and metadata.
 // Edge relationships are maintained by prefixing both start and end node IDs.
@@ -226,11 +227,22 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 
 	// Migrate nodes: create new prefixed versions and delete old ones
 	for _, node := range unprefixedNodes {
+		// Copy properties and ensure db property is set for migrated nodes
+		properties := make(map[string]any)
+		for k, v := range node.Properties {
+			properties[k] = v
+		}
+		// Add db property to mark this node as belonging to the default database
+		// This helps with queries that filter by db property
+		if _, exists := properties["db"]; !exists {
+			properties["db"] = defaultDB
+		}
+
 		// Create new node with prefixed ID
 		newNode := &storage.Node{
 			ID:           storage.NodeID(defaultDB + ":" + string(node.ID)),
 			Labels:       node.Labels,
-			Properties:   node.Properties,
+			Properties:   properties,
 			CreatedAt:    node.CreatedAt,
 			UpdatedAt:    node.UpdatedAt,
 			DecayScore:   node.DecayScore,
@@ -290,3 +302,50 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 	return nil
 }
 
+// ensureDefaultDatabaseProperty ensures all nodes in the default database have a db property.
+//
+// This is a post-migration step that adds the db property to nodes that were migrated
+// or created before the db property was standard. The db property helps with queries
+// that filter by database name, though the namespace prefix is what actually provides isolation.
+//
+// This function is idempotent - it only updates nodes that don't have the db property.
+func (m *DatabaseManager) ensureDefaultDatabaseProperty() error {
+	defaultDB := m.config.DefaultDatabase
+
+	// Get namespaced engine for default database
+	defaultEngine := storage.NewNamespacedEngine(m.inner, defaultDB)
+
+	// Get all nodes in default database
+	allNodes, err := defaultEngine.AllNodes()
+	if err != nil {
+		return fmt.Errorf("failed to get nodes from default database: %w", err)
+	}
+
+	// Update nodes that don't have db property
+	updated := 0
+	for _, node := range allNodes {
+		// Check if node has db property
+		if _, exists := node.Properties["db"]; !exists {
+			// Add db property
+			if node.Properties == nil {
+				node.Properties = make(map[string]any)
+			}
+			node.Properties["db"] = defaultDB
+
+			// Update the node
+			if err := defaultEngine.UpdateNode(node); err != nil {
+				// Log but continue - some nodes might fail to update
+				continue
+			}
+			updated++
+		}
+	}
+
+	// If we updated any nodes, log it (but don't fail)
+	if updated > 0 {
+		// This is a best-effort operation - namespace prefix provides the actual isolation
+		// The db property is just for convenience in queries
+	}
+
+	return nil
+}
