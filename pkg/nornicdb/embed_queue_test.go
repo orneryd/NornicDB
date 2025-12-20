@@ -419,12 +419,13 @@ func TestBuildEmbeddingText(t *testing.T) {
 			"score":       85,
 		}
 
-		text := buildEmbeddingText(props)
+		text := buildEmbeddingText(props, []string{"Document"})
 
 		assert.Contains(t, text, "Test Title")
 		assert.Contains(t, text, "Test Content")
 		assert.Contains(t, text, "Test Description")
 		assert.Contains(t, text, "85")
+		assert.Contains(t, text, "labels: Document")
 	})
 
 	t.Run("skips_metadata_fields", func(t *testing.T) {
@@ -438,9 +439,10 @@ func TestBuildEmbeddingText(t *testing.T) {
 			"createdAt":       "2024-01-01",
 		}
 
-		text := buildEmbeddingText(props)
+		text := buildEmbeddingText(props, []string{"Article"})
 
 		assert.Contains(t, text, "Real content")
+		assert.Contains(t, text, "labels: Article")
 		assert.NotContains(t, text, "id:")
 		assert.NotContains(t, text, "embedding:")
 		assert.NotContains(t, text, "has_embedding:")
@@ -449,7 +451,7 @@ func TestBuildEmbeddingText(t *testing.T) {
 		assert.NotContains(t, text, "createdAt:")
 	})
 
-	t.Run("returns_empty_for_only_metadata", func(t *testing.T) {
+	t.Run("returns_labels_for_only_metadata", func(t *testing.T) {
 		props := map[string]interface{}{
 			"id":            "123",
 			"embedding":     []float32{0.1},
@@ -457,9 +459,11 @@ func TestBuildEmbeddingText(t *testing.T) {
 			"createdAt":     "2024-01-01",
 		}
 
-		text := buildEmbeddingText(props)
+		text := buildEmbeddingText(props, []string{"Node"})
 
-		assert.Empty(t, text)
+		// Should return labels even if no embeddable properties
+		assert.Contains(t, text, "labels: Node")
+		assert.NotEmpty(t, text)
 	})
 
 	t.Run("includes_tags_array", func(t *testing.T) {
@@ -468,10 +472,11 @@ func TestBuildEmbeddingText(t *testing.T) {
 			"tags":    []interface{}{"tag1", "tag2"},
 		}
 
-		text := buildEmbeddingText(props)
+		text := buildEmbeddingText(props, []string{"Post"})
 
 		assert.Contains(t, text, "tag1")
 		assert.Contains(t, text, "tag2")
+		assert.Contains(t, text, "labels: Post")
 	})
 
 	t.Run("handles_arbitrary_properties", func(t *testing.T) {
@@ -484,13 +489,52 @@ func TestBuildEmbeddingText(t *testing.T) {
 			"issuesFound":        "Uses informal 'tu'",
 		}
 
-		text := buildEmbeddingText(props)
+		text := buildEmbeddingText(props, []string{"TranslationEntry"})
 
 		assert.Contains(t, text, "Your prescription was delivered")
 		assert.Contains(t, text, "Tu receta fue entregada")
 		assert.Contains(t, text, "80")
 		assert.Contains(t, text, "approved")
 		assert.Contains(t, text, "Uses informal")
+		assert.Contains(t, text, "labels: TranslationEntry")
+	})
+
+	t.Run("includes_labels_even_with_no_properties", func(t *testing.T) {
+		props := map[string]interface{}{}
+		text := buildEmbeddingText(props, []string{"Person", "Employee"})
+
+		assert.Contains(t, text, "labels: Person, Employee")
+		assert.NotEmpty(t, text)
+	})
+
+	t.Run("handles_empty_labels_and_properties", func(t *testing.T) {
+		props := map[string]interface{}{}
+		text := buildEmbeddingText(props, []string{})
+
+		// Should return fallback "node" if no labels and no properties
+		assert.NotEmpty(t, text)
+		assert.Contains(t, text, "node")
+	})
+
+	t.Run("includes_all_property_types", func(t *testing.T) {
+		props := map[string]interface{}{
+			"name":     "Alice",
+			"age":      30,
+			"active":   true,
+			"tags":     []interface{}{"developer", "golang"},
+			"metadata": map[string]interface{}{"key": "value"},
+			"empty":    "",
+			"nil":      nil,
+		}
+		text := buildEmbeddingText(props, []string{"Person"})
+
+		assert.Contains(t, text, "labels: Person")
+		assert.Contains(t, text, "name: Alice")
+		assert.Contains(t, text, "age: 30")
+		assert.Contains(t, text, "active: true")
+		assert.Contains(t, text, "tags: developer, golang")
+		assert.Contains(t, text, "empty: ")   // Empty strings are included
+		assert.Contains(t, text, "nil: null") // Nil values are included as "null"
 	})
 }
 
@@ -889,11 +933,12 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 		engine := storage.NewMemoryEngine()
 		embedder := newMockEmbedder()
 
-		// Create a node with ONLY metadata fields (all skipped by buildEmbeddingText)
+		// Create a node with NO labels and ONLY metadata fields (all skipped by buildEmbeddingText)
+		// This is a truly empty node - no labels, no embeddable properties
 		// Don't set has_embedding as that would prevent node discovery
 		err := engine.CreateNode(&storage.Node{
 			ID:     "no-content-node",
-			Labels: []string{"Empty"},
+			Labels: []string{}, // No labels - truly empty
 			Properties: map[string]any{
 				"id":        "123",        // Skipped
 				"createdAt": "2024-01-01", // Skipped
@@ -930,15 +975,18 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 
 		worker.Close()
 
-		// Embedder should NOT have been called (no embeddable content)
+		// With the new behavior, even empty nodes get embedded (using "node" fallback)
+		// The key test is that it doesn't loop infinitely
 		embedCount := embedder.GetEmbedCount()
-		assert.Equal(t, 0, embedCount, "Embedder should not be called for node without content")
+		// Node should be embedded (even if empty, we embed with fallback "node")
+		assert.Equal(t, 1, embedCount, "Empty node should be embedded with fallback text")
 
-		// Node should be marked as skipped
+		// Node should have been embedded (with "node" fallback text)
 		node, err := engine.GetNode("no-content-node")
 		require.NoError(t, err)
-		assert.Empty(t, node.Embedding, "Node should have no embedding (skipped)")
-		assert.Equal(t, "no content", node.Properties["embedding_skipped"], "Node should be marked as skipped")
+		// With new behavior, empty nodes get embedded with "node" fallback
+		assert.NotEmpty(t, node.Embedding, "Node should have embedding (even empty nodes get embedded)")
+		assert.Nil(t, node.Properties["embedding_skipped"], "Node should not be marked as skipped (it was embedded)")
 
 		t.Log("✓ No infinite loop with no-content node")
 	})

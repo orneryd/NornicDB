@@ -441,39 +441,9 @@ func (ew *EmbedWorker) processNextBatch() bool {
 	// Modifying the Properties map directly causes "concurrent map iteration and map write"
 	node = copyNodeForEmbedding(node)
 
-	// Build text for embedding
-	text := buildEmbeddingText(node.Properties)
-	if text == "" {
-		// No content - mark as processed but skip
-		// Debug: show what properties the node has
-		propKeys := make([]string, 0, len(node.Properties))
-		for k := range node.Properties {
-			propKeys = append(propKeys, k)
-		}
-		fmt.Printf("⏭️  Skipping node %s: no embeddable content (has props: %v, labels: %v)\n", node.ID, propKeys, node.Labels)
-		node.Properties["has_embedding"] = false
-		node.Properties["embedding_skipped"] = "no content"
-		_ = ew.storage.UpdateNode(node)
-
-		// Track as recently processed
-		ew.mu.Lock()
-		ew.recentlyProcessed[string(node.ID)] = time.Now()
-		ew.mu.Unlock()
-
-		// Immediately try next node (don't wait for next trigger)
-		ew.wg.Add(1)
-		go func(ctx context.Context) {
-			defer ew.wg.Done()
-			select {
-			case <-time.After(100 * time.Millisecond):
-				ew.Trigger()
-			case <-ctx.Done():
-				// Worker is shutting down, abort
-				return
-			}
-		}(ew.ctx)
-		return true // Permanently skipped node (no content) - continue to next
-	}
+	// Build text for embedding - always includes labels and all properties
+	// Every node gets an embedding, even if it only has labels
+	text := buildEmbeddingText(node.Properties, node.Labels)
 
 	// Chunk text if needed
 	chunks := chunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
@@ -670,10 +640,22 @@ func averageEmbeddings(embeddings [][]float32) []float32 {
 	return avg
 }
 
-// buildEmbeddingText creates text for embedding from node properties.
-// Stringifies all non-metadata properties into embeddable text.
-func buildEmbeddingText(properties map[string]interface{}) string {
+// buildEmbeddingText creates text for embedding from node properties and labels.
+// Always returns a non-empty string - at minimum includes labels.
+// This ensures every node gets an embedding regardless of property names or types.
+//
+// The function:
+//   - Always includes labels (even if node has no properties)
+//   - Includes all non-metadata properties
+//   - Converts all property values to string representation
+//   - Handles arrays, booleans, numbers, and complex types (via JSON)
+func buildEmbeddingText(properties map[string]interface{}, labels []string) string {
 	var parts []string
+
+	// Always include labels first - this ensures we always have embeddable content
+	if len(labels) > 0 {
+		parts = append(parts, fmt.Sprintf("labels: %s", strings.Join(labels, ", ")))
+	}
 
 	// Skip these metadata/internal fields
 	skipFields := map[string]bool{
@@ -688,6 +670,7 @@ func buildEmbeddingText(properties map[string]interface{}) string {
 		"id":                   true,
 	}
 
+	// Include all properties (even empty strings - they're part of the node representation)
 	for key, val := range properties {
 		if skipFields[key] {
 			continue
@@ -697,39 +680,48 @@ func buildEmbeddingText(properties map[string]interface{}) string {
 		var strVal string
 		switch v := val.(type) {
 		case string:
-			if v == "" {
-				continue
-			}
+			// Include even empty strings - they're part of the node
 			strVal = v
 		case []interface{}:
-			// Handle arrays (like tags)
+			// Handle arrays (like tags, lists, etc.)
 			strs := make([]string, 0, len(v))
 			for _, item := range v {
 				if s, ok := item.(string); ok {
 					strs = append(strs, s)
+				} else {
+					// Convert non-string items to string
+					strs = append(strs, fmt.Sprintf("%v", item))
 				}
-			}
-			if len(strs) == 0 {
-				continue
 			}
 			strVal = strings.Join(strs, ", ")
 		case bool:
 			strVal = fmt.Sprintf("%v", v)
 		case int, int64, float64:
 			strVal = fmt.Sprintf("%v", v)
+		case nil:
+			// Include nil values as "null" - they're part of the node representation
+			strVal = "null"
 		default:
-			// For complex types, use JSON
+			// For complex types (maps, nested objects), use JSON
 			if b, err := json.Marshal(v); err == nil {
 				strVal = string(b)
 			} else {
-				continue
+				// Fallback to string representation
+				strVal = fmt.Sprintf("%v", v)
 			}
 		}
 
 		parts = append(parts, fmt.Sprintf("%s: %s", key, strVal))
 	}
 
-	return strings.Join(parts, "\n")
+	// Always return at least labels, even if no properties
+	result := strings.Join(parts, "\n")
+	if result == "" {
+		// Fallback: if somehow we have no labels and no properties, use node ID
+		// This should never happen, but ensures we always return something
+		return "node"
+	}
+	return result
 }
 
 // chunkText splits text into chunks with overlap, trying to break at natural boundaries.
