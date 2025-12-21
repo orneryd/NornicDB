@@ -817,8 +817,9 @@ type Query {
 
   """
   Get multiple nodes by IDs
+  Returns empty array if ids is not provided or empty
   """
-  nodes(ids: [ID!]!): [Node!]!
+  nodes(ids: [ID!]): [Node!]!
 
   """
   Get all nodes with optional filtering

@@ -861,15 +861,34 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
   /gdpr/export:
-    get:
+    post:
       tags:
         - GDPR
       summary: GDPR data export
-      description: Export all user data (GDPR Art.15 - Right of access)
+      description: Export all user data (GDPR Art.15 - Right of access). Requires user_id and format in request body.
       operationId: gdprExport
       security:
         - bearerAuth: []
         - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - format
+              properties:
+                user_id:
+                  type: string
+                  description: User ID to export data for
+                  example: "user-123"
+                format:
+                  type: string
+                  enum: [json, csv]
+                  description: Export format (json or csv)
+                  example: "json"
       responses:
         '200':
           description: User data export

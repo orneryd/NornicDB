@@ -60,3 +60,4 @@ neural/training/__pycache__
 dist
 macos/build
 data.old/
+swagger-ui

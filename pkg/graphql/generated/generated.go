@@ -2332,7 +2332,7 @@ type Query {
   """
   Get multiple nodes by IDs
   """
-  nodes(ids: [ID!]!): [Node!]!
+  nodes(ids: [ID!]): [Node!]!
 
   """
   Get all nodes with optional filtering
@@ -3172,13 +3172,17 @@ func (ec *executionContext) field_Query_nodesByLabel_args(ctx context.Context, r
 }
 
 func (ec *executionContext) field_Query_nodes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "ids", ec.unmarshalNID2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
+	// ids is optional, so check if it's provided
+	if val, ok := rawArgs["ids"]; ok && val != nil {
+		arg0, err := graphql.ProcessArgField(ctx, rawArgs, "ids", ec.unmarshalNID2ᚕstringᚄ)
+		if err != nil {
+			return nil, err
+		}
+		args["ids"] = arg0
+	} else {
+		args["ids"] = nil
 	}
-	args["ids"] = arg0
 	return args, nil
 }
 
@@ -6259,7 +6263,11 @@ func (ec *executionContext) _Query_nodes(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_nodes,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Nodes(ctx, fc.Args["ids"].([]string))
+			var ids []string
+			if fc.Args["ids"] != nil {
+				ids = fc.Args["ids"].([]string)
+			}
+			return ec.resolvers.Query().Nodes(ctx, ids)
 		},
 		nil,
 		ec.marshalNNode2ᚕgithubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐNodeᚄ,

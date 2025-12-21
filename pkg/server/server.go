@@ -113,7 +113,7 @@
 //	  POST /admin/gpu/test              - Test GPU (admin)
 //
 //	GDPR Compliance:
-//	  GET  /gdpr/export                - GDPR data export
+//	  POST /gdpr/export                - GDPR data export (requires user_id and format in body)
 //	  POST /gdpr/delete                - GDPR erasure request
 //
 //	GraphQL & AI:

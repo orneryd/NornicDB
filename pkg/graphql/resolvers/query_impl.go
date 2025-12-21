@@ -18,7 +18,11 @@ func (r *queryResolver) queryNode(ctx context.Context, id string) (*models.Node,
 }
 
 // QueryNodes fetches multiple nodes by IDs
+// If ids is nil or empty, returns an empty array
 func (r *queryResolver) queryNodes(ctx context.Context, ids []string) ([]models.Node, error) {
+	if ids == nil || len(ids) == 0 {
+		return []models.Node{}, nil
+	}
 	result := make([]models.Node, 0, len(ids))
 	for _, id := range ids {
 		node, err := r.getNode(ctx, id)

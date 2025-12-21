@@ -556,6 +556,11 @@ build-oauth-provider:
 	go build -o bin/oauth-provider$(BIN_EXT) ./cmd/oauth-provider
 	@echo "✓ Built: bin/oauth-provider$(BIN_EXT)"
 
+build-swagger-ui:
+	@echo "Building Swagger UI server..."
+	go build -o bin/swagger-ui$(BIN_EXT) ./cmd/swagger-ui
+	@echo "✓ Built: bin/swagger-ui$(BIN_EXT)"
+
 build-binary: check-llama-lib
 ifeq ($(HOST_OS),windows)
 	@echo "Detecting GPU support..."
