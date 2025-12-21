@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/cache"
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/pool"
@@ -158,7 +160,8 @@ Features:
 		Short: "Interactive Cypher shell",
 		RunE:  runShell,
 	}
-	shellCmd.Flags().String("uri", "bolt://localhost:7687", "NornicDB URI")
+	shellCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	shellCmd.Flags().String("uri", "bolt://localhost:7687", "NornicDB URI (for future Bolt client support)")
 	rootCmd.AddCommand(shellCmd)
 
 	// Decay command (manual decay operations)
@@ -166,21 +169,30 @@ Features:
 		Use:   "decay",
 		Short: "Memory decay operations",
 	}
-	decayCmd.AddCommand(&cobra.Command{
+	decayRecalculateCmd := &cobra.Command{
 		Use:   "recalculate",
 		Short: "Recalculate all decay scores",
 		RunE:  runDecayRecalculate,
-	})
-	decayCmd.AddCommand(&cobra.Command{
+	}
+	decayRecalculateCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	decayCmd.AddCommand(decayRecalculateCmd)
+
+	decayArchiveCmd := &cobra.Command{
 		Use:   "archive",
 		Short: "Archive low-score memories",
 		RunE:  runDecayArchive,
-	})
-	decayCmd.AddCommand(&cobra.Command{
+	}
+	decayArchiveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	decayArchiveCmd.Flags().Float64("threshold", 0.05, "Archive threshold (default: 0.05)")
+	decayCmd.AddCommand(decayArchiveCmd)
+
+	decayStatsCmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show decay statistics",
 		RunE:  runDecayStats,
-	})
+	}
+	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -708,41 +720,340 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 func runShell(cmd *cobra.Command, args []string) error {
-	uri, _ := cmd.Flags().GetString("uri")
-	fmt.Printf("🔌 Connecting to %s...\n", uri)
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+
+	// Open database
+	fmt.Printf("📂 Opening database at %s...\n", dataDir)
+	config := nornicdb.DefaultConfig()
+	config.DataDir = dataDir
+
+	db, err := nornicdb.Open(dataDir, config)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	executor := db.GetCypherExecutor()
+	if executor == nil {
+		return fmt.Errorf("cypher executor not available")
+	}
+
+	fmt.Println("✅ Connected to NornicDB")
 	fmt.Println("Type 'exit' or Ctrl+D to quit")
+	fmt.Println("Enter Cypher queries (end with semicolon or newline):")
 	fmt.Println()
 
-	// TODO: Implement interactive REPL
-	fmt.Println("Interactive shell coming soon...")
-	fmt.Println("For now, use the HTTP API:")
-	fmt.Println("  curl -X POST http://localhost:7474/db/neo4j/tx/commit \\")
-	fmt.Println("    -H 'Content-Type: application/json' \\")
-	fmt.Println("    -d '{\"statements\": [{\"statement\": \"MATCH (n) RETURN n LIMIT 5\"}]}'")
+	scanner := bufio.NewScanner(os.Stdin)
+	ctx := context.Background()
 
+	for {
+		fmt.Print("nornicdb> ")
+		if !scanner.Scan() {
+			break // EOF or error
+		}
+
+		query := strings.TrimSpace(scanner.Text())
+		if query == "" {
+			continue
+		}
+
+		if query == "exit" || query == "quit" {
+			break
+		}
+
+		// Execute query
+		result, err := executor.Execute(ctx, query, nil)
+		if err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			continue
+		}
+
+		// Display results
+		if len(result.Columns) > 0 {
+			// Print header
+			fmt.Println(strings.Join(result.Columns, " | "))
+			fmt.Println(strings.Repeat("-", len(strings.Join(result.Columns, " | "))))
+
+			// Print rows
+			for _, row := range result.Rows {
+				values := make([]string, len(row))
+				for i, v := range row {
+					values[i] = fmt.Sprintf("%v", v)
+				}
+				fmt.Println(strings.Join(values, " | "))
+			}
+			fmt.Printf("\n(%d row(s))\n", len(result.Rows))
+		} else {
+			fmt.Println("✅ Query executed successfully")
+		}
+		fmt.Println()
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+
+	fmt.Println("👋 Goodbye!")
 	return nil
 }
 
 func runDecayRecalculate(cmd *cobra.Command, args []string) error {
-	fmt.Println("🔄 Recalculating decay scores...")
-	// TODO: Implement
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+
+	// Open database
+	fmt.Printf("📂 Opening database at %s...\n", dataDir)
+	config := nornicdb.DefaultConfig()
+	config.DataDir = dataDir
+
+	db, err := nornicdb.Open(dataDir, config)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	// Get storage engine
+	storageEngine := db.GetStorage()
+	if storageEngine == nil {
+		return fmt.Errorf("storage engine not available")
+	}
+
+	// Create decay manager
+	decayManager := decay.New(decay.DefaultConfig())
+
+	// Get all nodes
+	fmt.Println("📊 Loading nodes...")
+	nodes, err := storageEngine.AllNodes()
+	if err != nil {
+		return fmt.Errorf("loading nodes: %w", err)
+	}
+
+	fmt.Printf("🔄 Recalculating decay scores for %d nodes...\n", len(nodes))
+
+	updated := 0
+
+	// Process nodes in chunks to avoid memory issues
+	chunkSize := 1000
+	for i := 0; i < len(nodes); i += chunkSize {
+		end := i + chunkSize
+		if end > len(nodes) {
+			end = len(nodes)
+		}
+
+		for _, node := range nodes[i:end] {
+			// Extract tier from properties (default to SEMANTIC if not found)
+			tierStr := "SEMANTIC"
+			if v, ok := node.Properties["tier"].(string); ok {
+				tierStr = strings.ToUpper(v)
+			}
+
+			// Map to decay.Tier
+			var decayTier decay.Tier
+			switch tierStr {
+			case "EPISODIC":
+				decayTier = decay.TierEpisodic
+			case "SEMANTIC":
+				decayTier = decay.TierSemantic
+			case "PROCEDURAL":
+				decayTier = decay.TierProcedural
+			default:
+				decayTier = decay.TierSemantic // Default
+			}
+
+			// Create MemoryInfo
+			info := &decay.MemoryInfo{
+				ID:           string(node.ID),
+				Tier:         decayTier,
+				CreatedAt:    node.CreatedAt,
+				LastAccessed: node.LastAccessed,
+				AccessCount:  node.AccessCount,
+			}
+
+			// Calculate new score
+			newScore := decayManager.CalculateScore(info)
+
+			// Update node if score changed
+			if node.DecayScore != newScore {
+				node.DecayScore = newScore
+				if err := storageEngine.UpdateNode(node); err != nil {
+					fmt.Printf("⚠️  Warning: failed to update node %s: %v\n", node.ID, err)
+					continue
+				}
+				updated++
+			}
+		}
+
+		if i%10000 == 0 && i > 0 {
+			fmt.Printf("   Processed %d/%d nodes...\n", i, len(nodes))
+		}
+	}
+
+	fmt.Printf("✅ Recalculated decay scores: %d nodes updated\n", updated)
 	return nil
 }
 
 func runDecayArchive(cmd *cobra.Command, args []string) error {
-	fmt.Println("📦 Archiving low-score memories...")
-	// TODO: Implement
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+	threshold, _ := cmd.Flags().GetFloat64("threshold")
+
+	// Open database
+	fmt.Printf("📂 Opening database at %s...\n", dataDir)
+	config := nornicdb.DefaultConfig()
+	config.DataDir = dataDir
+
+	db, err := nornicdb.Open(dataDir, config)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	// Get storage engine
+	storageEngine := db.GetStorage()
+	if storageEngine == nil {
+		return fmt.Errorf("storage engine not available")
+	}
+
+	// Create decay manager with custom threshold
+	decayConfig := decay.DefaultConfig()
+	decayConfig.ArchiveThreshold = threshold
+	decayManager := decay.New(decayConfig)
+
+	// Get all nodes
+	fmt.Println("📊 Loading nodes...")
+	nodes, err := storageEngine.AllNodes()
+	if err != nil {
+		return fmt.Errorf("loading nodes: %w", err)
+	}
+
+	fmt.Printf("📦 Archiving nodes with decay score < %.2f...\n", threshold)
+
+	archived := 0
+
+	// Process nodes
+	for _, node := range nodes {
+		// Extract tier from properties
+		tierStr := "SEMANTIC"
+		if v, ok := node.Properties["tier"].(string); ok {
+			tierStr = strings.ToUpper(v)
+		}
+
+		var decayTier decay.Tier
+		switch tierStr {
+		case "EPISODIC":
+			decayTier = decay.TierEpisodic
+		case "SEMANTIC":
+			decayTier = decay.TierSemantic
+		case "PROCEDURAL":
+			decayTier = decay.TierProcedural
+		default:
+			decayTier = decay.TierSemantic
+		}
+
+		// Create MemoryInfo
+		info := &decay.MemoryInfo{
+			ID:           string(node.ID),
+			Tier:         decayTier,
+			CreatedAt:    node.CreatedAt,
+			LastAccessed: node.LastAccessed,
+			AccessCount:  node.AccessCount,
+		}
+
+		// Calculate current score
+		score := decayManager.CalculateScore(info)
+
+		// Check if should archive
+		if decayManager.ShouldArchive(score) {
+			// Mark as archived by adding "archived" property
+			if node.Properties == nil {
+				node.Properties = make(map[string]any)
+			}
+			node.Properties["archived"] = true
+			node.Properties["archived_at"] = time.Now().Format(time.RFC3339)
+			node.Properties["archived_score"] = score
+
+			if err := storageEngine.UpdateNode(node); err != nil {
+				fmt.Printf("⚠️  Warning: failed to archive node %s: %v\n", node.ID, err)
+				continue
+			}
+			archived++
+		}
+	}
+
+	fmt.Printf("✅ Archived %d nodes (decay score < %.2f)\n", archived, threshold)
 	return nil
 }
 
 func runDecayStats(cmd *cobra.Command, args []string) error {
+	dataDir, _ := cmd.Flags().GetString("data-dir")
+
+	// Open database
+	fmt.Printf("📂 Opening database at %s...\n", dataDir)
+	config := nornicdb.DefaultConfig()
+	config.DataDir = dataDir
+
+	db, err := nornicdb.Open(dataDir, config)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	// Get storage engine
+	storageEngine := db.GetStorage()
+	if storageEngine == nil {
+		return fmt.Errorf("storage engine not available")
+	}
+
+	// Create decay manager
+	decayManager := decay.New(decay.DefaultConfig())
+
+	// Get all nodes
+	fmt.Println("📊 Loading nodes...")
+	nodes, err := storageEngine.AllNodes()
+	if err != nil {
+		return fmt.Errorf("loading nodes: %w", err)
+	}
+
+	// Convert nodes to MemoryInfo and calculate stats
+	memories := make([]decay.MemoryInfo, 0, len(nodes))
+	for _, node := range nodes {
+		// Extract tier from properties
+		tierStr := "SEMANTIC"
+		if v, ok := node.Properties["tier"].(string); ok {
+			tierStr = strings.ToUpper(v)
+		}
+
+		var decayTier decay.Tier
+		switch tierStr {
+		case "EPISODIC":
+			decayTier = decay.TierEpisodic
+		case "SEMANTIC":
+			decayTier = decay.TierSemantic
+		case "PROCEDURAL":
+			decayTier = decay.TierProcedural
+		default:
+			decayTier = decay.TierSemantic
+		}
+
+		memories = append(memories, decay.MemoryInfo{
+			ID:           string(node.ID),
+			Tier:         decayTier,
+			CreatedAt:    node.CreatedAt,
+			LastAccessed: node.LastAccessed,
+			AccessCount:  node.AccessCount,
+		})
+	}
+
+	// Get statistics
+	stats := decayManager.GetStats(memories)
+
+	// Display statistics
 	fmt.Println("📊 Decay Statistics:")
-	fmt.Println("  Total memories: 0")
-	fmt.Println("  Episodic: 0 (avg decay: 0.00)")
-	fmt.Println("  Semantic: 0 (avg decay: 0.00)")
-	fmt.Println("  Procedural: 0 (avg decay: 0.00)")
-	fmt.Println("  Archived: 0")
-	// TODO: Implement
+	fmt.Printf("  Total memories: %d\n", stats.TotalMemories)
+	fmt.Printf("  Episodic: %d (avg decay: %.2f)\n", stats.EpisodicCount, stats.AvgByTier[decay.TierEpisodic])
+	fmt.Printf("  Semantic: %d (avg decay: %.2f)\n", stats.SemanticCount, stats.AvgByTier[decay.TierSemantic])
+	fmt.Printf("  Procedural: %d (avg decay: %.2f)\n", stats.ProceduralCount, stats.AvgByTier[decay.TierProcedural])
+	fmt.Printf("  Archived: %d (score < %.2f)\n", stats.ArchivedCount, decayManager.GetConfig().ArchiveThreshold)
+	fmt.Printf("  Average decay score: %.2f\n", stats.AvgDecayScore)
+
 	return nil
 }
 

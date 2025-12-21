@@ -22,7 +22,19 @@ go build -o nornicdb ./cmd/nornicdb
 
 # Verify installation
 ./nornicdb --version
+
+# See available commands
+./nornicdb --help
 ```
+
+**Available Commands:**
+- `nornicdb serve` - Start the database server
+- `nornicdb shell` - Interactive Cypher query shell
+- `nornicdb decay` - Memory decay management (recalculate, archive, stats)
+- `nornicdb init` - Initialize a new database
+- `nornicdb import` - Import data from Neo4j export
+
+See **[CLI Commands Guide](../operations/cli-commands.md)** for complete documentation.
 
 ### Option 2: Docker
 

@@ -4,6 +4,7 @@
 
 ## 📚 Documentation
 
+- **[CLI Commands](cli-commands.md)** - Command-line interface for database management
 - **[Deployment](deployment.md)** - Production deployment guide
 - **[Docker](docker.md)** - Docker and Kubernetes
 - **[Low Memory Mode](low-memory-mode.md)** - Run NornicDB with minimal RAM (Docker, Pi, VMs)

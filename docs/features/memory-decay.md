@@ -123,60 +123,118 @@ WHERE m.decay_score < 0.2
 RETURN m
 ```
 
-## Decay Statistics
+## CLI Commands
 
-### View Stats
+NornicDB provides CLI commands for managing memory decay. See **[CLI Commands Guide](../operations/cli-commands.md)** for complete documentation.
 
-```bash
-nornicdb decay stats
-```
+### Decay Statistics
 
-Output:
-```
-Memory Decay Statistics
-=======================
-Total memories: 15,234
-By tier:
-  Episodic:   5,123 (33.6%)
-  Semantic:   8,456 (55.5%)
-  Procedural: 1,655 (10.9%)
-
-Decay distribution:
-  Strong (>80%):   4,234
-  Medium (20-80%): 8,567
-  Weak (<20%):     2,433
-
-Archived: 1,234
-```
-
-### API Stats
+View aggregate statistics across all memories:
 
 ```bash
-curl http://localhost:7474/nornicdb/decay/stats \
-  -H "Authorization: Bearer $TOKEN"
+nornicdb decay stats --data-dir ./data
 ```
+
+**Output:**
+```
+📂 Opening database at ./data...
+📊 Loading nodes...
+📊 Decay Statistics:
+  Total memories: 15,234
+  Episodic: 5,123 (avg decay: 0.45)
+  Semantic: 8,456 (avg decay: 0.72)
+  Procedural: 1,655 (avg decay: 0.89)
+  Archived: 1,234 (score < 0.05)
+  Average decay score: 0.68
+```
+
+### Recalculate Decay Scores
+
+Recalculate decay scores for all nodes (useful after bulk imports or configuration changes):
+
+```bash
+nornicdb decay recalculate --data-dir ./data
+```
+
+**When to use:**
+- After bulk data imports
+- When decay configuration changes
+- Periodic maintenance (e.g., weekly)
+
+**Example:**
+```bash
+$ nornicdb decay recalculate --data-dir ./data
+📂 Opening database at ./data...
+📊 Loading nodes...
+🔄 Recalculating decay scores for 15,234 nodes...
+   Processed 10000/15234 nodes...
+✅ Recalculated decay scores: 3,245 nodes updated
+```
+
+### Archive Low-Score Memories
+
+Archive nodes with decay scores below a threshold:
+
+```bash
+nornicdb decay archive --data-dir ./data --threshold 0.05
+```
+
+**What it does:**
+- Marks archived nodes with `archived: true`, `archived_at`, and `archived_score` properties
+- Nodes remain in the database but are marked for archival
+- Safe to run anytime (read-only operation)
+
+**Example:**
+```bash
+$ nornicdb decay archive --data-dir ./data --threshold 0.05
+📂 Opening database at ./data...
+📊 Loading nodes...
+📦 Archiving nodes with decay score < 0.05...
+✅ Archived 1,234 nodes (decay score < 0.05)
+```
+
+**Query archived nodes:**
+```cypher
+// Find archived nodes
+MATCH (n)
+WHERE n.archived = true
+RETURN n.id, n.archived_at, n.archived_score
+ORDER BY n.archived_score
+```
+
+### Interactive Shell
+
+Execute Cypher queries interactively:
+
+```bash
+nornicdb shell --data-dir ./data
+```
+
+**Example session:**
+```bash
+$ nornicdb shell --data-dir ./data
+nornicdb> MATCH (m:Memory) WHERE m.decay_score < 0.1 RETURN count(m) AS weak
+weak
+---
+1234
+
+(1 row(s))
+```
+
+See **[CLI Commands Guide](../operations/cli-commands.md)** for complete CLI documentation.
 
 ## Archiving
 
 ### Automatic Archiving
 
-Memories below the threshold are automatically archived:
-
-```yaml
-decay:
-  archive_threshold: 0.1  # Archive below 10%
-  archive_action: soft_delete  # soft_delete, move, delete
-```
-
-### Manual Archiving
+Memories below the threshold can be archived using the CLI:
 
 ```bash
-# Archive weak memories
-nornicdb decay archive --threshold 0.2
-
-# Restore archived memories
-nornicdb decay restore --id mem-123
+# Archive memories with score < 10%
+nornicdb decay archive --data-dir ./data --threshold 0.1
 ```
+
+Archived nodes are marked with properties but remain in the database for querying and potential restoration.
 
 ## Use Cases
 
@@ -262,6 +320,7 @@ memory := &Memory{
 
 ## See Also
 
+- **[CLI Commands](../operations/cli-commands.md)** - Complete CLI documentation for decay management
 - **[Vector Search](../user-guides/vector-search.md)** - Search with decay
 - **[GPU Acceleration](gpu-acceleration.md)** - Performance
 - **[Architecture](../architecture/system-design.md)** - System design
