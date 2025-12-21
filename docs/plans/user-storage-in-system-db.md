@@ -1,35 +1,36 @@
-# User Storage in System Database - Implementation Plan
+# User Storage in System Database
+
+**Status:** ✅ **IMPLEMENTED** - Users are now stored persistently in the system database.
+
+This document describes how NornicDB stores user accounts in the system database for persistence, security, and compliance.
 
 ## Overview
 
-This document outlines the plan to migrate user storage from in-memory maps to persistent storage in the system database, following industry-standard practices.
+NornicDB stores all user accounts in the **system database** for persistence, security, and compliance. This follows industry-standard practices used by PostgreSQL, MySQL, Neo4j, and other enterprise systems.
 
-## Current State
+## Implementation Status
 
-- **Storage**: In-memory `map[string]*User` in `Authenticator` struct
-- **Persistence**: None - users are lost on restart
-- **Password Security**: ✅ Already correct - bcrypt with automatic salt
-- **System Database**: Exists and is used for database metadata
+✅ **Completed Features:**
+- Users stored as nodes in system database with labels `["_User", "_System"]`
+- Automatic loading of users on server startup
+- All user operations (create, update, delete) persist immediately
+- In-memory cache for fast authentication lookups
+- Password security with bcrypt (salt embedded in hash)
+- Internal database IDs never exposed in API responses
+- User data included in database backups automatically
+- GDPR export/deletion support for user accounts
 
-## Target State
-
-- **Storage**: Users stored as nodes in the system database
-- **Persistence**: Users survive restarts
-- **Password Security**: ✅ Unchanged - bcrypt (salt embedded in hash)
-- **Backwards Compatibility**: Support both in-memory (dev) and persistent (prod) modes
-
-## Design
+## Architecture
 
 ### User Node Structure
 
-Users will be stored as nodes in the system database with:
+Users are stored as nodes in the system database with:
 
 - **Labels**: `["_User", "_System"]`
 - **Node ID**: `user:{username}` (e.g., `user:admin`)
 - **Properties**:
   ```json
   {
-    "id": "usr-abc123",
     "username": "admin",
     "email": "admin@example.com",
     "password_hash": "$2a$10$...",  // bcrypt hash (includes salt)
@@ -44,172 +45,96 @@ Users will be stored as nodes in the system database with:
   }
   ```
 
-### Implementation Approach
+**Note:** Internal database IDs are stored but never exposed in API responses for security.
 
-1. **Add Storage Engine to Authenticator**
-   - Make storage engine optional (for backwards compatibility)
-   - If provided, use persistent storage
-   - If nil, use in-memory (current behavior)
+### How It Works
 
-2. **Load Users on Startup**
-   - Query system database for all `_User` nodes
-   - Deserialize into `User` structs
-   - Populate in-memory cache for fast lookups
+1. **Storage Engine**: Authenticator requires a storage engine (system database storage)
+2. **Startup Loading**: All users are automatically loaded from system database on server startup
+3. **In-Memory Cache**: Users are cached in memory for fast authentication lookups
+4. **Persistence**: All user operations (create, update, delete) are immediately persisted to the system database
+5. **Backup Integration**: User accounts are automatically included in database backups
 
-3. **Save Users on Create/Update**
-   - Create/update node in system database
-   - Update in-memory cache
-   - Use transactions for consistency
+## Usage
 
-4. **Query Pattern**
-   ```cypher
-   MATCH (u:_User {username: $username})
-   RETURN u
-   ```
+### Server Initialization
 
-### Code Changes
-
-#### 1. Update Authenticator Struct
+The authenticator is automatically initialized with system database storage:
 
 ```go
-type Authenticator struct {
-    mu     sync.RWMutex
-    users  map[string]*User // In-memory cache (fast lookups)
-    config AuthConfig
-    
-    // Optional: Storage engine for persistence
-    storage storage.Engine // nil = in-memory only
-    
-    // Audit callback
-    auditLog func(event AuditEvent)
+// System database storage is automatically used
+systemStorage, err := dbManager.GetStorage("system")
+if err != nil {
+    return fmt.Errorf("failed to get system database storage: %w", err)
 }
+
+authenticator, err := auth.NewAuthenticator(authConfig, systemStorage)
 ```
 
-#### 2. Update NewAuthenticator
+**Note:** Storage engine is required - there is no in-memory-only mode. For testing, use `storage.NewMemoryEngine()` via dependency injection.
+
+### Testing
+
+For unit tests, use a memory storage engine:
 
 ```go
-func NewAuthenticator(config AuthConfig, storage storage.Engine) (*Authenticator, error) {
-    auth := &Authenticator{
-        users:  make(map[string]*User),
-        config: config,
-        storage: storage,
-    }
-    
-    // Load users from storage if available
-    if storage != nil {
-        if err := auth.loadUsers(); err != nil {
-            return nil, fmt.Errorf("failed to load users: %w", err)
-        }
-    }
-    
-    return auth, nil
-}
+memoryStorage := storage.NewMemoryEngine()
+authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 ```
 
-#### 3. Add Load/Save Methods
+## Security Features
 
-```go
-// loadUsers loads all users from system database
-func (a *Authenticator) loadUsers() error {
-    // Query system database for _User nodes
-    // Deserialize and populate a.users map
-}
+✅ **Password Security:**
+- Passwords hashed with bcrypt (salt automatically embedded in hash)
+- Password hashes never serialized in JSON responses
+- Minimum password length enforced (default: 8 characters)
 
-// saveUser saves a user to system database
-func (a *Authenticator) saveUser(user *User) error {
-    // Create/update node in system database
-    // Update in-memory cache
-}
-```
+✅ **Data Protection:**
+- Internal database IDs never exposed in API responses
+- User data stored in isolated system database
+- Account lockout after failed login attempts
+- Failed login tracking and lockout duration
 
-#### 4. Update CreateUser
-
-```go
-func (a *Authenticator) CreateUser(username, password string, roles []Role) (*User, error) {
-    // ... existing validation and hashing ...
-    
-    user := &User{...}
-    
-    // Save to storage if available
-    if a.storage != nil {
-        if err := a.saveUser(user); err != nil {
-            return nil, err
-        }
-    }
-    
-    // Update in-memory cache
-    a.users[username] = user
-    
-    return a.copyUserSafe(user), nil
-}
-```
-
-## Migration Strategy
-
-### Phase 1: Add Storage Support (Backwards Compatible)
-- Add optional storage engine parameter
-- Implement load/save methods
-- Keep in-memory cache for performance
-- All existing code continues to work (storage=nil)
-
-### Phase 2: Update Server Initialization
-- Pass system database storage engine to Authenticator
-- Users automatically persist on create/update
-
-### Phase 3: Migration Script (Optional)
-- If needed, migrate existing in-memory users to database
-- Run once on first startup with storage enabled
-
-## Security Considerations
-
-✅ **Already Implemented Correctly:**
-- Passwords hashed with bcrypt (includes salt automatically)
-- Password hash never serialized in JSON responses
-- Account lockout and failed login tracking
-
-✅ **Additional Benefits:**
-- Users can be backed up with database backup
-- GDPR deletion can remove user nodes
-- Audit trail in system database
+✅ **Compliance:**
+- Users included in database backups automatically
+- GDPR export/deletion endpoints support user accounts
+- Audit trail for all user operations in system database
+- User changes tracked with timestamps
 
 ## Performance
 
-- **In-Memory Cache**: Fast lookups (O(1))
-- **Storage Writes**: Only on create/update (infrequent)
-- **Storage Reads**: Only on startup (once)
-- **Impact**: Minimal - authentication still fast
+- **In-Memory Cache**: Fast authentication lookups (O(1))
+- **Storage Writes**: Only on create/update/delete (infrequent operations)
+- **Storage Reads**: Only on server startup (once per restart)
+- **Impact**: Minimal - authentication performance unchanged
 
-## Testing
+## Backup and Recovery
 
-1. **Unit Tests**: Test load/save methods
-2. **Integration Tests**: Test with real storage engine
-3. **Migration Tests**: Test loading existing users
-4. **Backwards Compatibility**: Test with storage=nil
+User accounts are automatically included in database backups:
 
-## Example Usage
+```bash
+# Backup includes all user accounts
+nornicdb backup --output backup.db
 
-```go
-// Production: With persistence
-systemStorage := dbManager.GetStorage("system")
-auth, err := auth.NewAuthenticator(config, systemStorage)
-
-// Development: In-memory only
-auth, err := auth.NewAuthenticator(config, nil)
+# Restore includes user accounts
+nornicdb restore --input backup.db
 ```
+
+**Note:** When restoring from backup, all user accounts are restored along with the database data.
 
 ## Benefits
 
-1. ✅ **Persistence**: Users survive restarts
-2. ✅ **Backup**: Users included in database backups
+1. ✅ **Persistence**: Users survive server restarts
+2. ✅ **Backup Integration**: Users included in database backups automatically
 3. ✅ **Recovery**: Can restore users from backup
-4. ✅ **Compliance**: GDPR export/deletion works automatically
-5. ✅ **Multi-Instance**: Can share user data across instances
-6. ✅ **Audit**: User changes tracked in database
-7. ✅ **Standard Practice**: Matches industry standards (PostgreSQL, MySQL, etc.)
+4. ✅ **Compliance**: GDPR export/deletion works automatically for user accounts
+5. ✅ **Audit Trail**: User changes tracked in database with timestamps
+6. ✅ **Security**: Internal IDs never exposed, passwords properly hashed
+7. ✅ **Standard Practice**: Matches industry standards (PostgreSQL, MySQL, Neo4j, etc.)
 
 ## Industry Standards
 
-This approach matches how major systems store users:
+This implementation follows the same pattern as major database systems:
 
 - **PostgreSQL**: `pg_authid` system table
 - **MySQL**: `mysql.user` system table
@@ -217,11 +142,10 @@ This approach matches how major systems store users:
 - **MongoDB**: `admin.users` collection
 - **LDAP**: `ou=users` organizational unit
 
-## Next Steps
+## Related Documentation
 
-1. Review and approve this design
-2. Implement Phase 1 (add storage support)
-3. Update server initialization
-4. Add tests
-5. Document migration path
+- **[RBAC Guide](../compliance/rbac.md)** - Complete authentication and authorization documentation
+- **[Backup & Restore](../operations/backup-restore.md)** - Database backup procedures (includes users)
+- **[GDPR Compliance](../compliance/gdpr-compliance.md)** - User data export and deletion
+- **[Multi-Database Guide](../user-guides/multi-database.md)** - System database overview
 

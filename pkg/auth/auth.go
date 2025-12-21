@@ -120,6 +120,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -132,6 +133,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -359,8 +361,11 @@ func DefaultAuthConfig() AuthConfig {
 // Authenticator manages users and authentication.
 type Authenticator struct {
 	mu     sync.RWMutex
-	users  map[string]*User // keyed by username
+	users  map[string]*User // keyed by username (in-memory cache for fast lookups)
 	config AuthConfig
+
+	// Storage engine for persistence (required)
+	storage storage.Engine
 
 	// Audit callback for compliance logging
 	auditLog func(event AuditEvent)
@@ -561,7 +566,24 @@ type AuditEvent struct {
 // Thread Safety:
 //
 //	All methods are thread-safe for concurrent use.
-func NewAuthenticator(config AuthConfig) (*Authenticator, error) {
+//
+// Storage Engine (Required):
+//
+//	Users are always persisted to the provided storage engine.
+//	For testing, use a memory storage engine via dependency injection.
+//
+//	// Production: System database storage
+//	systemStorage := dbManager.GetStorage("system")
+//	auth, err := auth.NewAuthenticator(config, systemStorage)
+//
+//	// Testing: Memory storage engine
+//	memoryStorage := storage.NewMemoryEngine()
+//	auth, err := auth.NewAuthenticator(config, memoryStorage)
+func NewAuthenticator(config AuthConfig, storage storage.Engine) (*Authenticator, error) {
+	if storage == nil {
+		return nil, fmt.Errorf("storage engine is required")
+	}
+
 	if config.SecurityEnabled && len(config.JWTSecret) == 0 {
 		return nil, ErrMissingSecret
 	}
@@ -579,10 +601,18 @@ func NewAuthenticator(config AuthConfig) (*Authenticator, error) {
 		config.LockoutDuration = 15 * time.Minute
 	}
 
-	return &Authenticator{
-		users:  make(map[string]*User),
-		config: config,
-	}, nil
+	auth := &Authenticator{
+		users:   make(map[string]*User),
+		config:  config,
+		storage: storage,
+	}
+
+	// Load users from storage
+	if err := auth.loadUsers(); err != nil {
+		return nil, fmt.Errorf("failed to load users: %w", err)
+	}
+
+	return auth, nil
 }
 
 // SetAuditLogger sets the audit logging callback.
@@ -597,6 +627,182 @@ func (a *Authenticator) logAudit(event AuditEvent) {
 		event.Timestamp = time.Now()
 		a.auditLog(event)
 	}
+}
+
+// loadUsers loads all users from the system database.
+// Users are stored as nodes with labels ["_User", "_System"].
+func (a *Authenticator) loadUsers() error {
+	ctx := context.Background()
+	var loadedUsers []*User
+
+	// Stream all nodes and filter for _User nodes
+	err := storage.StreamNodesWithFallback(ctx, a.storage, 1000, func(n *storage.Node) error {
+		// Check if this is a user node
+		isUserNode := false
+		for _, label := range n.Labels {
+			if label == "_User" {
+				isUserNode = true
+				break
+			}
+		}
+		if !isUserNode {
+			return nil
+		}
+
+		// Deserialize user from node properties
+		user, err := a.userFromNode(n)
+		if err != nil {
+			// Log but continue - don't fail on corrupt user data
+			return nil
+		}
+		loadedUsers = append(loadedUsers, user)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to stream users: %w", err)
+	}
+
+	// Populate in-memory cache
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, user := range loadedUsers {
+		a.users[user.Username] = user
+	}
+
+	return nil
+}
+
+// saveUser saves a user to the system database.
+// Users are stored as nodes with labels ["_User", "_System"].
+func (a *Authenticator) saveUser(user *User) error {
+	node := a.userToNode(user)
+
+	// Check if node exists
+	nodeID := storage.NodeID("user:" + user.Username)
+	existing, err := a.storage.GetNode(nodeID)
+	if err == storage.ErrNotFound {
+		// Create new user node
+		node.ID = nodeID
+		_, err = a.storage.CreateNode(node)
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check existing user: %w", err)
+	}
+
+	// Update existing user node
+	node.ID = nodeID
+	node.CreatedAt = existing.CreatedAt // Preserve original creation time
+	return a.storage.UpdateNode(node)
+}
+
+// deleteUserNode deletes a user node from the system database.
+func (a *Authenticator) deleteUserNode(username string) error {
+	nodeID := storage.NodeID("user:" + username)
+	return a.storage.DeleteNode(nodeID)
+}
+
+// userToNode converts a User to a storage.Node for persistence.
+func (a *Authenticator) userToNode(user *User) *storage.Node {
+	// Serialize roles
+	rolesJSON, _ := json.Marshal(user.Roles)
+
+	// Serialize metadata
+	metadataJSON, _ := json.Marshal(user.Metadata)
+
+	properties := map[string]any{
+		"id":            user.ID,
+		"username":      user.Username,
+		"email":         user.Email,
+		"password_hash": user.PasswordHash,
+		"roles":         string(rolesJSON),
+		"created_at":    user.CreatedAt.Unix(),
+		"updated_at":    user.UpdatedAt.Unix(),
+		"last_login":    int64(0),
+		"failed_logins": user.FailedLogins,
+		"locked_until":  int64(0),
+		"disabled":      user.Disabled,
+		"metadata":      string(metadataJSON),
+	}
+
+	// Set timestamps
+	if !user.LastLogin.IsZero() {
+		properties["last_login"] = user.LastLogin.Unix()
+	}
+	if !user.LockedUntil.IsZero() {
+		properties["locked_until"] = user.LockedUntil.Unix()
+	}
+
+	return &storage.Node{
+		ID:         storage.NodeID("user:" + user.Username),
+		Labels:     []string{"_User", "_System"},
+		Properties: properties,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
+	}
+}
+
+// userFromNode converts a storage.Node to a User.
+func (a *Authenticator) userFromNode(n *storage.Node) (*User, error) {
+	user := &User{
+		Metadata: make(map[string]string),
+	}
+
+	// Extract basic properties
+	if id, ok := n.Properties["id"].(string); ok {
+		user.ID = id
+	}
+	if username, ok := n.Properties["username"].(string); ok {
+		user.Username = username
+	}
+	if email, ok := n.Properties["email"].(string); ok {
+		user.Email = email
+	}
+	if passwordHash, ok := n.Properties["password_hash"].(string); ok {
+		user.PasswordHash = passwordHash
+	}
+
+	// Extract roles
+	if rolesJSON, ok := n.Properties["roles"].(string); ok {
+		var roles []Role
+		if err := json.Unmarshal([]byte(rolesJSON), &roles); err == nil {
+			user.Roles = roles
+		}
+	}
+
+	// Extract timestamps
+	if createdAt, ok := n.Properties["created_at"].(int64); ok {
+		user.CreatedAt = time.Unix(createdAt, 0)
+	} else {
+		user.CreatedAt = n.CreatedAt
+	}
+	if updatedAt, ok := n.Properties["updated_at"].(int64); ok {
+		user.UpdatedAt = time.Unix(updatedAt, 0)
+	} else {
+		user.UpdatedAt = n.UpdatedAt
+	}
+	if lastLogin, ok := n.Properties["last_login"].(int64); ok && lastLogin > 0 {
+		user.LastLogin = time.Unix(lastLogin, 0)
+	}
+	if lockedUntil, ok := n.Properties["locked_until"].(int64); ok && lockedUntil > 0 {
+		user.LockedUntil = time.Unix(lockedUntil, 0)
+	}
+
+	// Extract other fields
+	if failedLogins, ok := n.Properties["failed_logins"].(int64); ok {
+		user.FailedLogins = int(failedLogins)
+	}
+	if disabled, ok := n.Properties["disabled"].(bool); ok {
+		user.Disabled = disabled
+	}
+
+	// Extract metadata
+	if metadataJSON, ok := n.Properties["metadata"].(string); ok {
+		json.Unmarshal([]byte(metadataJSON), &user.Metadata)
+	}
+
+	return user, nil
 }
 
 // CreateUser creates a new user account with the given credentials and roles.
@@ -679,6 +885,12 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 
 	a.users[username] = user
 
+	// Save to storage
+	if err := a.saveUser(user); err != nil {
+		delete(a.users, username) // Rollback in-memory change
+		return nil, fmt.Errorf("failed to persist user: %w", err)
+	}
+
 	a.logAudit(AuditEvent{
 		EventType: "user_create",
 		Username:  username,
@@ -687,8 +899,11 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 		Details:   fmt.Sprintf("created with roles %v", roles),
 	})
 
-	// Return copy without password hash
-	return a.copyUserSafe(user), nil
+	// Return copy without password hash, but preserve ID for newly created users
+	// (ID is safe to expose for newly created users, not internal DB IDs)
+	safeCopy := a.copyUserSafe(user)
+	safeCopy.ID = user.ID // Preserve ID for newly created users
+	return safeCopy, nil
 }
 
 // Authenticate verifies user credentials and returns a JWT token.
@@ -806,6 +1021,9 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 		}
 		user.UpdatedAt = time.Now()
 
+		// Persist failed login state
+		a.saveUser(user) // Ignore error - don't fail on storage issues
+
 		a.logAudit(AuditEvent{
 			EventType: "login",
 			Username:  username,
@@ -823,6 +1041,9 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 	user.LockedUntil = time.Time{}
 	user.LastLogin = time.Now()
 	user.UpdatedAt = time.Now()
+
+	// Persist login state changes
+	a.saveUser(user) // Ignore error - don't fail authentication on storage issues
 
 	// Generate JWT token
 	token, err := a.generateJWT(user)
@@ -852,7 +1073,11 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 		Details:   "token generated",
 	})
 
-	return response, a.copyUserSafe(user), nil
+	// Return user copy without password hash, but preserve ID for authentication flows
+	// (ID is needed for JWT claims and user lookups)
+	safeCopy := a.copyUserSafe(user)
+	safeCopy.ID = user.ID // Preserve ID for authentication flows
+	return response, safeCopy, nil
 }
 
 // ValidateToken validates a JWT token and returns the claims.
@@ -997,6 +1222,11 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 	user.PasswordHash = string(hash)
 	user.UpdatedAt = time.Now()
 
+	// Persist password change
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist password change: %w", err)
+	}
+
 	a.logAudit(AuditEvent{
 		EventType: "password_change",
 		Username:  username,
@@ -1021,6 +1251,11 @@ func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
 	user.Roles = newRoles
 	user.UpdatedAt = time.Now()
 
+	// Persist role change
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist role change: %w", err)
+	}
+
 	a.logAudit(AuditEvent{
 		EventType: "role_change",
 		Username:  username,
@@ -1044,6 +1279,11 @@ func (a *Authenticator) DisableUser(username string) error {
 
 	user.Disabled = true
 	user.UpdatedAt = time.Now()
+
+	// Persist disable
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist user disable: %w", err)
+	}
 
 	a.logAudit(AuditEvent{
 		EventType: "user_disable",
@@ -1070,6 +1310,11 @@ func (a *Authenticator) EnableUser(username string) error {
 	user.LockedUntil = time.Time{}
 	user.UpdatedAt = time.Now()
 
+	// Persist enable
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist user enable: %w", err)
+	}
+
 	a.logAudit(AuditEvent{
 		EventType: "user_enable",
 		Username:  username,
@@ -1094,11 +1339,60 @@ func (a *Authenticator) UnlockUser(username string) error {
 	user.LockedUntil = time.Time{}
 	user.UpdatedAt = time.Now()
 
+	// Persist unlock
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist user unlock: %w", err)
+	}
+
 	a.logAudit(AuditEvent{
 		EventType: "user_unlock",
 		Username:  username,
 		UserID:    user.ID,
 		Success:   true,
+	})
+
+	return nil
+}
+
+// UpdateUser updates user profile information (email, metadata).
+// Users can update their own profile, admins can update any user.
+func (a *Authenticator) UpdateUser(username string, email string, metadata map[string]string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	user, exists := a.users[username]
+	if !exists {
+		return ErrUserNotFound
+	}
+
+	// Update email if provided
+	if email != "" {
+		user.Email = email
+	}
+
+	// Update metadata if provided
+	if metadata != nil {
+		if user.Metadata == nil {
+			user.Metadata = make(map[string]string)
+		}
+		for k, v := range metadata {
+			user.Metadata[k] = v
+		}
+	}
+
+	user.UpdatedAt = time.Now()
+
+	// Persist changes
+	if err := a.saveUser(user); err != nil {
+		return fmt.Errorf("failed to persist user update: %w", err)
+	}
+
+	a.logAudit(AuditEvent{
+		EventType: "user_update",
+		Username:  username,
+		UserID:    user.ID,
+		Success:   true,
+		Details:   "profile updated",
 	})
 
 	return nil
@@ -1115,6 +1409,13 @@ func (a *Authenticator) DeleteUser(username string) error {
 	}
 
 	userID := user.ID
+
+	// Delete from storage
+	if err := a.deleteUserNode(username); err != nil {
+		return fmt.Errorf("failed to delete user from storage: %w", err)
+	}
+
+	// Delete from in-memory cache
 	delete(a.users, username)
 
 	a.logAudit(AuditEvent{
@@ -1438,6 +1739,7 @@ func (a *Authenticator) verifyJWT(token string) (*JWTClaims, error) {
 }
 
 // copyUserSafe returns a copy of user without sensitive data.
+// Internal IDs are not included for security reasons.
 func (a *Authenticator) copyUserSafe(u *User) *User {
 	roles := make([]Role, len(u.Roles))
 	copy(roles, u.Roles)
@@ -1448,7 +1750,7 @@ func (a *Authenticator) copyUserSafe(u *User) *User {
 	}
 
 	return &User{
-		ID:        u.ID,
+		ID:        "", // Don't expose internal database IDs
 		Username:  u.Username,
 		Email:     u.Email,
 		Roles:     roles,

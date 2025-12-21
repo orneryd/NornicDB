@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Browser } from './pages/Browser';
 import { Security } from './pages/Security';
+import { AdminUsers } from './pages/AdminUsers';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 // Base path from environment variable (set at build time)
@@ -21,6 +22,11 @@ function App() {
         <Route path="/security" element={
           <ProtectedRoute>
             <Security />
+          </ProtectedRoute>
+        } />
+        <Route path="/security/admin" element={
+          <ProtectedRoute>
+            <AdminUsers />
           </ProtectedRoute>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -123,9 +123,23 @@ CREATE (n:Person {name: "Bob"})
 
 ## System Database
 
-The `"system"` database stores metadata about all databases. It is:
+The system database (`"system"`) is a special database used for NornicDB's internal metadata and user accounts. It is not accessible to users for regular queries but is used by the system for:
+
+- **Database metadata** - Information about all databases (names, creation dates, etc.)
+- **User accounts** - All authentication user accounts are stored here
+- **System configuration** - Internal system settings
+
+**User Storage:**
+- All user accounts are stored as nodes with labels `["_User", "_System"]` in the system database
+- Users are automatically loaded from the system database on server startup
+- User accounts are included in database backups automatically
+- Internal database IDs are never exposed in API responses for security
+
+See **[User Storage in System Database](../../plans/user-storage-in-system-db.md)** for details.
+
+The system database is:
 - Automatically created
-- Not accessible to users (internal use only)
+- Not accessible to users for regular queries (internal use only)
 - Cannot be dropped
 
 ## Automatic Migration

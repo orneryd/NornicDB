@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ========================================
@@ -240,6 +242,13 @@ func TestCallTxSetMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Start a transaction first
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			if err != nil {
+				t.Fatalf("Failed to start transaction: %v", err)
+			}
+
+			// Set metadata
 			result, err := exec.Execute(ctx, tt.query, nil)
 			if err != nil {
 				t.Fatalf("tx.setMetaData() failed: %v", err)
@@ -252,8 +261,25 @@ func TestCallTxSetMetadata(t *testing.T) {
 			if len(result.Rows) != 1 {
 				t.Errorf("Expected 1 row, got %d", len(result.Rows))
 			}
+
+			// Commit transaction
+			_, err = exec.Execute(ctx, "COMMIT", nil)
+			if err != nil {
+				t.Fatalf("Failed to commit transaction: %v", err)
+			}
 		})
 	}
+
+	t.Run("error_without_transaction", func(t *testing.T) {
+		// Try to set metadata without an active transaction
+		_, err := exec.Execute(ctx, `CALL tx.setMetaData({app: 'test'})`, nil)
+		if err == nil {
+			t.Error("Expected error when setting metadata without active transaction")
+		}
+		if err != nil && !strings.Contains(err.Error(), "active transaction") {
+			t.Errorf("Expected error about active transaction, got: %v", err)
+		}
+	})
 }
 
 // ========================================
@@ -398,18 +424,108 @@ func TestCallDbClearQueryCaches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	result, err := exec.Execute(ctx, `CALL db.clearQueryCaches()`, nil)
+	// Create test data
+	_, err := exec.Execute(ctx, `CREATE (n:User {name: 'Alice'})`, nil)
 	if err != nil {
-		t.Fatalf("db.clearQueryCaches() failed: %v", err)
+		t.Fatalf("Failed to create test data: %v", err)
 	}
 
-	if len(result.Columns) != 1 || result.Columns[0] != "status" {
-		t.Errorf("Expected column 'status', got %v", result.Columns)
-	}
+	t.Run("clear_all_caches", func(t *testing.T) {
+		// Execute a query to populate caches
+		result1, err := exec.Execute(ctx, `MATCH (n:User) RETURN n.name`, nil)
+		if err != nil {
+			t.Fatalf("Failed to execute query: %v", err)
+		}
+		if len(result1.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result1.Rows))
+		}
 
-	if len(result.Rows) != 1 {
-		t.Errorf("Expected 1 row, got %d", len(result.Rows))
-	}
+		// Verify cache is working (second query should be faster/cached)
+		result2, err := exec.Execute(ctx, `MATCH (n:User) RETURN n.name`, nil)
+		if err != nil {
+			t.Fatalf("Failed to execute query: %v", err)
+		}
+		if len(result2.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result2.Rows))
+		}
+
+		// Clear all caches
+		result, err := exec.Execute(ctx, `CALL db.clearQueryCaches()`, nil)
+		if err != nil {
+			t.Fatalf("db.clearQueryCaches() failed: %v", err)
+		}
+
+		if len(result.Columns) != 1 || result.Columns[0] != "status" {
+			t.Errorf("Expected column 'status', got %v", result.Columns)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result.Rows))
+		}
+
+		// Verify caches are actually cleared by checking cache state
+		// (caches should be empty after clear)
+		if exec.cache != nil {
+			// Try to get a cached result - should not be found after clear
+			_, found := exec.cache.Get(`MATCH (n:User) RETURN n.name`, nil)
+			if found {
+				t.Error("Cache should be empty after clear")
+			}
+		}
+	})
+
+	t.Run("clear_plan_cache", func(t *testing.T) {
+		// Execute query to populate plan cache
+		_, err := exec.Execute(ctx, `MATCH (n:User) RETURN count(n)`, nil)
+		if err != nil {
+			t.Fatalf("Failed to execute query: %v", err)
+		}
+
+		// Clear caches
+		_, err = exec.Execute(ctx, `CALL db.clearQueryCaches()`, nil)
+		if err != nil {
+			t.Fatalf("db.clearQueryCaches() failed: %v", err)
+		}
+
+		// Verify plan cache is cleared
+		if exec.planCache != nil {
+			_, _, found := exec.planCache.Get(`MATCH (n:User) RETURN count(n)`)
+			if found {
+				t.Error("Plan cache should be empty after clear")
+			}
+		}
+	})
+
+	t.Run("clear_node_lookup_cache", func(t *testing.T) {
+		// Execute query that uses node lookup cache
+		_, err := exec.Execute(ctx, `MATCH (n:User {name: 'Alice'}) RETURN n`, nil)
+		if err != nil {
+			t.Fatalf("Failed to execute query: %v", err)
+		}
+
+		// Verify node lookup cache has entry
+		exec.nodeLookupCacheMu.RLock()
+		cacheSizeBefore := len(exec.nodeLookupCache)
+		exec.nodeLookupCacheMu.RUnlock()
+
+		// Clear caches
+		_, err = exec.Execute(ctx, `CALL db.clearQueryCaches()`, nil)
+		if err != nil {
+			t.Fatalf("db.clearQueryCaches() failed: %v", err)
+		}
+
+		// Verify node lookup cache is cleared
+		exec.nodeLookupCacheMu.RLock()
+		cacheSizeAfter := len(exec.nodeLookupCache)
+		exec.nodeLookupCacheMu.RUnlock()
+
+		if cacheSizeAfter != 0 {
+			t.Errorf("Node lookup cache should be empty after clear, got size %d", cacheSizeAfter)
+		}
+		if cacheSizeBefore > 0 && cacheSizeAfter >= cacheSizeBefore {
+			t.Errorf("Cache should have been cleared (before: %d, after: %d)", cacheSizeBefore, cacheSizeAfter)
+		}
+	})
 }
 
 // ========================================
@@ -578,4 +694,76 @@ func TestCallDbLabelsWithYield(t *testing.T) {
 	if len(result.Rows) < 3 {
 		t.Errorf("Expected at least 3 labels, got %d", len(result.Rows))
 	}
+}
+
+// ========================================
+// db.constraints Tests
+// ========================================
+
+func TestCallDbConstraints(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	t.Run("empty_constraints", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL db.constraints()", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"name", "type", "labelsOrTypes", "properties"}, result.Columns)
+		assert.Empty(t, result.Rows, "Should return empty when no constraints exist")
+	})
+
+	t.Run("single_unique_constraint", func(t *testing.T) {
+		// Create a unique constraint
+		_, err := exec.Execute(ctx, "CREATE CONSTRAINT node_id_unique IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE", nil)
+		require.NoError(t, err)
+
+		result, err := exec.Execute(ctx, "CALL db.constraints()", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Rows, 1, "Should return one constraint")
+
+		row := result.Rows[0]
+		assert.Equal(t, "node_id_unique", row[0], "Constraint name")
+		assert.Equal(t, "UNIQUE", row[1], "Constraint type")
+		labelsOrTypes := row[2].([]string)
+		assert.Equal(t, []string{"Node"}, labelsOrTypes, "Labels")
+		properties := row[3].([]string)
+		assert.Equal(t, []string{"id"}, properties, "Properties")
+	})
+
+	t.Run("multiple_constraints", func(t *testing.T) {
+		// Create multiple constraints on different labels
+		_, err := exec.Execute(ctx, "CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.email IS UNIQUE", nil)
+		require.NoError(t, err)
+
+		_, err = exec.Execute(ctx, "CREATE CONSTRAINT user_username_unique IF NOT EXISTS FOR (u:User) REQUIRE u.username IS UNIQUE", nil)
+		require.NoError(t, err)
+
+		result, err := exec.Execute(ctx, "CALL db.constraints()", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// Should have at least 2 constraints (may have more from previous test)
+		assert.GreaterOrEqual(t, len(result.Rows), 2, "Should have multiple constraints")
+
+		// Verify constraint names are present
+		constraintNames := make(map[string]bool)
+		for _, row := range result.Rows {
+			name := row[0].(string)
+			constraintNames[name] = true
+		}
+
+		assert.True(t, constraintNames["person_email_unique"], "Should have person_email_unique constraint")
+		assert.True(t, constraintNames["user_username_unique"], "Should have user_username_unique constraint")
+	})
+
+	t.Run("constraint_with_yield", func(t *testing.T) {
+		// Test with YIELD clause
+		result, err := exec.Execute(ctx, "CALL db.constraints() YIELD name, type RETURN name, type ORDER BY name", nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"name", "type"}, result.Columns)
+		assert.Greater(t, len(result.Rows), 0, "Should return constraints")
+	})
 }

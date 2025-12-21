@@ -901,6 +901,20 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 	return result
 }
 
+// GetAllConstraints returns all constraints in the schema, regardless of label.
+// This is used by db.constraints() procedure to list all constraints.
+func (sm *SchemaManager) GetAllConstraints() []Constraint {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	result := make([]Constraint, 0, len(sm.constraints))
+	for _, c := range sm.constraints {
+		result = append(result, c)
+	}
+
+	return result
+}
+
 // AddConstraint adds a constraint to the schema.
 // Stores constraint in both the constraints map and uniqueConstraints (for backward compatibility).
 func (sm *SchemaManager) AddConstraint(c Constraint) error {

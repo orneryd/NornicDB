@@ -81,8 +81,9 @@ import (
 // across all common neighbors. Higher scores indicate stronger predictions.
 //
 // Syntax:
-//   CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id, topK: 10})
-//   YIELD node1, node2, score
+//
+//	CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id, topK: 10})
+//	YIELD node1, node2, score
 //
 // Parameters:
 //   - sourceNode: Node ID to predict connections from (required)
@@ -135,7 +136,8 @@ import (
 // ELI12:
 //
 // Imagine you want to find new friends at school. Adamic-Adar says:
-//   "If you and someone else both know the SAME person, you should be friends!"
+//
+//	"If you and someone else both know the SAME person, you should be friends!"
 //
 // BUT there's a twist: If your mutual friend knows EVERYONE in school (super popular),
 // that connection isn't very special. If your mutual friend only knows a FEW people,
@@ -158,7 +160,7 @@ import (
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -185,8 +187,9 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(cypher string) (*Execu
 // Formula: Count the number of neighbors both nodes have in common.
 //
 // Syntax:
-//   CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: id, topK: 10})
-//   YIELD node1, node2, score
+//
+//	CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: id, topK: 10})
+//	YIELD node1, node2, score
 //
 // Parameters:
 //   - sourceNode: Node ID to predict connections from (required)
@@ -264,7 +267,7 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(cypher string) (*Execu
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +284,7 @@ func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(cypher string) (*
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
 func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +301,7 @@ func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(cypher string)
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
 func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +318,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(cypher str
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
 func (e *StorageExecutor) callGdsLinkPredictionJaccard(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +338,7 @@ func (e *StorageExecutor) callGdsLinkPredictionJaccard(cypher string) (*ExecuteR
 // This is a NornicDB extension that combines topological and semantic signals,
 // but follows Neo4j GDS naming conventions for compatibility.
 func (e *StorageExecutor) callGdsLinkPredictionPredict(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher)
+	config, err := e.parseLinkPredictionConfig(cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -393,9 +396,12 @@ type linkPredictionConfig struct {
 //   - Map syntax: {sourceNode: 123, topK: 10}
 //   - Named params: sourceNode: 123, topK: 10
 //   - Positional: (123, 10)
-func (e *StorageExecutor) parseLinkPredictionConfig(cypher string) (*linkPredictionConfig, error) {
+//
+// If nodeVars is provided, expressions like id(n) will be evaluated using the bound variables.
+// If nodeVars is nil, id(n) will be treated as a literal string (backward compatibility).
+func (e *StorageExecutor) parseLinkPredictionConfig(cypher string, nodeVars map[string]*storage.Node) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
-		TopK:           10,        // Default
+		TopK:           10,            // Default
 		Algorithm:      "adamic_adar", // Default
 		TopologyWeight: 0.5,
 		SemanticWeight: 0.5,
@@ -405,7 +411,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(cypher string) (*linkPredict
 	// Extract parameter block (everything between first ( and matching ))
 	paramStart := strings.Index(cypher, "(")
 	paramEnd := strings.LastIndex(cypher, ")")
-	
+
 	if paramStart == -1 || paramEnd == -1 || paramEnd <= paramStart {
 		return nil, fmt.Errorf("invalid procedure call syntax")
 	}
@@ -444,11 +450,36 @@ func (e *StorageExecutor) parseLinkPredictionConfig(cypher string) (*linkPredict
 		case "sourcenode":
 			// Could be id(n) or numeric
 			if strings.Contains(value, "id(") {
-				// Extract node variable using pre-compiled pattern
+				// Try to evaluate id(n) expression if nodeVars is provided
+				if nodeVars != nil {
+					evaluated := e.evaluateExpressionWithContext(value, nodeVars, make(map[string]*storage.Edge))
+					if evaluated != nil {
+						// Convert evaluated result to string (node ID)
+						if nodeID, ok := evaluated.(string); ok && nodeID != "" {
+							config.SourceNode = storage.NodeID(nodeID)
+							continue
+						}
+					}
+					// If evaluation returned nil, the variable wasn't found in nodeVars
+					// Extract variable name for better error message
+					matches := idFunctionPattern.FindStringSubmatch(value)
+					if len(matches) > 1 {
+						return nil, fmt.Errorf("variable %q not found in query context (id(%s) cannot be resolved)", matches[1], matches[1])
+					}
+				}
+				// Fallback: Extract node variable using pre-compiled pattern
+				// This handles cases where nodeVars is nil (backward compatibility)
 				matches := idFunctionPattern.FindStringSubmatch(value)
 				if len(matches) > 1 {
-					// This would need to be resolved from query context
-					// For now, treat as literal
+					// If nodeVars is available, try to look up the variable
+					if nodeVars != nil {
+						if node, ok := nodeVars[matches[1]]; ok {
+							config.SourceNode = node.ID
+							continue
+						}
+					}
+					// Otherwise, treat as literal (will likely fail validation)
+					// This maintains backward compatibility but may not work correctly
 					value = matches[1]
 				}
 			}

@@ -52,11 +52,29 @@ func TestParseLinkPredictionConfig(t *testing.T) {
 			cypher:  `CALL gds.linkPrediction.adamicAdar.stream(`,
 			wantErr: true,
 		},
+		{
+			name:     "id function with nodeVars",
+			cypher:   `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(n), topK: 10})`,
+			wantErr:  false,
+			wantNode: "node-123",
+			wantTopK: 10,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config, err := executor.parseLinkPredictionConfig(tt.cypher)
+			var nodeVars map[string]*storage.Node
+			// For the id function test, provide nodeVars
+			if tt.name == "id function with nodeVars" {
+				nodeVars = map[string]*storage.Node{
+					"n": {
+						ID:         "node-123",
+						Labels:     []string{"Person"},
+						Properties: map[string]interface{}{"name": "Alice"},
+					},
+				}
+			}
+			config, err := executor.parseLinkPredictionConfig(tt.cypher, nodeVars)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseLinkPredictionConfig() error = %v, wantErr %v", err, tt.wantErr)

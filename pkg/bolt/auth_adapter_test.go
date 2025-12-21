@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestAuthenticatorAdapter(t *testing.T) {
@@ -14,7 +15,8 @@ func TestAuthenticatorAdapter(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -213,7 +215,8 @@ func TestAuthenticatorAdapterIntegrationWithBoltConfig(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -249,7 +252,8 @@ func TestBearerTokenAuthentication(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -381,7 +385,8 @@ func TestJWTAsBasicAuth(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -435,7 +440,8 @@ func TestGenerateClusterToken(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -501,7 +507,8 @@ func TestGenerateClusterTokenWithExpiry(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -610,14 +617,16 @@ func TestClusterAuthenticationE2E(t *testing.T) {
 	config1 := auth.DefaultAuthConfig()
 	config1.JWTSecret = sharedSecret
 	config1.SecurityEnabled = true
-	node1Auth, _ := auth.NewAuthenticator(config1)
+	memoryStorage1 := storage.NewMemoryEngine()
+	node1Auth, _ := auth.NewAuthenticator(config1, memoryStorage1)
 	node1Adapter := NewAuthenticatorAdapter(node1Auth)
 
 	// Node 2 (follower)
 	config2 := auth.DefaultAuthConfig()
 	config2.JWTSecret = sharedSecret
 	config2.SecurityEnabled = true
-	node2Auth, _ := auth.NewAuthenticator(config2)
+	memoryStorage2 := storage.NewMemoryEngine()
+	node2Auth, _ := auth.NewAuthenticator(config2, memoryStorage2)
 	node2Adapter := NewAuthenticatorAdapter(node2Auth)
 
 	t.Run("token generated on node1 works on node2", func(t *testing.T) {
@@ -664,7 +673,8 @@ func TestClusterAuthenticationE2E(t *testing.T) {
 		rogueConfig := auth.DefaultAuthConfig()
 		rogueConfig.JWTSecret = []byte("different-secret-not-trusted!!!")
 		rogueConfig.SecurityEnabled = true
-		rogueAuth, _ := auth.NewAuthenticator(rogueConfig)
+		memoryStorage := storage.NewMemoryEngine()
+		rogueAuth, _ := auth.NewAuthenticator(rogueConfig, memoryStorage)
 
 		// Generate token with rogue secret
 		rogueToken, err := rogueAuth.GenerateClusterToken("rogue-node", auth.RoleAdmin)
@@ -823,7 +833,8 @@ func TestConcurrentAuthentication(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	authenticator, _ := auth.NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(config, memoryStorage)
 	authenticator.CreateUser("testuser", "testpass", []auth.Role{auth.RoleEditor})
 
 	adapter := NewAuthenticatorAdapter(authenticator)

@@ -5,14 +5,14 @@
 // users and issue NornicDB JWT tokens.
 //
 // OAuth Flow:
-//   1. User initiates OAuth login → redirects to OAuth provider
-//   2. User authenticates with OAuth provider
-//   3. OAuth provider redirects back with authorization code
-//   4. Exchange code for access token
-//   5. Get user info from OAuth provider
-//   6. Create/find NornicDB user account
-//   7. Issue NornicDB JWT token
-//   8. Validate OAuth tokens on subsequent requests
+//  1. User initiates OAuth login → redirects to OAuth provider
+//  2. User authenticates with OAuth provider
+//  3. OAuth provider redirects back with authorization code
+//  4. Exchange code for access token
+//  5. Get user info from OAuth provider
+//  6. Create/find NornicDB user account
+//  7. Issue NornicDB JWT token
+//  8. Validate OAuth tokens on subsequent requests
 //
 // Security Features:
 //   - CSRF protection via state parameter
@@ -61,11 +61,11 @@ type OAuthManager struct {
 
 // OAuthConfig holds OAuth provider configuration.
 type OAuthConfig struct {
-	Provider   string // "oauth" to enable
-	Issuer     string // OAuth provider base URL
-	ClientID   string // OAuth client ID
+	Provider     string // "oauth" to enable
+	Issuer       string // OAuth provider base URL
+	ClientID     string // OAuth client ID
 	ClientSecret string // OAuth client secret
-	CallbackURL string // OAuth callback URL
+	CallbackURL  string // OAuth callback URL
 }
 
 // OAuthTokenData represents an OAuth access token response.
@@ -299,16 +299,26 @@ func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.T
 	}
 
 	// Store OAuth token info in user metadata for validation
-	// Note: This requires an UpdateUserMetadata method which we'll need to add
-	// For now, we'll store it in the user object (won't persist without UpdateUser)
-	if user.Metadata == nil {
-		user.Metadata = make(map[string]string)
-	}
-	user.Metadata["auth_method"] = "oauth"
-	user.Metadata["oauth_access_token"] = tokenData.AccessToken
-	user.Metadata["oauth_token_expiry"] = oauthTokenExpiry.Format(time.RFC3339)
+	// This persists the OAuth token information to the system database
+	oauthMetadata := make(map[string]string)
+	oauthMetadata["auth_method"] = "oauth"
+	oauthMetadata["oauth_access_token"] = tokenData.AccessToken
+	oauthMetadata["oauth_token_expiry"] = oauthTokenExpiry.Format(time.RFC3339)
 	if tokenData.RefreshToken != "" {
-		user.Metadata["oauth_refresh_token"] = tokenData.RefreshToken
+		oauthMetadata["oauth_refresh_token"] = tokenData.RefreshToken
+	}
+
+	// Merge with existing metadata if present
+	if user.Metadata != nil {
+		for k, v := range user.Metadata {
+			oauthMetadata[k] = v
+		}
+	}
+
+	// Persist OAuth token information to system database
+	if err := m.authenticator.UpdateUser(username, user.Email, oauthMetadata); err != nil {
+		// Log error but don't fail - user can still authenticate
+		// Token validation will work from the in-memory cache
 	}
 
 	// Generate JWT token for the user using GenerateAPIToken
@@ -458,4 +468,3 @@ func ConvertOAuthRoles(roles []string) []Role {
 	}
 	return result
 }
-

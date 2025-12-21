@@ -1033,7 +1033,7 @@ func TestVectorIndexSearchGPU(t *testing.T) {
 	vi.Add("a", []float32{1, 0, 0})
 	vi.Add("b", []float32{0, 1, 0})
 
-	// This will fall back to CPU since VectorIndex GPU isn't fully implemented
+	// VectorIndex GPU is now fully implemented - should use GPU if available
 	results, err := vi.Search([]float32{1, 0, 0}, 2)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
@@ -1707,7 +1707,7 @@ func TestVectorIndexSearchGPUPath(t *testing.T) {
 	vi.Add("a", []float32{1, 0, 0, 0})
 	vi.Add("b", []float32{0, 1, 0, 0})
 
-	// VectorIndex.searchGPU falls back to CPU (TODO in implementation)
+	// VectorIndex.searchGPU should now properly implement GPU search
 	results, err := vi.Search([]float32{1, 0, 0, 0}, 2)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
@@ -1717,7 +1717,353 @@ func TestVectorIndexSearchGPUPath(t *testing.T) {
 		t.Errorf("expected 2 results, got %d", len(results))
 	}
 
-	// Should have recorded fallback
+	// Check stats
 	stats := m.Stats()
-	t.Logf("Fallback count: %d", stats.FallbackCount)
+	t.Logf("Fallback count: %d, GPU ops: %d, CPU ops: %d", stats.FallbackCount, stats.OperationsGPU, stats.OperationsCPU)
+}
+
+// TestVectorIndexSyncToGPU tests the syncToGPU functionality
+func TestVectorIndexSyncToGPU(t *testing.T) {
+	t.Run("empty vectors", func(t *testing.T) {
+		config := &Config{
+			Enabled:         true,
+			FallbackOnError: true,
+		}
+		m, _ := NewManager(config)
+		if !m.IsEnabled() {
+			t.Skip("GPU not available")
+		}
+
+		vi := NewVectorIndex(m, 3)
+		// syncToGPU is called internally, but we can verify it handles empty vectors
+		results, err := vi.Search([]float32{1, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results for empty index, got %d", len(results))
+		}
+	})
+
+	t.Run("GPU disabled", func(t *testing.T) {
+		config := &Config{
+			Enabled: false,
+		}
+		m, _ := NewManager(config)
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+
+		// Should use CPU search when GPU is disabled
+		results, err := vi.Search([]float32{1, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 result, got %d", len(results))
+		}
+	})
+
+	t.Run("with vectors", func(t *testing.T) {
+		config := &Config{
+			Enabled:         true,
+			FallbackOnError: true,
+		}
+		m, _ := NewManager(config)
+		if !m.IsEnabled() {
+			t.Skip("GPU not available")
+		}
+
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+		vi.Add("b", []float32{0, 1, 0})
+		vi.Add("c", []float32{0, 0, 1})
+
+		// First search should trigger sync
+		results, err := vi.Search([]float32{1, 0, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results))
+		}
+
+		// Second search should use already-synced GPU
+		results2, err := vi.Search([]float32{0, 1, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results2) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results2))
+		}
+	})
+
+	t.Run("mark unsynced on add", func(t *testing.T) {
+		config := &Config{
+			Enabled:         true,
+			FallbackOnError: true,
+		}
+		m, _ := NewManager(config)
+		if !m.IsEnabled() {
+			t.Skip("GPU not available")
+		}
+
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+
+		// First search syncs
+		_, err := vi.Search([]float32{1, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+
+		// Add new vector should mark as unsynced
+		vi.Add("b", []float32{0, 1, 0})
+
+		// Next search should re-sync
+		results, err := vi.Search([]float32{0, 1, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results after adding, got %d", len(results))
+		}
+	})
+}
+
+// TestVectorIndexSearchGPURouting tests the searchGPU routing logic
+func TestVectorIndexSearchGPURouting(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		FallbackOnError: true,
+	}
+	m, _ := NewManager(config)
+	if !m.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+
+	vi := NewVectorIndex(m, 3)
+	vi.Add("a", []float32{1, 0, 0})
+	vi.Add("b", []float32{0, 1, 0})
+	vi.Add("c", []float32{0, 0, 1})
+
+	t.Run("auto-sync on first search", func(t *testing.T) {
+		// First search should trigger sync
+		results, err := vi.Search([]float32{1, 0, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results))
+		}
+	})
+
+	t.Run("no re-sync on subsequent searches", func(t *testing.T) {
+		// Subsequent searches should use already-synced GPU
+		results, err := vi.Search([]float32{0, 1, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results))
+		}
+	})
+
+	t.Run("fallback on sync error", func(t *testing.T) {
+		// Create a new index and disable GPU after adding vectors
+		vi2 := NewVectorIndex(m, 3)
+		vi2.Add("a", []float32{1, 0, 0})
+		m.Disable()
+
+		// Should fall back to CPU
+		results, err := vi2.Search([]float32{1, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 result, got %d", len(results))
+		}
+
+		stats := m.Stats()
+		if stats.FallbackCount == 0 {
+			t.Log("Note: Fallback count is 0 - may have synced before disable")
+		}
+
+		m.Enable() // Re-enable for other tests
+	})
+}
+
+// TestVectorIndexBackendRouting tests routing to different GPU backends
+func TestVectorIndexBackendRouting(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		FallbackOnError: true,
+	}
+	m, _ := NewManager(config)
+	if !m.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+
+	device := m.Device()
+	if device == nil {
+		t.Skip("No GPU device available")
+	}
+
+	vi := NewVectorIndex(m, 3)
+	vi.Add("a", []float32{1, 0, 0})
+	vi.Add("b", []float32{0, 1, 0})
+	vi.Add("c", []float32{0, 0, 1})
+
+	t.Run("routes to correct backend", func(t *testing.T) {
+		// Search should route to the correct backend based on device
+		results, err := vi.Search([]float32{1, 0, 0}, 2)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results))
+		}
+
+		// Verify backend was used (stats should show GPU operations)
+		stats := m.Stats()
+		t.Logf("Backend: %s, GPU ops: %d, CPU ops: %d", device.Backend, stats.OperationsGPU, stats.OperationsCPU)
+	})
+}
+
+// TestVectorIndexSearchBackends tests each backend search method
+func TestVectorIndexSearchBackends(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		FallbackOnError: true,
+	}
+	m, _ := NewManager(config)
+	if !m.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+
+	device := m.Device()
+	if device == nil {
+		t.Skip("No GPU device available")
+	}
+
+	vi := NewVectorIndex(m, 3)
+	vi.Add("a", []float32{1, 0, 0})
+	vi.Add("b", []float32{0, 1, 0})
+	vi.Add("c", []float32{0, 0, 1})
+
+	// Test that search works regardless of backend
+	results, err := vi.Search([]float32{1, 0, 0}, 2)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+
+	// Verify results are correct
+	if results[0].ID != "a" {
+		t.Errorf("expected first result to be 'a', got %s", results[0].ID)
+	}
+	if results[0].Score < 0.99 {
+		t.Errorf("expected score ~1.0 for exact match, got %f", results[0].Score)
+	}
+}
+
+// TestVectorIndexConcurrentAccess tests thread safety
+func TestVectorIndexConcurrentAccess(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		FallbackOnError: true,
+	}
+	m, _ := NewManager(config)
+	if !m.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+
+	vi := NewVectorIndex(m, 3)
+	vi.Add("a", []float32{1, 0, 0})
+	vi.Add("b", []float32{0, 1, 0})
+	vi.Add("c", []float32{0, 0, 1})
+
+	// Concurrent searches
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			results, err := vi.Search([]float32{1, 0, 0}, 2)
+			if err != nil {
+				t.Errorf("Search() error = %v", err)
+			}
+			if len(results) != 2 {
+				t.Errorf("expected 2 results, got %d", len(results))
+			}
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+// TestVectorIndexEdgeCases tests edge cases and error handling
+func TestVectorIndexEdgeCases(t *testing.T) {
+	config := &Config{
+		Enabled:         true,
+		FallbackOnError: true,
+	}
+	m, _ := NewManager(config)
+	if !m.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+
+	t.Run("k greater than available", func(t *testing.T) {
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+		vi.Add("b", []float32{0, 1, 0})
+
+		results, err := vi.Search([]float32{1, 0, 0}, 100)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results (limited by available), got %d", len(results))
+		}
+	})
+
+	t.Run("k equals zero", func(t *testing.T) {
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+
+		results, err := vi.Search([]float32{1, 0, 0}, 0)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results for k=0, got %d", len(results))
+		}
+	})
+
+	t.Run("invalid query dimensions", func(t *testing.T) {
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+
+		_, err := vi.Search([]float32{1, 0}, 1)
+		if err != ErrInvalidDimensions {
+			t.Errorf("expected ErrInvalidDimensions, got %v", err)
+		}
+	})
+
+	t.Run("empty query vector", func(t *testing.T) {
+		vi := NewVectorIndex(m, 3)
+		vi.Add("a", []float32{1, 0, 0})
+
+		results, err := vi.Search([]float32{0, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search() error = %v", err)
+		}
+		// Should still return results (though with low similarity)
+		if len(results) == 0 {
+			t.Error("expected at least 1 result even for zero vector")
+		}
+	})
 }

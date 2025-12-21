@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,7 +61,8 @@ func TestOAuthManager_GenerateAuthURL(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	auth, err := NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
 	manager := NewOAuthManager(auth)
@@ -84,7 +86,8 @@ func TestOAuthManager_ValidateState(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	auth, err := NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
 	manager := NewOAuthManager(auth)
@@ -123,7 +126,7 @@ func TestOAuthManager_ExchangeCode(t *testing.T) {
 			tokenResp := OAuthTokenData{
 				AccessToken:  "test-access-token",
 				TokenType:    "Bearer",
-				ExpiresIn:   3600,
+				ExpiresIn:    3600,
 				Scope:        "openid profile email",
 				RefreshToken: "test-refresh-token",
 			}
@@ -141,7 +144,8 @@ func TestOAuthManager_ExchangeCode(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	auth, err := NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
 	manager := NewOAuthManager(auth)
@@ -188,7 +192,8 @@ func TestOAuthManager_GetUserInfo(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	auth, err := NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
 	manager := NewOAuthManager(auth)
@@ -232,7 +237,8 @@ func TestOAuthManager_ValidateOAuthToken(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	auth, err := NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
 	manager := NewOAuthManager(auth)
@@ -354,4 +360,3 @@ func TestConvertOAuthRoles(t *testing.T) {
 		})
 	}
 }
-

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestNewAuthenticator(t *testing.T) {
@@ -41,7 +43,8 @@ func TestNewAuthenticator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewAuthenticator(tt.config)
+			memoryStorage := storage.NewMemoryEngine()
+			_, err := NewAuthenticator(tt.config, memoryStorage)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewAuthenticator() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -132,7 +135,8 @@ func TestAuthenticateWithExpiry(t *testing.T) {
 		JWTSecret:       []byte("test-secret-at-least-32-bytes!!"),
 		TokenExpiry:     time.Hour,
 	}
-	auth, err := NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
@@ -160,7 +164,8 @@ func TestAccountLockout(t *testing.T) {
 		MaxFailedLogins: 3,
 		LockoutDuration: time.Minute,
 	}
-	auth, err := NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
@@ -281,7 +286,8 @@ func TestTokenExpiration(t *testing.T) {
 		JWTSecret:       []byte("test-secret-at-least-32-bytes!!"),
 		TokenExpiry:     time.Second * 2, // 2 seconds for testing
 	}
-	auth, err := NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
@@ -325,7 +331,8 @@ func TestSecurityDisabled(t *testing.T) {
 	config := AuthConfig{
 		SecurityEnabled: false,
 	}
-	auth, err := NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
@@ -716,7 +723,8 @@ func newTestAuthenticator(t *testing.T) *Authenticator {
 		LockoutDuration:   15 * time.Minute,
 		BcryptCost:        4, // Low cost for faster tests
 	}
-	auth, err := NewAuthenticator(config)
+	memoryStorage := storage.NewMemoryEngine()
+	auth, err := NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
@@ -817,9 +825,10 @@ func TestGenerateClusterToken(t *testing.T) {
 	})
 
 	t.Run("fails without JWT secret", func(t *testing.T) {
+		memoryStorage := storage.NewMemoryEngine()
 		noSecretAuth, _ := NewAuthenticator(AuthConfig{
 			SecurityEnabled: false,
-		})
+		}, memoryStorage)
 
 		_, err := noSecretAuth.GenerateClusterToken("node", RoleAdmin)
 		if err == nil {
@@ -939,9 +948,10 @@ func TestGenerateClusterTokenWithExpiry(t *testing.T) {
 	})
 
 	t.Run("fails without JWT secret", func(t *testing.T) {
+		memoryStorage := storage.NewMemoryEngine()
 		noSecretAuth, _ := NewAuthenticator(AuthConfig{
 			SecurityEnabled: false,
-		})
+		}, memoryStorage)
 
 		_, err := noSecretAuth.GenerateClusterTokenWithExpiry("node", RoleAdmin, 1*time.Hour)
 		if err == nil {
@@ -978,15 +988,17 @@ func TestGenerateClusterTokenWithExpiry(t *testing.T) {
 func TestClusterTokenCrossValidation(t *testing.T) {
 	sharedSecret := []byte("shared-cluster-secret-32-chars!!")
 
+	memoryStorage1 := storage.NewMemoryEngine()
 	auth1, _ := NewAuthenticator(AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       sharedSecret,
-	})
+	}, memoryStorage1)
 
+	memoryStorage2 := storage.NewMemoryEngine()
 	auth2, _ := NewAuthenticator(AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       sharedSecret,
-	})
+	}, memoryStorage2)
 
 	t.Run("token from auth1 validates on auth2", func(t *testing.T) {
 		token, err := auth1.GenerateClusterToken("node-from-auth1", RoleAdmin)
@@ -1021,10 +1033,11 @@ func TestClusterTokenCrossValidation(t *testing.T) {
 	})
 
 	t.Run("token with different secret fails", func(t *testing.T) {
+		memoryStorage := storage.NewMemoryEngine()
 		rogueAuth, _ := NewAuthenticator(AuthConfig{
 			SecurityEnabled: true,
 			JWTSecret:       []byte("different-secret-not-trusted!!!"),
-		})
+		}, memoryStorage)
 
 		rogueToken, _ := rogueAuth.GenerateClusterToken("rogue-node", RoleAdmin)
 

@@ -113,12 +113,12 @@ func parseYieldClause(cypher string) *yieldClause {
 	if returnIdx != -1 {
 		result.hasReturn = true
 		returnPart := strings.TrimSpace(afterYield[returnIdx+6:])
-		
+
 		// Find ORDER BY, LIMIT, SKIP positions
 		orderIdx := findKeywordIndexInContext(returnPart, "ORDER")
 		limitIdx := findKeywordIndexInContext(returnPart, "LIMIT")
 		skipIdx := findKeywordIndexInContext(returnPart, "SKIP")
-		
+
 		// Find where RETURN items end
 		endIdx := len(returnPart)
 		if orderIdx != -1 {
@@ -130,9 +130,9 @@ func parseYieldClause(cypher string) *yieldClause {
 		if skipIdx != -1 {
 			endIdx = min(endIdx, skipIdx)
 		}
-		
+
 		result.returnExpr = strings.TrimSpace(returnPart[:endIdx])
-		
+
 		// Parse ORDER BY clause
 		if orderIdx != -1 {
 			// Find end of ORDER BY (at LIMIT, SKIP, or end of string)
@@ -151,7 +151,7 @@ func parseYieldClause(cypher string) *yieldClause {
 				result.orderBy = strings.TrimSpace(orderPart[5:])
 			}
 		}
-		
+
 		// Parse LIMIT value
 		if limitIdx != -1 {
 			limitEnd := len(returnPart)
@@ -165,7 +165,7 @@ func parseYieldClause(cypher string) *yieldClause {
 				result.limit = n
 			}
 		}
-		
+
 		// Parse SKIP value
 		if skipIdx != -1 {
 			skipEnd := len(returnPart)
@@ -199,7 +199,7 @@ func parseYieldClause(cypher string) *yieldClause {
 				result.orderBy = strings.TrimSpace(orderPart[5:])
 			}
 		}
-		
+
 		// Parse LIMIT value
 		if limitIdx != -1 {
 			limitEnd := len(afterYield)
@@ -216,7 +216,7 @@ func parseYieldClause(cypher string) *yieldClause {
 				result.limit = n
 			}
 		}
-		
+
 		// Parse SKIP value
 		if skipIdx != -1 {
 			skipEnd := len(afterYield)
@@ -614,7 +614,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	switch {
 	// Neo4j Vector Index Procedures (CRITICAL for Mimir)
 	case strings.Contains(upper, "DB.INDEX.VECTOR.QUERYNODES"):
-		result, err = e.callDbIndexVectorQueryNodes(cypher)
+		result, err = e.callDbIndexVectorQueryNodes(ctx, cypher)
 	// Neo4j Fulltext Index Procedures (CRITICAL for Mimir)
 	case strings.Contains(upper, "DB.INDEX.FULLTEXT.QUERYNODES"):
 		result, err = e.callDbIndexFulltextQueryNodes(cypher)
@@ -924,11 +924,43 @@ func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
 	}, nil
 }
 
+// callDbConstraints returns all constraints in the database.
+// Syntax: CALL db.constraints() YIELD name, type, labelsOrTypes, properties
+// Returns constraints in Neo4j-compatible format.
 func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
-	// Return empty for now
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return &ExecuteResult{
+			Columns: []string{"name", "type", "labelsOrTypes", "properties"},
+			Rows:    [][]interface{}{},
+		}, nil
+	}
+
+	// Get all constraints from schema
+	allConstraints := schema.GetAllConstraints()
+
+	rows := make([][]interface{}, 0, len(allConstraints))
+	for _, constraint := range allConstraints {
+		// Format labelsOrTypes as []string (single label for node constraints)
+		labelsOrTypes := []string{constraint.Label}
+
+		// Format properties as []string
+		properties := constraint.Properties
+
+		// Convert constraint type to string
+		constraintType := string(constraint.Type)
+
+		rows = append(rows, []interface{}{
+			constraint.Name,
+			constraintType,
+			labelsOrTypes,
+			properties,
+		})
+	}
+
 	return &ExecuteResult{
 		Columns: []string{"name", "type", "labelsOrTypes", "properties"},
-		Rows:    [][]interface{}{},
+		Rows:    rows,
 	}, nil
 }
 
@@ -1204,7 +1236,7 @@ func (e *StorageExecutor) callDbmsFunctions() (*ExecuteResult, error) {
 // Returns:
 //   - node: The matched node with all properties
 //   - score: Cosine similarity score (0.0 to 1.0)
-func (e *StorageExecutor) callDbIndexVectorQueryNodes(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Parse parameters from: CALL db.index.vector.queryNodes('indexName', k, queryInput)
 	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
 	indexName, k, input, err := e.parseVectorQueryParams(cypher)
@@ -1223,20 +1255,95 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(cypher string) (*ExecuteRe
 		if e.embedder == nil {
 			return nil, fmt.Errorf("string query provided but no embedder configured; use vector array or configure embedding service")
 		}
-		ctx := context.Background()
 		embedded, embedErr := e.embedder.Embed(ctx, input.stringQuery)
 		if embedErr != nil {
 			return nil, fmt.Errorf("failed to embed query '%s': %w", input.stringQuery, embedErr)
 		}
 		queryVector = embedded
 	} else if input.paramName != "" {
-		// Parameter reference - should have been resolved by caller
-		// For now, return empty result (parameter resolution happens at higher level)
-		return &ExecuteResult{
-			Columns: []string{"node", "score"},
-			Rows:    [][]interface{}{},
-		}, nil
+		// Parameter reference - resolve from context parameters
+		// Parameters should have been substituted by executeCall, but if not, try to resolve here
+		params := getParamsFromContext(ctx)
+		if params == nil {
+			// No parameters provided - return empty result (parameter not resolved)
+			return &ExecuteResult{
+				Columns: []string{"node", "score"},
+				Rows:    [][]interface{}{},
+			}, nil
+		}
+
+		paramValue, exists := params[input.paramName]
+		if !exists {
+			// Parameter not found in provided parameters
+			return nil, fmt.Errorf("parameter $%s not provided", input.paramName)
+		}
+
+		// Convert parameter value to []float32
+		// Parameter can be []float32, []float64, []interface{}, or string (to embed)
+		switch val := paramValue.(type) {
+		case []float32:
+			queryVector = val
+		case []float64:
+			queryVector = make([]float32, len(val))
+			for i, v := range val {
+				queryVector[i] = float32(v)
+			}
+		case []interface{}:
+			queryVector = make([]float32, 0, len(val))
+			for _, item := range val {
+				switch v := item.(type) {
+				case float32:
+					queryVector = append(queryVector, v)
+				case float64:
+					queryVector = append(queryVector, float32(v))
+				case int:
+					queryVector = append(queryVector, float32(v))
+				case int64:
+					queryVector = append(queryVector, float32(v))
+				default:
+					return nil, fmt.Errorf("parameter $%s contains non-numeric value: %T", input.paramName, v)
+				}
+			}
+		case string:
+			// String parameter - embed it
+			if e.embedder == nil {
+				return nil, fmt.Errorf("parameter $%s is a string but no embedder configured; provide vector array or configure embedding service", input.paramName)
+			}
+			embedded, embedErr := e.embedder.Embed(ctx, val)
+			if embedErr != nil {
+				return nil, fmt.Errorf("failed to embed parameter $%s value '%s': %w", input.paramName, val, embedErr)
+			}
+			queryVector = embedded
+		default:
+			return nil, fmt.Errorf("parameter $%s has unsupported type for vector query: %T (expected []float32, []float64, []interface{}, or string)", input.paramName, val)
+		}
 	} else {
+		// No query input provided - check if this might be a substituted invalid parameter
+		params := getParamsFromContext(ctx)
+		if params != nil {
+			// Parameters were provided, so if we have no input, it might be a substituted invalid type
+			// Check which parameters have unsupported types to provide a better error message
+			var unsupportedParams []string
+			for paramName, paramValue := range params {
+				// Check if this parameter has an unsupported type for vector queries
+				switch paramValue.(type) {
+				case []float32, []float64, []interface{}, string:
+					// Supported types - skip
+					continue
+				default:
+					// Unsupported type - add to list
+					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
+				}
+			}
+
+			if len(unsupportedParams) > 0 {
+				// Found parameters with unsupported types - provide specific error
+				paramList := strings.Join(unsupportedParams, ", ")
+				return nil, fmt.Errorf("no query vector or search text provided - parameter(s) %s have unsupported type (expected []float32, []float64, []interface{}, or string)", paramList)
+			}
+			// Parameters exist but all have supported types - might be a different issue
+			return nil, fmt.Errorf("no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)")
+		}
 		return nil, fmt.Errorf("no query vector or search text provided")
 	}
 
@@ -1359,9 +1466,12 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	indexName = "default"
 	input = &vectorQueryInput{}
 
-	// Find the procedure call
+	// Find the procedure call (supports both queryNodes and queryRelationships)
 	upper := strings.ToUpper(cypher)
 	callIdx := strings.Index(upper, "DB.INDEX.VECTOR.QUERYNODES")
+	if callIdx == -1 {
+		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")
+	}
 	if callIdx == -1 {
 		return "", 0, nil, fmt.Errorf("vector query procedure not found")
 	}
@@ -1415,6 +1525,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		// - Vector array: [0.1, 0.2, ...]
 		// - String query: 'search text' or "search text"
 		// - Parameter: $queryVector
+		// - Substituted parameter value: 123, "text", [0.1, 0.2], etc.
 		queryStr := strings.TrimSpace(parts[2])
 
 		if strings.HasPrefix(queryStr, "$") {
@@ -1427,6 +1538,10 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 			(strings.HasPrefix(queryStr, "\"") && strings.HasSuffix(queryStr, "\"")) {
 			// Quoted string query - will be embedded server-side
 			input.stringQuery = strings.Trim(queryStr, "'\"")
+		} else {
+			// Could be a substituted parameter value that doesn't match patterns above
+			// This will be handled in callDbIndexVectorQueryNodes when checking for parameter resolution
+			// For now, leave it empty - will be caught by validation later
 		}
 	}
 
@@ -2197,36 +2312,308 @@ func isTerminateNode(node *storage.Node, terminateLabels []string) bool {
 // callApocPathExpand implements apoc.path.expand
 // Syntax: CALL apoc.path.expand(startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
 //
-// Similar to subgraphNodes but returns paths instead of just nodes.
-// For now, delegates to subgraphNodes since path tracking is not yet implemented.
+// Returns paths (sequences of nodes and relationships) from the start node.
+// Unlike subgraphNodes which returns just nodes, expand returns complete paths.
 func (e *StorageExecutor) callApocPathExpand(cypher string) (*ExecuteResult, error) {
-	// For now, delegate to subgraphNodes with the same logic
-	// A full implementation would track and return actual paths
-	subgraphResult, err := e.callApocPathSubgraphNodes(cypher)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to path format
 	result := &ExecuteResult{
 		Columns: []string{"path"},
-		Rows:    make([][]interface{}, 0, len(subgraphResult.Rows)),
+		Rows:    [][]interface{}{},
 	}
 
-	for _, row := range subgraphResult.Rows {
-		if len(row) > 0 {
-			// Wrap node in a simple path representation
-			result.Rows = append(result.Rows, []interface{}{
-				map[string]interface{}{
-					"nodes":         []interface{}{row[0]},
-					"relationships": []interface{}{},
-					"length":        0,
-				},
-			})
-		}
+	// Parse parameters: (startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
+	params := e.parseApocPathExpandParams(cypher)
+	if params.startNode == nil {
+		// No start node found, return empty result
+		return result, nil
+	}
+
+	// Build config from parameters
+	config := apocPathConfig{
+		maxLevel:          params.maxLevel,
+		minLevel:          params.minLevel,
+		relationshipTypes: params.relationshipTypes,
+		direction:         params.direction,
+		includeLabels:     params.includeLabels,
+		excludeLabels:     params.excludeLabels,
+		terminateLabels:   params.terminateLabels,
+		limit:             0, // No limit for expand
+		bfs:               true,
+	}
+
+	// Perform BFS traversal with path tracking
+	paths := e.bfsPathTraversal(params.startNode, config)
+
+	// Convert paths to result format
+	for _, path := range paths {
+		result.Rows = append(result.Rows, []interface{}{e.pathToMap(path)})
 	}
 
 	return result, nil
+}
+
+// apocPathExpandParams holds parsed parameters for apoc.path.expand
+type apocPathExpandParams struct {
+	startNode         *storage.Node
+	relationshipTypes []string
+	direction         string
+	includeLabels     []string
+	excludeLabels     []string
+	terminateLabels   []string
+	minLevel          int
+	maxLevel          int
+}
+
+// parseApocPathExpandParams parses positional parameters from apoc.path.expand call
+// Syntax: CALL apoc.path.expand(startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
+func (e *StorageExecutor) parseApocPathExpandParams(cypher string) apocPathExpandParams {
+	params := apocPathExpandParams{
+		minLevel:  1,
+		maxLevel:  1,
+		direction: "both",
+	}
+
+	// Find the procedure call and extract parameters
+	upper := strings.ToUpper(cypher)
+	callIdx := strings.Index(upper, "APOC.PATH.EXPAND")
+	if callIdx == -1 {
+		return params
+	}
+
+	// Find opening parenthesis
+	rest := cypher[callIdx:]
+	parenIdx := strings.Index(rest, "(")
+	if parenIdx == -1 {
+		return params
+	}
+
+	// Find matching closing parenthesis
+	parenContent := rest[parenIdx+1:]
+	depth := 1
+	endIdx := -1
+	for i, c := range parenContent {
+		if c == '(' {
+			depth++
+		} else if c == ')' {
+			depth--
+			if depth == 0 {
+				endIdx = i
+				break
+			}
+		}
+	}
+	if endIdx == -1 {
+		return params
+	}
+
+	// Split parameters carefully (respecting quotes and nested structures)
+	paramStr := parenContent[:endIdx]
+	parts := splitParamsCarefully(paramStr)
+
+	// Parse startNode (first parameter)
+	if len(parts) > 0 {
+		firstParam := strings.TrimSpace(parts[0])
+		// Try to extract node ID from MATCH clause first
+		startNodeID := e.extractStartNodeID(cypher)
+		if startNodeID != "" && startNodeID != "*" {
+			if node, err := e.storage.GetNode(storage.NodeID(startNodeID)); err == nil && node != nil {
+				params.startNode = node
+			}
+		} else if firstParam != "" && firstParam != "null" {
+			// If no ID found, try to find node by variable name from MATCH clause
+			// Look for pattern: MATCH (varName:Label {id: 'value'})
+			varName := strings.Trim(firstParam, "'\"")
+			if node := e.findNodeByVariableInMatch(cypher, varName); node != nil {
+				params.startNode = node
+			}
+		}
+	}
+
+	// Parse relationshipFilter (second parameter)
+	if len(parts) > 1 {
+		relFilter := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+		if relFilter != "" && relFilter != "null" {
+			params.relationshipTypes, params.direction = parseRelationshipFilter(relFilter)
+		}
+	}
+
+	// Parse labelFilter (third parameter)
+	if len(parts) > 2 {
+		labelFilter := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
+		if labelFilter != "" && labelFilter != "null" {
+			params.includeLabels, params.excludeLabels, params.terminateLabels = parseLabelFilter(labelFilter)
+		}
+	}
+
+	// Parse minLevel (fourth parameter)
+	if len(parts) > 3 {
+		minLevelStr := strings.TrimSpace(parts[3])
+		if minLevel, err := strconv.Atoi(minLevelStr); err == nil {
+			params.minLevel = minLevel
+		}
+	}
+
+	// Parse maxLevel (fifth parameter)
+	if len(parts) > 4 {
+		maxLevelStr := strings.TrimSpace(parts[4])
+		if maxLevel, err := strconv.Atoi(maxLevelStr); err == nil {
+			params.maxLevel = maxLevel
+		}
+	}
+
+	return params
+}
+
+// findNodeByVariableInMatch finds a node by variable name from a MATCH clause
+func (e *StorageExecutor) findNodeByVariableInMatch(cypher, varName string) *storage.Node {
+	// Look for MATCH clause with this variable
+	// Pattern: MATCH (varName:Label {id: 'value'}) or MATCH (varName:Label {prop: 'value'})
+	matchPattern := regexp.MustCompile(`(?i)MATCH\s*\(` + regexp.QuoteMeta(varName) + `[^)]*\)`)
+	matches := matchPattern.FindStringSubmatch(cypher)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	// Extract the node pattern
+	nodePattern := matches[0]
+
+	// Try to extract ID from {id: 'value'} pattern
+	if idMatch := apocNodeIdBracePattern.FindStringSubmatch(nodePattern); len(idMatch) > 1 {
+		if node, err := e.storage.GetNode(storage.NodeID(idMatch[1])); err == nil && node != nil {
+			return node
+		}
+	}
+
+	// Try to find node by parsing the pattern
+	nodeInfo := e.parseNodePattern(nodePattern)
+	if len(nodeInfo.labels) > 0 {
+		candidates, _ := e.storage.GetNodesByLabel(nodeInfo.labels[0])
+		for _, node := range candidates {
+			if e.nodeMatchesProps(node, nodeInfo.properties) {
+				return node
+			}
+		}
+	}
+
+	return nil
+}
+
+// bfsPathTraversal performs breadth-first traversal with path tracking
+func (e *StorageExecutor) bfsPathTraversal(startNode *storage.Node, config apocPathConfig) []PathResult {
+	var results []PathResult
+
+	// Queue item tracks the path taken to reach this node
+	type pathQueueItem struct {
+		path  PathResult
+		level int
+	}
+
+	// Start with path containing just the start node
+	initialPath := PathResult{
+		Nodes:         []*storage.Node{startNode},
+		Relationships: []*storage.Edge{},
+		Length:        0,
+	}
+	queue := []pathQueueItem{{path: initialPath, level: 0}}
+
+	// Track visited nodes to avoid cycles
+	visited := make(map[string]bool)
+	visited[string(startNode.ID)] = true
+
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+
+		currentPath := item.path
+		level := item.level
+		currentNode := currentPath.Nodes[len(currentPath.Nodes)-1]
+
+		// Check if we should include this path
+		if level >= config.minLevel && level <= config.maxLevel {
+			// Check label filters on the end node
+			if passesLabelFilter(currentNode, config.includeLabels, config.excludeLabels) {
+				// Create a copy of the path for results
+				pathCopy := PathResult{
+					Nodes:         make([]*storage.Node, len(currentPath.Nodes)),
+					Relationships: make([]*storage.Edge, len(currentPath.Relationships)),
+					Length:        currentPath.Length,
+				}
+				copy(pathCopy.Nodes, currentPath.Nodes)
+				copy(pathCopy.Relationships, currentPath.Relationships)
+				results = append(results, pathCopy)
+			}
+		}
+
+		// Check if we should terminate at this node
+		if isTerminateNode(currentNode, config.terminateLabels) {
+			continue
+		}
+
+		// Check if we've reached max level
+		if level >= config.maxLevel {
+			continue
+		}
+
+		// Get edges based on direction
+		var edges []*storage.Edge
+		switch config.direction {
+		case "outgoing":
+			edges, _ = e.storage.GetOutgoingEdges(currentNode.ID)
+		case "incoming":
+			edges, _ = e.storage.GetIncomingEdges(currentNode.ID)
+		default: // "both"
+			out, _ := e.storage.GetOutgoingEdges(currentNode.ID)
+			in, _ := e.storage.GetIncomingEdges(currentNode.ID)
+			edges = append(out, in...)
+		}
+
+		// Process each edge
+		for _, edge := range edges {
+			// Check relationship type filter
+			if len(config.relationshipTypes) > 0 {
+				found := false
+				for _, t := range config.relationshipTypes {
+					if edge.Type == t {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
+			// Get the other node
+			var nextNodeID storage.NodeID
+			if edge.StartNode == currentNode.ID {
+				nextNodeID = edge.EndNode
+			} else {
+				nextNodeID = edge.StartNode
+			}
+
+			// Skip if already visited in this path (avoid cycles)
+			// But allow revisiting nodes if they're reached via different paths
+			nextNode, err := e.storage.GetNode(nextNodeID)
+			if err != nil || nextNode == nil {
+				continue
+			}
+
+			// Create new path by extending current path
+			newPath := PathResult{
+				Nodes:         make([]*storage.Node, len(currentPath.Nodes)+1),
+				Relationships: make([]*storage.Edge, len(currentPath.Relationships)+1),
+				Length:        currentPath.Length + 1,
+			}
+			copy(newPath.Nodes, currentPath.Nodes)
+			copy(newPath.Relationships, currentPath.Relationships)
+			newPath.Nodes[len(newPath.Nodes)-1] = nextNode
+			newPath.Relationships[len(newPath.Relationships)-1] = edge
+
+			// Add to queue
+			queue = append(queue, pathQueueItem{path: newPath, level: level + 1})
+		}
+	}
+
+	return results
 }
 
 // callApocPathSpanningTree implements apoc.path.spanningTree
@@ -2647,13 +3034,208 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (
 }
 
 // callDbIndexVectorQueryRelationships searches relationships using vector similarity - Neo4j db.index.vector.queryRelationships()
+// Syntax: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
+// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
 func (e *StorageExecutor) callDbIndexVectorQueryRelationships(cypher string) (*ExecuteResult, error) {
-	// For now, return empty - relationships typically don't have embeddings
-	// A full implementation would need relationship embeddings
-	return &ExecuteResult{
+	ctx := context.Background()
+
+	// Parse parameters from: CALL db.index.vector.queryRelationships('indexName', k, queryInput)
+	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
+	indexName, k, input, err := e.parseVectorQueryParams(cypher)
+	if err != nil {
+		return nil, fmt.Errorf("vector query parse error: %w", err)
+	}
+
+	// Resolve the query vector (same logic as queryNodes)
+	var queryVector []float32
+
+	if len(input.vector) > 0 {
+		// Direct vector provided (Neo4j compatible)
+		queryVector = input.vector
+	} else if input.stringQuery != "" {
+		// String query - embed server-side (NornicDB enhancement)
+		if e.embedder == nil {
+			return nil, fmt.Errorf("string query provided but no embedder configured; use vector array or configure embedding service")
+		}
+		embedded, embedErr := e.embedder.Embed(ctx, input.stringQuery)
+		if embedErr != nil {
+			return nil, fmt.Errorf("failed to embed query '%s': %w", input.stringQuery, embedErr)
+		}
+		queryVector = embedded
+	} else if input.paramName != "" {
+		// Parameter reference - resolve from context parameters
+		params := getParamsFromContext(ctx)
+		if params == nil {
+			// No parameters provided - return empty result (parameter not resolved)
+			return &ExecuteResult{
+				Columns: []string{"relationship", "score"},
+				Rows:    [][]interface{}{},
+			}, nil
+		}
+
+		paramValue, exists := params[input.paramName]
+		if !exists {
+			// Parameter not found in provided parameters
+			return nil, fmt.Errorf("parameter $%s not provided", input.paramName)
+		}
+
+		// Convert parameter value to []float32
+		// Parameter can be []float32, []float64, []interface{}, or string (to embed)
+		switch val := paramValue.(type) {
+		case []float32:
+			queryVector = val
+		case []float64:
+			queryVector = make([]float32, len(val))
+			for i, v := range val {
+				queryVector[i] = float32(v)
+			}
+		case []interface{}:
+			queryVector = make([]float32, 0, len(val))
+			for _, item := range val {
+				switch v := item.(type) {
+				case float32:
+					queryVector = append(queryVector, v)
+				case float64:
+					queryVector = append(queryVector, float32(v))
+				case int:
+					queryVector = append(queryVector, float32(v))
+				case int64:
+					queryVector = append(queryVector, float32(v))
+				default:
+					return nil, fmt.Errorf("parameter $%s contains non-numeric value: %T", input.paramName, v)
+				}
+			}
+		case string:
+			// String parameter - embed it
+			if e.embedder == nil {
+				return nil, fmt.Errorf("parameter $%s is a string but no embedder configured; provide vector array or configure embedding service", input.paramName)
+			}
+			embedded, embedErr := e.embedder.Embed(ctx, val)
+			if embedErr != nil {
+				return nil, fmt.Errorf("failed to embed parameter $%s value '%s': %w", input.paramName, val, embedErr)
+			}
+			queryVector = embedded
+		default:
+			return nil, fmt.Errorf("parameter $%s has unsupported type for vector query: %T (expected []float32, []float64, []interface{}, or string)", input.paramName, val)
+		}
+	} else {
+		// No query input provided - check if this might be a substituted invalid parameter
+		params := getParamsFromContext(ctx)
+		if params != nil {
+			// Parameters were provided, so if we have no input, it might be a substituted invalid type
+			// Check which parameters have unsupported types to provide a better error message
+			var unsupportedParams []string
+			for paramName, paramValue := range params {
+				// Check if this parameter has an unsupported type for vector queries
+				switch paramValue.(type) {
+				case []float32, []float64, []interface{}, string:
+					// Supported types - skip
+					continue
+				default:
+					// Unsupported type - add to list
+					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
+				}
+			}
+
+			if len(unsupportedParams) > 0 {
+				// Found parameters with unsupported types - provide specific error
+				paramList := strings.Join(unsupportedParams, ", ")
+				return nil, fmt.Errorf("no query vector or search text provided - parameter(s) %s have unsupported type (expected []float32, []float64, []interface{}, or string)", paramList)
+			}
+			// Parameters exist but all have supported types - might be a different issue
+			return nil, fmt.Errorf("no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)")
+		}
+		return nil, fmt.Errorf("no query vector or search text provided")
+	}
+
+	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
-	}, nil
+	}
+
+	// Get vector index configuration (if it exists)
+	var targetRelType, targetProperty string
+	var similarityFunc string = "cosine"
+
+	schema := e.storage.GetSchema()
+	if schema != nil {
+		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
+			// For relationship indexes, Label field stores the relationship type
+			targetRelType = vectorIdx.Label
+			targetProperty = vectorIdx.Property
+			similarityFunc = vectorIdx.SimilarityFunc
+		}
+	}
+
+	// Get all edges and filter to those with embeddings
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect edges with embeddings and calculate similarities
+	type scoredEdge struct {
+		edge  *storage.Edge
+		score float64
+	}
+	var scoredEdges []scoredEdge
+
+	for _, edge := range edges {
+		// Check relationship type filter if index specifies one
+		if targetRelType != "" && edge.Type != targetRelType {
+			continue
+		}
+
+		// Get embedding from property
+		var edgeEmbedding []float32
+		if targetProperty != "" {
+			if emb, ok := edge.Properties[targetProperty]; ok {
+				edgeEmbedding = toFloat32Slice(emb)
+			}
+		}
+
+		if edgeEmbedding == nil || len(edgeEmbedding) == 0 {
+			continue
+		}
+
+		// Skip if dimensions don't match
+		if len(edgeEmbedding) != len(queryVector) {
+			continue
+		}
+
+		// Calculate similarity
+		var score float64
+		switch similarityFunc {
+		case "euclidean":
+			score = vector.EuclideanSimilarity(queryVector, edgeEmbedding)
+		case "dot":
+			score = vector.DotProduct(queryVector, edgeEmbedding)
+		default: // cosine
+			score = vector.CosineSimilarity(queryVector, edgeEmbedding)
+		}
+
+		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})
+	}
+
+	// Sort by score descending
+	sort.Slice(scoredEdges, func(i, j int) bool {
+		return scoredEdges[i].score > scoredEdges[j].score
+	})
+
+	// Limit to k results
+	if k > 0 && len(scoredEdges) > k {
+		scoredEdges = scoredEdges[:k]
+	}
+
+	// Convert to result rows
+	for _, se := range scoredEdges {
+		result.Rows = append(result.Rows, []interface{}{
+			e.edgeToMap(se.edge),
+			se.score,
+		})
+	}
+
+	return result, nil
 }
 
 // callDbIndexVectorCreateNodeIndex creates a vector index on nodes - Neo4j db.index.vector.createNodeIndex()
@@ -3106,21 +3688,57 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 // This procedure is used to attach metadata to transactions for logging/debugging.
 // Syntax: CALL tx.setMetaData({key: value})
 //
-// Note: Transaction support in Cypher (BEGIN/COMMIT/ROLLBACK) is planned for Phase 4.
-// The storage layer (storage.Transaction) already supports metadata via SetMetadata().
-// Once Cypher transaction context is added, this will work seamlessly.
-//
-// Current behavior: Returns success message but metadata is not persisted (no active transaction in Cypher yet).
+// Requires an active transaction (BEGIN ... COMMIT). If no transaction is active,
+// returns an error. Metadata is stored with the transaction and can be used for
+// logging, debugging, or audit trails.
 func (e *StorageExecutor) callTxSetMetadata(cypher string) (*ExecuteResult, error) {
-	// Note: This is a placeholder implementation until Phase 4 adds full transaction support
-	// The actual Transaction.SetMetadata() implementation exists and is tested
+	// Check if there's an active transaction
+	if e.txContext == nil || !e.txContext.active {
+		return nil, fmt.Errorf("tx.setMetaData() requires an active transaction. Use BEGIN TRANSACTION first")
+	}
 
-	// For now, just acknowledge the call was successful
-	// Phase 4 will add StorageExecutor.txContext and wire this up properly
+	// Extract metadata object from Cypher: CALL tx.setMetaData({key: value})
+	upper := strings.ToUpper(cypher)
+	idx := strings.Index(upper, "SETMETADATA")
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid tx.setMetaData syntax")
+	}
+
+	// Find opening parenthesis
+	remainder := cypher[idx:]
+	openParen := strings.Index(remainder, "(")
+	closeParen := strings.LastIndex(remainder, ")")
+	if openParen < 0 || closeParen < 0 {
+		return nil, fmt.Errorf("invalid tx.setMetaData syntax: missing parentheses")
+	}
+
+	// Extract the metadata object string: {key: value}
+	argsStr := strings.TrimSpace(remainder[openParen+1 : closeParen])
+	if argsStr == "" {
+		return nil, fmt.Errorf("tx.setMetaData requires a metadata object: {key: value}")
+	}
+
+	// Parse the metadata object
+	metadata := e.parseProperties(argsStr)
+	if len(metadata) == 0 {
+		return nil, fmt.Errorf("tx.setMetaData requires at least one key-value pair")
+	}
+
+	// Get the transaction and set metadata
+	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
+	if !ok {
+		return nil, fmt.Errorf("transaction type not supported for metadata")
+	}
+
+	err := tx.SetMetadata(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set transaction metadata: %w", err)
+	}
+
 	return &ExecuteResult{
 		Columns: []string{"status"},
 		Rows: [][]interface{}{
-			{"Transaction metadata feature available in storage layer. Full Cypher transaction support coming in Phase 4."},
+			{"Transaction metadata set successfully"},
 		},
 	}, nil
 }
@@ -3259,9 +3877,39 @@ func (e *StorageExecutor) callDbStatsStop() (*ExecuteResult, error) {
 }
 
 // callDbClearQueryCaches clears all query caches - Neo4j db.clearQueryCaches()
+//
+// Clears all caches in the executor:
+//   - Query result cache (SmartQueryCache)
+//   - Query plan cache (QueryPlanCache)
+//   - Query analyzer cache (AST cache)
+//   - Node lookup cache
+//
+// This is useful for:
+//   - Testing (ensuring fresh queries)
+//   - After bulk data imports
+//   - When schema changes affect query plans
+//   - Debugging cache-related issues
 func (e *StorageExecutor) callDbClearQueryCaches() (*ExecuteResult, error) {
-	// If there's a query cache, clear it
-	// For now, just acknowledge the call
+	// Clear query result cache
+	if e.cache != nil {
+		e.cache.Invalidate()
+	}
+
+	// Clear query plan cache
+	if e.planCache != nil {
+		e.planCache.Clear()
+	}
+
+	// Clear query analyzer cache (AST cache)
+	if e.analyzer != nil {
+		e.analyzer.ClearCache()
+	}
+
+	// Clear node lookup cache
+	e.nodeLookupCacheMu.Lock()
+	e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	e.nodeLookupCacheMu.Unlock()
+
 	return &ExecuteResult{
 		Columns: []string{"status"},
 		Rows: [][]interface{}{

@@ -48,12 +48,14 @@ func setupTestServer(t *testing.T) (*Server, *auth.Authenticator) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	// Create authenticator
+	// Create authenticator with memory storage for testing
 	authConfig := auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}
-	authenticator, err := auth.NewAuthenticator(authConfig)
+	// Use memory storage for tests
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(authConfig, memoryStorage)
 	if err != nil {
 		t.Fatalf("failed to create authenticator: %v", err)
 	}

@@ -598,11 +598,15 @@ func (c *ComputeContext) NormalizeVectorsGPU(vectors *Buffer, n, dimensions uint
 	return c.dispatchCompute(PipelineNormalize, []*Buffer{vectors}, pushConstants, n, 1, 1)
 }
 
-// TopKGPU finds top-k scores using GPU compute shader
+// TopKGPU finds top-k scores using GPU compute shader.
+// Uses an iterative reduction algorithm that works for any k value.
+// Performance is optimal for k <= 64 (typical for similarity search).
+// For larger k, the algorithm still works but may be slower (O(k×n) complexity).
 func (c *ComputeContext) TopKGPU(scores, topIndices, topScores *Buffer, n, k uint32) error {
 	pushConstants := []uint32{n, k}
 
-	// Single workgroup for now (suitable for k <= 64)
+	// Single workgroup with 256 threads - each thread strides through all n elements
+	// This handles any n value efficiently via parallel striding
 	return c.dispatchCompute(PipelineTopK, []*Buffer{scores, topIndices, topScores}, pushConstants, 1, 1, 1)
 }
 

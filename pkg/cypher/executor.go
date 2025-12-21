@@ -1219,6 +1219,19 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeMatchWithCallSubquery(ctx, cypher)
 	}
 
+	// Compound queries: MATCH ... CALL procedure() ... (procedure with bound variables)
+	if startsWithMatch && findKeywordIndex(cypher, "CALL") > 0 {
+		// Check if it's a procedure call (not a subquery)
+		callIdx := findKeywordIndex(cypher, "CALL")
+		if callIdx > 0 {
+			callPart := strings.TrimSpace(cypher[callIdx:])
+			if !isCallSubquery(callPart) {
+				// It's a procedure call - handle with bound variables
+				return e.executeMatchWithCallProcedure(ctx, cypher)
+			}
+		}
+	}
+
 	switch {
 	case findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH") == 0:
 		// OPTIONAL MATCH must be at start (position 0) to be a standalone clause
@@ -1508,8 +1521,8 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	upper := strings.ToUpper(cypher)
 
-	// Check for valid starting keyword (including EXPLAIN/PROFILE prefixes)
-	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER", "USE"}
+	// Check for valid starting keyword (including EXPLAIN/PROFILE prefixes and transaction control)
+	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK"}
 	hasValidStart := false
 	for _, start := range validStarts {
 		if strings.HasPrefix(upper, start) {
@@ -1518,7 +1531,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 	if !hasValidStart {
-		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, etc.)")
+		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, BEGIN, COMMIT, ROLLBACK, etc.)")
 	}
 
 	// Check balanced parentheses
@@ -1807,9 +1820,14 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	}
 
 	// Execute the match first (use normalized query for slicing)
+	// Extract variable names from the MATCH pattern to handle RETURN * correctly
+	matchPattern := strings.TrimSpace(normalized[matchIdx+5 : setIdx]) // Skip "MATCH"
+	varNames := e.extractVariableNamesFromPattern(matchPattern)
+
 	var matchQuery string
-	if returnIdx > 0 {
-		matchQuery = normalized[matchIdx:setIdx] + " RETURN *"
+	if len(varNames) > 0 {
+		// Use explicit variable names instead of RETURN * for better handling
+		matchQuery = normalized[matchIdx:setIdx] + " RETURN " + strings.Join(varNames, ", ")
 	} else {
 		matchQuery = normalized[matchIdx:setIdx] + " RETURN *"
 	}
@@ -1933,18 +1951,42 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		}
 
 		// Return updated nodes
+		// Build a map of variable names to nodes from match result columns
+		// This handles multiple variables (e.g., n, m) correctly
 		for _, row := range matchResult.Rows {
-			for _, val := range row {
-				node, ok := val.(*storage.Node)
-				if !ok || node == nil {
-					continue
+			// Map column names to values in this row
+			varMap := make(map[string]*storage.Node)
+			for i, colName := range matchResult.Columns {
+				if i < len(row) {
+					if node, ok := row[i].(*storage.Node); ok && node != nil {
+						varMap[colName] = node
+					}
 				}
-				newRow := make([]interface{}, len(returnItems))
-				for j, item := range returnItems {
-					newRow[j] = e.resolveReturnItem(item, variable, node)
-				}
-				result.Rows = append(result.Rows, newRow)
 			}
+
+			// Build a single row with all return items
+			newRow := make([]interface{}, len(returnItems))
+			for j, item := range returnItems {
+				// Extract variable name from return item expression
+				// Handle cases like: "n", "n.name", "id(n)", etc.
+				varName := extractVariableNameFromReturnItem(item.expr)
+				if varName != "" {
+					if node, ok := varMap[varName]; ok {
+						newRow[j] = e.resolveReturnItem(item, varName, node)
+						continue
+					}
+				}
+				// Fallback: try to resolve with the first variable (for backward compatibility)
+				if variable != "" {
+					if node, ok := varMap[variable]; ok {
+						newRow[j] = e.resolveReturnItem(item, variable, node)
+						continue
+					}
+				}
+				// If no variable matches, try to evaluate expression with all variables
+				newRow[j] = e.evaluateExpressionWithContext(item.expr, varMap, make(map[string]*storage.Edge))
+			}
+			result.Rows = append(result.Rows, newRow)
 		}
 	}
 
@@ -3064,6 +3106,43 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 	return false
 }
 
+// extractVariableNameFromReturnItem extracts the variable name from a return item expression.
+// Examples:
+//   - "n" -> "n"
+//   - "n.name" -> "n"
+//   - "id(n)" -> "n"
+//   - "n.age + 1" -> "n"
+func extractVariableNameFromReturnItem(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return ""
+	}
+
+	// Handle function calls like id(n), elementId(n), etc.
+	if strings.Contains(expr, "(") {
+		// Extract variable from function call: id(n) -> n
+		openParen := strings.Index(expr, "(")
+		closeParen := strings.LastIndex(expr, ")")
+		if openParen > 0 && closeParen > openParen {
+			inner := strings.TrimSpace(expr[openParen+1 : closeParen])
+			// If inner contains a dot, it's property access: id(n.name) -> n
+			if dotIdx := strings.Index(inner, "."); dotIdx > 0 {
+				return strings.TrimSpace(inner[:dotIdx])
+			}
+			return inner
+		}
+	}
+
+	// Handle property access: n.name -> n
+	if strings.Contains(expr, ".") {
+		parts := strings.SplitN(expr, ".", 2)
+		return strings.TrimSpace(parts[0])
+	}
+
+	// Simple variable name
+	return expr
+}
+
 // extractTargetVariable extracts the target variable name from a relationship pattern
 // e.g., from "(m)-[:MANAGES]->(report)" it extracts "report"
 func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string {
@@ -3511,6 +3590,285 @@ func isCallSubquery(cypher string) bool {
 	return hasSubqueryPattern(cypher, callSubqueryRe)
 }
 
+// executeMatchWithCallProcedure handles MATCH ... CALL procedure() ... queries
+// This allows procedure calls to use bound variables from the MATCH clause
+// Example: MATCH (n:Node {id: 'n1'}) CALL db.index.vector.queryNodes('idx', 10, n.embedding) YIELD node, score
+func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	// Substitute parameters first
+	if params := getParamsFromContext(ctx); params != nil {
+		cypher = e.substituteParams(cypher, params)
+	}
+
+	// Find CALL position
+	callIdx := findKeywordIndex(cypher, "CALL")
+	if callIdx == -1 {
+		return nil, fmt.Errorf("CALL not found in query")
+	}
+
+	// Extract the MATCH part (before CALL)
+	matchPart := strings.TrimSpace(cypher[:callIdx])
+	matchIdx := findKeywordIndex(matchPart, "MATCH")
+	if matchIdx == -1 {
+		return nil, fmt.Errorf("MATCH not found before CALL")
+	}
+
+	// Extract the CALL part and everything after
+	callPart := strings.TrimSpace(cypher[callIdx:])
+
+	// Execute MATCH to get bound variables
+	// We'll execute a modified MATCH query that returns all bound variables
+	matchPattern := strings.TrimSpace(matchPart[matchIdx+5:]) // Skip "MATCH"
+
+	// Parse WHERE clause if present
+	whereIdx := findKeywordIndex(matchPattern, "WHERE")
+	var whereClause string
+	var patternOnly string
+	if whereIdx > 0 {
+		patternOnly = strings.TrimSpace(matchPattern[:whereIdx])
+		whereClause = strings.TrimSpace(matchPattern[whereIdx+5:])
+	} else {
+		patternOnly = matchPattern
+	}
+
+	// Parse node pattern to get variable name
+	nodePattern := e.parseNodePattern(patternOnly)
+	if nodePattern.variable == "" {
+		return nil, fmt.Errorf("could not parse node pattern: %s", patternOnly)
+	}
+
+	// Get matching nodes
+	var nodes []*storage.Node
+	var err error
+	if len(nodePattern.labels) > 0 {
+		nodes, err = e.storage.GetNodesByLabel(nodePattern.labels[0])
+	} else {
+		nodes, err = e.storage.AllNodes()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get nodes: %w", err)
+	}
+
+	// Filter by properties
+	if len(nodePattern.properties) > 0 {
+		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+	}
+
+	// Filter by WHERE clause
+	if whereClause != "" {
+		var filtered []*storage.Node
+		for _, node := range nodes {
+			if e.evaluateWhere(node, nodePattern.variable, whereClause) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+	}
+
+	// If no nodes match, return empty result
+	if len(nodes) == 0 {
+		// Determine result columns from YIELD clause or procedure type
+		var columns []string
+		yield := parseYieldClause(callPart)
+		if yield != nil && len(yield.items) > 0 {
+			// Extract column names from yield items (use alias if present, otherwise name)
+			columns = make([]string, len(yield.items))
+			for i, item := range yield.items {
+				if item.alias != "" {
+					columns[i] = item.alias
+				} else {
+					columns[i] = item.name
+				}
+			}
+		} else {
+			// Default columns for vector queries
+			if strings.Contains(strings.ToUpper(callPart), "QUERYNODES") {
+				columns = []string{"node", "score"}
+			} else if strings.Contains(strings.ToUpper(callPart), "QUERYRELATIONSHIPS") {
+				columns = []string{"relationship", "score"}
+			} else {
+				columns = []string{} // Empty if unknown
+			}
+		}
+		return &ExecuteResult{
+			Columns: columns,
+			Rows:    [][]interface{}{},
+		}, nil
+	}
+
+	// For each matching node, evaluate the CALL with bound variables
+	var allResults []*ExecuteResult
+	for _, node := range nodes {
+		// Create variable context for this node
+		nodeContext := map[string]*storage.Node{
+			nodePattern.variable: node,
+		}
+
+		// Evaluate variable references in the CALL statement
+		// Replace patterns like "n.embedding" with actual values
+		evaluatedCall := e.substituteBoundVariablesInCall(callPart, nodeContext)
+
+		// Execute the CALL with evaluated values
+		result, err := e.executeCall(ctx, evaluatedCall)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute CALL for node %s: %w", node.ID, err)
+		}
+		if result != nil {
+			allResults = append(allResults, result)
+		}
+	}
+
+	// Combine results from all nodes
+	if len(allResults) == 0 {
+		// Determine result columns from YIELD clause or procedure type
+		var columns []string
+		yield := parseYieldClause(callPart)
+		if yield != nil && len(yield.items) > 0 {
+			// Extract column names from yield items (use alias if present, otherwise name)
+			columns = make([]string, len(yield.items))
+			for i, item := range yield.items {
+				if item.alias != "" {
+					columns[i] = item.alias
+				} else {
+					columns[i] = item.name
+				}
+			}
+		} else {
+			if strings.Contains(strings.ToUpper(callPart), "QUERYNODES") {
+				columns = []string{"node", "score"}
+			} else if strings.Contains(strings.ToUpper(callPart), "QUERYRELATIONSHIPS") {
+				columns = []string{"relationship", "score"}
+			} else {
+				columns = []string{} // Empty if unknown
+			}
+		}
+		return &ExecuteResult{
+			Columns: columns,
+			Rows:    [][]interface{}{},
+		}, nil
+	}
+
+	// Merge all results
+	combined := allResults[0]
+	for i := 1; i < len(allResults); i++ {
+		combined.Rows = append(combined.Rows, allResults[i].Rows...)
+	}
+
+	return combined, nil
+}
+
+// substituteBoundVariablesInCall replaces variable references in CALL statements with actual values
+// Example: "CALL db.index.vector.queryNodes('idx', 10, n.embedding)" -> "CALL db.index.vector.queryNodes('idx', 10, [0.1, 0.2, ...])"
+// This handles variable.property patterns like n.embedding, n.id, etc.
+func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeContext map[string]*storage.Node) string {
+	result := callPart
+
+	// Find all variable.property patterns in the CALL
+	// Pattern: varName.propertyName (but not inside strings)
+	// We need to be careful not to match patterns inside quoted strings
+	varPattern := regexp.MustCompile(`(\w+)\.(\w+)`)
+	matches := varPattern.FindAllStringSubmatchIndex(callPart, -1)
+
+	// Process matches in reverse order to maintain indices
+	for i := len(matches) - 1; i >= 0; i-- {
+		match := matches[i]
+		startIdx := match[0]
+		endIdx := match[1]
+		varName := callPart[match[2]:match[3]]
+		propName := callPart[match[4]:match[5]]
+
+		// Check if this match is inside a quoted string (skip if so)
+		beforeMatch := callPart[:startIdx]
+		singleQuotes := strings.Count(beforeMatch, "'") - strings.Count(beforeMatch, "\\'")
+		doubleQuotes := strings.Count(beforeMatch, "\"") - strings.Count(beforeMatch, "\\\"")
+		if singleQuotes%2 != 0 || doubleQuotes%2 != 0 {
+			// Inside a quoted string - skip
+			continue
+		}
+
+		// Check if this variable is in our context
+		if node, exists := nodeContext[varName]; exists {
+			// Evaluate the property access
+			var value interface{}
+			if propName == "embedding" {
+				// Special handling for embedding - return the actual vector
+				if len(node.Embedding) > 0 {
+					value = node.Embedding
+				} else if emb, ok := node.Properties["embedding"].([]float32); ok {
+					value = emb
+				} else if emb, ok := node.Properties["embedding"].([]float64); ok {
+					// Convert []float64 to []float32
+					emb32 := make([]float32, len(emb))
+					for i, v := range emb {
+						emb32[i] = float32(v)
+					}
+					value = emb32
+				} else if emb, ok := node.Properties["embedding"].([]interface{}); ok {
+					// Convert []interface{} to []float32
+					emb32 := make([]float32, 0, len(emb))
+					for _, item := range emb {
+						switch v := item.(type) {
+						case float32:
+							emb32 = append(emb32, v)
+						case float64:
+							emb32 = append(emb32, float32(v))
+						case int:
+							emb32 = append(emb32, float32(v))
+						case int64:
+							emb32 = append(emb32, float32(v))
+						}
+					}
+					value = emb32
+				}
+			} else {
+				// Regular property access
+				if val, ok := node.Properties[propName]; ok {
+					value = val
+				}
+			}
+
+			// Replace the variable.property with the actual value
+			if value != nil {
+				var replacement string
+				switch v := value.(type) {
+				case []float32:
+					// Format as vector array
+					parts := make([]string, len(v))
+					for i, f := range v {
+						parts[i] = fmt.Sprintf("%g", f)
+					}
+					replacement = "[" + strings.Join(parts, ", ") + "]"
+				case []float64:
+					// Format as vector array
+					parts := make([]string, len(v))
+					for i, f := range v {
+						parts[i] = fmt.Sprintf("%g", f)
+					}
+					replacement = "[" + strings.Join(parts, ", ") + "]"
+				case string:
+					replacement = fmt.Sprintf("'%s'", v)
+				case int, int64:
+					replacement = fmt.Sprintf("%d", v)
+				case float32, float64:
+					replacement = fmt.Sprintf("%g", v)
+				case bool:
+					if v {
+						replacement = "true"
+					} else {
+						replacement = "false"
+					}
+				default:
+					// For complex types, try to convert to string representation
+					replacement = fmt.Sprintf("%v", v)
+				}
+				// Replace from end to start to maintain indices
+				result = result[:startIdx] + replacement + result[endIdx:]
+			}
+		}
+	}
+
+	return result
+}
+
 // executeMatchWithCallSubquery handles MATCH ... WHERE ... CALL { WITH var ... } ... RETURN queries
 // This is a correlated subquery where the CALL {} references variables from the outer MATCH
 func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -3847,18 +4205,319 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 }
 
 // executeCallInTransactions executes a CALL {} IN TRANSACTIONS query
-// This batches operations for large datasets
+// This batches operations for large datasets by processing results in separate transactions.
+//
+// The subquery is executed in batches where each batch is processed in its own transaction.
+// This is useful for large imports/updates to avoid memory issues and provide transaction boundaries.
+//
+// Example:
+//
+//	CALL {
+//	  MATCH (p:Person)
+//	  SET p.processed = true
+//	  RETURN p.name AS name
+//	} IN TRANSACTIONS OF 2 ROWS
+//
+// This will process Person nodes in batches of 2, each batch in a separate transaction.
+//
+// Strategy:
+//  1. First execute the subquery to determine the total number of rows (read-only)
+//  2. If it contains write operations, process in batches by adding LIMIT/SKIP to the MATCH
+//  3. Each batch is executed in its own transaction via executeWithImplicitTransaction
 func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquery string, batchSize int) (*ExecuteResult, error) {
-	// For now, execute as a single operation
-	// Full implementation would batch CREATE/SET operations
-	result, err := e.Execute(ctx, subquery, nil)
-	if err != nil {
-		return nil, err
+	if batchSize <= 0 {
+		batchSize = 1000 // Default batch size
 	}
 
-	// If the result has multiple rows and we need to batch, process them
-	// This is a simplified implementation - full Neo4j batches actual writes
-	return result, nil
+	// Check if the subquery contains write operations (CREATE, SET, DELETE, MERGE)
+	upperSubquery := strings.ToUpper(subquery)
+	hasWrites := strings.Contains(upperSubquery, "CREATE") ||
+		strings.Contains(upperSubquery, "SET") ||
+		strings.Contains(upperSubquery, "DELETE") ||
+		strings.Contains(upperSubquery, "MERGE")
+
+	if !hasWrites {
+		// No write operations - execute once and return (no need for batching)
+		result, err := e.Execute(ctx, subquery, nil)
+		if err != nil {
+			return nil, fmt.Errorf("subquery execution failed: %w", err)
+		}
+		return result, nil
+	}
+
+	// For write operations, we need to batch the execution
+	// Strategy: Add LIMIT/SKIP to the MATCH part (before write operations) to process in batches
+	// We'll execute the subquery multiple times, each time with different LIMIT/SKIP values
+	// Each execution will be in its own transaction
+
+	// First, try to get a row count estimate by executing a read-only version
+	// This helps us determine how many batches we need
+	readOnlyQuery := e.makeSubqueryReadOnly(subquery)
+	var totalRows int
+	var resultColumns []string
+
+	if readOnlyQuery != "" {
+		// Execute read-only version to get row count (doesn't perform writes)
+		readOnlyResult, err := e.Execute(ctx, readOnlyQuery, nil)
+		if err == nil && readOnlyResult != nil {
+			totalRows = len(readOnlyResult.Rows)
+			resultColumns = readOnlyResult.Columns
+		}
+	}
+
+	// If we couldn't get a row count, we'll need to process until we get no more results
+	// This is less efficient but handles edge cases
+	useIterativeBatching := totalRows == 0
+
+	// Combined result
+	combinedResult := &ExecuteResult{
+		Columns: resultColumns,
+		Rows:    make([][]interface{}, 0),
+		Stats:   &QueryStats{},
+	}
+
+	if useIterativeBatching {
+		// Iterative batching: process batches until we get no results
+		batchNum := 0
+		for {
+			skip := batchNum * batchSize
+			limit := batchSize
+
+			// Create a modified subquery with LIMIT and SKIP to process this batch
+			modifiedSubquery := e.addLimitSkipToSubquery(subquery, limit, skip)
+
+			// Execute this batch in its own transaction
+			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
+			if err != nil {
+				// On error, stop processing and return error
+				return nil, fmt.Errorf("batch %d failed: %w", batchNum+1, err)
+			}
+
+			// If no results, we're done
+			if batchResult == nil || len(batchResult.Rows) == 0 {
+				break
+			}
+
+			// Set columns from first batch if not set
+			if len(combinedResult.Columns) == 0 && len(batchResult.Columns) > 0 {
+				combinedResult.Columns = batchResult.Columns
+			}
+
+			// Accumulate results
+			combinedResult.Rows = append(combinedResult.Rows, batchResult.Rows...)
+			if batchResult.Stats != nil {
+				combinedResult.Stats.NodesCreated += batchResult.Stats.NodesCreated
+				combinedResult.Stats.NodesDeleted += batchResult.Stats.NodesDeleted
+				combinedResult.Stats.RelationshipsCreated += batchResult.Stats.RelationshipsCreated
+				combinedResult.Stats.RelationshipsDeleted += batchResult.Stats.RelationshipsDeleted
+				combinedResult.Stats.PropertiesSet += batchResult.Stats.PropertiesSet
+				combinedResult.Stats.LabelsAdded += batchResult.Stats.LabelsAdded
+			}
+
+			// If we got fewer rows than the batch size, we're done
+			if len(batchResult.Rows) < batchSize {
+				break
+			}
+
+			batchNum++
+		}
+	} else {
+		// Known row count: process exact number of batches
+		if totalRows == 0 {
+			// No rows to process
+			return &ExecuteResult{
+				Columns: resultColumns,
+				Rows:    [][]interface{}{},
+				Stats:   &QueryStats{},
+			}, nil
+		}
+
+		// Calculate number of batches
+		numBatches := (totalRows + batchSize - 1) / batchSize
+
+		// Process each batch in a separate transaction
+		for batchNum := 0; batchNum < numBatches; batchNum++ {
+			skip := batchNum * batchSize
+			limit := batchSize
+
+			// Create a modified subquery with LIMIT and SKIP to process this batch
+			modifiedSubquery := e.addLimitSkipToSubquery(subquery, limit, skip)
+
+			// Execute this batch in its own transaction
+			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
+			if err != nil {
+				// On error, stop processing and return error
+				return nil, fmt.Errorf("batch %d/%d failed: %w", batchNum+1, numBatches, err)
+			}
+
+			// Set columns from first batch if not set
+			if len(combinedResult.Columns) == 0 && batchResult != nil && len(batchResult.Columns) > 0 {
+				combinedResult.Columns = batchResult.Columns
+			}
+
+			// Accumulate results
+			if batchResult != nil {
+				combinedResult.Rows = append(combinedResult.Rows, batchResult.Rows...)
+				if batchResult.Stats != nil {
+					combinedResult.Stats.NodesCreated += batchResult.Stats.NodesCreated
+					combinedResult.Stats.NodesDeleted += batchResult.Stats.NodesDeleted
+					combinedResult.Stats.RelationshipsCreated += batchResult.Stats.RelationshipsCreated
+					combinedResult.Stats.RelationshipsDeleted += batchResult.Stats.RelationshipsDeleted
+					combinedResult.Stats.PropertiesSet += batchResult.Stats.PropertiesSet
+					combinedResult.Stats.LabelsAdded += batchResult.Stats.LabelsAdded
+				}
+			}
+		}
+	}
+
+	return combinedResult, nil
+}
+
+// makeSubqueryReadOnly converts a subquery with writes to a read-only version for row counting.
+// This is used to determine how many batches we need before executing the actual writes.
+// Returns empty string if conversion is not possible.
+func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
+	upper := strings.ToUpper(subquery)
+
+	// Simple strategy: Replace write operations with RETURN of matched entities
+	// This works for common patterns like "MATCH ... SET ... RETURN"
+
+	// Check for MATCH ... SET ... RETURN pattern
+	matchIdx := strings.Index(upper, "MATCH")
+	setIdx := strings.Index(upper, "SET")
+	returnIdx := strings.Index(upper, "RETURN")
+
+	if matchIdx >= 0 && setIdx > matchIdx && returnIdx > setIdx {
+		// Extract MATCH and RETURN parts, skip SET
+		matchPart := strings.TrimSpace(subquery[matchIdx:setIdx])
+		returnPart := strings.TrimSpace(subquery[returnIdx:])
+		return matchPart + " " + returnPart
+	}
+
+	// Check for MATCH ... CREATE ... RETURN pattern
+	createIdx := strings.Index(upper, "CREATE")
+	if matchIdx >= 0 && createIdx > matchIdx && returnIdx > createIdx {
+		// Extract MATCH and RETURN parts, skip CREATE
+		matchPart := strings.TrimSpace(subquery[matchIdx:createIdx])
+		returnPart := strings.TrimSpace(subquery[returnIdx:])
+		return matchPart + " " + returnPart
+	}
+
+	// If we can't convert, return empty string (caller will use iterative batching)
+	return ""
+}
+
+// addLimitSkipToSubquery adds LIMIT and SKIP clauses to a subquery for batching.
+// For queries with MATCH followed by write operations (SET, CREATE, DELETE, MERGE),
+// it adds LIMIT/SKIP after the MATCH clause to limit how many rows are processed.
+// For other patterns, it adds LIMIT/SKIP before RETURN.
+//
+// This ensures that batching limits the number of matched rows processed, not just
+// the number of returned rows.
+func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip int) string {
+	upper := strings.ToUpper(subquery)
+
+	// Check for MATCH ... SET/CREATE/DELETE/MERGE ... RETURN pattern
+	// For these, we want to add LIMIT/SKIP after MATCH to limit how many rows are processed
+	matchIdx := strings.Index(upper, "MATCH")
+	if matchIdx >= 0 {
+		// Find the first operation after MATCH (SET, CREATE, DELETE, MERGE, or RETURN)
+		remaining := upper[matchIdx+5:] // Skip "MATCH"
+		setIdx := strings.Index(remaining, "SET")
+		createIdx := strings.Index(remaining, "CREATE")
+		deleteIdx := strings.Index(remaining, "DELETE")
+		mergeIdx := strings.Index(remaining, "MERGE")
+		returnIdx := strings.Index(remaining, "RETURN")
+
+		// Find the earliest operation after MATCH
+		firstOpIdx := -1
+		var firstOpName string
+		if setIdx >= 0 && (firstOpIdx == -1 || setIdx < firstOpIdx) {
+			firstOpIdx = setIdx
+			firstOpName = "SET"
+		}
+		if createIdx >= 0 && (firstOpIdx == -1 || createIdx < firstOpIdx) {
+			firstOpIdx = createIdx
+			firstOpName = "CREATE"
+		}
+		if deleteIdx >= 0 && (firstOpIdx == -1 || deleteIdx < firstOpIdx) {
+			firstOpIdx = deleteIdx
+			firstOpName = "DELETE"
+		}
+		if mergeIdx >= 0 && (firstOpIdx == -1 || mergeIdx < firstOpIdx) {
+			firstOpIdx = mergeIdx
+			firstOpName = "MERGE"
+		}
+		if returnIdx >= 0 && (firstOpIdx == -1 || returnIdx < firstOpIdx) {
+			firstOpIdx = returnIdx
+			firstOpName = "RETURN"
+		}
+
+		if firstOpIdx > 0 {
+			// We need to find where the MATCH clause ends
+			// The MATCH clause can include WHERE, so we need to find the end of the pattern
+			matchEnd := matchIdx + 5 + firstOpIdx // End of MATCH pattern, start of first operation
+
+			// Check if there's a WHERE clause between MATCH and the first operation
+			whereIdx := strings.Index(upper[matchIdx+5:matchIdx+5+firstOpIdx], "WHERE")
+			if whereIdx >= 0 {
+				// Find end of WHERE clause (before first operation)
+				whereEnd := strings.Index(upper[matchIdx+5+whereIdx:matchIdx+5+firstOpIdx], " "+firstOpName)
+				if whereEnd > 0 {
+					matchEnd = matchIdx + 5 + whereIdx + 5 + whereEnd // After WHERE clause
+				}
+			}
+
+			// Extract the MATCH part
+			matchPart := strings.TrimSpace(subquery[:matchEnd])
+			afterOp := subquery[matchEnd:]
+
+			// Extract variable name from MATCH pattern (e.g., "MATCH (s:Source)" -> "s")
+			varNames := e.extractVariableNamesFromPattern(matchPart[5:]) // Skip "MATCH"
+			varName := "n"                                               // Default fallback
+			if len(varNames) > 0 {
+				varName = varNames[0]
+			}
+
+			// Use WITH clause to apply LIMIT/SKIP (Cypher doesn't allow LIMIT directly after MATCH)
+			// Format: MATCH ... WITH var SKIP n LIMIT m CREATE/SET...
+			if skip > 0 {
+				return matchPart + fmt.Sprintf(" WITH %s SKIP %d LIMIT %d ", varName, skip, limit) + afterOp
+			}
+			return matchPart + fmt.Sprintf(" WITH %s LIMIT %d ", varName, limit) + afterOp
+		}
+	}
+
+	// Fallback: Add LIMIT/SKIP before RETURN (or at end if no RETURN)
+	returnIdx := strings.LastIndex(upper, "RETURN")
+	if returnIdx == -1 {
+		// No RETURN clause - append LIMIT/SKIP at the end
+		if skip > 0 {
+			return subquery + fmt.Sprintf(" SKIP %d LIMIT %d", skip, limit)
+		}
+		return subquery + fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	// Find where the RETURN clause starts in the original query
+	returnPart := subquery[returnIdx:]
+
+	// Check if LIMIT or SKIP already exists
+	if strings.Contains(strings.ToUpper(returnPart), "LIMIT") || strings.Contains(strings.ToUpper(returnPart), "SKIP") {
+		// LIMIT/SKIP already present - append (may cause issues but handles common cases)
+		if skip > 0 {
+			return subquery + fmt.Sprintf(" SKIP %d LIMIT %d", skip, limit)
+		}
+		return subquery + fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	// Insert SKIP and LIMIT before RETURN
+	beforeReturn := strings.TrimSpace(subquery[:returnIdx])
+	returnClause := subquery[returnIdx:]
+
+	if skip > 0 {
+		return beforeReturn + fmt.Sprintf(" SKIP %d LIMIT %d ", skip, limit) + returnClause
+	}
+	return beforeReturn + fmt.Sprintf(" LIMIT %d ", limit) + returnClause
 }
 
 // processAfterCallSubquery handles clauses after CALL { } like RETURN
@@ -4455,9 +5114,21 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 
 	// Try to get database name from context or use default
 	dbName := "nornic" // Default fallback
-	if e.dbManager != nil {
-		// Try to infer database name from storage (if it's a NamespacedEngine)
-		// For now, use default
+
+	// Priority 1: Check context for :USE database command
+	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" {
+		dbName = useDB
+	} else if e.dbManager != nil {
+		// Priority 2: Try to infer database name from storage (if it's a NamespacedEngine)
+		if namespacedEngine, ok := e.storage.(interface{ Namespace() string }); ok {
+			if namespace := namespacedEngine.Namespace(); namespace != "" {
+				dbName = namespace
+			}
+		}
+		// Priority 3: Use default database from dbManager
+		// Note: DatabaseManagerInterface doesn't expose DefaultDatabaseName,
+		// so we can't call it directly. The NamespacedEngine namespace should
+		// already be set correctly by the server layer.
 	}
 
 	return &ExecuteResult{

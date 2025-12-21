@@ -67,34 +67,107 @@ export NORNICDB_NO_AUTH=true
 
 ## User Management
 
+### User Storage and Persistence
+
+NornicDB stores all user accounts in the **system database** for persistence and security:
+
+- **Persistent Storage**: Users are stored as nodes in the system database with labels `["_User", "_System"]`
+- **Automatic Loading**: All users are automatically loaded from the system database on server startup
+- **Backup Integration**: User accounts are included in database backups automatically
+- **GDPR Compliance**: User data can be exported and deleted via GDPR endpoints
+- **Security**: Internal database IDs are never exposed in API responses
+
+**Storage Details:**
+- Users are stored as graph nodes (not separate tables)
+- Node ID format: `user:{username}` (e.g., `user:admin`)
+- All user operations (create, update, delete) are persisted immediately
+- In-memory cache provides fast lookups while maintaining persistence
+
 ### Create Users
 
 ```bash
-# CLI
-nornicdb user create --username alice --role viewer
-nornicdb user create --username bob --role editor
-nornicdb user create --username admin --role admin
+# Via Web UI (Admin Panel)
+# Navigate to /security/admin as an admin user
 
-# Or via API
+# Via API
 curl -X POST http://localhost:7474/auth/users \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"username": "alice", "password": "SecurePass123!", "roles": ["viewer"]}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "alice",
+    "password": "SecurePass123!",
+    "roles": ["viewer"]
+  }'
 ```
+
+**Response:**
+```json
+{
+  "username": "alice",
+  "email": "alice@localhost",
+  "roles": ["viewer"],
+  "created_at": "2024-12-01T10:30:00Z",
+  "disabled": false
+}
+```
+
+**Note:** Internal database IDs are never included in responses for security reasons.
 
 ### Manage Users
 
 ```bash
-# List users
-nornicdb user list
+# List all users (admin only)
+curl -X GET http://localhost:7474/auth/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
-# Change role
-nornicdb user update alice --role editor
+# Get specific user
+curl -X GET http://localhost:7474/auth/users/alice \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Update user roles
+curl -X PUT http://localhost:7474/auth/users/alice \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"roles": ["editor"]}'
 
 # Disable user
-nornicdb user disable alice
+curl -X PUT http://localhost:7474/auth/users/alice \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"disabled": true}'
 
-# Reset password
-nornicdb user reset-password alice
+# Delete user
+curl -X DELETE http://localhost:7474/auth/users/alice \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### User Profile Management
+
+Users can manage their own profiles via the Security page (`/security`):
+
+**Change Password:**
+```bash
+curl -X POST http://localhost:7474/auth/password \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "old_password": "OldPass123!",
+    "new_password": "NewSecurePass456!"
+  }'
+```
+
+**Update Profile:**
+```bash
+curl -X PUT http://localhost:7474/auth/profile \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alice@example.com",
+    "metadata": {
+      "department": "Engineering",
+      "team": "Backend"
+    }
+  }'
 ```
 
 ## Authentication
@@ -187,13 +260,26 @@ user.LockedUntil    // time.Time
 
 ### Password Hashing
 
-Passwords are hashed using bcrypt with default cost factor (10):
+Passwords are hashed using bcrypt with automatic salt generation:
+
+- **Algorithm**: bcrypt with configurable cost factor (default: 10)
+- **Salt**: Automatically generated and embedded in the hash (no separate salt storage needed)
+- **Storage**: Password hashes are stored in the system database, never in plain text
+- **Security**: Internal database IDs and password hashes are never exposed in API responses
 
 ```go
 // Passwords are never stored in plain text
 // Bcrypt automatically salts passwords
 // Uses bcrypt.DefaultCost (10) - configurable via BcryptCost
 hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+// Salt is embedded in the hash - no separate storage needed
+```
+
+**Configuration:**
+```yaml
+auth:
+  bcrypt_cost: 10  # Higher = more secure but slower (4-31, default: 10)
+  min_password_length: 8  # Minimum password length
 ```
 
 ### Session Management
@@ -237,7 +323,9 @@ See **[Audit Logging](audit-logging.md)** for details.
 
 ## See Also
 
+- **[User Storage in System Database](../../plans/user-storage-in-system-db.md)** - User persistence architecture
 - **[Encryption](encryption.md)** - Data protection
 - **[Audit Logging](audit-logging.md)** - Compliance trails
 - **[HIPAA Compliance](hipaa-compliance.md)** - Healthcare requirements
+- **[Backup & Restore](../operations/backup-restore.md)** - Database backup (includes users)
 

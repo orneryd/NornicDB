@@ -322,7 +322,8 @@ func (m *DatabaseManager) GetStorage(name string) (storage.Engine, error) {
 			accessModes[ref.Alias] = ref.AccessMode
 		}
 
-		// Create composite engine
+		// Create composite engine with intelligent default routing
+		// Routing will be auto-configured based on constituent aliases and access modes
 		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
 		// Note: We don't cache composite engines the same way as they're lightweight wrappers
 		return compositeEngine, nil

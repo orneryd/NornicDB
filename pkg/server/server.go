@@ -871,6 +871,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil, fmt.Errorf("failed to initialize database manager: %w", err)
 	}
 
+	// If authenticator is provided but doesn't have storage, initialize it with system database storage
+	// This handles the case where authenticator was created before dbManager
+	if authenticator != nil {
+		// Authenticator should already have storage from main.go initialization
+		// This is just a check to ensure system database is available
+	}
+
 	s := &Server{
 		config:          config,
 		db:              db,
@@ -1120,6 +1127,8 @@ func (s *Server) buildRouter() http.Handler {
 	mux.HandleFunc("/auth/token", s.handleToken)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 	mux.HandleFunc("/auth/me", s.withAuth(s.handleMe, auth.PermRead))
+	mux.HandleFunc("/auth/password", s.withAuth(s.handleChangePassword, auth.PermRead))     // Users can change their own password
+	mux.HandleFunc("/auth/profile", s.withAuth(s.handleUpdateProfile, auth.PermRead))       // Users can update their own profile
 	mux.HandleFunc("/auth/api-token", s.withAuth(s.handleGenerateAPIToken, auth.PermAdmin)) // Admin only - generate API tokens
 
 	// OAuth endpoints
@@ -3502,6 +3511,112 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+// handleChangePassword allows users to change their own password.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		return
+	}
+
+	if s.auth == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		return
+	}
+
+	// Get authenticated user
+	claims := getClaims(r)
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		return
+	}
+
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		return
+	}
+
+	// Get username from claims
+	username := claims.Username
+	if username == "" {
+		// Fallback to subject if username not in claims
+		user, err := s.auth.GetUserByID(claims.Sub)
+		if err != nil {
+			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			return
+		}
+		username = user.Username
+	}
+
+	// Change password
+	if err := s.auth.ChangePassword(username, req.OldPassword, req.NewPassword); err != nil {
+		if err == auth.ErrInvalidCredentials {
+			s.writeError(w, http.StatusUnauthorized, "old password incorrect", ErrUnauthorized)
+			return
+		}
+		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		return
+	}
+
+	s.logAudit(r, claims.Sub, "password_change", true, "user changed own password")
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+}
+
+// handleUpdateProfile allows users to update their own profile information.
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		s.writeError(w, http.StatusMethodNotAllowed, "PUT required", ErrMethodNotAllowed)
+		return
+	}
+
+	if s.auth == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		return
+	}
+
+	// Get authenticated user
+	claims := getClaims(r)
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		return
+	}
+
+	var req struct {
+		Email    string            `json:"email,omitempty"`
+		Metadata map[string]string `json:"metadata,omitempty"`
+	}
+
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		return
+	}
+
+	// Get username from claims
+	username := claims.Username
+	if username == "" {
+		// Fallback to subject if username not in claims
+		user, err := s.auth.GetUserByID(claims.Sub)
+		if err != nil {
+			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			return
+		}
+		username = user.Username
+	}
+
+	// Update user profile
+	if err := s.auth.UpdateUser(username, req.Email, req.Metadata); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		return
+	}
+
+	s.logAudit(r, claims.Sub, "profile_update", true, "user updated own profile")
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated"})
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {

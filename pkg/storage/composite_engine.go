@@ -26,6 +26,11 @@ type CompositeEngine struct {
 	// Access modes for each constituent
 	accessModes map[string]string // "read", "write", "read_write"
 
+	// Routing configuration for label-based and property-based routing
+	labelRouting     map[string][]string               // label -> []constituent aliases
+	propertyRouting  map[string]map[interface{}]string // property name -> value -> constituent alias
+	propertyDefaults map[string]string                 // property name -> default constituent
+
 	// Track which constituent each node was created in (for same-statement edge creation)
 	// Following Neo4j TransactionState pattern: track nodes created in current transaction
 	nodeToConstituent map[NodeID]string
@@ -44,12 +49,62 @@ func NewCompositeEngine(
 	constituentNames map[string]string,
 	accessModes map[string]string,
 ) *CompositeEngine {
+	// Initialize routing configuration with intelligent defaults
+	labelRouting := make(map[string][]string)
+	propertyRouting := make(map[string]map[interface{}]string)
+	propertyDefaults := make(map[string]string)
+
+	// Auto-configure label-based routing: If a label matches a constituent alias, route to that constituent
+	writableConstituents := make([]string, 0)
+	for alias, mode := range accessModes {
+		if mode == "write" || mode == "read_write" {
+			writableConstituents = append(writableConstituents, alias)
+			// Auto-configure: label matching alias routes to that constituent
+			labelRouting[strings.ToLower(alias)] = []string{alias}
+		}
+	}
+
+	// Set default constituents for common property-based routing
+	if len(writableConstituents) > 0 {
+		propertyDefaults["tenant_id"] = writableConstituents[0]
+		propertyDefaults["database_id"] = writableConstituents[0]
+	}
+
 	return &CompositeEngine{
 		constituents:      constituents,
 		constituentNames:  constituentNames,
 		accessModes:       accessModes,
+		labelRouting:      labelRouting,
+		propertyRouting:   propertyRouting,
+		propertyDefaults:  propertyDefaults,
 		nodeToConstituent: make(map[NodeID]string),
 	}
+}
+
+// SetLabelRouting configures label-based routing for a specific label.
+// This allows explicit configuration of which constituents should handle nodes with a given label.
+func (c *CompositeEngine) SetLabelRouting(label string, constituents []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.labelRouting[strings.ToLower(label)] = constituents
+}
+
+// SetPropertyRouting configures property-based routing for a specific property value.
+// This enables routing based on property values (e.g., tenant_id, database_id).
+func (c *CompositeEngine) SetPropertyRouting(propertyName string, value interface{}, constituent string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.propertyRouting[propertyName] == nil {
+		c.propertyRouting[propertyName] = make(map[interface{}]string)
+	}
+	c.propertyRouting[propertyName][value] = constituent
+}
+
+// SetPropertyDefault sets the default constituent for a property when the value is not found in routing rules.
+func (c *CompositeEngine) SetPropertyDefault(propertyName string, constituent string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.propertyDefaults[propertyName] = constituent
 }
 
 // getConstituentsForRead returns all constituents that can be read from.
@@ -101,52 +156,135 @@ func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 }
 
 // routeWrite determines which constituent should receive a write operation.
-// Implements label-based and property-based routing.
+// Implements full routing using configured routing rules with intelligent fallbacks.
 func (c *CompositeEngine) routeWrite(operation string, labels []string, properties map[string]interface{}, writableConstituents []string) string {
 	if len(writableConstituents) == 0 {
 		return ""
 	}
 
-	// Label-based routing: route based on first label
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// 1. Label-based routing: Use configured routing rules
 	if len(labels) > 0 {
-		// For now, use simple hash-based routing on label
-		// In a full implementation, this would use configured routing rules
-		labelHash := 0
-		for _, r := range labels[0] {
-			labelHash = labelHash*31 + int(r)
+		firstLabel := strings.ToLower(labels[0])
+		if constituents, exists := c.labelRouting[firstLabel]; exists && len(constituents) > 0 {
+			// Route to first configured constituent for this label
+			// Verify it's writable
+			for _, alias := range constituents {
+				for _, writable := range writableConstituents {
+					if alias == writable {
+						return alias
+					}
+				}
+			}
 		}
-		if labelHash < 0 {
-			labelHash = -labelHash
+
+		// Fallback: Check if label matches a constituent alias (auto-routing)
+		for _, alias := range writableConstituents {
+			if strings.ToLower(alias) == firstLabel {
+				return alias
+			}
 		}
-		index := labelHash % len(writableConstituents)
-		return writableConstituents[index]
 	}
 
-	// Property-based routing: check for common routing properties
+	// 2. Property-based routing: Check configured property routing rules
 	if properties != nil {
-		// Check for tenant_id, database_id, or similar routing properties
-		if tenantID, exists := properties["tenant_id"]; exists {
-			// Hash tenant_id to select constituent
-			tenantHash := 0
-			if s, ok := tenantID.(string); ok {
-				for _, r := range s {
-					tenantHash = tenantHash*31 + int(r)
+		for propName, propMap := range c.propertyRouting {
+			if value, exists := properties[propName]; exists {
+				if constituent, found := propMap[value]; found {
+					// Verify constituent is writable
+					for _, writable := range writableConstituents {
+						if constituent == writable {
+							return constituent
+						}
+					}
 				}
-			} else if i, ok := tenantID.(int64); ok {
-				tenantHash = int(i)
-			} else if i, ok := tenantID.(int); ok {
-				tenantHash = i
+				// Try default for this property
+				if defaultConstituent, hasDefault := c.propertyDefaults[propName]; hasDefault {
+					for _, writable := range writableConstituents {
+						if defaultConstituent == writable {
+							return defaultConstituent
+						}
+					}
+				}
 			}
-			if tenantHash < 0 {
-				tenantHash = -tenantHash
-			}
+		}
+
+		// Fallback: Check common routing properties (tenant_id, database_id)
+		// Use consistent hashing for unconfigured properties
+		if tenantID, exists := properties["tenant_id"]; exists {
+			tenantHash := hashValue(tenantID)
 			index := tenantHash % len(writableConstituents)
+			if index < 0 {
+				index = -index
+			}
+			return writableConstituents[index]
+		}
+
+		if databaseID, exists := properties["database_id"]; exists {
+			dbHash := hashValue(databaseID)
+			index := dbHash % len(writableConstituents)
+			if index < 0 {
+				index = -index
+			}
 			return writableConstituents[index]
 		}
 	}
 
-	// Default: route to first writable constituent
+	// 3. Label hash-based routing: Use consistent hashing on first label
+	// This provides deterministic routing when no explicit rules match
+	if len(labels) > 0 {
+		labelHash := hashString(labels[0])
+		index := labelHash % len(writableConstituents)
+		if index < 0 {
+			index = -index
+		}
+		return writableConstituents[index]
+	}
+
+	// 4. Default: route to first writable constituent
 	return writableConstituents[0]
+}
+
+// hashString computes a consistent hash for a string value.
+func hashString(s string) int {
+	hash := 0
+	for _, r := range s {
+		hash = hash*31 + int(r)
+	}
+	if hash < 0 {
+		hash = -hash
+	}
+	return hash
+}
+
+// hashValue computes a consistent hash for various value types.
+func hashValue(v interface{}) int {
+	switch val := v.(type) {
+	case string:
+		return hashString(val)
+	case int64:
+		hash := int(val)
+		if hash < 0 {
+			hash = -hash
+		}
+		return hash
+	case int:
+		if val < 0 {
+			return -val
+		}
+		return val
+	case int32:
+		hash := int(val)
+		if hash < 0 {
+			hash = -hash
+		}
+		return hash
+	default:
+		// Convert to string and hash
+		return hashString(fmt.Sprintf("%v", val))
+	}
 }
 
 // ============================================================================

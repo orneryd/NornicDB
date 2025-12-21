@@ -270,6 +270,14 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 
+	case []float32:
+		// Float32 array (common for vector embeddings)
+		parts := make([]string, len(val))
+		for i, item := range val {
+			parts[i] = strconv.FormatFloat(float64(item), 'f', -1, 32)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+
 	case map[string]interface{}:
 		// Convert map to Cypher map literal: {key1: val1, key2: val2}
 		parts := make([]string, 0, len(val))

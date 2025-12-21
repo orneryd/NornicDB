@@ -71,12 +71,13 @@ func TestSetReturnSingleVariable(t *testing.T) {
 }
 
 // TestSetReturnMultipleVariables tests MATCH...SET...RETURN n, m
+// Tests SET with multiple node variables in a relationship pattern
 func TestSetReturnMultipleVariables(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	// Create test nodes
+	// Create test nodes with a relationship
 	node1 := &storage.Node{
 		ID:         "node-1",
 		Labels:     []string{"Person"},
@@ -92,19 +93,40 @@ func TestSetReturnMultipleVariables(t *testing.T) {
 	_, err = store.CreateNode(node2)
 	require.NoError(t, err)
 
-	// MATCH...SET...RETURN n, m (if we can match multiple nodes)
-	// For now, test single node with multiple RETURN expressions
+	// Create relationship: Alice KNOWS Bob
+	edge := &storage.Edge{
+		ID:         "edge-1",
+		Type:       "KNOWS",
+		StartNode:  "node-1",
+		EndNode:    "node-2",
+		Properties: map[string]interface{}{},
+	}
+	err = store.CreateEdge(edge)
+	require.NoError(t, err)
+
+	// MATCH (n:Person)-[:KNOWS]->(m:Person) SET n.status = 'active' RETURN n, m
+	// This tests multiple variables (n and m) in the RETURN clause
 	result, err := exec.Execute(ctx, `
-		MATCH (n:Person {name: 'Alice'})
+		MATCH (n:Person {name: 'Alice'})-[:KNOWS]->(m:Person {name: 'Bob'})
 		SET n.status = 'active'
-		RETURN n, n.name
+		RETURN n, m
 	`, nil)
 
 	require.NoError(t, err)
 	require.Len(t, result.Columns, 2, "Should have 2 columns")
 	assert.Equal(t, "n", result.Columns[0], "First column should be 'n'")
-	assert.Equal(t, "n.name", result.Columns[1], "Second column should be 'n.name'")
+	assert.Equal(t, "m", result.Columns[1], "Second column should be 'm'")
 	require.Len(t, result.Rows, 1, "Should have 1 row")
+
+	// Verify returned nodes
+	returnedN, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok, "First result should be a *storage.Node")
+	assert.Equal(t, "active", returnedN.Properties["status"], "Node n should have updated status")
+	assert.Equal(t, "Alice", returnedN.Properties["name"], "Node n should be Alice")
+
+	returnedM, ok := result.Rows[0][1].(*storage.Node)
+	require.True(t, ok, "Second result should be a *storage.Node")
+	assert.Equal(t, "Bob", returnedM.Properties["name"], "Node m should be Bob")
 }
 
 // TestSetReturnWithAlias tests MATCH...SET...RETURN n AS alias

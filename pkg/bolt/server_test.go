@@ -2397,6 +2397,114 @@ func TestDecodePackStreamValue_INT64(t *testing.T) {
 	}
 }
 
+func TestDecodePackStreamStructure(t *testing.T) {
+	t.Run("node_structure", func(t *testing.T) {
+		// Create a Node structure: B3 4E [id] [labels] [properties]
+		// B3 = tiny struct with 3 fields, 4E = Node signature
+		nodeId := encodePackStreamInt(int64(123))
+		labels := encodePackStreamList([]any{"Person"})
+		properties := encodePackStreamMap(map[string]any{"name": "Alice"})
+
+		data := []byte{0xB3, 0x4E}
+		data = append(data, nodeId...)
+		data = append(data, labels...)
+		data = append(data, properties...)
+
+		result, consumed, err := decodePackStreamValue(data, 0)
+		if err != nil {
+			t.Fatalf("decodePackStreamValue failed: %v", err)
+		}
+		if consumed == 0 {
+			t.Error("Should consume bytes")
+		}
+
+		// Verify structure
+		nodeMap, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Result should be a map, got %T", result)
+		}
+		if nodeMap["_type"] != "Node" {
+			t.Errorf("Expected _type=Node, got %v", nodeMap["_type"])
+		}
+		if nodeMap["id"] != int64(123) {
+			t.Errorf("Expected id=123, got %v", nodeMap["id"])
+		}
+		labelsVal, ok := nodeMap["labels"].([]any)
+		if !ok || len(labelsVal) == 0 || labelsVal[0] != "Person" {
+			t.Errorf("Expected labels=[Person], got %v", labelsVal)
+		}
+		props, ok := nodeMap["properties"].(map[string]any)
+		if !ok || props["name"] != "Alice" {
+			t.Errorf("Expected properties.name=Alice, got %v", props)
+		}
+	})
+
+	t.Run("empty_structure", func(t *testing.T) {
+		// Empty structure: B0 [signature]
+		data := []byte{0xB0, 0x01}
+
+		result, consumed, err := decodePackStreamValue(data, 0)
+		if err != nil {
+			t.Fatalf("decodePackStreamValue failed: %v", err)
+		}
+		if consumed != 2 {
+			t.Errorf("Should consume 2 bytes (marker + signature), got %d", consumed)
+		}
+
+		structMap, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Result should be a map, got %T", result)
+		}
+		if structMap["_type"] != "Structure_0x01" {
+			t.Errorf("Expected _type=Structure_0x01, got %v", structMap["_type"])
+		}
+		fields, ok := structMap["fields"].([]any)
+		if !ok || len(fields) != 0 {
+			t.Errorf("Expected empty fields, got %v", fields)
+		}
+	})
+
+	t.Run("structure_in_list", func(t *testing.T) {
+		// List containing a structure
+		nodeId := encodePackStreamInt(int64(456))
+		labels := encodePackStreamList([]any{"Company"})
+		properties := encodePackStreamMap(map[string]any{"name": "Acme"})
+
+		nodeStruct := []byte{0xB3, 0x4E}
+		nodeStruct = append(nodeStruct, nodeId...)
+		nodeStruct = append(nodeStruct, labels...)
+		nodeStruct = append(nodeStruct, properties...)
+
+		// List with one element (the node structure)
+		listData := []byte{0x91} // Tiny list with 1 element
+		listData = append(listData, nodeStruct...)
+
+		result, _, err := decodePackStreamValue(listData, 0)
+		if err != nil {
+			t.Fatalf("decodePackStreamValue failed: %v", err)
+		}
+
+		list, ok := result.([]any)
+		if !ok {
+			t.Fatalf("Result should be a list, got %T", result)
+		}
+		if len(list) != 1 {
+			t.Fatalf("Expected list length 1, got %d", len(list))
+		}
+
+		nodeMap, ok := list[0].(map[string]any)
+		if !ok {
+			t.Fatalf("List element should be a map, got %T", list[0])
+		}
+		if nodeMap["_type"] != "Node" {
+			t.Errorf("Expected _type=Node, got %v", nodeMap["_type"])
+		}
+		if nodeMap["id"] != int64(456) {
+			t.Errorf("Expected id=456, got %v", nodeMap["id"])
+		}
+	})
+}
+
 // ============================================================================
 // Transaction Tests
 // ============================================================================

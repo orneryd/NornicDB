@@ -33,6 +33,20 @@ export function Security() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  
+  // Password change state
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  
+  // Profile update state
+  const [email, setEmail] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState(false);
+  const [updatingProfile, setUpdatingProfile] = useState(false);
 
   useEffect(() => {
     // Check if user is admin and get user info
@@ -44,6 +58,7 @@ export function Security() {
         const roles = data.roles || [];
         setIsAdmin(roles.includes('admin'));
         setUserInfo(data);
+        setEmail(data.email || '');
         setCheckingAuth(false);
       })
       .catch(() => {
@@ -102,26 +117,6 @@ export function Security() {
     );
   }
 
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="bg-slate-800 p-8 rounded-lg shadow-xl max-w-md text-center">
-          <div className="text-red-400 text-6xl mb-4">🔒</div>
-          <h1 className="text-2xl font-bold text-white mb-2">Access Denied</h1>
-          <p className="text-slate-400 mb-6">
-            You need admin privileges to access this page.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Back to Home
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
@@ -138,6 +133,15 @@ export function Security() {
             </button>
             <h1 className="text-xl font-semibold">Security & API Tokens</h1>
           </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => navigate('/security/admin')}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors text-sm"
+            >
+              👥 Admin Panel
+            </button>
+          )}
         </div>
       </header>
 
@@ -170,6 +174,198 @@ export function Security() {
           </div>
         )}
 
+        {/* Profile Update Section */}
+        {userInfo && userInfo.auth_method !== 'oauth' && (
+          <div className="bg-slate-800 rounded-lg p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-4">Profile Settings</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="email" className="block text-sm text-slate-400 mb-1">
+                  Email Address
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your.email@example.com"
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setProfileError('');
+                  setProfileSuccess(false);
+                  setUpdatingProfile(true);
+                  
+                  try {
+                    const response = await fetch(`${BASE_PATH}/auth/profile`, {
+                      method: 'PUT',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      credentials: 'include',
+                      body: JSON.stringify({ email }),
+                    });
+
+                    if (!response.ok) {
+                      const data = await response.json();
+                      throw new Error(data.message || 'Failed to update profile');
+                    }
+
+                    setProfileSuccess(true);
+                    setTimeout(() => setProfileSuccess(false), 3000);
+                    
+                    // Refresh user info
+                    const meResponse = await fetch(`${BASE_PATH}/auth/me`, {
+                      credentials: 'include'
+                    });
+                    const meData = await meResponse.json();
+                    setUserInfo(meData);
+                    setEmail(meData.email || '');
+                  } catch (err) {
+                    setProfileError(err instanceof Error ? err.message : 'Failed to update profile');
+                  } finally {
+                    setUpdatingProfile(false);
+                  }
+                }}
+                disabled={updatingProfile}
+                className="px-4 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {updatingProfile ? 'Updating...' : 'Update Profile'}
+              </button>
+
+              {profileError && (
+                <div className="bg-red-900/30 border border-red-700/50 rounded p-3 text-red-300 text-sm">
+                  {profileError}
+                </div>
+              )}
+
+              {profileSuccess && (
+                <div className="bg-green-900/30 border border-green-700/50 rounded p-3 text-green-300 text-sm">
+                  Profile updated successfully!
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Password Change Section */}
+        {userInfo && userInfo.auth_method !== 'oauth' && (
+          <div className="bg-slate-800 rounded-lg p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-4">Change Password</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="old-password" className="block text-sm text-slate-400 mb-1">
+                  Current Password
+                </label>
+                <input
+                  id="old-password"
+                  type="password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="new-password" className="block text-sm text-slate-400 mb-1">
+                  New Password
+                </label>
+                <input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="confirm-password" className="block text-sm text-slate-400 mb-1">
+                  Confirm New Password
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setPasswordError('');
+                  setPasswordSuccess(false);
+                  
+                  if (newPassword !== confirmPassword) {
+                    setPasswordError('New passwords do not match');
+                    return;
+                  }
+                  
+                  if (newPassword.length < 8) {
+                    setPasswordError('New password must be at least 8 characters');
+                    return;
+                  }
+                  
+                  setChangingPassword(true);
+                  
+                  try {
+                    const response = await fetch(`${BASE_PATH}/auth/password`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        old_password: oldPassword,
+                        new_password: newPassword,
+                      }),
+                    });
+
+                    if (!response.ok) {
+                      const data = await response.json();
+                      throw new Error(data.message || 'Failed to change password');
+                    }
+
+                    setPasswordSuccess(true);
+                    setOldPassword('');
+                    setNewPassword('');
+                    setConfirmPassword('');
+                    setTimeout(() => setPasswordSuccess(false), 3000);
+                  } catch (err) {
+                    setPasswordError(err instanceof Error ? err.message : 'Failed to change password');
+                  } finally {
+                    setChangingPassword(false);
+                  }
+                }}
+                disabled={changingPassword || !oldPassword || !newPassword || !confirmPassword}
+                className="w-full py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {changingPassword ? 'Changing...' : 'Change Password'}
+              </button>
+
+              {passwordError && (
+                <div className="bg-red-900/30 border border-red-700/50 rounded p-3 text-red-300 text-sm">
+                  {passwordError}
+                </div>
+              )}
+
+              {passwordSuccess && (
+                <div className="bg-green-900/30 border border-green-700/50 rounded p-3 text-green-300 text-sm">
+                  Password changed successfully!
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Info Banner */}
         <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-4 mb-8">
           <div className="flex gap-3">
@@ -186,9 +382,10 @@ export function Security() {
           </div>
         </div>
 
-        {/* Token Generator */}
-        <div className="bg-slate-800 rounded-lg p-6 mb-8">
-          <h2 className="text-lg font-semibold mb-4">Generate API Token</h2>
+        {/* Token Generator - Admin Only */}
+        {isAdmin && (
+          <div className="bg-slate-800 rounded-lg p-6 mb-8">
+            <h2 className="text-lg font-semibold mb-4">Generate API Token</h2>
           
           <div className="space-y-4">
             {/* Subject/Label */}
@@ -257,7 +454,8 @@ export function Security() {
               </div>
             )}
           </div>
-        </div>
+          </div>
+        )}
 
         {/* Generated Token Display */}
         {generatedToken && (

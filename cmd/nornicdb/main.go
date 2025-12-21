@@ -22,6 +22,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/pool"
 	"github.com/orneryd/nornicdb/pkg/server"
@@ -453,6 +454,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Println("   ✅ Search indexes ready")
 	}
 
+	// Initialize DatabaseManager for multi-database support (needed for user storage)
+	storageEngine := db.GetStorage()
+	globalConfig := config.LoadFromEnv()
+	multiDBConfig := &multidb.Config{
+		DefaultDatabase:  globalConfig.Database.DefaultDatabase,
+		SystemDatabase:   "system",
+		MaxDatabases:     0, // Unlimited
+		AllowDropDefault: false,
+	}
+
+	dbManager, err := multidb.NewDatabaseManager(storageEngine, multiDBConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database manager: %w", err)
+	}
+
 	// Setup authentication
 	var authenticator *auth.Authenticator
 	if !noAuth {
@@ -468,8 +484,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			fmt.Println("   ⚠️  No JWT secret configured - tokens will invalidate on restart!")
 		}
 
+		// Get system database storage for user persistence
+		systemStorage, storageErr := dbManager.GetStorage("system")
+		if storageErr != nil {
+			return fmt.Errorf("failed to get system database storage: %w", storageErr)
+		}
+
 		var authErr error
-		authenticator, authErr = auth.NewAuthenticator(authConfig)
+		authenticator, authErr = auth.NewAuthenticator(authConfig, systemStorage)
 		if authErr != nil {
 			return fmt.Errorf("creating authenticator: %w", authErr)
 		}
@@ -515,6 +537,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		server.SetUIAssets(ui.Assets)
 	}
 
+	// Pass dbManager to server (it will use it if authenticator needs it)
+	// Note: dbManager is created earlier for authenticator initialization
 	httpServer, err := server.New(db, authenticator, serverConfig)
 	if err != nil {
 		return fmt.Errorf("creating server: %w", err)

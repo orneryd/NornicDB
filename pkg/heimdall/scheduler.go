@@ -107,7 +107,8 @@ func NewManager(cfg Config) (*Manager, error) {
 	fmt.Printf("   GPU layers: %d (-1 = auto, falls back to CPU if needed)\n", gpuLayers)
 	fmt.Printf("   Context: %d tokens, Batch: %d tokens (single-shot mode)\n", contextSize, batchSize)
 
-	// Load the model - this uses the stub for now, will be replaced with CGO impl
+	// Load the model - uses CGO implementation if available (via generator_cgo.go init),
+	// otherwise falls back to stub (requires CGO build with localllm tag)
 	generator, err := loadGenerator(modelPath, gpuLayers, contextSize, batchSize)
 	if err != nil {
 		// Try CPU fallback

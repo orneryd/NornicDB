@@ -317,42 +317,60 @@ int cuda_cosine_similarity(CudaDevice* dev, CudaBuffer* embeddings, CudaBuffer* 
     return 0;
 }
 
-// Simple top-k selection (CPU implementation for now)
-// For production, use thrust::sort or custom CUDA kernel
+// Top-k selection using optimized insertion-sort algorithm.
+// Works for any k value, with optimal performance for k <= 100 (typical for similarity search).
+//
+// Implementation note: This uses a CPU-based algorithm that copies data to host.
+// For full GPU acceleration, the kernel_topk_simple from cuda_kernels.cu should be
+// compiled separately (nvcc -c cuda_kernels.cu) and linked, then called via
+// CUDA runtime API. The kernel is already implemented in cuda_kernels.cu.
 int cuda_topk(CudaDevice* dev, CudaBuffer* scores, unsigned int* out_indices,
               float* out_scores, unsigned int n, unsigned int k) {
-    // Copy scores to host
+    if (k == 0 || n == 0) {
+        return 0;
+    }
+    if (k > n) {
+        k = n;
+    }
+
+    // Copy scores to host (this is the bottleneck - ideally we'd use GPU kernel)
     float* host_scores = (float*)malloc(n * sizeof(float));
+    if (!host_scores) {
+        cuda_set_error("Failed to allocate host memory");
+        return -1;
+    }
+
     if (cuda_buffer_copy_to_host(scores, host_scores, n) != 0) {
         free(host_scores);
         return -1;
     }
 
-    // Simple selection sort for top-k
-    unsigned int* indices = (unsigned int*)malloc(n * sizeof(unsigned int));
-    for (unsigned int i = 0; i < n; i++) indices[i] = i;
-
-    for (unsigned int i = 0; i < k && i < n; i++) {
-        unsigned int max_idx = i;
-        for (unsigned int j = i + 1; j < n; j++) {
-            if (host_scores[indices[j]] > host_scores[indices[max_idx]]) {
-                max_idx = j;
-            }
-        }
-        // Swap
-        unsigned int tmp = indices[i];
-        indices[i] = indices[max_idx];
-        indices[max_idx] = tmp;
+    // Optimized top-k using insertion sort (O(n*k) but efficient for small k)
+    // Initialize top-k with minimum values
+    for (unsigned int i = 0; i < k; i++) {
+        out_scores[i] = -1e30f;
+        out_indices[i] = 0;
     }
 
-    // Copy top-k results
-    for (unsigned int i = 0; i < k && i < n; i++) {
-        out_indices[i] = indices[i];
-        out_scores[i] = host_scores[indices[i]];
+    // Linear scan with insertion into sorted top-k array
+    for (unsigned int i = 0; i < n; i++) {
+        float score = host_scores[i];
+
+        // Check if this score should be in top-k
+        if (score > out_scores[k - 1]) {
+            // Find insertion position (binary search would be faster but insertion is simpler)
+            unsigned int pos = k - 1;
+            while (pos > 0 && score > out_scores[pos - 1]) {
+                out_scores[pos] = out_scores[pos - 1];
+                out_indices[pos] = out_indices[pos - 1];
+                pos--;
+            }
+            out_scores[pos] = score;
+            out_indices[pos] = i;
+        }
     }
 
     free(host_scores);
-    free(indices);
     return 0;
 }
 */

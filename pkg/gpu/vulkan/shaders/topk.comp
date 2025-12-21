@@ -5,11 +5,16 @@
 // Based on llama.cpp's topk_argsort.comp shader.
 //
 // Strategy:
-//   - Phase 1: Each workgroup sorts a chunk of the data locally
-//   - Phase 2: Merge results to find global top-k
+//   - Single workgroup bitonic sort (works for n <= 256, k <= 256)
+//   - All data fits in shared memory for fast sorting
 //
-// For similarity search, K is typically small (10-100), so we use
-// a simplified approach: partial sort only top-k elements.
+// Limitations:
+//   - Requires n <= 256 (workgroup size)
+//   - Requires k <= 256 (workgroup size)
+//   - For larger datasets, use topk_full.comp which handles any n/k
+//
+// For similarity search, K is typically small (10-100), so this
+// single-workgroup approach is sufficient for small datasets.
 
 #version 450
 
@@ -81,12 +86,10 @@ void main() {
         }
     }
     
-    // First workgroup writes final results
-    // For multi-workgroup merge, we need a second pass
-    // For now, we handle k <= 256 in a single workgroup
+    // Write results from first workgroup only
+    // This shader is designed for single-workgroup operation (k <= 256, n <= 256)
+    // For larger datasets or k values, use topk_full.comp which handles any n/k
     if (wid == 0 && lid < params.k && lid < params.n) {
-        // Merge all workgroup results - simplified for single workgroup
-        // For large n, this needs a multi-pass approach
         top_indices[lid] = shared_indices[lid];
         top_scores[lid] = shared_scores[lid];
     }

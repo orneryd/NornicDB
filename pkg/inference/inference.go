@@ -542,7 +542,7 @@ func (e *Engine) OnStore(ctx context.Context, nodeID string, embedding []float32
 	// 3. Heimdall QC validation (if enabled)
 	// Each suggestion is sent to the SLM for approval before returning
 	if e.heimdallQC != nil && config.IsAutoTLPLLMQCEnabled() {
-		suggestions = e.validateSuggestionsWithHeimdall(ctx, nodeID, suggestions)
+		suggestions = e.validateSuggestionsWithHeimdall(ctx, nodeID, embedding, suggestions)
 	}
 
 	return suggestions, nil
@@ -550,7 +550,7 @@ func (e *Engine) OnStore(ctx context.Context, nodeID string, embedding []float32
 
 // validateSuggestionsWithHeimdall filters suggestions through Heimdall SLM batch review.
 // Returns approved suggestions + any augmented suggestions from Heimdall.
-func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNodeID string, suggestions []EdgeSuggestion) []EdgeSuggestion {
+func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNodeID string, embedding []float32, suggestions []EdgeSuggestion) []EdgeSuggestion {
 	if len(suggestions) == 0 || e.heimdallQC == nil {
 		return suggestions
 	}
@@ -563,8 +563,49 @@ func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNode
 		Props:  make(map[string]string),
 	}
 
-	// Build candidate pool for augmentation (empty for now - could be populated from similarity search)
+	// Build candidate pool for augmentation using similarity search
+	// This provides additional context nodes for Heimdall to consider when suggesting new edges
 	var candidatePool []NodeSummary
+
+	// Only build candidate pool if augment is enabled and we have similarity search
+	if config.IsAutoTLPLLMAugmentEnabled() && e.similaritySearch != nil && len(embedding) > 0 {
+		// Get additional similar nodes beyond what's already in suggestions
+		// Request more than we need to filter out duplicates
+		poolSize := 20 // Request more to account for filtering
+		similar, err := e.similaritySearch(ctx, embedding, poolSize)
+		if err == nil {
+			// Build a set of already-suggested target IDs to avoid duplicates
+			suggestedTargets := make(map[string]bool)
+			for _, sug := range suggestions {
+				suggestedTargets[sug.TargetID] = true
+			}
+
+			// Convert similarity results to candidate pool, excluding:
+			// 1. The source node itself
+			// 2. Nodes already in suggestions
+			// 3. Limit to 10 candidates (Heimdall's max)
+			for _, result := range similar {
+				if result.ID == sourceNodeID {
+					continue // Skip self
+				}
+				if suggestedTargets[result.ID] {
+					continue // Skip nodes already in suggestions
+				}
+
+				// Add to candidate pool
+				candidatePool = append(candidatePool, NodeSummary{
+					ID:     result.ID,
+					Labels: []string{}, // Would be populated from storage if available
+					Props:  make(map[string]string),
+				})
+
+				// Limit to 10 candidates (Heimdall's constraint)
+				if len(candidatePool) >= 10 {
+					break
+				}
+			}
+		}
+	}
 
 	// Call Heimdall batch review
 	approved, augmented, err := e.heimdallQC.ReviewBatch(ctx, sourceNode, suggestions, candidatePool)

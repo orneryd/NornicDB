@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -993,8 +994,33 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 	matchPart := strings.TrimSpace(block[:createIdx])
 	createPart := strings.TrimSpace(block[createIdx:]) // Keep "CREATE" for splitting
 
-	// Strip WITH clause from matchPart (handles MATCH ... WITH ... LIMIT 1 CREATE ...)
+	// Extract WITH clause with LIMIT/SKIP from matchPart (handles MATCH ... WITH ... LIMIT 1 CREATE ...)
+	// We need to preserve the LIMIT/SKIP to properly batch operations
+	var withLimit, withSkip int
 	if withInMatch := findKeywordIndex(matchPart, "WITH"); withInMatch > 0 {
+		withPart := strings.TrimSpace(matchPart[withInMatch:])
+		// Extract LIMIT and SKIP from WITH clause
+		limitIdx := findKeywordIndex(withPart, "LIMIT")
+		skipIdx := findKeywordIndex(withPart, "SKIP")
+
+		if limitIdx > 0 {
+			limitPart := strings.TrimSpace(withPart[limitIdx+5:])
+			if fields := strings.Fields(limitPart); len(fields) > 0 {
+				if l, err := strconv.Atoi(fields[0]); err == nil {
+					withLimit = l
+				}
+			}
+		}
+		if skipIdx > 0 && (limitIdx < 0 || skipIdx < limitIdx) {
+			skipPart := strings.TrimSpace(withPart[skipIdx+4:])
+			if fields := strings.Fields(skipPart); len(fields) > 0 {
+				if s, err := strconv.Atoi(fields[0]); err == nil {
+					withSkip = s
+				}
+			}
+		}
+
+		// Strip WITH clause from matchPart for processing
 		matchPart = strings.TrimSpace(matchPart[:withInMatch])
 	}
 
@@ -1161,6 +1187,24 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 	// Build cartesian product of all pattern matches
 	allCombinations := e.buildCartesianProduct(patternMatches)
+
+	// Apply WITH LIMIT/SKIP if present (from MATCH ... WITH ... LIMIT ... CREATE pattern)
+	// This limits how many matched rows are processed before CREATE
+	if withLimit > 0 || withSkip > 0 {
+		startIdx := withSkip
+		if startIdx > len(allCombinations) {
+			startIdx = len(allCombinations)
+		}
+		endIdx := len(allCombinations)
+		if withLimit > 0 && startIdx+withLimit < endIdx {
+			endIdx = startIdx + withLimit
+		}
+		if startIdx < len(allCombinations) {
+			allCombinations = allCombinations[startIdx:endIdx]
+		} else {
+			allCombinations = []map[string]*storage.Node{} // No matches after SKIP
+		}
+	}
 
 	// Apply WHERE clause filtering to cartesian product if present
 	if whereClause != "" {

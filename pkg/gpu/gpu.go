@@ -602,7 +602,17 @@ type VectorIndex struct {
 	vectors    [][]float32 // CPU fallback storage
 	ids        []string
 	mu         sync.RWMutex
-	gpuBuffer  unsafe.Pointer // Native GPU buffer handle
+	gpuBuffer  unsafe.Pointer // Native GPU buffer handle (legacy)
+
+	// GPU storage (similar to EmbeddingIndex)
+	metalBuffer   *metal.Buffer          // Metal GPU buffer (macOS)
+	metalDevice   *metal.Device          // Metal device reference
+	cudaBuffer    *cuda.Buffer           // CUDA GPU buffer (NVIDIA)
+	cudaDevice    *cuda.Device           // CUDA device reference
+	vulkanBuffer  *vulkan.Buffer         // Vulkan GPU buffer (cross-platform)
+	vulkanDevice  *vulkan.Device         // Vulkan device reference
+	vulkanCompute *vulkan.ComputeContext // Vulkan compute pipeline context
+	gpuSynced     bool                   // Is GPU in sync with CPU?
 }
 
 // NewVectorIndex creates a GPU-accelerated vector index.
@@ -626,8 +636,8 @@ func (vi *VectorIndex) Add(id string, vector []float32) error {
 
 	vi.ids = append(vi.ids, id)
 	vi.vectors = append(vi.vectors, vector)
+	vi.gpuSynced = false // Mark GPU as out of sync
 
-	// TODO: Upload to GPU if enabled
 	return nil
 }
 
@@ -638,11 +648,15 @@ func (vi *VectorIndex) Search(query []float32, k int) ([]SearchResult, error) {
 	}
 
 	vi.mu.RLock()
-	defer vi.mu.RUnlock()
+	enabled := vi.manager.IsEnabled()
+	vi.mu.RUnlock()
 
-	if vi.manager.IsEnabled() {
+	if enabled {
 		return vi.searchGPU(query, k)
 	}
+
+	vi.mu.RLock()
+	defer vi.mu.RUnlock()
 	return vi.searchCPU(query, k)
 }
 
@@ -655,10 +669,341 @@ type SearchResult struct {
 
 // searchGPU performs GPU-accelerated similarity search.
 func (vi *VectorIndex) searchGPU(query []float32, k int) ([]SearchResult, error) {
-	// TODO: Implement actual GPU kernel execution
-	// For now, fall back to CPU
+	// Check if GPU sync is needed (with read lock)
+	vi.mu.RLock()
+	needsSync := !vi.gpuSynced
+	device := vi.manager.device
+	vi.mu.RUnlock()
+
+	// Sync to GPU if needed (acquires write lock internally)
+	if needsSync {
+		if err := vi.syncToGPU(); err != nil {
+			// Fall back to CPU if sync fails
+			atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+			vi.mu.RLock()
+			defer vi.mu.RUnlock()
+			return vi.searchCPU(query, k)
+		}
+	}
+
+	// Determine which backend to use
+	if device != nil {
+		switch device.Backend {
+		case BackendMetal:
+			return vi.searchMetal(query, k)
+		case BackendCUDA:
+			return vi.searchCUDA(query, k)
+		case BackendVulkan:
+			return vi.searchVulkan(query, k)
+		}
+	}
+
+	// Fallback to CPU if no GPU backend available
 	atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+	vi.mu.RLock()
+	defer vi.mu.RUnlock()
 	return vi.searchCPU(query, k)
+}
+
+// syncToGPU uploads vectors to GPU memory.
+// This method acquires a write lock and should not be called while holding a read lock.
+func (vi *VectorIndex) syncToGPU() error {
+	vi.mu.Lock()
+	defer vi.mu.Unlock()
+
+	if !vi.manager.IsEnabled() {
+		return ErrGPUDisabled
+	}
+
+	if len(vi.vectors) == 0 {
+		vi.gpuSynced = true
+		return nil
+	}
+
+	// Flatten vectors to contiguous array (same format as EmbeddingIndex)
+	flatVectors := make([]float32, 0, len(vi.vectors)*vi.dimensions)
+	for _, vec := range vi.vectors {
+		flatVectors = append(flatVectors, vec...)
+	}
+
+	// Determine which backend to use
+	if vi.manager.device != nil {
+		switch vi.manager.device.Backend {
+		case BackendMetal:
+			return vi.syncToMetal(flatVectors)
+		case BackendCUDA:
+			return vi.syncToCUDA(flatVectors)
+		case BackendVulkan:
+			return vi.syncToVulkan(flatVectors)
+		}
+	}
+
+	return ErrGPUNotAvailable
+}
+
+// syncToMetal uploads vectors to Metal GPU buffer.
+func (vi *VectorIndex) syncToMetal(flatVectors []float32) error {
+	if vi.metalDevice == nil {
+		device, err := metal.NewDevice()
+		if err != nil {
+			return err
+		}
+		vi.metalDevice = device
+	}
+
+	if vi.metalBuffer != nil {
+		vi.metalBuffer.Release()
+		vi.metalBuffer = nil
+	}
+
+	buffer, err := vi.metalDevice.NewBuffer(flatVectors, metal.StorageShared)
+	if err != nil {
+		return err
+	}
+
+	vi.metalBuffer = buffer
+	vi.gpuSynced = true
+	return nil
+}
+
+// syncToCUDA uploads vectors to CUDA GPU buffer.
+func (vi *VectorIndex) syncToCUDA(flatVectors []float32) error {
+	if vi.cudaDevice == nil {
+		deviceID := 0
+		if vi.manager.config != nil {
+			deviceID = vi.manager.config.DeviceID
+		}
+		device, err := cuda.NewDevice(deviceID)
+		if err != nil {
+			return err
+		}
+		vi.cudaDevice = device
+	}
+
+	if vi.cudaBuffer != nil {
+		vi.cudaBuffer.Release()
+		vi.cudaBuffer = nil
+	}
+
+	buffer, err := vi.cudaDevice.NewBuffer(flatVectors, cuda.MemoryDevice)
+	if err != nil {
+		return err
+	}
+
+	vi.cudaBuffer = buffer
+	vi.gpuSynced = true
+	return nil
+}
+
+// syncToVulkan uploads vectors to Vulkan GPU buffer.
+func (vi *VectorIndex) syncToVulkan(flatVectors []float32) error {
+	if vi.vulkanDevice == nil {
+		deviceID := 0
+		if vi.manager.config != nil {
+			deviceID = vi.manager.config.DeviceID
+		}
+		device, err := vulkan.NewDevice(deviceID)
+		if err != nil {
+			return err
+		}
+		vi.vulkanDevice = device
+
+		// Create compute context if available
+		computeCtx, err := device.NewComputeContext()
+		if err == nil {
+			vi.vulkanCompute = computeCtx
+		}
+	}
+
+	if vi.vulkanBuffer != nil {
+		vi.vulkanBuffer.Release()
+		vi.vulkanBuffer = nil
+	}
+
+	buffer, err := vi.vulkanDevice.NewBuffer(flatVectors)
+	if err != nil {
+		return err
+	}
+
+	vi.vulkanBuffer = buffer
+	vi.gpuSynced = true
+	return nil
+}
+
+// searchMetal performs similarity search using Metal GPU.
+func (vi *VectorIndex) searchMetal(query []float32, k int) ([]SearchResult, error) {
+	vi.mu.RLock()
+	metalBuffer := vi.metalBuffer
+	metalDevice := vi.metalDevice
+	ids := vi.ids
+	vi.mu.RUnlock()
+
+	if metalBuffer == nil || metalDevice == nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	n := uint32(len(ids))
+	if k > int(n) {
+		k = int(n)
+	}
+
+	results, err := metalDevice.Search(
+		metalBuffer,
+		query,
+		n,
+		uint32(vi.dimensions),
+		k,
+		true, // vectors are normalized
+	)
+
+	if err != nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	atomic.AddInt64(&vi.manager.stats.OperationsGPU, 1)
+	atomic.AddInt64(&vi.manager.stats.KernelExecutions, 2) // similarity + topk
+
+	output := make([]SearchResult, len(results))
+	for i, r := range results {
+		if int(r.Index) < len(ids) {
+			output[i] = SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			}
+		}
+	}
+
+	return output, nil
+}
+
+// searchCUDA performs similarity search using NVIDIA CUDA GPU.
+func (vi *VectorIndex) searchCUDA(query []float32, k int) ([]SearchResult, error) {
+	vi.mu.RLock()
+	cudaBuffer := vi.cudaBuffer
+	cudaDevice := vi.cudaDevice
+	ids := vi.ids
+	vi.mu.RUnlock()
+
+	if cudaBuffer == nil || cudaDevice == nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	n := uint32(len(ids))
+	if k > int(n) {
+		k = int(n)
+	}
+
+	results, err := cudaDevice.Search(
+		cudaBuffer,
+		query,
+		n,
+		uint32(vi.dimensions),
+		k,
+		true, // vectors are normalized
+	)
+
+	if err != nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	atomic.AddInt64(&vi.manager.stats.OperationsGPU, 1)
+	atomic.AddInt64(&vi.manager.stats.KernelExecutions, 2) // similarity + topk
+
+	output := make([]SearchResult, len(results))
+	for i, r := range results {
+		if int(r.Index) < len(ids) {
+			output[i] = SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			}
+		}
+	}
+
+	return output, nil
+}
+
+// searchVulkan performs similarity search using Vulkan GPU.
+func (vi *VectorIndex) searchVulkan(query []float32, k int) ([]SearchResult, error) {
+	vi.mu.RLock()
+	vulkanBuffer := vi.vulkanBuffer
+	vulkanDevice := vi.vulkanDevice
+	vulkanCompute := vi.vulkanCompute
+	ids := vi.ids
+	vi.mu.RUnlock()
+
+	if vulkanBuffer == nil || vulkanDevice == nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	n := uint32(len(ids))
+	if k > int(n) {
+		k = int(n)
+	}
+
+	var results []vulkan.SearchResult
+	var err error
+
+	// Use GPU compute shaders if available, otherwise fall back to CPU implementation
+	if vulkanCompute != nil {
+		results, err = vulkanCompute.SearchGPU(
+			vulkanBuffer,
+			query,
+			n,
+			uint32(vi.dimensions),
+			k,
+			true, // vectors are normalized
+		)
+	} else {
+		// CPU fallback (still uses GPU memory buffers)
+		results, err = vulkanDevice.Search(
+			vulkanBuffer,
+			query,
+			n,
+			uint32(vi.dimensions),
+			k,
+			true, // vectors are normalized
+		)
+	}
+
+	if err != nil {
+		atomic.AddInt64(&vi.manager.stats.FallbackCount, 1)
+		vi.mu.RLock()
+		defer vi.mu.RUnlock()
+		return vi.searchCPU(query, k)
+	}
+
+	atomic.AddInt64(&vi.manager.stats.OperationsGPU, 1)
+	atomic.AddInt64(&vi.manager.stats.KernelExecutions, 2) // similarity + topk
+
+	output := make([]SearchResult, len(results))
+	for i, r := range results {
+		if int(r.Index) < len(ids) {
+			output[i] = SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			}
+		}
+	}
+
+	return output, nil
 }
 
 // searchCPU performs CPU-based similarity search.

@@ -141,21 +141,25 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 }
 
 // executeInTransaction executes a query within the active transaction.
+// Uses the same transactionStorageWrapper pattern as implicit transactions,
+// routing writes through the transaction for atomicity and rollback support.
 func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
-	// Temporarily swap storage with transaction for scoped operations
-	originalStorage := e.storage
-
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
-	if _, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
-		// Use transaction-scoped operations
-		// For now, execute against original storage (limitation)
-		// Full implementation would use a transaction-aware storage adapter
-		result, err := e.executeQueryAgainstStorage(ctx, cypher, upperQuery)
-		e.storage = originalStorage
-		return result, err
+	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
+	if !ok {
+		return nil, fmt.Errorf("unknown transaction type")
 	}
 
-	return nil, fmt.Errorf("unknown transaction type")
+	// Create a transactional wrapper that routes writes through the transaction
+	// This ensures all operations within the transaction are atomic and can be rolled back
+	txWrapper := &transactionStorageWrapper{tx: tx, underlying: e.storage}
+
+	// Pass the wrapper through context (same pattern as implicit transactions)
+	// This is thread-safe and allows getStorage() to automatically use the transaction
+	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
+
+	// Execute the query - getStorage() will automatically use the transaction wrapper
+	return e.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
 }
 
 // executeQueryAgainstStorage executes query with current storage context.

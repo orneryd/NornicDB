@@ -189,6 +189,89 @@ static const uint32_t cosine_similarity_spirv[] = {
 
 static const size_t cosine_similarity_spirv_size = sizeof(cosine_similarity_spirv);
 
+// Normalize vectors SPIR-V shader
+// Compile with: glslc -fshader-stage=compute -O normalize.comp -o normalize.spv
+// Total size: 2416 bytes (604 uint32_t words)
+static const uint32_t normalize_spirv[] = {
+    0x07230203, 0x00010000, 0x000d000b, 0x000000ad, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,
+    0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001,
+    0x0007000f, 0x00000005, 0x00000004, 0x6e69616d, 0x00000000, 0x0000000b, 0x00000011, 0x00060010,
+    0x00000004, 0x00000011, 0x00000100, 0x00000001, 0x00000001, 0x00040047, 0x0000000b, 0x0000000b,
+    0x0000001a, 0x00040047, 0x00000011, 0x0000000b, 0x0000001b, 0x00030047, 0x00000017, 0x00000002,
+    0x00050048, 0x00000017, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000017, 0x00000001,
+    0x00000023, 0x00000004, 0x00040047, 0x0000003a, 0x00000006, 0x00000004, 0x00030047, 0x0000003b,
+    0x00000003, 0x00050048, 0x0000003b, 0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x0000003d,
+    0x00000021, 0x00000000, 0x00040047, 0x0000003d, 0x00000022, 0x00000000, 0x00040047, 0x0000009e,
+    0x0000000b, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000000, 0x00040017, 0x00000009, 0x00000006, 0x00000003, 0x00040020,
+    0x0000000a, 0x00000001, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000001, 0x0004002b,
+    0x00000006, 0x0000000c, 0x00000000, 0x00040020, 0x0000000d, 0x00000001, 0x00000006, 0x0004003b,
+    0x0000000a, 0x00000011, 0x00000001, 0x0004002b, 0x00000006, 0x00000015, 0x00000100, 0x0004001e,
+    0x00000017, 0x00000006, 0x00000006, 0x00040020, 0x00000018, 0x00000009, 0x00000017, 0x0004003b,
+    0x00000018, 0x00000019, 0x00000009, 0x00040015, 0x0000001a, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000001a, 0x0000001b, 0x00000000, 0x00040020, 0x0000001c, 0x00000009, 0x00000006, 0x00020014,
+    0x0000001f, 0x0004002b, 0x0000001a, 0x00000026, 0x00000001, 0x00030016, 0x0000002a, 0x00000020,
+    0x0004002b, 0x0000002a, 0x0000002d, 0x00000000, 0x0003001d, 0x0000003a, 0x0000002a, 0x0003001e,
+    0x0000003b, 0x0000003a, 0x00040020, 0x0000003c, 0x00000002, 0x0000003b, 0x0004003b, 0x0000003c,
+    0x0000003d, 0x00000002, 0x00040020, 0x00000041, 0x00000002, 0x0000002a, 0x0004001c, 0x0000004c,
+    0x0000002a, 0x00000015, 0x00040020, 0x0000004d, 0x00000004, 0x0000004c, 0x0004003b, 0x0000004d,
+    0x0000004e, 0x00000004, 0x00040020, 0x00000051, 0x00000004, 0x0000002a, 0x0004002b, 0x00000006,
+    0x00000053, 0x00000002, 0x0004002b, 0x00000006, 0x00000054, 0x00000108, 0x0004002b, 0x0000002a,
+    0x00000079, 0x1e3ce508, 0x0004002b, 0x00000006, 0x0000009d, 0x00000001, 0x0006002c, 0x00000009,
+    0x0000009e, 0x00000015, 0x0000009d, 0x0000009d, 0x0004002b, 0x00000006, 0x000000ac, 0x00000080,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x000300f7,
+    0x0000009f, 0x00000000, 0x000300fb, 0x0000000c, 0x000000a0, 0x000200f8, 0x000000a0, 0x00050041,
+    0x0000000d, 0x0000000e, 0x0000000b, 0x0000000c, 0x0004003d, 0x00000006, 0x0000000f, 0x0000000e,
+    0x00050041, 0x0000000d, 0x00000012, 0x00000011, 0x0000000c, 0x0004003d, 0x00000006, 0x00000013,
+    0x00000012, 0x00050041, 0x0000001c, 0x0000001d, 0x00000019, 0x0000001b, 0x0004003d, 0x00000006,
+    0x0000001e, 0x0000001d, 0x000500ae, 0x0000001f, 0x00000020, 0x0000000f, 0x0000001e, 0x000300f7,
+    0x00000022, 0x00000000, 0x000400fa, 0x00000020, 0x00000021, 0x00000022, 0x000200f8, 0x00000021,
+    0x000200f9, 0x0000009f, 0x000200f8, 0x00000022, 0x00050041, 0x0000001c, 0x00000027, 0x00000019,
+    0x00000026, 0x0004003d, 0x00000006, 0x00000028, 0x00000027, 0x00050084, 0x00000006, 0x00000029,
+    0x0000000f, 0x00000028, 0x000200f9, 0x00000030, 0x000200f8, 0x00000030, 0x000700f5, 0x0000002a,
+    0x000000a6, 0x0000002d, 0x00000022, 0x00000048, 0x00000031, 0x000700f5, 0x00000006, 0x000000a5,
+    0x00000013, 0x00000022, 0x0000004b, 0x00000031, 0x000500b0, 0x0000001f, 0x00000038, 0x000000a5,
+    0x00000028, 0x000400f6, 0x00000032, 0x00000031, 0x00000000, 0x000400fa, 0x00000038, 0x00000031,
+    0x00000032, 0x000200f8, 0x00000031, 0x00050080, 0x00000006, 0x00000040, 0x00000029, 0x000000a5,
+    0x00060041, 0x00000041, 0x00000042, 0x0000003d, 0x0000001b, 0x00000040, 0x0004003d, 0x0000002a,
+    0x00000043, 0x00000042, 0x00050085, 0x0000002a, 0x00000046, 0x00000043, 0x00000043, 0x00050081,
+    0x0000002a, 0x00000048, 0x000000a6, 0x00000046, 0x00050080, 0x00000006, 0x0000004b, 0x000000a5,
+    0x00000015, 0x000200f9, 0x00000030, 0x000200f8, 0x00000032, 0x00050041, 0x00000051, 0x00000052,
+    0x0000004e, 0x00000013, 0x0003003e, 0x00000052, 0x000000a6, 0x000400e0, 0x00000053, 0x00000053,
+    0x00000054, 0x000200f9, 0x00000058, 0x000200f8, 0x00000058, 0x000700f5, 0x00000006, 0x000000a7,
+    0x000000ac, 0x00000032, 0x0000006f, 0x0000005b, 0x000500ac, 0x0000001f, 0x0000005e, 0x000000a7,
+    0x0000000c, 0x000400f6, 0x0000005a, 0x0000005b, 0x00000000, 0x000400fa, 0x0000005e, 0x00000059,
+    0x0000005a, 0x000200f8, 0x00000059, 0x000500b0, 0x0000001f, 0x00000061, 0x00000013, 0x000000a7,
+    0x000300f7, 0x00000063, 0x00000000, 0x000400fa, 0x00000061, 0x00000062, 0x00000063, 0x000200f8,
+    0x00000062, 0x00050080, 0x00000006, 0x00000067, 0x00000013, 0x000000a7, 0x00050041, 0x00000051,
+    0x00000068, 0x0000004e, 0x00000067, 0x0004003d, 0x0000002a, 0x00000069, 0x00000068, 0x0004003d,
+    0x0000002a, 0x0000006b, 0x00000052, 0x00050081, 0x0000002a, 0x0000006c, 0x0000006b, 0x00000069,
+    0x0003003e, 0x00000052, 0x0000006c, 0x000200f9, 0x00000063, 0x000200f8, 0x00000063, 0x000400e0,
+    0x00000053, 0x00000053, 0x00000054, 0x000200f9, 0x0000005b, 0x000200f8, 0x0000005b, 0x00050086,
+    0x00000006, 0x0000006f, 0x000000a7, 0x00000053, 0x000200f9, 0x00000058, 0x000200f8, 0x0000005a,
+    0x000500aa, 0x0000001f, 0x00000072, 0x00000013, 0x0000000c, 0x000300f7, 0x00000074, 0x00000000,
+    0x000400fa, 0x00000072, 0x00000073, 0x00000074, 0x000200f8, 0x00000073, 0x00050041, 0x00000051,
+    0x00000076, 0x0000004e, 0x0000001b, 0x0004003d, 0x0000002a, 0x00000077, 0x00000076, 0x000500ba,
+    0x0000001f, 0x0000007a, 0x00000077, 0x00000079, 0x000300f7, 0x0000007c, 0x00000000, 0x000400fa,
+    0x0000007a, 0x0000007b, 0x0000007c, 0x000200f8, 0x0000007b, 0x0006000c, 0x0000002a, 0x0000007e,
+    0x00000001, 0x00000020, 0x00000077, 0x000200f9, 0x0000007c, 0x000200f8, 0x0000007c, 0x000700f5,
+    0x0000002a, 0x000000a8, 0x0000002d, 0x00000073, 0x0000007e, 0x0000007b, 0x0003003e, 0x00000076,
+    0x000000a8, 0x000200f9, 0x00000074, 0x000200f8, 0x00000074, 0x000400e0, 0x00000053, 0x00000053,
+    0x00000054, 0x00050041, 0x00000051, 0x00000081, 0x0000004e, 0x0000001b, 0x0004003d, 0x0000002a,
+    0x00000082, 0x00000081, 0x000500ba, 0x0000001f, 0x00000084, 0x00000082, 0x0000002d, 0x000300f7,
+    0x00000086, 0x00000000, 0x000400fa, 0x00000084, 0x00000085, 0x00000086, 0x000200f8, 0x00000085,
+    0x000200f9, 0x00000089, 0x000200f8, 0x00000089, 0x000700f5, 0x00000006, 0x000000a9, 0x00000013,
+    0x00000085, 0x0000009c, 0x0000008a, 0x000500b0, 0x0000001f, 0x00000091, 0x000000a9, 0x00000028,
+    0x000400f6, 0x0000008b, 0x0000008a, 0x00000000, 0x000400fa, 0x00000091, 0x0000008a, 0x0000008b,
+    0x000200f8, 0x0000008a, 0x00050080, 0x00000006, 0x00000094, 0x00000029, 0x000000a9, 0x00060041,
+    0x00000041, 0x00000096, 0x0000003d, 0x0000001b, 0x00000094, 0x0004003d, 0x0000002a, 0x00000097,
+    0x00000096, 0x00050085, 0x0000002a, 0x00000098, 0x00000097, 0x00000082, 0x0003003e, 0x00000096,
+    0x00000098, 0x00050080, 0x00000006, 0x0000009c, 0x000000a9, 0x00000015, 0x000200f9, 0x00000089,
+    0x000200f8, 0x0000008b, 0x000200f9, 0x00000086, 0x000200f8, 0x00000086, 0x000200f9, 0x0000009f,
+    0x000200f8, 0x0000009f, 0x000100fd, 0x00010038,
+};
+static const size_t normalize_spirv_size = sizeof(normalize_spirv);
+
 // Device structure
 typedef struct {
     VkInstance instance;
@@ -203,6 +286,8 @@ typedef struct {
     VkPipeline topk_pipeline;
     VkPipeline normalize_pipeline;
     VkDescriptorSetLayout descriptor_set_layout;
+    VkDescriptorSetLayout normalize_descriptor_layout;  // For normalize pipeline (1 buffer)
+    VkPipelineLayout normalize_pipeline_layout;         // For normalize pipeline
     int device_id;
     char device_name[256];
     uint64_t device_memory;
@@ -487,6 +572,8 @@ void vulkan_release_device(VulkanDevice* dev) {
     if (dev->cosine_pipeline) vkDestroyPipeline(dev->device, dev->cosine_pipeline, NULL);
     if (dev->topk_pipeline) vkDestroyPipeline(dev->device, dev->topk_pipeline, NULL);
     if (dev->normalize_pipeline) vkDestroyPipeline(dev->device, dev->normalize_pipeline, NULL);
+    if (dev->normalize_pipeline_layout) vkDestroyPipelineLayout(dev->device, dev->normalize_pipeline_layout, NULL);
+    if (dev->normalize_descriptor_layout) vkDestroyDescriptorSetLayout(dev->device, dev->normalize_descriptor_layout, NULL);
     if (dev->pipeline_layout) vkDestroyPipelineLayout(dev->device, dev->pipeline_layout, NULL);
     if (dev->descriptor_set_layout) vkDestroyDescriptorSetLayout(dev->device, dev->descriptor_set_layout, NULL);
     if (dev->descriptor_pool) vkDestroyDescriptorPool(dev->device, dev->descriptor_pool, NULL);
@@ -634,34 +721,259 @@ int vulkan_buffer_copy_to_host(VulkanBuffer* buf, float* host_data, size_t count
 // Compute operations (simplified - would use actual compute shaders in production)
 
 int vulkan_normalize_vectors(VulkanDevice* dev, VulkanBuffer* vectors, uint32_t n, uint32_t dims) {
-    // CPU fallback for now - would dispatch compute shader in production
-    float* data = (float*)malloc(n * dims * sizeof(float));
-    if (vulkan_buffer_copy_to_host(vectors, data, n * dims) != 0) {
-        free(data);
+    if (!dev || !vectors) {
+        vulkan_set_error("Invalid device or buffer");
         return -1;
     }
 
-    for (uint32_t i = 0; i < n; i++) {
-        float* vec = data + i * dims;
-        float norm = 0.0f;
-        for (uint32_t d = 0; d < dims; d++) {
-            norm += vec[d] * vec[d];
+    // Create pipeline if not already created
+    if (vulkan_create_normalize_pipeline(dev) != 0) {
+        // Fall back to CPU if pipeline creation fails
+        float* data = (float*)malloc(n * dims * sizeof(float));
+        if (vulkan_buffer_copy_to_host(vectors, data, n * dims) != 0) {
+            free(data);
+            return -1;
         }
-        norm = sqrtf(norm);
-        if (norm > 1e-10f) {
+
+        for (uint32_t i = 0; i < n; i++) {
+            float* vec = data + i * dims;
+            float norm = 0.0f;
             for (uint32_t d = 0; d < dims; d++) {
-                vec[d] /= norm;
+                norm += vec[d] * vec[d];
+            }
+            norm = sqrtf(norm);
+            if (norm > 1e-10f) {
+                for (uint32_t d = 0; d < dims; d++) {
+                    vec[d] /= norm;
+                }
             }
         }
+
+        void* mapped;
+        vkMapMemory(dev->device, vectors->memory, 0, vectors->size, 0, &mapped);
+        memcpy(mapped, data, n * dims * sizeof(float));
+        vkUnmapMemory(dev->device, vectors->memory);
+        free(data);
+        return 0;
     }
 
-    // Write back
-    void* mapped;
-    vkMapMemory(dev->device, vectors->memory, 0, vectors->size, 0, &mapped);
-    memcpy(mapped, data, n * dims * sizeof(float));
-    vkUnmapMemory(dev->device, vectors->memory);
+    // Allocate descriptor set
+    VkDescriptorSetAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = dev->descriptor_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &dev->normalize_descriptor_layout
+    };
 
-    free(data);
+    VkDescriptorSet descriptor_set;
+    VkResult result = vkAllocateDescriptorSets(dev->device, &alloc_info, &descriptor_set);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to allocate descriptor set: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        return -1;
+    }
+
+    // Update descriptor set with buffer
+    VkDescriptorBufferInfo buffer_info = {
+        .buffer = vectors->buffer,
+        .offset = 0,
+        .range = vectors->size
+    };
+
+    VkWriteDescriptorSet write = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = descriptor_set,
+        .dstBinding = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pBufferInfo = &buffer_info
+    };
+
+    vkUpdateDescriptorSets(dev->device, 1, &write, 0, NULL);
+
+    // Allocate command buffer
+    VkCommandBufferAllocateInfo cmd_alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = dev->command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+
+    VkCommandBuffer cmd_buffer;
+    result = vkAllocateCommandBuffers(dev->device, &cmd_alloc_info, &cmd_buffer);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to allocate command buffer: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        return -1;
+    }
+
+    // Begin command buffer
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+
+    result = vkBeginCommandBuffer(cmd_buffer, &begin_info);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to begin command buffer: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkFreeCommandBuffers(dev->device, dev->command_pool, 1, &cmd_buffer);
+        return -1;
+    }
+
+    // Bind pipeline
+    vkCmdBindPipeline(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, dev->normalize_pipeline);
+
+    // Bind descriptor set
+    vkCmdBindDescriptorSets(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, dev->normalize_pipeline_layout, 0, 1, &descriptor_set, 0, NULL);
+
+    // Push constants (n, dimensions)
+    uint32_t push_constants[2] = {n, dims};
+    vkCmdPushConstants(cmd_buffer, dev->normalize_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 8, push_constants);
+
+    // Dispatch compute (n workgroups, one per vector)
+    vkCmdDispatch(cmd_buffer, n, 1, 1);
+
+    // End command buffer
+    result = vkEndCommandBuffer(cmd_buffer);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to end command buffer: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkFreeCommandBuffers(dev->device, dev->command_pool, 1, &cmd_buffer);
+        return -1;
+    }
+
+    // Submit to queue
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd_buffer
+    };
+
+    result = vkQueueSubmit(dev->compute_queue, 1, &submit_info, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to submit to queue: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkFreeCommandBuffers(dev->device, dev->command_pool, 1, &cmd_buffer);
+        return -1;
+    }
+
+    // Wait for completion
+    result = vkQueueWaitIdle(dev->compute_queue);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to wait for queue: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkFreeCommandBuffers(dev->device, dev->command_pool, 1, &cmd_buffer);
+        return -1;
+    }
+
+    // Free command buffer
+    vkFreeCommandBuffers(dev->device, dev->command_pool, 1, &cmd_buffer);
+
+    return 0;
+}
+
+// Create normalize pipeline lazily
+static int vulkan_create_normalize_pipeline(VulkanDevice* dev) {
+    if (dev->normalize_pipeline) {
+        return 0; // Already created
+    }
+
+    // Create descriptor set layout for normalize (1 buffer: vectors)
+    VkDescriptorSetLayoutBinding binding = {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+    };
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &binding
+    };
+
+    VkResult result = vkCreateDescriptorSetLayout(dev->device, &layout_info, NULL, &dev->normalize_descriptor_layout);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to create normalize descriptor layout: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        return -1;
+    }
+
+    // Create pipeline layout with push constants (2 uint32: n, dimensions)
+    VkPushConstantRange push_range = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0,
+        .size = 8 // 2 uint32
+    };
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &dev->normalize_descriptor_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_range
+    };
+
+    result = vkCreatePipelineLayout(dev->device, &pipeline_layout_info, NULL, &dev->normalize_pipeline_layout);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to create normalize pipeline layout: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkDestroyDescriptorSetLayout(dev->device, dev->normalize_descriptor_layout, NULL);
+        return -1;
+    }
+
+    // Create shader module
+    VkShaderModuleCreateInfo shader_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = normalize_spirv_size,
+        .pCode = normalize_spirv
+    };
+
+    VkShaderModule shader_module;
+    result = vkCreateShaderModule(dev->device, &shader_info, NULL, &shader_module);
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to create normalize shader module: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkDestroyPipelineLayout(dev->device, dev->normalize_pipeline_layout, NULL);
+        vkDestroyDescriptorSetLayout(dev->device, dev->normalize_descriptor_layout, NULL);
+        return -1;
+    }
+
+    // Create compute pipeline
+    const char* entry_point = "main";
+    VkComputePipelineCreateInfo pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = shader_module,
+            .pName = entry_point
+        },
+        .layout = dev->normalize_pipeline_layout
+    };
+
+    result = vkCreateComputePipelines(dev->device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &dev->normalize_pipeline);
+    vkDestroyShaderModule(dev->device, shader_module, NULL);
+
+    if (result != VK_SUCCESS) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to create normalize pipeline: %s", vulkan_result_string(result));
+        vulkan_set_error(msg);
+        vkDestroyPipelineLayout(dev->device, dev->normalize_pipeline_layout, NULL);
+        vkDestroyDescriptorSetLayout(dev->device, dev->normalize_descriptor_layout, NULL);
+        return -1;
+    }
+
     return 0;
 }
 

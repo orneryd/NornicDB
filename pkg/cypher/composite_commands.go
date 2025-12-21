@@ -5,15 +5,18 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 // executeCreateCompositeDatabase handles CREATE COMPOSITE DATABASE command.
 //
 // Syntax:
-//   CREATE COMPOSITE DATABASE name
-//     ALIAS alias1 FOR DATABASE db1
-//     ALIAS alias2 FOR DATABASE db2
-//     ...
+//
+//	CREATE COMPOSITE DATABASE name
+//	  ALIAS alias1 FOR DATABASE db1
+//	  ALIAS alias2 FOR DATABASE db2
+//	  ...
 //
 // Example:
 //
@@ -311,7 +314,16 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 
 	rows := make([][]interface{}, len(constituents))
 	for i, c := range constituents {
-		if m, ok := c.(map[string]interface{}); ok {
+		// Handle ConstituentRef type
+		if ref, ok := c.(multidb.ConstituentRef); ok {
+			rows[i] = []interface{}{
+				ref.Alias,
+				ref.DatabaseName,
+				ref.Type,
+				ref.AccessMode,
+			}
+		} else if m, ok := c.(map[string]interface{}); ok {
+			// Fallback for map format (if returned as map)
 			rows[i] = []interface{}{
 				m["alias"],
 				m["database_name"],
@@ -319,8 +331,7 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				m["access_mode"],
 			}
 		} else {
-			// Try to convert from ConstituentRef
-			// This would require importing multidb, so we use interface{} for now
+			// Unknown type - return empty row
 			rows[i] = []interface{}{"", "", "", ""}
 		}
 	}
@@ -334,10 +345,11 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 // executeAlterCompositeDatabase handles ALTER COMPOSITE DATABASE command.
 //
 // Syntax:
-//   ALTER COMPOSITE DATABASE name
-//     ADD ALIAS alias FOR DATABASE db
-//   ALTER COMPOSITE DATABASE name
-//     DROP ALIAS alias
+//
+//	ALTER COMPOSITE DATABASE name
+//	  ADD ALIAS alias FOR DATABASE db
+//	ALTER COMPOSITE DATABASE name
+//	  DROP ALIAS alias
 //
 // Example:
 //
@@ -357,7 +369,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 	if alterIdx == -1 {
 		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax")
 	}
-	
+
 	// Check that "DATABASE" follows "COMPOSITE"
 	afterComposite := alterIdx + len("ALTER")
 	for afterComposite < len(cypher) && isWhitespace(cypher[afterComposite]) {
@@ -549,4 +561,3 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS or DROP ALIAS expected")
 	}
 }
-

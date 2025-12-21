@@ -2,30 +2,115 @@
 package replication
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // StorageAdapter bridges the replication.Storage interface to storage.Engine.
 // It translates replication commands into storage operations and maintains WAL state.
 type StorageAdapter struct {
-	engine storage.Engine
+	engine   storage.Engine
+	executor *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
 
-	// WAL position tracking (in-memory for now, production would use persistent WAL)
+	// Persistent WAL for replication commands
+	wal         *storage.WAL
+	walDir      string
+	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
-	walEntries  []WALEntry
 }
 
 // NewStorageAdapter creates a new storage adapter wrapping the given engine.
-func NewStorageAdapter(engine storage.Engine) *StorageAdapter {
-	return &StorageAdapter{
-		engine:     engine,
-		walEntries: make([]WALEntry, 0),
+// The WAL directory defaults to "data/replication/wal" if not specified.
+func NewStorageAdapter(engine storage.Engine) (*StorageAdapter, error) {
+	return NewStorageAdapterWithWAL(engine, "")
+}
+
+// NewStorageAdapterWithWAL creates a new storage adapter with a custom WAL directory.
+// If walDir is empty, defaults to "data/replication/wal".
+func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAdapter, error) {
+	if walDir == "" {
+		walDir = "data/replication/wal"
 	}
+
+	// Create WAL directory if needed
+	if err := os.MkdirAll(walDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create WAL directory: %w", err)
+	}
+
+	// Create persistent WAL
+	walConfig := storage.DefaultWALConfig()
+	walConfig.Dir = walDir
+	walConfig.SyncMode = "batch" // Batch sync for performance
+	walConfig.BatchSyncInterval = 100 * time.Millisecond
+
+	wal, err := storage.NewWAL(walDir, walConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create WAL: %w", err)
+	}
+
+	adapter := &StorageAdapter{
+		engine:   engine,
+		executor: cypher.NewStorageExecutor(engine),
+		wal:      wal,
+		walDir:   walDir,
+	}
+
+	// Load existing WAL position
+	if err := adapter.loadWALPosition(); err != nil {
+		// Log error but continue - will start from position 0
+		// This allows recovery even if WAL is corrupted
+	}
+
+	return adapter, nil
+}
+
+// loadWALPosition loads the last WAL position from persistent storage.
+func (a *StorageAdapter) loadWALPosition() error {
+	walPath := filepath.Join(a.walDir, "wal.log")
+	entries, err := storage.ReadWALEntries(walPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No existing WAL - start fresh
+			return nil
+		}
+		return fmt.Errorf("failed to read WAL entries: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Find the highest position from WAL entries
+	// We need to deserialize each entry to get the replication WALEntry
+	maxPos := uint64(0)
+	for _, entry := range entries {
+		var replEntry WALEntry
+		if err := json.Unmarshal(entry.Data, &replEntry); err == nil {
+			if replEntry.Position > maxPos {
+				maxPos = replEntry.Position
+			}
+		}
+	}
+
+	a.walPosition.Store(maxPos)
+	return nil
+}
+
+// SetExecutor sets a custom Cypher executor for the adapter.
+// This allows using an executor with additional configuration (e.g., database manager, embedder).
+func (a *StorageAdapter) SetExecutor(executor *cypher.StorageExecutor) {
+	a.executor = executor
 }
 
 // ApplyCommand applies a replicated command to storage.
@@ -34,14 +119,20 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		return fmt.Errorf("nil command")
 	}
 
-	// Record in WAL
+	// Record in persistent WAL first (write-ahead logging)
 	pos := a.walPosition.Add(1)
 	entry := WALEntry{
 		Position:  pos,
 		Timestamp: cmd.Timestamp.UnixNano(),
 		Command:   cmd,
 	}
-	a.walEntries = append(a.walEntries, entry)
+
+	// Append to persistent WAL
+	// Use a custom operation type for replication WAL entries
+	// The WAL will marshal the entry automatically
+	if err := a.wal.Append(storage.OperationType("replication_command"), entry); err != nil {
+		return fmt.Errorf("failed to append to WAL: %w", err)
+	}
 
 	// Execute the command
 	switch cmd.Type {
@@ -158,9 +249,34 @@ func (a *StorageAdapter) applyBatchWrite(data []byte) error {
 }
 
 // applyCypher executes a Cypher command (for write queries).
+// The data should be a JSON object with "query" (string) and optional "params" (map[string]interface{}).
 func (a *StorageAdapter) applyCypher(data []byte) error {
-	// Cypher execution would need the executor - for now, just store the command
-	// In production, this would be handled by routing Cypher writes through replication
+	if a.executor == nil {
+		return fmt.Errorf("cypher executor not available - cannot execute Cypher command")
+	}
+
+	// Parse Cypher command data
+	var cypherCmd struct {
+		Query  string                 `json:"query"`
+		Params map[string]interface{} `json:"params,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &cypherCmd); err != nil {
+		return fmt.Errorf("unmarshal cypher command: %w", err)
+	}
+
+	if cypherCmd.Query == "" {
+		return fmt.Errorf("cypher query is empty")
+	}
+
+	// Execute the Cypher query
+	// Use background context since this is a replicated command (no user context)
+	ctx := context.Background()
+	_, err := a.executor.Execute(ctx, cypherCmd.Query, cypherCmd.Params)
+	if err != nil {
+		return fmt.Errorf("execute cypher query: %w", err)
+	}
+
 	return nil
 }
 
@@ -171,11 +287,42 @@ func (a *StorageAdapter) GetWALPosition() (uint64, error) {
 
 // GetWALEntries returns WAL entries starting from the given position.
 func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error) {
-	var entries []*WALEntry
+	a.walMu.RLock()
+	defer a.walMu.RUnlock()
 
-	for i := range a.walEntries {
-		if a.walEntries[i].Position > fromPosition {
-			entries = append(entries, &a.walEntries[i])
+	// Read from persistent WAL
+	walPath := filepath.Join(a.walDir, "wal.log")
+	storageEntries, err := storage.ReadWALEntries(walPath)
+	if err != nil {
+		// Handle missing WAL file gracefully (may not exist yet)
+		if os.IsNotExist(err) {
+			return []*WALEntry{}, nil
+		}
+		// Check if error message indicates file not found (storage.ReadWALEntries may wrap the error)
+		errStr := err.Error()
+		if strings.Contains(errStr, "no such file") || strings.Contains(errStr, "not found") {
+			return []*WALEntry{}, nil
+		}
+		return nil, fmt.Errorf("failed to read WAL entries: %w", err)
+	}
+
+	var entries []*WALEntry
+	for _, storageEntry := range storageEntries {
+		// Only process replication_command entries
+		if storageEntry.Operation != storage.OperationType("replication_command") {
+			continue
+		}
+
+		// Deserialize replication WALEntry from storage entry's Data field
+		// The Data field contains the JSON-marshaled replication.WALEntry
+		var replEntry WALEntry
+		if err := json.Unmarshal(storageEntry.Data, &replEntry); err != nil {
+			continue // Skip corrupted entries
+		}
+
+		// Filter by position
+		if replEntry.Position > fromPosition {
+			entries = append(entries, &replEntry)
 			if len(entries) >= maxEntries {
 				break
 			}
@@ -257,6 +404,15 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 // Engine returns the underlying storage engine.
 func (a *StorageAdapter) Engine() storage.Engine {
 	return a.engine
+}
+
+// Close closes the WAL and cleans up resources.
+// Should be called when the adapter is no longer needed.
+func (a *StorageAdapter) Close() error {
+	if a.wal != nil {
+		return a.wal.Close()
+	}
+	return nil
 }
 
 // Verify StorageAdapter implements Storage interface.

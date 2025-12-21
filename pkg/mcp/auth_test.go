@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // =============================================================================
@@ -339,7 +340,8 @@ func TestNewAuthMiddleware(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, err := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, err := auth.NewAuthenticator(authConfig, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
@@ -365,7 +367,8 @@ func TestAuthMiddlewareSecurityDisabled(t *testing.T) {
 	authConfig := auth.AuthConfig{
 		SecurityEnabled: false,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
 	config.SecurityEnabled = false
@@ -407,7 +410,8 @@ func TestAuthMiddlewareHealthEndpoint(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	called := false
@@ -435,7 +439,8 @@ func TestAuthMiddlewareRequiresToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -458,7 +463,8 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	// Create a user and get a token
 	_, _ = authenticator.CreateUser("testuser", "TestPassword123!", []auth.Role{auth.RoleEditor})
@@ -500,7 +506,8 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +531,8 @@ func TestAuthMiddlewareAllowAnonymous(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
 	config.AllowAnonymous = true
@@ -561,7 +569,8 @@ func TestAuthMiddlewareXAPIKeyHeader(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	_, _ = authenticator.CreateUser("apiuser", "ApiPassword123!", []auth.Role{auth.RoleAdmin})
 	tokenResp, _, _ := authenticator.Authenticate("apiuser", "ApiPassword123!", "", "")
@@ -593,7 +602,8 @@ func TestAuthMiddlewareQueryToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	_, _ = authenticator.CreateUser("queryuser", "QueryPassword123!", []auth.Role{auth.RoleViewer})
 	tokenResp, _, _ := authenticator.Authenticate("queryuser", "QueryPassword123!", "", "")
@@ -628,7 +638,8 @@ func TestCheckToolAccess(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	tests := []struct {
@@ -664,7 +675,8 @@ func TestCheckToolAccessNoContext(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	err := middleware.CheckToolAccess(context.Background(), ToolStore)
@@ -682,7 +694,8 @@ func TestLogToolCall(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
 	config.AuditEnabled = true
@@ -725,7 +738,8 @@ func TestLogToolCallDisabled(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
 	config.AuditEnabled = false
@@ -776,7 +790,8 @@ func TestIsSecurityEnabled(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	authenticator, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage := storage.NewMemoryEngine()
+	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
 	if !middleware.isSecurityEnabled() {
@@ -785,7 +800,8 @@ func TestIsSecurityEnabled(t *testing.T) {
 
 	// With disabled authenticator
 	authConfig.SecurityEnabled = false
-	authenticator2, _ := auth.NewAuthenticator(authConfig)
+	memoryStorage2 := storage.NewMemoryEngine()
+	authenticator2, _ := auth.NewAuthenticator(authConfig, memoryStorage2)
 	middleware2 := NewAuthMiddleware(authenticator2, DefaultAuthConfig())
 
 	if middleware2.isSecurityEnabled() {

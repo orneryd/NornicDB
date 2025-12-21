@@ -74,6 +74,8 @@ nornicdb backup --output backup.tar.gz --compress gzip
 nornicdb backup --output backup.tar.gz --include-wal
 ```
 
+**Note:** All backups automatically include user accounts stored in the system database. When you restore from backup, all user accounts are restored along with the database data.
+
 ### API Backup
 
 ```bash

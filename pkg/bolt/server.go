@@ -2360,13 +2360,151 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 		return decodePackStreamMap(data, offset)
 	}
 
-	// Structure (for nodes, relationships, etc.) - skip for now
+	// Structure (for nodes, relationships, paths, etc.)
+	// Format: [marker] [signature] [field1] [field2] ...
+	// Tiny structures: 0xB0-0xBF (0-15 fields)
+	// Larger structures: 0xDC (STRUCT8), 0xDD (STRUCT16)
 	if marker >= 0xB0 && marker <= 0xBF {
-		// Tiny structure - skip
-		return nil, 1, nil
+		return decodePackStreamStructure(data, offset)
+	}
+
+	// STRUCT8: 0xDC [size: 1 byte] [signature: 1 byte] [fields...]
+	if marker == 0xDC {
+		if offset+2 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRUCT8")
+		}
+		size := int(data[offset+1])
+		signature := data[offset+2]
+		fieldOffset := offset + 3
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature)
+		if err != nil {
+			return nil, 0, err
+		}
+		// Total consumed: marker (1) + size (1) + signature (1) + fields
+		return result, 1 + 1 + 1 + fieldsConsumed, nil
+	}
+
+	// STRUCT16: 0xDD [size: 2 bytes] [signature: 1 byte] [fields...]
+	if marker == 0xDD {
+		if offset+4 >= len(data) {
+			return nil, 0, fmt.Errorf("incomplete STRUCT16")
+		}
+		size := int(data[offset+1])<<8 | int(data[offset+2])
+		signature := data[offset+3]
+		fieldOffset := offset + 4
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature)
+		if err != nil {
+			return nil, 0, err
+		}
+		// Total consumed: marker (1) + size (2) + signature (1) + fields
+		return result, 1 + 2 + 1 + fieldsConsumed, nil
 	}
 
 	return nil, 0, fmt.Errorf("unknown marker: 0x%02X", marker)
+}
+
+// decodePackStreamStructure decodes a tiny structure (0xB0-0xBF).
+// Format: [marker] [signature] [field1] [field2] ...
+func decodePackStreamStructure(data []byte, offset int) (any, int, error) {
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("offset out of bounds")
+	}
+
+	marker := data[offset]
+
+	// Extract field count from marker (0xB0 = 0 fields, 0xB1 = 1 field, etc.)
+	fieldCount := int(marker - 0xB0)
+	offset++
+
+	// Read signature byte
+	if offset >= len(data) {
+		return nil, 0, fmt.Errorf("incomplete structure: missing signature")
+	}
+	signature := data[offset]
+	offset++
+
+	// Decode fields based on signature
+	// Note: offset already accounts for marker (1 byte) and signature (1 byte)
+	result, fieldsConsumed, err := decodeStructureFields(data, offset, fieldCount, signature)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Total consumed: marker (1) + signature (1) + fields
+	return result, 1 + 1 + fieldsConsumed, nil
+}
+
+// decodeStructureFields decodes structure fields based on signature.
+// Common signatures:
+//
+//	0x4E (N) = Node: [id, labels, properties]
+//	0x52 (R) = Relationship: [id, startNodeId, endNodeId, type, properties]
+//	0x50 (P) = Path: [nodes, relationships, sequence]
+//	Other signatures are decoded as generic structures (map with fields)
+func decodeStructureFields(data []byte, offset int, fieldCount int, signature byte) (any, int, error) {
+	startOffset := offset
+	fields := make([]any, fieldCount)
+
+	// Decode all fields
+	for i := 0; i < fieldCount; i++ {
+		value, n, err := decodePackStreamValue(data, offset)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode structure field %d: %w", i, err)
+		}
+		fields[i] = value
+		offset += n
+	}
+
+	fieldsConsumed := offset - startOffset
+
+	// Convert to appropriate type based on signature
+	switch signature {
+	case 0x4E: // Node (N)
+		// Node structure: [id, labels, properties]
+		if fieldCount >= 3 {
+			return map[string]any{
+				"_type":      "Node",
+				"id":         fields[0],
+				"labels":     fields[1],
+				"properties": fields[2],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Node", "fields": fields}, fieldsConsumed, nil
+
+	case 0x52: // Relationship (R)
+		// Relationship structure: [id, startNodeId, endNodeId, type, properties]
+		if fieldCount >= 5 {
+			return map[string]any{
+				"_type":       "Relationship",
+				"id":          fields[0],
+				"startNodeId": fields[1],
+				"endNodeId":   fields[2],
+				"type":        fields[3],
+				"properties":  fields[4],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Relationship", "fields": fields}, fieldsConsumed, nil
+
+	case 0x50: // Path (P)
+		// Path structure: [nodes, relationships, sequence]
+		if fieldCount >= 3 {
+			return map[string]any{
+				"_type":         "Path",
+				"nodes":         fields[0],
+				"relationships": fields[1],
+				"sequence":      fields[2],
+			}, fieldsConsumed, nil
+		}
+		return map[string]any{"_type": "Path", "fields": fields}, fieldsConsumed, nil
+
+	default:
+		// Generic structure - return as map with signature and fields
+		result := map[string]any{
+			"_type":     fmt.Sprintf("Structure_0x%02X", signature),
+			"signature": signature,
+			"fields":    fields,
+		}
+		return result, fieldsConsumed, nil
+	}
 }
 
 func decodePackStreamList(data []byte, offset int) ([]any, int, error) {
