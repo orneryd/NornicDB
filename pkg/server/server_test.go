@@ -18,6 +18,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -344,7 +345,7 @@ func TestMetaField_NodeMetadata(t *testing.T) {
 	require.Len(t, result.Results[0].Data, 1)
 
 	row := result.Results[0].Data[0]
-	
+
 	// Verify meta field exists and has correct length
 	require.NotNil(t, row.Meta, "meta field should always be present")
 	require.Len(t, row.Meta, 1, "meta should have one element per column")
@@ -355,7 +356,7 @@ func TestMetaField_NodeMetadata(t *testing.T) {
 
 	metaMap, ok := metaItem.(map[string]interface{})
 	require.True(t, ok, "meta[0] should be a map for a node")
-	
+
 	// Verify required metadata fields
 	require.Contains(t, metaMap, "id", "meta should contain 'id' field")
 	require.Contains(t, metaMap, "type", "meta should contain 'type' field")
@@ -392,7 +393,7 @@ func TestMetaField_PrimitiveValues(t *testing.T) {
 	require.Len(t, result.Results[0].Data, 1)
 
 	row := result.Results[0].Data[0]
-	
+
 	// Verify meta field exists and has correct length
 	require.NotNil(t, row.Meta, "meta field should always be present")
 	require.Len(t, row.Meta, 3, "meta should have one element per column")
@@ -819,15 +820,106 @@ func TestHandleSimilar(t *testing.T) {
 	server, auth := setupTestServer(t)
 	token := getAuthToken(t, auth, "admin")
 
+	// Get the default database storage to create test nodes with embeddings
+	dbName := server.dbManager.DefaultDatabaseName()
+	storageEngine, err := server.dbManager.GetStorage(dbName)
+	require.NoError(t, err, "should get default database storage")
+
+	// Create a target node with an embedding
+	targetEmbedding := make([]float32, 1024)
+	for i := range targetEmbedding {
+		targetEmbedding[i] = float32(i) / 1024.0
+	}
+	targetNode := &storage.Node{
+		ID:         storage.NodeID("target-node"),
+		Labels:     []string{"Test"},
+		Properties: map[string]interface{}{"name": "Target Node"},
+		Embedding:  targetEmbedding,
+	}
+	_, err = storageEngine.CreateNode(targetNode)
+	require.NoError(t, err, "should create target node")
+
+	// Create a similar node with a similar embedding (slight variation)
+	similarEmbedding := make([]float32, 1024)
+	for i := range similarEmbedding {
+		similarEmbedding[i] = float32(i+1) / 1024.0 // Slight variation
+	}
+	similarNode := &storage.Node{
+		ID:         storage.NodeID("similar-node"),
+		Labels:     []string{"Test"},
+		Properties: map[string]interface{}{"name": "Similar Node"},
+		Embedding:  similarEmbedding,
+	}
+	_, err = storageEngine.CreateNode(similarNode)
+	require.NoError(t, err, "should create similar node")
+
+	// Create a dissimilar node with a very different embedding
+	dissimilarEmbedding := make([]float32, 1024)
+	for i := range dissimilarEmbedding {
+		dissimilarEmbedding[i] = float32(1024-i) / 1024.0 // Very different
+	}
+	dissimilarNode := &storage.Node{
+		ID:         storage.NodeID("dissimilar-node"),
+		Labels:     []string{"Test"},
+		Properties: map[string]interface{}{"name": "Dissimilar Node"},
+		Embedding:  dissimilarEmbedding,
+	}
+	_, err = storageEngine.CreateNode(dissimilarNode)
+	require.NoError(t, err, "should create dissimilar node")
+
+	// Test the similar endpoint
 	resp := makeRequest(t, server, "POST", "/nornicdb/similar", map[string]interface{}{
-		"node_id": "test-node-id",
+		"node_id": "target-node",
 		"limit":   5,
 	}, "Bearer "+token)
 
-	// May return 200 (success) or 500 (if similar not fully implemented)
-	if resp.Code != http.StatusOK && resp.Code != http.StatusInternalServerError {
-		t.Errorf("unexpected status %d", resp.Code)
+	require.Equal(t, http.StatusOK, resp.Code, "should return 200 OK")
+
+	// Verify response structure
+	var results []map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&results)
+	require.NoError(t, err, "should decode response as JSON array")
+
+	// Should find at least the similar node (may also find dissimilar node)
+	require.Greater(t, len(results), 0, "should return at least one result")
+
+	// Verify result structure
+	for _, result := range results {
+		require.Contains(t, result, "node", "result should contain 'node' field")
+		require.Contains(t, result, "score", "result should contain 'score' field")
+		node, ok := result["node"].(map[string]interface{})
+		require.True(t, ok, "node should be a map")
+		require.Contains(t, node, "id", "node should have 'id' field")
+		score, ok := result["score"].(float64)
+		require.True(t, ok, "score should be a number")
+		require.GreaterOrEqual(t, score, 0.0, "score should be non-negative")
+		require.LessOrEqual(t, score, 1.0, "score should be at most 1.0")
 	}
+
+	// Test with non-existent node (should return 404)
+	resp = makeRequest(t, server, "POST", "/nornicdb/similar", map[string]interface{}{
+		"node_id": "non-existent-node",
+		"limit":   5,
+	}, "Bearer "+token)
+
+	require.Equal(t, http.StatusNotFound, resp.Code, "should return 404 for non-existent node")
+
+	// Test with node without embedding (should return 400)
+	nodeWithoutEmbedding := &storage.Node{
+		ID:         storage.NodeID("no-embedding-node"),
+		Labels:     []string{"Test"},
+		Properties: map[string]interface{}{"name": "No Embedding"},
+		Embedding:  nil, // No embedding
+	}
+	_, err = storageEngine.CreateNode(nodeWithoutEmbedding)
+	require.NoError(t, err, "should create node without embedding")
+
+	resp = makeRequest(t, server, "POST", "/nornicdb/similar", map[string]interface{}{
+		"node_id": "no-embedding-node",
+		"limit":   5,
+	}, "Bearer "+token)
+
+	require.Equal(t, http.StatusBadRequest, resp.Code, "should return 400 for node without embedding")
 }
 
 // =============================================================================

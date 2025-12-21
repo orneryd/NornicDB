@@ -136,6 +136,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -150,9 +151,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -2795,22 +2798,49 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, response)
 }
 
-// handleSearchRebuild rebuilds search indexes from all nodes.
+// handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
 func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
 		return
 	}
 
-	err := s.db.BuildSearchIndexes(r.Context())
+	var req struct {
+		Database string `json:"database,omitempty"` // Optional: defaults to default database
+	}
+
+	if err := s.readJSON(r, &req); err != nil {
+		// If no JSON body, use default database
+		req.Database = ""
+	}
+
+	// Get database name (default to default database if not specified)
+	dbName := req.Database
+	if dbName == "" {
+		dbName = s.dbManager.DefaultDatabaseName()
+	}
+
+	// Get namespaced storage for the specified database
+	storageEngine, err := s.dbManager.GetStorage(dbName)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		return
+	}
+
+	// Create a search service for this database's namespaced storage
+	searchSvc := search.NewServiceWithDimensions(storageEngine, s.db.VectorIndexDimensions())
+
+	// Build indexes from all nodes in this database
+	err = searchSvc.BuildIndexes(r.Context())
 	if err != nil {
 		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
 		return
 	}
 
 	response := map[string]interface{}{
-		"success": true,
-		"message": "Search indexes rebuilt from all nodes",
+		"success":  true,
+		"database": dbName,
+		"message":  fmt.Sprintf("Search indexes rebuilt for database '%s'", dbName),
 	}
 	s.writeJSON(w, http.StatusOK, response)
 }
@@ -3366,9 +3396,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Query  string   `json:"query"`
-		Labels []string `json:"labels,omitempty"`
-		Limit  int      `json:"limit,omitempty"`
+		Database string   `json:"database,omitempty"` // Optional: defaults to default database
+		Query    string   `json:"query"`
+		Labels   []string `json:"labels,omitempty"`
+		Limit    int      `json:"limit,omitempty"`
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
@@ -3380,26 +3411,68 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
+	// Get database name (default to default database if not specified)
+	dbName := req.Database
+	if dbName == "" {
+		dbName = s.dbManager.DefaultDatabaseName()
+	}
+
+	// Get namespaced storage for the specified database
+	storageEngine, err := s.dbManager.GetStorage(dbName)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		return
+	}
+
 	// Try to generate embedding for hybrid search
 	queryEmbedding, embedErr := s.db.EmbedQuery(r.Context(), req.Query)
 	if embedErr != nil {
 		log.Printf("⚠️ Query embedding failed: %v", embedErr)
 	}
 
-	var results []*nornicdb.SearchResult
-	var err error
+	// Create a search service for this database's namespaced storage
+	// Note: This creates a new service each time. For better performance, consider
+	// caching search services per database if this endpoint is called frequently.
+	searchSvc := search.NewServiceWithDimensions(storageEngine, s.db.VectorIndexDimensions())
 
+	// Build indexes if needed (this is fast if already indexed)
+	// For production, indexes should be built on startup or via /nornicdb/search/rebuild
+	ctx := r.Context()
+	opts := search.DefaultSearchOptions()
+	opts.Limit = req.Limit
+	if len(req.Labels) > 0 {
+		opts.Types = req.Labels
+	}
+
+	var searchResponse *search.SearchResponse
 	if queryEmbedding != nil {
 		// Use hybrid search (vector + text)
-		results, err = s.db.HybridSearch(r.Context(), req.Query, queryEmbedding, req.Labels, req.Limit)
+		searchResponse, err = searchSvc.Search(ctx, req.Query, queryEmbedding, opts)
 	} else {
 		// Fall back to text-only search
-		results, err = s.db.Search(r.Context(), req.Query, req.Labels, req.Limit)
+		searchResponse, err = searchSvc.Search(ctx, req.Query, nil, opts)
 	}
 
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
 		return
+	}
+
+	// Convert search results to our format
+	// SearchResult.NodeID is already unprefixed (NamespacedEngine.GetNode() unprefixes automatically)
+	results := make([]*nornicdb.SearchResult, len(searchResponse.Results))
+	for i, r := range searchResponse.Results {
+		results[i] = &nornicdb.SearchResult{
+			Node: &nornicdb.Node{
+				ID:         string(r.NodeID),
+				Labels:     r.Labels,
+				Properties: r.Properties,
+			},
+			Score:      r.Score,
+			RRFScore:   r.RRFScore,
+			VectorRank: r.VectorRank,
+			BM25Rank:   r.BM25Rank,
+		}
 	}
 
 	s.writeJSON(w, http.StatusOK, results)
@@ -3412,8 +3485,9 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		NodeID string `json:"node_id"`
-		Limit  int    `json:"limit,omitempty"`
+		Database string `json:"database,omitempty"` // Optional: defaults to default database
+		NodeID   string `json:"node_id"`
+		Limit    int    `json:"limit,omitempty"`
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
@@ -3425,13 +3499,89 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	results, err := s.db.FindSimilar(r.Context(), req.NodeID, req.Limit)
+	// Get database name (default to default database if not specified)
+	dbName := req.Database
+	if dbName == "" {
+		dbName = s.dbManager.DefaultDatabaseName()
+	}
+
+	// Get namespaced storage for the specified database
+	storageEngine, err := s.dbManager.GetStorage(dbName)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		return
+	}
+
+	// Get the target node from namespaced storage
+	targetNode, err := storageEngine.GetNode(storage.NodeID(req.NodeID))
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Node '%s' not found", req.NodeID), ErrNotFound)
+		return
+	}
+
+	if len(targetNode.Embedding) == 0 {
+		s.writeError(w, http.StatusBadRequest, "Node has no embedding", ErrBadRequest)
+		return
+	}
+
+	// Find similar nodes using vector similarity search
+	type scored struct {
+		node  *storage.Node
+		score float64
+	}
+	var results []scored
+
+	ctx := r.Context()
+	err = storage.StreamNodesWithFallback(ctx, storageEngine, 1000, func(n *storage.Node) error {
+		// Skip self and nodes without embeddings
+		if string(n.ID) == req.NodeID || len(n.Embedding) == 0 {
+			return nil
+		}
+
+		sim := vector.CosineSimilarity(targetNode.Embedding, n.Embedding)
+
+		// Maintain top-k results
+		if len(results) < req.Limit {
+			results = append(results, scored{node: n, score: sim})
+			if len(results) == req.Limit {
+				sort.Slice(results, func(i, j int) bool {
+					return results[i].score > results[j].score
+				})
+			}
+		} else if sim > results[req.Limit-1].score {
+			results[req.Limit-1] = scored{node: n, score: sim}
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].score > results[j].score
+			})
+		}
+		return nil
+	})
+
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, results)
+	// Final sort
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	// Convert to response format (node IDs are already unprefixed from NamespacedEngine)
+	searchResults := make([]*nornicdb.SearchResult, len(results))
+	for i, r := range results {
+		searchResults[i] = &nornicdb.SearchResult{
+			Node: &nornicdb.Node{
+				ID:         string(r.node.ID),
+				Labels:     r.node.Labels,
+				Properties: r.node.Properties,
+				CreatedAt:  r.node.CreatedAt,
+			},
+			Score: r.score,
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, searchResults)
 }
 
 // =============================================================================
