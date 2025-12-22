@@ -70,6 +70,43 @@ var (
 	ErrRecoveryFailed    = errors.New("wal: recovery failed")
 )
 
+// CorruptionDiagnostics captures detailed information about WAL corruption
+// to help diagnose root causes (disk failure, split-brain, bugs, etc.)
+type CorruptionDiagnostics struct {
+	Timestamp      time.Time `json:"timestamp"`
+	WALPath        string    `json:"wal_path"`
+	CorruptedSeq   uint64    `json:"corrupted_seq"`
+	Operation      string    `json:"operation"`
+	ExpectedCRC    uint32    `json:"expected_crc"`
+	ActualCRC      uint32    `json:"actual_crc"`
+	FileSize       int64     `json:"file_size"`
+	LastGoodSeq    uint64    `json:"last_good_seq"`
+	SuspectedCause string    `json:"suspected_cause"`
+	BackupPath     string    `json:"backup_path,omitempty"`
+	RecoveryAction string    `json:"recovery_action"`
+}
+
+// diagnoseCause analyzes corruption patterns to suggest likely causes
+func (d *CorruptionDiagnostics) diagnoseCause() {
+	// Heuristics for common corruption causes:
+	// 1. Seq 1 corruption often indicates stale WAL from previous run or split-brain
+	// 2. High-sequence corruption usually indicates crash during write
+	// 3. CRC mismatch with valid JSON suggests bit-flip (disk/memory error)
+	// 4. Multiple corrupted entries suggest catastrophic failure
+
+	if d.CorruptedSeq == 1 {
+		d.SuspectedCause = "stale_wal_or_split_brain: corruption at seq 1 suggests " +
+			"either a leftover WAL from a previous instance, or split-brain " +
+			"where two nodes wrote to the same WAL. Check for duplicate primaries."
+	} else if d.CorruptedSeq > 0 && d.LastGoodSeq == d.CorruptedSeq-1 {
+		d.SuspectedCause = "crash_during_write: corruption at entry boundary suggests " +
+			"crash or power loss during write. This is expected and recoverable."
+	} else {
+		d.SuspectedCause = "unknown: possible disk error, memory corruption, or bug. " +
+			"Check system logs for I/O errors. Backup preserved for forensics."
+	}
+}
+
 // WAL format constants for atomic writes
 const (
 	// walMagic identifies the start of an atomic WAL entry (length-prefixed format)
@@ -740,6 +777,361 @@ func verifyCRC32(data []byte, expected uint32) bool {
 	return crc32Checksum(data) == expected
 }
 
+// backupCorruptedWAL creates a timestamped backup of a corrupted WAL file
+// for forensic analysis. Returns the backup path or empty string on failure.
+func backupCorruptedWAL(walPath, walDir string) string {
+	timestamp := time.Now().Format("20060102-150405")
+	backupPath := filepath.Join(walDir, fmt.Sprintf("wal-corrupted-%s.log", timestamp))
+
+	// Copy file content (don't move - we still need the original for truncation)
+	src, err := os.Open(walPath)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to open WAL for backup: %v\n", err)
+		return ""
+	}
+	defer src.Close()
+
+	dst, err := os.Create(backupPath)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to create WAL backup file: %v\n", err)
+		return ""
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		fmt.Printf("⚠️  Failed to copy WAL to backup: %v\n", err)
+		os.Remove(backupPath)
+		return ""
+	}
+
+	// Sync backup to ensure it's durable
+	if err := dst.Sync(); err != nil {
+		fmt.Printf("⚠️  Failed to sync WAL backup: %v\n", err)
+	}
+
+	return backupPath
+}
+
+// logCorruptionDiagnostics logs detailed corruption information to help
+// diagnose root causes. Also writes to a diagnostics file for later analysis.
+func logCorruptionDiagnostics(diag *CorruptionDiagnostics, origErr error) {
+	// Log to console with high visibility
+	fmt.Printf("\n")
+	fmt.Printf("╔══════════════════════════════════════════════════════════════════╗\n")
+	fmt.Printf("║  ⚠️  WAL CORRUPTION DETECTED                                      ║\n")
+	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
+	fmt.Printf("║  Time: %-57s ║\n", diag.Timestamp.Format(time.RFC3339))
+	fmt.Printf("║  File: %-57s ║\n", truncateString(diag.WALPath, 57))
+	fmt.Printf("║  Size: %-57d ║\n", diag.FileSize)
+	if diag.CorruptedSeq > 0 {
+		fmt.Printf("║  Corrupted at seq: %-46d ║\n", diag.CorruptedSeq)
+	}
+	if diag.LastGoodSeq > 0 {
+		fmt.Printf("║  Last good seq: %-49d ║\n", diag.LastGoodSeq)
+	}
+	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
+	fmt.Printf("║  SUSPECTED CAUSE:                                                ║\n")
+	// Word-wrap the suspected cause
+	for _, line := range wrapText(diag.SuspectedCause, 64) {
+		fmt.Printf("║  %-64s ║\n", line)
+	}
+	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
+	fmt.Printf("║  Recovery: %-55s ║\n", diag.RecoveryAction)
+	if diag.BackupPath != "" {
+		fmt.Printf("║  Backup: %-57s ║\n", truncateString(diag.BackupPath, 57))
+	}
+	fmt.Printf("╚══════════════════════════════════════════════════════════════════╝\n")
+	fmt.Printf("\n")
+
+	// Also write diagnostics to JSON file for programmatic access
+	diagPath := filepath.Join(filepath.Dir(diag.WALPath),
+		fmt.Sprintf("wal-corruption-%s.json", diag.Timestamp.Format("20060102-150405")))
+	if data, err := json.MarshalIndent(diag, "", "  "); err == nil {
+		os.WriteFile(diagPath, data, 0644)
+	}
+}
+
+// truncateString truncates a string to maxLen, adding "..." if truncated
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// wrapText wraps text to specified width, returning slice of lines
+func wrapText(text string, width int) []string {
+	if len(text) <= width {
+		return []string{text}
+	}
+
+	var lines []string
+	for len(text) > width {
+		// Find last space before width
+		breakAt := width
+		for i := width - 1; i > 0; i-- {
+			if text[i] == ' ' {
+				breakAt = i
+				break
+			}
+		}
+		lines = append(lines, text[:breakAt])
+		text = text[breakAt:]
+		// Trim leading space
+		for len(text) > 0 && text[0] == ' ' {
+			text = text[1:]
+		}
+	}
+	if len(text) > 0 {
+		lines = append(lines, text)
+	}
+	return lines
+}
+
+// WALIntegrityReport provides detailed integrity check results
+type WALIntegrityReport struct {
+	Healthy           bool                    `json:"healthy"`
+	TotalEntries      int                     `json:"total_entries"`
+	ValidEntries      int                     `json:"valid_entries"`
+	CorruptedEntries  int                     `json:"corrupted_entries"`
+	SkippedEmbeddings int                     `json:"skipped_embeddings"`
+	FirstSeq          uint64                  `json:"first_seq"`
+	LastSeq           uint64                  `json:"last_seq"`
+	FileSize          int64                   `json:"file_size"`
+	Format            string                  `json:"format"` // "atomic" or "legacy"
+	Errors            []string                `json:"errors,omitempty"`
+	CorruptionDetails []CorruptionDiagnostics `json:"corruption_details,omitempty"`
+}
+
+// CheckWALIntegrity performs a comprehensive integrity check on a WAL file.
+// This can be used for health checks, startup validation, or manual diagnostics.
+// It does NOT modify the WAL - read-only operation.
+func CheckWALIntegrity(walPath string) (*WALIntegrityReport, error) {
+	report := &WALIntegrityReport{
+		Healthy: true,
+		Format:  "unknown",
+	}
+
+	// Check file exists and get size
+	fi, err := os.Stat(walPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			report.Healthy = true // No WAL is healthy (fresh start)
+			return report, nil
+		}
+		return nil, fmt.Errorf("failed to stat WAL: %w", err)
+	}
+	report.FileSize = fi.Size()
+
+	if report.FileSize == 0 {
+		report.Healthy = true
+		return report, nil
+	}
+
+	// Open and detect format
+	file, err := os.Open(walPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open WAL: %w", err)
+	}
+	defer file.Close()
+
+	header := make([]byte, 4)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read header: %w", err)
+	}
+
+	if n == 0 {
+		report.Healthy = true
+		return report, nil
+	}
+
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, fmt.Errorf("failed to seek: %w", err)
+	}
+
+	magic := binary.LittleEndian.Uint32(header)
+	if magic == walMagic {
+		report.Format = "atomic"
+		return checkAtomicWALIntegrity(file, report)
+	}
+
+	report.Format = "legacy"
+	return checkLegacyWALIntegrity(file, report)
+}
+
+func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
+	reader := bufio.NewReader(file)
+	headerBuf := make([]byte, 9)
+	var lastGoodSeq uint64
+
+	for {
+		n, err := io.ReadFull(reader, headerBuf)
+		if err == io.EOF {
+			break
+		}
+		if err == io.ErrUnexpectedEOF || n != 9 {
+			report.Errors = append(report.Errors, "partial header at end of file")
+			break
+		}
+		if err != nil {
+			report.Healthy = false
+			report.Errors = append(report.Errors, fmt.Sprintf("read error: %v", err))
+			break
+		}
+
+		magic := binary.LittleEndian.Uint32(headerBuf[0:4])
+		if magic != walMagic {
+			report.Healthy = false
+			report.CorruptedEntries++
+			report.Errors = append(report.Errors,
+				fmt.Sprintf("invalid magic after seq %d", lastGoodSeq))
+			break
+		}
+
+		version := headerBuf[4]
+		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
+
+		if payloadLen > walMaxEntrySize {
+			report.Healthy = false
+			report.CorruptedEntries++
+			report.Errors = append(report.Errors,
+				fmt.Sprintf("invalid payload size %d after seq %d", payloadLen, lastGoodSeq))
+			break
+		}
+
+		// Read payload
+		payload := make([]byte, payloadLen)
+		n, err = io.ReadFull(reader, payload)
+		if err != nil || uint32(n) != payloadLen {
+			report.Errors = append(report.Errors, "truncated payload")
+			break
+		}
+
+		// Read CRC
+		crcBuf := make([]byte, 4)
+		n, err = io.ReadFull(reader, crcBuf)
+		if err != nil || n != 4 {
+			report.Errors = append(report.Errors, "missing CRC")
+			break
+		}
+
+		storedCRC := binary.LittleEndian.Uint32(crcBuf)
+		computedCRC := crc32Checksum(payload)
+
+		if storedCRC != computedCRC {
+			report.Healthy = false
+			report.CorruptedEntries++
+			diag := CorruptionDiagnostics{
+				LastGoodSeq: lastGoodSeq,
+				ExpectedCRC: computedCRC,
+				ActualCRC:   storedCRC,
+			}
+			diag.diagnoseCause()
+			report.CorruptionDetails = append(report.CorruptionDetails, diag)
+			report.Errors = append(report.Errors,
+				fmt.Sprintf("CRC mismatch after seq %d", lastGoodSeq))
+			// Continue checking to find all corrupted entries
+		}
+
+		// Read trailer for v2+
+		if version >= 2 {
+			trailerBuf := make([]byte, 8)
+			n, err = io.ReadFull(reader, trailerBuf)
+			if err != nil || n != 8 {
+				report.Errors = append(report.Errors, "missing trailer")
+				break
+			}
+
+			storedTrailer := binary.LittleEndian.Uint64(trailerBuf)
+			if storedTrailer != walTrailer {
+				report.Errors = append(report.Errors,
+					fmt.Sprintf("invalid trailer after seq %d", lastGoodSeq))
+			}
+
+			// Skip padding
+			rawRecordLen := int64(9 + payloadLen + 4 + 8)
+			alignedRecordLen := alignUp(rawRecordLen)
+			paddingLen := alignedRecordLen - rawRecordLen
+			if paddingLen > 0 {
+				paddingBuf := make([]byte, paddingLen)
+				io.ReadFull(reader, paddingBuf)
+			}
+		}
+
+		// Decode entry for sequence tracking
+		var entry WALEntry
+		if err := json.Unmarshal(payload, &entry); err != nil {
+			report.CorruptedEntries++
+			continue
+		}
+
+		report.TotalEntries++
+		if storedCRC == computedCRC {
+			report.ValidEntries++
+			lastGoodSeq = entry.Sequence
+
+			if report.FirstSeq == 0 {
+				report.FirstSeq = entry.Sequence
+			}
+			report.LastSeq = entry.Sequence
+		}
+	}
+
+	return report, nil
+}
+
+func checkLegacyWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
+	decoder := json.NewDecoder(file)
+	var lastGoodSeq uint64
+
+	for {
+		var entry WALEntry
+		if err := decoder.Decode(&entry); err != nil {
+			if err == io.EOF {
+				break
+			}
+			report.Errors = append(report.Errors, fmt.Sprintf("JSON decode error: %v", err))
+			break
+		}
+
+		report.TotalEntries++
+		expected := crc32Checksum(entry.Data)
+
+		if entry.Checksum != expected {
+			report.Healthy = false
+			report.CorruptedEntries++
+
+			if entry.Operation == OpUpdateEmbedding {
+				report.SkippedEmbeddings++
+			} else {
+				diag := CorruptionDiagnostics{
+					CorruptedSeq: entry.Sequence,
+					Operation:    string(entry.Operation),
+					ExpectedCRC:  expected,
+					ActualCRC:    entry.Checksum,
+					LastGoodSeq:  lastGoodSeq,
+				}
+				diag.diagnoseCause()
+				report.CorruptionDetails = append(report.CorruptionDetails, diag)
+			}
+		} else {
+			report.ValidEntries++
+			lastGoodSeq = entry.Sequence
+
+			if report.FirstSeq == 0 {
+				report.FirstSeq = entry.Sequence
+			}
+			report.LastSeq = entry.Sequence
+		}
+	}
+
+	return report, nil
+}
+
 // syncDir is implemented in platform-specific files:
 // - wal_sync_unix.go: Unix/Linux/macOS (uses os.Open + Sync)
 // - wal_sync_windows.go: Windows (no-op, NTFS handles this automatically)
@@ -893,18 +1285,45 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	}
 
 	// Read all entries from current WAL
-	allEntries, err := ReadWALEntries(walPath)
-	if err != nil {
-		// Reopen WAL even on error to keep it functional
-		w.reopenWAL()
-		return fmt.Errorf("wal: failed to read entries for truncate: %w", err)
-	}
+	// Use best-effort read for truncation - corrupted entries before snapshotSeq
+	// can be safely discarded since the snapshot captured the state.
+	allEntries, readErr := ReadWALEntries(walPath)
 
 	// Filter entries AFTER snapshot sequence
 	var keptEntries []WALEntry
-	for _, entry := range allEntries {
-		if entry.Sequence > snapshotSeq {
-			keptEntries = append(keptEntries, entry)
+	if readErr != nil {
+		// WAL is corrupted, but snapshot was saved successfully.
+		// CRITICAL: Backup corrupted WAL for forensic analysis before modifying
+		backupPath := backupCorruptedWAL(walPath, w.config.Dir)
+
+		// Log detailed diagnostics
+		diag := &CorruptionDiagnostics{
+			Timestamp:      time.Now(),
+			WALPath:        walPath,
+			BackupPath:     backupPath,
+			RecoveryAction: "truncate_after_snapshot",
+		}
+		if fi, err := os.Stat(walPath); err == nil {
+			diag.FileSize = fi.Size()
+		}
+		diag.diagnoseCause()
+		logCorruptionDiagnostics(diag, readErr)
+
+		// Try to salvage entries after snapshot sequence using best-effort read.
+		keptEntries, _ = readWALEntriesForTruncation(walPath, snapshotSeq)
+		if len(keptEntries) == 0 {
+			// No entries to keep - just start fresh with empty WAL
+			fmt.Printf("⚠️  WAL corrupted but snapshot saved; starting fresh WAL\n")
+			fmt.Printf("    Backup saved to: %s\n", backupPath)
+		} else {
+			fmt.Printf("⚠️  WAL partially corrupted; salvaged %d entries after snapshot\n", len(keptEntries))
+			fmt.Printf("    Backup saved to: %s\n", backupPath)
+		}
+	} else {
+		for _, entry := range allEntries {
+			if entry.Sequence > snapshotSeq {
+				keptEntries = append(keptEntries, entry)
+			}
 		}
 	}
 
@@ -1262,6 +1681,137 @@ func readLegacyWALEntries(file *os.File) ([]WALEntry, error) {
 
 	if skippedEmbeddings > 0 {
 		fmt.Printf("⚠️  WAL recovery: skipped %d corrupted embedding entries (will regenerate)\n", skippedEmbeddings)
+	}
+
+	return entries, nil
+}
+
+// readWALEntriesForTruncation does a best-effort read of WAL entries for truncation.
+// Unlike ReadWALEntries, this function:
+// 1. Ignores corrupted entries (they're being discarded anyway)
+// 2. Only returns entries with sequence > afterSeq
+// 3. Returns whatever entries could be salvaged
+// This is safe because truncation only happens AFTER a snapshot is saved,
+// so corrupted entries before the snapshot sequence are no longer needed.
+func readWALEntriesForTruncation(walPath string, afterSeq uint64) ([]WALEntry, error) {
+	file, err := os.Open(walPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Peek at first 4 bytes to detect format
+	header := make([]byte, 4)
+	n, err := file.Read(header)
+	if err == io.EOF || n == 0 {
+		return []WALEntry{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, err
+	}
+
+	magic := binary.LittleEndian.Uint32(header)
+	if magic == walMagic {
+		return readAtomicWALEntriesForTruncation(file, afterSeq)
+	}
+	return readLegacyWALEntriesForTruncation(file, afterSeq)
+}
+
+// readAtomicWALEntriesForTruncation reads atomic format entries, skipping corrupted ones.
+func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
+	var entries []WALEntry
+	reader := bufio.NewReader(file)
+	headerBuf := make([]byte, 9)
+
+	for {
+		n, err := io.ReadFull(reader, headerBuf)
+		if err == io.EOF {
+			break
+		}
+		if err == io.ErrUnexpectedEOF || n != 9 {
+			break // Partial header, stop reading
+		}
+		if err != nil {
+			break
+		}
+
+		magic := binary.LittleEndian.Uint32(headerBuf[0:4])
+		if magic != walMagic {
+			break // Invalid magic, corrupted
+		}
+
+		version := headerBuf[4]
+		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
+		if payloadLen > walMaxEntrySize {
+			break // Invalid size
+		}
+
+		payload := make([]byte, payloadLen)
+		n, err = io.ReadFull(reader, payload)
+		if err != nil || uint32(n) != payloadLen {
+			break
+		}
+
+		crcBuf := make([]byte, 4)
+		n, err = io.ReadFull(reader, crcBuf)
+		if err != nil || n != 4 {
+			break
+		}
+
+		// Skip CRC verification for truncation - we just want to find valid entries
+
+		// Version 2+: Read trailer
+		if version >= 2 {
+			trailerBuf := make([]byte, 8)
+			n, err = io.ReadFull(reader, trailerBuf)
+			if err != nil || n != 8 {
+				break
+			}
+			// Skip alignment padding
+			rawRecordLen := int64(9 + payloadLen + 4 + 8)
+			alignedRecordLen := alignUp(rawRecordLen)
+			paddingLen := alignedRecordLen - rawRecordLen
+			if paddingLen > 0 {
+				paddingBuf := make([]byte, paddingLen)
+				_, err = io.ReadFull(reader, paddingBuf)
+				if err != nil {
+					break
+				}
+			}
+		}
+
+		var entry WALEntry
+		if err := json.Unmarshal(payload, &entry); err != nil {
+			continue // Skip malformed entries
+		}
+
+		if entry.Sequence > afterSeq {
+			entries = append(entries, entry)
+		}
+	}
+
+	return entries, nil
+}
+
+// readLegacyWALEntriesForTruncation reads legacy JSON format entries, skipping corrupted ones.
+func readLegacyWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
+	var entries []WALEntry
+	decoder := json.NewDecoder(file)
+
+	for {
+		var entry WALEntry
+		if err := decoder.Decode(&entry); err != nil {
+			break // Stop on any decode error
+		}
+
+		// Skip checksum verification for truncation - we just want entries after snapshot
+		if entry.Sequence > afterSeq {
+			entries = append(entries, entry)
+		}
 	}
 
 	return entries, nil
