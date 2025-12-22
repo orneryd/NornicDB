@@ -3771,9 +3771,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// caching search services per database if this endpoint is called frequently.
 	searchSvc := search.NewServiceWithDimensions(storageEngine, s.db.VectorIndexDimensions())
 
-	// Build indexes if needed (this is fast if already indexed)
+	// Build indexes if needed - the service starts with empty indexes
+	// Only build if indexes are empty to avoid rebuilding on every request
 	// For production, indexes should be built on startup or via /nornicdb/search/rebuild
 	ctx := r.Context()
+	if searchSvc.EmbeddingCount() == 0 {
+		// Indexes are empty, build them from existing nodes
+		if err := searchSvc.BuildIndexes(ctx); err != nil {
+			log.Printf("⚠️ Failed to build search indexes: %v", err)
+			// Continue anyway - search will work with whatever is indexed
+		}
+	}
+	
 	opts := search.DefaultSearchOptions()
 	opts.Limit = req.Limit
 	if len(req.Labels) > 0 {
