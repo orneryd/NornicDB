@@ -19,7 +19,9 @@ import (
 // =============================================================================
 
 func TestGraphBuilder_Basic(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	config := DefaultBuildConfig()
@@ -48,13 +50,15 @@ func TestGraphBuilder_Basic(t *testing.T) {
 }
 
 func TestGraphBuilder_Parallel(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create larger graph for parallelization test
 	nodeCount := 100
 	for i := 0; i < nodeCount; i++ {
 		engine.CreateNode(&storage.Node{
-			ID:     storage.NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     storage.NodeID(fmt.Sprintf("test:node-%d", i)),
 			Labels: []string{"Test"},
 		})
 	}
@@ -65,9 +69,9 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 		for j := i + 1; j < nodeCount; j++ {
 			if (i+j)%7 == 0 { // Sparse edges
 				engine.CreateEdge(&storage.Edge{
-					ID:        storage.EdgeID(fmt.Sprintf("e-%d", edgeCount)),
-					StartNode: storage.NodeID(fmt.Sprintf("node-%d", i)),
-					EndNode:   storage.NodeID(fmt.Sprintf("node-%d", j)),
+					ID:        storage.EdgeID(fmt.Sprintf("test:e-%d", edgeCount)),
+					StartNode: storage.NodeID(fmt.Sprintf("test:node-%d", i)),
+					EndNode:   storage.NodeID(fmt.Sprintf("test:node-%d", j)),
 					Type:      "CONNECTS",
 				})
 				edgeCount++
@@ -103,13 +107,15 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 }
 
 func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create graph
 	nodeCount := 50
 	for i := 0; i < nodeCount; i++ {
 		engine.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
+			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
 
@@ -135,12 +141,14 @@ func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 }
 
 func TestGraphBuilder_ContextCancellation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create graph
 	for i := 0; i < 100; i++ {
 		engine.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
+			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
 
@@ -162,12 +170,14 @@ func TestGraphBuilder_ContextCancellation(t *testing.T) {
 }
 
 func TestGraphBuilder_GCAfterChunk(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create graph
 	for i := 0; i < 30; i++ {
 		engine.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
+			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
 
@@ -197,7 +207,9 @@ func TestGraphBuilder_GCAfterChunk(t *testing.T) {
 // =============================================================================
 
 func TestGraphBuilder_DiskCache(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	// Create temp directory for cache
@@ -248,7 +260,9 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 }
 
 func TestGraphBuilder_CacheInvalidation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	cacheDir := t.TempDir()
@@ -288,7 +302,9 @@ func TestGraphBuilder_CacheInvalidation(t *testing.T) {
 }
 
 func TestGraphBuilder_CacheExpiration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	cacheDir := t.TempDir()
@@ -325,7 +341,9 @@ func TestGraphBuilder_CacheExpiration(t *testing.T) {
 // =============================================================================
 
 func TestGraphBuilder_ApplyDelta_AddNodes(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	builder := NewGraphBuilder(engine, config)
 
@@ -351,7 +369,9 @@ func TestGraphBuilder_ApplyDelta_AddNodes(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_AddEdges(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	config.Undirected = true
 	builder := NewGraphBuilder(engine, config)
@@ -386,7 +406,9 @@ func TestGraphBuilder_ApplyDelta_AddEdges(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_RemoveNodes(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	builder := NewGraphBuilder(engine, config)
 
@@ -424,7 +446,9 @@ func TestGraphBuilder_ApplyDelta_RemoveNodes(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_RemoveEdges(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	config.Undirected = true
 	builder := NewGraphBuilder(engine, config)
@@ -463,7 +487,9 @@ func TestGraphBuilder_ApplyDelta_RemoveEdges(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_Complex(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	config.Undirected = true
 	builder := NewGraphBuilder(engine, config)
@@ -509,7 +535,9 @@ func TestGraphBuilder_ApplyDelta_Complex(t *testing.T) {
 // =============================================================================
 
 func TestParallelCommonNeighbors(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	config := DefaultBuildConfig()
@@ -532,7 +560,9 @@ func TestParallelCommonNeighbors(t *testing.T) {
 }
 
 func TestParallelAdamicAdar(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	config := DefaultBuildConfig()
@@ -549,7 +579,9 @@ func TestParallelAdamicAdar(t *testing.T) {
 }
 
 func TestParallelJaccard(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	config := DefaultBuildConfig()
@@ -566,12 +598,14 @@ func TestParallelJaccard(t *testing.T) {
 }
 
 func TestParallelAlgorithms_Cancellation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create larger graph
 	for i := 0; i < 100; i++ {
 		engine.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
+			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
 
@@ -581,7 +615,7 @@ func TestParallelAlgorithms_Cancellation(t *testing.T) {
 
 	sources := make([]storage.NodeID, 50)
 	for i := range sources {
-		sources[i] = storage.NodeID(fmt.Sprintf("n%d", i))
+		sources[i] = storage.NodeID(fmt.Sprintf("test:n%d", i))
 	}
 
 	// Cancel immediately
@@ -601,7 +635,9 @@ func TestParallelAlgorithms_Cancellation(t *testing.T) {
 // =============================================================================
 
 func TestGraphStreamer(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	config := DefaultBuildConfig()
@@ -625,11 +661,13 @@ func TestGraphStreamer(t *testing.T) {
 }
 
 func TestGraphStreamer_Cancellation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	for i := 0; i < 50; i++ {
 		engine.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("n%d", i)),
+			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
 
@@ -714,9 +752,11 @@ func TestExportImport(t *testing.T) {
 // =============================================================================
 
 func BenchmarkGraphBuilder_Small(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 100; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 
 	config := DefaultBuildConfig()
@@ -731,18 +771,20 @@ func BenchmarkGraphBuilder_Small(b *testing.B) {
 }
 
 func BenchmarkGraphBuilder_Parallel(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 500; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 	// Add edges
 	for i := 0; i < 500; i++ {
 		for j := i + 1; j < 500; j++ {
 			if (i+j)%10 == 0 {
 				engine.CreateEdge(&storage.Edge{
-					ID:        storage.EdgeID(fmt.Sprintf("e%d-%d", i, j)),
-					StartNode: storage.NodeID(fmt.Sprintf("n%d", i)),
-					EndNode:   storage.NodeID(fmt.Sprintf("n%d", j)),
+					ID:        storage.EdgeID(fmt.Sprintf("test:e%d-%d", i, j)),
+					StartNode: storage.NodeID(fmt.Sprintf("test:n%d", i)),
+					EndNode:   storage.NodeID(fmt.Sprintf("test:n%d", j)),
 					Type:      "CONNECTS",
 				})
 			}
@@ -762,18 +804,20 @@ func BenchmarkGraphBuilder_Parallel(b *testing.B) {
 }
 
 func BenchmarkParallelAdamicAdar(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	nodeCount := 200
 	for i := 0; i < nodeCount; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 	for i := 0; i < nodeCount; i++ {
 		for j := i + 1; j < nodeCount; j++ {
 			if (i+j)%5 == 0 {
 				engine.CreateEdge(&storage.Edge{
-					ID:        storage.EdgeID(fmt.Sprintf("e%d-%d", i, j)),
-					StartNode: storage.NodeID(fmt.Sprintf("n%d", i)),
-					EndNode:   storage.NodeID(fmt.Sprintf("n%d", j)),
+					ID:        storage.EdgeID(fmt.Sprintf("test:e%d-%d", i, j)),
+					StartNode: storage.NodeID(fmt.Sprintf("test:n%d", i)),
+					EndNode:   storage.NodeID(fmt.Sprintf("test:n%d", j)),
 					Type:      "CONNECTS",
 				})
 			}
@@ -786,7 +830,7 @@ func BenchmarkParallelAdamicAdar(b *testing.B) {
 
 	sources := make([]storage.NodeID, 50)
 	for i := range sources {
-		sources[i] = storage.NodeID(fmt.Sprintf("n%d", i))
+		sources[i] = storage.NodeID(fmt.Sprintf("test:n%d", i))
 	}
 
 	ctx := context.Background()
@@ -823,7 +867,7 @@ func setupTestGraphForBuilder(t *testing.T, engine storage.Engine) {
 
 	for i, e := range edges {
 		engine.CreateEdge(&storage.Edge{
-			ID:        storage.EdgeID(fmt.Sprintf("e%d", i)),
+			ID:        storage.EdgeID(fmt.Sprintf("test:e%d", i)),
 			StartNode: storage.NodeID(e.from),
 			EndNode:   storage.NodeID(e.to),
 			Type:      "KNOWS",
@@ -836,7 +880,9 @@ func setupTestGraphForBuilder(t *testing.T, engine storage.Engine) {
 // =============================================================================
 
 func TestGraphBuilder_ConcurrentBuilds(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
 
 	cacheDir := t.TempDir()
@@ -868,7 +914,9 @@ func TestGraphBuilder_ConcurrentBuilds(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_Concurrent(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
 	builder := NewGraphBuilder(engine, config)
 
@@ -887,9 +935,9 @@ func TestGraphBuilder_ApplyDelta_Concurrent(t *testing.T) {
 			defer wg.Done()
 
 			delta := &GraphDelta{
-				AddedNodes: []storage.NodeID{storage.NodeID(fmt.Sprintf("node-%d", idx))},
+				AddedNodes: []storage.NodeID{storage.NodeID(fmt.Sprintf("test:node-%d", idx))},
 				AddedEdges: []EdgeChange{
-					{From: "a", To: storage.NodeID(fmt.Sprintf("node-%d", idx))},
+					{From: "a", To: storage.NodeID(fmt.Sprintf("test:node-%d", idx))},
 				},
 			}
 

@@ -9,7 +9,9 @@ import (
 )
 
 func TestCreateUniqueConstraint(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -45,7 +47,9 @@ func TestCreateUniqueConstraint(t *testing.T) {
 }
 
 func TestCreateIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -63,7 +67,9 @@ func TestCreateIndex(t *testing.T) {
 }
 
 func TestCreateFulltextIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -87,7 +93,9 @@ func TestCreateFulltextIndex(t *testing.T) {
 }
 
 func TestCreateVectorIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -109,7 +117,9 @@ func TestCreateVectorIndex(t *testing.T) {
 
 func TestMimirInitialization(t *testing.T) {
 	// Test the actual Mimir initialization queries
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -162,7 +172,9 @@ func TestMimirInitialization(t *testing.T) {
 }
 
 func TestConstraintWithoutName(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -180,7 +192,9 @@ func TestConstraintWithoutName(t *testing.T) {
 }
 
 func TestIndexWithoutName(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -198,7 +212,9 @@ func TestIndexWithoutName(t *testing.T) {
 }
 
 func TestIdempotentSchemaCreation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -223,7 +239,9 @@ func TestIdempotentSchemaCreation(t *testing.T) {
 }
 
 func TestSchemaErrorCases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -261,7 +279,9 @@ func TestSchemaErrorCases(t *testing.T) {
 }
 
 func TestVectorIndexWithDifferentOptions(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -309,7 +329,9 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 }
 
 func TestFulltextIndexMultipleProperties(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -338,7 +360,9 @@ func TestFulltextIndexMultipleProperties(t *testing.T) {
 }
 
 func TestConstraintEnforcementMultipleProperties(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -380,7 +404,9 @@ func TestConstraintEnforcementMultipleProperties(t *testing.T) {
 
 // TestSchemaCommandsNoOp tests that schema commands don't error (they're no-ops)
 func TestSchemaCommandExecution(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	defer store.Close()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

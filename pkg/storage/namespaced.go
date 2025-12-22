@@ -66,6 +66,12 @@ func (n *NamespacedEngine) Namespace() string {
 	return n.namespace
 }
 
+// GetInnerEngine returns the underlying storage engine (unwraps the namespace).
+// This is used by DatabaseManager to create NamespacedEngines for other databases.
+func (n *NamespacedEngine) GetInnerEngine() Engine {
+	return n.inner
+}
+
 // prefixNodeID adds namespace prefix to a node ID.
 // "123" → "tenant_a:123"
 func (n *NamespacedEngine) prefixNodeID(id NodeID) NodeID {
@@ -135,14 +141,8 @@ func (n *NamespacedEngine) CreateNode(node *Node) (NodeID, error) {
 }
 
 func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
-	// If ID is already prefixed with this namespace, use it directly
-	// Otherwise, prefix it (for composite engines, nodes may already have prefixed IDs)
-	var namespacedID NodeID
-	if n.hasNodePrefix(id) {
-		namespacedID = id
-	} else {
-		namespacedID = n.prefixNodeID(id)
-	}
+	// Always prefix the ID (user-facing API always receives unprefixed IDs)
+	namespacedID := n.prefixNodeID(id)
 	node, err := n.inner.GetNode(namespacedID)
 	if err != nil {
 		return nil, err
@@ -155,13 +155,8 @@ func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
 }
 
 func (n *NamespacedEngine) UpdateNode(node *Node) error {
-	// Handle already-prefixed node IDs (from composite engines)
-	var namespacedID NodeID
-	if n.hasNodePrefix(node.ID) {
-		namespacedID = node.ID
-	} else {
-		namespacedID = n.prefixNodeID(node.ID)
-	}
+	// Always prefix the ID (user-facing API always receives unprefixed IDs)
+	namespacedID := n.prefixNodeID(node.ID)
 	namespacedNode := &Node{
 		ID:              namespacedID,
 		Labels:          node.Labels,
@@ -182,13 +177,10 @@ func (n *NamespacedEngine) DeleteNode(id NodeID) error {
 	// Delete the node (this will remove it from pending embeddings index)
 	err := n.inner.DeleteNode(prefixedID)
 
-	// Also explicitly remove from pending embeddings index with both prefixed and unprefixed IDs
-	// This ensures cleanup even if the index has stale entries
+	// Remove from pending embeddings index (with namespace prefix)
+	// ALL node IDs in the index must be prefixed
 	if mgr, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
-		// Remove with prefixed ID (normal case)
 		mgr.MarkNodeEmbedded(prefixedID)
-		// Also try unprefixed ID (in case of stale entries)
-		mgr.MarkNodeEmbedded(id)
 	}
 
 	return err
@@ -199,18 +191,9 @@ func (n *NamespacedEngine) DeleteNode(id NodeID) error {
 // ============================================================================
 
 func (n *NamespacedEngine) CreateEdge(edge *Edge) error {
-	// Handle already-prefixed node IDs (from composite engines)
-	var startNodeID, endNodeID NodeID
-	if n.hasNodePrefix(edge.StartNode) {
-		startNodeID = edge.StartNode
-	} else {
-		startNodeID = n.prefixNodeID(edge.StartNode)
-	}
-	if n.hasNodePrefix(edge.EndNode) {
-		endNodeID = edge.EndNode
-	} else {
-		endNodeID = n.prefixNodeID(edge.EndNode)
-	}
+	// Always prefix node IDs (user-facing API always receives unprefixed IDs)
+	startNodeID := n.prefixNodeID(edge.StartNode)
+	endNodeID := n.prefixNodeID(edge.EndNode)
 
 	namespacedEdge := &Edge{
 		ID:            n.prefixEdgeID(edge.ID),
@@ -241,24 +224,10 @@ func (n *NamespacedEngine) GetEdge(id EdgeID) (*Edge, error) {
 }
 
 func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
-	// Handle already-prefixed IDs (from composite engines)
-	var startNodeID, endNodeID NodeID
-	if n.hasNodePrefix(edge.StartNode) {
-		startNodeID = edge.StartNode
-	} else {
-		startNodeID = n.prefixNodeID(edge.StartNode)
-	}
-	if n.hasNodePrefix(edge.EndNode) {
-		endNodeID = edge.EndNode
-	} else {
-		endNodeID = n.prefixNodeID(edge.EndNode)
-	}
-	var edgeID EdgeID
-	if n.hasEdgePrefix(edge.ID) {
-		edgeID = edge.ID
-	} else {
-		edgeID = n.prefixEdgeID(edge.ID)
-	}
+	// Always prefix IDs (user-facing API always receives unprefixed IDs)
+	startNodeID := n.prefixNodeID(edge.StartNode)
+	endNodeID := n.prefixNodeID(edge.EndNode)
+	edgeID := n.prefixEdgeID(edge.ID)
 	namespacedEdge := &Edge{
 		ID:            edgeID,
 		Type:          edge.Type,
@@ -310,13 +279,8 @@ func (n *NamespacedEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	// Handle already-prefixed node IDs (from composite engines)
-	var namespacedID NodeID
-	if n.hasNodePrefix(nodeID) {
-		namespacedID = nodeID
-	} else {
-		namespacedID = n.prefixNodeID(nodeID)
-	}
+	// Always prefix the ID (user-facing API always receives unprefixed IDs)
+	namespacedID := n.prefixNodeID(nodeID)
 	edges, err := n.inner.GetOutgoingEdges(namespacedID)
 	if err != nil {
 		return nil, err
@@ -336,13 +300,8 @@ func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 }
 
 func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	// Handle already-prefixed node IDs (from composite engines)
-	var namespacedID NodeID
-	if n.hasNodePrefix(nodeID) {
-		namespacedID = nodeID
-	} else {
-		namespacedID = n.prefixNodeID(nodeID)
-	}
+	// Always prefix the ID (user-facing API always receives unprefixed IDs)
+	namespacedID := n.prefixNodeID(nodeID)
 	edges, err := n.inner.GetIncomingEdges(namespacedID)
 	if err != nil {
 		return nil, err
@@ -362,18 +321,9 @@ func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 }
 
 func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	// Handle already-prefixed node IDs (from composite engines)
-	var startNamespacedID, endNamespacedID NodeID
-	if n.hasNodePrefix(startID) {
-		startNamespacedID = startID
-	} else {
-		startNamespacedID = n.prefixNodeID(startID)
-	}
-	if n.hasNodePrefix(endID) {
-		endNamespacedID = endID
-	} else {
-		endNamespacedID = n.prefixNodeID(endID)
-	}
+	// Always prefix IDs (user-facing API always receives unprefixed IDs)
+	startNamespacedID := n.prefixNodeID(startID)
+	endNamespacedID := n.prefixNodeID(endID)
 	edges, err := n.inner.GetEdgesBetween(startNamespacedID, endNamespacedID)
 	if err != nil {
 		return nil, err
@@ -393,18 +343,9 @@ func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, erro
 }
 
 func (n *NamespacedEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	// Handle already-prefixed node IDs (from composite engines)
-	var startNamespacedID, endNamespacedID NodeID
-	if n.hasNodePrefix(startID) {
-		startNamespacedID = startID
-	} else {
-		startNamespacedID = n.prefixNodeID(startID)
-	}
-	if n.hasNodePrefix(endID) {
-		endNamespacedID = endID
-	} else {
-		endNamespacedID = n.prefixNodeID(endID)
-	}
+	// Always prefix IDs (user-facing API always receives unprefixed IDs)
+	startNamespacedID := n.prefixNodeID(startID)
+	endNamespacedID := n.prefixNodeID(endID)
 	edge := n.inner.GetEdgeBetween(startNamespacedID, endNamespacedID, edgeType)
 	if edge == nil {
 		return nil
@@ -476,7 +417,8 @@ func (n *NamespacedEngine) GetAllNodes() []*Node {
 	var filtered []*Node
 	for _, node := range allNodes {
 		if n.hasNodePrefix(node.ID) {
-			// Keep prefixed ID - no unprefixing needed
+			// Unprefix ID for user-facing API (consistent with AllNodes())
+			node.ID = n.unprefixNodeID(node.ID)
 			filtered = append(filtered, node)
 		}
 	}
@@ -587,11 +529,14 @@ func (n *NamespacedEngine) Close() error {
 // ============================================================================
 
 func (n *NamespacedEngine) NodeCount() (int64, error) {
-	// Optimized: Use streaming to count without loading all nodes into memory
-	// This is much more efficient for large databases
-	var count int64
+	// CRITICAL: If inner engine has its own NodeCount() (e.g., AsyncEngine with pending nodes),
+	// we must use it to get accurate counts that include pending operations.
+	// However, the inner engine's NodeCount() counts ALL nodes (all namespaces),
+	// so we need to filter by namespace prefix.
+
+	// Try streaming first (most efficient for large databases)
 	if streamer, ok := n.inner.(StreamingEngine); ok {
-		// Use streaming for efficient counting
+		var count int64
 		err := streamer.StreamNodes(context.Background(), func(node *Node) error {
 			if n.hasNodePrefix(node.ID) {
 				count++
@@ -604,7 +549,8 @@ func (n *NamespacedEngine) NodeCount() (int64, error) {
 		return count, nil
 	}
 
-	// Fallback: Count nodes by loading them (less efficient but works for all engines)
+	// Fallback: Count nodes by loading them (works for all engines, includes pending in AsyncEngine)
+	// This ensures AsyncEngine's pending nodes are included via AllNodes()
 	nodes, err := n.AllNodes()
 	if err != nil {
 		return 0, err
@@ -735,7 +681,7 @@ func (n *NamespacedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, ed
 }
 
 // FindNodeNeedingEmbedding finds a node that needs embedding, but only from this namespace.
-// It skips nodes from other namespaces in the pending embeddings index.
+// It only looks for nodes with the current namespace prefix - all IDs must be prefixed.
 func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 	// Get underlying engine's finder
 	finder, ok := n.inner.(interface{ FindNodeNeedingEmbedding() *Node })
@@ -748,19 +694,19 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 
 	// Keep trying until we find a node in our namespace or run out of nodes
 	maxAttempts := 10000 // Prevent infinite loop (but allow scanning many nodes)
-	staleCount := 0
+	skippedCount := 0
 	for i := 0; i < maxAttempts; i++ {
 		node := finder.FindNodeNeedingEmbedding()
 		if node == nil {
 			// No more nodes need embedding
-			if staleCount > 0 {
-				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", staleCount)
+			if skippedCount > 0 {
+				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", skippedCount)
 			}
 			return nil
 		}
 
+		// ALL node IDs must be prefixed - if not, it's a bug or old data
 		// Check if this node belongs to our namespace
-		// The node ID from the underlying engine will have the namespace prefix
 		if n.hasNodePrefix(node.ID) {
 			// Verify the node actually exists before returning it
 			// This prevents returning nodes that were deleted but still in the index
@@ -770,29 +716,27 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 				if hasMarker {
 					marker.MarkNodeEmbedded(node.ID)
 				}
-				staleCount++
+				skippedCount++
 				continue
 			}
 
-			// Remove namespace prefix before returning
+			// Remove namespace prefix before returning (user-facing API)
 			node.ID = n.unprefixNodeID(node.ID)
-			if staleCount > 0 && staleCount%100 == 0 {
-				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", staleCount)
+			if skippedCount > 0 && skippedCount%100 == 0 {
+				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", skippedCount)
 			}
 			return node
 		}
 
-		// Node is from a different namespace - mark it as embedded to skip it
-		// and try the next one
-		if hasMarker {
-			marker.MarkNodeEmbedded(node.ID)
-		}
-		staleCount++
+		// Node is from a different namespace (has a different prefix)
+		// Don't mark it as embedded - it belongs to another namespace
+		// Just skip it and try the next one
+		skippedCount++
 	}
 
-	// Too many attempts - likely many stale entries
-	if staleCount > 0 {
-		fmt.Printf("⚠️  FindNodeNeedingEmbedding: gave up after %d attempts, skipped %d nodes from other namespaces\n", maxAttempts, staleCount)
+	// Too many attempts - likely many nodes from other namespaces
+	if skippedCount > 0 {
+		fmt.Printf("⚠️  FindNodeNeedingEmbedding: gave up after %d attempts, skipped %d nodes from other namespaces\n", maxAttempts, skippedCount)
 	}
 	return nil
 }

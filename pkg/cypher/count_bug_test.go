@@ -15,7 +15,9 @@ import (
 // - Storage NodeCount() returns 0
 // But nodes clearly exist in the database.
 func TestBug_CountReturnsZeroWhenNodesExist(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	defer store.Close()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -79,7 +81,9 @@ func TestBug_CountReturnsZeroWhenNodesExist(t *testing.T) {
 
 // TestBug_CountAfterDeleteAndRecreate tests count behavior after delete/recreate cycle
 func TestBug_CountAfterDeleteAndRecreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	defer store.Close()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

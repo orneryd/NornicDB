@@ -33,7 +33,7 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 	assert.Equal(t, 0, len(allNodes))
 
 	// Write operations should fail with clear error
-	node := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	_, err = composite.CreateNode(node)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no writable constituents available")
@@ -60,7 +60,7 @@ func TestCompositeEngine_OfflineConstituent(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Create node in db1
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	_, err := engine1.CreateNode(node1)
 	require.NoError(t, err)
 
@@ -75,7 +75,7 @@ func TestCompositeEngine_OfflineConstituent(t *testing.T) {
 
 	// Write should still work with db1
 	// Note: CreateNode routes to a constituent, so it should work if db1 is still open
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	_, err = composite.CreateNode(node2)
 	// May succeed if routed to db1, or fail if routed to db2
 	// Either way, the composite engine handles it
@@ -114,7 +114,7 @@ func TestCompositeEngine_AllConstituentsOffline(t *testing.T) {
 	assert.Equal(t, 0, len(nodes))
 
 	// Write operations should fail with storage closed error
-	node := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	_, err = composite.CreateNode(node)
 	assert.Error(t, err)
 	// May be "no writable constituents available" or "storage closed" depending on routing
@@ -147,7 +147,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		compositeB := NewCompositeEngine(constituentsB, constituentNamesB, accessModesB)
 
 		// Create node in C
-		nodeC := &Node{ID: NodeID("nodeC"), Labels: []string{"Person"}}
+		nodeC := &Node{ID: NodeID(prefixTestID("nodeC")), Labels: []string{"Person"}}
 		_, err := engineC.CreateNode(nodeC)
 		require.NoError(t, err)
 
@@ -188,7 +188,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		compositeA := NewCompositeEngine(constituentsA, constituentNamesA, accessModesA)
 
 		// Create node in engine1
-		node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 		_, err := engine1.CreateNode(node1)
 		require.NoError(t, err)
 
@@ -259,7 +259,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		compositeAWithB := NewCompositeEngine(constituentsAWithB, constituentNamesAWithB, accessModesAWithB)
 
 		// Create node in engine1
-		node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 		_, err := engine1.CreateNode(node1)
 		require.NoError(t, err)
 
@@ -296,7 +296,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		composite1 := NewCompositeEngine(constituents1, constituentNames1, accessModes1)
 
 		// Create node in engine1
-		node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 		_, err := engine1.CreateNode(node1)
 		require.NoError(t, err)
 

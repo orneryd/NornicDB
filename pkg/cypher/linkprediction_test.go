@@ -95,7 +95,9 @@ func TestParseLinkPredictionConfig(t *testing.T) {
 
 // TestGdsLinkPredictionAdamicAdar tests Adamic-Adar procedure
 func TestGdsLinkPredictionAdamicAdar(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	executor := &StorageExecutor{
@@ -145,7 +147,9 @@ func TestGdsLinkPredictionAdamicAdar(t *testing.T) {
 
 // TestGdsLinkPredictionCommonNeighbors tests Common Neighbors procedure
 func TestGdsLinkPredictionCommonNeighbors(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	executor := &StorageExecutor{
@@ -166,7 +170,9 @@ func TestGdsLinkPredictionCommonNeighbors(t *testing.T) {
 
 // TestGdsLinkPredictionResourceAllocation tests Resource Allocation procedure
 func TestGdsLinkPredictionResourceAllocation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	executor := &StorageExecutor{
@@ -187,7 +193,9 @@ func TestGdsLinkPredictionResourceAllocation(t *testing.T) {
 
 // TestGdsLinkPredictionPreferentialAttachment tests Preferential Attachment procedure
 func TestGdsLinkPredictionPreferentialAttachment(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	executor := &StorageExecutor{
@@ -208,7 +216,9 @@ func TestGdsLinkPredictionPreferentialAttachment(t *testing.T) {
 
 // TestGdsLinkPredictionJaccard tests Jaccard procedure
 func TestGdsLinkPredictionJaccard(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	executor := &StorageExecutor{
@@ -229,7 +239,9 @@ func TestGdsLinkPredictionJaccard(t *testing.T) {
 
 // TestGdsLinkPredictionPredict tests hybrid prediction procedure
 func TestGdsLinkPredictionPredict(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	// Add embeddings

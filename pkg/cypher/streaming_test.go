@@ -15,7 +15,9 @@ import (
 // TestStreamingOptimization_LimitQuery verifies that LIMIT queries use streaming
 // with early termination instead of loading all nodes into memory.
 func TestStreamingOptimization_LimitQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -84,7 +86,9 @@ func TestStreamingOptimization_LimitQuery(t *testing.T) {
 
 // TestStreamingCodePath explicitly tests that the streaming interface is being used.
 func TestStreamingCodePath(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 
 	// Verify store implements StreamingEngine (cast to interface{} first)
 	var storeInterface interface{} = store
@@ -115,7 +119,9 @@ func TestStreamingCodePath(t *testing.T) {
 
 // TestCountOptimization verifies that COUNT queries use O(1) NodeCount when possible.
 func TestCountOptimization(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -176,7 +182,9 @@ func TestCountOptimization(t *testing.T) {
 
 // TestCollectNodesWithStreaming directly tests the helper function.
 func TestCollectNodesWithStreaming(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

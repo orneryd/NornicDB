@@ -13,7 +13,7 @@ func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create same node in both constituents (same ID)
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node1) // Same ID
 
@@ -46,9 +46,9 @@ func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -85,7 +85,7 @@ func TestCompositeEngine_Deduplication_AllNodes(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create same node in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node1) // Same ID
 
@@ -118,9 +118,9 @@ func TestCompositeEngine_Deduplication_AllEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -157,9 +157,9 @@ func TestCompositeEngine_Deduplication_GetOutgoingEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -196,9 +196,9 @@ func TestCompositeEngine_Deduplication_GetIncomingEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -235,9 +235,9 @@ func TestCompositeEngine_Deduplication_GetEdgesBetween(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and same edge in both constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)

@@ -11,6 +11,7 @@ import (
 
 // TestWALEngine_CountAfterDeleteRecreate tests the full WAL+Badger stack
 // to verify node counts are correct after delete and recreate cycle.
+
 func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "wal_count_test")
 	require.NoError(t, err)
@@ -32,7 +33,7 @@ func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 	// Step 1: Create 10 nodes
 	for i := 0; i < 10; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		}
 		_, err := walEngine.CreateNode(node)
@@ -44,7 +45,7 @@ func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 
 	// Step 2: Delete all
 	for i := 0; i < 10; i++ {
-		require.NoError(t, walEngine.DeleteNode(NodeID(fmt.Sprintf("node-%d", i))))
+		require.NoError(t, walEngine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i)))))
 	}
 
 	count2, _ := walEngine.NodeCount()
@@ -53,7 +54,7 @@ func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 	// Step 3: Create NEW nodes via UpdateNode (like AsyncEngine flush does)
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("new-node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("new-node-%d", i))),
 			Labels: []string{"NewTest"},
 		}
 		require.NoError(t, walEngine.UpdateNode(node))
@@ -85,7 +86,7 @@ func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
 	// Step 1: Create 10 nodes
 	for i := 0; i < 10; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		}
 		_, err := asyncEngine.CreateNode(node)
@@ -98,7 +99,7 @@ func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
 
 	// Step 2: Delete all
 	for i := 0; i < 10; i++ {
-		require.NoError(t, asyncEngine.DeleteNode(NodeID(fmt.Sprintf("node-%d", i))))
+		require.NoError(t, asyncEngine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i)))))
 	}
 	asyncEngine.Flush()
 
@@ -108,7 +109,7 @@ func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
 	// Step 3: Create NEW nodes (simulating what Cypher MERGE does)
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("new-node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("new-node-%d", i))),
 			Labels: []string{"NewTest"},
 		}
 		_, err := asyncEngine.CreateNode(node)

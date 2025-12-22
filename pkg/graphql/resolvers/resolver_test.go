@@ -28,7 +28,8 @@ func testDB(t *testing.T) *nornicdb.DB {
 // testDBManager creates a DatabaseManager for testing
 func testDBManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
 	t.Helper()
-	inner := db.GetStorage()
+	// Get the base storage (unwraps NamespacedEngine) - DatabaseManager creates its own NamespacedEngines
+	inner := db.GetBaseStorageForManager()
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { manager.Close() })
@@ -81,31 +82,9 @@ func createEdgeViaCypher(t *testing.T, resolver *Resolver, sourceID, targetID, e
 	t.Helper()
 	ctx := context.Background()
 
-	propsStr := "{"
-	params := make(map[string]interface{})
-	params["source"] = sourceID
-	params["target"] = targetID
-	first := true
-	i := 0
-	for k, v := range properties {
-		if !first {
-			propsStr += ", "
-		}
-		first = false
-		paramName := fmt.Sprintf("p%d", i)
-		propsStr += fmt.Sprintf("%s: $%s", k, paramName)
-		params[paramName] = v
-		i++
-	}
-	propsStr += "}"
-
-	query := fmt.Sprintf("MATCH (a), (b) WHERE (id(a) = $source OR a.id = $source) AND (id(b) = $target OR b.id = $target) CREATE (a)-[r:%s %s]->(b) RETURN r, id(a) as source, id(b) as target", edgeType, propsStr)
-	result, err := resolver.executeCypher(ctx, query, params, "")
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-
-	edge, err := extractEdgeFromResult(result.Rows[0])
-	require.NoError(t, err)
+	// Use the resolver's createEdgeViaCypher function which handles the query correctly
+	edge, err := resolver.createEdgeViaCypher(ctx, sourceID, targetID, edgeType, properties)
+	require.NoError(t, err, "failed to create relationship: source=%s, target=%s", sourceID, targetID)
 	return edge
 }
 

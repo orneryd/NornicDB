@@ -10,7 +10,9 @@ import (
 )
 
 func TestReturnAliases_WithAggregation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -72,7 +74,9 @@ func TestReturnAliases_WithAggregation(t *testing.T) {
 }
 
 func TestReturnAliases_OptimizedExecutors(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -110,7 +114,9 @@ func TestReturnAliases_OptimizedExecutors(t *testing.T) {
 }
 
 func TestReturnAliases_WithWhereFilter(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -162,7 +168,9 @@ func TestReturnAliases_WithWhereFilter(t *testing.T) {
 }
 
 func TestExtractReturnItemsFromQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {

@@ -49,7 +49,9 @@ func (c *cypherQueryExecutor) Execute(ctx context.Context, query string, params 
 // TestBoltCypherIntegration tests the full stack: Bolt server + Cypher executor.
 func TestBoltCypherIntegration(t *testing.T) {
 	// Create storage and executor
-	store := storage.NewMemoryEngine()
+	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
+	baseStore := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
 
@@ -500,7 +502,9 @@ func TestBoltServerStress(t *testing.T) {
 // KEEP THIS TEST - this is the actual Bolt layer benchmark
 func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	// Create storage with AsyncEngine
-	store := storage.NewMemoryEngine()
+	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
+	baseStore := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	asyncStore := storage.NewAsyncEngine(store, nil)
 	cypherExec := cypher.NewStorageExecutor(asyncStore)
 	executor := &cypherQueryExecutor{executor: cypherExec}

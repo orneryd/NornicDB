@@ -15,7 +15,9 @@ import (
 // Source: docs/getting-started/first-queries.md
 func TestDocumentationExamples_FirstQueries(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("CreateFirstNode", func(t *testing.T) {
@@ -113,7 +115,9 @@ func TestDocumentationExamples_FirstQueries(t *testing.T) {
 // TestDocumentationExamples_QueryPatterns tests query patterns from documentation
 func TestDocumentationExamples_QueryPatterns(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Setup test data
@@ -211,7 +215,9 @@ func TestDocumentationExamples_QueryPatterns(t *testing.T) {
 // TestDocumentationExamples_Aggregations tests aggregation queries from documentation
 func TestDocumentationExamples_Aggregations(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Setup test data
@@ -296,7 +302,9 @@ func TestDocumentationExamples_Aggregations(t *testing.T) {
 // TestDocumentationExamples_Updates tests update queries from documentation
 func TestDocumentationExamples_Updates(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("SetProperty", func(t *testing.T) {
@@ -361,7 +369,9 @@ func TestDocumentationExamples_Updates(t *testing.T) {
 // TestDocumentationExamples_Delete tests delete queries from documentation
 func TestDocumentationExamples_Delete(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("DeleteNode", func(t *testing.T) {
@@ -403,7 +413,9 @@ func TestDocumentationExamples_Delete(t *testing.T) {
 // TestDocumentationExamples_Functions tests built-in function usage
 func TestDocumentationExamples_Functions(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Setup
@@ -480,7 +492,9 @@ func TestDocumentationExamples_Functions(t *testing.T) {
 // TestDocumentationExamples_StringFunctions tests string functions
 func TestDocumentationExamples_StringFunctions(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("ToUpperToLower", func(t *testing.T) {
@@ -528,7 +542,9 @@ func TestDocumentationExamples_StringFunctions(t *testing.T) {
 // TestDocumentationExamples_ListFunctions tests list functions
 func TestDocumentationExamples_ListFunctions(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("RangeFunction", func(t *testing.T) {
@@ -570,7 +586,9 @@ func TestDocumentationExamples_ListFunctions(t *testing.T) {
 // TestDocumentationExamples_CaseExpression tests CASE expressions
 func TestDocumentationExamples_CaseExpression(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Setup
@@ -604,7 +622,9 @@ func TestDocumentationExamples_CaseExpression(t *testing.T) {
 // TestDocumentationExamples_UnwindClause tests UNWIND functionality
 func TestDocumentationExamples_UnwindClause(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("UnwindSimpleList", func(t *testing.T) {
@@ -646,7 +666,9 @@ func TestDocumentationExamples_UnwindClause(t *testing.T) {
 // TestDocumentationExamples_ListComprehension tests list comprehension
 func TestDocumentationExamples_ListComprehension(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("SimpleListComprehension", func(t *testing.T) {
@@ -683,7 +705,9 @@ func TestDocumentationExamples_ListComprehension(t *testing.T) {
 // TestDocumentationExamples_Procedures tests CALL procedure syntax
 func TestDocumentationExamples_Procedures(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("DbmsComponents", func(t *testing.T) {

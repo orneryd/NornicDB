@@ -123,7 +123,9 @@ func TestDurationString(t *testing.T) {
 }
 
 func TestDurationFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -158,7 +160,9 @@ func TestDurationFunction(t *testing.T) {
 }
 
 func TestDurationBetween(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -193,7 +197,9 @@ func TestDurationBetween(t *testing.T) {
 }
 
 func TestDurationInDays(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -212,7 +218,9 @@ func TestDurationInDays(t *testing.T) {
 }
 
 func TestDurationInSeconds(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -322,7 +330,9 @@ func TestParseDateTime(t *testing.T) {
 
 // Test date arithmetic via Cypher queries
 func TestDateArithmeticQueries(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()

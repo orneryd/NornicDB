@@ -11,7 +11,9 @@ import (
 
 func TestPluginFunctionLookupIntegration(t *testing.T) {
 	// Create executor
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

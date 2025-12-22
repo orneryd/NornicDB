@@ -42,6 +42,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -146,11 +147,12 @@ func alignUp(n int64) int64 {
 // WALEntry represents a single write-ahead log entry.
 // Each mutating operation is recorded as an entry before execution.
 type WALEntry struct {
-	Sequence  uint64        `json:"seq"`      // Monotonically increasing sequence number
-	Timestamp time.Time     `json:"ts"`       // When the operation occurred
-	Operation OperationType `json:"op"`       // Operation type (create_node, update_node, etc.)
-	Data      []byte        `json:"data"`     // JSON-serialized operation data
-	Checksum  uint32        `json:"checksum"` // CRC32 checksum for integrity
+	Sequence  uint64        `json:"seq"`                // Monotonically increasing sequence number
+	Timestamp time.Time     `json:"ts"`                 // When the operation occurred
+	Operation OperationType `json:"op"`                 // Operation type (create_node, update_node, etc.)
+	Data      []byte        `json:"data"`               // JSON-serialized operation data
+	Checksum  uint32        `json:"checksum"`           // CRC32 checksum for integrity
+	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
 }
 
 // WALNodeData holds node data for WAL entries with optional undo support.
@@ -383,6 +385,11 @@ func (w *WAL) batchSyncLoop() {
 //   - Missing/truncated payload: length mismatch detected
 //   - Missing checksum: CRC verification fails
 func (w *WAL) Append(op OperationType, data interface{}) error {
+	return w.AppendWithDatabase(op, data, "")
+}
+
+// AppendWithDatabase writes a new entry to the WAL with database/namespace information.
+func (w *WAL) AppendWithDatabase(op OperationType, data interface{}, database string) error {
 	if !config.IsWALEnabled() {
 		return nil // WAL disabled, skip
 	}
@@ -405,6 +412,7 @@ func (w *WAL) Append(op OperationType, data interface{}) error {
 		Operation: op,
 		Data:      dataBytes,
 		Checksum:  crc32Checksum(dataBytes),
+		Database:  database, // Store database name for proper recovery
 	}
 
 	// Serialize the entire entry to bytes first
@@ -1867,14 +1875,38 @@ func ReadWALEntriesAfter(walPath string, afterSeq uint64) ([]WALEntry, error) {
 }
 
 // ReplayWALEntry applies a single WAL entry to the engine.
+// Uses the database name from the entry if present, otherwise wraps with default database.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
+	// Determine database name: use entry's database if present, otherwise get from config
+	dbName := entry.Database
+	if dbName == "" {
+		globalConfig := nornicConfig.LoadFromEnv()
+		dbName = globalConfig.Database.DefaultDatabase
+		if dbName == "" {
+			dbName = "nornic" // Fallback
+		}
+	}
+	
+	// Unwrap NamespacedEngine if present to avoid double-wrapping
+	baseEngine := engine
+	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+		baseEngine = namespacedEngine.GetInnerEngine()
+		// Use the existing namespace if entry doesn't specify one
+		if dbName == "" || dbName == "nornic" {
+			dbName = namespacedEngine.Namespace()
+		}
+	}
+	
+	// Wrap base engine with NamespacedEngine for the entry's database
+	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
+	
 	switch entry.Operation {
 	case OpCreateNode:
 		var data WALNodeData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		_, err := engine.CreateNode(data.Node)
+		_, err := namespacedEngine.CreateNode(data.Node)
 		return err
 
 	case OpUpdateNode:
@@ -1882,49 +1914,49 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return engine.UpdateNode(data.Node)
+		return namespacedEngine.UpdateNode(data.Node)
 
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return engine.DeleteNode(NodeID(data.ID))
+		return namespacedEngine.DeleteNode(NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return engine.CreateEdge(data.Edge)
+		return namespacedEngine.CreateEdge(data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return engine.UpdateEdge(data.Edge)
+		return namespacedEngine.UpdateEdge(data.Edge)
 
 	case OpDeleteEdge:
 		var data WALDeleteData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return engine.DeleteEdge(EdgeID(data.ID))
+		return namespacedEngine.DeleteEdge(EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
-		return engine.BulkCreateNodes(data.Nodes)
+		return namespacedEngine.BulkCreateNodes(data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
 		if err := json.Unmarshal(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
-		return engine.BulkCreateEdges(data.Edges)
+		return namespacedEngine.BulkCreateEdges(data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
@@ -1968,6 +2000,29 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 var ErrNoUndoData = errors.New("wal: entry has no undo data")
 
 func UndoWALEntry(engine Engine, entry WALEntry) error {
+	// Determine database name: use entry's database if present, otherwise get from config
+	dbName := entry.Database
+	if dbName == "" {
+		globalConfig := nornicConfig.LoadFromEnv()
+		dbName = globalConfig.Database.DefaultDatabase
+		if dbName == "" {
+			dbName = "nornic" // Fallback
+		}
+	}
+	
+	// Unwrap NamespacedEngine if present to avoid double-wrapping
+	baseEngine := engine
+	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+		baseEngine = namespacedEngine.GetInnerEngine()
+		// Use the existing namespace if entry doesn't specify one
+		if dbName == "" || dbName == "nornic" {
+			dbName = namespacedEngine.Namespace()
+		}
+	}
+	
+	// Wrap base engine with NamespacedEngine for the entry's database
+	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
+	
 	switch entry.Operation {
 	case OpCreateNode:
 		// Undo create = delete
@@ -1978,7 +2033,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Node == nil {
 			return ErrNoUndoData
 		}
-		return engine.DeleteNode(data.Node.ID)
+		return namespacedEngine.DeleteNode(data.Node.ID)
 
 	case OpUpdateNode:
 		// Undo update = restore old node
@@ -1989,7 +2044,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return engine.UpdateNode(data.OldNode)
+		return namespacedEngine.UpdateNode(data.OldNode)
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2000,7 +2055,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		_, err := engine.CreateNode(data.OldNode)
+		_, err := namespacedEngine.CreateNode(data.OldNode)
 		return err
 
 	case OpCreateEdge:
@@ -2012,7 +2067,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Edge == nil {
 			return ErrNoUndoData
 		}
-		return engine.DeleteEdge(data.Edge.ID)
+		return namespacedEngine.DeleteEdge(data.Edge.ID)
 
 	case OpUpdateEdge:
 		// Undo update = restore old edge
@@ -2023,7 +2078,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return engine.UpdateEdge(data.OldEdge)
+		return namespacedEngine.UpdateEdge(data.OldEdge)
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
@@ -2034,7 +2089,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return engine.CreateEdge(data.OldEdge)
+		return namespacedEngine.CreateEdge(data.OldEdge)
 
 	case OpBulkNodes:
 		// Undo bulk create = delete all
@@ -2168,10 +2223,18 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		}
 		if snapshot != nil {
 			result.SnapshotSeq = snapshot.Sequence
-			if err := engine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			// Get database name from config (WAL entries have unprefixed IDs)
+			globalConfig := nornicConfig.LoadFromEnv()
+			dbName := globalConfig.Database.DefaultDatabase
+			if dbName == "" {
+				dbName = "nornic" // Fallback to "nornic" if not configured
+			}
+			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
+			namespacedEngine := NewNamespacedEngine(engine, dbName)
+			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := engine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
@@ -2233,6 +2296,9 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 		}
 	}
+
+	// Phase 2: Apply committed transactions
+	// Each entry will use its own database name (stored in entry.Database)
 
 	// Phase 2: Apply committed transactions
 	for txID, tx := range result.Transactions {
@@ -2347,10 +2413,18 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 		} else {
 			// Apply snapshot
 			snapshotSeq = snapshot.Sequence
-			if err := engine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			// Get database name from config (WAL entries have unprefixed IDs)
+			globalConfig := nornicConfig.LoadFromEnv()
+			dbName := globalConfig.Database.DefaultDatabase
+			if dbName == "" {
+				dbName = "nornic" // Fallback to "nornic" if not configured
+			}
+			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
+			namespacedEngine := NewNamespacedEngine(engine, dbName)
+			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := engine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
@@ -2370,6 +2444,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	}
 
 	// Replay entries with proper error tracking
+	// Each entry will use its own database name (stored in entry.Database)
 	result = ReplayWALEntries(engine, entries)
 
 	return engine, result, nil
@@ -2578,10 +2653,25 @@ func (w *WALEngine) GetSnapshotStats() (totalSnapshots int64, lastSnapshotTime t
 	return total, lastTime
 }
 
+// getDatabaseName extracts the database name from the wrapped engine if it's a NamespacedEngine.
+func (w *WALEngine) getDatabaseName() string {
+	if namespacedEngine, ok := w.engine.(*NamespacedEngine); ok {
+		return namespacedEngine.Namespace()
+	}
+	// Fallback to default if engine is not namespaced
+	globalConfig := nornicConfig.LoadFromEnv()
+	dbName := globalConfig.Database.DefaultDatabase
+	if dbName == "" {
+		return "nornic"
+	}
+	return dbName
+}
+
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpCreateNode, WALNodeData{Node: node}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: node}, dbName); err != nil {
 			return "", fmt.Errorf("wal: failed to log create_node: %w", err)
 		}
 	}
@@ -2591,7 +2681,8 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpUpdateNode, WALNodeData{Node: node}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: node}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_node: %w", err)
 		}
 	}
@@ -2603,7 +2694,8 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 // since embeddings can be regenerated automatically.
 func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpUpdateEmbedding, WALNodeData{Node: node}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: node}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
 		}
 	}
@@ -2613,7 +2705,8 @@ func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 // DeleteNode logs then executes node deletion.
 func (w *WALEngine) DeleteNode(id NodeID) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpDeleteNode, WALDeleteData{ID: string(id)}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: string(id)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log delete_node: %w", err)
 		}
 	}
@@ -2623,7 +2716,8 @@ func (w *WALEngine) DeleteNode(id NodeID) error {
 // CreateEdge logs then executes edge creation.
 func (w *WALEngine) CreateEdge(edge *Edge) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpCreateEdge, WALEdgeData{Edge: edge}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpCreateEdge, WALEdgeData{Edge: edge}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log create_edge: %w", err)
 		}
 	}
@@ -2633,7 +2727,8 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 // UpdateEdge logs then executes edge update.
 func (w *WALEngine) UpdateEdge(edge *Edge) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpUpdateEdge, WALEdgeData{Edge: edge}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpUpdateEdge, WALEdgeData{Edge: edge}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_edge: %w", err)
 		}
 	}
@@ -2643,7 +2738,8 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 // DeleteEdge logs then executes edge deletion.
 func (w *WALEngine) DeleteEdge(id EdgeID) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpDeleteEdge, WALDeleteData{ID: string(id)}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpDeleteEdge, WALDeleteData{ID: string(id)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log delete_edge: %w", err)
 		}
 	}
@@ -2653,7 +2749,8 @@ func (w *WALEngine) DeleteEdge(id EdgeID) error {
 // BulkCreateNodes logs then executes bulk node creation.
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpBulkNodes, WALBulkNodesData{Nodes: nodes}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpBulkNodes, WALBulkNodesData{Nodes: nodes}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_create_nodes: %w", err)
 		}
 	}
@@ -2663,7 +2760,8 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 // BulkCreateEdges logs then executes bulk edge creation.
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
 	if config.IsWALEnabled() {
-		if err := w.wal.Append(OpBulkEdges, WALBulkEdgesData{Edges: edges}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpBulkEdges, WALBulkEdgesData{Edges: edges}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_create_edges: %w", err)
 		}
 	}
@@ -2678,7 +2776,8 @@ func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
 		for i, id := range ids {
 			strIDs[i] = string(id)
 		}
-		if err := w.wal.Append(OpBulkDeleteNodes, WALBulkDeleteNodesData{IDs: strIDs}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpBulkDeleteNodes, WALBulkDeleteNodesData{IDs: strIDs}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_delete_nodes: %w", err)
 		}
 	}
@@ -2693,7 +2792,8 @@ func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
 		for i, id := range ids {
 			strIDs[i] = string(id)
 		}
-		if err := w.wal.Append(OpBulkDeleteEdges, WALBulkDeleteEdgesData{IDs: strIDs}); err != nil {
+		dbName := w.getDatabaseName()
+		if err := w.wal.AppendWithDatabase(OpBulkDeleteEdges, WALBulkDeleteEdgesData{IDs: strIDs}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_delete_edges: %w", err)
 		}
 	}

@@ -56,7 +56,9 @@ func whitespacePermutations(baseQuery string) []string {
 }
 
 func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -104,7 +106,9 @@ func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
 }
 
 func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -156,7 +160,9 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 }
 
 func TestDatabaseCommands_ShowDatabases_WhitespacePermutations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -183,7 +189,9 @@ func TestDatabaseCommands_ShowDatabases_WhitespacePermutations(t *testing.T) {
 }
 
 func TestDatabaseCommands_ShowDatabase_WhitespacePermutations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -204,7 +212,9 @@ func TestDatabaseCommands_ShowDatabase_WhitespacePermutations(t *testing.T) {
 }
 
 func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -269,7 +279,9 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 }
 
 func TestDatabaseCommands_EdgeCases_Whitespace(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

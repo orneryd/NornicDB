@@ -8,7 +8,9 @@ import (
 )
 
 func TestShortestPathCypher(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -125,7 +127,9 @@ func TestShortestPathCypher(t *testing.T) {
 }
 
 func TestShortestPathBidirectional(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -159,7 +163,9 @@ func TestShortestPathBidirectional(t *testing.T) {
 }
 
 func TestShortestPathNoPath(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -185,7 +191,9 @@ func TestShortestPathNoPath(t *testing.T) {
 }
 
 func TestShortestPathWithMaxHops(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -240,7 +248,9 @@ func TestShortestPathWithMaxHops(t *testing.T) {
 }
 
 func TestShortestPathDirectional(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

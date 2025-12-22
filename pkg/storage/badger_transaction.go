@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,12 +79,19 @@ func (tx *BadgerTransaction) IsActive() bool {
 }
 
 // CreateNode adds a node to the transaction with constraint validation.
+// REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
+// This enforces that all nodes are namespaced at the storage layer.
 func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
 	if tx.Status != TxStatusActive {
 		return "", ErrTransactionClosed
+	}
+
+	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
+	if node != nil && node.ID != "" && !strings.Contains(string(node.ID), ":") {
+		return "", fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
 	// Validate constraints BEFORE writing

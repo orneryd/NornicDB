@@ -15,6 +15,7 @@ import (
 )
 
 // TestWALCompactionConfig tests WAL configuration options for compaction.
+
 func TestWALCompactionConfig(t *testing.T) {
 	config.EnableWAL()
 	defer config.DisableWAL()
@@ -62,7 +63,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Create 100 nodes
 		for i := 1; i <= 100; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 			_, err := walEngine.CreateNode(node)
 			require.NoError(t, err)
 		}
@@ -109,7 +110,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Create 50 nodes before snapshot
 		for i := 1; i <= 50; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 			walEngine.CreateNode(node)
 		}
 
@@ -120,7 +121,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Add 50 more nodes AFTER snapshot
 		for i := 51; i <= 100; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 			walEngine.CreateNode(node)
 		}
 
@@ -157,7 +158,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 			// Create nodes
 			for i := 1; i <= 100; i++ {
-				node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 				walEngine.CreateNode(node)
 			}
 
@@ -174,7 +175,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 			// Add more nodes after truncation
 			for i := 101; i <= 150; i++ {
-				node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 				walEngine.CreateNode(node)
 			}
 
@@ -275,7 +276,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 
 		// Add some data before enabling compaction
 		for i := 1; i <= 20; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 			walEngine.CreateNode(node)
 		}
 
@@ -396,7 +397,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		// Verify all nodes were created
 		for w := 0; w < writers; w++ {
 			for i := 0; i < writeCount; i++ {
-				nodeID := NodeID(fmt.Sprintf("w%d_n%d", w, i))
+				nodeID := NodeID(prefixTestID(fmt.Sprintf("w%d_n%d", w, i)))
 				node, err := walEngine.GetNode(nodeID)
 				assert.NoError(t, err, "Node %s should exist", nodeID)
 				assert.NotNil(t, node, "Node %s should not be nil", nodeID)
@@ -435,7 +436,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		// Write a lot of data to grow the WAL
 		for i := 1; i <= 500; i++ {
 			node := &Node{
-				ID:     NodeID(fmt.Sprintf("n%d", i)),
+				ID:     NodeID(prefixTestID(fmt.Sprintf("n%d", i))),
 				Labels: []string{"Test"},
 				Properties: map[string]interface{}{
 					"name":        fmt.Sprintf("Node %d with some extra content to increase size", i),
@@ -555,7 +556,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			walEngine := NewWALEngine(engine, wal)
 
 			for i := 1; i <= 50; i++ {
-				node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
+				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
 				walEngine.CreateNode(node)
 			}
 
@@ -658,7 +659,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 
 			// Create data
 			for j := 0; j < 1000; j++ {
-				node := &Node{ID: NodeID(fmt.Sprintf("n%d", j))}
+				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
 				walEngine.CreateNode(node)
 			}
 
@@ -685,7 +686,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 
 		// Create test data
 		for j := 0; j < 10000; j++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", j))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
 			engine.CreateNode(node)
 		}
 

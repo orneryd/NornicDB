@@ -198,6 +198,7 @@ func (r *Resolver) createEdgeViaCypher(ctx context.Context, source, target, edge
 	params["target"] = target
 
 	// Use id(n) function for matching internal storage ID, or fallback to n.id property
+	// Note: id() returns unprefixed IDs when using NamespacedEngine, so source/target should be unprefixed
 	query := fmt.Sprintf("MATCH (a), (b) WHERE (id(a) = $source OR a.id = $source) AND (id(b) = $target OR b.id = $target) CREATE (a)-[r:%s %s]->(b) RETURN r, id(a) as source, id(b) as target", edgeType, propsStr)
 	result, err := r.executeCypher(ctx, query, params, "")
 	if err != nil {
@@ -205,7 +206,17 @@ func (r *Resolver) createEdgeViaCypher(ctx context.Context, source, target, edge
 	}
 
 	if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-		return nil, fmt.Errorf("failed to create edge")
+		// Try to get more info about why the match failed
+		// Check if nodes exist
+		checkQuery := "MATCH (n) WHERE id(n) = $source OR n.id = $source RETURN count(n) as cnt"
+		checkResult, _ := r.executeCypher(ctx, checkQuery, map[string]interface{}{"source": source}, "")
+		sourceExists := false
+		if checkResult != nil && len(checkResult.Rows) > 0 {
+			if cnt, ok := checkResult.Rows[0][0].(int64); ok && cnt > 0 {
+				sourceExists = true
+			}
+		}
+		return nil, fmt.Errorf("failed to create relationship: source node %s exists=%v, target=%s", source, sourceExists, target)
 	}
 
 	return extractEdgeFromResult(result.Rows[0])

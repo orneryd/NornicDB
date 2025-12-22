@@ -12,7 +12,9 @@ import (
 // TestSetWithReturnAlias tests that MATCH ... SET ... RETURN n returns
 // the node under the correct alias 'n', not 'matched'
 func TestSetWithReturnAlias(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -123,7 +125,9 @@ func TestSetWithReturnAlias(t *testing.T) {
 
 // TestSetReturnMultipleNodes tests SET with multiple matched nodes
 func TestSetReturnMultipleNodes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -157,7 +161,9 @@ func TestSetReturnMultipleNodes(t *testing.T) {
 // MATCH ... SET ... RETURN n was returning results under 'matched' instead of 'n'
 func TestSetReturnAliasRegressionBug(t *testing.T) {
 	// This reproduces the exact scenario from the Mimir GraphManager
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

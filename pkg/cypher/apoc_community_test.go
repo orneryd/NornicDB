@@ -14,37 +14,51 @@ func createCommunityTestGraph(t *testing.T, engine storage.Engine) {
 	// With a weak link between C and D
 
 	// Community 1: A-B-C (triangle)
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}})
+	// When using NamespacedEngine, pass unprefixed IDs - the engine handles prefixing
+	aNode := &storage.Node{ID: storage.NodeID("a"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}}
+	actualA, err := engine.CreateNode(aNode)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}})
+	
+	bNode := &storage.Node{ID: storage.NodeID("b"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}}
+	actualB, err := engine.CreateNode(bNode)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}})
+	
+	cNode := &storage.Node{ID: storage.NodeID("c"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}}
+	actualC, err := engine.CreateNode(cNode)
 	require.NoError(t, err)
 
 	// Community 2: D-E-F (triangle)
-	_, err = engine.CreateNode(&storage.Node{ID: "d", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}})
+	dNode := &storage.Node{ID: storage.NodeID("d"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}}
+	actualD, err := engine.CreateNode(dNode)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "e", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "E"}})
+	
+	eNode := &storage.Node{ID: storage.NodeID("e"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "E"}}
+	actualE, err := engine.CreateNode(eNode)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "f", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "F"}})
+	
+	fNode := &storage.Node{ID: storage.NodeID("f"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "F"}}
+	actualF, err := engine.CreateNode(fNode)
 	require.NoError(t, err)
 
 	// Dense connections within community 1
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e2", StartNode: "b", EndNode: "c", Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e3", StartNode: "c", EndNode: "a", Type: "CONNECTS"}))
+	// Use the actual IDs returned from CreateNode (which are unprefixed for NamespacedEngine)
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e1"), StartNode: actualA, EndNode: actualB, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e2"), StartNode: actualB, EndNode: actualC, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e3"), StartNode: actualC, EndNode: actualA, Type: "CONNECTS"}))
 
 	// Dense connections within community 2
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e4", StartNode: "d", EndNode: "e", Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e5", StartNode: "e", EndNode: "f", Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e6", StartNode: "f", EndNode: "d", Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e4"), StartNode: actualD, EndNode: actualE, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e5"), StartNode: actualE, EndNode: actualF, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e6"), StartNode: actualF, EndNode: actualD, Type: "CONNECTS"}))
 
 	// Weak link between communities
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e7", StartNode: "c", EndNode: "d", Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e7"), StartNode: actualC, EndNode: actualD, Type: "CONNECTS"}))
 }
 
 func TestApocAlgoLouvain(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -77,7 +91,9 @@ func TestApocAlgoLouvain(t *testing.T) {
 }
 
 func TestApocAlgoLabelPropagation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -103,7 +119,9 @@ func TestApocAlgoLabelPropagation(t *testing.T) {
 }
 
 func TestApocAlgoWCC(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -141,11 +159,29 @@ func TestApocAlgoWCC(t *testing.T) {
 }
 
 func TestApocAlgoWCC_SingleComponent(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	createCommunityTestGraph(t, engine)
+	// Create a fully connected graph using Cypher (ensures IDs are handled correctly)
+	_, err := exec.Execute(ctx, `
+		CREATE (a:Node {name: "A"}),
+		       (b:Node {name: "B"}),
+		       (c:Node {name: "C"}),
+		       (d:Node {name: "D"}),
+		       (e:Node {name: "E"}),
+		       (f:Node {name: "F"}),
+		       (a)-[:CONNECTS]->(b),
+		       (b)-[:CONNECTS]->(c),
+		       (c)-[:CONNECTS]->(a),
+		       (d)-[:CONNECTS]->(e),
+		       (e)-[:CONNECTS]->(f),
+		       (f)-[:CONNECTS]->(d),
+		       (c)-[:CONNECTS]->(d)
+	`, nil)
+	require.NoError(t, err)
 
 	t.Run("connected_graph", func(t *testing.T) {
 		result, err := exec.Execute(ctx, "CALL apoc.algo.wcc() YIELD node, componentId", nil)

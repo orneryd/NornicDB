@@ -858,8 +858,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	// Initialize DatabaseManager for multi-database support
-	// Get the underlying storage engine from the DB
-	storageEngine := db.GetStorage()
+	// Get the base storage engine from the DB (unwraps the namespaced storage)
+	// DatabaseManager will create NamespacedEngines for each database
+	storageEngine := db.GetBaseStorageForManager()
 
 	// Get multi-database config from global config
 	globalConfig := nornicConfig.LoadFromEnv()

@@ -13,7 +13,9 @@ import (
 // - MATCH (n) RETURN count(n) returns 0 (WRONG)
 // - MATCH (n) WITH n RETURN count(n) returns correct count (CORRECT)
 func TestBug_CountDirectReturnVsWithReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	defer store.Close()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -117,7 +119,9 @@ func TestBug_CountDirectReturnVsWithReturn(t *testing.T) {
 
 // TestBug_CountAfterDeleteRecreate tests count behavior after delete/recreate
 func TestBug_CountAfterDeleteRecreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	defer store.Close()
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

@@ -13,7 +13,9 @@ import (
 //
 // These test cases come from real-world data that failed migration.
 func TestContentWithCypherLikeSyntax(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -176,7 +178,9 @@ tools: ['run_terminal_cmd', 'read_file']
 
 // TestBatchInsertWithProblematicContent tests batch INSERT with content that previously failed
 func TestBatchInsertWithProblematicContent(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -213,7 +217,9 @@ func TestBatchInsertWithProblematicContent(t *testing.T) {
 
 // TestStringLiteralParsing verifies string literals are not parsed as Cypher
 func TestStringLiteralParsing(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -253,7 +259,9 @@ func TestStringLiteralParsing(t *testing.T) {
 
 // TestInlinePropertySyntax tests that inline property syntax handles special content
 func TestInlinePropertySyntax(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 

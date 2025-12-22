@@ -8,7 +8,9 @@ import (
 )
 
 func TestCaseExpressionSearched(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -152,7 +154,9 @@ func TestCaseExpressionSearched(t *testing.T) {
 }
 
 func TestCaseExpressionSimple(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -248,7 +252,9 @@ func TestCaseExpressionSimple(t *testing.T) {
 }
 
 func TestCaseExpressionNullHandling(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -306,7 +312,9 @@ func TestCaseExpressionNullHandling(t *testing.T) {
 }
 
 func TestCaseExpressionComplexConditions(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -367,7 +375,9 @@ func TestCaseExpressionComplexConditions(t *testing.T) {
 }
 
 func TestCaseExpressionEdgeCases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

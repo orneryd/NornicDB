@@ -10,11 +10,13 @@ import (
 )
 
 func TestNodeID_String(t *testing.T) {
+	// Test basic string conversion (not using prefixTestID since this tests the type itself)
 	id := NodeID("node-123")
 	assert.Equal(t, "node-123", string(id))
 }
 
 func TestEdgeID_String(t *testing.T) {
+	// Test basic string conversion (not using prefixTestID since this tests the type itself)
 	id := EdgeID("edge-456")
 	assert.Equal(t, "edge-456", string(id))
 }
@@ -22,7 +24,7 @@ func TestEdgeID_String(t *testing.T) {
 func TestNode_MergeInternalProperties(t *testing.T) {
 	now := time.Now()
 	node := &Node{
-		ID:           NodeID("test-1"),
+		ID:           NodeID(prefixTestID("test-1")),
 		Labels:       []string{"Person"},
 		Properties:   map[string]any{"name": "Alice", "age": 30},
 		CreatedAt:    now,
@@ -37,7 +39,7 @@ func TestNode_MergeInternalProperties(t *testing.T) {
 	// Original properties preserved
 	assert.Equal(t, "Alice", merged["name"])
 	assert.Equal(t, 30, merged["age"])
-	
+
 	// Internal properties added
 	assert.Equal(t, now.Unix(), merged["_createdAt"])
 	assert.Equal(t, now.Unix(), merged["_updatedAt"])
@@ -49,7 +51,7 @@ func TestNode_MergeInternalProperties(t *testing.T) {
 func TestNode_ExtractInternalProperties(t *testing.T) {
 	now := time.Now()
 	node := &Node{
-		ID:     NodeID("test-1"),
+		ID:     NodeID(prefixTestID("test-1")),
 		Labels: []string{"Person"},
 		Properties: map[string]any{
 			"name":          "Alice",
@@ -70,11 +72,11 @@ func TestNode_ExtractInternalProperties(t *testing.T) {
 	assert.Equal(t, 0.85, node.DecayScore)
 	assert.Equal(t, now.Unix(), node.LastAccessed.Unix())
 	assert.Equal(t, int64(5), node.AccessCount)
-	
+
 	// Internal properties removed from map
 	_, hasCreatedAt := node.Properties["_createdAt"]
 	assert.False(t, hasCreatedAt)
-	
+
 	// User properties preserved
 	assert.Equal(t, "Alice", node.Properties["name"])
 	assert.Equal(t, 30, node.Properties["age"])
@@ -82,6 +84,7 @@ func TestNode_ExtractInternalProperties(t *testing.T) {
 
 func TestNode_MarshalNeo4jJSON(t *testing.T) {
 	now := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	// Use unprefixed ID since MarshalNeo4jJSON should export unprefixed IDs for Neo4j compatibility
 	node := &Node{
 		ID:           NodeID("person-1"),
 		Labels:       []string{"Person", "Employee"},
@@ -108,6 +111,7 @@ func TestNode_MarshalNeo4jJSON(t *testing.T) {
 }
 
 func TestToNeo4jExport(t *testing.T) {
+	// Use unprefixed IDs since ToNeo4jExport should export unprefixed IDs for Neo4j compatibility
 	nodes := []*Node{
 		{ID: NodeID("n1"), Labels: []string{"A"}, Properties: map[string]any{"x": 1}},
 		{ID: NodeID("n2"), Labels: []string{"B"}, Properties: map[string]any{"y": 2}},
@@ -120,10 +124,10 @@ func TestToNeo4jExport(t *testing.T) {
 
 	assert.Len(t, export.Nodes, 2)
 	assert.Len(t, export.Relationships, 1)
-	
+
 	assert.Equal(t, "n1", export.Nodes[0].ID)
 	assert.Equal(t, []string{"A"}, export.Nodes[0].Labels)
-	
+
 	assert.Equal(t, "e1", export.Relationships[0].ID)
 	assert.Equal(t, "n1", export.Relationships[0].StartNode)
 	assert.Equal(t, "n2", export.Relationships[0].EndNode)
@@ -145,12 +149,13 @@ func TestFromNeo4jExport(t *testing.T) {
 
 	require.Len(t, nodes, 2)
 	require.Len(t, edges, 1)
-	
+
+	// FromNeo4jExport returns unprefixed IDs (prefixing happens when inserted into NamespacedEngine)
 	assert.Equal(t, NodeID("person-1"), nodes[0].ID)
 	assert.Equal(t, []string{"Person"}, nodes[0].Labels)
 	assert.Equal(t, "Alice", nodes[0].Properties["name"])
 	assert.Equal(t, 1.0, nodes[0].DecayScore) // Default decay score
-	
+
 	assert.Equal(t, EdgeID("rel-1"), edges[0].ID)
 	assert.Equal(t, NodeID("person-1"), edges[0].StartNode)
 	assert.Equal(t, NodeID("person-2"), edges[0].EndNode)
@@ -170,7 +175,7 @@ func TestNeo4jExport_RoundTrip(t *testing.T) {
 
 	// Convert to internal format
 	nodes, edges := FromNeo4jExport(original)
-	
+
 	// Convert back to Neo4j format
 	exported := ToNeo4jExport(nodes, edges)
 
@@ -178,7 +183,7 @@ func TestNeo4jExport_RoundTrip(t *testing.T) {
 	assert.Equal(t, original.Nodes[0].ID, exported.Nodes[0].ID)
 	assert.Equal(t, original.Nodes[0].Labels, exported.Nodes[0].Labels)
 	assert.Equal(t, original.Nodes[0].Properties["content"], exported.Nodes[0].Properties["content"])
-	
+
 	assert.Equal(t, original.Relationships[0].ID, exported.Relationships[0].ID)
 	assert.Equal(t, original.Relationships[0].Type, exported.Relationships[0].Type)
 }

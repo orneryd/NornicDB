@@ -12,7 +12,9 @@ import (
 // TestMatchRelationshipWithWhereIdFunction tests MATCH with WHERE clause using id() function
 // This is the pattern used by GraphQL resolvers: MATCH (n)-[r]->(m) WHERE id(n) = $nodeId RETURN r, id(n), id(m)
 func TestMatchRelationshipWithWhereIdFunction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

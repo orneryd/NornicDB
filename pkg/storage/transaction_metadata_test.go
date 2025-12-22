@@ -128,7 +128,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 
 	// Create a node
 	node := &Node{
-		ID:     "test-node",
+		ID: NodeID(prefixTestID("test-node")),
 		Labels: []string{"Test"},
 	}
 	tx.CreateNode(node)
@@ -140,7 +140,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 	}
 
 	// Verify node was created
-	retrieved, err := engine.GetNode("test-node")
+	retrieved, err := engine.GetNode(NodeID(prefixTestID("test-node")))
 	if err != nil {
 		t.Errorf("Node should exist after commit: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestTransaction_Metadata_WithOperations(t *testing.T) {
 	// Perform operations
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID("node-" + string(rune('0'+i))),
+			ID:     NodeID(prefixTestID("node-" + string(rune('0'+i)))),
 			Labels: []string{"Imported"},
 			Properties: map[string]interface{}{
 				"index": i,
@@ -190,7 +190,7 @@ func TestTransaction_Metadata_WithOperations(t *testing.T) {
 	// Verify all nodes were created
 	count := 0
 	for i := 0; i < 5; i++ {
-		nodeID := NodeID("node-" + string(rune('0'+i)))
+		nodeID := NodeID(prefixTestID("node-" + string(rune('0'+i))))
 		if _, err := engine.GetNode(nodeID); err == nil {
 			count++
 		}

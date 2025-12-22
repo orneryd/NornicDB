@@ -40,13 +40,17 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		return nil, fmt.Errorf("transaction already active")
 	}
 
-	// Unwrap AsyncEngine and WALEngine to get underlying engine for transactions
+	// Unwrap AsyncEngine, WALEngine, and NamespacedEngine to get underlying engine for transactions
 	engine := e.storage
 	if asyncEngine, ok := engine.(*storage.AsyncEngine); ok {
 		engine = asyncEngine.GetEngine()
 	}
 	if walEngine, ok := engine.(*storage.WALEngine); ok {
 		engine = walEngine.GetEngine()
+	}
+	// Unwrap NamespacedEngine to get the underlying engine (transactions work on the base engine)
+	if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
+		engine = namespacedEngine.GetInnerEngine()
 	}
 
 	// Start transaction based on engine type

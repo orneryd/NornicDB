@@ -10,7 +10,9 @@ import (
 )
 
 func TestDetachDeleteAll(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -43,7 +45,9 @@ func TestDetachDeleteAll(t *testing.T) {
 }
 
 func TestDetachDeleteWithRelationships(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -76,7 +80,9 @@ func TestDetachDeleteWithRelationships(t *testing.T) {
 }
 
 func TestDeleteWithFilter(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -103,7 +109,9 @@ func TestDeleteWithFilter(t *testing.T) {
 // TestDetachDeleteParsing tests that DETACH DELETE is parsed correctly
 // This fixes the issue where "MATCH (n) DETACH DELETE n" wasn't working
 func TestDetachDeleteParsing(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -135,7 +143,9 @@ func TestDetachDeleteParsing(t *testing.T) {
 }
 
 func TestDeleteWithWhereClause(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -160,7 +170,9 @@ func TestDeleteWithWhereClause(t *testing.T) {
 }
 
 func TestDeleteWithParameters(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -187,7 +199,9 @@ func TestDeleteWithParameters(t *testing.T) {
 }
 
 func TestDeleteContentWithCypherKeywords(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 

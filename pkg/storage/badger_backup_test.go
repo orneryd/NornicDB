@@ -105,5 +105,5 @@ func TestBadgerEngine_Backup(t *testing.T) {
 
 func generateUniqueTestID() string {
 	id := atomic.AddInt64(&testIDCounter, 1)
-	return fmt.Sprintf("test-backup-%d-%d", os.Getpid(), id)
+	return prefixTestID(fmt.Sprintf("test-backup-%d-%d", os.Getpid(), id))
 }

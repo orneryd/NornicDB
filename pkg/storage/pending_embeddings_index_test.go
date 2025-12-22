@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -15,7 +16,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding
 		node := &Node{
-			ID:              "pending-1",
+			ID:              NodeID(prefixTestID("pending-1")),
 			Labels:          []string{"Person"},
 			Properties:      map[string]interface{}{"name": "Alice"},
 			ChunkEmbeddings: nil,
@@ -30,7 +31,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// FindNodeNeedingEmbedding should return this node
 		found := engine.FindNodeNeedingEmbedding()
 		require.NotNil(t, found)
-		assert.Equal(t, "pending-1", string(found.ID))
+		assert.Equal(t, prefixTestID("pending-1"), string(found.ID))
 	})
 
 	t.Run("node with embedding is NOT added to pending index", func(t *testing.T) {
@@ -38,7 +39,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node WITH embedding
 		node := &Node{
-			ID:              "embedded-1",
+			ID:              NodeID(prefixTestID("embedded-1")),
 			Labels:          []string{"Person"},
 			Properties:      map[string]interface{}{"name": "Bob"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
@@ -60,7 +61,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding
 		node := &Node{
-			ID:              "mark-1",
+			ID:              NodeID(prefixTestID("mark-1")),
 			Labels:          []string{"Person"},
 			Properties:      map[string]interface{}{"name": "Charlie"},
 			ChunkEmbeddings: nil,
@@ -72,7 +73,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
 
 		// Mark as embedded
-		engine.MarkNodeEmbedded("mark-1")
+		engine.MarkNodeEmbedded(NodeID(prefixTestID("mark-1")))
 
 		// Should no longer be in pending
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
@@ -84,7 +85,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// Create nodes without embedding
 		for i := 0; i < 5; i++ {
 			node := &Node{
-				ID:              NodeID("refresh-" + string(rune('a'+i))),
+				ID:              NodeID(prefixTestID("refresh-" + string(rune('a'+i)))),
 				Labels:          []string{"Item"},
 				Properties:      map[string]interface{}{"index": i},
 				ChunkEmbeddings: nil,
@@ -98,7 +99,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Manually clear the pending index (simulating corruption or bug)
 		for i := 0; i < 5; i++ {
-			engine.MarkNodeEmbedded(NodeID("refresh-" + string(rune('a'+i))))
+			engine.MarkNodeEmbedded(NodeID(prefixTestID("refresh-" + string(rune('a'+i)))))
 		}
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 
@@ -114,7 +115,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// Create nodes WITH embeddings
 		for i := 0; i < 3; i++ {
 			node := &Node{
-				ID:              NodeID("clear-" + string(rune('a'+i))),
+				ID:              NodeID(prefixTestID("clear-" + string(rune('a'+i)))),
 				Labels:          []string{"Memory"},
 				Properties:      map[string]interface{}{"content": "test content"},
 				ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
@@ -145,7 +146,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// Create a node that has has_embedding=true but no actual embedding
 		// This was the bug - such nodes were being skipped
 		node := &Node{
-			ID:     "regression-1",
+			ID:     NodeID(prefixTestID("regression-1")),
 			Labels: []string{"File"},
 			Properties: map[string]interface{}{
 				"name":          "test.txt",
@@ -164,7 +165,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// FindNodeNeedingEmbedding should return this node
 		found := engine.FindNodeNeedingEmbedding()
 		require.NotNil(t, found, "should find node that needs embedding")
-		assert.Equal(t, "regression-1", string(found.ID))
+		assert.Equal(t, prefixTestID("regression-1"), string(found.ID))
 	})
 
 	t.Run("RefreshPendingEmbeddingsIndex_removes_stale_entries", func(t *testing.T) {
@@ -172,7 +173,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding
 		node := &Node{
-			ID:              "stale-test",
+			ID:              NodeID(prefixTestID("stale-test")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
@@ -187,7 +188,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// Manually add a stale entry to the index (simulating a deleted node)
 		// This simulates the bug where deleted nodes remain in the index
 		err = engine.db.Update(func(txn *badger.Txn) error {
-			return txn.Set(pendingEmbedKey(NodeID("deleted-node")), []byte{})
+			return txn.Set(pendingEmbedKey(NodeID(prefixTestID("deleted-node"))), []byte{})
 		})
 		require.NoError(t, err)
 
@@ -209,7 +210,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding
 		node := &Node{
-			ID:              "needs-embed",
+			ID:              NodeID(prefixTestID("needs-embed")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
@@ -250,7 +251,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create an internal node (label starts with _)
 		node := &Node{
-			ID:              "internal-1",
+			ID:              NodeID(prefixTestID("internal-1")),
 			Labels:          []string{"_SystemNode"},
 			Properties:      map[string]interface{}{"data": "internal"},
 			ChunkEmbeddings: nil,
@@ -270,7 +271,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		nodeIDs := []string{"multi-a", "multi-b", "multi-c"}
 		for _, id := range nodeIDs {
 			node := &Node{
-				ID:              NodeID(id),
+				ID:              NodeID(prefixTestID(id)),
 				Labels:          []string{"Item"},
 				Properties:      map[string]interface{}{"id": id},
 				ChunkEmbeddings: nil,
@@ -286,7 +287,12 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			found := engine.FindNodeNeedingEmbedding()
 			require.NotNil(t, found)
-			processed[string(found.ID)] = true
+			// found.ID is prefixed (e.g., "test:multi-a"), unprefix it for comparison
+			unprefixedID := string(found.ID)
+			if strings.HasPrefix(unprefixedID, "test:") {
+				unprefixedID = unprefixedID[5:] // Remove "test:" prefix
+			}
+			processed[unprefixedID] = true
 
 			// Mark as embedded
 			engine.MarkNodeEmbedded(found.ID)
@@ -307,7 +313,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a valid node without embedding
 		node := &Node{
-			ID:              "valid-node",
+			ID:              NodeID(prefixTestID("valid-node")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
@@ -332,7 +338,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// It should handle up to 100 stale entries before giving up
 		found := engine.FindNodeNeedingEmbedding()
 		require.NotNil(t, found, "should find valid node despite stale entries")
-		assert.Equal(t, "valid-node", string(found.ID), "should find the valid node")
+		assert.Equal(t, prefixTestID("valid-node"), string(found.ID), "should find the valid node")
 
 		// Verify stale entries were removed from index
 		count = engine.PendingEmbeddingsCount()
@@ -344,7 +350,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a valid node
 		node := &Node{
-			ID:              "valid-node",
+			ID:              NodeID(prefixTestID("valid-node")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
@@ -354,7 +360,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Add 50 stale entries (less than the 100 max attempts)
 		for i := 0; i < 50; i++ {
-			staleID := NodeID(fmt.Sprintf("stale-%d", i))
+			staleID := NodeID(prefixTestID(fmt.Sprintf("stale-%d", i)))
 			err = engine.db.Update(func(txn *badger.Txn) error {
 				return txn.Set(pendingEmbedKey(staleID), []byte{})
 			})
@@ -364,7 +370,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// FindNodeNeedingEmbedding should skip all stale entries and find the valid one
 		found := engine.FindNodeNeedingEmbedding()
 		require.NotNil(t, found, "should find valid node after skipping 50 stale entries")
-		assert.Equal(t, "valid-node", string(found.ID))
+		assert.Equal(t, prefixTestID("valid-node"), string(found.ID))
 	})
 
 	t.Run("FindNodeNeedingEmbedding_returns_nil_after_max_attempts", func(t *testing.T) {
@@ -372,7 +378,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Add 101 stale entries (more than the 100 max attempts)
 		for i := 0; i < 101; i++ {
-			staleID := NodeID(fmt.Sprintf("stale-%d", i))
+			staleID := NodeID(prefixTestID(fmt.Sprintf("stale-%d", i)))
 			err := engine.db.Update(func(txn *badger.Txn) error {
 				return txn.Set(pendingEmbedKey(staleID), []byte{})
 			})
@@ -389,7 +395,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding
 		node := &Node{
-			ID:              "test-node",
+			ID:              NodeID(prefixTestID("test-node")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
@@ -415,14 +421,14 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Try to update a non-existent node - should return ErrNotFound
 		nonExistent := &Node{
-			ID:              "non-existent",
+			ID:              NodeID(prefixTestID("non-existent")),
 			ChunkEmbeddings: [][]float32{{0.5, 0.6}},
 		}
 		err = engine.UpdateNodeEmbedding(nonExistent)
 		assert.Equal(t, ErrNotFound, err, "UpdateNodeEmbedding should return ErrNotFound for non-existent node")
 
 		// Verify node was NOT created
-		_, err = engine.GetNode("non-existent")
+		_, err = engine.GetNode(NodeID(prefixTestID("non-existent")))
 		assert.Equal(t, ErrNotFound, err, "node should not have been created")
 	})
 
@@ -431,7 +437,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node with properties
 		node := &Node{
-			ID:     "test-node",
+			ID:     NodeID(prefixTestID("test-node")),
 			Labels: []string{"Test"},
 			Properties: map[string]interface{}{
 				"content": "Original content",
@@ -464,7 +470,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Create a node without embedding (should be in pending index)
 		node := &Node{
-			ID:              "test-node",
+			ID:              NodeID(prefixTestID("test-node")),
 			Labels:          []string{"Test"},
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,

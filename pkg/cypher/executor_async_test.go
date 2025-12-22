@@ -25,7 +25,9 @@ func skipDiskIOTestOnWindows(t *testing.T) {
 // TestExecuteImplicitAsync_CreateNode verifies that CREATE node queries
 // execute correctly through the async path and data is persisted.
 func TestExecuteImplicitAsync_CreateNode(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -64,7 +66,9 @@ func TestExecuteImplicitAsync_CreateNode(t *testing.T) {
 // TestExecuteImplicitAsync_CreateRelationship verifies that relationship creation
 // works correctly through the async path.
 func TestExecuteImplicitAsync_CreateRelationship(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -106,7 +110,9 @@ func TestExecuteImplicitAsync_CreateRelationship(t *testing.T) {
 // TestExecuteImplicitAsync_AggregationEmptyDB verifies that aggregation queries
 // return correct results even when the database is empty.
 func TestExecuteImplicitAsync_AggregationEmptyDB(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -133,7 +139,9 @@ func TestExecuteImplicitAsync_AggregationEmptyDB(t *testing.T) {
 // TestExecuteImplicitAsync_RelationshipCountEmptyDB verifies that relationship
 // count returns 0 (not error) when no relationships exist.
 func TestExecuteImplicitAsync_RelationshipCountEmptyDB(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -160,7 +168,9 @@ func TestExecuteImplicitAsync_RelationshipCountEmptyDB(t *testing.T) {
 // TestExecuteImplicitAsync_BulkCreateAndCount simulates the benchmark scenario:
 // create many nodes/relationships, then count them.
 func TestExecuteImplicitAsync_BulkCreateAndCount(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -211,7 +221,9 @@ func TestExecuteImplicitAsync_BulkCreateAndCount(t *testing.T) {
 
 // TestExecuteImplicitAsync_DeleteNode verifies DELETE works through async path.
 func TestExecuteImplicitAsync_DeleteNode(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -243,7 +255,9 @@ func TestExecuteImplicitAsync_DeleteNode(t *testing.T) {
 
 // TestExecuteImplicitAsync_CreateDeleteRelationship is the exact benchmark scenario.
 func TestExecuteImplicitAsync_CreateDeleteRelationship(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -295,7 +309,9 @@ func TestExecuteImplicitAsync_CreateDeleteRelationship(t *testing.T) {
 // TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery tests the exact benchmark pattern:
 // MATCH ... WITH ... CREATE ... DELETE r (all in one query)
 func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -329,7 +345,9 @@ func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
 // Run with: go test -v -run BenchmarkMatchCreateDelete -count 1 ./pkg/cypher/
 // KEEP THIS TEST - it's the primary test for relationship write performance
 func TestBenchmarkMatchCreateDelete(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -386,7 +404,9 @@ func TestBenchmarkMatchCreateDelete(t *testing.T) {
 // TestBenchmarkMatchCreateDelete_WithFlush simulates the Bolt path where we flush after each query
 // KEEP THIS TEST - it shows the impact of flushing on performance
 func TestBenchmarkMatchCreateDelete_WithFlush(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -537,7 +557,9 @@ func TestBenchmarkMatchCreateDelete_WithBadgerAndFlush(t *testing.T) {
 // TestBenchmarkMatchCreateDelete_LargeDataset_Direct tests with 100 actors + 150 movies
 // KEEP THIS TEST - isolates executor performance with realistic data
 func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()
@@ -590,7 +612,9 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 
 // TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush tests flush impact
 func TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	executor := NewStorageExecutor(asyncEngine)
 	ctx := context.Background()

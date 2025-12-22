@@ -62,7 +62,9 @@ import (
 //	}
 func SetupTestExecutor(t *testing.T) *cypher.StorageExecutor {
 	t.Helper()
-	store := storage.NewMemoryEngine()
+	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
+	baseStore := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	return cypher.NewStorageExecutor(store)
 }
 

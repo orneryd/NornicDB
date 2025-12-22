@@ -16,7 +16,9 @@ import (
 // ========================================
 
 func TestCallDbInfoExtended(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -64,7 +66,9 @@ func TestCallDbInfoExtended(t *testing.T) {
 }
 
 func TestCallDbInfoYield(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -84,7 +88,9 @@ func TestCallDbInfoYield(t *testing.T) {
 // ========================================
 
 func TestCallDbPingExtended(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -107,7 +113,9 @@ func TestCallDbPingExtended(t *testing.T) {
 // ========================================
 
 func TestCallDbAwaitIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -148,7 +156,9 @@ func TestCallDbAwaitIndex(t *testing.T) {
 // ========================================
 
 func TestCallDbAwaitIndexes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -188,7 +198,9 @@ func TestCallDbAwaitIndexes(t *testing.T) {
 // ========================================
 
 func TestCallDbResampleIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -228,7 +240,9 @@ func TestCallDbResampleIndex(t *testing.T) {
 // ========================================
 
 func TestCallTxSetMetadata(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -287,7 +301,9 @@ func TestCallTxSetMetadata(t *testing.T) {
 // ========================================
 
 func TestCallDbStatsClear(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -306,7 +322,9 @@ func TestCallDbStatsClear(t *testing.T) {
 }
 
 func TestCallDbStatsCollect(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -332,7 +350,9 @@ func TestCallDbStatsCollect(t *testing.T) {
 }
 
 func TestCallDbStatsRetrieve(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -351,7 +371,9 @@ func TestCallDbStatsRetrieve(t *testing.T) {
 }
 
 func TestCallDbStatsStatus(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -370,7 +392,9 @@ func TestCallDbStatsStatus(t *testing.T) {
 }
 
 func TestCallDbStatsStop(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -392,7 +416,9 @@ func TestCallDbStatsStop(t *testing.T) {
 }
 
 func TestCallDbStatsRetrieveAllAnTheStats(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -420,7 +446,9 @@ func TestCallDbStatsRetrieveAllAnTheStats(t *testing.T) {
 // ========================================
 
 func TestCallDbClearQueryCaches(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -533,7 +561,9 @@ func TestCallDbClearQueryCaches(t *testing.T) {
 // ========================================
 
 func TestCallDbmsInfoExtended(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -553,7 +583,9 @@ func TestCallDbmsInfoExtended(t *testing.T) {
 }
 
 func TestCallDbmsListConfigExtended(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -574,7 +606,9 @@ func TestCallDbmsListConfigExtended(t *testing.T) {
 }
 
 func TestCallDbmsClientConfig(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -594,7 +628,9 @@ func TestCallDbmsClientConfig(t *testing.T) {
 }
 
 func TestCallDbmsListConnections(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -616,7 +652,9 @@ func TestCallDbmsListConnections(t *testing.T) {
 // ========================================
 
 func TestCallDbIndexFulltextListAvailableAnalyzersExtended(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -650,7 +688,9 @@ func TestCallDbIndexFulltextListAvailableAnalyzersExtended(t *testing.T) {
 // ========================================
 
 func TestCallDbInfoWithYieldAndWhere(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -671,7 +711,9 @@ func TestCallDbInfoWithYieldAndWhere(t *testing.T) {
 }
 
 func TestCallDbLabelsWithYield(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -701,7 +743,9 @@ func TestCallDbLabelsWithYield(t *testing.T) {
 // ========================================
 
 func TestCallDbConstraints(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

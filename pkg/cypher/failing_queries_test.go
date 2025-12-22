@@ -44,7 +44,9 @@ func setupAreaGraphData(t *testing.T, exec *StorageExecutor, ctx context.Context
 // Actual: Returns no results, driver warning "Expected a single record, but found multiple"
 
 func TestFailingQuery_CallSubqueryWithVariableLengthPath(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -122,7 +124,9 @@ func TestFailingQuery_CallSubqueryWithVariableLengthPath(t *testing.T) {
 // Actual: Returns strings instead of maps, `seed_name` is literal "seed.name"
 
 func TestFailingQuery_VariableLengthWithClauseAggregation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -201,7 +205,9 @@ func TestFailingQuery_VariableLengthWithClauseAggregation(t *testing.T) {
 // Actual: Maps are created correctly but `rel_chain` is always empty `[]`
 
 func TestFailingQuery_RelationshipChainExtraction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -278,7 +284,9 @@ func TestFailingQuery_RelationshipChainExtraction(t *testing.T) {
 // ============================================================================
 
 func TestRelationshipsPathFunction_Basic(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -323,7 +331,9 @@ func TestRelationshipsPathFunction_Basic(t *testing.T) {
 // ============================================================================
 
 func TestLengthPathInCollectMapLiteral(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -387,7 +397,9 @@ func TestLengthPathInCollectMapLiteral(t *testing.T) {
 // This pattern was failing because after WITH, the path context was lost
 // and map literal expressions were returned as literal strings.
 func TestFailingQuery_WithPathLimitCollectMapLiteral(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -496,7 +508,9 @@ func TestFailingQuery_WithPathLimitCollectMapLiteral(t *testing.T) {
 // WITH seed, connected, length(path) as dist LIMIT 20
 // RETURN seed.name, collect(DISTINCT {...})
 func TestFailingQuery_WithSeedConnectedDistLimit(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -565,7 +579,9 @@ func TestFailingQuery_WithSeedConnectedDistLimit(t *testing.T) {
 // Expected: size() should return an integer count
 
 func TestSizeFunctionWithAggregation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

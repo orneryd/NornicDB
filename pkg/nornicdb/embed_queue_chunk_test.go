@@ -16,12 +16,14 @@ import (
 // are chunked and all chunks are stored on the same node.
 func TestNonFileNodeChunking(t *testing.T) {
 	t.Run("single_chunk_stored_normally", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node with small content (single chunk)
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "small-node",
+			ID: storage.NodeID("small-node"),
 			Labels: []string{"Document"},
 			Properties: map[string]any{
 				"content": "Short content",
@@ -62,7 +64,9 @@ func TestNonFileNodeChunking(t *testing.T) {
 	})
 
 	t.Run("multiple_chunks_stored_on_same_node", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node with large content (will be chunked)
@@ -70,7 +74,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 		// So we need content large enough that after adding labels/title, it exceeds chunkSize
 		largeContent := strings.Repeat("This is a sentence with various words and tokens. ", 500)
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "large-doc-node",
+			ID: storage.NodeID("large-doc-node"),
 			Labels: []string{"Document"},
 			Properties: map[string]any{
 				"content": largeContent,
@@ -137,13 +141,15 @@ func TestNonFileNodeChunking(t *testing.T) {
 	})
 
 	t.Run("chunk_embeddings_preserved_on_update", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node with large content
 		largeContent := strings.Repeat("Test content for chunking. ", 500)
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "test-node",
+			ID: storage.NodeID("test-node"),
 			Labels: []string{"Article"},
 			Properties: map[string]any{
 				"content": largeContent,
@@ -199,7 +205,9 @@ func TestNonFileNodeChunking(t *testing.T) {
 // TestChunkEmbeddingSearch tests that all chunk embeddings are searchable
 // and results are properly deduplicated.
 func TestChunkEmbeddingSearch(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	embedder := newMockEmbedder()
 
 	// Create a search service
@@ -208,7 +216,7 @@ func TestChunkEmbeddingSearch(t *testing.T) {
 	// Create a node with large content (will be chunked)
 	largeContent := strings.Repeat("Machine learning algorithms are fascinating. ", 500)
 	_, err := engine.CreateNode(&storage.Node{
-		ID:     "ml-doc",
+		ID: storage.NodeID("ml-doc"),
 		Labels: []string{"Document"},
 		Properties: map[string]any{
 			"content": largeContent,
@@ -294,14 +302,16 @@ func TestChunkEmbeddingSearch(t *testing.T) {
 // TestChunkEmbeddingRemoval tests that chunk embeddings are properly removed
 // when a node is deleted.
 func TestChunkEmbeddingRemoval(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	embedder := newMockEmbedder()
 	searchService := search.NewService(engine)
 
 	// Create a node with large content
 	largeContent := strings.Repeat("Test content. ", 500)
 	_, err := engine.CreateNode(&storage.Node{
-		ID:     "temp-doc",
+		ID: storage.NodeID("temp-doc"),
 		Labels: []string{"Document"},
 		Properties: map[string]any{
 			"content": largeContent,

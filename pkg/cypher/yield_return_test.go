@@ -16,7 +16,9 @@ import (
 // - ORDER BY, LIMIT, SKIP clauses
 // - Multi-line query formatting (whitespace handling)
 func TestYieldReturnIntegration(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -287,7 +289,9 @@ func TestYieldReturnIntegration(t *testing.T) {
 
 // TestYieldReturnWithOtherProcedures tests YIELD...RETURN with various procedures
 func TestYieldReturnWithOtherProcedures(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -354,7 +358,9 @@ func TestYieldReturnWithOtherProcedures(t *testing.T) {
 
 // TestYieldReturnEdgeCases tests edge cases in YIELD...RETURN parsing
 func TestYieldReturnEdgeCases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

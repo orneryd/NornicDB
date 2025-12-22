@@ -63,8 +63,8 @@ func TestLoadFromNeo4jExport(t *testing.T) {
 		edge, err := engine.GetEdge("rel-1")
 		require.NoError(t, err)
 		assert.Equal(t, "KNOWS", edge.Type)
-		assert.Equal(t, NodeID("person-1"), edge.StartNode)
-		assert.Equal(t, NodeID("person-2"), edge.EndNode)
+		assert.Equal(t, NodeID(prefixTestID("person-1")), edge.StartNode)
+		assert.Equal(t, NodeID(prefixTestID("person-2")), edge.EndNode)
 	})
 
 	t.Run("file not found", func(t *testing.T) {
@@ -338,7 +338,7 @@ func TestNodeFromNeo4j(t *testing.T) {
 		node, err := nodeFromNeo4j(neo4jNode)
 		require.NoError(t, err)
 
-		assert.Equal(t, NodeID("test-123"), node.ID)
+		assert.Equal(t, NodeID(prefixTestID("test-123")), node.ID)
 		assert.Equal(t, []string{"Person", "Employee"}, node.Labels)
 		assert.Equal(t, "Alice", node.Properties["name"])
 	})
@@ -395,10 +395,10 @@ func TestEdgeFromNeo4j(t *testing.T) {
 		edge, err := edgeFromNeo4j(neo4jRel)
 		require.NoError(t, err)
 
-		assert.Equal(t, EdgeID("rel-123"), edge.ID)
+		assert.Equal(t, EdgeID(prefixTestID("rel-123")), edge.ID)
 		assert.Equal(t, "KNOWS", edge.Type)
-		assert.Equal(t, NodeID("n1"), edge.StartNode)
-		assert.Equal(t, NodeID("n2"), edge.EndNode)
+		assert.Equal(t, NodeID(prefixTestID("n1")), edge.StartNode)
+		assert.Equal(t, NodeID(prefixTestID("n2")), edge.EndNode)
 		assert.Equal(t, 2020, edge.Properties["since"])
 	})
 
@@ -443,11 +443,11 @@ func TestEdgeFromNeo4j(t *testing.T) {
 func TestMemoryEngine_AllNodes(t *testing.T) {
 	t.Run("returns all nodes", func(t *testing.T) {
 		engine := NewMemoryEngine()
-		_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"A"}})
+		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"B"}})
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"B"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "n3", Labels: []string{"A", "B"}})
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n3")), Labels: []string{"A", "B"}})
 
 		nodes, err := engine.AllNodes()
 		require.NoError(t, err)
@@ -457,7 +457,7 @@ func TestMemoryEngine_AllNodes(t *testing.T) {
 	t.Run("returns copies", func(t *testing.T) {
 		engine := NewMemoryEngine()
 		_, err := engine.CreateNode(&Node{
-			ID:         "n1",
+			ID:         NodeID(prefixTestID("n1")),
 			Properties: map[string]any{"key": "value"},
 		})
 		require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestMemoryEngine_AllNodes(t *testing.T) {
 		nodes, _ := engine.AllNodes()
 		nodes[0].Properties["key"] = "mutated"
 
-		original, _ := engine.GetNode("n1")
+		original, _ := engine.GetNode(NodeID(prefixTestID("n1")))
 		assert.Equal(t, "value", original.Properties["key"])
 	})
 
@@ -481,14 +481,14 @@ func TestMemoryEngine_AllNodes(t *testing.T) {
 func TestMemoryEngine_AllEdges(t *testing.T) {
 	t.Run("returns all edges", func(t *testing.T) {
 		engine := NewMemoryEngine()
-		_, err := engine.CreateNode(&Node{ID: "n1"})
+		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1"))})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "n2"})
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2"))})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "n3"})
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n3"))})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2"}))
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "e2", StartNode: "n2", EndNode: "n3"}))
+		require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2"))}))
+		require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e2")), StartNode: NodeID(prefixTestID("n2")), EndNode: NodeID(prefixTestID("n3"))}))
 
 		edges, err := engine.AllEdges()
 		require.NoError(t, err)

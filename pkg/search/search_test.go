@@ -114,7 +114,9 @@ func TestFulltextIndex_Tokenization(t *testing.T) {
 // TestRRFFusion tests Reciprocal Rank Fusion algorithm.
 func TestRRFFusion(t *testing.T) {
 	// Create test service with mock data
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create nodes
@@ -173,7 +175,9 @@ func TestAdaptiveRRFConfig(t *testing.T) {
 
 // TestSearchService_FullTextOnly tests full-text search without embeddings.
 func TestSearchService_FullTextOnly(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create nodes with searchable properties
@@ -237,7 +241,9 @@ func TestSearchService_FullTextOnly(t *testing.T) {
 
 // TestSearchService_BuildIndexes tests building indexes from storage.
 func TestSearchService_BuildIndexes(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create nodes with embeddings
@@ -310,7 +316,9 @@ func TestSearchService_WithRealData(t *testing.T) {
 	t.Logf("Using export directory: %s", exportDir)
 
 	// Load data into memory engine
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	result, err := storage.LoadFromMimirExport(engine, exportDir)
@@ -384,7 +392,9 @@ func TestSearchService_RRFHybrid(t *testing.T) {
 	}
 
 	// Load data
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	result, err := storage.LoadFromMimirExport(engine, exportDir)
@@ -498,7 +508,9 @@ func BenchmarkBM25Search(b *testing.B) {
 
 // BenchmarkRRFFusion benchmarks RRF fusion algorithm.
 func BenchmarkRRFFusion(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create nodes
@@ -652,7 +664,9 @@ func TestFulltextIndex_PhraseSearch(t *testing.T) {
 
 // TestSearchService_RemoveNode tests node removal from search service.
 func TestSearchService_RemoveNode(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewService(engine)
@@ -690,7 +704,9 @@ func TestSearchService_RemoveNode(t *testing.T) {
 // are deleted via Cypher, the embedding count is updated correctly without requiring
 // a manual "regenerate" operation.
 func TestSearchService_RemoveNode_DecrementsEmbeddingCount(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewServiceWithDimensions(engine, 4) // 4-dimensional embeddings for test
@@ -750,7 +766,9 @@ func TestSearchService_RemoveNode_DecrementsEmbeddingCount(t *testing.T) {
 // TestSearchService_RemoveNode_OnlyRemovesTargetNode ensures RemoveNode is precise
 // and doesn't affect other nodes' embeddings.
 func TestSearchService_RemoveNode_OnlyRemovesTargetNode(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewServiceWithDimensions(engine, 4) // 4-dimensional embeddings for test
@@ -809,7 +827,9 @@ func TestSearchService_RemoveNode_OnlyRemovesTargetNode(t *testing.T) {
 
 // TestSearchService_HybridSearch tests the hybrid RRF search.
 func TestSearchService_HybridSearch(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewService(engine)
@@ -865,7 +885,9 @@ func TestSearchService_HybridSearch(t *testing.T) {
 
 // TestSearchService_VectorSearchOnly tests vector-only search mode.
 func TestSearchService_VectorSearchOnly(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create a service with 4-dimensional vector index
@@ -918,7 +940,9 @@ func TestSearchService_VectorSearchOnly(t *testing.T) {
 
 // TestSearchService_FilterByType tests type filtering.
 func TestSearchService_FilterByType(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewService(engine)
@@ -950,7 +974,9 @@ func TestSearchService_FilterByType(t *testing.T) {
 
 // TestSearchService_EnrichResults tests result enrichment.
 func TestSearchService_EnrichResults(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create a node with full properties
@@ -1034,7 +1060,9 @@ func TestTruncate(t *testing.T) {
 
 // TestSearchService_BuildIndexesFromStorage tests index building from storage.
 func TestSearchService_BuildIndexesFromStorage(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	// Create nodes before service
@@ -1100,7 +1128,9 @@ func TestGetAdaptiveRRFConfig(t *testing.T) {
 
 // TestSearchService_EmptyQuery tests behavior with empty query.
 func TestSearchService_EmptyQuery(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewService(engine)
@@ -1113,7 +1143,9 @@ func TestSearchService_EmptyQuery(t *testing.T) {
 
 // TestSearchService_SpecialCharacters tests search with special characters.
 func TestSearchService_SpecialCharacters(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 
 	svc := NewService(engine)
@@ -1142,7 +1174,9 @@ func TestVectorSearchOnlyDirect(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("basic_vector_search", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		// Create nodes with embeddings (float32)
@@ -1187,7 +1221,9 @@ func TestVectorSearchOnlyDirect(t *testing.T) {
 	})
 
 	t.Run("empty_embedding", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		service := NewService(store)
@@ -1205,7 +1241,9 @@ func TestBuildIndexesDirect(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("build_on_empty_storage", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		service := NewService(store)
@@ -1217,7 +1255,9 @@ func TestBuildIndexesDirect(t *testing.T) {
 	})
 
 	t.Run("build_with_nodes", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		// Create nodes with embeddings (float32)
@@ -1281,7 +1321,9 @@ func TestSearchServiceSearchDirect(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("search_with_embedding", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		embedding := make([]float32, 1024)
@@ -1344,7 +1386,9 @@ func TestRRFHybridSearchDirect(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("rrf_with_both_results", func(t *testing.T) {
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 
 		embedding := make([]float32, 1024)
@@ -1391,7 +1435,9 @@ func TestRRFHybridSearchDirect(t *testing.T) {
 // =============================================================================
 
 func TestMMRDiversification(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	service := NewService(store)
 
 	// Create nodes with embeddings - some similar, some diverse
@@ -1474,7 +1520,9 @@ func TestMMRDiversification(t *testing.T) {
 }
 
 func TestSearchWithMMROption(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	service := NewService(store)
 	ctx := context.Background()
 

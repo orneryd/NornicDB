@@ -9,7 +9,9 @@ import (
 
 // TestCompositeIndex tests composite (multi-property) index creation
 func TestCompositeIndex(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -47,7 +49,9 @@ func TestCompositeIndex(t *testing.T) {
 
 // TestCompositeIndexUnnamed tests composite index without explicit name
 func TestCompositeIndexUnnamed(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -89,7 +93,9 @@ func TestCompositeIndexUnnamed(t *testing.T) {
 
 // TestCompositeIndexThreeProperties tests composite index with three properties
 func TestCompositeIndexThreeProperties(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -128,7 +134,9 @@ func TestCompositeIndexThreeProperties(t *testing.T) {
 
 // TestCompositeIndexWithSpaces tests parsing with various spacing
 func TestCompositeIndexWithSpaces(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -153,7 +161,9 @@ func TestCompositeIndexWithSpaces(t *testing.T) {
 
 // TestCompositeIndexIfNotExists tests IF NOT EXISTS clause with composite indexes
 func TestCompositeIndexIfNotExists(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -172,7 +182,9 @@ func TestCompositeIndexIfNotExists(t *testing.T) {
 
 // TestSinglePropertyIndexStillWorks tests that single-property indexes still work
 func TestSinglePropertyIndexStillWorks(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -209,7 +221,9 @@ func TestSinglePropertyIndexStillWorks(t *testing.T) {
 
 // TestCompositeIndexQueryOptimization tests that composite indexes can be used in queries
 func TestCompositeIndexQueryOptimization(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -251,7 +265,9 @@ func TestCompositeIndexQueryOptimization(t *testing.T) {
 
 // TestParseIndexProperties tests the parseIndexProperties helper function
 func TestParseIndexProperties(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	testCases := []struct {

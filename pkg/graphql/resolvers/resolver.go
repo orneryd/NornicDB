@@ -53,28 +53,33 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 
 	// Wire up storage event callbacks to event broker
 	// This enables GraphQL subscriptions to receive real-time updates
-	// Get the underlying storage engine and unwrap layers (WALEngine, AsyncEngine)
+	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine, AsyncEngine)
 	// to reach the BadgerEngine that implements StorageEventNotifier
 	// Note: Events from all namespaces will be published. Namespace filtering
 	// can be added later if needed by checking node/edge ID prefixes.
 	if db != nil {
 		underlyingEngine := db.GetStorage()
-		
+
+		// Unwrap NamespacedEngine if present (from db.GetStorage())
+		if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
+			underlyingEngine = namespacedEngine.GetInnerEngine()
+		}
+
 		// Unwrap WALEngine if present
 		if walEngine, ok := underlyingEngine.(interface{ GetEngine() storage.Engine }); ok {
 			underlyingEngine = walEngine.GetEngine()
 		}
-		
+
 		// Unwrap AsyncEngine if present
 		if asyncEngine, ok := underlyingEngine.(interface{ GetEngine() storage.Engine }); ok {
 			underlyingEngine = asyncEngine.GetEngine()
 		}
-		
+
 		if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
 			// Get default database name for namespace prefix removal
 			defaultDBName := dbManager.DefaultDatabaseName()
 			namespacePrefix := defaultDBName + ":"
-			
+
 			// Helper to unprefix node ID
 			unprefixNodeID := func(id storage.NodeID) storage.NodeID {
 				idStr := string(id)
@@ -83,7 +88,7 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 				}
 				return id
 			}
-			
+
 			// Helper to unprefix edge ID
 			unprefixEdgeID := func(id storage.EdgeID) storage.EdgeID {
 				idStr := string(id)
@@ -92,7 +97,7 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 				}
 				return id
 			}
-			
+
 			// Node events
 			notifier.OnNodeCreated(func(node *storage.Node) {
 				// Create a copy with unprefixed ID for GraphQL
@@ -140,7 +145,7 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cypher.StorageExecutor, error) {
 	var storage storage.Engine
 	var err error
-	
+
 	if database != "" {
 		// Use specified database
 		storage, err = r.dbManager.GetStorage(database)
@@ -154,7 +159,7 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 			return nil, fmt.Errorf("default database 'nornic' not found: %w", err)
 		}
 	}
-	
+
 	executor := cypher.NewStorageExecutor(storage)
 
 	// Copy configuration from base DB's executor if available

@@ -18,7 +18,9 @@ import (
 // ========================================
 
 func TestMergeNode_CreateWhenEmpty(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -41,7 +43,9 @@ func TestMergeNode_CreateWhenEmpty(t *testing.T) {
 }
 
 func TestMergeNode_MatchWhenExists(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -75,7 +79,9 @@ func TestMergeNode_MatchWhenExists(t *testing.T) {
 // ========================================
 
 func TestMergeNode_OnCreateSet(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -100,7 +106,9 @@ func TestMergeNode_OnCreateSet(t *testing.T) {
 }
 
 func TestMergeNode_OnMatchSet(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -135,7 +143,9 @@ func TestMergeNode_OnMatchSet(t *testing.T) {
 // ========================================
 
 func TestMergeNode_Idempotent(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -184,7 +194,9 @@ func TestMergeNode_Idempotent(t *testing.T) {
 // ========================================
 
 func TestMergeRelationship_Basic(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -212,7 +224,9 @@ func TestMergeRelationship_Basic(t *testing.T) {
 }
 
 func TestMergeRelationship_Idempotent(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -251,7 +265,9 @@ func TestMergeRelationship_Idempotent(t *testing.T) {
 // ========================================
 
 func TestMerge_FileIndexerPattern(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -353,7 +369,9 @@ func TestMerge_FileIndexerPattern(t *testing.T) {
 
 // Test exact Mimir FileIndexer query format with SET on separate line
 func TestMerge_FileIndexerExactFormat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -413,7 +431,9 @@ func TestMerge_FileIndexerExactFormat(t *testing.T) {
 // ========================================
 
 func TestMerge_WithParameters(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 

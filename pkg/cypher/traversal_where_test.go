@@ -82,7 +82,9 @@ func TestFindMatchingParen(t *testing.T) {
 
 // TestParseTraversalPatternStateMachine tests parsing with special characters
 func TestParseTraversalPatternStateMachine(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {
@@ -171,7 +173,9 @@ func TestParseTraversalPatternStateMachine(t *testing.T) {
 
 // TestEvaluatePathValue tests literal value parsing
 func TestEvaluatePathValue(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {
@@ -231,7 +235,9 @@ func TestEvaluatePathValue(t *testing.T) {
 
 // TestCompareValuesForPath tests value comparison with different operators
 func TestCompareValuesForPath(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {
@@ -279,7 +285,9 @@ func TestCompareValuesForPath(t *testing.T) {
 
 // TestEvaluateWhereOnPath tests WHERE evaluation on path contexts
 func TestEvaluateWhereOnPath(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Create path context with test nodes
@@ -377,7 +385,9 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 
 // TestFilterPathsByWhere tests filtering paths with WHERE clause
 func TestFilterPathsByWhere(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Create test nodes

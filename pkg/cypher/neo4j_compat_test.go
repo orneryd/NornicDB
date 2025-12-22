@@ -28,7 +28,9 @@ import (
 // Neo4j allows: CREATE (n:Node {id: 'test'}) SET n.content = 'value' RETURN n
 // NornicDB currently errors: "SET requires a MATCH clause first"
 func TestCreateWithSetNeo4jCompat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -122,7 +124,9 @@ RETURN n`
 // Neo4j allows: CALL procedure() YIELD node, score RETURN node.id, node.type, score
 // NornicDB may only return [node, score] without allowing property access
 func TestPropertyAccessAfterYieldNeo4jCompat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -173,7 +177,9 @@ RETURN n.id as id, n.type as type, score`
 // TestDetachDeleteWithWhereNeo4jCompat tests that DETACH DELETE with WHERE completes quickly
 // Neo4j executes this immediately, NornicDB may hang
 func TestDetachDeleteWithWhereNeo4jCompat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -235,7 +241,9 @@ DETACH DELETE n`
 // Neo4j returns an error immediately if the index doesn't exist
 // NornicDB should do the same, not hang
 func TestFulltextWithoutIndexNeo4jCompat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -315,7 +323,9 @@ LIMIT 5`
 
 // TestCreateSetWhitespaceVariations tests that CREATE...SET works with various whitespace
 func TestCreateSetWhitespaceVariations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -372,7 +382,9 @@ RETURN n`,
 
 // TestMimirSearchPatternNeo4jCompat tests the complex search query pattern from Mimir
 func TestMimirSearchPatternNeo4jCompat(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

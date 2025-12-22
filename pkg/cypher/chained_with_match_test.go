@@ -13,7 +13,9 @@ import (
 // MERGE (e:Entry {key: $key}) WITH e MATCH (b:Category) MERGE (e)-[:REL]->(b)
 // This is the pattern used in the import script
 func TestChainedWithMatchMerge(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -113,7 +115,9 @@ func TestChainedWithMatchMerge(t *testing.T) {
 
 // TestChainedWithMatchPermutations tests all permutations of chained WITH...MATCH patterns
 func TestChainedWithMatchPermutations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -325,7 +329,9 @@ func TestChainedWithMatchPermutations(t *testing.T) {
 
 // TestOptionalMatchInChain tests OPTIONAL MATCH behavior (the fix for the import script)
 func TestOptionalMatchInChain(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -363,7 +369,9 @@ func TestOptionalMatchInChain(t *testing.T) {
 
 // TestImportScriptQueryPattern tests the exact query structure from import-translation-audit.mjs
 func TestImportScriptQueryPattern(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -562,7 +570,9 @@ func TestImportScriptQueryPattern(t *testing.T) {
 
 // TestMergeRelationshipDirectly tests creating relationships without chained MATCH
 func TestMergeRelationshipDirectly(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

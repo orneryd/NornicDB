@@ -11,7 +11,9 @@ import (
 )
 
 func TestTimestampFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -37,7 +39,9 @@ func TestTimestampFunction(t *testing.T) {
 }
 
 func TestDatetimeFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -67,7 +71,9 @@ func TestDatetimeFunction(t *testing.T) {
 }
 
 func TestDateFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -97,7 +103,9 @@ func TestDateFunction(t *testing.T) {
 }
 
 func TestTimeFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -127,7 +135,9 @@ func TestTimeFunction(t *testing.T) {
 }
 
 func TestLocaldatetimeFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -144,7 +154,9 @@ func TestLocaldatetimeFunction(t *testing.T) {
 }
 
 func TestLocaltimeFunction(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -161,7 +173,9 @@ func TestLocaltimeFunction(t *testing.T) {
 }
 
 func TestDateComponentFunctions(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	defer engine.Close()
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()

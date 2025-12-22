@@ -64,7 +64,9 @@ func TestParseExecutionMode(t *testing.T) {
 }
 
 func TestExplainBasicQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -137,7 +139,9 @@ func TestExplainBasicQuery(t *testing.T) {
 }
 
 func TestProfileBasicQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -202,7 +206,9 @@ func TestProfileBasicQuery(t *testing.T) {
 }
 
 func TestExplainComplexQueries(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -249,7 +255,9 @@ func TestExplainComplexQueries(t *testing.T) {
 }
 
 func TestExplainPlanStructure(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -283,7 +291,9 @@ func TestExplainPlanStructure(t *testing.T) {
 }
 
 func TestProfileDBHits(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -302,7 +312,9 @@ func TestProfileDBHits(t *testing.T) {
 }
 
 func TestExplainNoExecution(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -354,7 +366,9 @@ func collectOperatorTypes(op *PlanOperator) []string {
 }
 
 func TestExplainVsProfileOutput(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -382,7 +396,9 @@ func TestExplainVsProfileOutput(t *testing.T) {
 }
 
 func TestAnalyzeNodeScan(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {

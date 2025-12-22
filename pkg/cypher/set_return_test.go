@@ -38,7 +38,9 @@ import (
 
 // TestSetReturnSingleVariable tests MATCH...SET...RETURN n
 func TestSetReturnSingleVariable(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -73,7 +75,9 @@ func TestSetReturnSingleVariable(t *testing.T) {
 // TestSetReturnMultipleVariables tests MATCH...SET...RETURN n, m
 // Tests SET with multiple node variables in a relationship pattern
 func TestSetReturnMultipleVariables(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -131,7 +135,9 @@ func TestSetReturnMultipleVariables(t *testing.T) {
 
 // TestSetReturnWithAlias tests MATCH...SET...RETURN n AS alias
 func TestSetReturnWithAlias(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -159,7 +165,9 @@ func TestSetReturnWithAlias(t *testing.T) {
 
 // TestSetReturnProperty tests MATCH...SET...RETURN n.property
 func TestSetReturnProperty(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -190,7 +198,9 @@ func TestSetReturnProperty(t *testing.T) {
 
 // TestSetReturnPropertyWithAlias tests MATCH...SET...RETURN n.property AS alias
 func TestSetReturnPropertyWithAlias(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -221,7 +231,9 @@ func TestSetReturnPropertyWithAlias(t *testing.T) {
 
 // TestSetReturnFunction tests MATCH...SET...RETURN id(n)
 func TestSetReturnFunction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -250,7 +262,9 @@ func TestSetReturnFunction(t *testing.T) {
 
 // TestSetReturnMixedExpressions tests MATCH...SET...RETURN n, id(n) AS nodeId
 func TestSetReturnMixedExpressions(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -280,7 +294,9 @@ func TestSetReturnMixedExpressions(t *testing.T) {
 
 // TestSetNoReturn tests MATCH...SET without RETURN clause
 func TestSetNoReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -307,7 +323,9 @@ func TestSetNoReturn(t *testing.T) {
 
 // TestSetMergeOperatorReturn tests SET n += {props} RETURN n
 func TestSetMergeOperatorReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -343,7 +361,9 @@ func TestSetMergeOperatorReturn(t *testing.T) {
 
 // TestSetMultiplePropertiesReturn tests SET n.a = 1, n.b = 2 RETURN n
 func TestSetMultiplePropertiesReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -378,7 +398,9 @@ func TestSetMultiplePropertiesReturn(t *testing.T) {
 
 // TestSetReturnMultipleMatches tests SET with RETURN when matching multiple nodes
 func TestSetReturnMultipleMatches(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -431,7 +453,9 @@ func TestSetReturnMultipleMatches(t *testing.T) {
 
 // TestSetReturnComplexQuery tests SET with RETURN in complex query
 func TestSetReturnComplexQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -470,7 +494,9 @@ func TestSetReturnComplexQuery(t *testing.T) {
 
 // TestSetReturnStarRegression tests MATCH...SET...RETURN * still works
 func TestSetReturnStarRegression(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -497,7 +523,9 @@ func TestSetReturnStarRegression(t *testing.T) {
 
 // TestSetWithoutMatchRegression tests that SET still requires MATCH
 func TestSetWithoutMatchRegression(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -517,7 +545,9 @@ func TestSetWithoutMatchRegression(t *testing.T) {
 
 // TestSetReturnWithParameters tests SET with parameters in RETURN
 func TestSetReturnWithParameters(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -556,7 +586,9 @@ func TestSetReturnWithParameters(t *testing.T) {
 
 // TestSetReturnEmptyMatch tests SET...RETURN when MATCH finds no nodes
 func TestSetReturnEmptyMatch(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -573,7 +605,9 @@ func TestSetReturnEmptyMatch(t *testing.T) {
 
 // TestSetReturnWhitespaceVariations tests various whitespace in RETURN
 func TestSetReturnWhitespaceVariations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

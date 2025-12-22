@@ -15,7 +15,9 @@ import (
 )
 
 func TestMatchCreateRelationship_CommaSeparated(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -48,7 +50,9 @@ func TestMatchCreateRelationship_CommaSeparated(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_MultipleMATCH(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -84,7 +88,9 @@ func TestMatchCreateRelationship_MultipleMATCH(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_MixedStyles(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -111,7 +117,9 @@ func TestMatchCreateRelationship_MixedStyles(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_WithProperties(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -148,7 +156,9 @@ func TestMatchCreateRelationship_WithProperties(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_ByID(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -189,7 +199,9 @@ func TestMatchCreateRelationship_ByID(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_NoReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -218,7 +230,9 @@ func TestMatchCreateRelationship_NoReturn(t *testing.T) {
 }
 
 func TestMatchCreateRelationship_ReverseDirection(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

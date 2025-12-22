@@ -8,7 +8,9 @@ import (
 )
 
 func TestFormatFunction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	tests := []struct {
@@ -63,7 +65,9 @@ func TestFormatFunction(t *testing.T) {
 }
 
 func TestFormatFunctionEdgeCases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	t.Run("format with no args", func(t *testing.T) {

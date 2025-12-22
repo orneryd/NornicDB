@@ -212,7 +212,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// First node succeeds
 		node1 := &Node{
-			ID:     "user1",
+			ID: NodeID(prefixTestID("user1")),
 			Labels: []string{"User"},
 			Properties: map[string]any{
 				"email": "test@example.com",
@@ -226,7 +226,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Second node with same email fails
 		node2 := &Node{
-			ID:     "user2",
+			ID: NodeID(prefixTestID("user2")),
 			Labels: []string{"User"},
 			Properties: map[string]any{
 				"email": "test@example.com",
@@ -240,7 +240,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Different email succeeds
 		node3 := &Node{
-			ID:     "user3",
+			ID: NodeID(prefixTestID("user3")),
 			Labels: []string{"User"},
 			Properties: map[string]any{
 				"email": "different@example.com",
@@ -260,7 +260,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Node with Entity label
 		node1 := &Node{
-			ID:     "n1",
+			ID: NodeID(prefixTestID("n1")),
 			Labels: []string{"Entity", "User"},
 			Properties: map[string]any{
 				"id": "unique-id-1",
@@ -273,7 +273,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Another node with Entity label and same id should fail
 		node2 := &Node{
-			ID:     "n2",
+			ID: NodeID(prefixTestID("n2")),
 			Labels: []string{"Entity", "Post"},
 			Properties: map[string]any{
 				"id": "unique-id-1",
@@ -292,7 +292,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Create User with email
 		user := &Node{
-			ID:     "user1",
+			ID: NodeID(prefixTestID("user1")),
 			Labels: []string{"User"},
 			Properties: map[string]any{
 				"email": "test@example.com",
@@ -302,7 +302,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 		// Post with same email property should succeed (different label)
 		post := &Node{
-			ID:     "post1",
+			ID: NodeID(prefixTestID("post1")),
 			Labels: []string{"Post"},
 			Properties: map[string]any{
 				"email": "test@example.com",
@@ -676,7 +676,7 @@ func TestCompositeIndexConcurrency(t *testing.T) {
 			defer wg.Done()
 
 			for i := 0; i < opsPerGoroutine; i++ {
-				nodeID := NodeID(fmt.Sprintf("node-%d-%d", gid, i))
+				nodeID := NodeID(prefixTestID(fmt.Sprintf("node-%d-%d", gid, i)))
 				props := map[string]interface{}{
 					"a": fmt.Sprintf("a-%d", gid),
 					"b": fmt.Sprintf("b-%d", i),
@@ -854,7 +854,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	// Pre-populate with some data
 	for i := 0; i < 10000; i++ {
-		idx.IndexNode(NodeID(fmt.Sprintf("user-%d", i)), map[string]interface{}{
+		idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("user-%d", i))), map[string]interface{}{
 			"country": fmt.Sprintf("country-%d", i%100),
 			"city":    fmt.Sprintf("city-%d", i%1000),
 			"zipcode": fmt.Sprintf("zip-%d", i),
@@ -863,7 +863,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	b.Run("IndexNode", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx.IndexNode(NodeID(fmt.Sprintf("bench-user-%d", i)), map[string]interface{}{
+			idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("bench-user-%d", i))), map[string]interface{}{
 				"country": "US",
 				"city":    "NYC",
 				"zipcode": fmt.Sprintf("1000%d", i),

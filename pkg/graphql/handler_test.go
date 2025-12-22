@@ -29,7 +29,8 @@ func testDB(t *testing.T) *nornicdb.DB {
 // testDBManager creates a DatabaseManager for testing
 func testDBManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
 	t.Helper()
-	inner := db.GetStorage()
+	// Get the base storage (unwraps NamespacedEngine) - DatabaseManager creates its own NamespacedEngines
+	inner := db.GetBaseStorageForManager()
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { manager.Close() })

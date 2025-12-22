@@ -66,7 +66,7 @@ func TestAsyncEngine_Flush(t *testing.T) {
 	// Create nodes
 	for i := 0; i < 10; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestAsyncEngine_NodeCount_RaceCondition(t *testing.T) {
 	// Create nodes
 	for i := 0; i < numNodes; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestAsyncEngine_EdgeCount_RaceCondition(t *testing.T) {
 	// Create nodes first
 	for i := 0; i < numNodes; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -215,9 +215,9 @@ func TestAsyncEngine_EdgeCount_RaceCondition(t *testing.T) {
 	// Create edges
 	for i := 0; i < numEdges; i++ {
 		err := async.CreateEdge(&Edge{
-			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
+			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
 			Type:      "CONNECTS",
-			StartNode: NodeID(fmt.Sprintf("node-%d", i%numNodes)),
+			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i%numNodes))),
 			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%numNodes)),
 		})
 		require.NoError(t, err)
@@ -282,7 +282,7 @@ func TestAsyncEngine_DeleteNode(t *testing.T) {
 	// Create and flush nodes
 	for i := 0; i < 10; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -291,7 +291,7 @@ func TestAsyncEngine_DeleteNode(t *testing.T) {
 
 	// Delete some nodes
 	for i := 0; i < 3; i++ {
-		err := async.DeleteNode(NodeID(fmt.Sprintf("node-%d", i)))
+		err := async.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i))))
 		require.NoError(t, err)
 	}
 
@@ -325,7 +325,7 @@ func TestAsyncEngine_StreamNodes(t *testing.T) {
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestAsyncEngine_StreamNodes(t *testing.T) {
 		// Add more nodes to cache (not flushed yet)
 		for i := 100; i < 150; i++ {
 			_, err := async.CreateNode(&Node{
-				ID:     NodeID(fmt.Sprintf("node-%d", i)),
+				ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 				Labels: []string{"Test"},
 			})
 			require.NoError(t, err)
@@ -389,7 +389,7 @@ func TestAsyncEngine_StreamNodes(t *testing.T) {
 	t.Run("StreamExcludesDeletedNodes", func(t *testing.T) {
 		// Delete some nodes
 		for i := 0; i < 10; i++ {
-			err := async.DeleteNode(NodeID(fmt.Sprintf("node-%d", i)))
+			err := async.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i))))
 			require.NoError(t, err)
 		}
 
@@ -417,7 +417,7 @@ func TestAsyncEngine_StreamEdges(t *testing.T) {
 	// Create nodes first
 	for i := 0; i < 10; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -429,9 +429,9 @@ func TestAsyncEngine_StreamEdges(t *testing.T) {
 	// Create edges
 	for i := 0; i < 50; i++ {
 		err := async.CreateEdge(&Edge{
-			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
+			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
 			Type:      "CONNECTS",
-			StartNode: NodeID(fmt.Sprintf("node-%d", i%10)),
+			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i%10))),
 			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%10)),
 		})
 		require.NoError(t, err)
@@ -475,7 +475,7 @@ func TestAsyncEngine_StreamNodeChunks(t *testing.T) {
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)

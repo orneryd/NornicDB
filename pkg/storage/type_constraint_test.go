@@ -62,7 +62,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	// Insert node with correct type
 	tx1, _ := engine.BeginTransaction()
 	tx1.CreateNode(&Node{
-		ID:     "user-1",
+		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
 			"age": 30, // INTEGER
@@ -73,7 +73,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	// Insert node with WRONG type
 	tx2, _ := engine.BeginTransaction()
 	tx2.CreateNode(&Node{
-		ID:     "user-2",
+		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
 			"age": "thirty", // STRING (wrong!)

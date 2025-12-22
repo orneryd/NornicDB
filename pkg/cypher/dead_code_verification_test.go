@@ -43,7 +43,9 @@ import (
 // creation patterns work through executeCreate, ensuring we don't need to
 // re-add the removed executeCreateRelationship function.
 func TestRegressionPrevention_CreateRelationship(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -87,7 +89,9 @@ func TestRegressionPrevention_CreateRelationship(t *testing.T) {
 // work through executeImplicitAsync, ensuring we don't need to re-add the
 // removed executeImplicit function.
 func TestRegressionPrevention_ImplicitTransaction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -110,7 +114,9 @@ func TestRegressionPrevention_ImplicitTransaction(t *testing.T) {
 // TestRegressionPrevention_MatchVariableExtraction verifies that MATCH queries
 // work correctly without extractVariablesFromMatch function.
 func TestRegressionPrevention_MatchVariableExtraction(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

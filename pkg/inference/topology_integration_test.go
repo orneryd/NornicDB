@@ -10,7 +10,9 @@ import (
 // TestTopologyIntegrationBasic verifies basic topology integration.
 func TestTopologyIntegrationBasic(t *testing.T) {
 	// Create storage with test graph
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	// Create topology integration
@@ -49,7 +51,9 @@ func TestTopologyIntegrationBasic(t *testing.T) {
 
 // TestTopologyAlgorithms tests different topology algorithms.
 func TestTopologyAlgorithms(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	algorithms := []string{
@@ -85,7 +89,9 @@ func TestTopologyAlgorithms(t *testing.T) {
 
 // TestCombinedSuggestions tests merging semantic + topological.
 func TestCombinedSuggestions(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -138,7 +144,9 @@ func TestCombinedSuggestions(t *testing.T) {
 
 // TestInferenceEngineIntegration tests full integration with Engine.
 func TestInferenceEngineIntegration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	// Create inference engine
@@ -194,7 +202,9 @@ func TestInferenceEngineIntegration(t *testing.T) {
 
 // TestCacheInvalidation tests graph cache management.
 func TestCacheInvalidation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -233,7 +243,9 @@ func TestCacheInvalidation(t *testing.T) {
 
 // TestDisabledTopology verifies topology can be disabled.
 func TestDisabledTopology(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -252,7 +264,9 @@ func TestDisabledTopology(t *testing.T) {
 
 // TestMinScoreThreshold tests filtering by minimum score.
 func TestMinScoreThreshold(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -311,7 +325,9 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 
 // BenchmarkTopologyIntegration benchmarks topology suggestion performance.
 func BenchmarkTopologyIntegration(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create larger graph
 	for i := 0; i < 100; i++ {
@@ -351,7 +367,9 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 // Normalization is now done in pkg/linkpredict/topology.go, not here.
 func TestNormalizeScoreEdgeCases(t *testing.T) {
 	// Build a simple graph to test normalization
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	ctx := context.Background()
 
 	// Create some nodes
@@ -396,7 +414,9 @@ func TestNormalizeScoreEdgeCases(t *testing.T) {
 
 // TestEmptyGraphHandling tests handling of empty suggestions
 func TestEmptyGraphHandling(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	// Empty graph
 
 	config := DefaultTopologyConfig()
@@ -448,7 +468,9 @@ func TestCombinedSuggestionsEmpty(t *testing.T) {
 
 // TestInvalidateCache tests cache invalidation
 func TestInvalidateCache(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -479,7 +501,9 @@ func TestInvalidateCache(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnNodeAdded(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -501,7 +525,9 @@ func TestTopologyIntegration_OnNodeAdded(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnNodeRemoved(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -522,7 +548,9 @@ func TestTopologyIntegration_OnNodeRemoved(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnEdgeAdded(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -544,7 +572,9 @@ func TestTopologyIntegration_OnEdgeAdded(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnEdgeRemoved(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
 	config.Enabled = true
 	topo := NewTopologyIntegration(engine, config)
@@ -566,7 +596,9 @@ func TestTopologyIntegration_OnEdgeRemoved(t *testing.T) {
 }
 
 func TestTopologyIntegration_Stats(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -607,7 +639,9 @@ func TestTopologyIntegration_Stats(t *testing.T) {
 }
 
 func TestTopologyIntegration_ApplyPendingDelta(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -652,7 +686,9 @@ func TestTopologyIntegration_ApplyPendingDelta(t *testing.T) {
 }
 
 func TestTopologyIntegration_ApplyPendingDelta_NoCachedGraph(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true

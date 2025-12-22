@@ -19,7 +19,9 @@ import (
 // setupTestAdapter creates a StorageAdapter with a temporary WAL directory.
 func setupTestAdapter(t *testing.T) (*StorageAdapter, string) {
 	t.Helper()
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	walDir := filepath.Join(t.TempDir(), "wal")
 	adapter, err := NewStorageAdapterWithWAL(engine, walDir)
 	require.NoError(t, err)
@@ -28,7 +30,9 @@ func setupTestAdapter(t *testing.T) (*StorageAdapter, string) {
 
 func TestNewStorageAdapter(t *testing.T) {
 	t.Run("default WAL directory", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		adapter, err := NewStorageAdapter(engine)
 		require.NoError(t, err)
 		require.NotNil(t, adapter)
@@ -38,7 +42,9 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("custom WAL directory", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "custom_wal")
 		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
 		require.NoError(t, err)
@@ -48,7 +54,9 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("creates WAL directory if missing", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "new_wal", "subdir")
 		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
 		require.NoError(t, err)
@@ -62,7 +70,9 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("empty WAL directory uses default", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		adapter, err := NewStorageAdapterWithWAL(engine, "")
 		require.NoError(t, err)
 		require.NotNil(t, adapter)
@@ -82,7 +92,9 @@ func TestStorageAdapter_LoadWALPosition(t *testing.T) {
 	})
 
 	t.Run("recovers position from existing WAL", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "wal_recovery")
 
 		// Create first adapter and write some commands
@@ -133,7 +145,9 @@ func TestStorageAdapter_LoadWALPosition(t *testing.T) {
 	})
 
 	t.Run("handles corrupted WAL gracefully", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "corrupted_wal")
 
 		// Create WAL directory
@@ -376,7 +390,9 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("returns entries across restarts", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "wal_persistence")
 
 		// Create adapter and write commands
@@ -410,7 +426,9 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("handles missing WAL file", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "missing_wal")
 
 		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
@@ -587,7 +605,10 @@ func TestStorageAdapter_SetExecutor(t *testing.T) {
 		adapter, _ := setupTestAdapter(t)
 		defer adapter.Close()
 
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		executor := cypher.NewStorageExecutor(engine)
 
 		adapter.SetExecutor(executor)

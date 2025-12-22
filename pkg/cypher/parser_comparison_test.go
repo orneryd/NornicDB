@@ -91,7 +91,9 @@ var testQueries = []struct {
 // using the integrated executor flow with config switching.
 // Prints a timing comparison report at the end.
 func TestParserComparison(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -179,7 +181,9 @@ func TestParserComparison(t *testing.T) {
 
 // BenchmarkParserComparison benchmarks both parsers using the integrated executor flow.
 func BenchmarkParserComparison(b *testing.B) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -222,7 +226,10 @@ func TestParserPerformanceComparison(t *testing.T) {
 		t.Skip("Skipping performance comparison in short mode")
 	}
 
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

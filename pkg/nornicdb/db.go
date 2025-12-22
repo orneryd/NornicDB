@@ -139,6 +139,7 @@ import (
 	"time"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -437,8 +438,8 @@ type DB struct {
 	closed bool
 
 	// Internal components
-	storage        storage.Engine
-	wal            *storage.WAL // Write-ahead log for durability
+	storage        storage.Engine // Namespaced storage for default database (all DB operations use this)
+	wal            *storage.WAL   // Write-ahead log for durability
 	decay          *decay.Manager
 	inference      *inference.Engine
 	cypherExecutor *cypher.StorageExecutor
@@ -854,13 +855,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Optionally wrap with AsyncEngine for faster writes (eventual consistency)
+		var baseStorage storage.Engine
 		if config.AsyncWritesEnabled {
 			asyncConfig := &storage.AsyncEngineConfig{
 				FlushInterval:    config.AsyncFlushInterval,
 				MaxNodeCacheSize: config.AsyncMaxNodeCacheSize,
 				MaxEdgeCacheSize: config.AsyncMaxEdgeCacheSize,
 			}
-			db.storage = storage.NewAsyncEngine(walEngine, asyncConfig)
+			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
 			if config.AsyncMaxNodeCacheSize > 0 || config.AsyncMaxEdgeCacheSize > 0 {
 				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v, node cache: %d, edge cache: %d)\n",
 					dataDir, config.AsyncFlushInterval, config.AsyncMaxNodeCacheSize, config.AsyncMaxEdgeCacheSize)
@@ -868,12 +870,33 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v)\n", dataDir, config.AsyncFlushInterval)
 			}
 		} else {
-			db.storage = walEngine
+			baseStorage = walEngine
 			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync)\n", dataDir)
 		}
+
+		// Wrap base storage with NamespacedEngine for the default database ("nornic")
+		// This ensures everything uses namespaced storage - no direct base storage access
+		// Get default database name from global config (same as server does)
+		globalConfig := nornicConfig.LoadFromEnv()
+		defaultDBName := globalConfig.Database.DefaultDatabase
+		if defaultDBName == "" {
+			defaultDBName = "nornic" // Fallback to "nornic" if not configured
+		}
+		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
 	} else {
-		db.storage = storage.NewMemoryEngine()
+		baseStorage := storage.NewMemoryEngine()
 		fmt.Println("⚠️  Using in-memory storage (data will not persist)")
+
+		// Wrap in-memory storage with NamespacedEngine for consistency
+		// Get default database name from global config (same as server does)
+		globalConfig := nornicConfig.LoadFromEnv()
+		defaultDBName := globalConfig.Database.DefaultDatabase
+		if defaultDBName == "" {
+			defaultDBName = "nornic" // Fallback to "nornic" if not configured
+		}
+		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
 	}
 
 	// Initialize Cypher executor
@@ -1183,43 +1206,33 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	return db.searchService.BuildIndexes(ctx)
 }
 
-// GetStorage returns the underlying storage engine.
+// GetStorage returns the namespaced storage engine for the default database.
+// This is used by the DB itself for all operations (embedding queue, search, etc.).
 //
-// This method exposes the raw storage engine for advanced use cases, particularly
-// multi-database support where a DatabaseManager needs direct access to the storage
-// layer to create namespaced views.
-//
-// The returned storage engine is the actual storage backend (BadgerEngine, MemoryEngine,
-// or wrapped with WAL/Async layers). Modifications to this engine will affect the
-// database, so use with caution.
-//
-// Returns:
-//   - storage.Engine: The underlying storage engine
-//
-// Example:
-//
-//	db, _ := nornicdb.Open("./data", nil)
-//	storage := db.GetStorage()
-//
-//	// Use with DatabaseManager for multi-database support
-//	manager, _ := multidb.NewDatabaseManager(storage, config)
-//
-// Thread Safety:
-//   - Safe for concurrent use
-//   - Returns the same storage instance (shared reference)
-//   - Storage engine itself is thread-safe
-//
-// Performance:
-//   - O(1) operation (just returns a reference)
-//   - No copying or allocation
-//
-// Warning:
-//   - Direct manipulation of the storage engine bypasses NornicDB's higher-level
-//     APIs (decay, inference, search). Use only when necessary for multi-database
-//     support or other advanced scenarios.
+// Note: This returns the namespaced storage, not the base storage.
+// All DB operations use namespaced storage - there is no direct base storage access.
+// Use GetBaseStorageForManager() if you need the base storage for DatabaseManager.
 func (db *DB) GetStorage() storage.Engine {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+	return db.storage
+}
+
+// GetBaseStorageForManager returns the underlying base storage engine (unwraps namespace).
+// This is used by DatabaseManager to create NamespacedEngines for other databases.
+//
+// This method unwraps the NamespacedEngine to get the base storage (BadgerEngine/MemoryEngine/etc.)
+// so that DatabaseManager can create new NamespacedEngines for different databases.
+func (db *DB) GetBaseStorageForManager() storage.Engine {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Unwrap the NamespacedEngine to get the base storage
+	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+		return namespaced.GetInnerEngine()
+	}
+
+	// If it's not a NamespacedEngine (shouldn't happen), return as-is
 	return db.storage
 }
 

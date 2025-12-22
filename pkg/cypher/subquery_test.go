@@ -11,7 +11,9 @@ import (
 
 // TestCountSubqueryComparison tests COUNT { } subquery functionality
 func TestCountSubquery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -45,7 +47,9 @@ func TestCountSubquery(t *testing.T) {
 
 // TestCountSubqueryEquals tests COUNT { } = n syntax
 func TestCountSubqueryEquals(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -79,7 +83,9 @@ func TestCountSubqueryEquals(t *testing.T) {
 
 // TestCountSubqueryZero tests COUNT { } = 0 syntax (no relationships)
 func TestCountSubqueryZero(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -110,7 +116,9 @@ func TestCountSubqueryZero(t *testing.T) {
 
 // TestCountSubqueryGTE tests COUNT { } >= n syntax
 func TestCountSubqueryGTE(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -147,7 +155,9 @@ func TestCountSubqueryGTE(t *testing.T) {
 
 // TestCountSubqueryIncoming tests COUNT with incoming relationships
 func TestCountSubqueryIncoming(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -184,7 +194,9 @@ func TestCountSubqueryIncoming(t *testing.T) {
 
 // TestCallSubqueryBasic tests basic CALL {} subquery execution
 func TestCallSubqueryBasic(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -222,7 +234,9 @@ func TestCallSubqueryBasic(t *testing.T) {
 
 // TestCallSubqueryWithOuterMatch tests CALL {} with outer MATCH context
 func TestCallSubqueryWithOuterMatch(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -259,7 +273,9 @@ func TestCallSubqueryWithOuterMatch(t *testing.T) {
 
 // TestCallSubqueryUnion tests CALL {} with UNION inside
 func TestCallSubqueryUnion(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -376,7 +392,9 @@ func TestCallSubqueryUnion(t *testing.T) {
 
 // TestCallSubqueryNested tests nested CALL {} subqueries
 func TestCallSubqueryNested(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -417,7 +435,9 @@ func TestCallSubqueryNested(t *testing.T) {
 
 // TestCallSubqueryWithCreate tests CALL {} with write operations
 func TestCallSubqueryWithCreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -457,7 +477,9 @@ func TestCallSubqueryWithCreate(t *testing.T) {
 // TestCallSubqueryInTransactions tests CALL {} IN TRANSACTIONS syntax with actual batching.
 // This verifies that operations are processed in separate transactions per batch.
 func TestCallSubqueryInTransactions(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -673,7 +695,9 @@ func TestCallSubqueryInTransactions(t *testing.T) {
 
 // TestExistsSubqueryMultipleRelTypes tests EXISTS with multiple relationship types
 func TestExistsSubqueryMultipleRelTypes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -704,7 +728,9 @@ func TestExistsSubqueryMultipleRelTypes(t *testing.T) {
 
 // TestExistsSubqueryBidirectional tests EXISTS with bidirectional relationships
 func TestExistsSubqueryBidirectional(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -735,7 +761,9 @@ func TestExistsSubqueryBidirectional(t *testing.T) {
 
 // TestExistsSubqueryWithSpecificLabel tests EXISTS matching specific target labels
 func TestExistsSubqueryWithSpecificLabel(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -773,7 +801,9 @@ func TestExistsSubqueryWithSpecificLabel(t *testing.T) {
 
 // TestNotExistsSubqueryMultipleRelTypes tests NOT EXISTS with multiple relationship types
 func TestNotExistsSubqueryMultipleRelTypes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -805,7 +835,9 @@ func TestNotExistsSubqueryMultipleRelTypes(t *testing.T) {
 
 // TestNotExistsSubquerySpecificType tests NOT EXISTS for specific relationship type
 func TestNotExistsSubquerySpecificType(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -841,7 +873,9 @@ func TestNotExistsSubquerySpecificType(t *testing.T) {
 
 // TestCountSubqueryLTE tests COUNT { } <= n syntax
 func TestCountSubqueryLTE(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -874,7 +908,9 @@ func TestCountSubqueryLTE(t *testing.T) {
 
 // TestCountSubqueryNotEquals tests COUNT { } != n syntax
 func TestCountSubqueryNotEquals(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -907,7 +943,9 @@ func TestCountSubqueryNotEquals(t *testing.T) {
 
 // TestCountSubqueryLT tests COUNT { } < n syntax
 func TestCountSubqueryLT(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -939,7 +977,9 @@ func TestCountSubqueryLT(t *testing.T) {
 
 // TestCountSubqueryMultipleRelTypes tests COUNT with any relationship type
 func TestCountSubqueryMultipleRelTypes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -979,7 +1019,9 @@ func TestCountSubqueryMultipleRelTypes(t *testing.T) {
 
 // TestCallSubqueryWithWhere tests CALL {} with WHERE clause inside
 func TestCallSubqueryWithWhere(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1015,7 +1057,9 @@ func TestCallSubqueryWithWhere(t *testing.T) {
 
 // TestCallSubqueryWithAggregation tests CALL {} with aggregation functions
 func TestCallSubqueryWithAggregation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1048,7 +1092,9 @@ func TestCallSubqueryWithAggregation(t *testing.T) {
 
 // TestCallSubqueryWithDelete tests CALL {} with DELETE operation
 func TestCallSubqueryWithDelete(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1089,7 +1135,9 @@ func TestCallSubqueryWithDelete(t *testing.T) {
 
 // TestCallSubqueryMultipleColumns tests CALL {} returning multiple columns
 func TestCallSubqueryMultipleColumns(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1127,7 +1175,9 @@ func TestCallSubqueryMultipleColumns(t *testing.T) {
 
 // TestCallSubqueryWithSkip tests CALL {} with SKIP
 func TestCallSubqueryWithSkip(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1164,7 +1214,9 @@ func TestCallSubqueryWithSkip(t *testing.T) {
 
 // TestCallSubqueryNoReturn tests CALL {} without outer RETURN (just execute)
 func TestCallSubqueryNoReturn(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1211,7 +1263,9 @@ func TestCallSubqueryNoReturn(t *testing.T) {
 
 // TestCombinedExistsAndCount tests combining EXISTS and COUNT in WHERE
 func TestCombinedExistsAndCount(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1248,7 +1302,9 @@ func TestCombinedExistsAndCount(t *testing.T) {
 
 // TestExistsOrNotExists tests EXISTS OR NOT EXISTS logic
 func TestExistsOrNotExists(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1281,7 +1337,9 @@ func TestExistsOrNotExists(t *testing.T) {
 
 // TestCountSubqueryInExpression tests COUNT subquery used in expression
 func TestCountSubqueryInExpression(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1313,7 +1371,9 @@ func TestCountSubqueryInExpression(t *testing.T) {
 
 // TestCallSubqueryWithOrderByOnly tests CALL {} with just ORDER BY after (no RETURN)
 func TestCallSubqueryWithOrderByOnly(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1355,7 +1415,9 @@ func TestCallSubqueryWithOrderByOnly(t *testing.T) {
 
 // TestExistsSubqueryWithNewlines tests EXISTS with varied whitespace/newlines
 func TestExistsSubqueryWithNewlines(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1386,7 +1448,9 @@ func TestExistsSubqueryWithNewlines(t *testing.T) {
 
 // TestCountSubqueryWithNewlines tests COUNT with varied whitespace/newlines
 func TestCountSubqueryWithNewlines(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1418,7 +1482,9 @@ func TestCountSubqueryWithNewlines(t *testing.T) {
 
 // TestCallSubqueryWithNewlines tests CALL {} with varied whitespace/newlines
 func TestCallSubqueryWithNewlines(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1450,7 +1516,9 @@ func TestCallSubqueryWithNewlines(t *testing.T) {
 
 // TestSubqueryMinimalWhitespace tests subqueries with minimal whitespace
 func TestSubqueryMinimalWhitespace(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1473,7 +1541,9 @@ func TestSubqueryMinimalWhitespace(t *testing.T) {
 
 // TestNotExistsSubqueryWithNewlines tests NOT EXISTS with varied whitespace
 func TestNotExistsSubqueryWithNewlines(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1512,7 +1582,10 @@ func TestNotExistsSubqueryWithNewlines(t *testing.T) {
 // TestCollectSubquery tests COLLECT { } subquery for collecting values
 func TestCollectSubquery(t *testing.T) {
 
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1555,7 +1628,9 @@ func TestCollectSubquery(t *testing.T) {
 
 // TestExistsSubqueryEmptyResult tests EXISTS when no matches exist
 func TestExistsSubqueryEmptyResult(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1585,7 +1660,9 @@ func TestExistsSubqueryEmptyResult(t *testing.T) {
 
 // TestCountSubqueryWithZeroMatches tests COUNT when no matches exist
 func TestCountSubqueryWithZeroMatches(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1615,7 +1692,9 @@ func TestCountSubqueryWithZeroMatches(t *testing.T) {
 
 // TestCallSubqueryEmptyResult tests CALL {} when inner query returns nothing
 func TestCallSubqueryEmptyResult(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1646,7 +1725,9 @@ func TestCallSubqueryEmptyResult(t *testing.T) {
 
 // TestSubqueriesWithParameters tests subqueries with parameter substitution
 func TestSubqueriesWithParameters(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1680,7 +1761,9 @@ func TestSubqueriesWithParameters(t *testing.T) {
 
 // TestExistsSubqueryWithMultiplePatterns tests EXISTS with complex patterns
 func TestExistsSubqueryWithMultiplePatterns(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1711,7 +1794,9 @@ func TestExistsSubqueryWithMultiplePatterns(t *testing.T) {
 
 // TestCallSubqueryWithMerge tests CALL {} with MERGE operation
 func TestCallSubqueryWithMerge(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1764,7 +1849,9 @@ func TestCallSubqueryWithMerge(t *testing.T) {
 
 // TestMultipleSubqueriesInWhere tests multiple subqueries in same WHERE
 func TestMultipleSubqueriesInWhere(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1799,7 +1886,9 @@ func TestMultipleSubqueriesInWhere(t *testing.T) {
 // TestExistsSubqueryWithWherePropertyComparison tests EXISTS subquery with WHERE property comparison
 // This verifies that evaluateInnerWhere correctly handles property comparisons
 func TestExistsSubqueryWithWherePropertyComparison(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1881,7 +1970,9 @@ func TestExistsSubqueryWithWherePropertyComparison(t *testing.T) {
 
 // TestNestedExistsSubquery tests nested EXISTS subqueries
 func TestNestedExistsSubquery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1915,7 +2006,9 @@ func TestNestedExistsSubquery(t *testing.T) {
 
 // TestCallSubqueryWithUnwind tests CALL {} with UNWIND inside
 func TestCallSubqueryWithUnwind(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1947,7 +2040,9 @@ func TestCallSubqueryWithUnwind(t *testing.T) {
 
 // TestExistsSubqueryWithTabs tests EXISTS with tab characters
 func TestExistsSubqueryWithTabs(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1972,7 +2067,9 @@ func TestExistsSubqueryWithTabs(t *testing.T) {
 
 // TestCallSubqueryOnSingleLine tests CALL {} all on one line
 func TestCallSubqueryOnSingleLine(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -1995,7 +2092,9 @@ func TestCallSubqueryOnSingleLine(t *testing.T) {
 
 // TestCountSubqueryNoSpaceBeforeBrace tests COUNT{ without space
 func TestCountSubqueryNoSpaceBeforeBrace(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -2021,7 +2120,9 @@ func TestCountSubqueryNoSpaceBeforeBrace(t *testing.T) {
 
 // TestExistsNoSpaceBeforeBrace tests EXISTS{ without space
 func TestExistsNoSpaceBeforeBrace(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -2046,7 +2147,9 @@ func TestExistsNoSpaceBeforeBrace(t *testing.T) {
 
 // TestCallSubqueryWithOptionalMatch tests CALL {} with OPTIONAL MATCH inside
 func TestCallSubqueryWithOptionalMatch(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -2081,7 +2184,9 @@ func TestCallSubqueryWithOptionalMatch(t *testing.T) {
 
 // TestSubqueryWithNestedBraces tests subqueries with nested braces (maps)
 func TestSubqueryWithNestedBraces(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

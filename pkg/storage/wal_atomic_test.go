@@ -406,16 +406,22 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 		{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Charlie"}},
 	}
 
+	// Use a specific database name for this test
+	testDBName := "test"
 	for _, node := range nodes {
-		wal1.Append(OpCreateNode, WALNodeData{Node: node})
+		wal1.AppendWithDatabase(OpCreateNode, WALNodeData{Node: node}, testDBName)
 	}
 	wal1.Close()
 
 	// Phase 2: Recover from WAL
-	engine, result, err := RecoverFromWALWithResult(dir, "")
+	// Recovery will use the database name from each WAL entry
+	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+
+	// Wrap with NamespacedEngine using the same database name as the WAL entries
+	engine := NewNamespacedEngine(baseEngine, testDBName)
 
 	if result.Applied != 3 {
 		t.Errorf("Expected 3 applied, got %d", result.Applied)
@@ -439,11 +445,12 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 	dir := t.TempDir()
 	walPath := filepath.Join(dir, "wal.log")
 
-	// Write valid entries
+	// Write valid entries with database name
+	testDBName := "test"
 	cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
 	wal, _ := NewWAL(dir, cfg)
-	wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}})
-	wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}})
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}}, testDBName)
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}}, testDBName)
 	wal.Close()
 
 	// Simulate crash: append partial entry
@@ -457,10 +464,12 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 	f.Close()
 
 	// Recovery should work, getting the 2 valid entries
-	engine, result, err := RecoverFromWALWithResult(dir, "")
+	// Use the same database name as the WAL entries (testDBName declared above)
+	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery should succeed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, testDBName)
 
 	if result.Applied != 2 {
 		t.Errorf("Expected 2 applied (ignoring partial), got %d", result.Applied)

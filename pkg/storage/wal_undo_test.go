@@ -284,10 +284,11 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	engine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := RecoverWithTransactions(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Verify transaction was committed
 	if result.CommittedTransactions != 1 {
@@ -325,10 +326,11 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	engine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := RecoverWithTransactions(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Verify transaction was rolled back
 	if result.RolledBackTransactions != 1 {
@@ -363,10 +365,11 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	engine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := RecoverWithTransactions(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Verify transaction was recognized as aborted
 	if result.AbortedTransactions != 1 {
@@ -414,10 +417,11 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	engine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := RecoverWithTransactions(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Verify statistics
 	if result.CommittedTransactions != 1 {

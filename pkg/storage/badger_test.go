@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,10 +35,22 @@ func createTestBadgerEngineOnDisk(t *testing.T) (*BadgerEngine, string) {
 	return engine, dir
 }
 
+// prefixTestID ensures an ID is prefixed for BadgerEngine tests.
+// BadgerEngine requires all node/edge IDs to be prefixed (e.g., "test:node-1").
+func prefixTestID(id string) string {
+	if strings.Contains(id, ":") {
+		return id
+	}
+	return "test:" + id
+}
+
 // testNode creates a test node with the given ID.
+// For BadgerEngine tests, IDs must be prefixed (e.g., "test:node-1").
+// If the ID doesn't contain ":", it will be prefixed with "test:".
 func testNode(id string) *Node {
+	prefixedID := prefixTestID(id)
 	return &Node{
-		ID:         NodeID(id),
+		ID:         NodeID(prefixedID),
 		Labels:     []string{"TestNode"},
 		Properties: map[string]any{"name": id},
 		CreatedAt:  time.Now(),
@@ -46,11 +59,38 @@ func testNode(id string) *Node {
 }
 
 // testEdge creates a test edge between two nodes.
-func testEdge(id string, start, end NodeID, edgeType string) *Edge {
+// For BadgerEngine tests, IDs must be prefixed (e.g., "test:edge-1").
+// If the ID doesn't contain ":", it will be prefixed with "test:".
+// Node IDs (start/end) can be strings or NodeIDs - they will be prefixed automatically.
+func testEdge(id string, start, end interface{}, edgeType string) *Edge {
+	prefixedEdgeID := prefixTestID(id)
+
+	// Handle start node ID (string or NodeID)
+	var prefixedStart NodeID
+	switch v := start.(type) {
+	case string:
+		prefixedStart = NodeID(prefixTestID(v))
+	case NodeID:
+		prefixedStart = NodeID(prefixTestID(string(v)))
+	default:
+		panic(fmt.Sprintf("testEdge: start must be string or NodeID, got %T", start))
+	}
+
+	// Handle end node ID (string or NodeID)
+	var prefixedEnd NodeID
+	switch v := end.(type) {
+	case string:
+		prefixedEnd = NodeID(prefixTestID(v))
+	case NodeID:
+		prefixedEnd = NodeID(prefixTestID(string(v)))
+	default:
+		panic(fmt.Sprintf("testEdge: end must be string or NodeID, got %T", end))
+	}
+
 	return &Edge{
-		ID:         EdgeID(id),
-		StartNode:  start,
-		EndNode:    end,
+		ID:         EdgeID(prefixedEdgeID),
+		StartNode:  prefixedStart,
+		EndNode:    prefixedEnd,
 		Type:       edgeType,
 		Properties: map[string]any{},
 		CreatedAt:  time.Now(),
@@ -96,7 +136,7 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 
 	t.Run("gets existing node", func(t *testing.T) {
 		original := &Node{
-			ID:          NodeID("n1"),
+			ID:          NodeID(prefixTestID("n1")),
 			Labels:      []string{"Person", "User"},
 			Properties:  map[string]any{"name": "Alice", "age": 30},
 			CreatedAt:   time.Now().Truncate(time.Second),
@@ -106,7 +146,7 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 		_, err := engine.CreateNode(original)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetNode("n1")
+		retrieved, err := engine.GetNode(NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 
 		assert.Equal(t, original.ID, retrieved.ID)
@@ -116,7 +156,7 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing node", func(t *testing.T) {
-		_, err := engine.GetNode("nonexistent")
+		_, err := engine.GetNode(NodeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -139,14 +179,14 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 		err = engine.UpdateNode(node)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetNode("n1")
+		retrieved, err := engine.GetNode(NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 		assert.Equal(t, "Updated", retrieved.Properties["name"])
 		assert.Equal(t, []string{"UpdatedLabel"}, retrieved.Labels)
 	})
 
 	t.Run("updates label index correctly", func(t *testing.T) {
-		node := &Node{ID: NodeID("n2"), Labels: []string{"OldLabel"}}
+		node := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"OldLabel"}}
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
@@ -179,7 +219,7 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 		require.NoError(t, err, "UpdateNode should create if not exists")
 
 		// Verify node was created
-		retrieved, err := engine.GetNode("upsert-test")
+		retrieved, err := engine.GetNode(NodeID(prefixTestID("upsert-test")))
 		require.NoError(t, err)
 		assert.Equal(t, "bar", retrieved.Properties["foo"])
 	})
@@ -193,15 +233,15 @@ func TestBadgerEngine_DeleteNode(t *testing.T) {
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
-		err = engine.DeleteNode("n1")
+		err = engine.DeleteNode(NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 
-		_, err = engine.GetNode("n1")
+		_, err = engine.GetNode(NodeID(prefixTestID("n1")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("removes from label index", func(t *testing.T) {
-		node := &Node{ID: NodeID("n2"), Labels: []string{"DeleteTest"}}
+		node := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"DeleteTest"}}
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
@@ -209,7 +249,7 @@ func TestBadgerEngine_DeleteNode(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, nodes, 1)
 
-		err = engine.DeleteNode("n2")
+		err = engine.DeleteNode(NodeID(prefixTestID("n2")))
 		require.NoError(t, err)
 
 		nodes, err = engine.GetNodesByLabel("DeleteTest")
@@ -232,16 +272,16 @@ func TestBadgerEngine_DeleteNode(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete source node
-		err = engine.DeleteNode("source")
+		err = engine.DeleteNode(NodeID(prefixTestID("source")))
 		require.NoError(t, err)
 
 		// Edge should be gone
-		_, err = engine.GetEdge("e1")
+		_, err = engine.GetEdge(EdgeID(prefixTestID("e1")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns ErrNotFound for missing node", func(t *testing.T) {
-		err := engine.DeleteNode("nonexistent")
+		err := engine.DeleteNode(NodeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -262,13 +302,13 @@ func TestBadgerEngine_CreateEdge(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("creates edge successfully", func(t *testing.T) {
-		edge := testEdge("e1", "n1", "n2", "KNOWS")
+		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
 		err := engine.CreateEdge(edge)
 		assert.NoError(t, err)
 	})
 
 	t.Run("returns ErrAlreadyExists for duplicate", func(t *testing.T) {
-		edge := testEdge("e2", "n1", "n2", "FOLLOWS")
+		edge := testEdge("e2", n1.ID, n2.ID, "FOLLOWS")
 		err := engine.CreateEdge(edge)
 		require.NoError(t, err)
 
@@ -277,13 +317,13 @@ func TestBadgerEngine_CreateEdge(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing start node", func(t *testing.T) {
-		edge := testEdge("e3", "missing", "n2", "TEST")
+		edge := testEdge("e3", NodeID(prefixTestID("missing")), n2.ID, "TEST")
 		err := engine.CreateEdge(edge)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns ErrNotFound for missing end node", func(t *testing.T) {
-		edge := testEdge("e4", "n1", "missing", "TEST")
+		edge := testEdge("e4", n1.ID, NodeID(prefixTestID("missing")), "TEST")
 		err := engine.CreateEdge(edge)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
@@ -300,9 +340,9 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 	require.NoError(t, err)
 	t.Run("gets existing edge", func(t *testing.T) {
 		original := &Edge{
-			ID:            EdgeID("e1"),
-			StartNode:     NodeID("n1"),
-			EndNode:       NodeID("n2"),
+			ID:            EdgeID(prefixTestID("e1")),
+			StartNode:     NodeID(prefixTestID("n1")),
+			EndNode:       NodeID(prefixTestID("n2")),
 			Type:          "KNOWS",
 			Properties:    map[string]any{"since": "2020"},
 			CreatedAt:     time.Now().Truncate(time.Second),
@@ -312,7 +352,7 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 		err := engine.CreateEdge(original)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetEdge("e1")
+		retrieved, err := engine.GetEdge(EdgeID(prefixTestID("e1")))
 		require.NoError(t, err)
 
 		assert.Equal(t, original.ID, retrieved.ID)
@@ -324,7 +364,7 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
-		_, err := engine.GetEdge("nonexistent")
+		_, err := engine.GetEdge(EdgeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -343,7 +383,7 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("updates edge properties", func(t *testing.T) {
-		edge := testEdge("e1", "n1", "n2", "KNOWS")
+		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
 		err := engine.CreateEdge(edge)
 		require.NoError(t, err)
 
@@ -352,30 +392,30 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 		err = engine.UpdateEdge(edge)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetEdge("e1")
+		retrieved, err := engine.GetEdge(EdgeID(prefixTestID("e1")))
 		require.NoError(t, err)
 		assert.Equal(t, "strong", retrieved.Properties["strength"])
 		assert.InDelta(t, 0.95, retrieved.Confidence, 0.001)
 	})
 
 	t.Run("updates edge endpoints", func(t *testing.T) {
-		edge := testEdge("e2", "n1", "n2", "FOLLOWS")
+		edge := testEdge("e2", n1.ID, n2.ID, "FOLLOWS")
 		err := engine.CreateEdge(edge)
 		require.NoError(t, err)
 
 		// Change endpoint
-		edge.EndNode = "n3"
+		edge.EndNode = n3.ID
 		err = engine.UpdateEdge(edge)
 		require.NoError(t, err)
 
 		// Check indexes updated
-		outgoing, err := engine.GetOutgoingEdges("n1")
+		outgoing, err := engine.GetOutgoingEdges(n1.ID)
 		require.NoError(t, err)
 
 		found := false
 		for _, e := range outgoing {
-			if e.ID == "e2" {
-				assert.Equal(t, NodeID("n3"), e.EndNode)
+			if e.ID == edge.ID {
+				assert.Equal(t, n3.ID, e.EndNode)
 				found = true
 				break
 			}
@@ -384,7 +424,7 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
-		edge := testEdge("nonexistent", "n1", "n2", "TEST")
+		edge := testEdge("nonexistent", n1.ID, n2.ID, "TEST")
 		err := engine.UpdateEdge(edge)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
@@ -401,14 +441,14 @@ func TestBadgerEngine_DeleteEdge(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("deletes existing edge", func(t *testing.T) {
-		edge := testEdge("e1", "n1", "n2", "KNOWS")
+		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
 		err := engine.CreateEdge(edge)
 		require.NoError(t, err)
 
-		err = engine.DeleteEdge("e1")
+		err = engine.DeleteEdge(edge.ID)
 		require.NoError(t, err)
 
-		_, err = engine.GetEdge("e1")
+		_, err = engine.GetEdge(edge.ID)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -417,18 +457,18 @@ func TestBadgerEngine_DeleteEdge(t *testing.T) {
 		err := engine.CreateEdge(edge)
 		require.NoError(t, err)
 
-		outgoing, _ := engine.GetOutgoingEdges("n1")
+		outgoing, _ := engine.GetOutgoingEdges(NodeID(prefixTestID("n1")))
 		initialCount := len(outgoing)
 
-		err = engine.DeleteEdge("e2")
+		err = engine.DeleteEdge(EdgeID(prefixTestID("e2")))
 		require.NoError(t, err)
 
-		outgoing, _ = engine.GetOutgoingEdges("n1")
+		outgoing, _ = engine.GetOutgoingEdges(NodeID(prefixTestID("n1")))
 		assert.Len(t, outgoing, initialCount-1)
 	})
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
-		err := engine.DeleteEdge("nonexistent")
+		err := engine.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -439,7 +479,7 @@ func TestBadgerEngine_BulkDeleteNodes(t *testing.T) {
 	// Create multiple nodes
 	for i := 0; i < 10; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("bulk-del-node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("bulk-del-node-%d", i))),
 			Labels: []string{"BulkTest"},
 		}
 		_, err := engine.CreateNode(node)
@@ -450,7 +490,7 @@ func TestBadgerEngine_BulkDeleteNodes(t *testing.T) {
 	assert.Equal(t, int64(10), count)
 
 	t.Run("deletes multiple nodes in single transaction", func(t *testing.T) {
-		ids := []NodeID{"bulk-del-node-0", "bulk-del-node-1", "bulk-del-node-2"}
+		ids := []NodeID{NodeID(prefixTestID("bulk-del-node-0")), NodeID(prefixTestID("bulk-del-node-1")), NodeID(prefixTestID("bulk-del-node-2"))}
 		err := engine.BulkDeleteNodes(ids)
 		require.NoError(t, err)
 
@@ -458,7 +498,7 @@ func TestBadgerEngine_BulkDeleteNodes(t *testing.T) {
 		assert.Equal(t, int64(7), count)
 
 		// Verify nodes are gone
-		_, err = engine.GetNode("bulk-del-node-0")
+		_, err = engine.GetNode(NodeID(prefixTestID("bulk-del-node-0")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -468,11 +508,11 @@ func TestBadgerEngine_BulkDeleteNodes(t *testing.T) {
 	})
 
 	t.Run("continues on not found", func(t *testing.T) {
-		ids := []NodeID{"nonexistent", "bulk-del-node-3", "also-nonexistent"}
+		ids := []NodeID{NodeID(prefixTestID("nonexistent")), NodeID(prefixTestID("bulk-del-node-3")), NodeID(prefixTestID("also-nonexistent"))}
 		err := engine.BulkDeleteNodes(ids)
 		require.NoError(t, err) // Should not error
 
-		_, err = engine.GetNode("bulk-del-node-3")
+		_, err = engine.GetNode(NodeID(prefixTestID("bulk-del-node-3")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -481,17 +521,17 @@ func TestBadgerEngine_BulkDeleteEdges(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	// Create nodes
-	_, err := engine.CreateNode(&Node{ID: "n1"})
+	_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1"))})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "n2"})
+	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2"))})
 	require.NoError(t, err)
 
 	// Create multiple edges
 	for i := 0; i < 10; i++ {
 		edge := &Edge{
-			ID:        EdgeID(fmt.Sprintf("bulk-del-edge-%d", i)),
-			StartNode: "n1",
-			EndNode:   "n2",
+			ID:        EdgeID(prefixTestID(fmt.Sprintf("bulk-del-edge-%d", i))),
+			StartNode: NodeID(prefixTestID("n1")),
+			EndNode:   NodeID(prefixTestID("n2")),
 			Type:      "TEST",
 		}
 		require.NoError(t, engine.CreateEdge(edge))
@@ -501,7 +541,7 @@ func TestBadgerEngine_BulkDeleteEdges(t *testing.T) {
 	assert.Equal(t, int64(10), count)
 
 	t.Run("deletes multiple edges in single transaction", func(t *testing.T) {
-		ids := []EdgeID{"bulk-del-edge-0", "bulk-del-edge-1", "bulk-del-edge-2"}
+		ids := []EdgeID{EdgeID(prefixTestID("bulk-del-edge-0")), EdgeID(prefixTestID("bulk-del-edge-1")), EdgeID(prefixTestID("bulk-del-edge-2"))}
 		err := engine.BulkDeleteEdges(ids)
 		require.NoError(t, err)
 
@@ -525,7 +565,7 @@ func TestBadgerEngine_GetNodesByLabel(t *testing.T) {
 	// Create nodes with different labels
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID("user-" + string(rune('0'+i))),
+			ID:     NodeID(prefixTestID("user-" + string(rune('0'+i)))),
 			Labels: []string{"User", "Person"},
 		}
 		_, err := engine.CreateNode(node)
@@ -534,7 +574,7 @@ func TestBadgerEngine_GetNodesByLabel(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		node := &Node{
-			ID:     NodeID("org-" + string(rune('0'+i))),
+			ID:     NodeID(prefixTestID("org-" + string(rune('0'+i)))),
 			Labels: []string{"Organization"},
 		}
 		_, err := engine.CreateNode(node)
@@ -599,19 +639,19 @@ func TestBadgerEngine_GetOutgoingEdges(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(testEdge("e3", "n2", "n3", "C")))
 
 	t.Run("returns outgoing edges", func(t *testing.T) {
-		edges, err := engine.GetOutgoingEdges("n1")
+		edges, err := engine.GetOutgoingEdges(NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
 
 	t.Run("returns one edge", func(t *testing.T) {
-		edges, err := engine.GetOutgoingEdges("n2")
+		edges, err := engine.GetOutgoingEdges(NodeID(prefixTestID("n2")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 1)
 	})
 
 	t.Run("returns empty for leaf node", func(t *testing.T) {
-		edges, err := engine.GetOutgoingEdges("n3")
+		edges, err := engine.GetOutgoingEdges(NodeID(prefixTestID("n3")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 0)
 	})
@@ -634,13 +674,13 @@ func TestBadgerEngine_GetIncomingEdges(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(testEdge("e2", "n2", "n3", "B")))
 
 	t.Run("returns incoming edges", func(t *testing.T) {
-		edges, err := engine.GetIncomingEdges("n3")
+		edges, err := engine.GetIncomingEdges(NodeID(prefixTestID("n3")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
 
 	t.Run("returns empty for root node", func(t *testing.T) {
-		edges, err := engine.GetIncomingEdges("n1")
+		edges, err := engine.GetIncomingEdges(NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 		assert.Len(t, edges, 0)
 	})
@@ -656,17 +696,17 @@ func TestBadgerEngine_GetEdgesBetween(t *testing.T) {
 	_, err = engine.CreateNode(n2)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(testEdge("e1", "n1", "n2", "A")))
-	require.NoError(t, engine.CreateEdge(testEdge("e2", "n1", "n2", "B")))
+	require.NoError(t, engine.CreateEdge(testEdge("e1", n1.ID, n2.ID, "A")))
+	require.NoError(t, engine.CreateEdge(testEdge("e2", n1.ID, n2.ID, "B")))
 
 	t.Run("returns all edges between nodes", func(t *testing.T) {
-		edges, err := engine.GetEdgesBetween("n1", "n2")
+		edges, err := engine.GetEdgesBetween(n1.ID, n2.ID)
 		require.NoError(t, err)
 		assert.Len(t, edges, 2)
 	})
 
 	t.Run("returns empty for no connection", func(t *testing.T) {
-		edges, err := engine.GetEdgesBetween("n2", "n1")
+		edges, err := engine.GetEdgesBetween(n2.ID, n1.ID)
 		require.NoError(t, err)
 		assert.Len(t, edges, 0)
 	})
@@ -682,22 +722,22 @@ func TestBadgerEngine_GetEdgeBetween(t *testing.T) {
 	_, err = engine.CreateNode(n2)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(testEdge("e1", "n1", "n2", "KNOWS")))
-	require.NoError(t, engine.CreateEdge(testEdge("e2", "n1", "n2", "FOLLOWS")))
+	require.NoError(t, engine.CreateEdge(testEdge("e1", n1.ID, n2.ID, "KNOWS")))
+	require.NoError(t, engine.CreateEdge(testEdge("e2", n1.ID, n2.ID, "FOLLOWS")))
 
 	t.Run("returns edge with matching type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween("n1", "n2", "KNOWS")
+		edge := engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS")
 		require.NotNil(t, edge)
 		assert.Equal(t, "KNOWS", edge.Type)
 	})
 
 	t.Run("returns any edge with empty type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween("n1", "n2", "")
+		edge := engine.GetEdgeBetween(n1.ID, n2.ID, "")
 		require.NotNil(t, edge)
 	})
 
 	t.Run("returns nil for no matching type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween("n1", "n2", "BLOCKS")
+		edge := engine.GetEdgeBetween(NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")), "BLOCKS")
 		assert.Nil(t, edge)
 	})
 }
@@ -759,8 +799,8 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 	t.Run("creates multiple edges", func(t *testing.T) {
 		edges := make([]*Edge, 20)
 		for i := 0; i < 20; i++ {
-			start := NodeID(fmt.Sprintf("n%d", i%10))
-			end := NodeID(fmt.Sprintf("n%d", (i+1)%10))
+			start := NodeID(prefixTestID(fmt.Sprintf("n%d", i%10)))
+			end := NodeID(prefixTestID(fmt.Sprintf("n%d", (i+1)%10)))
 			edges[i] = testEdge(fmt.Sprintf("e%02d", i), start, end, "CONNECTS")
 		}
 
@@ -788,23 +828,23 @@ func TestBadgerEngine_Degree(t *testing.T) {
 		spoke := testNode("spoke-" + string(rune('0'+i)))
 		_, err := engine.CreateNode(spoke)
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(testEdge("out-"+string(rune('0'+i)), "hub", spoke.ID, "OUT")))
-		require.NoError(t, engine.CreateEdge(testEdge("in-"+string(rune('0'+i)), spoke.ID, "hub", "IN")))
+		require.NoError(t, engine.CreateEdge(testEdge("out-"+string(rune('0'+i)), hub.ID, spoke.ID, "OUT")))
+		require.NoError(t, engine.CreateEdge(testEdge("in-"+string(rune('0'+i)), spoke.ID, hub.ID, "IN")))
 	}
 
 	t.Run("GetOutDegree", func(t *testing.T) {
-		degree := engine.GetOutDegree("hub")
+		degree := engine.GetOutDegree(NodeID(prefixTestID("hub")))
 		assert.Equal(t, 5, degree)
 	})
 
 	t.Run("GetInDegree", func(t *testing.T) {
-		degree := engine.GetInDegree("hub")
+		degree := engine.GetInDegree(NodeID(prefixTestID("hub")))
 		assert.Equal(t, 5, degree)
 	})
 
 	t.Run("returns 0 for non-existent node", func(t *testing.T) {
-		assert.Equal(t, 0, engine.GetOutDegree("nonexistent"))
-		assert.Equal(t, 0, engine.GetInDegree("nonexistent"))
+		assert.Equal(t, 0, engine.GetOutDegree(NodeID(prefixTestID("nonexistent"))))
+		assert.Equal(t, 0, engine.GetInDegree(NodeID(prefixTestID("nonexistent"))))
 	})
 }
 
@@ -855,7 +895,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		require.NoError(t, err)
 
 		node := &Node{
-			ID:         NodeID("persistent"),
+			ID:         NodeID(prefixTestID("persistent")),
 			Labels:     []string{"Test"},
 			Properties: map[string]any{"value": "persisted"},
 			CreatedAt:  time.Now(),
@@ -873,7 +913,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		defer engine2.Close()
 
 		// Verify data persisted
-		retrieved, err := engine2.GetNode("persistent")
+		retrieved, err := engine2.GetNode(NodeID(prefixTestID("persistent")))
 		require.NoError(t, err)
 		assert.Equal(t, "persisted", retrieved.Properties["value"])
 		assert.InDelta(t, 0.5, retrieved.DecayScore, 0.001)
@@ -896,7 +936,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		}
 
 		// Add edges
-		_, err = engine1.CreateNode(&Node{ID: "target", Labels: []string{"Target"}})
+		_, err = engine1.CreateNode(&Node{ID: NodeID(prefixTestID("target")), Labels: []string{"Target"}})
 		require.NoError(t, err)
 		for i := 0; i < 3; i++ {
 			edge := testEdge("persist-edge-"+string(rune('0'+i)), NodeID("labeled-"+string(rune('0'+i))), "target", "POINTS")
@@ -995,7 +1035,7 @@ func TestBadgerEngine_ClosedOperations(t *testing.T) {
 	})
 
 	t.Run("GetNode returns ErrStorageClosed", func(t *testing.T) {
-		_, err := engine.GetNode("test")
+		_, err := engine.GetNode(NodeID(prefixTestID("test")))
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
@@ -1026,7 +1066,7 @@ func TestBadgerEngine_Size(t *testing.T) {
 	// Add some data
 	for i := 0; i < 100; i++ {
 		node := &Node{
-			ID:         NodeID(fmt.Sprintf("size-%03d", i)),
+			ID:         NodeID(prefixTestID(fmt.Sprintf("size-%03d", i))),
 			Labels:     []string{"SizeTest"},
 			Properties: map[string]any{"data": "some test data to increase size"},
 		}
@@ -1073,7 +1113,7 @@ func TestBadgerEngine_RunGC(t *testing.T) {
 
 	// Delete half
 	for i := 0; i < 50; i++ {
-		engine.DeleteNode(NodeID(fmt.Sprintf("gc-%03d", i)))
+		engine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("gc-%03d", i))))
 	}
 
 	// GC may or may not run depending on amount of garbage
@@ -1144,14 +1184,14 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 func TestSerialization(t *testing.T) {
 	t.Run("node round-trip", func(t *testing.T) {
 		original := &Node{
-			ID:           NodeID("test-serialize"),
-			Labels:       []string{"A", "B", "C"},
-			Properties:   map[string]any{"string": "value", "number": float64(42), "bool": true},
-			CreatedAt:    time.Now().Truncate(time.Second),
-			UpdatedAt:    time.Now().Add(time.Hour).Truncate(time.Second),
-			DecayScore:   0.75,
-			LastAccessed: time.Now().Add(-time.Hour).Truncate(time.Second),
-			AccessCount:  100,
+			ID:              NodeID(prefixTestID("test-serialize")),
+			Labels:          []string{"A", "B", "C"},
+			Properties:      map[string]any{"string": "value", "number": float64(42), "bool": true},
+			CreatedAt:       time.Now().Truncate(time.Second),
+			UpdatedAt:       time.Now().Add(time.Hour).Truncate(time.Second),
+			DecayScore:      0.75,
+			LastAccessed:    time.Now().Add(-time.Hour).Truncate(time.Second),
+			AccessCount:     100,
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 		}
 
@@ -1171,9 +1211,9 @@ func TestSerialization(t *testing.T) {
 
 	t.Run("edge round-trip", func(t *testing.T) {
 		original := &Edge{
-			ID:            EdgeID("test-edge"),
-			StartNode:     NodeID("start"),
-			EndNode:       NodeID("end"),
+			ID:            EdgeID(prefixTestID("test-edge")),
+			StartNode:     NodeID(prefixTestID("start")),
+			EndNode:       NodeID(prefixTestID("end")),
 			Type:          "CONNECTS",
 			Properties:    map[string]any{"weight": float64(1.5)},
 			CreatedAt:     time.Now().Truncate(time.Second),
@@ -1219,7 +1259,7 @@ func TestKeyEncoding(t *testing.T) {
 
 		// Extract node ID
 		nodeID := extractNodeIDFromLabelIndex(key, len("Person"))
-		assert.Equal(t, NodeID("node-123"), nodeID)
+		assert.Equal(t, NodeID(prefixTestID("node-123")), nodeID)
 	})
 
 	t.Run("outgoingIndexKey and extraction", func(t *testing.T) {
@@ -1228,7 +1268,7 @@ func TestKeyEncoding(t *testing.T) {
 
 		// Extract edge ID
 		edgeID := extractEdgeIDFromIndexKey(key)
-		assert.Equal(t, EdgeID("edge-1"), edgeID)
+		assert.Equal(t, EdgeID(prefixTestID("edge-1")), edgeID)
 	})
 
 	t.Run("incomingIndexKey and extraction", func(t *testing.T) {
@@ -1237,7 +1277,7 @@ func TestKeyEncoding(t *testing.T) {
 
 		// Extract edge ID
 		edgeID := extractEdgeIDFromIndexKey(key)
-		assert.Equal(t, EdgeID("edge-1"), edgeID)
+		assert.Equal(t, EdgeID(prefixTestID("edge-1")), edgeID)
 	})
 }
 
@@ -1264,7 +1304,7 @@ func BenchmarkBadgerEngine_CreateNode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		node := &Node{
-			ID:         NodeID(fmt.Sprintf("bench-%06d", i)),
+			ID:         NodeID(prefixTestID(fmt.Sprintf("bench-%06d", i))),
 			Labels:     []string{"Benchmark"},
 			Properties: map[string]any{"index": i},
 		}
@@ -1282,7 +1322,7 @@ func BenchmarkBadgerEngine_GetNode(b *testing.B) {
 	// Pre-populate
 	for i := 0; i < 10000; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("bench-%06d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("bench-%06d", i))),
 			Labels: []string{"Benchmark"},
 		}
 		engine.CreateNode(node)
@@ -1291,7 +1331,7 @@ func BenchmarkBadgerEngine_GetNode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		idx := i % 10000
-		engine.GetNode(NodeID(fmt.Sprintf("bench-%06d", idx)))
+		_, _ = engine.GetNode(NodeID(prefixTestID(fmt.Sprintf("bench-%06d", idx))))
 	}
 }
 
@@ -1307,7 +1347,7 @@ func BenchmarkBadgerEngine_BulkCreateNodes(b *testing.B) {
 			nodes := make([]*Node, size)
 			for i := 0; i < size; i++ {
 				nodes[i] = &Node{
-					ID:     NodeID(fmt.Sprintf("bulk-%06d", i)),
+					ID:     NodeID(prefixTestID(fmt.Sprintf("bulk-%06d", i))),
 					Labels: []string{"Bulk"},
 				}
 			}

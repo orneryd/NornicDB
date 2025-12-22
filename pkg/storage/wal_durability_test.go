@@ -321,10 +321,11 @@ func TestWALFullDurabilityPath(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	engine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Verify recovery stats
 	if result.Applied != 2 {

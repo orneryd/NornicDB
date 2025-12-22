@@ -11,7 +11,9 @@ import (
 
 // TestFastPath_MatchCreateDeleteRel tests the fast-path for MATCH...CREATE...DELETE patterns.
 func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	defer asyncEngine.Close()
 
@@ -63,7 +65,9 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 
 // TestFastPath_LDBCPattern tests the LDBC-style pattern with property matching.
 func TestFastPath_LDBCPattern(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	defer asyncEngine.Close()
 
@@ -181,7 +185,9 @@ func TestFastPath_RegexMatching(t *testing.T) {
 
 // BenchmarkFastPath_WithLimit benchmarks the WITH LIMIT pattern.
 func BenchmarkFastPath_WithLimit(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	defer asyncEngine.Close()
 
@@ -209,7 +215,9 @@ func BenchmarkFastPath_WithLimit(b *testing.B) {
 
 // BenchmarkFastPath_LDBC benchmarks the LDBC property pattern.
 func BenchmarkFastPath_LDBC(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	asyncEngine := storage.NewAsyncEngine(engine, nil)
 	defer asyncEngine.Close()
 

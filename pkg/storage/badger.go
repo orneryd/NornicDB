@@ -805,12 +805,18 @@ func decodeEdge(data []byte) (*Edge, error) {
 // ============================================================================
 
 // CreateNode creates a new node in persistent storage.
+// REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
+// This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	if node == nil {
 		return "", ErrInvalidData
 	}
 	if node.ID == "" {
 		return "", ErrInvalidID
+	}
+	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
+	if !strings.Contains(string(node.ID), ":") {
+		return "", fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
 	b.mu.RLock()
@@ -972,6 +978,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	if node.ID == "" {
 		return ErrInvalidID
+	}
+	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
+	if !strings.Contains(string(node.ID), ":") {
+		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
 	b.mu.RLock()
@@ -1139,12 +1149,17 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 // UpdateNodeEmbedding updates only the embedding field of an existing node.
 // Returns ErrNotFound if the node doesn't exist (does NOT create the node).
 // This is used by the embedding queue to prevent creating orphaned nodes.
+// REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
 	if node.ID == "" {
 		return ErrInvalidID
+	}
+	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
+	if !strings.Contains(string(node.ID), ":") {
+		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
 	b.mu.RLock()
@@ -2849,21 +2864,13 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		}
 
 		// Load the full node - CRITICAL: verify it actually exists
+		// ALL node IDs must be prefixed - no unprefixed IDs allowed
 		node, err := b.GetNode(nodeID)
 		if err != nil || node == nil {
 			// Node was deleted - remove from pending index immediately
 			// This is a stale entry that needs cleanup
 			fmt.Printf("🧹 Removing stale entry from pending embeddings index: %s (node doesn't exist)\n", nodeID)
 			b.MarkNodeEmbedded(nodeID)
-			// If nodeID looks like it might have a namespace prefix, also try removing unprefixed version
-			if strings.Contains(string(nodeID), ":") {
-				// Extract unprefixed ID (everything after last colon)
-				parts := strings.Split(string(nodeID), ":")
-				if len(parts) > 1 {
-					unprefixedID := NodeID(parts[len(parts)-1])
-					b.MarkNodeEmbedded(unprefixedID)
-				}
-			}
 			// Continue to next iteration to try next node
 			continue
 		}
@@ -2872,14 +2879,6 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		if (len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0) || !NodeNeedsEmbedding(node) {
 			// Node already has embedding - remove from pending index
 			b.MarkNodeEmbedded(nodeID)
-			// If nodeID looks like it might have a namespace prefix, also try removing unprefixed version
-			if strings.Contains(string(nodeID), ":") {
-				parts := strings.Split(string(nodeID), ":")
-				if len(parts) > 1 {
-					unprefixedID := NodeID(parts[len(parts)-1])
-					b.MarkNodeEmbedded(unprefixedID)
-				}
-			}
 			// Continue to next iteration to try next node
 			continue
 		}
@@ -2962,20 +2961,9 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 			nodeID := NodeID(key[1:])
 
 			// Check if node exists and still needs embedding
-			// Try both prefixed and unprefixed versions for namespace compatibility
+			// ALL node IDs must be prefixed - no unprefixed IDs allowed
 			keyToCheck := nodeKey(nodeID)
 			item, err := txn.Get(keyToCheck)
-
-			// If node not found and ID contains ":" (namespace prefix), try unprefixed version
-			if err == badger.ErrKeyNotFound && strings.Contains(string(nodeID), ":") {
-				// Extract unprefixed ID (everything after last colon)
-				parts := strings.Split(string(nodeID), ":")
-				if len(parts) > 1 {
-					unprefixedID := NodeID(parts[len(parts)-1])
-					unprefixedKeyToCheck := nodeKey(unprefixedID)
-					item, err = txn.Get(unprefixedKeyToCheck)
-				}
-			}
 
 			if err == badger.ErrKeyNotFound {
 				// Node doesn't exist - remove from pending index

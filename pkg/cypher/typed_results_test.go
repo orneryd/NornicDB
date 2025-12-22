@@ -10,7 +10,9 @@ import (
 )
 
 func TestTypedExecute_MemoryNode(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -46,7 +48,9 @@ func TestTypedExecute_MemoryNode(t *testing.T) {
 }
 
 func TestTypedExecute_NodeCount(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -71,7 +75,9 @@ func TestTypedExecute_NodeCount(t *testing.T) {
 }
 
 func TestTypedExecute_WithParameters(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 

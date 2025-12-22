@@ -33,7 +33,7 @@ func TestTransaction_CreateNode_Basic(t *testing.T) {
 	tx, _ := engine.BeginTransaction()
 
 	node := &Node{
-		ID:         "tx-node-1",
+		ID: NodeID(prefixTestID("tx-node-1")),
 		Labels:     []string{"Test"},
 		Properties: map[string]interface{}{"name": "Test Node"},
 	}
@@ -45,13 +45,13 @@ func TestTransaction_CreateNode_Basic(t *testing.T) {
 	}
 
 	// Node should NOT be visible in engine yet (not committed)
-	_, err = engine.GetNode("tx-node-1")
+	_, err = engine.GetNode(NodeID(prefixTestID("tx-node-1")))
 	if err != ErrNotFound {
 		t.Error("Node should not be visible before commit")
 	}
 
 	// Node should be visible within transaction (read-your-writes)
-	txNode, err := tx.GetNode("tx-node-1")
+	txNode, err := tx.GetNode(NodeID(prefixTestID("tx-node-1")))
 	if err != nil {
 		t.Errorf("GetNode in transaction failed: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestTransaction_CreateNode_Basic(t *testing.T) {
 	}
 
 	// Now node should be visible in engine
-	stored, err := engine.GetNode("tx-node-1")
+	stored, err := engine.GetNode(NodeID(prefixTestID("tx-node-1")))
 	if err != nil {
 		t.Fatalf("GetNode after commit failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestTransaction_Rollback(t *testing.T) {
 	// Create some nodes
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID("rollback-node-" + string(rune('0'+i))),
+			ID:     NodeID(prefixTestID("rollback-node-" + string(rune('0'+i)))),
 			Labels: []string{"Rollback"},
 		}
 		if _, err := tx.CreateNode(node); err != nil {
@@ -108,7 +108,7 @@ func TestTransaction_Rollback(t *testing.T) {
 
 	// Verify nodes not in engine
 	for i := 0; i < 5; i++ {
-		_, err := engine.GetNode(NodeID("rollback-node-" + string(rune('0'+i))))
+		_, err := engine.GetNode(NodeID(prefixTestID("rollback-node-" + string(rune('0'+i)))))
 		if err != ErrNotFound {
 			t.Error("Node should not exist after rollback")
 		}
@@ -119,7 +119,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 	engine := NewMemoryEngine()
 
 	// Pre-create a node that will cause conflict
-	conflictNode := &Node{ID: "conflict-node", Labels: []string{"Conflict"}}
+	conflictNode := &Node{ID: NodeID(prefixTestID("conflict-node")), Labels: []string{"Conflict"}}
 	if _, err := engine.CreateNode(conflictNode); err != nil {
 		t.Fatalf("Pre-create failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 	// Create some nodes
 	for i := 0; i < 3; i++ {
 		node := &Node{
-			ID:     NodeID("atomic-node-" + string(rune('0'+i))),
+			ID:     NodeID(prefixTestID("atomic-node-" + string(rune('0'+i)))),
 			Labels: []string{"Atomic"},
 		}
 		if _, err := tx.CreateNode(node); err != nil {
@@ -138,7 +138,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 	}
 
 	// Try to create the conflicting node (should fail at commit)
-	node := &Node{ID: "conflict-node", Labels: []string{"Conflict"}}
+	node := &Node{ID: NodeID(prefixTestID("conflict-node")), Labels: []string{"Conflict"}}
 	// This will succeed in transaction (we check at commit time)
 	// But when we commit, it should fail
 
@@ -156,7 +156,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 
 	// All atomic nodes should exist
 	for i := 0; i < 3; i++ {
-		_, err := engine.GetNode(NodeID("atomic-node-" + string(rune('0'+i))))
+		_, err := engine.GetNode(NodeID(prefixTestID("atomic-node-" + string(rune('0'+i)))))
 		if err != nil {
 			t.Errorf("Node atomic-node-%d should exist after commit", i)
 		}
@@ -167,7 +167,7 @@ func TestTransaction_DeleteNode(t *testing.T) {
 	engine := NewMemoryEngine()
 
 	// Create a node first
-	node := &Node{ID: "delete-me", Labels: []string{"Delete"}}
+	node := &Node{ID: NodeID(prefixTestID("delete-me")), Labels: []string{"Delete"}}
 	if _, err := engine.CreateNode(node); err != nil {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
@@ -175,19 +175,19 @@ func TestTransaction_DeleteNode(t *testing.T) {
 	tx, _ := engine.BeginTransaction()
 
 	// Delete in transaction
-	err := tx.DeleteNode("delete-me")
+	err := tx.DeleteNode(NodeID(prefixTestID("delete-me")))
 	if err != nil {
 		t.Fatalf("DeleteNode failed: %v", err)
 	}
 
 	// Node should NOT be deleted from engine yet
-	_, err = engine.GetNode("delete-me")
+	_, err = engine.GetNode(NodeID(prefixTestID("delete-me")))
 	if err != nil {
 		t.Error("Node should still exist before commit")
 	}
 
 	// But should not be visible in transaction
-	_, err = tx.GetNode("delete-me")
+	_, err = tx.GetNode(NodeID(prefixTestID("delete-me")))
 	if err != ErrNotFound {
 		t.Error("Node should not be visible in transaction after delete")
 	}
@@ -199,7 +199,7 @@ func TestTransaction_DeleteNode(t *testing.T) {
 	}
 
 	// Now node should be gone
-	_, err = engine.GetNode("delete-me")
+	_, err = engine.GetNode(NodeID(prefixTestID("delete-me")))
 	if err != ErrNotFound {
 		t.Error("Node should not exist after commit")
 	}
@@ -210,7 +210,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 
 	// Create a node first
 	node := &Node{
-		ID:         "update-me",
+		ID: NodeID(prefixTestID("update-me")),
 		Labels:     []string{"Update"},
 		Properties: map[string]interface{}{"version": 1},
 	}
@@ -222,7 +222,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 
 	// Update in transaction
 	updatedNode := &Node{
-		ID:         "update-me",
+		ID: NodeID(prefixTestID("update-me")),
 		Labels:     []string{"Updated"},
 		Properties: map[string]interface{}{"version": 2},
 	}
@@ -232,13 +232,13 @@ func TestTransaction_UpdateNode(t *testing.T) {
 	}
 
 	// Engine should still have old version
-	old, _ := engine.GetNode("update-me")
+	old, _ := engine.GetNode(NodeID(prefixTestID("update-me")))
 	if old.Properties["version"] != 1 {
 		t.Error("Engine should still have old version before commit")
 	}
 
 	// Transaction should have new version
-	txNode, _ := tx.GetNode("update-me")
+	txNode, _ := tx.GetNode(NodeID(prefixTestID("update-me")))
 	if txNode.Properties["version"] != 2 {
 		t.Error("Transaction should have new version")
 	}
@@ -250,7 +250,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 	}
 
 	// Engine should have new version
-	updated, err := engine.GetNode("update-me")
+	updated, err := engine.GetNode(NodeID(prefixTestID("update-me")))
 	if err != nil {
 		t.Fatalf("GetNode after commit failed: %v", err)
 	}
@@ -272,8 +272,8 @@ func TestTransaction_CreateEdge(t *testing.T) {
 	engine := NewMemoryEngine()
 
 	// Create nodes first
-	node1 := &Node{ID: "edge-node-1", Labels: []string{"Node"}}
-	node2 := &Node{ID: "edge-node-2", Labels: []string{"Node"}}
+	node1 := &Node{ID: NodeID(prefixTestID("edge-node-1")), Labels: []string{"Node"}}
+	node2 := &Node{ID: NodeID(prefixTestID("edge-node-2")), Labels: []string{"Node"}}
 	engine.CreateNode(node1)
 	engine.CreateNode(node2)
 
@@ -281,9 +281,9 @@ func TestTransaction_CreateEdge(t *testing.T) {
 
 	// Create edge in transaction
 	edge := &Edge{
-		ID:        "tx-edge-1",
-		StartNode: "edge-node-1",
-		EndNode:   "edge-node-2",
+		ID: EdgeID(prefixTestID("tx-edge-1")),
+		StartNode: NodeID(prefixTestID("edge-node-1")),
+		EndNode:   NodeID(prefixTestID("edge-node-2")),
 		Type:      "CONNECTS",
 	}
 	err := tx.CreateEdge(edge)
@@ -292,7 +292,7 @@ func TestTransaction_CreateEdge(t *testing.T) {
 	}
 
 	// Edge should NOT exist in engine yet
-	_, err = engine.GetEdge("tx-edge-1")
+	_, err = engine.GetEdge(EdgeID(prefixTestID("tx-edge-1")))
 	if err != ErrNotFound {
 		t.Error("Edge should not exist before commit")
 	}
@@ -304,7 +304,7 @@ func TestTransaction_CreateEdge(t *testing.T) {
 	}
 
 	// Edge should exist now
-	stored, err := engine.GetEdge("tx-edge-1")
+	stored, err := engine.GetEdge(EdgeID(prefixTestID("tx-edge-1")))
 	if err != nil {
 		t.Fatalf("GetEdge after commit failed: %v", err)
 	}
@@ -318,16 +318,16 @@ func TestTransaction_CreateEdgeWithNewNodes(t *testing.T) {
 	tx, _ := engine.BeginTransaction()
 
 	// Create nodes IN transaction
-	node1 := &Node{ID: "new-edge-node-1", Labels: []string{"New"}}
-	node2 := &Node{ID: "new-edge-node-2", Labels: []string{"New"}}
+	node1 := &Node{ID: NodeID(prefixTestID("new-edge-node-1")), Labels: []string{"New"}}
+	node2 := &Node{ID: NodeID(prefixTestID("new-edge-node-2")), Labels: []string{"New"}}
 	tx.CreateNode(node1)
 	tx.CreateNode(node2)
 
 	// Create edge between new nodes (should work!)
 	edge := &Edge{
-		ID:        "new-edge-1",
-		StartNode: "new-edge-node-1",
-		EndNode:   "new-edge-node-2",
+		ID: EdgeID(prefixTestID("new-edge-1")),
+		StartNode: NodeID(prefixTestID("new-edge-node-1")),
+		EndNode: NodeID(prefixTestID("new-edge-node-2")),
 		Type:      "LINKS",
 	}
 	err := tx.CreateEdge(edge)
@@ -342,15 +342,15 @@ func TestTransaction_CreateEdgeWithNewNodes(t *testing.T) {
 	}
 
 	// Verify all exist
-	_, err = engine.GetNode("new-edge-node-1")
+	_, err = engine.GetNode(NodeID(prefixTestID("new-edge-node-1")))
 	if err != nil {
 		t.Error("Node 1 should exist")
 	}
-	_, err = engine.GetNode("new-edge-node-2")
+	_, err = engine.GetNode(NodeID(prefixTestID("new-edge-node-2")))
 	if err != nil {
 		t.Error("Node 2 should exist")
 	}
-	_, err = engine.GetEdge("new-edge-1")
+	_, err = engine.GetEdge(EdgeID(prefixTestID("new-edge-1")))
 	if err != nil {
 		t.Error("Edge should exist")
 	}
@@ -360,14 +360,14 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 	engine := NewMemoryEngine()
 
 	// Create nodes and edge first
-	node1 := &Node{ID: "del-edge-node-1", Labels: []string{"Node"}}
-	node2 := &Node{ID: "del-edge-node-2", Labels: []string{"Node"}}
+	node1 := &Node{ID: NodeID(prefixTestID("del-edge-node-1")), Labels: []string{"Node"}}
+	node2 := &Node{ID: NodeID(prefixTestID("del-edge-node-2")), Labels: []string{"Node"}}
 	engine.CreateNode(node1)
 	engine.CreateNode(node2)
 	edge := &Edge{
-		ID:        "delete-edge-1",
-		StartNode: "del-edge-node-1",
-		EndNode:   "del-edge-node-2",
+		ID: EdgeID(prefixTestID("delete-edge-1")),
+		StartNode: NodeID(prefixTestID("del-edge-node-1")),
+		EndNode: NodeID(prefixTestID("del-edge-node-2")),
 		Type:      "DELETE_ME",
 	}
 	engine.CreateEdge(edge)
@@ -375,13 +375,13 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 	tx, _ := engine.BeginTransaction()
 
 	// Delete edge in transaction
-	err := tx.DeleteEdge("delete-edge-1")
+	err := tx.DeleteEdge(EdgeID(prefixTestID("delete-edge-1")))
 	if err != nil {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
 
 	// Edge should still exist in engine
-	_, err = engine.GetEdge("delete-edge-1")
+	_, err = engine.GetEdge(EdgeID(prefixTestID("delete-edge-1")))
 	if err != nil {
 		t.Error("Edge should still exist before commit")
 	}
@@ -393,7 +393,7 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 	}
 
 	// Edge should be gone
-	_, err = engine.GetEdge("delete-edge-1")
+	_, err = engine.GetEdge(EdgeID(prefixTestID("delete-edge-1")))
 	if err != ErrNotFound {
 		t.Error("Edge should not exist after commit")
 	}
@@ -407,7 +407,7 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 	tx.Commit()
 
 	// Try operations on closed transaction
-	node := &Node{ID: "closed-test", Labels: []string{"Test"}}
+	node := &Node{ID: NodeID(prefixTestID("closed-test")), Labels: []string{"Test"}}
 	_, err := tx.CreateNode(node)
 	if err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
@@ -418,7 +418,7 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	err = tx.DeleteNode("any")
+	err = tx.DeleteNode(NodeID(prefixTestID("any")))
 	if err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
@@ -455,12 +455,12 @@ func TestTransaction_Isolation(t *testing.T) {
 
 	// Transaction 1 creates a node
 	tx1, _ := engine.BeginTransaction()
-	node := &Node{ID: "isolated-node", Labels: []string{"Isolated"}}
+	node := &Node{ID: NodeID(prefixTestID("isolated-node")), Labels: []string{"Isolated"}}
 	tx1.CreateNode(node)
 
 	// Transaction 2 should NOT see this node
 	tx2, _ := engine.BeginTransaction()
-	_, err := tx2.GetNode("isolated-node")
+	_, err := tx2.GetNode(NodeID(prefixTestID("isolated-node")))
 	if err != ErrNotFound {
 		t.Error("TX2 should not see TX1's uncommitted node")
 	}
@@ -480,16 +480,16 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	engine := NewMemoryEngine()
 
 	// Pre-create some data
-	engine.CreateNode(&Node{ID: "existing-1", Labels: []string{"Existing"}})
-	engine.CreateNode(&Node{ID: "existing-2", Labels: []string{"Existing"}})
+	engine.CreateNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Existing"}})
+	engine.CreateNode(&Node{ID: NodeID(prefixTestID("existing-2")), Labels: []string{"Existing"}})
 
 	tx, _ := engine.BeginTransaction()
 
 	// Mix of operations
-	tx.CreateNode(&Node{ID: "new-1", Labels: []string{"New"}})
-	tx.CreateNode(&Node{ID: "new-2", Labels: []string{"New"}})
-	tx.UpdateNode(&Node{ID: "existing-1", Labels: []string{"Updated"}})
-	tx.DeleteNode("existing-2")
+	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-1")), Labels: []string{"New"}})
+	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-2")), Labels: []string{"New"}})
+	tx.UpdateNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Updated"}})
+	tx.DeleteNode(NodeID(prefixTestID("existing-2")))
 
 	// Verify operation count
 	if tx.OperationCount() != 4 {
@@ -500,19 +500,19 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	tx.Commit()
 
 	// Verify final state
-	_, err := engine.GetNode("new-1")
+	_, err := engine.GetNode(NodeID(prefixTestID("new-1")))
 	if err != nil {
 		t.Error("new-1 should exist")
 	}
-	_, err = engine.GetNode("new-2")
+	_, err = engine.GetNode(NodeID(prefixTestID("new-2")))
 	if err != nil {
 		t.Error("new-2 should exist")
 	}
-	updated, _ := engine.GetNode("existing-1")
+	updated, _ := engine.GetNode(NodeID(prefixTestID("existing-1")))
 	if updated.Labels[0] != "Updated" {
 		t.Error("existing-1 should be updated")
 	}
-	_, err = engine.GetNode("existing-2")
+	_, err = engine.GetNode(NodeID(prefixTestID("existing-2")))
 	if err != ErrNotFound {
 		t.Error("existing-2 should be deleted")
 	}
@@ -527,7 +527,7 @@ func BenchmarkTransaction_CommitNodes(b *testing.B) {
 		tx, _ := engine.BeginTransaction()
 		for j := 0; j < 10; j++ {
 			node := &Node{
-				ID:     NodeID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j))),
+				ID:     NodeID(prefixTestID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j)))),
 				Labels: []string{"Bench"},
 			}
 			tx.CreateNode(node)
@@ -544,7 +544,7 @@ func BenchmarkTransaction_RollbackNodes(b *testing.B) {
 		tx, _ := engine.BeginTransaction()
 		for j := 0; j < 10; j++ {
 			node := &Node{
-				ID:     NodeID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j))),
+				ID:     NodeID(prefixTestID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j)))),
 				Labels: []string{"Bench"},
 			}
 			tx.CreateNode(node)

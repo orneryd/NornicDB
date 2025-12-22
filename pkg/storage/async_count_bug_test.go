@@ -125,7 +125,7 @@ func TestBug_AsyncEngineNodeCountWithSameIDs(t *testing.T) {
 	})
 	defer async.Close()
 
-	nodeIDs := []NodeID{"node-1", "node-2", "node-3"}
+	nodeIDs := []NodeID{NodeID(prefixTestID("node-1")), NodeID(prefixTestID("node-2")), NodeID(prefixTestID("node-3"))}
 
 	// Create nodes
 	t.Log("Creating 3 nodes...")

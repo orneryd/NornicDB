@@ -12,7 +12,9 @@ import (
 // TestCaseExpressionInAggregation tests CASE expressions inside aggregation functions
 // Bug: count(CASE WHEN condition THEN 1 END) was returning total count instead of conditional count
 func TestCaseExpressionInAggregation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -91,7 +93,8 @@ func TestCaseExpressionInAggregation(t *testing.T) {
 
 	t.Run("count CASE with CONTAINS", func(t *testing.T) {
 		// Create fresh store for this test to avoid interference
-		store2 := storage.NewMemoryEngine()
+		baseStore2 := storage.NewMemoryEngine()
+		store2 := storage.NewNamespacedEngine(baseStore2, "test")
 		exec2 := NewStorageExecutor(store2)
 
 		// Add entries with text content
@@ -136,7 +139,9 @@ func TestCaseExpressionInAggregation(t *testing.T) {
 
 // TestUnionAllQuery tests UNION ALL queries
 func TestUnionAllQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -175,7 +180,9 @@ func TestUnionAllQuery(t *testing.T) {
 
 // TestEvaluateCaseExpressionDirectly tests evaluateCaseExpression directly
 func TestEvaluateCaseExpressionDirectly(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Create a test node
@@ -223,7 +230,9 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 
 // TestEvaluateConditionContains tests the evaluateCondition function with CONTAINS
 func TestEvaluateConditionContains(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	// Create a test node
@@ -349,7 +358,9 @@ func TestFindTopLevelKeywordUTF8(t *testing.T) {
 
 // TestCaseConditionEvaluation tests the evaluateCondition function directly
 func TestCaseConditionEvaluation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -462,7 +473,9 @@ func toInt64Value(v interface{}) int64 {
 
 // TestUTF8StringOperations tests all string operations with UTF-8 content
 func TestUTF8StringOperations(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -539,7 +552,9 @@ func TestUTF8StringOperations(t *testing.T) {
 
 // TestCaseExpressionWithUTF8 tests CASE expressions with UTF-8 content in various positions
 func TestCaseExpressionWithUTF8(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -600,7 +615,9 @@ func TestCaseExpressionWithUTF8(t *testing.T) {
 
 // TestAggregationWithUTF8 tests aggregation functions with UTF-8 content
 func TestAggregationWithUTF8(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -660,7 +677,9 @@ func TestAggregationWithUTF8(t *testing.T) {
 
 // TestMultipleReturnItemsWithUTF8 tests multiple RETURN items containing UTF-8
 func TestMultipleReturnItemsWithUTF8(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

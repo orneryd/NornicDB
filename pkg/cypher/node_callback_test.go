@@ -12,7 +12,9 @@ import (
 
 // TestNodeCreatedCallbackOnCreate verifies the callback is invoked when nodes are created via CREATE
 func TestNodeCreatedCallbackOnCreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -37,7 +39,9 @@ func TestNodeCreatedCallbackOnCreate(t *testing.T) {
 
 // TestNodeCreatedCallbackOnCreateMultiple verifies callback is invoked for each node in multi-node CREATE
 func TestNodeCreatedCallbackOnCreateMultiple(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -61,7 +65,9 @@ func TestNodeCreatedCallbackOnCreateMultiple(t *testing.T) {
 
 // TestNodeCreatedCallbackOnCreateWithRelationship verifies callback for nodes created with relationships
 func TestNodeCreatedCallbackOnCreateWithRelationship(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -85,7 +91,9 @@ func TestNodeCreatedCallbackOnCreateWithRelationship(t *testing.T) {
 
 // TestNodeCreatedCallbackOnMergeCreate verifies callback is invoked when MERGE creates a new node
 func TestNodeCreatedCallbackOnMergeCreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -109,7 +117,9 @@ func TestNodeCreatedCallbackOnMergeCreate(t *testing.T) {
 
 // TestNodeCreatedCallbackOnMergeMatch verifies callback is NOT invoked when MERGE matches existing node
 func TestNodeCreatedCallbackOnMergeMatch(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -141,7 +151,9 @@ func TestNodeCreatedCallbackOnMergeMatch(t *testing.T) {
 
 // TestNodeCreatedCallbackNotSet verifies no panic when callback is nil
 func TestNodeCreatedCallbackNotSet(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -155,7 +167,9 @@ func TestNodeCreatedCallbackNotSet(t *testing.T) {
 
 // TestNodeCreatedCallbackNodeIDsAreValid verifies the callback receives valid node IDs
 func TestNodeCreatedCallbackNodeIDsAreValid(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -185,7 +199,9 @@ func TestNodeCreatedCallbackNodeIDsAreValid(t *testing.T) {
 
 // TestNodeCreatedCallbackConcurrentCreates verifies callback is thread-safe
 func TestNodeCreatedCallbackConcurrentCreates(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -219,7 +235,9 @@ func TestNodeCreatedCallbackConcurrentCreates(t *testing.T) {
 
 // TestNodeCreatedCallbackOnMatchCreate verifies callback for MATCH...CREATE pattern
 func TestNodeCreatedCallbackOnMatchCreate(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -252,7 +270,9 @@ func TestNodeCreatedCallbackOnMatchCreate(t *testing.T) {
 
 // TestSetNodeCreatedCallbackReplacesExisting verifies callback can be replaced
 func TestSetNodeCreatedCallbackReplacesExisting(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

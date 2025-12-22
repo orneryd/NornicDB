@@ -631,7 +631,9 @@ func BenchmarkChainedTraversal(b *testing.B) {
 
 // setupBenchmarkExecutor creates an executor for benchmarks
 func setupBenchmarkExecutor(b *testing.B) *StorageExecutor {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	return exec
 }

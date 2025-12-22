@@ -324,8 +324,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	c.flushAsyncEngine(engine)
 
 	// Track node -> constituent mapping (following Neo4j TransactionState pattern)
-	// CRITICAL: Store BOTH prefixed and unprefixed IDs in nodeToConstituent
-	// This allows CreateEdge to find nodes whether it receives prefixed or unprefixed IDs
+	// CRITICAL: Only store prefixed IDs in nodeToConstituent (we always use prefixed storage now)
 	// Get the actual prefixed ID from the engine (NamespacedEngine returns unprefixed)
 	actualPrefixedID := nodeID
 	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
@@ -334,9 +333,8 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 		actualPrefixedID = namespacedEngine.prefixNodeID(nodeID)
 	}
 	c.mu.Lock()
-	// Store both prefixed and unprefixed -> constituent mappings
+	// Store only prefixed ID -> constituent mapping
 	c.nodeToConstituent[actualPrefixedID] = targetConstituent
-	c.nodeToConstituent[nodeID] = targetConstituent // Also store unprefixed for direct lookup
 	c.mu.Unlock()
 
 	// Return unprefixed ID to user (user-facing API)
@@ -432,43 +430,36 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	// Check if start node was created in current transaction (following Neo4j pattern)
 	// This allows us to route directly to the correct constituent
 	// CRITICAL: edge.StartNode/EndNode may be unprefixed (from user), but nodeToConstituent
-	// stores both prefixed and unprefixed IDs. Try unprefixed first, then prefixed.
+	// only stores prefixed IDs. We must prefix the IDs before looking them up.
 	c.mu.RLock()
-	// Try unprefixed first (most common case - IDs from CreateNode are unprefixed)
-	startConstituent, startNodeInTx := c.nodeToConstituent[edge.StartNode]
-	endConstituent, endNodeInTx := c.nodeToConstituent[edge.EndNode]
+	// Prefix the node IDs before looking them up (we only store prefixed IDs)
+	startNodeInTx := false
+	endNodeInTx := false
+	var startConstituent, endConstituent string
 
-	// If not found unprefixed, try prefixed versions by checking all constituents
-	if !startNodeInTx {
-		for _, engine := range c.constituents {
-			if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-				prefixedStartID := namespacedEngine.prefixNodeID(edge.StartNode)
-				if constituent, found := c.nodeToConstituent[prefixedStartID]; found {
-					startConstituent = constituent
-					startNodeInTx = true
-					break
-				}
+	// Try to find the constituent for start node by checking all constituents
+	// (since we don't know which namespace the node belongs to)
+	for _, engine := range c.constituents {
+		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+			prefixedStartID := namespacedEngine.prefixNodeID(edge.StartNode)
+			if constituent, found := c.nodeToConstituent[prefixedStartID]; found {
+				startConstituent = constituent
+				startNodeInTx = true
+				break
 			}
 		}
 	}
-	if !endNodeInTx {
-		for _, engine := range c.constituents {
-			if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-				prefixedEndID := namespacedEngine.prefixNodeID(edge.EndNode)
-				if constituent, found := c.nodeToConstituent[prefixedEndID]; found {
-					endConstituent = constituent
-					endNodeInTx = true
-					break
-				}
+
+	// Try to find the constituent for end node
+	for _, engine := range c.constituents {
+		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+			prefixedEndID := namespacedEngine.prefixNodeID(edge.EndNode)
+			if constituent, found := c.nodeToConstituent[prefixedEndID]; found {
+				endConstituent = constituent
+				endNodeInTx = true
+				break
 			}
 		}
-	}
-	// Ensure we have valid constituent names
-	if startNodeInTx && startConstituent == "" {
-		startNodeInTx = false
-	}
-	if endNodeInTx && endConstituent == "" {
-		endNodeInTx = false
 	}
 	c.mu.RUnlock()
 

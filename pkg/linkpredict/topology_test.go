@@ -223,7 +223,9 @@ func TestIsolatedNode(t *testing.T) {
 // TestBuildGraphFromEngine verifies graph construction from storage.
 func TestBuildGraphFromEngine(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	// Create test nodes
 	nodes := []*storage.Node{
@@ -456,7 +458,9 @@ func TestBuildGraphErrors(t *testing.T) {
 	// (actual behavior depends on Engine interface implementation)
 
 	// Test with empty engine
-	engine := storage.NewMemoryEngine()
+	baseEngine := storage.NewMemoryEngine()
+
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	graph, err := BuildGraphFromEngine(ctx, engine, true)
 
 	if err != nil {

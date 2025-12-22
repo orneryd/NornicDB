@@ -26,7 +26,7 @@ func TestBadgerEngine_UpdateNode_WasInsertAfterDelete(t *testing.T) {
 	// Step 1: Create 10 nodes via CreateNode
 	for i := 0; i < 10; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 			Properties: map[string]interface{}{
 				"name": fmt.Sprintf("Node %d", i),
@@ -42,7 +42,7 @@ func TestBadgerEngine_UpdateNode_WasInsertAfterDelete(t *testing.T) {
 
 	// Step 2: Delete all nodes
 	for i := 0; i < 10; i++ {
-		err := engine.DeleteNode(NodeID(fmt.Sprintf("node-%d", i)))
+		err := engine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i))))
 		require.NoError(t, err)
 	}
 
@@ -54,7 +54,7 @@ func TestBadgerEngine_UpdateNode_WasInsertAfterDelete(t *testing.T) {
 	// These are brand new UUIDs that never existed before
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("new-uuid-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("new-uuid-%d", i))),
 			Labels: []string{"NewTest"},
 			Properties: map[string]interface{}{
 				"name": fmt.Sprintf("New Node %d", i),
@@ -84,7 +84,7 @@ func TestBadgerEngine_UpdateNode_WasInsertWithSameIDs(t *testing.T) {
 	// Step 1: Create nodes
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("reuse-id-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("reuse-id-%d", i))),
 			Labels: []string{"Test"},
 		}
 		_, err := engine.CreateNode(node)
@@ -96,7 +96,7 @@ func TestBadgerEngine_UpdateNode_WasInsertWithSameIDs(t *testing.T) {
 
 	// Step 2: Delete all
 	for i := 0; i < 5; i++ {
-		require.NoError(t, engine.DeleteNode(NodeID(fmt.Sprintf("reuse-id-%d", i))))
+		require.NoError(t, engine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("reuse-id-%d", i)))))
 	}
 
 	count2, _ := engine.NodeCount()
@@ -105,7 +105,7 @@ func TestBadgerEngine_UpdateNode_WasInsertWithSameIDs(t *testing.T) {
 	// Step 3: UpdateNode with SAME IDs (like MERGE might do)
 	for i := 0; i < 5; i++ {
 		node := &Node{
-			ID:     NodeID(fmt.Sprintf("reuse-id-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("reuse-id-%d", i))),
 			Labels: []string{"Test"},
 		}
 		require.NoError(t, engine.UpdateNode(node))
@@ -127,20 +127,20 @@ func TestBadgerEngine_DeleteActuallyRemovesKey(t *testing.T) {
 	defer engine.Close()
 
 	// Create a node
-	node := &Node{ID: "test-delete", Labels: []string{"Test"}}
+	node := &Node{ID: NodeID(prefixTestID("test-delete")), Labels: []string{"Test"}}
 	_, err = engine.CreateNode(node)
 	require.NoError(t, err)
 
 	// Verify it exists
-	retrieved, err := engine.GetNode("test-delete")
+	retrieved, err := engine.GetNode(NodeID(prefixTestID("test-delete")))
 	require.NoError(t, err)
 	require.NotNil(t, retrieved)
 
 	// Delete it
-	require.NoError(t, engine.DeleteNode("test-delete"))
+	require.NoError(t, engine.DeleteNode(NodeID(prefixTestID("test-delete"))))
 
 	// Verify it's gone
-	retrieved, err = engine.GetNode("test-delete")
+	retrieved, err = engine.GetNode(NodeID(prefixTestID("test-delete")))
 	assert.Equal(t, ErrNotFound, err, "Node should not be found after delete")
 	assert.Nil(t, retrieved)
 }

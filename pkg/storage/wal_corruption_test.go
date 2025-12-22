@@ -328,10 +328,11 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	file.Close()
 
 	// Recovery should track results
-	engine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Should have recovered the node
 	if engine == nil {

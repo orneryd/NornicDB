@@ -12,7 +12,9 @@ import (
 // TestGraphTraversalWithCallSubquery tests a complex query that finds neighbors
 // 1-2 hops away from a seed node using CALL subquery
 func TestGraphTraversalWithCallSubquery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -105,7 +107,9 @@ func TestGraphTraversalWithCallSubquery(t *testing.T) {
 
 // TestGraphTraversalWithInternalID tests the same query but using internal node ID
 func TestGraphTraversalWithInternalID(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -162,7 +166,9 @@ func TestGraphTraversalWithInternalID(t *testing.T) {
 // TestSimplifiedGraphTraversal tests a simpler version without CALL subquery
 // to isolate any issues with the variable-length path pattern
 func TestSimplifiedGraphTraversal(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -202,7 +208,9 @@ func TestSimplifiedGraphTraversal(t *testing.T) {
 // TestPOCRelationshipQuery tests a production query pattern that finds
 // all relationships connected to a specific POC node
 func TestPOCRelationshipQuery(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -266,7 +274,9 @@ func TestPOCRelationshipQuery(t *testing.T) {
 // TestPOCRelationshipQueryWithCoalesce tests that coalesce() works correctly
 // to handle different property names across different node types
 func TestPOCRelationshipQueryWithCoalesce(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -310,7 +320,9 @@ func TestPOCRelationshipQueryWithCoalesce(t *testing.T) {
 // TestVariableLengthPathWithExplicitDistance tests variable-length paths with explicit distance return
 // Expected: Should return up to 20 connected nodes within 2 hops
 func TestVariableLengthPathWithExplicitDistance(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -376,7 +388,9 @@ func TestVariableLengthPathWithExplicitDistance(t *testing.T) {
 // TestAggregatedNeighborsWithRelationshipChain tests aggregation with relationship type chains
 // Expected: Should return aggregated neighbors with relationship chains
 func TestAggregatedNeighborsWithRelationshipChain(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -445,7 +459,9 @@ func TestAggregatedNeighborsWithRelationshipChain(t *testing.T) {
 // TestCollectWithMapLiteral tests that collect() correctly evaluates map literals
 // This was a bug where { key: value } was returned as strings instead of maps
 func TestCollectWithMapLiteral(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

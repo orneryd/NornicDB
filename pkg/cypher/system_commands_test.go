@@ -145,7 +145,9 @@ func (m *mockDatabaseManager) IsCompositeDatabase(name string) bool {
 }
 
 func TestSystemCommands_CreateDatabase(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -221,7 +223,9 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 }
 
 func TestSystemCommands_DropDatabase(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -290,7 +294,9 @@ func TestSystemCommands_DropDatabase(t *testing.T) {
 }
 
 func TestSystemCommands_ShowDatabases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -347,7 +353,9 @@ func TestSystemCommands_ShowDatabases(t *testing.T) {
 }
 
 func TestSystemCommands_ShowDatabase(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -363,7 +371,9 @@ func TestSystemCommands_ShowDatabase(t *testing.T) {
 }
 
 func TestSystemCommands_Integration(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -397,7 +407,9 @@ func TestSystemCommands_Integration(t *testing.T) {
 }
 
 func TestSystemCommands_AlterDatabaseSetLimit(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -484,7 +496,9 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 
 	t.Run("show limits for database with no limits", func(t *testing.T) {
 		// Fresh setup for each subtest to avoid state leakage
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
 		mockDBM := newMockDatabaseManager()
@@ -503,7 +517,9 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 
 	t.Run("show limits for database with limits set", func(t *testing.T) {
 		// Fresh setup for each subtest to avoid state leakage
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
 		mockDBM := newMockDatabaseManager()
@@ -553,7 +569,9 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 
 	t.Run("error on non-existent database", func(t *testing.T) {
 		// Fresh setup for each subtest to avoid state leakage
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
 		mockDBM := newMockDatabaseManager()
@@ -567,7 +585,9 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 
 	t.Run("error on invalid syntax", func(t *testing.T) {
 		// Fresh setup for each subtest to avoid state leakage
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
 		mockDBM := newMockDatabaseManager()
@@ -581,7 +601,9 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 
 	t.Run("error without database manager", func(t *testing.T) {
 		// Fresh setup for each subtest to avoid state leakage
-		store := storage.NewMemoryEngine()
+		baseStore := storage.NewMemoryEngine()
+
+		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		execNoDBM := NewStorageExecutor(store)
 		// Intentionally don't set database manager

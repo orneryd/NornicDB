@@ -19,10 +19,12 @@ import (
 func setupFastRPTestStorage(t *testing.T) storage.Engine {
 	t.Helper()
 	// Use in-memory Badger for tests to avoid disk I/O and Windows OOM issues
-	engine, err := storage.NewBadgerEngineInMemory()
+	baseEngine, err := storage.NewBadgerEngineInMemory()
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
+	// Wrap with NamespacedEngine to ensure prefixed IDs
+	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	return engine
 }
 

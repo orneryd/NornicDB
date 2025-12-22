@@ -69,7 +69,7 @@ func (m *mockEmbedder) GetEmbedCount() int {
 func TestCopyNodeForEmbedding(t *testing.T) {
 	t.Run("creates_independent_properties_map", func(t *testing.T) {
 		original := &storage.Node{
-			ID:     "test-node",
+			ID: storage.NodeID("test-node"),
 			Labels: []string{"Memory", "Test"},
 			Properties: map[string]any{
 				"content": "test content",
@@ -91,7 +91,7 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 
 	t.Run("copies_embedding", func(t *testing.T) {
 		original := &storage.Node{
-			ID:              "test-node",
+			ID: storage.NodeID("test-node"),
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 		}
 
@@ -106,7 +106,7 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 
 	t.Run("copies_labels", func(t *testing.T) {
 		original := &storage.Node{
-			ID:     "test-node",
+			ID: storage.NodeID("test-node"),
 			Labels: []string{"Label1", "Label2"},
 		}
 
@@ -121,7 +121,7 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 
 	t.Run("preserves_id", func(t *testing.T) {
 		original := &storage.Node{
-			ID: "unique-id-123",
+			ID: storage.NodeID("unique-id-123"),
 		}
 
 		copy := copyNodeForEmbedding(original)
@@ -138,7 +138,9 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 // TestEmbedWorkerRecentlyProcessed tests the duplicate processing prevention
 func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 	t.Run("tracks_processed_nodes", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		config := &EmbedWorkerConfig{
@@ -166,7 +168,9 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 	})
 
 	t.Run("cleans_old_entries", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		config := &EmbedWorkerConfig{
@@ -187,7 +191,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 
 		// Create a node to trigger cleanup (cleanup happens during processing)
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "trigger-node",
+			ID: storage.NodeID("trigger-node"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "trigger content",
@@ -222,12 +226,14 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 // TestEmbedWorkerPersistence tests that embeddings are actually persisted
 func TestEmbedWorkerPersistence(t *testing.T) {
 	t.Run("embedding_persisted_to_storage", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node without embedding
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "persist-test",
+			ID: storage.NodeID("persist-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "This is test content for embedding",
@@ -280,12 +286,14 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 	})
 
 	t.Run("node_not_reprocessed_after_embedding", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "no-reprocess-test",
+			ID: storage.NodeID("no-reprocess-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "Content for no-reprocess test",
@@ -341,12 +349,14 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 // TestEmbedWorkerFindNodeWithoutEmbedding tests the node discovery logic
 func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	t.Run("finds_node_without_embedding", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create node without embedding
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "needs-embed",
+			ID: storage.NodeID("needs-embed"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "Content needing embedding",
@@ -364,12 +374,14 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_node_with_embedding", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create node WITH embedding
 		_, err := engine.CreateNode(&storage.Node{
-			ID:              "has-embed",
+			ID: storage.NodeID("has-embed"),
 			Labels:          []string{"Memory"},
 			ChunkEmbeddings: [][]float32{make([]float32, 1024)}, // Pre-existing embedding
 			Properties: map[string]any{
@@ -387,12 +399,14 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_internal_nodes", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create internal node (starts with _)
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "internal-node",
+			ID: storage.NodeID("internal-node"),
 			Labels: []string{"_Internal"},
 			Properties: map[string]any{
 				"content": "Internal content",
@@ -409,12 +423,14 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_deleted_nodes", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create node without embedding
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "to-delete",
+			ID: storage.NodeID("to-delete"),
 			Labels: []string{"Test"},
 			Properties: map[string]any{
 				"content": "Content to delete",
@@ -780,14 +796,16 @@ func (a *Application) Stop(ctx context.Context) error {
 // TestLargeContentEmbedding tests end-to-end embedding of large content
 func TestLargeContentEmbedding(t *testing.T) {
 	t.Run("large_file_gets_chunked_and_embedded", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node with large content (like a source file)
 		largeContent := strings.Repeat("This is line of code with various tokens and symbols. ", 100)
 
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "large-file-node",
+			ID: storage.NodeID("large-file-node"),
 			Labels: []string{"File"},
 			Properties: map[string]any{
 				"content":  largeContent,
@@ -867,7 +885,9 @@ func TestLargeContentEmbedding(t *testing.T) {
 // TestEmbedWorkerConcurrency tests for race conditions
 func TestEmbedWorkerConcurrency(t *testing.T) {
 	t.Run("concurrent_triggers_safe", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create multiple nodes
@@ -918,12 +938,14 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 // TestRecentlyProcessedOnlyLogsOnce verifies we don't spam "recently processed" logs
 func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 	t.Run("skip_message_should_not_repeat", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node that will be marked as recently processed but still found
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "test-skip-logs",
+			ID: storage.NodeID("test-skip-logs"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "Some content",
@@ -975,14 +997,16 @@ func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 // would print infinitely
 func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 	t.Run("no_content_node_stops_loop", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node with NO labels and ONLY metadata fields (all skipped by buildEmbeddingText)
 		// This is a truly empty node - no labels, no embeddable properties
 		// Don't set has_embedding as that would prevent node discovery
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "no-content-node",
+			ID: storage.NodeID("no-content-node"),
 			Labels: []string{}, // No labels - truly empty
 			Properties: map[string]any{
 				"id":        "123",        // Skipped
@@ -1043,7 +1067,9 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 func TestAsyncEngineCacheIntegration(t *testing.T) {
 	t.Run("cached_embedding_not_refound", func(t *testing.T) {
 		// Create underlying engine
-		underlying := storage.NewMemoryEngine()
+		baseUnderlying := storage.NewMemoryEngine()
+
+		underlying := storage.NewNamespacedEngine(baseUnderlying, "test")
 
 		// Wrap with AsyncEngine (like production setup)
 		asyncConfig := storage.DefaultAsyncEngineConfig()
@@ -1055,7 +1081,7 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 
 		// Create a node
 		_, err := asyncEngine.CreateNode(&storage.Node{
-			ID:     "async-test",
+			ID: storage.NodeID("async-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "Test content for async cache",
@@ -1112,12 +1138,14 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 // and readable back from storage - this catches the bug where n1 keeps getting skipped
 func TestEmbeddingPersistenceVerification(t *testing.T) {
 	t.Run("embedding_readable_after_update", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "verify-persist",
+			ID: storage.NodeID("verify-persist"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content": "Test content for persistence verification",
@@ -1161,11 +1189,13 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 	})
 
 	t.Run("storage_update_persists_embedding_field", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 		// Create a node
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "manual-embed",
+			ID: storage.NodeID("manual-embed"),
 			Labels: []string{"Test"},
 			Properties: map[string]any{
 				"content": "test",
@@ -1198,12 +1228,14 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 // where the embedding worker processes a node while another goroutine reads it
 func TestRaceConditionPrevention(t *testing.T) {
 	t.Run("concurrent_node_access_during_embedding", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		baseEngine := storage.NewMemoryEngine()
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
 		// Create a node
 		_, err := engine.CreateNode(&storage.Node{
-			ID:     "race-test",
+			ID: storage.NodeID("race-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
 				"content":     "Test content for race condition",

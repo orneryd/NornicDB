@@ -16,7 +16,9 @@ import (
 // TestMimirExactQueries tests the EXACT queries from Mimir's index-api.ts
 // with data that matches production: mostly .md files with File:Node labels
 func TestMimirExactQueries(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -155,7 +157,9 @@ func TestMimirExactQueries(t *testing.T) {
 
 // TestMimirExactQueriesWithEmbeddings tests with files that have embeddings
 func TestMimirExactQueriesWithEmbeddings(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -246,14 +250,17 @@ func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	// Create BadgerEngine -> AsyncEngine stack (like production)
+	// Create BadgerEngine -> NamespacedEngine -> AsyncEngine stack (like production)
 	badger, err := storage.NewBadgerEngine(filepath.Join(tmpDir, "data"))
 	require.NoError(t, err)
 	defer badger.Close()
 
+	// Wrap with NamespacedEngine (required for prefixed storage)
+	namespaced := storage.NewNamespacedEngine(badger, "test")
+
 	config := storage.DefaultAsyncEngineConfig()
 	config.FlushInterval = 100 * time.Millisecond
-	async := storage.NewAsyncEngine(badger, config)
+	async := storage.NewAsyncEngine(namespaced, config)
 	defer async.Close()
 
 	exec := NewStorageExecutor(async)
@@ -410,7 +417,7 @@ func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 		// Store embedding as []interface{} property (like Mimir/Neo4j does)
 		embeddingArray := []interface{}{0.1, 0.2, 0.3, 0.4}
 		node.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3, 0.4}} // Also native field
-		node.Properties["embedding"] = embeddingArray  // Property like Mimir!
+		node.Properties["embedding"] = embeddingArray            // Property like Mimir!
 		node.Properties["embedding_dimensions"] = 4
 		node.Properties["embedding_model"] = "test-model"
 		node.Properties["has_embedding"] = true
@@ -428,7 +435,7 @@ func TestMimirE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 		// Store embedding as []interface{} property (like Mimir does)
 		embeddingArray := []interface{}{0.5, 0.6, 0.7, 0.8}
 		node.ChunkEmbeddings = [][]float32{{0.5, 0.6, 0.7, 0.8}} // Also native field
-		node.Properties["embedding"] = embeddingArray  // Property like Mimir!
+		node.Properties["embedding"] = embeddingArray            // Property like Mimir!
 		node.Properties["embedding_dimensions"] = 4
 		node.Properties["embedding_model"] = "test-model"
 		node.Properties["has_embedding"] = true

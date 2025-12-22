@@ -169,7 +169,9 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 }
 
 func TestExecuteAlterCompositeDatabase_AddAlias(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	inner := storage.NewMemoryEngine()
 	manager, _ := multidb.NewDatabaseManager(inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
@@ -219,7 +221,9 @@ func TestExecuteAlterCompositeDatabase_AddAlias(t *testing.T) {
 }
 
 func TestExecuteAlterCompositeDatabase_DropAlias(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	inner := storage.NewMemoryEngine()
 	manager, _ := multidb.NewDatabaseManager(inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
@@ -268,7 +272,9 @@ func TestExecuteAlterCompositeDatabase_DropAlias(t *testing.T) {
 }
 
 func TestExecuteAlterCompositeDatabase_InvalidSyntax(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	inner := storage.NewMemoryEngine()
 	manager, _ := multidb.NewDatabaseManager(inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}

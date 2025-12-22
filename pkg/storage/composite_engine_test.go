@@ -29,7 +29,7 @@ func TestCompositeEngine_CreateNode(t *testing.T) {
 
 	// Create node
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
@@ -56,8 +56,8 @@ func TestCompositeEngine_GetNode(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in each constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -87,7 +87,7 @@ func TestCompositeEngine_GetNode(t *testing.T) {
 	assert.Equal(t, node2.ID, retrieved.ID)
 
 	// Get non-existent node
-	_, err = composite.GetNode(NodeID("nonexistent"))
+	_, err = composite.GetNode(NodeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -98,8 +98,8 @@ func TestCompositeEngine_CreateEdge(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 
@@ -120,7 +120,7 @@ func TestCompositeEngine_CreateEdge(t *testing.T) {
 
 	// Create edge
 	edge := &Edge{
-		ID:         EdgeID("edge1"),
+		ID:         EdgeID(prefixTestID("edge1")),
 		StartNode:  node1.ID,
 		EndNode:    node2.ID,
 		Type:       "KNOWS",
@@ -159,9 +159,9 @@ func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 
 	// Create multiple nodes
 	nodes := []*Node{
-		{ID: NodeID("node1"), Labels: []string{"Person"}},
-		{ID: NodeID("node2"), Labels: []string{"Person"}},
-		{ID: NodeID("node3"), Labels: []string{"Company"}},
+		{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}},
+		{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}},
+		{ID: NodeID(prefixTestID("node3")), Labels: []string{"Company"}},
 	}
 	err := composite.BulkCreateNodes(nodes)
 	require.NoError(t, err)
@@ -186,10 +186,10 @@ func TestCompositeEngine_GetSchema(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes with labels to populate schema
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Company"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Product"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Company"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Product"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine2.CreateNode(node3)
@@ -223,7 +223,7 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create node in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 
 	// Create composite engine with one read-only constituent
@@ -247,7 +247,7 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 	assert.Equal(t, node1.ID, retrieved.ID)
 
 	// Cannot write to read-only constituent - should route to writable one
-	newNode := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	newNode := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	_, err = composite.CreateNode(newNode)
 	require.NoError(t, err)
 
@@ -262,8 +262,8 @@ func TestCompositeEngine_GetNodeFromMultipleConstituents(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in each constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -300,7 +300,7 @@ func TestCompositeEngine_UpdateNode(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create node in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
 	engine1.CreateNode(node1)
 
 	// Create composite engine
@@ -335,7 +335,7 @@ func TestCompositeEngine_DeleteNode(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create node in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 
 	// Create composite engine
@@ -369,9 +369,9 @@ func TestCompositeEngine_GetEdge(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edge in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -405,9 +405,9 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edge in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -444,9 +444,9 @@ func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edge in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -482,8 +482,8 @@ func TestCompositeEngine_GetNodesByLabel(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes with same label in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -522,8 +522,8 @@ func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes with same label in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -555,11 +555,11 @@ func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -593,9 +593,9 @@ func TestCompositeEngine_GetIncomingEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -628,9 +628,9 @@ func TestCompositeEngine_GetEdgesBetween(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edge
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -663,9 +663,9 @@ func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edge
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -697,12 +697,12 @@ func TestCompositeEngine_GetEdgesByType(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges with same type in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -745,8 +745,8 @@ func TestCompositeEngine_AllNodes(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -785,12 +785,12 @@ func TestCompositeEngine_AllEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -833,8 +833,8 @@ func TestCompositeEngine_GetAllNodes(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -872,11 +872,11 @@ func TestCompositeEngine_GetInDegree(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges (both edges point to node2)
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node2.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node2.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -912,11 +912,11 @@ func TestCompositeEngine_GetOutDegree(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -949,10 +949,10 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes - put node1 and node2 in engine1, node3 and node4 in engine2
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine2.CreateNode(node3)
@@ -975,8 +975,8 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 
 	// Create edges - edge1 within engine1, edge2 within engine2
 	edges := []*Edge{
-		{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"},
-		{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"},
+		{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"},
+		{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"},
 	}
 
 	err := composite.BulkCreateEdges(edges)
@@ -995,8 +995,8 @@ func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -1032,12 +1032,12 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)
@@ -1093,7 +1093,7 @@ func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 
 	// Test routing with tenant_id property
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"tenant_id": "tenant_a"},
 	}
@@ -1134,7 +1134,7 @@ func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 
 	// Test routing with labels only (no properties)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{},
 	}
@@ -1175,7 +1175,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 
 	// Test routing with int64 tenant_id
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"tenant_id": int64(123)},
 	}
@@ -1205,7 +1205,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 
 	// Test routing with int tenant_id
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"tenant_id": 456},
 	}
@@ -1235,7 +1235,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 
 	// Test routing with negative int64 tenant_id (tests negative hash handling)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"tenant_id": int64(-123)},
 	}
@@ -1265,7 +1265,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 
 	// Test routing with negative int tenant_id (tests negative hash handling)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"tenant_id": -456},
 	}
@@ -1296,7 +1296,7 @@ func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 	// Test routing with label that produces negative hash
 	// Use a label that will produce a negative hash value
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Z"}, // Single char that might produce negative hash
 		Properties: map[string]interface{}{},
 	}
@@ -1326,7 +1326,7 @@ func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 
 	// Test routing with no labels and no properties (should use default)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{},
 		Properties: nil,
 	}
@@ -1356,7 +1356,7 @@ func TestCompositeEngine_routeWrite_PropertiesWithoutTenantID(t *testing.T) {
 
 	// Test routing with properties but no tenant_id (should use default)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
@@ -1386,7 +1386,7 @@ func TestCompositeEngine_CreateNode_NoWritableConstituents(t *testing.T) {
 
 	// Try to create node (should fail - no writable constituents)
 	node := &Node{
-		ID:         NodeID("node1"),
+		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{},
 	}
@@ -1416,7 +1416,7 @@ func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to update non-existent node
-	node := &Node{ID: NodeID("nonexistent"), Labels: []string{"Person"}}
+	node := &Node{ID: NodeID(prefixTestID("nonexistent")), Labels: []string{"Person"}}
 	err := composite.UpdateNode(node)
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
@@ -1443,7 +1443,7 @@ func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to delete non-existent node
-	err := composite.DeleteNode(NodeID("nonexistent"))
+	err := composite.DeleteNode(NodeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1469,7 +1469,7 @@ func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to get non-existent edge
-	_, err := composite.GetEdge(EdgeID("nonexistent"))
+	_, err := composite.GetEdge(EdgeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1495,7 +1495,7 @@ func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to update non-existent edge
-	edge := &Edge{ID: EdgeID("nonexistent"), StartNode: NodeID("node1"), EndNode: NodeID("node2"), Type: "KNOWS"}
+	edge := &Edge{ID: EdgeID(prefixTestID("nonexistent")), StartNode: NodeID(prefixTestID("node1")), EndNode: NodeID(prefixTestID("node2")), Type: "KNOWS"}
 	err := composite.UpdateEdge(edge)
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
@@ -1522,7 +1522,7 @@ func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to delete non-existent edge
-	err := composite.DeleteEdge(EdgeID("nonexistent"))
+	err := composite.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1577,7 +1577,7 @@ func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Try to get edge between non-existent nodes
-	edge := composite.GetEdgeBetween(NodeID("node1"), NodeID("node2"), "KNOWS")
+	edge := composite.GetEdgeBetween(NodeID(prefixTestID("node1")), NodeID(prefixTestID("node2")), "KNOWS")
 	assert.Nil(t, edge)
 }
 
@@ -1587,8 +1587,8 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in first constituent
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 
@@ -1610,9 +1610,9 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 	// Create edge with non-existent start node (should route to first writable)
 	// But edge creation will fail because nodes don't exist
 	edge := &Edge{
-		ID:        EdgeID("edge1"),
-		StartNode: NodeID("nonexistent"),
-		EndNode:   NodeID("nonexistent2"),
+		ID:        EdgeID(prefixTestID("edge1")),
+		StartNode: NodeID(prefixTestID("nonexistent")),
+		EndNode:   NodeID(prefixTestID("nonexistent2")),
 		Type:      "KNOWS",
 	}
 
@@ -1627,8 +1627,8 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -1648,12 +1648,12 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Batch get nodes
-	nodes, err := composite.BatchGetNodes([]NodeID{node1.ID, node2.ID, NodeID("nonexistent")})
+	nodes, err := composite.BatchGetNodes([]NodeID{node1.ID, node2.ID, NodeID(prefixTestID("nonexistent"))})
 	require.NoError(t, err)
 	assert.Equal(t, 2, len(nodes))
 	assert.NotNil(t, nodes[node1.ID])
 	assert.NotNil(t, nodes[node2.ID])
-	assert.Nil(t, nodes[NodeID("nonexistent")])
+	assert.Nil(t, nodes[NodeID(prefixTestID("nonexistent"))])
 }
 
 func TestCompositeEngine_Close(t *testing.T) {
@@ -1687,8 +1687,8 @@ func TestCompositeEngine_NodeCount(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node2)
 
@@ -1719,12 +1719,12 @@ func TestCompositeEngine_EdgeCount(t *testing.T) {
 	engine2 := NewMemoryEngine()
 
 	// Create nodes and edges in different constituents
-	node1 := &Node{ID: NodeID("node1"), Labels: []string{"Person"}}
-	node2 := &Node{ID: NodeID("node2"), Labels: []string{"Person"}}
-	node3 := &Node{ID: NodeID("node3"), Labels: []string{"Person"}}
-	node4 := &Node{ID: NodeID("node4"), Labels: []string{"Person"}}
-	edge1 := &Edge{ID: EdgeID("edge1"), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	edge2 := &Edge{ID: EdgeID("edge2"), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
+	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
+	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
+	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
+	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
+	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
 	engine1.CreateNode(node1)
 	engine1.CreateNode(node2)
 	engine1.CreateEdge(edge1)

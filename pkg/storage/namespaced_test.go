@@ -15,7 +15,7 @@ func TestNamespacedEngine_BasicOperations(t *testing.T) {
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	assert.Equal(t, "tenant_a", tenantA.Namespace())
 
-	// Create a node
+	// Create a node (NamespacedEngine receives unprefixed IDs)
 	node := &Node{
 		ID:     NodeID("node-1"),
 		Labels: []string{"Person"},
@@ -26,7 +26,7 @@ func TestNamespacedEngine_BasicOperations(t *testing.T) {
 	_, err := tenantA.CreateNode(node)
 	require.NoError(t, err)
 
-	// Get the node back
+	// Get the node back (NamespacedEngine receives unprefixed IDs)
 	retrieved, err := tenantA.GetNode(NodeID("node-1"))
 	require.NoError(t, err)
 	assert.Equal(t, "node-1", string(retrieved.ID))
@@ -45,7 +45,7 @@ func TestNamespacedEngine_Isolation(t *testing.T) {
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	tenantB := NewNamespacedEngine(inner, "tenant_b")
 
-	// Create nodes in different tenants
+	// Create nodes in different tenants (NamespacedEngine receives unprefixed IDs)
 	nodeA := &Node{
 		ID:         NodeID("node-1"),
 		Labels:     []string{"Person"},
@@ -80,7 +80,7 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-	// Create two nodes
+	// Create two nodes (NamespacedEngine receives unprefixed IDs)
 	node1 := &Node{ID: NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID("n2"), Labels: []string{"Person"}}
 	_, err := tenantA.CreateNode(node1)
@@ -88,7 +88,7 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 	_, err = tenantA.CreateNode(node2)
 	require.NoError(t, err)
 
-	// Create edge
+	// Create edge (NamespacedEngine receives unprefixed IDs)
 	edge := &Edge{
 		ID:        EdgeID("e1"),
 		StartNode: NodeID("n1"),
@@ -101,14 +101,14 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 	err = tenantA.CreateEdge(edge)
 	require.NoError(t, err)
 
-	// Get edge back
+	// Get edge back (NamespacedEngine receives unprefixed IDs)
 	retrieved, err := tenantA.GetEdge(EdgeID("e1"))
 	require.NoError(t, err)
 	assert.Equal(t, "n1", string(retrieved.StartNode))
 	assert.Equal(t, "n2", string(retrieved.EndNode))
 	assert.Equal(t, "KNOWS", retrieved.Type)
 
-	// Get outgoing edges
+	// Get outgoing edges (NamespacedEngine receives unprefixed IDs)
 	outgoing, err := tenantA.GetOutgoingEdges(NodeID("n1"))
 	require.NoError(t, err)
 	assert.Len(t, outgoing, 1)
@@ -182,7 +182,7 @@ func TestNamespacedEngine_Stats(t *testing.T) {
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-	// Create nodes and edges
+	// Create nodes and edges (NamespacedEngine receives unprefixed IDs)
 	node1 := &Node{ID: NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID("n2"), Labels: []string{"Person"}}
 	_, err := tenantA.CreateNode(node1)
@@ -215,7 +215,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-	// Bulk create nodes
+	// Bulk create nodes (NamespacedEngine receives unprefixed IDs)
 	nodes := []*Node{
 		{ID: NodeID("n1"), Labels: []string{"Person"}},
 		{ID: NodeID("n2"), Labels: []string{"Person"}},
@@ -229,7 +229,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, allNodes, 3)
 
-	// Bulk delete
+	// Bulk delete (NamespacedEngine receives unprefixed IDs)
 	err = tenantA.BulkDeleteNodes([]NodeID{NodeID("n1"), NodeID("n2")})
 	require.NoError(t, err)
 
@@ -250,8 +250,8 @@ func TestNamespacedEngine_Close(t *testing.T) {
 	err := tenantA.Close()
 	require.NoError(t, err)
 
-	// Underlying engine should still work
-	node := &Node{ID: NodeID("test"), Labels: []string{"Test"}}
+	// Underlying engine should still work (direct access to inner engine needs prefixed IDs)
+	node := &Node{ID: NodeID("test:test"), Labels: []string{"Test"}}
 	_, err = inner.CreateNode(node)
 	require.NoError(t, err)
 }

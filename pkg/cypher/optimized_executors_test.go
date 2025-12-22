@@ -16,7 +16,9 @@ import (
 
 // setupSocialNetwork creates a test social network for optimization tests
 func setupSocialNetwork(t *testing.T) *StorageExecutor {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -61,7 +63,9 @@ func setupSocialNetwork(t *testing.T) *StorageExecutor {
 
 // setupReviewedProducts creates products with reviews for edge property aggregation tests
 func setupReviewedProducts(t *testing.T) *StorageExecutor {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -564,7 +568,9 @@ func TestIntegration_EdgeAggViaExecute(t *testing.T) {
 // =============================================================================
 
 func TestOptimized_EmptyDatabase(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -619,7 +625,9 @@ func TestOptimized_ZeroLimit(t *testing.T) {
 // =============================================================================
 
 func TestGetNodeCached(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -650,7 +658,9 @@ func TestGetNodeCached(t *testing.T) {
 }
 
 func TestGetPropertyString(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
 	node := &storage.Node{
@@ -670,7 +680,9 @@ func TestGetPropertyString(t *testing.T) {
 }
 
 func TestBatchGetNodes(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -701,7 +713,9 @@ func TestBatchGetNodes(t *testing.T) {
 // =============================================================================
 
 func setupLargeNetwork(t *testing.T, nodeCount int) *StorageExecutor {
-	store := storage.NewMemoryEngine()
+	baseStore := storage.NewMemoryEngine()
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 

@@ -72,7 +72,7 @@ func TestAsyncEngine_NodeCacheLimit_TriggersFlush(t *testing.T) {
 	// Create 15 nodes - should trigger at least one flush
 	for i := 0; i < 15; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestAsyncEngine_EdgeCacheLimit_TriggersFlush(t *testing.T) {
 	// Create source and target nodes first
 	for i := 0; i < 20; i++ {
 		_, err := engine.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -119,9 +119,9 @@ func TestAsyncEngine_EdgeCacheLimit_TriggersFlush(t *testing.T) {
 	// Create 15 edges - should trigger at least one flush
 	for i := 0; i < 15; i++ {
 		err := async.CreateEdge(&Edge{
-			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
-			StartNode: NodeID(fmt.Sprintf("node-%d", i)),
-			EndNode:   NodeID(fmt.Sprintf("node-%d", i+1)),
+			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
+			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
+			EndNode:   NodeID(prefixTestID(fmt.Sprintf("node-%d", i+1))),
 			Type:      "KNOWS",
 		})
 		require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestAsyncEngine_ZeroCacheSize_NoAutoFlush(t *testing.T) {
 	// Create 100 nodes - should NOT trigger any flush
 	for i := 0; i < 100; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestAsyncEngine_FlushInterval_Configurable(t *testing.T) {
 
 	// Create a node
 	_, err := async.CreateNode(&Node{
-		ID:     NodeID("test-node"),
+		ID:     NodeID(prefixTestID("test-node")),
 		Labels: []string{"Test"},
 	})
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestAsyncEngine_CacheLimit_ExactBoundary(t *testing.T) {
 	// Create exactly cacheLimit nodes - should NOT trigger flush yet
 	for i := 0; i < cacheLimit; i++ {
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -298,7 +298,7 @@ func TestAsyncEngine_CacheLimit_ExactBoundary(t *testing.T) {
 
 	// One more node should trigger flush
 	_, err := async.CreateNode(&Node{
-		ID:     NodeID("node-trigger"),
+		ID:     NodeID(prefixTestID("node-trigger")),
 		Labels: []string{"Test"},
 	})
 	require.NoError(t, err)
@@ -337,7 +337,7 @@ func TestAsyncEngine_MultipleFlushes_CacheLimit(t *testing.T) {
 		async.mu.RUnlock()
 
 		_, err := async.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)

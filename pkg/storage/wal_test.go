@@ -362,7 +362,8 @@ func TestReplayWALEntry(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("replay_create_node", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		baseEngine := NewMemoryEngine()
+		engine := NewNamespacedEngine(baseEngine, "test")
 		entry := WALEntry{
 			Sequence:  1,
 			Operation: OpCreateNode,
@@ -379,7 +380,8 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_update_node", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		baseEngine := NewMemoryEngine()
+		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
 
 		entry := WALEntry{
@@ -405,7 +407,8 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_delete_node", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		baseEngine := NewMemoryEngine()
+		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
 
 		entry := WALEntry{
@@ -423,7 +426,8 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_create_edge", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		baseEngine := NewMemoryEngine()
+		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1"})
 		engine.CreateNode(&Node{ID: "n2"})
 
@@ -443,7 +447,8 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_bulk_nodes", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		baseEngine := NewMemoryEngine()
+		engine := NewNamespacedEngine(baseEngine, "test")
 		nodes := []*Node{
 			{ID: "b1", Labels: []string{"Bulk"}},
 			{ID: "b2", Labels: []string{"Bulk"}},
@@ -933,7 +938,7 @@ func TestBatchWriter_Commit(t *testing.T) {
 
 	// Add entries
 	for i := 0; i < 5; i++ {
-		node := &Node{ID: NodeID(fmt.Sprintf("commit-n%d", i)), Labels: []string{"Test"}}
+		node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("commit-n%d", i))), Labels: []string{"Test"}}
 		err = batch.AppendNode(OpCreateNode, node)
 		require.NoError(t, err)
 	}
@@ -960,7 +965,7 @@ func TestBatchWriter_Rollback(t *testing.T) {
 
 	// Add entries
 	for i := 0; i < 3; i++ {
-		node := &Node{ID: NodeID(fmt.Sprintf("rollback-n%d", i)), Labels: []string{"Test"}}
+		node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("rollback-n%d", i))), Labels: []string{"Test"}}
 		batch.AppendNode(OpCreateNode, node)
 	}
 
@@ -1018,7 +1023,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add entries before snapshot
 		for i := 1; i <= 5; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"BeforeSnapshot"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"BeforeSnapshot"}}
 			engine.CreateNode(node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
@@ -1034,7 +1039,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add entries after snapshot
 		for i := 6; i <= 10; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"AfterSnapshot"}}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"AfterSnapshot"}}
 			engine.CreateNode(node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
@@ -1085,7 +1090,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add 100 nodes
 		for i := 1; i <= 100; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			engine.CreateNode(node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
@@ -1097,7 +1102,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add 50 more nodes
 		for i := 101; i <= 150; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			engine.CreateNode(node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
@@ -1150,7 +1155,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add nodes
 		for i := 1; i <= 10; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			engine.CreateNode(node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
@@ -1208,7 +1213,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 		// Add many nodes to WAL
 		for i := 1; i <= 50; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			walEngine.CreateNode(node)
 		}
 
@@ -1233,7 +1238,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 		// Add more nodes after first compaction
 		for i := 51; i <= 100; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			walEngine.CreateNode(node)
 		}
 
@@ -1251,7 +1256,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 		// Verify all nodes are still accessible (data not lost)
 		for i := 1; i <= 100; i++ {
-			node, err := walEngine.GetNode(NodeID(fmt.Sprintf("n%d", i)))
+			node, err := walEngine.GetNode(NodeID(prefixTestID(fmt.Sprintf("n%d", i))))
 			assert.NoError(t, err)
 			assert.NotNil(t, node)
 		}
@@ -1281,7 +1286,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 			// Create nodes
 			for i := 1; i <= 100; i++ {
-				node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 				walEngine.CreateNode(node)
 			}
 
@@ -1349,7 +1354,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 		// Add nodes
 		for i := 1; i <= 20; i++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("n%d", i))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
 			walEngine.CreateNode(node)
 		}
 
@@ -1401,7 +1406,7 @@ func BenchmarkBatchWriter_Commit(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		batch := wal.NewBatch()
 		for j := 0; j < 100; j++ {
-			node := &Node{ID: NodeID(fmt.Sprintf("bench-n%d-%d", i, j))}
+			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("bench-n%d-%d", i, j)))}
 			batch.AppendNode(OpCreateNode, node)
 		}
 		batch.Commit()
@@ -1430,7 +1435,7 @@ func TestWALEngine_StreamNodes(t *testing.T) {
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
 		_, err := walEngine.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -1478,7 +1483,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 	// Create nodes first
 	for i := 0; i < 10; i++ {
 		_, err := walEngine.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -1487,9 +1492,9 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 	// Create edges
 	for i := 0; i < 50; i++ {
 		err := walEngine.CreateEdge(&Edge{
-			ID:        EdgeID(fmt.Sprintf("edge-%d", i)),
+			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
 			Type:      "CONNECTS",
-			StartNode: NodeID(fmt.Sprintf("node-%d", i%10)),
+			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i%10))),
 			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%10)),
 		})
 		require.NoError(t, err)
@@ -1537,7 +1542,7 @@ func TestWALEngine_StreamNodeChunks(t *testing.T) {
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
 		_, err := walEngine.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
 		require.NoError(t, err)
@@ -1606,7 +1611,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 	// Create 100 nodes through the full chain
 	for i := 0; i < 100; i++ {
 		_, err := asyncEngine.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("chain-node-%d", i)),
+			ID:     NodeID(prefixTestID(fmt.Sprintf("chain-node-%d", i))),
 			Labels: []string{"ChainTest"},
 		})
 		require.NoError(t, err)
