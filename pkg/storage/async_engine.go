@@ -455,6 +455,8 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) error {
 
 	// Exists in cache (including nodes created/updated but not yet flushed).
 	if _, ok := ae.nodeCache[node.ID]; ok {
+		// Important: do NOT mark this as an update here. If the node is a pending create
+		// (not yet flushed), it must still count as a create for NodeCount/EdgeCount.
 		ae.nodeCache[node.ID] = node
 		ae.pendingWrites++
 		return nil
@@ -462,6 +464,9 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) error {
 
 	// In-flight nodes will exist in the underlying engine after flush; allow update.
 	if ae.inFlightNodes[node.ID] {
+		// This is an update to an existing node (at minimum, it will exist after the in-flight write).
+		// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
+		ae.updateNodes[node.ID] = true
 		ae.nodeCache[node.ID] = node
 		ae.pendingWrites++
 		return nil
@@ -472,6 +477,9 @@ func (ae *AsyncEngine) UpdateNodeEmbedding(node *Node) error {
 		return ErrNotFound
 	}
 
+	// Node exists in the underlying engine, so this is an update.
+	// Mark as update so NodeCount doesn't temporarily treat it as a pending create.
+	ae.updateNodes[node.ID] = true
 	ae.nodeCache[node.ID] = node
 	ae.pendingWrites++
 	return nil
