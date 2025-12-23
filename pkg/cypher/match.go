@@ -4754,7 +4754,13 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 		// Use streaming with early termination for LIMIT queries
 		nodes = make([]*storage.Node, 0, limit)
 		if streamer, ok := e.storage.(storage.StreamingEngine); ok {
+			hideSystemNodes := shouldHideSystemNodes(e.storage)
 			err = streamer.StreamNodes(ctx, func(node *storage.Node) error {
+				// Skip system nodes (labels starting with _)
+				if hideSystemNodes && isSystemNode(node) {
+					return nil
+				}
+
 				// Check label filter
 				if len(labels) > 0 {
 					hasLabel := false
@@ -4797,12 +4803,44 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 		return nil, err
 	}
 
+	// Filter out system nodes (labels starting with _)
+	hideSystemNodes := shouldHideSystemNodes(e.storage)
+	filteredNodes := make([]*storage.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if !hideSystemNodes || !isSystemNode(node) {
+			filteredNodes = append(filteredNodes, node)
+		}
+	}
+	nodes = filteredNodes
+
 	// Apply property filters
 	if len(properties) > 0 {
 		nodes = e.filterNodesByProperties(nodes, properties)
 	}
 
 	return nodes, nil
+}
+
+func shouldHideSystemNodes(engine storage.Engine) bool {
+	// Allow system nodes to be queried when the active database is system.
+	// For all other databases, hide internal nodes (labels starting with "_")
+	// to avoid leaking metadata into normal user queries.
+	if namespaced, ok := engine.(*storage.NamespacedEngine); ok {
+		return namespaced.Namespace() != "system"
+	}
+	return true
+}
+
+func isSystemNode(node *storage.Node) bool {
+	if node == nil {
+		return false
+	}
+	for _, label := range node.Labels {
+		if strings.HasPrefix(label, "_") {
+			return true
+		}
+	}
+	return false
 }
 
 // executeCartesianProductMatch handles MATCH queries with multiple comma-separated node patterns.

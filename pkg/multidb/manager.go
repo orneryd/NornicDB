@@ -7,6 +7,7 @@ package multidb
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +118,24 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	if config == nil {
 		config = DefaultConfig()
 	}
+	// DatabaseManager requires an un-namespaced base engine. It creates NamespacedEngines
+	// per database. Passing a NamespacedEngine here would double-prefix IDs and can
+	// leak system metadata into the default database (e.g., "nornic:system:...").
+	if _, ok := inner.(*storage.NamespacedEngine); ok {
+		return nil, fmt.Errorf("multidb: NewDatabaseManager requires base storage (non-namespaced); pass db.GetBaseStorageForManager()")
+	}
+	// Ensure callers can't accidentally make the system database the default.
+	// Neo4j reserves the system database for metadata and administration commands.
+	if config.SystemDatabase == "" {
+		config.SystemDatabase = "system"
+	}
+	if config.DefaultDatabase == "" {
+		config.DefaultDatabase = "nornic"
+	}
+	if config.DefaultDatabase == config.SystemDatabase {
+		log.Printf("⚠️  multidb: default database %q matches system database; forcing default to %q", config.DefaultDatabase, "nornic")
+		config.DefaultDatabase = "nornic"
+	}
 
 	m := &DatabaseManager{
 		inner:     inner,
@@ -141,6 +160,12 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		return nil, fmt.Errorf("failed to migrate legacy data: %w", err)
 	}
 
+	// Cleanup: if a previous run mistakenly constructed DatabaseManager with a
+	// NamespacedEngine, system metadata nodes may have been stored under the default
+	// namespace as "defaultDb:system:<...>". Remove those leaked nodes so normal
+	// queries against the default database don't show system internals.
+	m.cleanupLeakedSystemNodes()
+
 	// Ensure all nodes in default database have db property
 	// This is idempotent and helps with queries that filter by db property
 	// Runs on every startup to catch any nodes that might have been created without the property
@@ -150,6 +175,65 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	}
 
 	return m, nil
+}
+
+func (m *DatabaseManager) cleanupLeakedSystemNodes() {
+	systemPrefix := m.config.SystemDatabase + ":"
+	if m.config.SystemDatabase == "" {
+		systemPrefix = "system:"
+	}
+
+	// Only target known system-internal nodes (metadata, migration, users) that
+	// should never live in user databases.
+	isLeak := func(node *storage.Node) bool {
+		if node == nil {
+			return false
+		}
+		id := string(node.ID)
+		if !strings.HasPrefix(id, systemPrefix) {
+			return false
+		}
+		hasSystemLabel := false
+		for _, label := range node.Labels {
+			if label == "_System" {
+				hasSystemLabel = true
+				break
+			}
+		}
+		if !hasSystemLabel {
+			return false
+		}
+		// Restrict deletions to well-known internal namespaces.
+		return id == systemPrefix+"databases:metadata" ||
+			strings.HasPrefix(id, systemPrefix+"migration:") ||
+			strings.HasPrefix(id, systemPrefix+"user:")
+	}
+
+	removed := 0
+	for dbName, info := range m.databases {
+		if info == nil {
+			continue
+		}
+		if dbName == m.config.SystemDatabase {
+			continue
+		}
+		engine := storage.NewNamespacedEngine(m.inner, dbName)
+		nodes, err := engine.AllNodes()
+		if err != nil {
+			continue
+		}
+		for _, node := range nodes {
+			if !isLeak(node) {
+				continue
+			}
+			if err := engine.DeleteNode(node.ID); err == nil {
+				removed++
+			}
+		}
+	}
+	if removed > 0 {
+		log.Printf("🧹 multidb: removed %d leaked system nodes from user databases", removed)
+	}
 }
 
 // ensureSystemDatabases creates system and default databases if they don't exist.
@@ -405,6 +489,10 @@ func (m *DatabaseManager) Exists(name string) bool {
 
 // DefaultDatabaseName returns the default database name.
 func (m *DatabaseManager) DefaultDatabaseName() string {
+	// Never advertise the system database as the default.
+	if m.config.DefaultDatabase == m.config.SystemDatabase {
+		return "nornic"
+	}
 	return m.config.DefaultDatabase
 }
 

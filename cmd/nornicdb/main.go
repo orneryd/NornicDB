@@ -455,7 +455,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize DatabaseManager for multi-database support (needed for user storage)
-	storageEngine := db.GetStorage()
+	storageEngine := db.GetBaseStorageForManager()
 	globalConfig := config.LoadFromEnv()
 	multiDBConfig := &multidb.Config{
 		DefaultDatabase:  globalConfig.Database.DefaultDatabase,

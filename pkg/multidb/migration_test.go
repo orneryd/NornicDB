@@ -17,10 +17,7 @@ import (
 //  3. Verify migrated data is accessible through default database
 //  4. Verify all properties and relationships are preserved
 func TestMigration_LegacyDataMigration(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Step 1: Create unprefixed data (simulate old version)
 	// Directly create nodes/edges without namespace prefix
@@ -111,10 +108,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 // TestMigration_NoUnprefixedData verifies that migration is skipped
 // when there's no unprefixed data (fresh installation).
 func TestMigration_NoUnprefixedData(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create DatabaseManager with fresh storage (no unprefixed data)
 	manager, err := NewDatabaseManager(inner, nil)
@@ -144,10 +138,7 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 // TestMigration_AlreadyPrefixedData verifies that migration doesn't
 // affect data that already has namespace prefixes (already migrated).
 func TestMigration_AlreadyPrefixedData(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create data with namespace prefix (simulating already-migrated data)
 	prefixedNode := &storage.Node{
@@ -181,10 +172,7 @@ func TestMigration_AlreadyPrefixedData(t *testing.T) {
 
 // TestMigration_MixedData verifies migration handles mix of prefixed and unprefixed data.
 func TestMigration_MixedData(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create mix of prefixed and unprefixed data
 	unprefixedNode := &storage.Node{
@@ -240,10 +228,7 @@ func TestMigration_MixedData(t *testing.T) {
 // TestMigration_NoMigrationOnSecondStart verifies that migration
 // doesn't run again if already completed (idempotency).
 func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// First startup - create unprefixed data and migrate
 	oldNode := &storage.Node{
@@ -281,10 +266,7 @@ func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
 // TestMigration_EdgeRelationshipsPreserved verifies that edge relationships
 // are correctly maintained after migration (both start and end nodes prefixed).
 func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create unprefixed nodes and edge
 	node1 := &storage.Node{
@@ -341,10 +323,7 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 // TestMigration_LabelIndexesPreserved verifies that label indexes
 // are correctly maintained after migration.
 func TestMigration_LabelIndexesPreserved(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create unprefixed nodes with labels
 	node1 := &storage.Node{
@@ -396,10 +375,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 // TestMigration_CustomDefaultDatabase verifies migration works with
 // custom default database names.
 func TestMigration_CustomDefaultDatabase(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create unprefixed data
 	oldNode := &storage.Node{
@@ -434,10 +410,7 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 
 // TestMigration_AddsDbProperty verifies that migrated nodes get the db property set
 func TestMigration_AddsDbProperty(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	// Create unprefixed node (simulating pre-multi-db data)
 	oldNode := &storage.Node{
@@ -482,10 +455,7 @@ func TestMigration_AddsDbProperty(t *testing.T) {
 
 // TestEnsureDefaultDatabaseProperty verifies that ensureDefaultDatabaseProperty adds db property
 func TestEnsureDefaultDatabaseProperty(t *testing.T) {
-	baseInner := storage.NewMemoryEngine()
-
-	inner := storage.NewNamespacedEngine(baseInner, "test")
-	defer inner.Close()
+	inner := newLegacyTestEngine()
 
 	config := &Config{
 		DefaultDatabase:  "nornic",
