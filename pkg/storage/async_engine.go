@@ -59,7 +59,7 @@ type AsyncEngine struct {
 	totalFlushes  int64
 
 	// Flush mutex prevents concurrent flushes (race condition fix)
-	flushMu sync.Mutex
+	flushMu sync.RWMutex
 }
 
 // AsyncEngineConfig configures the async engine behavior.
@@ -1044,6 +1044,16 @@ func (ae *AsyncEngine) GetSchema() *SchemaManager {
 }
 
 func (ae *AsyncEngine) NodeCount() (int64, error) {
+	// Prevent double-counting during flush I/O:
+	// Flush holds flushMu.Lock() across the entire flush (including engine writes).
+	// By taking a read lock, NodeCount sees either:
+	//   - pre-flush state (cache populated, engine not yet updated), or
+	//   - post-flush state (cache cleared, engine updated),
+	// but never the mixed mid-flush state where engine reflects writes while cache
+	// still contains in-flight items.
+	ae.flushMu.RLock()
+	defer ae.flushMu.RUnlock()
+
 	// Hold lock during entire operation to get consistent count
 	// This prevents race with flush which clears cache before writing to engine
 	ae.mu.RLock()
@@ -1093,6 +1103,9 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 }
 
 func (ae *AsyncEngine) EdgeCount() (int64, error) {
+	ae.flushMu.RLock()
+	defer ae.flushMu.RUnlock()
+
 	// Hold lock during entire operation to get consistent count
 	// This prevents race with flush which clears cache before writing to engine
 	ae.mu.RLock()
@@ -1137,6 +1150,9 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 }
 
 func (ae *AsyncEngine) NodeCountByPrefix(prefix string) (int64, error) {
+	ae.flushMu.RLock()
+	defer ae.flushMu.RUnlock()
+
 	// Keep same consistency semantics as NodeCount(): hold lock across engine read.
 	ae.mu.RLock()
 
@@ -1190,6 +1206,9 @@ func (ae *AsyncEngine) NodeCountByPrefix(prefix string) (int64, error) {
 }
 
 func (ae *AsyncEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+	ae.flushMu.RLock()
+	defer ae.flushMu.RUnlock()
+
 	ae.mu.RLock()
 
 	pendingCreates := int64(0)

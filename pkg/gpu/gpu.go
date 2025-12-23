@@ -1501,7 +1501,7 @@ func (ei *EmbeddingIndex) Search(query []float32, k int) ([]SearchResult, error)
 	}
 
 	// Use GPU if enabled and synced
-	if ei.manager.IsEnabled() && ei.gpuSynced {
+	if ei.manager != nil && ei.manager.IsEnabled() && ei.gpuSynced {
 		return ei.searchGPU(query, k)
 	}
 
@@ -1511,6 +1511,10 @@ func (ei *EmbeddingIndex) Search(query []float32, k int) ([]SearchResult, error)
 // searchGPU performs similarity search on GPU.
 func (ei *EmbeddingIndex) searchGPU(query []float32, k int) ([]SearchResult, error) {
 	atomic.AddInt64(&ei.searchesGPU, 1)
+
+	if ei.manager == nil {
+		return ei.searchCPU(query, k)
+	}
 
 	// Determine which backend to use
 	if ei.manager.device != nil {
@@ -1552,13 +1556,17 @@ func (ei *EmbeddingIndex) searchCUDA(query []float32, k int) ([]SearchResult, er
 
 	if err != nil {
 		// Fall back to CPU on GPU error
-		atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
 		return ei.searchCPU(query, k)
 	}
 
 	// Update stats
-	atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
-	atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	}
 
 	// Convert CUDA results to SearchResult with nodeIDs
 	output := make([]SearchResult, len(results))
@@ -1614,13 +1622,17 @@ func (ei *EmbeddingIndex) searchVulkan(query []float32, k int) ([]SearchResult, 
 
 	if err != nil {
 		// Fall back to CPU on GPU error
-		atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
 		return ei.searchCPU(query, k)
 	}
 
 	// Update stats
-	atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
-	atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	}
 
 	// Convert Vulkan results to SearchResult with nodeIDs
 	output := make([]SearchResult, len(results))
@@ -1661,13 +1673,17 @@ func (ei *EmbeddingIndex) searchMetal(query []float32, k int) ([]SearchResult, e
 
 	if err != nil {
 		// Fall back to CPU on GPU error
-		atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
 		return ei.searchCPU(query, k)
 	}
 
 	// Update stats
-	atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
-	atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2) // similarity + topk
+	}
 
 	// Convert Metal results to SearchResult with nodeIDs
 	output := make([]SearchResult, len(results))
@@ -1726,7 +1742,7 @@ func (ei *EmbeddingIndex) searchCPU(query []float32, k int) ([]SearchResult, err
 
 // SyncToGPU uploads the current embeddings to GPU memory.
 func (ei *EmbeddingIndex) SyncToGPU() error {
-	if !ei.manager.IsEnabled() {
+	if ei.manager == nil || !ei.manager.IsEnabled() {
 		return ErrGPUDisabled
 	}
 
@@ -1795,7 +1811,9 @@ func (ei *EmbeddingIndex) syncToCUDA() error {
 	ei.gpuSynced = true
 	atomic.AddInt64(&ei.uploadsCount, 1)
 	atomic.AddInt64(&ei.uploadBytes, int64(ei.gpuAllocated))
-	atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(ei.gpuAllocated))
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(ei.gpuAllocated))
+	}
 
 	return nil
 }
@@ -1860,7 +1878,9 @@ func (ei *EmbeddingIndex) syncToVulkan() error {
 	ei.gpuSynced = true
 	atomic.AddInt64(&ei.uploadsCount, 1)
 	atomic.AddInt64(&ei.uploadBytes, int64(ei.gpuAllocated))
-	atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(ei.gpuAllocated))
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(ei.gpuAllocated))
+	}
 
 	return nil
 }
@@ -1895,7 +1915,9 @@ func (ei *EmbeddingIndex) syncToMetal() error {
 	ei.uploadBytes += int64(len(ei.cpuVectors) * 4)
 
 	// Update manager stats
-	atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(len(ei.cpuVectors)*4))
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.BytesTransferred, int64(len(ei.cpuVectors)*4))
+	}
 
 	return nil
 }

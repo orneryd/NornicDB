@@ -141,7 +141,7 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 }
 
 // getCypherExecutor returns the Cypher executor using the specified database's namespaced storage.
-// If database is empty, uses "nornic" as the default database (NornicDB's standard default).
+// If database is empty, uses the configured default database (typically "nornic").
 func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cypher.StorageExecutor, error) {
 	var storage storage.Engine
 	var err error
@@ -153,10 +153,12 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 			return nil, fmt.Errorf("database '%s' not found: %w", database, err)
 		}
 	} else {
-		// Always default to "nornic" if not specified (NornicDB's standard default database)
-		storage, err = r.dbManager.GetStorage("nornic")
+		// Use the configured default database (typically "nornic")
+		// This ensures queries without a database parameter only see nodes from the default database
+		defaultDBName := r.dbManager.DefaultDatabaseName()
+		storage, err = r.dbManager.GetStorage(defaultDBName)
 		if err != nil {
-			return nil, fmt.Errorf("default database 'nornic' not found: %w", err)
+			return nil, fmt.Errorf("default database '%s' not found: %w", defaultDBName, err)
 		}
 	}
 
