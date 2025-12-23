@@ -560,8 +560,7 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 	baseEngine := storage.NewMemoryEngine()
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	asyncEngine := storage.NewAsyncEngine(engine, nil)
-	executor := NewStorageExecutor(asyncEngine)
+	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
 	// Create 100 actors (like real benchmark)
@@ -578,7 +577,7 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 			t.Fatalf("Failed to create movie %d: %v", i, err)
 		}
 	}
-	asyncEngine.Flush()
+	// No async flush needed when using direct engine
 
 	// Verify data was created
 	actorCount, _ := executor.Execute(ctx, "MATCH (a:Actor) RETURN count(a) as c", nil)
@@ -642,7 +641,6 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Iteration %d failed: %v", i, err)
 		}
-		asyncEngine.Flush()
 	}
 	elapsed := time.Since(start)
 

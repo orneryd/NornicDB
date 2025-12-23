@@ -62,17 +62,17 @@ func TestLabelRouting_RouteWrite(t *testing.T) {
 }
 
 func TestPropertyRouting(t *testing.T) {
-	routing := NewPropertyRouting("tenant_id")
+	routing := NewPropertyRouting("database_id")
 
 	// Set up routing rules
-	routing.SetPropertyRouting("tenant_a", "db1")
-	routing.SetPropertyRouting("tenant_b", "db2")
+	routing.SetPropertyRouting("db_a", "db1")
+	routing.SetPropertyRouting("db_b", "db2")
 	routing.SetDefaultConstituent("db3")
 
 	// Test routing with matching property
 	queryInfo := &QueryInfo{
 		Properties: map[string]interface{}{
-			"tenant_id": "tenant_a",
+			"database_id": "db_a",
 		},
 	}
 	result := routing.RouteQuery(queryInfo)
@@ -82,7 +82,7 @@ func TestPropertyRouting(t *testing.T) {
 	// Test routing with default
 	queryInfo = &QueryInfo{
 		Properties: map[string]interface{}{
-			"tenant_id": "unknown",
+			"database_id": "unknown",
 		},
 	}
 	result = routing.RouteQuery(queryInfo)
@@ -97,11 +97,11 @@ func TestPropertyRouting(t *testing.T) {
 	assert.Nil(t, result) // nil means full scan
 
 	// Test routing with property not in map and no default
-	routing2 := NewPropertyRouting("tenant_id")
-	routing2.SetPropertyRouting("tenant_a", "db1")
+	routing2 := NewPropertyRouting("database_id")
+	routing2.SetPropertyRouting("db_a", "db1")
 	queryInfo = &QueryInfo{
 		Properties: map[string]interface{}{
-			"tenant_id": "unknown",
+			"database_id": "unknown",
 		},
 	}
 	result = routing2.RouteQuery(queryInfo)
@@ -109,21 +109,21 @@ func TestPropertyRouting(t *testing.T) {
 }
 
 func TestPropertyRouting_RouteWrite(t *testing.T) {
-	routing := NewPropertyRouting("tenant_id")
+	routing := NewPropertyRouting("database_id")
 
 	// Set up routing rules
-	routing.SetPropertyRouting("tenant_a", "db1")
+	routing.SetPropertyRouting("db_a", "db1")
 	routing.SetDefaultConstituent("db2")
 
 	// Test write routing with matching property
 	result := routing.RouteWrite("create", []string{}, map[string]interface{}{
-		"tenant_id": "tenant_a",
+		"database_id": "db_a",
 	})
 	assert.Equal(t, "db1", result)
 
 	// Test write routing with default
 	result = routing.RouteWrite("create", []string{}, map[string]interface{}{
-		"tenant_id": "unknown",
+		"database_id": "unknown",
 	})
 	assert.Equal(t, "db2", result)
 
@@ -156,8 +156,8 @@ func TestCompositeRouting(t *testing.T) {
 	composite.AddStrategy(labelRouting)
 
 	// Add property routing strategy
-	propertyRouting := NewPropertyRouting("tenant_id")
-	propertyRouting.SetPropertyRouting("tenant_a", "db2")
+	propertyRouting := NewPropertyRouting("database_id")
+	propertyRouting.SetPropertyRouting("db_a", "db2")
 	composite.AddStrategy(propertyRouting)
 
 	// Test with label (should use label routing)
@@ -171,7 +171,7 @@ func TestCompositeRouting(t *testing.T) {
 	// Test with property (should use property routing)
 	queryInfo = &QueryInfo{
 		Properties: map[string]interface{}{
-			"tenant_id": "tenant_a",
+			"database_id": "db_a",
 		},
 	}
 	result = composite.RouteQuery(queryInfo)

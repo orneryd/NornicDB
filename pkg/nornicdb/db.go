@@ -439,6 +439,7 @@ type DB struct {
 
 	// Internal components
 	storage        storage.Engine // Namespaced storage for default database (all DB operations use this)
+	baseStorage    storage.Engine // Underlying storage chain (must be closed to release Badger/WAL locks)
 	wal            *storage.WAL   // Write-ahead log for durability
 	decay          *decay.Manager
 	inference      *inference.Engine
@@ -874,6 +875,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync)\n", dataDir)
 		}
 
+		// Track the underlying storage chain so Close() can release Badger directory locks.
+		db.baseStorage = baseStorage
+
 		// Wrap base storage with NamespacedEngine for the default database ("nornic")
 		// This ensures everything uses namespaced storage - no direct base storage access
 		// Get default database name from global config (same as server does)
@@ -887,6 +891,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	} else {
 		baseStorage := storage.NewMemoryEngine()
 		fmt.Println("⚠️  Using in-memory storage (data will not persist)")
+
+		// Track the underlying storage chain so Close() can cleanly shut down goroutines/locks.
+		db.baseStorage = baseStorage
 
 		// Wrap in-memory storage with NamespacedEngine for consistency
 		// Get default database name from global config (same as server does)
@@ -1022,6 +1029,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Storage is the single source of truth - it notifies when changes happen
 	// The storage chain can be: AsyncEngine -> WALEngine -> BadgerEngine
 	var underlyingEngine storage.Engine = db.storage
+	namespacePrefix := ""
+
+	// Unwrap NamespacedEngine first so we can:
+	//  1) Reach the underlying engine that emits events (BadgerEngine)
+	//  2) Filter/unprefix events to this DB's namespace for search indexing
+	if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
+		namespacePrefix = namespacedEngine.Namespace() + ":"
+		underlyingEngine = namespacedEngine.GetInnerEngine()
+	}
 
 	// Unwrap AsyncEngine if present
 	if asyncEngine, ok := underlyingEngine.(*storage.AsyncEngine); ok {
@@ -1035,9 +1051,32 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Set callbacks on the actual storage engine (BadgerEngine which implements StorageEventNotifier)
 	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
+		unprefixNodeID := func(id storage.NodeID) storage.NodeID {
+			if namespacePrefix == "" {
+				return id
+			}
+			s := string(id)
+			if strings.HasPrefix(s, namespacePrefix) {
+				return storage.NodeID(strings.TrimPrefix(s, namespacePrefix))
+			}
+			return id
+		}
+
+		filterInNamespace := func(id storage.NodeID) bool {
+			if namespacePrefix == "" {
+				return true
+			}
+			return strings.HasPrefix(string(id), namespacePrefix)
+		}
+
 		// When a node is created, automatically index it for search
 		notifier.OnNodeCreated(func(node *storage.Node) {
-			if err := db.searchService.IndexNode(node); err != nil {
+			if node == nil || !filterInNamespace(node.ID) {
+				return
+			}
+			userNode := storage.CopyNode(node)
+			userNode.ID = unprefixNodeID(userNode.ID)
+			if err := db.searchService.IndexNode(userNode); err != nil {
 				// Log but don't fail - search indexing is best-effort
 				fmt.Printf("⚠️  Failed to index node %s: %v\n", node.ID, err)
 			}
@@ -1045,14 +1084,23 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 		// When a node is updated, re-index it for search
 		notifier.OnNodeUpdated(func(node *storage.Node) {
-			if err := db.searchService.IndexNode(node); err != nil {
+			if node == nil || !filterInNamespace(node.ID) {
+				return
+			}
+			userNode := storage.CopyNode(node)
+			userNode.ID = unprefixNodeID(userNode.ID)
+			if err := db.searchService.IndexNode(userNode); err != nil {
 				fmt.Printf("⚠️  Failed to re-index node %s: %v\n", node.ID, err)
 			}
 		})
 
 		// When a node is deleted, remove it from search indexes
 		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
-			if err := db.searchService.RemoveNode(nodeID); err != nil {
+			if !filterInNamespace(nodeID) {
+				return
+			}
+			userID := unprefixNodeID(nodeID)
+			if err := db.searchService.RemoveNode(userID); err != nil {
 				fmt.Printf("⚠️  Failed to remove node %s from search indexes: %v\n", nodeID, err)
 			}
 		})
@@ -1270,15 +1318,11 @@ func (db *DB) closeInternal() error {
 		db.embedQueue.Close()
 	}
 
-	// Close WAL first to ensure all writes are flushed
-	if db.wal != nil {
-		if err := db.wal.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("WAL close: %w", err))
-		}
-	}
-
-	if db.storage != nil {
-		if err := db.storage.Close(); err != nil {
+	// Close the underlying storage chain to release Badger directory locks and stop
+	// background goroutines (AsyncEngine flush loop, WAL auto-compaction, etc).
+	// NamespacedEngine.Close() intentionally does NOT close its inner engine.
+	if db.baseStorage != nil {
+		if err := db.baseStorage.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -1355,6 +1399,13 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	// Unwrap storage layers to find the BadgerEngine
 	// The storage chain can be: AsyncEngine -> WALEngine -> BadgerEngine
 	engine := db.storage
+	idPrefix := ""
+
+	// Unwrap NamespacedEngine first (DB instances are scoped to a single database namespace)
+	if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
+		idPrefix = namespacedEngine.Namespace() + ":"
+		engine = namespacedEngine.GetInnerEngine()
+	}
 
 	// Unwrap AsyncEngine if present
 	if asyncEngine, ok := engine.(*storage.AsyncEngine); ok {
@@ -1368,6 +1419,9 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 
 	// Now check if we have a BadgerEngine
 	if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
+		if idPrefix != "" {
+			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
+		}
 		return badgerStorage.ClearAllEmbeddings()
 	}
 

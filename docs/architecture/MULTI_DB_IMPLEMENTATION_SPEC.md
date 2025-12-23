@@ -103,7 +103,7 @@ CREATE DATABASE tenant_a
 
 // 2. Use Cypher to copy data (example)
 // In default database:
-MATCH (n:Customer {tenant_id: "a"})
+MATCH (n:Customer {database_id: "db_a"})
 WITH n
 // Switch to tenant database
 :USE tenant_a

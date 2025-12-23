@@ -31,7 +31,7 @@ func TestDefaultKalmanSearchConfig(t *testing.T) {
 
 func TestNewKalmanSearchAdapter(t *testing.T) {
 	// Create a storage engine
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 
 	// Create search service
 	service := NewService(engine)
@@ -60,7 +60,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -84,7 +84,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 }
 
 func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -116,7 +116,7 @@ func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 }
 
 func TestKalmanSearchAdapter_RecordRanking(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 
 	cfg := DefaultKalmanSearchConfig()
@@ -141,7 +141,7 @@ func TestKalmanSearchAdapter_RecordRanking(t *testing.T) {
 }
 
 func TestKalmanSearchAdapter_SortByScore(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -170,7 +170,7 @@ func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -192,7 +192,7 @@ func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -215,7 +215,7 @@ func TestKalmanSearchAdapter_GetDocumentRelevanceTrend(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -245,7 +245,7 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -264,7 +264,7 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 }
 
 func TestKalmanSearchAdapter_GetStats(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -279,7 +279,7 @@ func TestKalmanSearchAdapter_GetStats(t *testing.T) {
 }
 
 func TestKalmanSearchAdapter_GetService(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -293,7 +293,7 @@ func TestKalmanSearchAdapter_Reset(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -324,7 +324,7 @@ func TestKalmanSearchAdapter_DisabledSmoothing(t *testing.T) {
 	cleanup := config.WithKalmanDisabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 	service := NewService(engine)
 
 	cfg := DefaultKalmanSearchConfig()
@@ -349,7 +349,7 @@ func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(t)
 
 	// Add some nodes with embeddings
 	ctx := context.Background()
@@ -359,9 +359,9 @@ func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 			embedding[j] = float32(i*j) / 1024.0
 		}
 		_, _ = engine.CreateNode(&storage.Node{
-			Labels:     []string{"Document"},
-			Properties: map[string]interface{}{"title": "Doc " + string(rune('A'+i))},
-			ChunkEmbeddings:  [][]float32{embedding},
+			Labels:          []string{"Document"},
+			Properties:      map[string]interface{}{"title": "Doc " + string(rune('A'+i))},
+			ChunkEmbeddings: [][]float32{embedding},
 		})
 	}
 
@@ -412,7 +412,7 @@ func BenchmarkKalmanSearchAdapter_EnhanceResult(b *testing.B) {
 	config.EnableKalmanFiltering()
 	defer config.DisableKalmanFiltering()
 
-	engine := storage.NewMemoryEngine()
+	engine := newNamespacedEngine(b)
 	service := NewService(engine)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 

@@ -312,7 +312,7 @@ func TestWALFullDurabilityPath(t *testing.T) {
 	}
 
 	for _, node := range nodes {
-		if err := wal.Append(OpCreateNode, WALNodeData{Node: node}); err != nil {
+		if err := wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: node}, "test"); err != nil {
 			t.Fatalf("Append failed: %v", err)
 		}
 	}

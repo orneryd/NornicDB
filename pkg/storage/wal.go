@@ -38,6 +38,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,6 +154,25 @@ type WALEntry struct {
 	Data      []byte        `json:"data"`               // JSON-serialized operation data
 	Checksum  uint32        `json:"checksum"`           // CRC32 checksum for integrity
 	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
+}
+
+func parseDatabaseFromID(id string) (db string, unprefixed string, ok bool) {
+	idx := strings.IndexByte(id, ':')
+	if idx <= 0 || idx >= len(id)-1 {
+		return "", "", false
+	}
+	return id[:idx], id[idx+1:], true
+}
+
+func unprefixIDForDatabase(dbName, id string) string {
+	if dbName == "" || id == "" {
+		return id
+	}
+	prefix := dbName + ":"
+	if strings.HasPrefix(id, prefix) {
+		return id[len(prefix):]
+	}
+	return id
 }
 
 // WALNodeData holds node data for WAL entries with optional undo support.
@@ -1877,27 +1897,27 @@ func ReadWALEntriesAfter(walPath string, afterSeq uint64) ([]WALEntry, error) {
 // ReplayWALEntry applies a single WAL entry to the engine.
 // Uses the database name from the entry if present, otherwise wraps with default database.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
-	// Determine database name: use entry's database if present, otherwise get from config
+	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
-		globalConfig := nornicConfig.LoadFromEnv()
-		dbName = globalConfig.Database.DefaultDatabase
-		if dbName == "" {
-			dbName = "nornic" // Fallback
+		if namespaced, ok := engine.(*NamespacedEngine); ok {
+			dbName = namespaced.Namespace()
+		} else {
+			globalConfig := nornicConfig.LoadFromEnv()
+			dbName = globalConfig.Database.DefaultDatabase
+			if dbName == "" {
+				dbName = "nornic" // Fallback
+			}
 		}
 	}
-	
-	// Unwrap NamespacedEngine if present to avoid double-wrapping
+
+	// Unwrap NamespacedEngine if present to avoid double-wrapping.
 	baseEngine := engine
-	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-		baseEngine = namespacedEngine.GetInnerEngine()
-		// Use the existing namespace if entry doesn't specify one
-		if dbName == "" || dbName == "nornic" {
-			dbName = namespacedEngine.Namespace()
-		}
+	if namespaced, ok := engine.(*NamespacedEngine); ok {
+		baseEngine = namespaced.GetInnerEngine()
 	}
-	
-	// Wrap base engine with NamespacedEngine for the entry's database
+
+	// Wrap base engine with NamespacedEngine for the entry's database.
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 	
 	switch entry.Operation {
@@ -1967,7 +1987,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = NodeID(id)
 		}
-		return engine.BulkDeleteNodes(ids)
+		return namespacedEngine.BulkDeleteNodes(ids)
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
@@ -1978,7 +1998,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = EdgeID(id)
 		}
-		return engine.BulkDeleteEdges(ids)
+		return namespacedEngine.BulkDeleteEdges(ids)
 
 	case OpCheckpoint:
 		// Checkpoints are markers, no action needed
@@ -2000,27 +2020,27 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 var ErrNoUndoData = errors.New("wal: entry has no undo data")
 
 func UndoWALEntry(engine Engine, entry WALEntry) error {
-	// Determine database name: use entry's database if present, otherwise get from config
+	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
-		globalConfig := nornicConfig.LoadFromEnv()
-		dbName = globalConfig.Database.DefaultDatabase
-		if dbName == "" {
-			dbName = "nornic" // Fallback
+		if namespaced, ok := engine.(*NamespacedEngine); ok {
+			dbName = namespaced.Namespace()
+		} else {
+			globalConfig := nornicConfig.LoadFromEnv()
+			dbName = globalConfig.Database.DefaultDatabase
+			if dbName == "" {
+				dbName = "nornic" // Fallback
+			}
 		}
 	}
-	
-	// Unwrap NamespacedEngine if present to avoid double-wrapping
+
+	// Unwrap NamespacedEngine if present to avoid double-wrapping.
 	baseEngine := engine
-	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-		baseEngine = namespacedEngine.GetInnerEngine()
-		// Use the existing namespace if entry doesn't specify one
-		if dbName == "" || dbName == "nornic" {
-			dbName = namespacedEngine.Namespace()
-		}
+	if namespaced, ok := engine.(*NamespacedEngine); ok {
+		baseEngine = namespaced.GetInnerEngine()
 	}
-	
-	// Wrap base engine with NamespacedEngine for the entry's database
+
+	// Wrap base engine with NamespacedEngine for the entry's database.
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 	
 	switch entry.Operation {
@@ -2413,13 +2433,34 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 		} else {
 			// Apply snapshot
 			snapshotSeq = snapshot.Sequence
-			// Get database name from config (WAL entries have unprefixed IDs)
+
+			// Determine database name from snapshot contents or config.
 			globalConfig := nornicConfig.LoadFromEnv()
 			dbName := globalConfig.Database.DefaultDatabase
 			if dbName == "" {
 				dbName = "nornic" // Fallback to "nornic" if not configured
 			}
-			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
+
+			if len(snapshot.Nodes) > 0 {
+				if parsedDB, _, ok := parseDatabaseFromID(string(snapshot.Nodes[0].ID)); ok {
+					dbName = parsedDB
+				}
+			} else if len(snapshot.Edges) > 0 {
+				if parsedDB, _, ok := parseDatabaseFromID(string(snapshot.Edges[0].ID)); ok {
+					dbName = parsedDB
+				}
+			}
+
+			// Unprefix snapshot data for the selected database before restoring via NamespacedEngine.
+			for _, node := range snapshot.Nodes {
+				node.ID = NodeID(unprefixIDForDatabase(dbName, string(node.ID)))
+			}
+			for _, edge := range snapshot.Edges {
+				edge.ID = EdgeID(unprefixIDForDatabase(dbName, string(edge.ID)))
+				edge.StartNode = NodeID(unprefixIDForDatabase(dbName, string(edge.StartNode)))
+				edge.EndNode = NodeID(unprefixIDForDatabase(dbName, string(edge.EndNode)))
+			}
+
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
 			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
@@ -2667,11 +2708,69 @@ func (w *WALEngine) getDatabaseName() string {
 	return dbName
 }
 
+func (w *WALEngine) databaseFromNode(node *Node) string {
+	if node != nil {
+		if db, _, ok := parseDatabaseFromID(string(node.ID)); ok {
+			return db
+		}
+	}
+	return w.getDatabaseName()
+}
+
+func (w *WALEngine) databaseFromEdge(edge *Edge) (string, error) {
+	if edge == nil {
+		return w.getDatabaseName(), nil
+	}
+
+	dbCandidates := make([]string, 0, 3)
+	if db, _, ok := parseDatabaseFromID(string(edge.ID)); ok {
+		dbCandidates = append(dbCandidates, db)
+	}
+	if db, _, ok := parseDatabaseFromID(string(edge.StartNode)); ok {
+		dbCandidates = append(dbCandidates, db)
+	}
+	if db, _, ok := parseDatabaseFromID(string(edge.EndNode)); ok {
+		dbCandidates = append(dbCandidates, db)
+	}
+
+	if len(dbCandidates) == 0 {
+		return w.getDatabaseName(), nil
+	}
+
+	dbName := dbCandidates[0]
+	for _, candidate := range dbCandidates[1:] {
+		if candidate != dbName {
+			return "", fmt.Errorf("wal: inconsistent database prefixes in edge IDs (id=%q start=%q end=%q)", edge.ID, edge.StartNode, edge.EndNode)
+		}
+	}
+	return dbName, nil
+}
+
+func cloneNodeForWAL(dbName string, node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	c := *node
+	c.ID = NodeID(unprefixIDForDatabase(dbName, string(node.ID)))
+	return &c
+}
+
+func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
+	if edge == nil {
+		return nil
+	}
+	c := *edge
+	c.ID = EdgeID(unprefixIDForDatabase(dbName, string(edge.ID)))
+	c.StartNode = NodeID(unprefixIDForDatabase(dbName, string(edge.StartNode)))
+	c.EndNode = NodeID(unprefixIDForDatabase(dbName, string(edge.EndNode)))
+	return &c
+}
+
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: node}, dbName); err != nil {
+		dbName := w.databaseFromNode(node)
+		if err := w.wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
 			return "", fmt.Errorf("wal: failed to log create_node: %w", err)
 		}
 	}
@@ -2681,8 +2780,8 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: node}, dbName); err != nil {
+		dbName := w.databaseFromNode(node)
+		if err := w.wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_node: %w", err)
 		}
 	}
@@ -2694,8 +2793,8 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 // since embeddings can be regenerated automatically.
 func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: node}, dbName); err != nil {
+		dbName := w.databaseFromNode(node)
+		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
 		}
 	}
@@ -2705,8 +2804,11 @@ func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 // DeleteNode logs then executes node deletion.
 func (w *WALEngine) DeleteNode(id NodeID) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: string(id)}, dbName); err != nil {
+		dbName, unprefixedID := w.getDatabaseName(), string(id)
+		if parsedDB, parsedID, ok := parseDatabaseFromID(string(id)); ok {
+			dbName, unprefixedID = parsedDB, parsedID
+		}
+		if err := w.wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log delete_node: %w", err)
 		}
 	}
@@ -2716,8 +2818,11 @@ func (w *WALEngine) DeleteNode(id NodeID) error {
 // CreateEdge logs then executes edge creation.
 func (w *WALEngine) CreateEdge(edge *Edge) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpCreateEdge, WALEdgeData{Edge: edge}, dbName); err != nil {
+		dbName, err := w.databaseFromEdge(edge)
+		if err != nil {
+			return err
+		}
+		if err := w.wal.AppendWithDatabase(OpCreateEdge, WALEdgeData{Edge: cloneEdgeForWAL(dbName, edge)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log create_edge: %w", err)
 		}
 	}
@@ -2727,8 +2832,11 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 // UpdateEdge logs then executes edge update.
 func (w *WALEngine) UpdateEdge(edge *Edge) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpUpdateEdge, WALEdgeData{Edge: edge}, dbName); err != nil {
+		dbName, err := w.databaseFromEdge(edge)
+		if err != nil {
+			return err
+		}
+		if err := w.wal.AppendWithDatabase(OpUpdateEdge, WALEdgeData{Edge: cloneEdgeForWAL(dbName, edge)}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log update_edge: %w", err)
 		}
 	}
@@ -2738,8 +2846,11 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 // DeleteEdge logs then executes edge deletion.
 func (w *WALEngine) DeleteEdge(id EdgeID) error {
 	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpDeleteEdge, WALDeleteData{ID: string(id)}, dbName); err != nil {
+		dbName, unprefixedID := w.getDatabaseName(), string(id)
+		if parsedDB, parsedID, ok := parseDatabaseFromID(string(id)); ok {
+			dbName, unprefixedID = parsedDB, parsedID
+		}
+		if err := w.wal.AppendWithDatabase(OpDeleteEdge, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log delete_edge: %w", err)
 		}
 	}
@@ -2750,7 +2861,22 @@ func (w *WALEngine) DeleteEdge(id EdgeID) error {
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 	if config.IsWALEnabled() {
 		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpBulkNodes, WALBulkNodesData{Nodes: nodes}, dbName); err != nil {
+		cloned := make([]*Node, 0, len(nodes))
+		for _, node := range nodes {
+			if node == nil {
+				cloned = append(cloned, nil)
+				continue
+			}
+			if db, _, ok := parseDatabaseFromID(string(node.ID)); ok {
+				if dbName == "" || dbName == "nornic" {
+					dbName = db
+				} else if db != dbName {
+					return fmt.Errorf("wal: bulk nodes contain multiple databases: %q vs %q", dbName, db)
+				}
+			}
+			cloned = append(cloned, cloneNodeForWAL(dbName, node))
+		}
+		if err := w.wal.AppendWithDatabase(OpBulkNodes, WALBulkNodesData{Nodes: cloned}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_create_nodes: %w", err)
 		}
 	}
@@ -2761,7 +2887,24 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
 	if config.IsWALEnabled() {
 		dbName := w.getDatabaseName()
-		if err := w.wal.AppendWithDatabase(OpBulkEdges, WALBulkEdgesData{Edges: edges}, dbName); err != nil {
+		cloned := make([]*Edge, 0, len(edges))
+		for _, edge := range edges {
+			if edge == nil {
+				cloned = append(cloned, nil)
+				continue
+			}
+			db, err := w.databaseFromEdge(edge)
+			if err != nil {
+				return err
+			}
+			if dbName == "" || dbName == "nornic" {
+				dbName = db
+			} else if db != dbName {
+				return fmt.Errorf("wal: bulk edges contain multiple databases: %q vs %q", dbName, db)
+			}
+			cloned = append(cloned, cloneEdgeForWAL(dbName, edge))
+		}
+		if err := w.wal.AppendWithDatabase(OpBulkEdges, WALBulkEdgesData{Edges: cloned}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_create_edges: %w", err)
 		}
 	}
@@ -2773,10 +2916,19 @@ func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
 	if config.IsWALEnabled() {
 		// Convert to strings for serialization
 		strIDs := make([]string, len(ids))
-		for i, id := range ids {
-			strIDs[i] = string(id)
-		}
 		dbName := w.getDatabaseName()
+		for i, id := range ids {
+			str := string(id)
+			if db, unprefixed, ok := parseDatabaseFromID(str); ok {
+				if dbName == "" || dbName == "nornic" {
+					dbName = db
+				} else if db != dbName {
+					return fmt.Errorf("wal: bulk delete nodes contains multiple databases: %q vs %q", dbName, db)
+				}
+				str = unprefixed
+			}
+			strIDs[i] = str
+		}
 		if err := w.wal.AppendWithDatabase(OpBulkDeleteNodes, WALBulkDeleteNodesData{IDs: strIDs}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_delete_nodes: %w", err)
 		}
@@ -2789,10 +2941,19 @@ func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
 	if config.IsWALEnabled() {
 		// Convert to strings for serialization
 		strIDs := make([]string, len(ids))
-		for i, id := range ids {
-			strIDs[i] = string(id)
-		}
 		dbName := w.getDatabaseName()
+		for i, id := range ids {
+			str := string(id)
+			if db, unprefixed, ok := parseDatabaseFromID(str); ok {
+				if dbName == "" || dbName == "nornic" {
+					dbName = db
+				} else if db != dbName {
+					return fmt.Errorf("wal: bulk delete edges contains multiple databases: %q vs %q", dbName, db)
+				}
+				str = unprefixed
+			}
+			strIDs[i] = str
+		}
 		if err := w.wal.AppendWithDatabase(OpBulkDeleteEdges, WALBulkDeleteEdgesData{IDs: strIDs}, dbName); err != nil {
 			return fmt.Errorf("wal: failed to log bulk_delete_edges: %w", err)
 		}

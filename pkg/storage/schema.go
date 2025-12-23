@@ -240,7 +240,7 @@ type CompositeKey struct {
 //   - Consistent length (SHA-256 always 64 chars)
 //
 // Use Cases:
-//   - Composite unique constraints (email + tenant_id)
+//   - Composite unique constraints (email + database_id)
 //   - Multi-column indexes
 //   - Deduplication of complex records
 func NewCompositeKey(values ...interface{}) CompositeKey {

@@ -3281,6 +3281,14 @@ func hasPrefix(s, prefix []byte) bool {
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // Returns the number of nodes that had their embeddings cleared.
 func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
+	return b.ClearAllEmbeddingsForPrefix("")
+}
+
+// ClearAllEmbeddingsForPrefix removes embeddings from nodes whose IDs start with the given prefix.
+// This is used to clear embeddings for a single logical database namespace (e.g., "nornic:").
+//
+// If idPrefix is empty, clears embeddings for all nodes.
+func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -3299,8 +3307,8 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		keyPrefix := []byte{prefixNode}
+		for it.Seek(keyPrefix); it.ValidForPrefix(keyPrefix); it.Next() {
 			item := it.Item()
 			// Extract nodeID from key (skip prefix byte)
 			key := item.Key()
@@ -3308,6 +3316,9 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 				continue
 			}
 			nodeID := NodeID(key[1:])
+			if idPrefix != "" && !strings.HasPrefix(string(nodeID), idPrefix) {
+				continue
+			}
 
 			err := item.Value(func(val []byte) error {
 				node, err := decodeNodeWithEmbeddings(txn, val, nodeID)

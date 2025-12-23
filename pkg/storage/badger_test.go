@@ -928,7 +928,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		// Add nodes with labels
 		for i := 0; i < 5; i++ {
 			node := &Node{
-				ID:     NodeID("labeled-" + string(rune('0'+i))),
+				ID:     NodeID(prefixTestID("labeled-" + string(rune('0'+i)))),
 				Labels: []string{"PersistLabel"},
 			}
 			_, err := engine1.CreateNode(node)
@@ -939,7 +939,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		_, err = engine1.CreateNode(&Node{ID: NodeID(prefixTestID("target")), Labels: []string{"Target"}})
 		require.NoError(t, err)
 		for i := 0; i < 3; i++ {
-			edge := testEdge("persist-edge-"+string(rune('0'+i)), NodeID("labeled-"+string(rune('0'+i))), "target", "POINTS")
+			edge := testEdge("persist-edge-"+string(rune('0'+i)), NodeID(prefixTestID("labeled-"+string(rune('0'+i)))), "target", "POINTS")
 			require.NoError(t, engine1.CreateEdge(edge))
 		}
 
@@ -956,7 +956,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		assert.Len(t, nodes, 5)
 
 		// Verify edge indexes work
-		incoming, err := engine2.GetIncomingEdges("target")
+		incoming, err := engine2.GetIncomingEdges(NodeID(prefixTestID("target")))
 		require.NoError(t, err)
 		assert.Len(t, incoming, 3)
 	})
@@ -1242,19 +1242,19 @@ func TestSerialization(t *testing.T) {
 
 func TestKeyEncoding(t *testing.T) {
 	t.Run("nodeKey", func(t *testing.T) {
-		key := nodeKey("test-node")
+		key := nodeKey(NodeID(prefixTestID("test-node")))
 		assert.Equal(t, prefixNode, key[0])
-		assert.Equal(t, "test-node", string(key[1:]))
+		assert.Equal(t, prefixTestID("test-node"), string(key[1:]))
 	})
 
 	t.Run("edgeKey", func(t *testing.T) {
-		key := edgeKey("test-edge")
+		key := edgeKey(EdgeID(prefixTestID("test-edge")))
 		assert.Equal(t, prefixEdge, key[0])
-		assert.Equal(t, "test-edge", string(key[1:]))
+		assert.Equal(t, prefixTestID("test-edge"), string(key[1:]))
 	})
 
 	t.Run("labelIndexKey and extraction", func(t *testing.T) {
-		key := labelIndexKey("Person", "node-123")
+		key := labelIndexKey("Person", NodeID(prefixTestID("node-123")))
 		assert.Equal(t, prefixLabelIndex, key[0])
 
 		// Extract node ID
@@ -1263,7 +1263,7 @@ func TestKeyEncoding(t *testing.T) {
 	})
 
 	t.Run("outgoingIndexKey and extraction", func(t *testing.T) {
-		key := outgoingIndexKey("node-1", "edge-1")
+		key := outgoingIndexKey(NodeID(prefixTestID("node-1")), EdgeID(prefixTestID("edge-1")))
 		assert.Equal(t, prefixOutgoingIndex, key[0])
 
 		// Extract edge ID
@@ -1272,7 +1272,7 @@ func TestKeyEncoding(t *testing.T) {
 	})
 
 	t.Run("incomingIndexKey and extraction", func(t *testing.T) {
-		key := incomingIndexKey("node-1", "edge-1")
+		key := incomingIndexKey(NodeID(prefixTestID("node-1")), EdgeID(prefixTestID("edge-1")))
 		assert.Equal(t, prefixIncomingIndex, key[0])
 
 		// Extract edge ID

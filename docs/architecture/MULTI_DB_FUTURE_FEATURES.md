@@ -151,7 +151,7 @@ type ConstituentRef struct {
 
 2. **Query Analysis**:
    - **Label-based routing**: Route queries to constituents based on labels
-   - **Property-based routing**: Route based on property values (e.g., tenant_id)
+   - **Property-based routing**: Route based on property values (e.g., database_id)
    - **Full scan**: Query all constituents if routing is ambiguous
 
 3. **Result Merging Strategies**:
@@ -195,9 +195,9 @@ type ConstituentRef struct {
    
    -- Configure property-based routing
    ALTER COMPOSITE DATABASE analytics
-     SET ROUTING PROPERTY tenant_id
-       WHERE tenant_id = 'a' TO tenant_a
-       WHERE tenant_id = 'b' TO tenant_b
+     SET ROUTING PROPERTY database_id
+       WHERE database_id = 'db_a' TO db_a
+       WHERE database_id = 'db_b' TO db_b
    ```
 
 #### Phase 4: Write Operations

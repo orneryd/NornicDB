@@ -18,7 +18,9 @@ import (
 func TestDetachDeleteStatsTracking(t *testing.T) {
 	t.Run("async_engine_tracks_counts_correctly_after_detach_delete", func(t *testing.T) {
 		// Setup: Create an AsyncEngine wrapping a MemoryEngine
-		engine := NewMemoryEngine()
+		base := NewMemoryEngine()
+		defer base.Close()
+		engine := NewNamespacedEngine(base, "test")
 		asyncConfig := &AsyncEngineConfig{
 			FlushInterval: 10 * time.Millisecond, // Fast flush for testing
 		}
@@ -110,7 +112,9 @@ func TestDetachDeleteStatsTracking(t *testing.T) {
 	})
 
 	t.Run("counts_never_go_negative", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		base := NewMemoryEngine()
+		defer base.Close()
+		engine := NewNamespacedEngine(base, "test")
 		asyncConfig := &AsyncEngineConfig{
 			FlushInterval: 100 * time.Millisecond,
 		}
@@ -154,7 +158,9 @@ func TestDetachDeleteStatsTracking(t *testing.T) {
 		// 1. Find edges for a node
 		// 2. Delete edges
 		// 3. Delete node
-		engine := NewMemoryEngine()
+		base := NewMemoryEngine()
+		defer base.Close()
+		engine := NewNamespacedEngine(base, "test")
 		asyncConfig := &AsyncEngineConfig{
 			FlushInterval: 100 * time.Millisecond,
 		}
@@ -214,7 +220,9 @@ func TestDetachDeleteStatsTracking(t *testing.T) {
 	t.Run("delete_nonexistent_node_does_not_affect_count", func(t *testing.T) {
 		// This tests the critical fix: deleting a non-existent node should NOT
 		// decrement the count and cause it to go negative
-		engine := NewMemoryEngine()
+		base := NewMemoryEngine()
+		defer base.Close()
+		engine := NewNamespacedEngine(base, "test")
 		asyncConfig := &AsyncEngineConfig{
 			FlushInterval: 100 * time.Millisecond,
 		}
@@ -245,13 +253,15 @@ func TestDetachDeleteStatsTracking(t *testing.T) {
 
 	t.Run("delete_nonexistent_edge_does_not_affect_count", func(t *testing.T) {
 		// Similar test for edges
-		engine := NewMemoryEngine()
+		base := NewMemoryEngine()
+		defer base.Close()
+		engine := NewNamespacedEngine(base, "test")
 		asyncConfig := &AsyncEngineConfig{
 			FlushInterval: 100 * time.Millisecond,
 		}
 		asyncEngine := NewAsyncEngine(engine, asyncConfig)
 		defer asyncEngine.Close()
-
+		
 		// Initial count should be 0
 		count, err := asyncEngine.EdgeCount()
 		require.NoError(t, err)
@@ -283,7 +293,7 @@ func TestBadgerEngineDetachDeleteStats(t *testing.T) {
 
 		// Create nodes
 		for i := 0; i < 10; i++ {
-			node := &Node{ID: NodeID(string(rune('a' + i))), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(string(rune('a' + i)))), Labels: []string{"Test"}}
 			_, err := engine.CreateNode(node)
 			require.NoError(t, err)
 		}
@@ -291,12 +301,12 @@ func TestBadgerEngineDetachDeleteStats(t *testing.T) {
 		// Create edges (chain)
 		edgeIDs := make([]EdgeID, 0, 9)
 		for i := 0; i < 9; i++ {
-			edgeID := EdgeID("edge_" + string(rune('a'+i)))
+			edgeID := EdgeID(prefixTestID("edge_" + string(rune('a'+i))))
 			edgeIDs = append(edgeIDs, edgeID)
 			edge := &Edge{
 				ID:        edgeID,
-				StartNode: NodeID(string(rune('a' + i))),
-				EndNode:   NodeID(string(rune('a' + i + 1))),
+				StartNode: NodeID(prefixTestID(string(rune('a' + i)))),
+				EndNode:   NodeID(prefixTestID(string(rune('a' + i + 1)))),
 				Type:      "NEXT",
 			}
 			require.NoError(t, engine.CreateEdge(edge))
@@ -325,19 +335,19 @@ func TestBadgerEngineDetachDeleteStats(t *testing.T) {
 		defer cleanup()
 
 		// Create one edge
-		node1 := &Node{ID: "n1", Labels: []string{"Test"}}
-		node2 := &Node{ID: "n2", Labels: []string{"Test"}}
+		node1 := &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Test"}}
+		node2 := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Test"}}
 		_, _ = engine.CreateNode(node1)
 		_, _ = engine.CreateNode(node2)
 
-		edge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}
+		edge := &Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "REL"}
 		engine.CreateEdge(edge)
 
 		ec1, _ := engine.EdgeCount()
 		assert.Equal(t, int64(1), ec1)
 
 		// Try to delete a nonexistent edge
-		err := engine.DeleteEdge("nonexistent")
+		err := engine.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
 		assert.Error(t, err) // Should return ErrNotFound
 
 		// Count should be unchanged
@@ -345,7 +355,7 @@ func TestBadgerEngineDetachDeleteStats(t *testing.T) {
 		assert.Equal(t, int64(1), ec2, "Count should be unchanged after deleting nonexistent edge")
 
 		// Bulk delete with nonexistent edge should not change count
-		engine.BulkDeleteEdges([]EdgeID{"nonexistent1", "nonexistent2"})
+		engine.BulkDeleteEdges([]EdgeID{EdgeID(prefixTestID("nonexistent1")), EdgeID(prefixTestID("nonexistent2"))})
 		ec3, _ := engine.EdgeCount()
 		assert.Equal(t, int64(1), ec3, "Count unchanged after bulk deleting nonexistent edges")
 	})
@@ -362,15 +372,15 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 
 		// Create a graph: A -> B -> C -> D -> E (4 edges)
 		for i := 0; i < 5; i++ {
-			node := &Node{ID: NodeID(string(rune('A' + i))), Labels: []string{"Test"}}
+			node := &Node{ID: NodeID(prefixTestID(string(rune('A' + i)))), Labels: []string{"Test"}}
 			_, err := engine.CreateNode(node)
 			require.NoError(t, err)
 		}
 		for i := 0; i < 4; i++ {
 			edge := &Edge{
-				ID:        EdgeID("edge_" + string(rune('A'+i))),
-				StartNode: NodeID(string(rune('A' + i))),
-				EndNode:   NodeID(string(rune('A' + i + 1))),
+				ID:        EdgeID(prefixTestID("edge_" + string(rune('A'+i)))),
+				StartNode: NodeID(prefixTestID(string(rune('A' + i)))),
+				EndNode:   NodeID(prefixTestID(string(rune('A' + i + 1)))),
 				Type:      "NEXT",
 			}
 			require.NoError(t, engine.CreateEdge(edge))
@@ -383,7 +393,7 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		assert.Equal(t, int64(4), ec, "Should have 4 edges")
 
 		// Bulk delete nodes A, B, C (should also delete edges A->B, B->C)
-		err := engine.BulkDeleteNodes([]NodeID{"A", "B", "C"})
+		err := engine.BulkDeleteNodes([]NodeID{NodeID(prefixTestID("A")), NodeID(prefixTestID("B")), NodeID(prefixTestID("C"))})
 		require.NoError(t, err)
 
 		// Node count should be 2 (D, E remain)
@@ -396,7 +406,7 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		assert.Equal(t, int64(1), ec, "Should have 1 edge remaining (D->E)")
 
 		// Verify the remaining edge is D->E
-		_, err = engine.GetEdge("edge_D")
+		_, err = engine.GetEdge(EdgeID(prefixTestID("edge_D")))
 		assert.NoError(t, err, "edge_D (D->E) should still exist")
 	})
 
@@ -405,9 +415,9 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		defer cleanup()
 
 		// Create A -> B
-		_, _ = engine.CreateNode(&Node{ID: "A", Labels: []string{"Test"}})
-		_, _ = engine.CreateNode(&Node{ID: "B", Labels: []string{"Test"}})
-		engine.CreateEdge(&Edge{ID: "e1", StartNode: "A", EndNode: "B", Type: "REL"})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("A")), Labels: []string{"Test"}})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("B")), Labels: []string{"Test"}})
+		engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("A")), EndNode: NodeID(prefixTestID("B")), Type: "REL"})
 
 		nc, _ := engine.NodeCount()
 		ec, _ := engine.EdgeCount()
@@ -415,7 +425,7 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		assert.Equal(t, int64(1), ec)
 
 		// Delete node A - should also delete edge A->B
-		err := engine.DeleteNode("A")
+		err := engine.DeleteNode(NodeID(prefixTestID("A")))
 		require.NoError(t, err)
 
 		nc, _ = engine.NodeCount()
@@ -429,11 +439,11 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		defer cleanup()
 
 		// Create: A -> B -> C (B has both incoming and outgoing edges)
-		_, _ = engine.CreateNode(&Node{ID: "A", Labels: []string{"Test"}})
-		_, _ = engine.CreateNode(&Node{ID: "B", Labels: []string{"Test"}})
-		_, _ = engine.CreateNode(&Node{ID: "C", Labels: []string{"Test"}})
-		engine.CreateEdge(&Edge{ID: "e1", StartNode: "A", EndNode: "B", Type: "REL"})
-		engine.CreateEdge(&Edge{ID: "e2", StartNode: "B", EndNode: "C", Type: "REL"})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("A")), Labels: []string{"Test"}})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("B")), Labels: []string{"Test"}})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("C")), Labels: []string{"Test"}})
+		engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("A")), EndNode: NodeID(prefixTestID("B")), Type: "REL"})
+		engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e2")), StartNode: NodeID(prefixTestID("B")), EndNode: NodeID(prefixTestID("C")), Type: "REL"})
 
 		nc, _ := engine.NodeCount()
 		ec, _ := engine.EdgeCount()
@@ -441,7 +451,7 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		assert.Equal(t, int64(2), ec)
 
 		// Delete B - should delete both edges
-		err := engine.DeleteNode("B")
+		err := engine.DeleteNode(NodeID(prefixTestID("B")))
 		require.NoError(t, err)
 
 		nc, _ = engine.NodeCount()
@@ -454,15 +464,15 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		engine, cleanup := createDeleteStatsTestBadgerEngine(t)
 		defer cleanup()
 
-		_, _ = engine.CreateNode(&Node{ID: "A", Labels: []string{"Test"}})
-		_, _ = engine.CreateNode(&Node{ID: "B", Labels: []string{"Test"}})
-		engine.CreateEdge(&Edge{ID: "e1", StartNode: "A", EndNode: "B", Type: "REL"})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("A")), Labels: []string{"Test"}})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("B")), Labels: []string{"Test"}})
+		engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("A")), EndNode: NodeID(prefixTestID("B")), Type: "REL"})
 
 		// Delete A
-		engine.DeleteNode("A")
+		engine.DeleteNode(NodeID(prefixTestID("A")))
 
 		// Try to delete A again
-		err := engine.DeleteNode("A")
+		err := engine.DeleteNode(NodeID(prefixTestID("A")))
 		assert.Error(t, err) // Should return ErrNotFound
 
 		// Counts should still be correct
@@ -477,13 +487,13 @@ func TestBulkOperationsUpdateCounts(t *testing.T) {
 		defer cleanup()
 
 		// Create only A
-		_, _ = engine.CreateNode(&Node{ID: "A", Labels: []string{"Test"}})
+		_, _ = engine.CreateNode(&Node{ID: NodeID(prefixTestID("A")), Labels: []string{"Test"}})
 
 		nc, _ := engine.NodeCount()
 		assert.Equal(t, int64(1), nc)
 
 		// Bulk delete A, B, C (B and C don't exist)
-		err := engine.BulkDeleteNodes([]NodeID{"A", "B", "C"})
+		err := engine.BulkDeleteNodes([]NodeID{NodeID(prefixTestID("A")), NodeID(prefixTestID("B")), NodeID(prefixTestID("C"))})
 		assert.NoError(t, err) // Should not error, just skip nonexistent
 
 		// Count should be 0 (A was deleted, B/C didn't exist)

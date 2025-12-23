@@ -1,12 +1,12 @@
 # Multi-Database Support
 
-NornicDB supports multiple isolated databases (multi-tenancy) within a single storage backend, similar to Neo4j 4.x.
+NornicDB supports multiple isolated databases within a single storage backend, similar to Neo4j 4.x.
 
 ## Overview
 
 Multi-database support enables:
 - **Complete data isolation** between databases
-- **Multi-tenancy** - each database acts as a separate tenant
+- **Application-level multi-tenancy** - each database can be used as an isolation boundary
 - **Neo4j 4.x compatibility** - works with existing Neo4j drivers and tools
 - **Shared storage backend** - efficient resource usage
 
@@ -401,11 +401,11 @@ MATCH (n:Person)
 RETURN count(n)  -- Counts across all tenant databases
 
 -- Create nodes (routed to appropriate constituent)
-CREATE (n:Person {name: "Alice", tenant_id: "a"})
+CREATE (n:Person {name: "Alice", database_id: "db_a"})
 
 -- Match across all constituents
 MATCH (n:Person)
-WHERE n.tenant_id = "a"
+WHERE n.database_id = "db_a"
 RETURN n
 ```
 
@@ -493,4 +493,3 @@ SHOW CONSTRAINTS  -- Shows constraints from all constituents
 
 - [Configuration Guide](../operations/configuration.md) - Configuration options for multi-database
 - [Future Features Plan](../architecture/MULTI_DB_FUTURE_FEATURES.md) - Plans for cross-database queries
-

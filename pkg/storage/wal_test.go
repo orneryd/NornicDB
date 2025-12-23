@@ -308,9 +308,11 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 
 	// Create engine with data
 	engine := NewMemoryEngine()
-	engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
-	engine.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
-	engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
+	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "KNOWS"}))
 
 	// Create snapshot
 	snapshot, err := wal.CreateSnapshot(engine)
@@ -510,8 +512,10 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := NewMemoryEngine()
-		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Original"}})
-		engine.CreateNode(&Node{ID: "n2", Labels: []string{"Original"}})
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Original"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Original"}})
+		require.NoError(t, err)
 
 		// Create and save snapshot
 		snapshot, err := wal.CreateSnapshot(engine)
@@ -520,19 +524,20 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, err)
 
 		// Phase 2: Add more changes after snapshot
-		wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n3", Labels: []string{"AfterSnapshot"}}})
-		wal.Append(OpUpdateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Modified"}}})
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n3", Labels: []string{"AfterSnapshot"}}}, "test"))
+		require.NoError(t, wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Modified"}}}, "test"))
 		wal.Close()
 
 		// Phase 3: Recover
 		recovered, err := RecoverFromWAL(walDir, snapshotPath)
 		require.NoError(t, err)
 
-		// Verify state
-		count, _ := recovered.NodeCount()
+		// Verify state (wrap recovered base engine with namespace used in WAL)
+		recoveredNS := NewNamespacedEngine(recovered, "test")
+		count, _ := recoveredNS.NodeCount()
 		assert.Equal(t, int64(3), count)
 
-		n1, _ := recovered.GetNode("n1")
+		n1, _ := recoveredNS.GetNode("n1")
 		// Labels are normalized to lowercase
 		found := false
 		for _, l := range n1.Labels {
@@ -543,7 +548,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		}
 		assert.True(t, found, "n1 should have Modified label")
 
-		n3, _ := recovered.GetNode("n3")
+		n3, _ := recoveredNS.GetNode("n3")
 		assert.NotNil(t, n3)
 	})
 
@@ -555,14 +560,15 @@ func TestRecoverFromWAL(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}})
-		wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}})
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Test"}}}, "test"))
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}}, "test"))
 		wal.Close()
 
 		recovered, err := RecoverFromWAL(walDir, "")
 		require.NoError(t, err)
 
-		count, _ := recovered.NodeCount()
+		recoveredNS := NewNamespacedEngine(recovered, "test")
+		count, _ := recoveredNS.NodeCount()
 		assert.Equal(t, int64(2), count)
 	})
 
@@ -592,8 +598,10 @@ func TestWALEngine(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
-		walEngine := NewWALEngine(engine, wal)
+		base := NewMemoryEngine()
+		defer base.Close()
+		namespaced := NewNamespacedEngine(base, "test")
+		walEngine := NewWALEngine(namespaced, wal)
 		defer walEngine.Close()
 
 		// Create node
@@ -615,8 +623,10 @@ func TestWALEngine(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
-		walEngine := NewWALEngine(engine, wal)
+		base := NewMemoryEngine()
+		defer base.Close()
+		namespaced := NewNamespacedEngine(base, "test")
+		walEngine := NewWALEngine(namespaced, wal)
 		defer walEngine.Close()
 
 		// Create nodes
@@ -1090,9 +1100,10 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add 100 nodes
 		for i := 1; i <= 100; i++ {
-			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			engine.CreateNode(node)
-			wal.Append(OpCreateNode, WALNodeData{Node: node})
+			prefixed := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
+			_, err := engine.CreateNode(prefixed)
+			require.NoError(t, err)
+			require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("n%d", i))}}, "test"))
 		}
 
 		// Snapshot at node 50
@@ -1102,9 +1113,10 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Add 50 more nodes
 		for i := 101; i <= 150; i++ {
-			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			engine.CreateNode(node)
-			wal.Append(OpCreateNode, WALNodeData{Node: node})
+			prefixed := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
+			_, err := engine.CreateNode(prefixed)
+			require.NoError(t, err)
+			require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("n%d", i))}}, "test"))
 		}
 
 		// Truncate
@@ -1113,30 +1125,30 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		// Verify we can still append after truncation
 		newNode := &Node{ID: "n-after-truncate", Labels: []string{"PostTruncate"}}
-		err = wal.Append(OpCreateNode, WALNodeData{Node: newNode})
-		require.NoError(t, err)
+		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: newNode}, "test"))
 
 		wal.Close()
 
 		// Recover from snapshot + truncated WAL
 		recovered, err := RecoverFromWAL(walDir, snapshotPath)
 		require.NoError(t, err)
+		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Should have all 100 nodes from snapshot + 50 post-snapshot + 1 after truncate
-		count, err := recovered.NodeCount()
+		count, err := recoveredNS.NodeCount()
 		require.NoError(t, err)
 		assert.Equal(t, int64(151), count, "Should have 151 nodes after recovery")
 
 		// Verify specific nodes exist
-		n1, err := recovered.GetNode("n1")
+		n1, err := recoveredNS.GetNode("n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1)
 
-		n150, err := recovered.GetNode("n150")
+		n150, err := recoveredNS.GetNode("n150")
 		assert.NoError(t, err)
 		assert.NotNil(t, n150)
 
-		nAfter, err := recovered.GetNode("n-after-truncate")
+		nAfter, err := recoveredNS.GetNode("n-after-truncate")
 		assert.NoError(t, err)
 		assert.NotNil(t, nAfter)
 	})
@@ -1314,18 +1326,19 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Second session: recover from snapshot + WAL
 		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
 		require.NoError(t, err)
+		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Verify all data recovered
-		count, err := recovered.NodeCount()
+		count, err := recoveredNS.NodeCount()
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), count, "All nodes should be recovered")
 
 		// Spot check nodes
-		n1, err := recovered.GetNode("n1")
+		n1, err := recoveredNS.GetNode("n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1)
 
-		n100, err := recovered.GetNode("n100")
+		n100, err := recoveredNS.GetNode("n100")
 		assert.NoError(t, err)
 		assert.NotNil(t, n100)
 	})
@@ -1495,7 +1508,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
 			Type:      "CONNECTS",
 			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i%10))),
-			EndNode:   NodeID(fmt.Sprintf("node-%d", (i+1)%10)),
+			EndNode:   NodeID(prefixTestID(fmt.Sprintf("node-%d", (i+1)%10))),
 		})
 		require.NoError(t, err)
 	}

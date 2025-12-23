@@ -113,6 +113,54 @@ func (n *NamespacedEngine) hasEdgePrefix(id EdgeID) bool {
 	return strings.HasPrefix(string(id), n.namespace+n.separator)
 }
 
+// requiresDeepCopy returns true when the inner engine may return cached pointers
+// that must not be mutated (e.g., AsyncEngine caches nodes/edges).
+func (n *NamespacedEngine) requiresDeepCopy() bool {
+	engine := n.inner
+	// Unwrap WAL if present
+	if walEngine, ok := engine.(*WALEngine); ok {
+		engine = walEngine.GetEngine()
+	}
+	// AsyncEngine returns cached objects; always deep copy for safety.
+	if _, ok := engine.(*AsyncEngine); ok {
+		return true
+	}
+	return false
+}
+
+func (n *NamespacedEngine) toUserNode(node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	if !n.requiresDeepCopy() {
+		// Shallow copy is safe for engines that do not expose cached pointers
+		out := *node
+		out.ID = n.unprefixNodeID(out.ID)
+		return &out
+	}
+	out := CopyNode(node)
+	out.ID = n.unprefixNodeID(out.ID)
+	return out
+}
+
+func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
+	if edge == nil {
+		return nil
+	}
+	if !n.requiresDeepCopy() {
+		out := *edge
+		out.ID = n.unprefixEdgeID(out.ID)
+		out.StartNode = n.unprefixNodeID(out.StartNode)
+		out.EndNode = n.unprefixNodeID(out.EndNode)
+		return &out
+	}
+	out := CopyEdge(edge)
+	out.ID = n.unprefixEdgeID(out.ID)
+	out.StartNode = n.unprefixNodeID(out.StartNode)
+	out.EndNode = n.unprefixNodeID(out.EndNode)
+	return out
+}
+
 // ============================================================================
 // Node Operations
 // ============================================================================
@@ -148,10 +196,10 @@ func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
 		return nil, err
 	}
 
-	// Return with unprefixed ID (user sees "123", not "tenant_a:123")
-	// This is the user-facing API - hide implementation details
-	node.ID = n.unprefixNodeID(node.ID)
-	return node, nil
+	// IMPORTANT: Never mutate nodes returned from the inner engine in-place.
+	// AsyncEngine (and other engines) may return pointers to cached objects that
+	// are later flushed; mutating IDs would corrupt cache state and cause data loss.
+	return n.toUserNode(node), nil
 }
 
 func (n *NamespacedEngine) UpdateNode(node *Node) error {
@@ -216,11 +264,8 @@ func (n *NamespacedEngine) GetEdge(id EdgeID) (*Edge, error) {
 		return nil, err
 	}
 
-	// Unprefix all IDs (user-facing API)
-	edge.ID = n.unprefixEdgeID(edge.ID)
-	edge.StartNode = n.unprefixNodeID(edge.StartNode)
-	edge.EndNode = n.unprefixNodeID(edge.EndNode)
-	return edge, nil
+	// IMPORTANT: Never mutate edges returned from the inner engine in-place.
+	return n.toUserEdge(edge), nil
 }
 
 func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
@@ -260,14 +305,21 @@ func (n *NamespacedEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	var filtered []*Node
 	for _, node := range allNodes {
 		if n.hasNodePrefix(node.ID) {
-			node.ID = n.unprefixNodeID(node.ID)
-			filtered = append(filtered, node)
+			filtered = append(filtered, n.toUserNode(node))
 		}
 	}
 	return filtered, nil
 }
 
 func (n *NamespacedEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+	// Fast path: delegate to inner engine's first-node lookup, then filter namespace.
+	if node, err := n.inner.GetFirstNodeByLabel(label); err == nil && node != nil {
+		if n.hasNodePrefix(node.ID) {
+			return n.toUserNode(node), nil
+		}
+	}
+
+	// Fallback: iterate all and return first in this namespace
 	nodes, err := n.GetNodesByLabel(label)
 	if err != nil {
 		return nil, err
@@ -290,10 +342,7 @@ func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	var filtered []*Edge
 	for _, edge := range edges {
 		if n.hasEdgePrefix(edge.ID) {
-			edge.ID = n.unprefixEdgeID(edge.ID)
-			edge.StartNode = n.unprefixNodeID(edge.StartNode)
-			edge.EndNode = n.unprefixNodeID(edge.EndNode)
-			filtered = append(filtered, edge)
+			filtered = append(filtered, n.toUserEdge(edge))
 		}
 	}
 	return filtered, nil
@@ -311,10 +360,7 @@ func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	var filtered []*Edge
 	for _, edge := range edges {
 		if n.hasEdgePrefix(edge.ID) {
-			edge.ID = n.unprefixEdgeID(edge.ID)
-			edge.StartNode = n.unprefixNodeID(edge.StartNode)
-			edge.EndNode = n.unprefixNodeID(edge.EndNode)
-			filtered = append(filtered, edge)
+			filtered = append(filtered, n.toUserEdge(edge))
 		}
 	}
 	return filtered, nil
@@ -333,10 +379,7 @@ func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, erro
 	var filtered []*Edge
 	for _, edge := range edges {
 		if n.hasEdgePrefix(edge.ID) {
-			edge.ID = n.unprefixEdgeID(edge.ID)
-			edge.StartNode = n.unprefixNodeID(edge.StartNode)
-			edge.EndNode = n.unprefixNodeID(edge.EndNode)
-			filtered = append(filtered, edge)
+			filtered = append(filtered, n.toUserEdge(edge))
 		}
 	}
 	return filtered, nil
@@ -353,11 +396,7 @@ func (n *NamespacedEngine) GetEdgeBetween(startID, endID NodeID, edgeType string
 	if !n.hasEdgePrefix(edge.ID) {
 		return nil
 	}
-	// Unprefix all IDs (user-facing API)
-	edge.ID = n.unprefixEdgeID(edge.ID)
-	edge.StartNode = n.unprefixNodeID(edge.StartNode)
-	edge.EndNode = n.unprefixNodeID(edge.EndNode)
-	return edge
+	return n.toUserEdge(edge)
 }
 
 func (n *NamespacedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
@@ -369,10 +408,7 @@ func (n *NamespacedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	var filtered []*Edge
 	for _, edge := range allEdges {
 		if n.hasEdgePrefix(edge.ID) {
-			edge.ID = n.unprefixEdgeID(edge.ID)
-			edge.StartNode = n.unprefixNodeID(edge.StartNode)
-			edge.EndNode = n.unprefixNodeID(edge.EndNode)
-			filtered = append(filtered, edge)
+			filtered = append(filtered, n.toUserEdge(edge))
 		}
 	}
 	return filtered, nil
@@ -387,8 +423,7 @@ func (n *NamespacedEngine) AllNodes() ([]*Node, error) {
 	var filtered []*Node
 	for _, node := range allNodes {
 		if n.hasNodePrefix(node.ID) {
-			node.ID = n.unprefixNodeID(node.ID)
-			filtered = append(filtered, node)
+			filtered = append(filtered, n.toUserNode(node))
 		}
 	}
 	return filtered, nil
@@ -403,10 +438,7 @@ func (n *NamespacedEngine) AllEdges() ([]*Edge, error) {
 	var filtered []*Edge
 	for _, edge := range allEdges {
 		if n.hasEdgePrefix(edge.ID) {
-			edge.ID = n.unprefixEdgeID(edge.ID)
-			edge.StartNode = n.unprefixNodeID(edge.StartNode)
-			edge.EndNode = n.unprefixNodeID(edge.EndNode)
-			filtered = append(filtered, edge)
+			filtered = append(filtered, n.toUserEdge(edge))
 		}
 	}
 	return filtered, nil
@@ -417,9 +449,7 @@ func (n *NamespacedEngine) GetAllNodes() []*Node {
 	var filtered []*Node
 	for _, node := range allNodes {
 		if n.hasNodePrefix(node.ID) {
-			// Unprefix ID for user-facing API (consistent with AllNodes())
-			node.ID = n.unprefixNodeID(node.ID)
-			filtered = append(filtered, node)
+			filtered = append(filtered, n.toUserNode(node))
 		}
 	}
 	return filtered
@@ -508,8 +538,9 @@ func (n *NamespacedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error)
 	unprefixed := make(map[NodeID]*Node, len(result))
 	for namespacedID, node := range result {
 		unprefixedID := n.unprefixNodeID(namespacedID)
-		node.ID = unprefixedID
-		unprefixed[unprefixedID] = node
+		out := CopyNode(node)
+		out.ID = unprefixedID
+		unprefixed[unprefixedID] = out
 	}
 	return unprefixed, nil
 }
@@ -592,8 +623,7 @@ func (n *NamespacedEngine) StreamNodes(ctx context.Context, fn func(node *Node) 
 	if streamer, ok := n.inner.(StreamingEngine); ok {
 		return streamer.StreamNodes(ctx, func(node *Node) error {
 			if n.hasNodePrefix(node.ID) {
-				node.ID = n.unprefixNodeID(node.ID)
-				return fn(node)
+				return fn(n.toUserNode(node))
 			}
 			return nil // Skip nodes not in our namespace
 		})
@@ -616,10 +646,7 @@ func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) 
 	if streamer, ok := n.inner.(StreamingEngine); ok {
 		return streamer.StreamEdges(ctx, func(edge *Edge) error {
 			if n.hasEdgePrefix(edge.ID) {
-				edge.ID = n.unprefixEdgeID(edge.ID)
-				edge.StartNode = n.unprefixNodeID(edge.StartNode)
-				edge.EndNode = n.unprefixNodeID(edge.EndNode)
-				return fn(edge)
+				return fn(n.toUserEdge(edge))
 			}
 			return nil // Skip edges not in our namespace
 		})
@@ -644,8 +671,7 @@ func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, 
 			var filtered []*Node
 			for _, node := range nodes {
 				if n.hasNodePrefix(node.ID) {
-					node.ID = n.unprefixNodeID(node.ID)
-					filtered = append(filtered, node)
+					filtered = append(filtered, n.toUserNode(node))
 				}
 			}
 			if len(filtered) > 0 {
@@ -720,12 +746,12 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 				continue
 			}
 
-			// Remove namespace prefix before returning (user-facing API)
-			node.ID = n.unprefixNodeID(node.ID)
+			// Return a user-facing copy (never mutate inner engine objects in-place).
+			out := n.toUserNode(node)
 			if skippedCount > 0 && skippedCount%100 == 0 {
 				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", skippedCount)
 			}
-			return node
+			return out
 		}
 
 		// Node is from a different namespace (has a different prefix)

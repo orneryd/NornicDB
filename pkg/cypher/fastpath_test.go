@@ -14,19 +14,17 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 	baseEngine := storage.NewMemoryEngine()
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	asyncEngine := storage.NewAsyncEngine(engine, nil)
-	defer asyncEngine.Close()
 
 	// Setup: Create test nodes
 	for i := 0; i < 10; i++ {
-		asyncEngine.CreateNode(&storage.Node{
+		engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("actor%d", i)),
 			Labels: []string{"Actor"},
 			Properties: map[string]interface{}{
 				"name": fmt.Sprintf("Actor_%d", i),
 			},
 		})
-		asyncEngine.CreateNode(&storage.Node{
+		engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("movie%d", i)),
 			Labels: []string{"Movie"},
 			Properties: map[string]interface{}{
@@ -35,7 +33,7 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 		})
 	}
 
-	executor := NewStorageExecutor(asyncEngine)
+	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
 	// Test Pattern 1: WITH LIMIT pattern (benchmark style)
@@ -68,12 +66,10 @@ func TestFastPath_LDBCPattern(t *testing.T) {
 	baseEngine := storage.NewMemoryEngine()
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	asyncEngine := storage.NewAsyncEngine(engine, nil)
-	defer asyncEngine.Close()
 
 	// Setup: Create Person nodes with id properties (LDBC style)
 	for i := 1; i <= 10; i++ {
-		asyncEngine.CreateNode(&storage.Node{
+		engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("person%d", i)),
 			Labels: []string{"Person"},
 			Properties: map[string]interface{}{
@@ -83,7 +79,7 @@ func TestFastPath_LDBCPattern(t *testing.T) {
 		})
 	}
 
-	executor := NewStorageExecutor(asyncEngine)
+	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
 	// Test Pattern 2: LDBC style (property match, no WITH)

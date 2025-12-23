@@ -1136,7 +1136,7 @@ func TestGetAllNodes(t *testing.T) {
 		for _, n := range nodes {
 			foundIDs[n.ID] = true
 		}
-		if !foundIDs["node-1"] || !foundIDs["node-2"] || !foundIDs["node-3"] {
+		if !foundIDs[NodeID(prefixTestID("node-1"))] || !foundIDs[NodeID(prefixTestID("node-2"))] || !foundIDs[NodeID(prefixTestID("node-3"))] {
 			t.Error("Not all nodes were returned")
 		}
 	})

@@ -7,8 +7,9 @@ import (
 )
 
 func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
-	engine := NewMemoryEngine()
-	defer engine.Close()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 
 	// Add unique constraint
 	err := engine.GetSchema().AddUniqueConstraint("unique_email", "User", "email")
@@ -60,8 +61,9 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 
 	t.Run("bulk create registers unique values", func(t *testing.T) {
 		// Create a new engine for this test
-		engine2 := NewMemoryEngine()
-		defer engine2.Close()
+		base2 := NewMemoryEngine()
+		defer base2.Close()
+		engine2 := NewNamespacedEngine(base2, "test")
 
 		err := engine2.GetSchema().AddUniqueConstraint("unique_email", "User", "email")
 		if err != nil {
@@ -105,8 +107,9 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 	})
 
 	t.Run("bulk create with no constraints succeeds", func(t *testing.T) {
-		engine3 := NewMemoryEngine()
-		defer engine3.Close()
+		base3 := NewMemoryEngine()
+		defer base3.Close()
+		engine3 := NewNamespacedEngine(base3, "test")
 
 		// No constraints - bulk create should work with any data
 		nodes := []*Node{

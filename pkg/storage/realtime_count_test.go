@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ func TestRealtimeCountTracking(t *testing.T) {
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 50 * time.Millisecond, // Same as production default
 	}
-	async := NewAsyncEngine(badger, asyncConfig)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, asyncConfig)
 	defer async.Close()
 
 	t.Run("initial_count_is_zero", func(t *testing.T) {
@@ -102,7 +104,8 @@ func TestRealtimeCountWithCypher(t *testing.T) {
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 50 * time.Millisecond,
 	}
-	async := NewAsyncEngine(badger, asyncConfig)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, asyncConfig)
 	defer async.Close()
 
 	// Simulate what Cypher executor does
@@ -144,7 +147,8 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 50 * time.Millisecond,
 	}
-	async := NewAsyncEngine(badger, asyncConfig)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, asyncConfig)
 	defer async.Close()
 
 	t.Run("delete_then_create_same_id", func(t *testing.T) {
@@ -189,7 +193,8 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 		// Start fresh
 		badger2 := createRealtimeTestBadgerEngine(t)
 		defer badger2.Close()
-		async2 := NewAsyncEngine(badger2, asyncConfig)
+		namespaced2 := NewNamespacedEngine(badger2, "test")
+		async2 := NewAsyncEngine(namespaced2, asyncConfig)
 		defer async2.Close()
 
 		// Create node-A
@@ -227,14 +232,15 @@ func TestCountDuringFlushRace(t *testing.T) {
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 5 * time.Millisecond,
 	}
-	async := NewAsyncEngine(badger, asyncConfig)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, asyncConfig)
 	defer async.Close()
 
 	// Create many nodes while flushes are happening
 	numNodes := 100
 	for i := 0; i < numNodes; i++ {
 		node := &Node{
-			ID:     NodeID("race-node-" + string(rune(i))),
+			ID:     NodeID(fmt.Sprintf("race-node-%d", i)),
 			Labels: []string{"RaceTest"},
 		}
 		async.CreateNode(node)
@@ -267,7 +273,8 @@ func TestCountAfterFlushAndRecreate(t *testing.T) {
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 50 * time.Millisecond,
 	}
-	async := NewAsyncEngine(badger, asyncConfig)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, asyncConfig)
 	defer async.Close()
 
 	t.Run("create_flush_create_same_id", func(t *testing.T) {

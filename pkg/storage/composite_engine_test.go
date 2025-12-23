@@ -1091,11 +1091,11 @@ func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with tenant_id property
+	// Test routing with database_id property
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"tenant_id": "tenant_a"},
+		Properties: map[string]interface{}{"database_id": "db1"},
 	}
 	_, err := composite.CreateNode(node)
 	require.NoError(t, err)
@@ -1173,11 +1173,11 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with int64 tenant_id
+	// Test routing with int64 database_id (hash fallback)
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"tenant_id": int64(123)},
+		Properties: map[string]interface{}{"database_id": int64(123)},
 	}
 	_, err := composite.CreateNode(node)
 	require.NoError(t, err)
@@ -1203,11 +1203,11 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with int tenant_id
+	// Test routing with int database_id (hash fallback)
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"tenant_id": 456},
+		Properties: map[string]interface{}{"database_id": 456},
 	}
 	_, err := composite.CreateNode(node)
 	require.NoError(t, err)
@@ -1233,11 +1233,11 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with negative int64 tenant_id (tests negative hash handling)
+	// Test routing with negative int64 database_id (tests negative hash handling)
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"tenant_id": int64(-123)},
+		Properties: map[string]interface{}{"database_id": int64(-123)},
 	}
 	_, err := composite.CreateNode(node)
 	require.NoError(t, err)
@@ -1263,11 +1263,11 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with negative int tenant_id (tests negative hash handling)
+	// Test routing with negative int database_id (tests negative hash handling)
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"tenant_id": -456},
+		Properties: map[string]interface{}{"database_id": -456},
 	}
 	_, err := composite.CreateNode(node)
 	require.NoError(t, err)
@@ -1334,7 +1334,7 @@ func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCompositeEngine_routeWrite_PropertiesWithoutTenantID(t *testing.T) {
+func TestCompositeEngine_routeWrite_PropertiesWithoutDatabaseID(t *testing.T) {
 	// Create constituent engines
 	engine1 := NewMemoryEngine()
 	engine2 := NewMemoryEngine()
@@ -1354,7 +1354,7 @@ func TestCompositeEngine_routeWrite_PropertiesWithoutTenantID(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Test routing with properties but no tenant_id (should use default)
+	// Test routing with properties but no database_id (should use default)
 	node := &Node{
 		ID:         NodeID(prefixTestID("node1")),
 		Labels:     []string{},

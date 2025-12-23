@@ -8,6 +8,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,7 @@ func TestFlushResultHasErrors(t *testing.T) {
 // errorEngine wraps an engine and simulates failures for specific operations.
 type errorEngine struct {
 	Engine
+	baseEngine Engine
 	mu              sync.Mutex
 	failNodeIDs     map[NodeID]bool
 	failEdgeIDs     map[EdgeID]bool
@@ -79,11 +81,22 @@ type errorEngine struct {
 }
 
 func newErrorEngine() *errorEngine {
+	base := NewMemoryEngine()
+	namespaced := NewNamespacedEngine(base, "test")
 	return &errorEngine{
-		Engine:      NewMemoryEngine(),
+		Engine:      namespaced,
+		baseEngine:  base,
 		failNodeIDs: make(map[NodeID]bool),
 		failEdgeIDs: make(map[EdgeID]bool),
 	}
+}
+
+func (e *errorEngine) Close() error {
+	// Close the underlying engine (NamespacedEngine.Close() is a no-op).
+	if e.baseEngine != nil {
+		return e.baseEngine.Close()
+	}
+	return nil
 }
 
 func (e *errorEngine) UpdateNode(node *Node) error {
@@ -467,14 +480,16 @@ func TestBulkDeleteFallbackToIndividual(t *testing.T) {
 
 // TestFlushConcurrentWriteSafety verifies concurrent writes during flush are safe.
 func TestFlushConcurrentWriteSafety(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
 	ae := NewAsyncEngine(engine, cfg)
 	defer ae.Close()
 
 	// Write initial nodes
 	for i := 0; i < 100; i++ {
-		ae.CreateNode(&Node{ID: NodeID("node" + string(rune(i))), Labels: []string{"Test"}})
+		ae.CreateNode(&Node{ID: NodeID(fmt.Sprintf("node-%d", i)), Labels: []string{"Test"}})
 	}
 
 	// Start flush in background
@@ -487,7 +502,7 @@ func TestFlushConcurrentWriteSafety(t *testing.T) {
 
 	// Concurrent writes during flush
 	for i := 100; i < 200; i++ {
-		ae.CreateNode(&Node{ID: NodeID("node" + string(rune(i))), Labels: []string{"Test"}})
+		ae.CreateNode(&Node{ID: NodeID(fmt.Sprintf("node-%d", i)), Labels: []string{"Test"}})
 	}
 
 	wg.Wait()
@@ -496,7 +511,7 @@ func TestFlushConcurrentWriteSafety(t *testing.T) {
 	ae.Flush()
 
 	// Verify no data loss
-	count, _ := engine.NodeCount()
+	count, _ := base.NodeCount()
 	if count < 100 {
 		t.Errorf("Expected at least 100 nodes, got %d", count)
 	}
@@ -504,7 +519,9 @@ func TestFlushConcurrentWriteSafety(t *testing.T) {
 
 // TestEmptyFlushReturnsEmptyResult verifies empty flush behavior.
 func TestEmptyFlushReturnsEmptyResult(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
 	ae := NewAsyncEngine(engine, cfg)
 	defer ae.Close()
@@ -525,7 +542,9 @@ func TestEmptyFlushReturnsEmptyResult(t *testing.T) {
 
 // TestCloseSucceedsWithNoData verifies clean close when no data.
 func TestCloseSucceedsWithNoData(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
 	ae := NewAsyncEngine(engine, cfg)
 
@@ -537,7 +556,9 @@ func TestCloseSucceedsWithNoData(t *testing.T) {
 
 // TestCloseSucceedsAfterSuccessfulFlush verifies clean close after flush.
 func TestCloseSucceedsAfterSuccessfulFlush(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 	cfg := &AsyncEngineConfig{FlushInterval: 1000000}
 	ae := NewAsyncEngine(engine, cfg)
 
@@ -558,7 +579,7 @@ func TestCloseSucceedsAfterSuccessfulFlush(t *testing.T) {
 	}
 
 	// Verify data in underlying engine BEFORE close
-	n, err = engine.GetNode("n1")
+	n, err = base.GetNode(NodeID(prefixTestID("n1")))
 	if err != nil || n == nil {
 		t.Error("Data should be in underlying engine after flush")
 	}
@@ -616,7 +637,9 @@ func TestCloseReportsUnflushedData(t *testing.T) {
 
 // TestCloseCleansUpGoroutines verifies close stops background goroutines.
 func TestCloseCleansUpGoroutines(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 	cfg := &AsyncEngineConfig{FlushInterval: 10} // Fast interval
 	ae := NewAsyncEngine(engine, cfg)
 

@@ -65,9 +65,8 @@ func NewCompositeEngine(
 		}
 	}
 
-	// Set default constituents for common property-based routing
+	// Set default constituent for database_id if present
 	if len(writableConstituents) > 0 {
-		propertyDefaults["tenant_id"] = writableConstituents[0]
 		propertyDefaults["database_id"] = writableConstituents[0]
 	}
 
@@ -91,7 +90,7 @@ func (c *CompositeEngine) SetLabelRouting(label string, constituents []string) {
 }
 
 // SetPropertyRouting configures property-based routing for a specific property value.
-// This enables routing based on property values (e.g., tenant_id, database_id).
+// This enables routing based on property values (e.g., database_id).
 func (c *CompositeEngine) SetPropertyRouting(propertyName string, value interface{}, constituent string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -166,6 +165,17 @@ func (c *CompositeEngine) routeWrite(operation string, labels []string, properti
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	// 0. Property auto-routing for database identifiers (explicit database selection)
+	if properties != nil {
+		if dbVal, ok := properties["database_id"].(string); ok && dbVal != "" {
+			for _, alias := range writableConstituents {
+				if alias == dbVal || c.constituentNames[alias] == dbVal {
+					return alias
+				}
+			}
+		}
+	}
+
 	// 1. Label-based routing: Use configured routing rules
 	if len(labels) > 0 {
 		firstLabel := strings.ToLower(labels[0])
@@ -212,17 +222,7 @@ func (c *CompositeEngine) routeWrite(operation string, labels []string, properti
 			}
 		}
 
-		// Fallback: Check common routing properties (tenant_id, database_id)
-		// Use consistent hashing for unconfigured properties
-		if tenantID, exists := properties["tenant_id"]; exists {
-			tenantHash := hashValue(tenantID)
-			index := tenantHash % len(writableConstituents)
-			if index < 0 {
-				index = -index
-			}
-			return writableConstituents[index]
-		}
-
+		// Fallback: Check common routing property (database_id) with hashing
 		if databaseID, exists := properties["database_id"]; exists {
 			dbHash := hashValue(databaseID)
 			index := dbHash % len(writableConstituents)

@@ -230,8 +230,8 @@ func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 	// This ensures nodes are in context and passed directly to edge creation
 	// Wait 50ms after to ensure everything is persisted
 	createResult, err := exec.Execute(ctx, `
-		CREATE (a:Person {name: "Alice", tenant_id: "`+db1Name+`"})
-		CREATE (b:Person {name: "Bob", tenant_id: "`+db1Name+`"})
+		CREATE (a:Person {name: "Alice", database_id: "`+db1Name+`"})
+		CREATE (b:Person {name: "Bob", database_id: "`+db1Name+`"})
 		WITH a, b
 		CREATE (a)-[:KNOWS {since: 2020}]->(b)
 	`, nil)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -22,7 +23,9 @@ import (
 
 // TestUndoCreateNode verifies that creating a node can be undone.
 func TestUndoCreateNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 
 	// Create WAL entry for node creation
 	node := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
@@ -59,11 +62,16 @@ func TestUndoCreateNode(t *testing.T) {
 
 // TestUndoUpdateNode verifies that updating a node can be undone.
 func TestUndoUpdateNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 
 	// Create original node
 	oldNode := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	engine.CreateNode(oldNode)
+	_, err := engine.CreateNode(oldNode)
+	if err != nil {
+		t.Fatalf("failed to create original node: %v", err)
+	}
 
 	// Create WAL entry for update with before image
 	newNode := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
@@ -100,11 +108,16 @@ func TestUndoUpdateNode(t *testing.T) {
 
 // TestUndoDeleteNode verifies that deleting a node can be undone.
 func TestUndoDeleteNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 
 	// Create node to delete
 	oldNode := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	engine.CreateNode(oldNode)
+	_, err := engine.CreateNode(oldNode)
+	if err != nil {
+		t.Fatalf("failed to create node to delete: %v", err)
+	}
 
 	// Create WAL entry for delete with before image
 	data, _ := json.Marshal(WALDeleteData{ID: "n1", OldNode: oldNode})
@@ -143,7 +156,9 @@ func TestUndoDeleteNode(t *testing.T) {
 
 // TestUndoWithoutBeforeImage verifies error on missing undo data.
 func TestUndoWithoutBeforeImage(t *testing.T) {
-	engine := NewMemoryEngine()
+	base := NewMemoryEngine()
+	defer base.Close()
+	engine := NewNamespacedEngine(base, "test")
 
 	// Create WAL entry for update WITHOUT before image
 	newNode := &Node{ID: "n1", Labels: []string{"Person"}}
@@ -274,12 +289,12 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal, _ := NewWAL(dir, cfg)
 
 	// Write a complete transaction - pass structs directly
-	wal.Append(OpTxBegin, WALTxData{TxID: "tx-001"})
-	wal.Append(OpCreateNode, WALNodeData{
+	wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "tx-001"}, "test")
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{
 		Node: &Node{ID: "n1", Labels: []string{"Test"}, Properties: map[string]interface{}{"value": "committed"}},
 		TxID: "tx-001",
-	})
-	wal.Append(OpTxCommit, WALTxData{TxID: "tx-001"})
+	}, "test")
+	wal.AppendWithDatabase(OpTxCommit, WALTxData{TxID: "tx-001"}, "test")
 
 	wal.Close()
 
@@ -316,11 +331,11 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal, _ := NewWAL(dir, cfg)
 
 	// Write an incomplete transaction (no commit) - pass structs directly
-	wal.Append(OpTxBegin, WALTxData{TxID: "tx-incomplete"})
+	wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "tx-incomplete"}, "test")
 
 	// Node creation with undo data
 	node := &Node{ID: "n1", Labels: []string{"Test"}, Properties: map[string]interface{}{"value": "incomplete"}}
-	wal.Append(OpCreateNode, WALNodeData{Node: node, TxID: "tx-incomplete"})
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: node, TxID: "tx-incomplete"}, "test")
 
 	// No commit! Simulates crash.
 	wal.Close()
@@ -355,12 +370,12 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal, _ := NewWAL(dir, cfg)
 
 	// Write an explicitly aborted transaction - pass structs directly
-	wal.Append(OpTxBegin, WALTxData{TxID: "tx-aborted"})
-	wal.Append(OpCreateNode, WALNodeData{
+	wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "tx-aborted"}, "test")
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{
 		Node: &Node{ID: "n1", Labels: []string{"Test"}},
 		TxID: "tx-aborted",
-	})
-	wal.Append(OpTxAbort, WALTxData{TxID: "tx-aborted", Reason: "user cancelled"})
+	}, "test")
+	wal.AppendWithDatabase(OpTxAbort, WALTxData{TxID: "tx-aborted", Reason: "user cancelled"}, "test")
 
 	wal.Close()
 
@@ -394,25 +409,25 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal, _ := NewWAL(dir, cfg)
 
 	// Transaction 1: Committed - pass structs directly
-	wal.Append(OpTxBegin, WALTxData{TxID: "tx-1"})
-	wal.Append(OpCreateNode, WALNodeData{
+	wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "tx-1"}, "test")
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{
 		Node: &Node{ID: "committed-node", Labels: []string{"Test"}},
 		TxID: "tx-1",
-	})
-	wal.Append(OpTxCommit, WALTxData{TxID: "tx-1"})
+	}, "test")
+	wal.AppendWithDatabase(OpTxCommit, WALTxData{TxID: "tx-1"}, "test")
 
 	// Transaction 2: Incomplete (crash)
-	wal.Append(OpTxBegin, WALTxData{TxID: "tx-2"})
-	wal.Append(OpCreateNode, WALNodeData{
+	wal.AppendWithDatabase(OpTxBegin, WALTxData{TxID: "tx-2"}, "test")
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{
 		Node: &Node{ID: "incomplete-node", Labels: []string{"Test"}},
 		TxID: "tx-2",
-	})
+	}, "test")
 	// No commit!
 
 	// Non-transactional write
-	wal.Append(OpCreateNode, WALNodeData{
+	wal.AppendWithDatabase(OpCreateNode, WALNodeData{
 		Node: &Node{ID: "non-tx-node", Labels: []string{"Test"}},
-	})
+	}, "test")
 
 	wal.Close()
 
@@ -477,19 +492,22 @@ func TestRecoveryResultSummary(t *testing.T) {
 
 // TestUndoCreateEdge verifies edge creation can be undone.
 func TestUndoCreateEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	baseEngine := NewMemoryEngine()
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes first
-	engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
-	engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	require.NoError(t, err)
 
 	// Create edge via WAL
 	edge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}
 	data, _ := json.Marshal(WALEdgeData{Edge: edge})
-	entry := WALEntry{Sequence: 1, Operation: OpCreateEdge, Data: data, Checksum: crc32Checksum(data)}
+	entry := WALEntry{Sequence: 1, Operation: OpCreateEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
 	// Redo
-	ReplayWALEntry(engine, entry)
+	require.NoError(t, ReplayWALEntry(engine, entry))
 
 	e, _ := engine.GetEdge("e1")
 	if e == nil {
@@ -497,7 +515,7 @@ func TestUndoCreateEdge(t *testing.T) {
 	}
 
 	// Undo
-	UndoWALEntry(engine, entry)
+	require.NoError(t, UndoWALEntry(engine, entry))
 
 	e, _ = engine.GetEdge("e1")
 	if e != nil {
@@ -507,20 +525,23 @@ func TestUndoCreateEdge(t *testing.T) {
 
 // TestUndoDeleteEdge verifies edge deletion can be undone.
 func TestUndoDeleteEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	baseEngine := NewMemoryEngine()
+	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes and edge
-	engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
-	engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	require.NoError(t, err)
 	oldEdge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{"since": 2020}}
-	engine.CreateEdge(oldEdge)
+	require.NoError(t, engine.CreateEdge(oldEdge))
 
 	// Delete edge via WAL with before image
 	data, _ := json.Marshal(WALDeleteData{ID: "e1", OldEdge: oldEdge})
-	entry := WALEntry{Sequence: 2, Operation: OpDeleteEdge, Data: data, Checksum: crc32Checksum(data)}
+	entry := WALEntry{Sequence: 2, Operation: OpDeleteEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
 	// Redo (delete)
-	ReplayWALEntry(engine, entry)
+	require.NoError(t, ReplayWALEntry(engine, entry))
 
 	e, _ := engine.GetEdge("e1")
 	if e != nil {
@@ -528,7 +549,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 	}
 
 	// Undo (restore)
-	UndoWALEntry(engine, entry)
+	require.NoError(t, UndoWALEntry(engine, entry))
 
 	e, _ = engine.GetEdge("e1")
 	if e == nil {

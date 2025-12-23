@@ -12,6 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { base.Close() })
+	return storage.NewNamespacedEngine(base, "nornic")
+}
+
 // =============================================================================
 // K-MEANS CLUSTERED RRF HYBRID SEARCH TESTS
 // =============================================================================
@@ -26,8 +32,7 @@ import (
 // TestRRFHybridSearch_UsesClusteringWhenEnabled verifies that rrfHybridSearch
 // uses cluster-accelerated search when clustering is enabled and has been triggered.
 func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	// Create service
 	svc := NewService(engine)
@@ -66,8 +71,7 @@ func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
 // TestRRFHybridSearch_FallsBackToVectorOnClusterError verifies graceful fallback
 // when cluster search fails.
 func TestRRFHybridSearch_FallsBackToVectorOnClusterError(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -99,8 +103,7 @@ func TestRRFHybridSearch_FallsBackToVectorOnClusterError(t *testing.T) {
 
 // TestSearchService_ClusteringEnabledFlag tests the IsClusteringEnabled method.
 func TestSearchService_ClusteringEnabledFlag(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -117,8 +120,7 @@ func TestSearchService_ClusteringEnabledFlag(t *testing.T) {
 // TestSearchService_ConfigurableMinEmbeddingsThreshold tests the configurable
 // minimum embeddings threshold for clustering.
 func TestSearchService_ConfigurableMinEmbeddingsThreshold(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -148,8 +150,7 @@ func TestSearchService_ConfigurableMinEmbeddingsThreshold(t *testing.T) {
 
 // TestSearchService_ClusterStats tests cluster statistics retrieval.
 func TestSearchService_ClusterStats(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -187,8 +188,7 @@ func TestRRFHybridSearch_SearchMethodIndicatesClusteredSearch(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
-			defer engine.Close()
+			engine := newNamespacedMemoryEngine(t)
 
 			svc := NewService(engine)
 
@@ -197,8 +197,8 @@ func TestRRFHybridSearch_SearchMethodIndicatesClusteredSearch(t *testing.T) {
 			embedding[0] = 1.0
 
 			node := &storage.Node{
-				ID:        "doc1",
-				Labels:    []string{"Node"},
+				ID:              "doc1",
+				Labels:          []string{"Node"},
 				ChunkEmbeddings: [][]float32{embedding},
 				Properties: map[string]any{
 					"title":   "Test Document",
@@ -237,8 +237,7 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 	}
 	// Note: Manager doesn't have Close method, relies on GC
 
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -259,8 +258,8 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 			emb[1] = float32(i-10) * 0.01
 		}
 		nodes[i] = &storage.Node{
-			ID:        storage.NodeID(string(rune('a'+i)) + "-doc"),
-			Labels:    []string{"Node"},
+			ID:              storage.NodeID(string(rune('a'+i)) + "-doc"),
+			Labels:          []string{"Node"},
 			ChunkEmbeddings: [][]float32{emb},
 			Properties: map[string]any{
 				"title":   "Document " + string(rune('A'+i)),
@@ -315,8 +314,7 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 // TestVectorSearchOnly_UsesClusterWhenAvailable verifies that vectorSearchOnly
 // also uses cluster-accelerated search (this was the original working path).
 func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -325,8 +323,8 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 	embedding[0] = 1.0
 
 	node := &storage.Node{
-		ID:        "doc1",
-		Labels:    []string{"Node"},
+		ID:              "doc1",
+		Labels:          []string{"Node"},
 		ChunkEmbeddings: [][]float32{embedding},
 		Properties: map[string]any{
 			"title": "Test Document",
@@ -352,8 +350,7 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 // TestIndexNode_AddsToClusterIndex tests that IndexNode adds embeddings
 // to the cluster index when enabled.
 func TestIndexNode_AddsToClusterIndex(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -365,8 +362,8 @@ func TestIndexNode_AddsToClusterIndex(t *testing.T) {
 	embedding[0] = 1.0
 
 	node := &storage.Node{
-		ID:        "doc1",
-		Labels:    []string{"Node"},
+		ID:              "doc1",
+		Labels:          []string{"Node"},
 		ChunkEmbeddings: [][]float32{embedding},
 		Properties: map[string]any{
 			"title": "Test",
@@ -383,8 +380,7 @@ func TestIndexNode_AddsToClusterIndex(t *testing.T) {
 // TestRRFHybridSearch_MinEmbeddingsThreshold tests that clustering is skipped
 // when there are too few embeddings.
 func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -395,8 +391,8 @@ func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		node := &storage.Node{
-			ID:        storage.NodeID("doc" + string(rune('0'+i))),
-			Labels:    []string{"Node"},
+			ID:              storage.NodeID("doc" + string(rune('0'+i))),
+			Labels:          []string{"Node"},
 			ChunkEmbeddings: [][]float32{embedding},
 			Properties: map[string]any{
 				"title":   "Document",
@@ -438,8 +434,7 @@ func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
 // FIX: Updated rrfHybridSearch() to check if clusterIndex is available and
 // clustered, and use SearchWithClusters() when appropriate.
 func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -452,8 +447,8 @@ func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
 		emb[i%dim] = 1.0 // Spread embeddings
 
 		node := &storage.Node{
-			ID:        storage.NodeID(string(rune('a'+i%26)) + string(rune('0'+i/26))),
-			Labels:    []string{"Node"},
+			ID:              storage.NodeID(string(rune('a'+i%26)) + string(rune('0'+i/26))),
+			Labels:          []string{"Node"},
 			ChunkEmbeddings: [][]float32{emb},
 			Properties: map[string]any{
 				"title":   "Document",
@@ -495,8 +490,7 @@ func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
 // TestSearchPathIntegrity verifies that both search paths (RRF hybrid and
 // vector-only) are consistent in their cluster usage behavior.
 func TestSearchPathIntegrity(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	defer engine.Close()
+	engine := newNamespacedMemoryEngine(t)
 
 	svc := NewService(engine)
 
@@ -505,8 +499,8 @@ func TestSearchPathIntegrity(t *testing.T) {
 	embedding[0] = 1.0
 
 	node := &storage.Node{
-		ID:        "doc1",
-		Labels:    []string{"Node"},
+		ID:              "doc1",
+		Labels:          []string{"Node"},
 		ChunkEmbeddings: [][]float32{embedding},
 		Properties: map[string]any{
 			"title":   "Test Document",

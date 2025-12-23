@@ -79,7 +79,7 @@ func TestTopologyChaosRandomGraph(t *testing.T) {
 
 // TestTopologyChaosStarTopology tests with hub-and-spoke pattern.
 func TestTopologyChaosStarTopology(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 
 	// Create hub
 	engine.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}})
@@ -132,7 +132,7 @@ func TestTopologyChaosStarTopology(t *testing.T) {
 
 // TestTopologyChaosCliqueTopology tests with fully connected graph.
 func TestTopologyChaosCliqueTopology(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 
 	// Create clique of 10 nodes
 	for i := 0; i < 10; i++ {
@@ -170,7 +170,7 @@ func TestTopologyChaosCliqueTopology(t *testing.T) {
 
 // TestTopologyChaosEmptyGraph tests with empty storage.
 func TestTopologyChaosEmptyGraph(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true
@@ -188,7 +188,7 @@ func TestTopologyChaosEmptyGraph(t *testing.T) {
 
 // TestTopologyChaosDisabled tests behavior when disabled.
 func TestTopologyChaosDisabled(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -246,7 +246,7 @@ func TestTopologyChaosConcurrent(t *testing.T) {
 
 // TestTopologyChaosRapidCacheInvalidation tests rapid cache operations.
 func TestTopologyChaosRapidCacheInvalidation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -273,7 +273,7 @@ func TestTopologyChaosRapidCacheInvalidation(t *testing.T) {
 
 // TestTopologyComplexMultiLayerNetwork tests with multi-relationship graph.
 func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 
 	// Create users
 	users := []string{"alice", "bob", "charlie", "diana", "eve", "frank"}
@@ -339,7 +339,7 @@ func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
 
 // TestTopologyComplexInferenceEngineIntegration tests full Engine integration.
 func TestTopologyComplexInferenceEngineIntegration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	// Create inference engine
@@ -391,7 +391,7 @@ func TestTopologyComplexInferenceEngineIntegration(t *testing.T) {
 
 // TestTopologyComplexCombinedSuggestions tests merging semantic + topological.
 func TestTopologyComplexCombinedSuggestions(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -440,7 +440,7 @@ func TestTopologyComplexCombinedSuggestions(t *testing.T) {
 
 // TestTopologyComplexAlgorithmComparison tests all algorithms on same graph.
 func TestTopologyComplexAlgorithmComparison(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	algorithms := []string{
@@ -486,7 +486,7 @@ func TestTopologyComplexAlgorithmComparison(t *testing.T) {
 
 // TestTopologyComplexCacheLifecycle tests full cache lifecycle.
 func TestTopologyComplexCacheLifecycle(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	config := DefaultTopologyConfig()
@@ -543,7 +543,7 @@ func TestTopologyComplexCacheLifecycle(t *testing.T) {
 
 // TestTopologyComplexMinScoreFiltering tests minimum score threshold.
 func TestTopologyComplexMinScoreFiltering(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	thresholds := []float64{0.0, 0.3, 0.5, 0.7, 0.9, 1.0}
@@ -574,7 +574,7 @@ func TestTopologyComplexMinScoreFiltering(t *testing.T) {
 
 // TestTopologyComplexWeightConfiguration tests weight configuration.
 func TestTopologyComplexWeightConfiguration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	weights := []float64{0.0, 0.25, 0.5, 0.75, 1.0}
@@ -611,7 +611,7 @@ func TestTopologyComplexWeightConfiguration(t *testing.T) {
 
 // TestTopologyComplexProcessSuggestionIntegration tests ProcessSuggestion with topology.
 func TestTopologyComplexProcessSuggestionIntegration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 	setupTestGraph(t, engine)
 
 	// Create inference engine with all features
@@ -651,7 +651,8 @@ func TestTopologyComplexProcessSuggestionIntegration(t *testing.T) {
 // buildRandomStorageGraph creates a random graph in storage.
 func buildRandomStorageGraph(nodes int, density float64, seed int64) storage.Engine {
 	r := rand.New(rand.NewSource(seed))
-	engine := storage.NewMemoryEngine()
+	base := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(base, "test")
 
 	// Create nodes
 	for i := 0; i < nodes; i++ {

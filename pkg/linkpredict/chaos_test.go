@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -357,7 +358,7 @@ func TestChaosExtremeValues(t *testing.T) {
 // TestComplexMultiLayerGraph tests with nodes that have multiple edge types.
 func TestComplexMultiLayerGraph(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
 
 	// Create a multi-layer social network:
 	// - Friendship layer
@@ -366,7 +367,8 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 	users := []string{"alice", "bob", "charlie", "diana", "eve", "frank", "grace", "henry"}
 
 	for _, u := range users {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
+		require.NoError(t, err)
 	}
 
 	// Friendship layer
@@ -375,12 +377,12 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 		{"charlie", "diana"}, {"eve", "frank"}, {"frank", "grace"},
 	}
 	for i, f := range friendships {
-		engine.CreateEdge(&storage.Edge{
+		require.NoError(t, engine.CreateEdge(&storage.Edge{
 			ID: storage.EdgeID(fmt.Sprintf("friend-%d", i)),
 			StartNode: storage.NodeID(f[0]),
 			EndNode:   storage.NodeID(f[1]),
 			Type:      "FRIENDS_WITH",
-		})
+		}))
 	}
 
 	// Work colleague layer
@@ -389,12 +391,12 @@ func TestComplexMultiLayerGraph(t *testing.T) {
 		{"diana", "henry"}, {"eve", "grace"},
 	}
 	for i, c := range colleagues {
-		engine.CreateEdge(&storage.Edge{
+		require.NoError(t, engine.CreateEdge(&storage.Edge{
 			ID: storage.EdgeID(fmt.Sprintf("colleague-%d", i)),
 			StartNode: storage.NodeID(c[0]),
 			EndNode:   storage.NodeID(c[1]),
 			Type:      "WORKS_WITH",
-		})
+		}))
 	}
 
 	// Build unified graph

@@ -181,13 +181,16 @@ func TestAsyncEngine_CacheLimit_ConcurrentWrites(t *testing.T) {
 	engine := NewMemoryEngine()
 	defer engine.Close()
 
+	// Wrap with NamespacedEngine so AsyncEngine can accept unprefixed IDs.
+	namespaced := NewNamespacedEngine(engine, "test")
+
 	config := &AsyncEngineConfig{
 		FlushInterval:    1 * time.Hour, // Don't auto-flush
 		MaxNodeCacheSize: 50,            // Small limit
 		MaxEdgeCacheSize: 100,
 	}
 
-	async := NewAsyncEngine(engine, config)
+	async := NewAsyncEngine(namespaced, config)
 	defer async.Close()
 
 	// Concurrent writes from multiple goroutines

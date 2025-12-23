@@ -22,8 +22,11 @@ func TestBug_AsyncEngineNodeCountAfterDeleteRecreate(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	// Wrap with AsyncEngine directly (skip WAL for this test)
-	async := NewAsyncEngine(badger, &AsyncEngineConfig{
+	// Wrap Badger with NamespacedEngine so AsyncEngine can accept unprefixed IDs.
+	namespaced := NewNamespacedEngine(badger, "test")
+
+	// Wrap with AsyncEngine (skip WAL for this test)
+	async := NewAsyncEngine(namespaced, &AsyncEngineConfig{
 		FlushInterval: 10 * time.Millisecond,
 	})
 	defer async.Close()

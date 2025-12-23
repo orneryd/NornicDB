@@ -454,7 +454,7 @@ func DefaultConfig() Config {
 //			Action:   "CREATE",
 //			Success:  true,
 //			Metadata: map[string]string{
-//				"tenant_id": tenantID,
+//				"database_id": databaseID,
 //				"timestamp": time.Now().Format(time.RFC3339),
 //			},
 //		})

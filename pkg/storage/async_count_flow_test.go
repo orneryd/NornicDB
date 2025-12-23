@@ -25,11 +25,14 @@ func TestBug_CountAfterDeleteRecreate_AsyncEngine(t *testing.T) {
 	require.NoError(t, err)
 	defer badgerEngine.Close()
 
+	// Wrap with NamespacedEngine so AsyncEngine can accept unprefixed IDs.
+	namespaced := NewNamespacedEngine(badgerEngine, "test")
+
 	// Wrap with AsyncEngine (skip WAL for simpler test)
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 100 * time.Millisecond,
 	}
-	asyncEngine := NewAsyncEngine(badgerEngine, asyncConfig)
+	asyncEngine := NewAsyncEngine(namespaced, asyncConfig)
 	defer asyncEngine.Close()
 
 	// Step 1: Create 10 nodes
@@ -55,7 +58,7 @@ func TestBug_CountAfterDeleteRecreate_AsyncEngine(t *testing.T) {
 	assert.Equal(t, int64(10), count, "Count should be 10 before flush (pending creates)")
 
 	// Step 2: Flush
-	asyncEngine.Flush()
+	require.NoError(t, asyncEngine.Flush())
 	time.Sleep(50 * time.Millisecond) // Allow flush to complete
 
 	// Check count after flush
@@ -83,7 +86,7 @@ func TestBug_CountAfterDeleteRecreate_AsyncEngine(t *testing.T) {
 	assert.Equal(t, int64(0), count, "Count should be 0 after delete")
 
 	// Step 4: Flush deletes
-	asyncEngine.Flush()
+	require.NoError(t, asyncEngine.Flush())
 	time.Sleep(50 * time.Millisecond)
 
 	// Check count after delete flush
@@ -122,7 +125,7 @@ func TestBug_CountAfterDeleteRecreate_AsyncEngine(t *testing.T) {
 	assert.Equal(t, int64(5), count, "Count should be 5 after recreate")
 
 	// Flush and check again
-	asyncEngine.Flush()
+	require.NoError(t, asyncEngine.Flush())
 	time.Sleep(50 * time.Millisecond)
 
 	count, err = asyncEngine.NodeCount()
@@ -151,11 +154,14 @@ func TestBug_CountWithWAL_AsyncEngine(t *testing.T) {
 	walEngine := NewWALEngine(badgerEngine, wal)
 	defer walEngine.Close()
 
+	// Wrap with NamespacedEngine so AsyncEngine can accept unprefixed IDs.
+	namespaced := NewNamespacedEngine(walEngine, "test")
+
 	// Add AsyncEngine
 	asyncConfig := &AsyncEngineConfig{
 		FlushInterval: 100 * time.Millisecond,
 	}
-	asyncEngine := NewAsyncEngine(walEngine, asyncConfig)
+	asyncEngine := NewAsyncEngine(namespaced, asyncConfig)
 	defer asyncEngine.Close()
 
 	// Create 10 nodes
@@ -181,7 +187,7 @@ func TestBug_CountWithWAL_AsyncEngine(t *testing.T) {
 	assert.Equal(t, int64(10), count)
 
 	// Flush
-	asyncEngine.Flush()
+	require.NoError(t, asyncEngine.Flush())
 	time.Sleep(50 * time.Millisecond)
 
 	// Delete all
@@ -191,7 +197,7 @@ func TestBug_CountWithWAL_AsyncEngine(t *testing.T) {
 	}
 
 	// Flush deletes
-	asyncEngine.Flush()
+	require.NoError(t, asyncEngine.Flush())
 	time.Sleep(50 * time.Millisecond)
 
 	count, err = asyncEngine.NodeCount()

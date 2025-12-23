@@ -186,18 +186,19 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		snapshotPath := filepath.Join(snapshotDir, "snapshot.json")
 		recovered, err := RecoverFromWAL(walDir, snapshotPath)
 		require.NoError(t, err)
+		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Should have all 150 nodes
-		count, err := recovered.NodeCount()
+		count, err := recoveredNS.NodeCount()
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), count, "Should recover all nodes from snapshot + WAL")
 
 		// Verify specific nodes
-		n1, err := recovered.GetNode("n1")
+		n1, err := recoveredNS.GetNode("n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1, "Node 1 should be recovered")
 
-		n150, err := recovered.GetNode("n150")
+		n150, err := recoveredNS.GetNode("n150")
 		assert.NoError(t, err)
 		assert.NotNil(t, n150, "Node 150 should be recovered")
 	})
@@ -377,7 +378,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 				defer wg.Done()
 				for i := 0; i < writeCount; i++ {
 					nodeID := fmt.Sprintf("w%d_n%d", writerID, i)
-					node := &Node{ID: NodeID(nodeID), Labels: []string{"Test"}}
+					node := &Node{ID: NodeID(prefixTestID(nodeID)), Labels: []string{"Test"}}
 					_, err := walEngine.CreateNode(node)
 					if err != nil {
 						t.Errorf("Writer %d failed to create node %d: %v", writerID, i, err)
@@ -513,9 +514,10 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			// Create nodes in batches with delays to allow multiple snapshots
 			for batch := 0; batch < 5; batch++ {
 				for i := 0; i < 20; i++ {
-					nodeID := fmt.Sprintf("b%d_n%d", batch, i)
+					nodeID := prefixTestID(fmt.Sprintf("b%d_n%d", batch, i))
 					node := &Node{ID: NodeID(nodeID), Labels: []string{"Test"}}
-					walEngine.CreateNode(node)
+					_, err := walEngine.CreateNode(node)
+					require.NoError(t, err)
 				}
 				time.Sleep(80 * time.Millisecond) // Allow snapshot between batches
 			}

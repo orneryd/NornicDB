@@ -20,7 +20,8 @@ func TestEmbedThenFindNext(t *testing.T) {
 	// Create AsyncEngine
 	config := DefaultAsyncEngineConfig()
 	config.FlushInterval = 1 * time.Hour // No auto-flush
-	async := NewAsyncEngine(badger, config)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, config)
 	defer async.Close()
 
 	// Create 5 nodes
@@ -81,7 +82,8 @@ func TestEmbedThenFindNextWithFlush(t *testing.T) {
 	// Create AsyncEngine
 	config := DefaultAsyncEngineConfig()
 	config.FlushInterval = 1 * time.Hour // No auto-flush
-	async := NewAsyncEngine(badger, config)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, config)
 	defer async.Close()
 
 	// Create 5 nodes
@@ -143,7 +145,8 @@ func TestProductionScenario(t *testing.T) {
 	// Create AsyncEngine like production
 	config := DefaultAsyncEngineConfig()
 	config.FlushInterval = 50 * time.Millisecond
-	async := NewAsyncEngine(badger, config)
+	namespaced := NewNamespacedEngine(badger, "test")
+	async := NewAsyncEngine(namespaced, config)
 	defer async.Close()
 
 	// Simulate Mimir indexing 10 files

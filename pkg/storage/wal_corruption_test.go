@@ -314,9 +314,9 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	edgeData, _ := json.Marshal(WALEdgeData{Edge: edge})
 
 	entries := []WALEntry{
-		{Sequence: 1, Operation: OpCreateNode, Data: nodeData, Checksum: crc32Checksum(nodeData)},
+		{Sequence: 1, Operation: OpCreateNode, Data: nodeData, Checksum: crc32Checksum(nodeData), Database: "test"},
 		// This edge creation might fail due to missing endpoints
-		{Sequence: 2, Operation: OpCreateEdge, Data: edgeData, Checksum: crc32Checksum(edgeData)},
+		{Sequence: 2, Operation: OpCreateEdge, Data: edgeData, Checksum: crc32Checksum(edgeData), Database: "test"},
 	}
 
 	// Write entries
