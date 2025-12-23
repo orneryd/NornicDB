@@ -1193,8 +1193,8 @@ func (db *DB) GetBaseStorageForManager() storage.Engine {
 		return namespaced.GetInnerEngine()
 	}
 
-	// If it's not a NamespacedEngine (shouldn't happen), return as-is
-	return db.storage
+	// DB storage must always be namespaced; anything else is a programmer error.
+	panic("nornicdb: GetBaseStorageForManager called but DB storage is not namespaced")
 }
 
 // Close closes the database.

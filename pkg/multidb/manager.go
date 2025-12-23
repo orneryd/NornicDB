@@ -135,8 +135,8 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		return nil, err
 	}
 
-	// Migrate existing unprefixed data to default database namespace
-	// This handles backwards compatibility for databases created before multi-db support
+	// One-time migration: move any pre-multi-db (unprefixed) data into the default
+	// database namespace so the rest of the system can remain strictly namespaced.
 	if err := m.migrateLegacyData(); err != nil {
 		return nil, fmt.Errorf("failed to migrate legacy data: %w", err)
 	}

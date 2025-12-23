@@ -22,6 +22,7 @@ package multidb
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -67,17 +68,24 @@ func (m *DatabaseManager) migrateLegacyData() error {
 
 	if !hasUnprefixedData {
 		// No unprefixed data - mark migration as complete
-		m.markMigrationComplete()
+		_ = m.markMigrationComplete()
 		return nil
 	}
 
+	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
+
 	// Perform migration
 	if err := m.performMigration(engine); err != nil {
-		return fmt.Errorf("failed to migrate legacy data: %w", err)
+		// IMPORTANT: Migration is written to avoid deleting legacy records unless the
+		// full copy step succeeds. If we fail here, the user's existing data should
+		// still be intact (though some prefixed copies may have been created).
+		log.Printf("❌ Legacy migration failed; leaving existing database intact. Manual migration required: %v", err)
+		log.Printf("ℹ️  Recommended approach: export legacy data and re-import into %q using namespaced IDs, or restore from backup and retry after fixing the underlying error.", m.config.DefaultDatabase)
+		return fmt.Errorf("legacy migration failed; existing data left intact: %w", err)
 	}
 
 	// Mark migration as complete
-	m.markMigrationComplete()
+	_ = m.markMigrationComplete()
 
 	return nil
 }
@@ -226,7 +234,11 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 		return nil
 	}
 
-	// Migrate nodes: create new prefixed versions and delete old ones
+	// Phase 1: Create prefixed copies.
+	//
+	// IMPORTANT: Do not delete legacy (unprefixed) records during this phase.
+	// If we fail mid-migration, we must not lose any existing data.
+	createdNodes := make([]storage.NodeID, 0, len(unprefixedNodes))
 	for _, node := range unprefixedNodes {
 		// Copy properties and ensure db property is set for migrated nodes
 		properties := make(map[string]any)
@@ -260,16 +272,10 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 			}
 			return fmt.Errorf("failed to create migrated node %s: %w", newNode.ID, err)
 		}
-
-		// Delete old unprefixed node (this will clean up old indexes)
-		if err := engine.DeleteNode(node.ID); err != nil {
-			// Log but continue - old node might already be gone
-			// This is not critical as the new node exists
-			continue
-		}
+		createdNodes = append(createdNodes, newNode.ID)
 	}
 
-	// Migrate edges: create new prefixed versions and delete old ones
+	createdEdges := make([]storage.EdgeID, 0, len(unprefixedEdges))
 	for _, edge := range unprefixedEdges {
 		// Create new edge with prefixed IDs
 		newEdge := &storage.Edge{
@@ -292,13 +298,21 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 			}
 			return fmt.Errorf("failed to create migrated edge %s: %w", newEdge.ID, err)
 		}
-
-		// Delete old unprefixed edge (this will clean up old indexes)
-		if err := engine.DeleteEdge(edge.ID); err != nil {
-			// Log but continue - old edge might already be gone
-			continue
-		}
+		createdEdges = append(createdEdges, newEdge.ID)
 	}
+
+	// Phase 2: Best-effort cleanup of legacy (unprefixed) records.
+	//
+	// Failures here are not fatal: users will still have working namespaced data,
+	// and the legacy records remain as a fallback/backup.
+	for _, node := range unprefixedNodes {
+		_ = engine.DeleteNode(node.ID)
+	}
+	for _, edge := range unprefixedEdges {
+		_ = engine.DeleteEdge(edge.ID)
+	}
+
+	log.Printf("✅ Legacy migration complete: created %d nodes and %d edges in %q", len(createdNodes), len(createdEdges), defaultDB)
 
 	return nil
 }

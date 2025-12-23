@@ -457,11 +457,6 @@ func (ew *EmbedWorker) processNextBatch() bool {
 		// This is a stale entry - remove it immediately to prevent re-processing
 		fmt.Printf("⚠️  Node %s from pending index doesn't exist - removing stale entry\n", node.ID)
 		ew.markNodeEmbedded(node.ID)
-		// Also try with prefixed ID in case it's a namespace issue
-		if namespacedEngine, ok := ew.storage.(*storage.NamespacedEngine); ok {
-			prefixedID := namespacedEngine.Namespace() + ":" + string(node.ID)
-			ew.markNodeEmbedded(storage.NodeID(prefixedID))
-		}
 		return false // Skip this node, try next one
 	}
 

@@ -36,8 +36,8 @@ func (db *DB) defaultDatabaseName() string {
 	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
 		return namespaced.Namespace()
 	}
-	// DB storage is always namespaced; fall back to the configured default.
-	return "nornic"
+	// DB storage must always be namespaced; anything else is a programmer error.
+	panic("nornicdb: DB storage is not namespaced")
 }
 
 func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
@@ -155,7 +155,8 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 
 	dbName, local, ok := splitQualifiedID(string(node.ID))
 	if !ok {
-		// Unprefixed IDs are not supported; ignore silently to avoid log spam.
+		// Unprefixed IDs are not supported. This indicates a bug in the storage event pipeline.
+		log.Printf("⚠️ storage event had unprefixed node ID: %q", node.ID)
 		return
 	}
 
