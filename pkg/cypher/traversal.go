@@ -160,6 +160,40 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(pattern string, 
 		matches.PathVariable = pathVariable
 	}
 
+	// Fast path: MATCH ()-[r(:TYPE|...)?]->() RETURN count(r|*) [AS ...]
+	//
+	// This pattern appears in real workloads (and Northwind benchmarks). Routing it
+	// through full traversal materializes all edges/paths, which is unnecessary for
+	// pure counts and can be orders of magnitude slower.
+	if whereClause == "" && pathVariable == "" && !matches.IsChained && len(returnItems) == 1 &&
+		matches.StartNode.variable == "" && len(matches.StartNode.labels) == 0 && len(matches.StartNode.properties) == 0 &&
+		matches.EndNode.variable == "" && len(matches.EndNode.labels) == 0 && len(matches.EndNode.properties) == 0 &&
+		matches.Relationship.MinHops == 1 && matches.Relationship.MaxHops == 1 {
+		if count, ok, err := e.tryFastRelationshipCount(matches, returnItems[0]); ok {
+			if err != nil {
+				return nil, err
+			}
+			result.Rows = [][]interface{}{{count}}
+			return result, nil
+		}
+	}
+
+	// Fast path: relationship aggregations and chained joins (Northwind-style query shapes).
+	//
+	// This avoids full path materialization for common patterns like:
+	//   - MATCH (c)<-[:PART_OF]-(p) RETURN c.name, count(p)
+	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
+	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
+	if whereClause == "" && pathVariable == "" {
+		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
+			if err != nil {
+				return nil, err
+			}
+			result.Rows = rows
+			return result, nil
+		}
+	}
+
 	// OPTIMIZATION: If WHERE clause filters by id(startNode) = value, filter start nodes before traversal
 	// This avoids traversing from all nodes when we only need one specific node
 	var optimizedStartNodes []*storage.Node
@@ -429,6 +463,39 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(pattern string, 
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item returnItem) (count int64, ok bool, err error) {
+	upper := strings.ToUpper(strings.TrimSpace(item.expr))
+	if !strings.HasPrefix(upper, "COUNT(") || !strings.HasSuffix(upper, ")") {
+		return 0, false, nil
+	}
+
+	arg := strings.TrimSpace(item.expr[len("COUNT(") : len(item.expr)-1])
+	argUpper := strings.ToUpper(strings.TrimSpace(arg))
+
+	// Only handle COUNT(*) or COUNT(<relationship var>).
+	if argUpper != "*" && !strings.EqualFold(strings.TrimSpace(arg), matches.Relationship.Variable) {
+		return 0, false, nil
+	}
+
+	// No type filter: use storage.EdgeCount() (O(1) for most engines).
+	if len(matches.Relationship.Types) == 0 {
+		n, err := e.storage.EdgeCount()
+		return n, true, err
+	}
+
+	// Type filter(s): use GetEdgesByType() and count. This is backed by the edge-type
+	// index (and cached in BadgerEngine), avoiding full edge scans.
+	var total int64
+	for _, t := range matches.Relationship.Types {
+		edges, err := e.storage.GetEdgesByType(t)
+		if err != nil {
+			return 0, true, err
+		}
+		total += int64(len(edges))
+	}
+	return total, true, nil
 }
 
 // isLengthPathExpr checks if an expression is length(path) for some path variable

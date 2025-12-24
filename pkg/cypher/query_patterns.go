@@ -142,11 +142,27 @@ func DetectQueryPattern(query string) PatternInfo {
 
 	// Check for incoming count aggregation
 	if info.Pattern == PatternGeneric && strings.Contains(upperQuery, "COUNT(") {
-		if detectIncomingCountAgg(query, &info) {
-			return info
-		}
-		if detectOutgoingCountAgg(query, &info) {
-			return info
+		// Guardrails: the (in|out) count optimizers only support a very narrow query shape.
+		// Do NOT route queries that:
+		//   - have other aggregations (AVG/SUM/MIN/MAX/COLLECT)
+		//   - have multiple relationship segments (chained traversals)
+		//
+		// Those queries should use the generic executor (and any traversal fast paths),
+		// otherwise we can mis-route multi-hop queries and/or return incorrect columns.
+		if !strings.Contains(upperQuery, "SUM(") &&
+			!strings.Contains(upperQuery, "AVG(") &&
+			!strings.Contains(upperQuery, "MIN(") &&
+			!strings.Contains(upperQuery, "MAX(") &&
+			!strings.Contains(upperQuery, "COLLECT(") {
+			matchClause := extractMatchClause(query)
+			if countRelationshipPatterns(matchClause) == 1 {
+				if detectIncomingCountAgg(query, &info) {
+					return info
+				}
+				if detectOutgoingCountAgg(query, &info) {
+					return info
+				}
+			}
 		}
 	}
 
@@ -162,6 +178,60 @@ func DetectQueryPattern(query string) PatternInfo {
 	}
 
 	return info
+}
+
+func extractMatchClause(query string) string {
+	upper := strings.ToUpper(query)
+	matchIdx := strings.Index(upper, "MATCH")
+	if matchIdx < 0 {
+		return ""
+	}
+	end := len(query)
+	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "ORDER", "LIMIT", "SKIP"} {
+		if idx := strings.Index(upper[matchIdx:], keyword); idx > 0 {
+			if matchIdx+idx < end {
+				end = matchIdx + idx
+			}
+		}
+	}
+	return query[matchIdx:end]
+}
+
+func countRelationshipPatterns(s string) int {
+	inQuote := false
+	quoteChar := byte(0)
+	count := 0
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
+			if !inQuote {
+				inQuote = true
+				quoteChar = c
+			} else if c == quoteChar {
+				inQuote = false
+			}
+		}
+		if inQuote {
+			continue
+		}
+
+		if c != '[' {
+			continue
+		}
+
+		// Relationship patterns are introduced by a preceding '-' (possibly with whitespace).
+		j := i - 1
+		for j >= 0 && isWhitespace(s[j]) {
+			j--
+		}
+		if j >= 0 && s[j] == '-' {
+			count++
+		}
+	}
+
+	return count
 }
 
 // detectMutualRelationship checks for (a)-[:T]->(b)-[:T]->(a) pattern
@@ -221,12 +291,14 @@ func detectIncomingCountAgg(query string, info *PatternInfo) bool {
 	relType := matches[3]  // TYPE
 	endVar := matches[4]   // y
 
-	// Check if count() is on the end variable (the one doing the incoming)
+	// Check if count() is on the end variable (the one doing the incoming), and
+	// only optimize the narrow "RETURN x.name, count(y)" shape that the optimized executor implements.
 	upperQuery := strings.ToUpper(query)
 	countPattern := "COUNT(" + strings.ToUpper(endVar)
 	countStarPattern := "COUNT(*)"
 
-	if strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern) {
+	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
+		isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -251,11 +323,12 @@ func detectOutgoingCountAgg(query string, info *PatternInfo) bool {
 	relType := matches[3]  // TYPE
 	endVar := matches[4]   // y
 
-	// Check if count() is on the end variable
+	// Check if count() is on the end variable, and only optimize the narrow
+	// "RETURN x.name, count(y)" shape that the optimized executor implements.
 	upperQuery := strings.ToUpper(query)
 	countPattern := "COUNT(" + strings.ToUpper(endVar)
 
-	if strings.Contains(upperQuery, countPattern) {
+	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -266,6 +339,54 @@ func detectOutgoingCountAgg(query string, info *PatternInfo) bool {
 	}
 
 	return false
+}
+
+func isReturnNameCountShape(query string, startVar string, endVar string) bool {
+	upperQuery := strings.ToUpper(query)
+	returnIdx := strings.Index(upperQuery, "RETURN")
+	if returnIdx < 0 {
+		return false
+	}
+
+	returnPart := strings.TrimSpace(query[returnIdx+6:])
+
+	// Strip ORDER BY / SKIP / LIMIT.
+	end := len(returnPart)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	returnPart = strings.TrimSpace(returnPart[:end])
+	if returnPart == "" {
+		return false
+	}
+
+	parts := splitOutsideParens(returnPart, ',')
+	if len(parts) != 2 {
+		return false
+	}
+
+	left := strings.TrimSpace(parts[0])
+	right := strings.TrimSpace(parts[1])
+
+	// Handle "AS" aliases.
+	if asIdx := strings.Index(strings.ToUpper(left), " AS "); asIdx > 0 {
+		left = strings.TrimSpace(left[:asIdx])
+	}
+	if asIdx := strings.Index(strings.ToUpper(right), " AS "); asIdx > 0 {
+		right = strings.TrimSpace(right[:asIdx])
+	}
+
+	// Require "startVar.name" (the optimized executor currently uses the "name" property).
+	if !strings.EqualFold(left, startVar+".name") {
+		return false
+	}
+
+	// Require COUNT(endVar) or COUNT(*).
+	rightUpper := strings.ToUpper(strings.ReplaceAll(right, " ", ""))
+	wantCountVar := "COUNT(" + strings.ToUpper(endVar) + ")"
+	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
 }
 
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
@@ -295,6 +416,11 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 			if propName == "" {
 				return false // Let regular executeMatch handle simple count(r)
 			}
+			// Guardrail: only optimize the narrow "RETURN n.name, <agg>(r.prop)..." shape that
+			// executeEdgePropertyAggOptimized implements (it hardcodes the node "name" property).
+			if !isReturnEdgePropertyAggNameShape(query, relVar, propName) {
+				return false
+			}
 			info.Pattern = PatternEdgePropertyAgg
 			info.RelVar = relVar
 			info.AggFunctions = append(info.AggFunctions, aggFunc)
@@ -304,6 +430,83 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 	}
 
 	return false
+}
+
+func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
+	upperQuery := strings.ToUpper(query)
+	returnIdx := strings.Index(upperQuery, "RETURN")
+	if returnIdx < 0 {
+		return false
+	}
+	returnPart := strings.TrimSpace(query[returnIdx+6:])
+
+	// Strip ORDER BY / SKIP / LIMIT.
+	end := len(returnPart)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	returnPart = strings.TrimSpace(returnPart[:end])
+	if returnPart == "" {
+		return false
+	}
+
+	items := splitOutsideParens(returnPart, ',')
+	if len(items) < 2 {
+		return false
+	}
+
+	first := strings.TrimSpace(items[0])
+	if asIdx := strings.Index(strings.ToUpper(first), " AS "); asIdx > 0 {
+		first = strings.TrimSpace(first[:asIdx])
+	}
+	// Require "<var>.name" in first return position.
+	dot := strings.LastIndex(first, ".")
+	if dot < 0 || !strings.EqualFold(first[dot+1:], "name") {
+		return false
+	}
+
+	wantAggPrefix := strings.ToUpper(relVar) + "."
+	wantAggProp := strings.ToUpper(propName)
+
+	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
+	for i := 1; i < len(items); i++ {
+		item := strings.TrimSpace(items[i])
+		if asIdx := strings.Index(strings.ToUpper(item), " AS "); asIdx > 0 {
+			item = strings.TrimSpace(item[:asIdx])
+		}
+
+		u := strings.ToUpper(strings.ReplaceAll(item, " ", ""))
+		switch {
+		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
+			// Allow COUNT(r) and COUNT(*).
+			inner := strings.TrimSuffix(strings.TrimPrefix(u, "COUNT("), ")")
+			if inner == "*" || strings.EqualFold(inner, relVar) {
+				continue
+			}
+			return false
+
+		case strings.HasPrefix(u, "SUM(") || strings.HasPrefix(u, "AVG(") || strings.HasPrefix(u, "MIN(") || strings.HasPrefix(u, "MAX("):
+			open := strings.IndexByte(u, '(')
+			close := strings.LastIndexByte(u, ')')
+			if open < 0 || close < 0 || close <= open+1 {
+				return false
+			}
+			inner := u[open+1 : close]
+			if !strings.HasPrefix(inner, wantAggPrefix) {
+				return false
+			}
+			if !strings.EqualFold(inner[len(wantAggPrefix):], wantAggProp) {
+				return false
+			}
+			continue
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // extractNodeVariables extracts node variable names from a MATCH pattern

@@ -1033,6 +1033,15 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 	// Parse the OPTIONAL MATCH relationship pattern
 	relPattern := e.parseOptionalRelPattern(optMatchPattern)
 
+	// Fast path: OPTIONAL MATCH incoming count aggregation (Northwind-style).
+	// Avoid building joinedRows and per-node edge scans.
+	if res, ok, err := e.tryFastCompoundOptionalMatchCount(initialNodes, nodePattern, relPattern, restOfQuery); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+
 	// Build result rows - this is left outer join semantics
 	var joinedRows []joinedRow
 

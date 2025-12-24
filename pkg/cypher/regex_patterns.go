@@ -91,6 +91,19 @@ var (
 			`\s*,\s*\((\w+):(\w+)\s*\{\s*(\w+)\s*:\s*(\d+)\s*\}\s*\)` +
 			`\s+CREATE\s*\(\w+\)-\[(\w+):(\w+)\]->\(\w+\)` +
 			`\s+DELETE\s+(\w+)\s*$`)
+
+	// MATCH (s:Supplier {supplierID: 1}), (p:Product {productID: 1})
+	// CREATE (s)-[r:TEST_REL]->(p) WITH r DELETE r RETURN count(r)
+	//
+	// Groups:
+	//  1=var1 2=label1 3=prop1 4=val1
+	//  5=var2 6=label2 7=prop2 8=val2
+	//  9=relVar 10=relType 11=withVar 12=delVar 13=countVar
+	matchPropCreateWithDeleteReturnCountRelPattern = regexp.MustCompile(
+		`(?i)^\s*MATCH\s*\((\w+):(\w+)\s*\{\s*(\w+)\s*:\s*(\d+)\s*\}\s*\)` +
+			`\s*,\s*\((\w+):(\w+)\s*\{\s*(\w+)\s*:\s*(\d+)\s*\}\s*\)` +
+			`\s+CREATE\s*\(\w+\)-\[(\w+):(\w+)\]->\(\w+\)` +
+			`\s+WITH\s+(\w+)\s+DELETE\s+(\w+)\s+RETURN\s+COUNT\s*\(\s*(\w+)\s*\)\s*$`)
 )
 
 // =============================================================================

@@ -276,14 +276,14 @@ func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
 		{
 			name:        "multiple agg on edge",
 			query:       "MATCH ()-[r:REVIEWED]->() RETURN avg(r.rating), count(r), sum(r.rating)",
-			expected:    PatternEdgePropertyAgg,
-			aggProperty: "rating",
+			expected:    PatternGeneric,
+			aggProperty: "",
 		},
 		{
 			name:        "min max on edge",
 			query:       "MATCH ()-[r:TRANSACTION]->(p) RETURN min(r.amount), max(r.amount)",
-			expected:    PatternEdgePropertyAgg,
-			aggProperty: "amount",
+			expected:    PatternGeneric,
+			aggProperty: "",
 		},
 	}
 

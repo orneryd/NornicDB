@@ -112,14 +112,6 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		matches.PathVariable = pathVariable
 	}
 
-	// Execute traversal to get all paths
-	paths := e.traverseGraph(matches)
-
-	// Apply pre-WITH WHERE clause filter if present
-	if preWithWhere != "" {
-		paths = e.filterPathsByWhere(paths, matches, preWithWhere)
-	}
-
 	// Parse WITH and RETURN clauses from withAndReturn string
 	// withAndReturn starts with "WITH ..."
 	returnIdx := findKeywordIndex(withAndReturn, "RETURN")
@@ -224,6 +216,25 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	returnClause := strings.TrimSpace(returnPart)
+
+	// Fast path: revenue aggregation by product (Northwind-style WITH).
+	// Avoid full traversal/path materialization for MATCH (p)<-[r:ORDERS]-(:Order) + sum(p.unitPrice * r.quantity).
+	if preWithWhere == "" && pathVariable == "" {
+		if fastRes, ok, err := e.tryFastRevenueByProduct(matches, withClause, returnClause, orderByClause, skipVal, limitVal); ok || err != nil {
+			if err != nil {
+				return nil, err
+			}
+			return fastRes, nil
+		}
+	}
+
+	// Execute traversal to get all paths (generic path).
+	paths := e.traverseGraph(matches)
+
+	// Apply pre-WITH WHERE clause filter if present
+	if preWithWhere != "" {
+		paths = e.filterPathsByWhere(paths, matches, preWithWhere)
+	}
 
 	// Parse WITH items
 	withItems := e.splitWithItems(withClause)

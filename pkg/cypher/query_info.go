@@ -33,7 +33,7 @@ type QueryInfo struct {
 	HasOrderBy       bool
 	HasLimit         bool
 	HasSkip          bool
-	HasAggregation   bool // COUNT, SUM, AVG, etc. - should not cache these
+	HasAggregation   bool // COUNT, SUM, AVG, etc. (cached with conservative TTL)
 
 	// First clause type for routing
 	FirstClause ClauseType
@@ -252,7 +252,8 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasShortestPath = strings.Contains(upper, "SHORTESTPATH") ||
 		strings.Contains(upper, "ALLSHORTESTPATHS")
 
-	// Aggregation functions - these should NOT be cached (must always be fresh)
+	// Aggregation functions (COUNT/SUM/AVG/MIN/MAX/COLLECT).
+	// These are cached with conservative TTL and invalidation on writes.
 	info.HasAggregation = strings.Contains(upper, "COUNT(") ||
 		strings.Contains(upper, "SUM(") ||
 		strings.Contains(upper, "AVG(") ||

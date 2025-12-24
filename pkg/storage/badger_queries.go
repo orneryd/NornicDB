@@ -52,6 +52,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
 	var nodes []*Node
+	var loaded []*Node
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
@@ -62,6 +63,15 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 			if nodeID == "" {
 				continue
 			}
+
+			// Cache-first: avoid Badger reads/decodes for hot label scans.
+			b.nodeCacheMu.RLock()
+			if cached, ok := b.nodeCache[nodeID]; ok {
+				b.nodeCacheMu.RUnlock()
+				nodes = append(nodes, copyNode(cached))
+				continue
+			}
+			b.nodeCacheMu.RUnlock()
 
 			// Fetch node data in same transaction
 			item, err := txn.Get(nodeKey(nodeID))
@@ -78,6 +88,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 				continue
 			}
 
+			loaded = append(loaded, node)
 			nodes = append(nodes, node)
 		}
 		return nil
@@ -85,6 +96,13 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Cache loaded nodes for future label scans.
+	for _, n := range loaded {
+		if n != nil {
+			b.cacheStoreNode(n)
+		}
 	}
 
 	return nodes, nil
@@ -259,13 +277,34 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 		return make(map[NodeID]*Node), nil
 	}
 
+	// Fast path: satisfy as many lookups as possible from the node cache.
+	//
+	// This is critical for read-heavy workloads (and benchmarks) where the same
+	// node sets are repeatedly fetched (e.g., aggregation and COLLECT queries).
 	result := make(map[NodeID]*Node, len(ids))
-	err := b.withView(func(txn *badger.Txn) error {
-		for _, id := range ids {
-			if id == "" {
-				continue
-			}
+	missing := make([]NodeID, 0, len(ids))
 
+	b.nodeCacheMu.RLock()
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if cached, ok := b.nodeCache[id]; ok {
+			result[id] = copyNode(cached)
+			continue
+		}
+		missing = append(missing, id)
+	}
+	b.nodeCacheMu.RUnlock()
+
+	if len(missing) == 0 {
+		return result, nil
+	}
+
+	var loaded []*Node
+	err := b.withView(func(txn *badger.Txn) error {
+		loaded = loaded[:0]
+		for _, id := range missing {
 			item, err := txn.Get(nodeKey(id))
 			if err != nil {
 				continue // Skip missing nodes
@@ -280,15 +319,53 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 				continue
 			}
 
+			loaded = append(loaded, node)
 			result[id] = node
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
+	// Cache loaded nodes for future batch lookups.
+	for _, n := range loaded {
+		if n != nil {
+			b.cacheStoreNode(n)
+		}
+	}
+
+	return result, nil
+}
+
+// HasLabelBatch checks label membership for a batch of node IDs using the label index.
+// This avoids decoding node records and is significantly faster for large batches.
+func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]bool, error) {
+	if len(ids) == 0 {
+		return make(map[NodeID]bool), nil
+	}
+
+	result := make(map[NodeID]bool, len(ids))
+	err := b.withView(func(txn *badger.Txn) error {
+		for _, id := range ids {
+			if id == "" {
+				continue
+			}
+			_, err := txn.Get(labelIndexKey(label, id))
+			if err == nil {
+				result[id] = true
+				continue
+			}
+			if err == badger.ErrKeyNotFound {
+				continue
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
