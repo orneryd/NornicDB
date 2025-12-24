@@ -490,11 +490,13 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	if returnIdx > 0 {
 		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
 		// Remove ORDER BY, SKIP, LIMIT
-		for _, keyword := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
-			if idx := strings.Index(strings.ToUpper(returnClause), keyword); idx >= 0 {
-				returnClause = returnClause[:idx]
+		returnEnd := len(returnClause)
+		for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+			if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+				returnEnd = idx
 			}
 		}
+		returnClause = strings.TrimSpace(returnClause[:returnEnd])
 		returnItems = e.parseReturnItems(returnClause)
 		returnColumns = make([]string, len(returnItems))
 		for i, item := range returnItems {

@@ -2,8 +2,6 @@ package cypher
 
 import (
 	"math"
-	"strings"
-	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
 )
@@ -19,134 +17,12 @@ func toFloat64Slice(v interface{}) ([]float64, bool) {
 	return convert.ToFloat64Slice(v)
 }
 
-// ========================================
-// Keyword Detection Functions
-// ========================================
-
-// isWordBoundary checks if a character is a word boundary (not alphanumeric or underscore)
-// In Cypher, ':' precedes labels so it's NOT a valid left boundary for keywords
-func isWordBoundary(r rune) bool {
-	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
-}
-
-// isLeftKeywordBoundary checks if a character can precede a keyword
-// Colon is excluded because it precedes labels in Cypher (e.g., :Label)
-func isLeftKeywordBoundary(r rune) bool {
-	if r == ':' {
-		return false // Colon precedes labels, not keywords
-	}
-	return isWordBoundary(r)
-}
-
 // findKeywordIndex finds a keyword at word boundaries in the string.
 // This prevents matching substrings like "RemoveReturn" when searching for "RETURN".
 // Also prevents matching labels like ":Return" as keywords.
 // Returns -1 if not found.
 func findKeywordIndex(s, keyword string) int {
-	upper := strings.ToUpper(s)
-	keywordUpper := strings.ToUpper(keyword)
-	keyLen := len(keywordUpper)
-
-	// Build masks for positions inside string literals and parentheses
-	inStringLiteral := makeStringLiteralMask(s)
-	inParentheses := makeParenthesesMask(s)
-
-	idx := 0
-	for {
-		pos := strings.Index(upper[idx:], keywordUpper)
-		if pos == -1 {
-			return -1
-		}
-		absolutePos := idx + pos
-
-		// Skip if this position is inside a string literal
-		if absolutePos < len(inStringLiteral) && inStringLiteral[absolutePos] {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
-			continue
-		}
-
-		// Skip if this position is inside parentheses (part of node/relationship patterns)
-		if absolutePos < len(inParentheses) && inParentheses[absolutePos] {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
-			continue
-		}
-
-		// Check left boundary (before keyword) - use special boundary check
-		// that excludes ':' to avoid matching labels
-		leftOK := absolutePos == 0 || isLeftKeywordBoundary(rune(upper[absolutePos-1]))
-
-		// Check right boundary (after keyword)
-		endPos := absolutePos + keyLen
-		rightOK := endPos >= len(upper) || isWordBoundary(rune(upper[endPos]))
-
-		if leftOK && rightOK {
-			return absolutePos
-		}
-
-		// Move past this occurrence and continue searching
-		idx = absolutePos + 1
-		if idx >= len(upper) {
-			return -1
-		}
-	}
-}
-
-// makeParenthesesMask creates a boolean slice marking positions inside parentheses or square brackets.
-// This is used to skip keywords that appear inside node patterns (parentheses) or list comprehensions (brackets).
-func makeParenthesesMask(s string) []bool {
-	mask := make([]bool, len(s))
-	parenDepth := 0
-	bracketDepth := 0
-	inString := false
-	stringChar := byte(0)
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		// Handle string boundaries
-		if (c == '\'' || c == '"') && (i == 0 || s[i-1] != '\\') {
-			if !inString {
-				inString = true
-				stringChar = c
-			} else if c == stringChar {
-				inString = false
-			}
-			continue
-		}
-
-		if inString {
-			continue
-		}
-
-		// Track parentheses
-		if c == '(' {
-			parenDepth++
-		} else if c == ')' {
-			if parenDepth > 0 {
-				parenDepth--
-			}
-		}
-
-		// Track square brackets (list comprehensions, array literals)
-		if c == '[' {
-			bracketDepth++
-		} else if c == ']' {
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-		}
-
-		// Mark as inside if in either parentheses or brackets
-		mask[i] = parenDepth > 0 || bracketDepth > 0
-	}
-
-	return mask
+	return keywordIndex(s, keyword)
 }
 
 // containsKeywordOutsideStrings checks if a keyword exists in the string but NOT inside
@@ -159,85 +35,113 @@ func containsKeywordOutsideStrings(s, keyword string) bool {
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
-	mask := makeStringLiteralMask(s)
-	idx := 0
-	for {
-		pos := strings.Index(s[idx:], substr)
-		if pos == -1 {
-			return false
-		}
-		absolutePos := idx + pos
-
-		// Check if this position is outside string literals
-		insideString := false
-		for i := 0; i < len(substr); i++ {
-			checkPos := absolutePos + i
-			if checkPos < len(mask) && mask[checkPos] {
-				insideString = true
-				break
-			}
-		}
-
-		if !insideString {
-			return true
-		}
-
-		// Move past this occurrence and continue searching
-		idx = absolutePos + 1
-		if idx >= len(s) {
-			return false
-		}
+	if substr == "" {
+		return false
 	}
-}
+	first := substr[0]
 
-// makeStringLiteralMask creates a boolean slice where true means that position
-// is inside a string literal (single or double quoted).
-// This is used to skip string contents when searching for keywords.
-func makeStringLiteralMask(s string) []bool {
-	mask := make([]bool, len(s))
-	inString := false
-	stringChar := byte(0)
+	var (
+		inSingleQuote  bool
+		inDoubleQuote  bool
+		inBacktick     bool
+		inLineComment  bool
+		inBlockComment bool
+	)
 
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 
-		// Check for escaped quotes
-		if c == '\\' && i+1 < len(s) {
-			// Skip the escaped character
-			if inString {
-				mask[i] = true
-				mask[i+1] = true
+		if inLineComment {
+			if c == '\n' {
+				inLineComment = false
 			}
-			i++
 			continue
 		}
-
-		// Handle string boundaries
-		if c == '\'' || c == '"' {
-			if !inString {
-				// Starting a string
-				inString = true
-				stringChar = c
-				mask[i] = true // The quote itself is part of the string
-			} else if c == stringChar {
-				// Ending the string
-				mask[i] = true // The closing quote is part of the string
-				inString = false
-				stringChar = 0
-			} else {
-				// Different quote type inside string, just mark as inside
-				mask[i] = true
+		if inBlockComment {
+			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
+				inBlockComment = false
+				i++
 			}
 			continue
 		}
 
-		// Mark positions inside strings
-		if inString {
-			mask[i] = true
+		if inSingleQuote {
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == '\'' {
+				if i+1 < len(s) && s[i+1] == '\'' {
+					i++
+					continue
+				}
+				inSingleQuote = false
+			}
+			continue
+		}
+		if inDoubleQuote {
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == '"' {
+				if i+1 < len(s) && s[i+1] == '"' {
+					i++
+					continue
+				}
+				inDoubleQuote = false
+			}
+			continue
+		}
+		if inBacktick {
+			if c == '`' {
+				if i+1 < len(s) && s[i+1] == '`' {
+					i++
+					continue
+				}
+				inBacktick = false
+			}
+			continue
+		}
+
+		if c == '/' && i+1 < len(s) {
+			if s[i+1] == '/' {
+				inLineComment = true
+				i++
+				continue
+			}
+			if s[i+1] == '*' {
+				inBlockComment = true
+				i++
+				continue
+			}
+		}
+
+		if c == '\'' {
+			inSingleQuote = true
+			continue
+		}
+		if c == '"' {
+			inDoubleQuote = true
+			continue
+		}
+		if c == '`' {
+			inBacktick = true
+			continue
+		}
+
+		if c != first {
+			continue
+		}
+		if i+len(substr) > len(s) {
+			return false
+		}
+		if s[i:i+len(substr)] == substr {
+			return true
 		}
 	}
 
-	return mask
+	return false
 }
 
 // ========================================
@@ -371,91 +275,46 @@ func extractPolygonPoints(geom map[string]interface{}) []interface{} {
 //
 // Returns the position of the first word if the multi-word keyword is found, -1 otherwise.
 func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
-	upper := strings.ToUpper(s)
-	firstUpper := strings.ToUpper(firstWord)
-	secondUpper := strings.ToUpper(secondWord)
+	opts := defaultKeywordScanOpts()
 
-	// Build masks for positions inside string literals and parentheses
-	inStringLiteral := makeStringLiteralMask(s)
-	inParentheses := makeParenthesesMask(s)
+	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
+	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
+	if firstStart >= firstEnd || secondStart >= secondEnd {
+		return -1
+	}
 
-	idx := 0
+	searchFrom := 0
 	for {
-		// Find first word
-		pos := strings.Index(upper[idx:], firstUpper)
-		if pos == -1 {
+		idx := keywordIndexFrom(s, firstWord[firstStart:firstEnd], searchFrom, opts)
+		if idx == -1 {
 			return -1
 		}
-		absolutePos := idx + pos
 
-		// Skip if inside string literal or parentheses
-		if absolutePos < len(inStringLiteral) && inStringLiteral[absolutePos] {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
-			continue
-		}
-		if absolutePos < len(inParentheses) && inParentheses[absolutePos] {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
+		afterFirst, ok := keywordMatchAt(s, idx, firstWord, firstStart, firstEnd)
+		if !ok {
+			searchFrom = idx + 1
 			continue
 		}
 
-		// Check left boundary
-		leftOK := absolutePos == 0 || isLeftKeywordBoundary(rune(upper[absolutePos-1]))
-		if !leftOK {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
+		j := afterFirst
+		if j >= len(s) || !isASCIISpace(s[j]) {
+			searchFrom = idx + 1
+			continue
+		}
+		for j < len(s) && isASCIISpace(s[j]) {
+			j++
+		}
+
+		afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
+		if !ok {
+			searchFrom = idx + 1
 			continue
 		}
 
-		// Check that first word ends at word boundary
-		firstEnd := absolutePos + len(firstUpper)
-		if firstEnd < len(upper) && !isWordBoundary(rune(upper[firstEnd])) {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
-			continue
+		if keywordRightBoundaryOK(s, afterSecond, opts.Boundary) {
+			return idx
 		}
 
-		// Skip whitespace after first word (spaces, tabs, newlines)
-		secondStart := firstEnd
-		for secondStart < len(upper) {
-			ch := upper[secondStart]
-			if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' {
-				break
-			}
-			secondStart++
-		}
-
-		// Check if second word follows
-		if secondStart+len(secondUpper) > len(upper) {
-			idx = absolutePos + 1
-			if idx >= len(upper) {
-				return -1
-			}
-			continue
-		}
-
-		if strings.HasPrefix(upper[secondStart:], secondUpper) {
-			// Check right boundary after second word
-			secondEnd := secondStart + len(secondUpper)
-			rightOK := secondEnd >= len(upper) || isWordBoundary(rune(upper[secondEnd]))
-			if rightOK {
-				return absolutePos
-			}
-		}
-
-		// Move past this occurrence and continue searching
-		idx = absolutePos + 1
-		if idx >= len(upper) {
-			return -1
-		}
+		searchFrom = idx + 1
 	}
 }

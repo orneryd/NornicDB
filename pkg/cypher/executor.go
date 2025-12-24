@@ -1499,19 +1499,16 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
 func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
-	_, err := antlr.Parse(cypher)
-	return err
+	return antlr.Validate(cypher)
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
-	upper := strings.ToUpper(cypher)
-
 	// Check for valid starting keyword (including EXPLAIN/PROFILE prefixes and transaction control)
 	validStarts := []string{"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH", "UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN", "PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK"}
 	hasValidStart := false
 	for _, start := range validStarts {
-		if strings.HasPrefix(upper, start) {
+		if startsWithKeywordFold(cypher, start) {
 			hasValidStart = true
 			break
 		}

@@ -133,11 +133,13 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	// Extract RETURN clause
 	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
 	// Remove ORDER BY, SKIP, LIMIT
-	for _, keyword := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
-		if idx := strings.Index(strings.ToUpper(returnClause), keyword); idx >= 0 {
-			returnClause = returnClause[:idx]
+	returnEnd := len(returnClause)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+			returnEnd = idx
 		}
 	}
+	returnClause = strings.TrimSpace(returnClause[:returnEnd])
 	returnItems := e.parseReturnItems(returnClause)
 
 	// Parse WITH items to detect aggregations
@@ -411,9 +413,14 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Apply ORDER BY to computedRows (before building result)
-	upperCypher := strings.ToUpper(cypher)
-	if orderByIdx := strings.Index(upperCypher, "ORDER BY"); orderByIdx > 0 {
-		orderPart := upperCypher[orderByIdx+8:]
+	if orderByIdx := findKeywordIndex(cypher, "ORDER BY"); orderByIdx > 0 {
+		ks, ke := trimKeywordWSBounds("ORDER BY")
+		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+		}
+
+		orderPart := cypher[orderByEnd:]
 		endIdx := len(orderPart)
 		// Use findKeywordIndex which handles whitespace/newlines properly
 		for _, kw := range []string{"SKIP", "LIMIT", "RETURN"} {
@@ -421,7 +428,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 				endIdx = idx
 			}
 		}
-		orderExpr := strings.TrimSpace(cypher[orderByIdx+8 : orderByIdx+8+endIdx])
+		orderExpr := strings.TrimSpace(orderPart[:endIdx])
 		isDesc := strings.HasSuffix(strings.ToUpper(orderExpr), " DESC")
 		isAsc := strings.HasSuffix(strings.ToUpper(orderExpr), " ASC")
 		if isDesc {

@@ -7,6 +7,7 @@ package antlr
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/antlr4-go/antlr/v4"
 )
@@ -15,6 +16,39 @@ import (
 type ParseResult struct {
 	Tree   IScriptContext
 	Errors []string
+}
+
+type pooledValidator struct {
+	lexer         *CypherLexer
+	tokens        *antlr.CommonTokenStream
+	parser        *CypherParser
+	errorListener *parseErrorListener
+}
+
+var validatorPool = sync.Pool{
+	New: func() interface{} {
+		input := antlr.NewInputStream("")
+		lexer := NewCypherLexer(input)
+		tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+		parser := NewCypherParser(tokens)
+
+		errorListener := &parseErrorListener{}
+
+		parser.RemoveErrorListeners()
+		parser.AddErrorListener(errorListener)
+		lexer.RemoveErrorListeners()
+		lexer.AddErrorListener(errorListener)
+
+		// Validation does not need parse tree listeners.
+		parser.BuildParseTrees = false
+
+		return &pooledValidator{
+			lexer:         lexer,
+			tokens:        tokens,
+			parser:        parser,
+			errorListener: errorListener,
+		}
+	},
 }
 
 // Parse parses a Cypher query string using ANTLR and returns the parse tree
@@ -59,12 +93,71 @@ func Parse(query string) (*ParseResult, error) {
 	return result, nil
 }
 
+// Validate validates a Cypher query using pooled ANTLR objects (lexer/parser/token stream).
+//
+// This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
+// It is optimized for throughput and reduced allocations and does not return a parse tree.
+func Validate(query string) error {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return fmt.Errorf("empty query")
+	}
+
+	v := validatorPool.Get().(*pooledValidator)
+	v.errorListener.reset()
+	defer validatorPool.Put(v)
+
+	var input antlr.CharStream
+	if isASCII(query) {
+		input = newASCIICharStream(query)
+	} else {
+		input = antlr.NewInputStream(query)
+	}
+	v.lexer.SetInputStream(input)
+	v.lexer.Reset()
+
+	v.tokens.SetTokenSource(v.lexer)
+	v.parser.SetTokenStream(v.tokens)
+
+	// Fast path: SLL prediction mode is usually faster; fall back to LL on errors.
+	v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeSLL)
+	_ = v.parser.Script()
+
+	if len(v.errorListener.errors) > 0 {
+		// Retry with LL prediction mode to avoid rejecting valid queries that
+		// require full context prediction.
+		v.errorListener.reset()
+		v.tokens.Seek(0)
+		v.parser.SetTokenStream(v.tokens)
+		v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeLL)
+		_ = v.parser.Script()
+
+		if len(v.errorListener.errors) > 0 {
+			return fmt.Errorf("syntax error: %s", strings.Join(v.errorListener.errors, "; "))
+		}
+	}
+	return nil
+}
+
 // parseErrorListener collects syntax errors during parsing
 type parseErrorListener struct {
 	*antlr.DefaultErrorListener
 	errors []string
 }
 
+func (e *parseErrorListener) reset() {
+	e.errors = e.errors[:0]
+}
+
 func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, ex antlr.RecognitionException) {
 	e.errors = append(e.errors, fmt.Sprintf("line %d:%d %s", line, column, msg))
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

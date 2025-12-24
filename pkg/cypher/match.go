@@ -228,9 +228,8 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Find end of RETURN clause
 	returnEndIdx := len(returnPart)
-	for _, keyword := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
-		idx := strings.Index(strings.ToUpper(returnPart), keyword)
-		if idx >= 0 && idx < returnEndIdx {
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < returnEndIdx {
 			returnEndIdx = idx
 		}
 	}

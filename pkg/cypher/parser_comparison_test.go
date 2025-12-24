@@ -15,7 +15,44 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func setupParserComparisonExecutor(tb testing.TB) (*StorageExecutor, context.Context) {
+	tb.Helper()
+
+	baseStore := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	return exec, ctx
+}
+
+func setupParserComparisonData(tb testing.TB, exec *StorageExecutor, ctx context.Context) {
+	tb.Helper()
+
+	// Seed a small but representative dataset. This keeps comparisons stable and
+	// avoids "empty DB" artifacts (and avoids cross-run mutation effects).
+	queries := []string{
+		"CREATE (a:Person {name: 'Alice', age: 30, city: 'NYC'})",
+		"CREATE (b:Person {name: 'Bob', age: 25, city: 'LA'})",
+		"CREATE (c:Person {name: 'Charlie', age: 35, city: 'NYC'})",
+		"CREATE (d:Person {name: 'Diana', age: 28, city: 'Chicago'})",
+		"CREATE (e:Company {name: 'Acme', size: 100})",
+		"CREATE (f:Company {name: 'TechCorp', size: 500})",
+	}
+	for _, q := range queries {
+		_, err := exec.Execute(ctx, q, nil)
+		require.NoError(tb, err, "Setup query failed: %s", q)
+	}
+
+	// Add a relationship for relationship/optional-match queries.
+	_, err := exec.Execute(ctx, `
+		MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+		CREATE (a)-[:KNOWS {since: 2020}]->(b)
+	`, nil)
+	require.NoError(tb, err)
+}
 
 // testQueries contains queries for A/B testing between parsers
 var testQueries = []struct {
@@ -91,12 +128,6 @@ var testQueries = []struct {
 // using the integrated executor flow with config switching.
 // Prints a timing comparison report at the end.
 func TestParserComparison(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
 	type result struct {
 		name       string
 		nornicTime time.Duration
@@ -106,22 +137,28 @@ func TestParserComparison(t *testing.T) {
 	}
 	var results []result
 
+	runOnce := func(t *testing.T, parserType string, query string) (time.Duration, error) {
+		t.Helper()
+
+		config.SetParserType(parserType)
+		exec, ctx := setupParserComparisonExecutor(t)
+		setupParserComparisonData(t, exec, ctx)
+
+		start := time.Now()
+		_, err := exec.Execute(ctx, query, nil)
+		return time.Since(start), err
+	}
+
 	for _, tc := range testQueries {
 		t.Run(tc.name, func(t *testing.T) {
 			var r result
 			r.name = tc.name
 
-			// Test with Nornic parser (default)
-			config.SetParserType(config.ParserTypeNornic)
-			nornicStart := time.Now()
-			_, r.nornicErr = exec.Execute(ctx, tc.query, nil)
-			r.nornicTime = time.Since(nornicStart)
-
-			// Test with ANTLR parser
-			config.SetParserType(config.ParserTypeANTLR)
-			antlrStart := time.Now()
-			_, r.antlrErr = exec.Execute(ctx, tc.query, nil)
-			r.antlrTime = time.Since(antlrStart)
+			// IMPORTANT: Use fresh executors per parser run.
+			// Reusing the same executor biases results due to warmed caches
+			// (query cache / plan cache / analyzer cache) and mutated store state.
+			r.nornicTime, r.nornicErr = runOnce(t, config.ParserTypeNornic, tc.query)
+			r.antlrTime, r.antlrErr = runOnce(t, config.ParserTypeANTLR, tc.query)
 
 			// Reset to default
 			config.SetParserType(config.ParserTypeNornic)
@@ -181,12 +218,6 @@ func TestParserComparison(t *testing.T) {
 
 // BenchmarkParserComparison benchmarks both parsers using the integrated executor flow.
 func BenchmarkParserComparison(b *testing.B) {
-	baseStore := storage.NewMemoryEngine()
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
 	queries := []struct {
 		name  string
 		query string
@@ -199,18 +230,22 @@ func BenchmarkParserComparison(b *testing.B) {
 		// Benchmark with Nornic parser
 		b.Run("Nornic/"+tc.name, func(b *testing.B) {
 			config.SetParserType(config.ParserTypeNornic)
+			exec, benchCtx := setupParserComparisonExecutor(b)
+			setupParserComparisonData(b, exec, benchCtx)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = exec.Execute(ctx, tc.query, nil)
+				_, _ = exec.Execute(benchCtx, tc.query, nil)
 			}
 		})
 
 		// Benchmark with ANTLR parser
 		b.Run("ANTLR/"+tc.name, func(b *testing.B) {
 			config.SetParserType(config.ParserTypeANTLR)
+			exec, benchCtx := setupParserComparisonExecutor(b)
+			setupParserComparisonData(b, exec, benchCtx)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = exec.Execute(ctx, tc.query, nil)
+				_, _ = exec.Execute(benchCtx, tc.query, nil)
 			}
 		})
 	}
@@ -227,7 +262,6 @@ func TestParserPerformanceComparison(t *testing.T) {
 	}
 
 	baseStore := storage.NewMemoryEngine()
-
 
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)

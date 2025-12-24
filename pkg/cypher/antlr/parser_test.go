@@ -173,3 +173,14 @@ func BenchmarkANTLRParser(b *testing.B) {
 		_ = parser.Script()
 	}
 }
+
+func BenchmarkANTLRValidate(b *testing.B) {
+	query := "MATCH (n:Person {name: 'Alice'})-[r:KNOWS*1..3]->(m:Person) WHERE m.age > 21 AND m.city IN ['NYC', 'LA'] WITH m, COUNT(r) AS cnt ORDER BY cnt DESC LIMIT 10 RETURN m.name, m.age, cnt"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := Validate(query); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

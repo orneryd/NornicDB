@@ -170,11 +170,13 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 
 	// Parse RETURN clause
 	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-	for _, keyword := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
-		if idx := strings.Index(strings.ToUpper(returnClause), keyword); idx >= 0 {
-			returnClause = returnClause[:idx]
+	returnEnd := len(returnClause)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnClause, keyword); idx >= 0 && idx < returnEnd {
+			returnEnd = idx
 		}
 	}
+	returnClause = strings.TrimSpace(returnClause[:returnEnd])
 	returnItems := e.parseReturnItems(returnClause)
 
 	result := &ExecuteResult{
@@ -261,16 +263,22 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	}
 
 	// Apply ORDER BY
-	orderByIdx := strings.Index(upper, "ORDER BY")
+	orderByIdx := findKeywordIndex(cypher, "ORDER BY")
 	if orderByIdx > 0 {
-		orderPart := upper[orderByIdx+8:]
+		ks, ke := trimKeywordWSBounds("ORDER BY")
+		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+		}
+
+		orderPart := cypher[orderByEnd:]
 		endIdx := len(orderPart)
-		for _, kw := range []string{" SKIP ", " LIMIT "} {
-			if idx := strings.Index(orderPart, kw); idx >= 0 && idx < endIdx {
+		for _, kw := range []string{"SKIP", "LIMIT"} {
+			if idx := findKeywordIndex(orderPart, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}
-		orderExpr := strings.TrimSpace(cypher[orderByIdx+8 : orderByIdx+8+endIdx])
+		orderExpr := strings.TrimSpace(orderPart[:endIdx])
 		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
 	}
 
@@ -322,8 +330,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	// Parse RETURN clause
 	returnPart := cypher[returnIdx+6:]
 	returnEndIdx := len(returnPart)
-	for _, kw := range []string{" ORDER BY ", " SKIP ", " LIMIT "} {
-		if idx := strings.Index(strings.ToUpper(returnPart), kw); idx >= 0 && idx < returnEndIdx {
+	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnPart, kw); idx >= 0 && idx < returnEndIdx {
 			returnEndIdx = idx
 		}
 	}

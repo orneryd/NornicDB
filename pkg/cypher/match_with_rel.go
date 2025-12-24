@@ -122,7 +122,6 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 	// Parse WITH and RETURN clauses from withAndReturn string
 	// withAndReturn starts with "WITH ..."
-	upper := strings.ToUpper(withAndReturn)
 	returnIdx := findKeywordIndex(withAndReturn, "RETURN")
 	if returnIdx == -1 {
 		return nil, fmt.Errorf("RETURN clause required after WITH")
@@ -171,12 +170,18 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	var orderByClause string
 	var skipVal, limitVal int
 
-	orderByIdx := strings.Index(strings.ToUpper(returnPart), " ORDER BY ")
+	orderByIdx := findKeywordIndex(returnPart, "ORDER BY")
 	if orderByIdx >= 0 {
-		afterReturn := returnPart[orderByIdx+10:]
+		ks, ke := trimKeywordWSBounds("ORDER BY")
+		orderByEnd, ok := keywordMatchAt(returnPart, orderByIdx, "ORDER BY", ks, ke)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+		}
+
+		afterReturn := returnPart[orderByEnd:]
 		endIdx := len(afterReturn)
-		for _, kw := range []string{" SKIP ", " LIMIT "} {
-			if idx := strings.Index(strings.ToUpper(afterReturn), kw); idx >= 0 && idx < endIdx {
+		for _, kw := range []string{"SKIP", "LIMIT"} {
+			if idx := findKeywordIndex(afterReturn, kw); idx >= 0 && idx < endIdx {
 				endIdx = idx
 			}
 		}
@@ -185,11 +190,16 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	// Parse SKIP
-	if idx := strings.Index(upper[returnIdx:], " SKIP "); idx >= 0 {
-		skipPart := withAndReturn[returnIdx+idx+6:]
+	if idx := findKeywordIndex(withAndReturn[returnIdx:], "SKIP"); idx >= 0 {
+		ks, ke := trimKeywordWSBounds("SKIP")
+		skipEnd, ok := keywordMatchAt(withAndReturn[returnIdx:], idx, "SKIP", ks, ke)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse SKIP clause")
+		}
+		skipPart := withAndReturn[returnIdx+skipEnd:]
 		endIdx := len(skipPart)
-		for _, kw := range []string{" LIMIT ", " ORDER BY "} {
-			if i := strings.Index(strings.ToUpper(skipPart), kw); i >= 0 && i < endIdx {
+		for _, kw := range []string{"LIMIT", "ORDER BY"} {
+			if i := findKeywordIndex(skipPart, kw); i >= 0 && i < endIdx {
 				endIdx = i
 			}
 		}
@@ -197,11 +207,16 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	// Parse LIMIT
-	if idx := strings.Index(upper[returnIdx:], " LIMIT "); idx >= 0 {
-		limitPart := withAndReturn[returnIdx+idx+7:]
+	if idx := findKeywordIndex(withAndReturn[returnIdx:], "LIMIT"); idx >= 0 {
+		ks, ke := trimKeywordWSBounds("LIMIT")
+		limitEnd, ok := keywordMatchAt(withAndReturn[returnIdx:], idx, "LIMIT", ks, ke)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse LIMIT clause")
+		}
+		limitPart := withAndReturn[returnIdx+limitEnd:]
 		endIdx := len(limitPart)
-		for _, kw := range []string{" SKIP ", " ORDER BY "} {
-			if i := strings.Index(strings.ToUpper(limitPart), kw); i >= 0 && i < endIdx {
+		for _, kw := range []string{"SKIP", "ORDER BY"} {
+			if i := findKeywordIndex(limitPart, kw); i >= 0 && i < endIdx {
 				endIdx = i
 			}
 		}

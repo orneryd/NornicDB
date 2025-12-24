@@ -17,50 +17,46 @@ import (
 // that is NOT part of "STARTS WITH" or "ENDS WITH".
 // Returns -1 if not found.
 func findStandaloneWithIndex(s string) int {
-	upper := strings.ToUpper(s)
-	idx := 0
+	opts := defaultKeywordScanOpts()
+
+	searchFrom := 0
 	for {
-		pos := strings.Index(upper[idx:], "WITH")
-		if pos == -1 {
+		absolutePos := keywordIndexFrom(s, "WITH", searchFrom, opts)
+		if absolutePos == -1 {
 			return -1
 		}
-		absolutePos := idx + pos
-
-		// Check if it's preceded by "STARTS " or "ENDS "
-		if absolutePos >= 7 {
-			preceding := upper[absolutePos-7 : absolutePos]
-			if preceding == "STARTS " {
-				idx = absolutePos + 4
-				continue
-			}
-		}
-		if absolutePos >= 5 {
-			preceding := upper[absolutePos-5 : absolutePos]
-			if preceding == "ENDS " {
-				idx = absolutePos + 4
-				continue
-			}
-		}
-
-		// Check word boundaries
-		leftOK := absolutePos == 0 || !isAlphanumeric(rune(upper[absolutePos-1]))
-		endPos := absolutePos + 4
-		rightOK := endPos >= len(upper) || !isAlphanumeric(rune(upper[endPos]))
-
-		if leftOK && rightOK {
+		if !prevWordEqualsIgnoreCase(s, absolutePos, "STARTS") && !prevWordEqualsIgnoreCase(s, absolutePos, "ENDS") {
 			return absolutePos
 		}
-
-		idx = absolutePos + 1
-		if idx >= len(upper) {
-			return -1
-		}
+		searchFrom = absolutePos + 4
 	}
 }
 
-// isAlphanumeric returns true if the rune is a letter or digit
-func isAlphanumeric(r rune) bool {
-	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_'
+func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
+	if pos <= 0 {
+		return false
+	}
+	i := pos - 1
+	for i >= 0 && isASCIISpace(s[i]) {
+		i--
+	}
+	if i < 0 {
+		return false
+	}
+	end := i + 1
+	for i >= 0 && isIdentByte(s[i]) {
+		i--
+	}
+	start := i + 1
+	if end-start != len(word) {
+		return false
+	}
+	for j := 0; j < len(word); j++ {
+		if asciiUpper(s[start+j]) != asciiUpper(word[j]) {
+			return false
+		}
+	}
+	return true
 }
 
 // findKeywordNotInBrackets finds the index of a keyword that is NOT inside brackets [] or parentheses ()
@@ -68,62 +64,20 @@ func isAlphanumeric(r rune) bool {
 // The keyword should be in the format " KEYWORD " with leading/trailing spaces.
 // This function normalizes whitespace (tabs, newlines) to match.
 func findKeywordNotInBrackets(s string, keyword string) int {
-	bracketDepth := 0
-	parenDepth := 0
-	upper := strings.ToUpper(s)
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = false
+	opts.Boundary = keywordBoundaryWhitespace
 
-	// Normalize the keyword - strip spaces for the core keyword search
 	keywordCore := strings.TrimSpace(keyword)
-
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '[':
-			bracketDepth++
-		case ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '(':
-			parenDepth++
-		case ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-		}
-
-		// Only check for keyword when not inside brackets or parens
-		if bracketDepth == 0 && parenDepth == 0 {
-			// Check if this position could start our keyword
-			// First, check if preceded by whitespace (or is at start)
-			if i > 0 {
-				prevChar := s[i-1]
-				if !isWhitespace(prevChar) {
-					continue
-				}
-			}
-
-			// Check if we have enough characters for the keyword
-			if i+len(keywordCore) > len(s) {
-				continue
-			}
-
-			// Check if the keyword matches
-			if upper[i:i+len(keywordCore)] == keywordCore {
-				// Check if followed by whitespace (or is at end)
-				endPos := i + len(keywordCore)
-				if endPos < len(s) && !isWhitespace(s[endPos]) {
-					continue
-				}
-				return i
-			}
-		}
+	if keywordCore == "" {
+		return -1
 	}
-	return -1
+	return keywordIndexFrom(s, keywordCore, 0, opts)
 }
 
 // isWhitespace returns true if the rune is a whitespace character
 func isWhitespace(ch byte) bool {
-	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+	return isASCIISpace(ch)
 }
 
 // ========================================

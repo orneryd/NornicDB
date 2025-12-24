@@ -708,8 +708,8 @@ func TestCallDbIndexVectorQueryNodes(t *testing.T) {
 
 	// Create a node with an embedding
 	_, _ = store.CreateNode(&storage.Node{
-		ID:        "vec-node-1",
-		Labels:    []string{"Test"},
+		ID:              "vec-node-1",
+		Labels:          []string{"Test"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	})
 
@@ -1794,6 +1794,12 @@ func TestFindKeywordIndex(t *testing.T) {
 		{name: "keyword with newline", input: "MATCH (n)\nRETURN n", keyword: "RETURN", expected: 10},
 		{name: "keyword with tab", input: "MATCH (n)\tRETURN n", keyword: "RETURN", expected: 10},
 		{name: "keyword after paren", input: "(n:Test)RETURN n", keyword: "RETURN", expected: 8},
+
+		// Security/correctness: ignore keywords inside data / nested structures
+		{name: "ignore inside string literal", input: "MATCH (n) RETURN 'WITH' AS x", keyword: "WITH", expected: -1},
+		{name: "ignore inside line comment", input: "MATCH (n) // RETURN n\nRETURN n", keyword: "RETURN", expected: 22},
+		{name: "ignore inside block comment", input: "MATCH (n) /* RETURN n */ RETURN n", keyword: "RETURN", expected: 25},
+		{name: "ignore inside map literal", input: "MATCH (n) RETURN {WITH: 1} AS m", keyword: "WITH", expected: -1},
 	}
 
 	for _, tt := range tests {
@@ -1803,6 +1809,14 @@ func TestFindKeywordIndex(t *testing.T) {
 				t.Errorf("findKeywordIndex(%q, %q) = %d, want %d", tt.input, tt.keyword, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestTopLevelKeywordIndex_IgnoresCallSubqueryBody(t *testing.T) {
+	input := "CALL { RETURN 1 } RETURN 2"
+	got := topLevelKeywordIndex(input, "RETURN")
+	if got != 18 {
+		t.Fatalf("topLevelKeywordIndex(%q, %q) = %d, want %d", input, "RETURN", got, 18)
 	}
 }
 
