@@ -186,6 +186,19 @@ type DatabaseConfig struct {
 	// Set to 0 for unlimited (not recommended for bulk operations).
 	// Env: NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE (default: 100000)
 	AsyncMaxEdgeCacheSize int
+
+	// === Badger In-Process Cache Settings ===
+	// These control the in-memory caches inside BadgerEngine for hot read paths.
+
+	// BadgerNodeCacheMaxEntries is the max nodes to keep in the hot node cache.
+	// When exceeded, the cache is cleared (simple eviction).
+	// Env: NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES (default: 10000)
+	BadgerNodeCacheMaxEntries int
+
+	// BadgerEdgeTypeCacheMaxTypes is the max distinct edge types to cache for GetEdgesByType.
+	// When exceeded, the cache is cleared (simple eviction).
+	// Env: NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES (default: 50)
+	BadgerEdgeTypeCacheMaxTypes int
 }
 
 // ServerConfig holds server settings.
@@ -1033,16 +1046,18 @@ type YAMLConfig struct {
 
 	// Database/Storage configuration
 	Database struct {
-		DataDir                   string `yaml:"data_dir"`
-		DefaultDatabase           string `yaml:"default_database"`
-		ReadOnly                  bool   `yaml:"read_only"`
-		TransactionTimeout        string `yaml:"transaction_timeout"`
-		MaxConcurrentTransactions int    `yaml:"max_concurrent_transactions"`
-		StrictDurability          bool   `yaml:"strict_durability"`
-		WALSyncMode               string `yaml:"wal_sync_mode"`
-		WALSyncInterval           string `yaml:"wal_sync_interval"`
-		EncryptionEnabled         bool   `yaml:"encryption_enabled"`
-		EncryptionPassword        string `yaml:"encryption_password"`
+		DataDir                     string `yaml:"data_dir"`
+		DefaultDatabase             string `yaml:"default_database"`
+		ReadOnly                    bool   `yaml:"read_only"`
+		TransactionTimeout          string `yaml:"transaction_timeout"`
+		MaxConcurrentTransactions   int    `yaml:"max_concurrent_transactions"`
+		StrictDurability            bool   `yaml:"strict_durability"`
+		WALSyncMode                 string `yaml:"wal_sync_mode"`
+		WALSyncInterval             string `yaml:"wal_sync_interval"`
+		EncryptionEnabled           bool   `yaml:"encryption_enabled"`
+		EncryptionPassword          string `yaml:"encryption_password"`
+		BadgerNodeCacheMaxEntries   int    `yaml:"badger_node_cache_max_entries"`
+		BadgerEdgeTypeCacheMaxTypes int    `yaml:"badger_edge_type_cache_max_types"`
 	} `yaml:"database"`
 
 	// Storage alias for database
@@ -1217,6 +1232,8 @@ func LoadDefaults() *Config {
 	config.Database.AsyncFlushInterval = 50 * time.Millisecond
 	config.Database.AsyncMaxNodeCacheSize = 50000  // ~35MB assuming 700 bytes/node
 	config.Database.AsyncMaxEdgeCacheSize = 100000 // ~50MB assuming 500 bytes/edge
+	config.Database.BadgerNodeCacheMaxEntries = 10000
+	config.Database.BadgerEdgeTypeCacheMaxTypes = 50
 
 	// Server defaults - Bolt
 	config.Server.BoltEnabled = true
@@ -1429,6 +1446,12 @@ func applyEnvVars(config *Config) {
 	}
 	if v := getEnvInt("NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE", -1); v >= 0 {
 		config.Database.AsyncMaxEdgeCacheSize = v
+	}
+	if v := getEnvInt("NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES", -1); v >= 0 {
+		config.Database.BadgerNodeCacheMaxEntries = v
+	}
+	if v := getEnvInt("NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES", -1); v >= 0 {
+		config.Database.BadgerEdgeTypeCacheMaxTypes = v
 	}
 
 	// Server settings - Bolt
@@ -1904,6 +1927,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 		yamlCfg.Database.EncryptionPassword != "[stored-in-keychain]" &&
 		!strings.Contains(yamlCfg.Database.EncryptionPassword, "stored-in-keychain") {
 		config.Database.EncryptionPassword = yamlCfg.Database.EncryptionPassword
+	}
+	if yamlCfg.Database.BadgerNodeCacheMaxEntries > 0 {
+		config.Database.BadgerNodeCacheMaxEntries = yamlCfg.Database.BadgerNodeCacheMaxEntries
+	}
+	if yamlCfg.Database.BadgerEdgeTypeCacheMaxTypes > 0 {
+		config.Database.BadgerEdgeTypeCacheMaxTypes = yamlCfg.Database.BadgerEdgeTypeCacheMaxTypes
 	}
 
 	// === Authentication ===

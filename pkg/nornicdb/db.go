@@ -327,6 +327,10 @@ type Config struct {
 	AsyncMaxNodeCacheSize int           `yaml:"async_max_node_cache_size"` // Max nodes to buffer before forcing flush (default: 50000, 0=unlimited)
 	AsyncMaxEdgeCacheSize int           `yaml:"async_max_edge_cache_size"` // Max edges to buffer before forcing flush (default: 100000, 0=unlimited)
 
+	// BadgerEngine in-process caches (hot read paths)
+	BadgerNodeCacheMaxEntries   int `yaml:"badger_node_cache_max_entries"`    // Max hot nodes cached in-process (default: 10000)
+	BadgerEdgeTypeCacheMaxTypes int `yaml:"badger_edge_type_cache_max_types"` // Max edge types cached for GetEdgesByType (default: 50)
+
 	// Encryption (data-at-rest) - AES-256 full database encryption
 	// Disabled by default for performance. Enable for HIPAA/GDPR/SOC2 compliance.
 	// When enabled, ALL data is encrypted at the storage level - all or nothing.
@@ -386,6 +390,8 @@ func DefaultConfig() *Config {
 		AsyncFlushInterval:           50 * time.Millisecond, // Flush pending writes every 50ms
 		AsyncMaxNodeCacheSize:        50000,                 // Buffer up to 50K nodes before forcing flush (~35MB)
 		AsyncMaxEdgeCacheSize:        100000,                // Buffer up to 100K edges before forcing flush (~50MB)
+		BadgerNodeCacheMaxEntries:    10000,                 // Cache up to 10K hot nodes
+		BadgerEdgeTypeCacheMaxTypes:  50,                    // Cache up to 50 distinct edge types
 		EncryptionEnabled:            false,                 // Encryption disabled by default (opt-in)
 		EncryptionPassword:           "",                    // Must be set if encryption enabled
 		BoltPort:                     7687,
@@ -756,9 +762,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
 		badgerOpts := storage.BadgerOptions{
-			DataDir:         dataDir,
-			HighPerformance: !config.LowMemoryMode,
-			LowMemory:       config.LowMemoryMode,
+			DataDir:               dataDir,
+			HighPerformance:       !config.LowMemoryMode,
+			LowMemory:             config.LowMemoryMode,
+			NodeCacheMaxEntries:   config.BadgerNodeCacheMaxEntries,
+			EdgeTypeCacheMaxTypes: config.BadgerEdgeTypeCacheMaxTypes,
 		}
 		if config.LowMemoryMode {
 			fmt.Println("⚡ Using low-memory storage mode (reduced RAM usage)")

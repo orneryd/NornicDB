@@ -869,6 +869,8 @@ func clearEnvVars(t *testing.T) {
 		"NORNICDB_ASYNC_FLUSH_INTERVAL",
 		"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE",
 		"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE",
+		"NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES",
+		"NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -906,6 +908,12 @@ func TestLoadFromEnv_AsyncWriteDefaults(t *testing.T) {
 	}
 	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
 		t.Errorf("expected AsyncMaxEdgeCacheSize 100000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	}
+	if cfg.Database.BadgerNodeCacheMaxEntries != 10000 {
+		t.Errorf("expected BadgerNodeCacheMaxEntries 10000, got %d", cfg.Database.BadgerNodeCacheMaxEntries)
+	}
+	if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 50 {
+		t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 50, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
 	}
 }
 
@@ -1000,10 +1008,12 @@ func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
 		{
 			name: "all async settings combined",
 			envVars: map[string]string{
-				"NORNICDB_ASYNC_WRITES_ENABLED":      "true",
-				"NORNICDB_ASYNC_FLUSH_INTERVAL":      "25ms",
-				"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE": "5000",
-				"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE": "8000",
+				"NORNICDB_ASYNC_WRITES_ENABLED":             "true",
+				"NORNICDB_ASYNC_FLUSH_INTERVAL":             "25ms",
+				"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE":        "5000",
+				"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE":        "8000",
+				"NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES":    "20000",
+				"NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES": "75",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				if !cfg.Database.AsyncWritesEnabled {
@@ -1017,6 +1027,12 @@ func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
 				}
 				if cfg.Database.AsyncMaxEdgeCacheSize != 8000 {
 					t.Errorf("expected AsyncMaxEdgeCacheSize 8000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+				}
+				if cfg.Database.BadgerNodeCacheMaxEntries != 20000 {
+					t.Errorf("expected BadgerNodeCacheMaxEntries 20000, got %d", cfg.Database.BadgerNodeCacheMaxEntries)
+				}
+				if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 75 {
+					t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 75, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
 				}
 			},
 		},
@@ -1052,5 +1068,11 @@ func TestLoadDefaults_AsyncWriteValues(t *testing.T) {
 	}
 	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
 		t.Errorf("expected AsyncMaxEdgeCacheSize 100000 in defaults, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	}
+	if cfg.Database.BadgerNodeCacheMaxEntries != 10000 {
+		t.Errorf("expected BadgerNodeCacheMaxEntries 10000 in defaults, got %d", cfg.Database.BadgerNodeCacheMaxEntries)
+	}
+	if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 50 {
+		t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 50 in defaults, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
 	}
 }

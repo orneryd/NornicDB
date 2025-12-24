@@ -504,14 +504,7 @@ func (tx *BadgerTransaction) Commit() error {
 
 	// Invalidate cache for modified/deleted nodes
 	// This ensures subsequent reads see the committed changes
-	tx.engine.nodeCacheMu.Lock()
-	for nodeID := range tx.pendingNodes {
-		delete(tx.engine.nodeCache, nodeID)
-	}
-	for nodeID := range tx.deletedNodes {
-		delete(tx.engine.nodeCache, nodeID)
-	}
-	tx.engine.nodeCacheMu.Unlock()
+	tx.engine.cacheInvalidateNodes(tx.pendingNodes, tx.deletedNodes)
 
 	// Register unique constraint values for created/updated nodes
 	// This must happen AFTER commit succeeds to maintain consistency

@@ -28,12 +28,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		return "", fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return "", ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return "", err
 	}
-	b.mu.RUnlock()
 
 	// Check unique constraints for all labels and properties
 	for _, label := range node.Labels {
@@ -44,7 +41,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		// Check if node already exists
 		key := nodeKey(node.ID)
 		_, err := txn.Get(key)
@@ -100,11 +97,6 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 	// On successful create, update cache and register unique constraint values
 	if err == nil {
-		// Store deep copy in cache to prevent external mutation
-		b.nodeCacheMu.Lock()
-		b.nodeCache[node.ID] = copyNode(node)
-		b.nodeCacheMu.Unlock()
-
 		// Register unique constraint values
 		for _, label := range node.Labels {
 			for propName, propValue := range node.Properties {
@@ -112,8 +104,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 			}
 		}
 
-		// Increment cached node count for O(1) stats lookups
-		b.nodeCount.Add(1)
+		b.cacheOnNodeCreated(node)
 
 		// Notify listeners (e.g., search service) to index the new node
 		b.notifyNodeCreated(node)
@@ -131,12 +122,9 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 		return nil, ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return nil, err
 	}
-	b.mu.RUnlock()
 
 	// Check cache first
 	b.nodeCacheMu.RLock()
@@ -150,7 +138,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 	atomic.AddInt64(&b.cacheMisses, 1)
 
 	var node *Node
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -168,13 +156,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 
 	// Cache the result on successful fetch
 	if err == nil && node != nil {
-		b.nodeCacheMu.Lock()
-		// Simple eviction: if cache is too large, clear it
-		if len(b.nodeCache) > 10000 {
-			b.nodeCache = make(map[NodeID]*Node, 10000)
-		}
-		b.nodeCache[id] = copyNode(node)
-		b.nodeCacheMu.Unlock()
+		b.cacheStoreNode(node)
 	}
 
 	return node, err
@@ -193,17 +175,14 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Track if this is an insert (new node) or update (existing node)
 	wasInsert := false
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		key := nodeKey(node.ID)
 
 		// Get existing node for label index updates (if exists)
@@ -337,16 +316,12 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	// Update cache on successful operation
 	if err == nil {
-		b.nodeCacheMu.Lock()
-		b.nodeCache[node.ID] = node
-		b.nodeCacheMu.Unlock()
-
 		if wasInsert {
-			// Increment count for new nodes (upsert as insert)
-			b.nodeCount.Add(1)
+			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
 			b.notifyNodeCreated(node)
 		} else {
+			b.cacheOnNodeUpdated(node)
 			// Notify listeners to re-index the updated node
 			b.notifyNodeUpdated(node)
 		}
@@ -371,14 +346,12 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	var updated *Node
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		key := nodeKey(node.ID)
 
 		// Get existing node - MUST exist (no upsert)
@@ -502,16 +475,18 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 			txn.Delete(pendingEmbedKey(node.ID))
 		}
 
+		updated = existing
 		return nil
 	})
 
 	// Update cache on successful operation
 	if err == nil {
-		b.nodeCacheMu.Lock()
-		b.nodeCache[node.ID] = node
-		b.nodeCacheMu.Unlock()
+		if updated == nil {
+			updated = node
+		}
+		b.cacheOnNodeUpdated(updated)
 		// Notify listeners to re-index the updated node
-		b.notifyNodeUpdated(node)
+		b.notifyNodeUpdated(updated)
 	}
 
 	return err
@@ -523,18 +498,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		return ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Track edge deletions for counter update after transaction
 	var totalEdgesDeleted int64
 	var deletedEdgeIDs []EdgeID
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		key := nodeKey(id)
 
 		// Get node for label cleanup
@@ -601,22 +573,11 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 
 	// Invalidate cache on successful delete
 	if err == nil {
-		b.nodeCacheMu.Lock()
-		delete(b.nodeCache, id)
-		b.nodeCacheMu.Unlock()
+		b.cacheOnNodeDeleted(id, totalEdgesDeleted)
 
-		// Decrement cached node count for O(1) stats lookups
-		b.nodeCount.Add(-1)
-
-		// Decrement cached edge count for edges deleted with this node
-		if totalEdgesDeleted > 0 {
-			b.edgeCount.Add(-totalEdgesDeleted)
-			// Invalidate edge type cache since we deleted edges
-			b.InvalidateEdgeTypeCache()
-			// Notify listeners about deleted edges
-			for _, edgeID := range deletedEdgeIDs {
-				b.notifyEdgeDeleted(edgeID)
-			}
+		// Notify listeners about deleted edges
+		for _, edgeID := range deletedEdgeIDs {
+			b.notifyEdgeDeleted(edgeID)
 		}
 
 		// Notify listeners (e.g., search service) to remove from indexes

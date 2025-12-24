@@ -29,6 +29,11 @@ const (
 // Nodes exceeding this will have embeddings stored separately
 const maxNodeSize = 50 * 1024 // 50KB
 
+const (
+	defaultBadgerNodeCacheMaxEntries   = 10000
+	defaultBadgerEdgeTypeCacheMaxTypes = 50
+)
+
 // BadgerEngine provides persistent storage using BadgerDB.
 //
 // Features:
@@ -77,6 +82,11 @@ type BadgerEngine struct {
 	// Caches edges by type for O(1) lookup
 	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
 	edgeTypeCacheMu sync.RWMutex
+
+	// Cache sizing (tunable via config/options).
+	// Used by the cache invalidation helpers to preserve invariants.
+	nodeCacheMaxEntries   int
+	edgeTypeCacheMaxTypes int
 
 	// Cached counts for O(1) stats lookups (updated on create/delete)
 	// Eliminates expensive full table scans for node/edge counts
@@ -245,6 +255,16 @@ type BadgerOptions struct {
 	// WARNING: If you lose this key, your data is irrecoverable!
 	// Leave empty to disable encryption.
 	EncryptionKey []byte
+
+	// NodeCacheMaxEntries is the maximum number of nodes held in the in-process
+	// hot node cache (used by GetNode). When exceeded, the cache is cleared.
+	// Set to 0 to use the default.
+	NodeCacheMaxEntries int
+
+	// EdgeTypeCacheMaxTypes is the maximum number of distinct edge types cached
+	// for GetEdgesByType. When exceeded, the cache is cleared.
+	// Set to 0 to use the default.
+	EdgeTypeCacheMaxTypes int
 }
 
 // NewBadgerEngine creates a new persistent storage engine with default settings.
@@ -459,12 +479,23 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	}
 
 	engine := &BadgerEngine{
-		db:            db,
-		schema:        NewSchemaManager(),
-		inMemory:      opts.InMemory,
-		nodeCache:     make(map[NodeID]*Node, 10000), // Cache up to 10K hot nodes
-		edgeTypeCache: make(map[string][]*Edge, 100), // Cache edges by type for mutual queries
+		db:       db,
+		schema:   NewSchemaManager(),
+		inMemory: opts.InMemory,
+
+		nodeCacheMaxEntries:   opts.NodeCacheMaxEntries,
+		edgeTypeCacheMaxTypes: opts.EdgeTypeCacheMaxTypes,
 	}
+
+	if engine.nodeCacheMaxEntries <= 0 {
+		engine.nodeCacheMaxEntries = defaultBadgerNodeCacheMaxEntries
+	}
+	if engine.edgeTypeCacheMaxTypes <= 0 {
+		engine.edgeTypeCacheMaxTypes = defaultBadgerEdgeTypeCacheMaxTypes
+	}
+
+	engine.nodeCache = make(map[NodeID]*Node, engine.nodeCacheMaxEntries)
+	engine.edgeTypeCache = make(map[string][]*Edge, engine.edgeTypeCacheMaxTypes)
 
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request

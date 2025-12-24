@@ -19,14 +19,11 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		// Check if edge already exists
 		key := edgeKey(edge.ID)
 		_, err := txn.Get(key)
@@ -89,10 +86,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
-		b.InvalidateEdgeTypeCacheForType(edge.Type)
-
-		// Increment cached edge count for O(1) stats lookups
-		b.edgeCount.Add(1)
+		b.cacheOnEdgeCreated(edge)
 
 		// Notify listeners (e.g., graph analyzers) about the new edge
 		b.notifyEdgeCreated(edge)
@@ -107,15 +101,12 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return nil, err
 	}
-	b.mu.RUnlock()
 
 	var edge *Edge
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(edgeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -143,14 +134,12 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		return ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	var oldType string
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		key := edgeKey(edge.ID)
 
 		// Get existing edge
@@ -170,6 +159,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}); err != nil {
 			return err
 		}
+
+		oldType = existing.Type
 
 		// If endpoints changed, update indexes
 		if existing.StartNode != edge.StartNode || existing.EndNode != edge.EndNode {
@@ -198,6 +189,20 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			}
 		}
 
+		// If type changed, update edge type index.
+		if existing.Type != edge.Type {
+			if existing.Type != "" {
+				if err := txn.Delete(edgeTypeIndexKey(existing.Type, edge.ID)); err != nil {
+					return err
+				}
+			}
+			if edge.Type != "" {
+				if err := txn.Set(edgeTypeIndexKey(edge.Type, edge.ID), []byte{}); err != nil {
+					return err
+				}
+			}
+		}
+
 		// Store updated edge
 		data, err := encodeEdge(edge)
 		if err != nil {
@@ -209,6 +214,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 	// Notify listeners on successful update
 	if err == nil {
+		b.cacheOnEdgeUpdated(oldType, edge)
 		b.notifyEdgeUpdated(edge)
 	}
 
@@ -221,12 +227,9 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		return ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Get edge type before deletion for selective cache invalidation
 	edge, _ := b.GetEdge(id)
@@ -235,16 +238,17 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		edgeType = edge.Type
 	}
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		return b.deleteEdgeInTxn(txn, id)
 	})
 
 	// Invalidate only this edge type (not entire cache)
-	if err == nil && edgeType != "" {
-		b.InvalidateEdgeTypeCacheForType(edgeType)
-
-		// Decrement cached edge count for O(1) stats lookups
-		b.edgeCount.Add(-1)
+	if err == nil {
+		if edgeType != "" {
+			b.cacheOnEdgeDeleted(edgeType)
+		} else {
+			b.cacheOnEdgesDeleted(1)
+		}
 
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
 		b.notifyEdgeDeleted(id)
@@ -351,12 +355,9 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Track which nodes were actually deleted for accurate counting
 	deletedNodeCount := int64(0)
@@ -365,7 +366,7 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	totalEdgesDeleted := int64(0)
 	deletedEdgeIDs := make([]EdgeID, 0)
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue // Skip invalid IDs
@@ -386,26 +387,11 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 
 	// Invalidate cache for deleted nodes and update counts
 	if err == nil {
-		b.nodeCacheMu.Lock()
-		for _, id := range ids {
-			delete(b.nodeCache, id)
-		}
-		b.nodeCacheMu.Unlock()
+		b.cacheOnNodesDeleted(deletedNodeIDs, deletedNodeCount, totalEdgesDeleted)
 
-		// Decrement cached node count by actual number deleted (accurate)
-		if deletedNodeCount > 0 {
-			b.nodeCount.Add(-deletedNodeCount)
-		}
-
-		// Decrement cached edge count by edges deleted along with nodes
-		if totalEdgesDeleted > 0 {
-			b.edgeCount.Add(-totalEdgesDeleted)
-			// Invalidate edge type cache since we deleted edges
-			b.InvalidateEdgeTypeCache()
-			// Notify listeners about deleted edges
-			for _, edgeID := range deletedEdgeIDs {
-				b.notifyEdgeDeleted(edgeID)
-			}
+		// Notify listeners about deleted edges
+		for _, edgeID := range deletedEdgeIDs {
+			b.notifyEdgeDeleted(edgeID)
 		}
 
 		// Notify listeners (e.g., search service) for each deleted node
@@ -424,17 +410,14 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 		return nil
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Track which edges were actually deleted for accurate counting
 	deletedCount := int64(0)
 	deletedIDs := make([]EdgeID, 0, len(ids))
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue // Skip invalid IDs
@@ -453,10 +436,7 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 
 	// Invalidate edge type cache on successful bulk delete and update count
 	if err == nil && deletedCount > 0 {
-		b.InvalidateEdgeTypeCache()
-
-		// Decrement cached edge count by actual number deleted (accurate)
-		b.edgeCount.Add(-deletedCount)
+		b.cacheOnEdgesDeleted(deletedCount)
 
 		// Notify listeners (e.g., graph analyzers) for each deleted edge
 		for _, id := range deletedIDs {

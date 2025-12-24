@@ -383,6 +383,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.AsyncMaxNodeCacheSize = cfg.Database.AsyncMaxNodeCacheSize
 	dbConfig.AsyncMaxEdgeCacheSize = cfg.Database.AsyncMaxEdgeCacheSize
 
+	// Badger in-process cache sizing (hot read paths)
+	dbConfig.BadgerNodeCacheMaxEntries = cfg.Database.BadgerNodeCacheMaxEntries
+	dbConfig.BadgerEdgeTypeCacheMaxTypes = cfg.Database.BadgerEdgeTypeCacheMaxTypes
+
 	// Open database
 	fmt.Println("📂 Opening database...")
 	db, err := nornicdb.Open(dataDir, dbConfig)

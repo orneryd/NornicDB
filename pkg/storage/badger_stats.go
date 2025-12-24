@@ -60,26 +60,21 @@ func (b *BadgerEngine) initializeCounts() error {
 }
 
 func (b *BadgerEngine) NodeCount() (int64, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
 	}
-	b.mu.RUnlock()
 
 	// BUGFIX: The atomic counter gets out of sync when nodes are created via
 	// transactional writes that bypass the normal create path. Instead of
 	// trusting the counter, actually count nodes by scanning the prefix.
 	// This is still O(N) but uses key-only iteration which is fast.
 	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Only need keys, not values
-		it := txn.NewIterator(opts)
+	err := b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -100,25 +95,19 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
 func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
 	}
-	b.mu.RUnlock()
 
 	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // key-only scan
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
+	err := b.withView(func(txn *badger.Txn) error {
 		keyPrefix := make([]byte, 0, 1+len(prefix))
 		keyPrefix = append(keyPrefix, prefixNode)
 		keyPrefix = append(keyPrefix, []byte(prefix)...)
 
-		for it.Seek(keyPrefix); it.ValidForPrefix(keyPrefix); it.Next() {
+		it := txn.NewIterator(badgerIterOptsKeyOnly(keyPrefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -132,25 +121,20 @@ func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
 func (b *BadgerEngine) EdgeCount() (int64, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
 	}
-	b.mu.RUnlock()
 
 	// BUGFIX: The atomic counter gets out of sync when edges are created via
 	// transactional writes that bypass the normal create path. Instead of
 	// trusting the counter, actually count edges by scanning the prefix.
 	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Only need keys, not values
-		it := txn.NewIterator(opts)
+	err := b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixEdge}
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		prefix := []byte{prefixEdge}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -168,25 +152,19 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
 func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
 	}
-	b.mu.RUnlock()
 
 	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // key-only scan
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
+	err := b.withView(func(txn *badger.Txn) error {
 		keyPrefix := make([]byte, 0, 1+len(prefix))
 		keyPrefix = append(keyPrefix, prefixEdge)
 		keyPrefix = append(keyPrefix, []byte(prefix)...)
 
-		for it.Seek(keyPrefix); it.ValidForPrefix(keyPrefix); it.Next() {
+		it := txn.NewIterator(badgerIterOptsKeyOnly(keyPrefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -218,37 +196,26 @@ func (b *BadgerEngine) Close() error {
 // Sync forces a sync of all data to disk.
 // This is useful for ensuring durability before a crash.
 func (b *BadgerEngine) Sync() error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
-
 	return b.db.Sync()
 }
 
 // RunGC runs garbage collection on the BadgerDB value log.
 // Should be called periodically for long-running applications.
 func (b *BadgerEngine) RunGC() error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
-
 	return b.db.RunValueLogGC(0.5)
 }
 
 // Size returns the approximate size of the database in bytes.
 func (b *BadgerEngine) Size() (lsm, vlog int64) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
+	if b.ensureOpen() != nil {
 		return 0, 0
 	}
-	b.mu.RUnlock()
 
 	return b.db.Size()
 }
@@ -266,26 +233,20 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // processing non-existent nodes. It will skip up to 100 stale entries
 // before giving up to prevent infinite loops.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
+	if b.ensureOpen() != nil {
 		return nil
 	}
-	b.mu.RUnlock()
 
 	var found *Node
 	removedStale := 0
 	removedNoLongerNeeds := 0
 
-	_ = b.db.Update(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
+	_ = b.withUpdate(func(txn *badger.Txn) error {
+		prefix := []byte{prefixPendingEmbed}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 10))
 		defer it.Close()
 
-		prefix := []byte{prefixPendingEmbed}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
 			if len(key) <= 1 {
 				continue
@@ -339,7 +300,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	b.db.Update(func(txn *badger.Txn) error {
+	_ = b.withUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
 	})
 }
@@ -347,7 +308,7 @@ func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	b.db.Update(func(txn *badger.Txn) error {
+	_ = b.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(pendingEmbedKey(nodeID), []byte{})
 	})
 }
@@ -356,14 +317,12 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // Note: This requires a scan of the pending index, so use sparingly.
 func (b *BadgerEngine) PendingEmbeddingsCount() int {
 	count := 0
-	b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Keys only - fast
-		it := txn.NewIterator(opts)
+	_ = b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixPendingEmbed}
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		prefix := []byte{prefixPendingEmbed}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -387,14 +346,12 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	b.db.Update(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Only need keys for cleanup
-		it := txn.NewIterator(opts)
+	_ = b.withUpdate(func(txn *badger.Txn) error {
+		pendingPrefix := []byte{prefixPendingEmbed}
+		it := txn.NewIterator(badgerIterOptsKeyOnly(pendingPrefix))
 		defer it.Close()
 
-		pendingPrefix := []byte{prefixPendingEmbed}
-		for it.Seek(pendingPrefix); it.ValidForPrefix(pendingPrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
 			// Extract nodeID from key (skip prefix byte)
 			if len(key) <= 1 {
@@ -452,15 +409,12 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	})
 
 	// Second pass: Add missing nodes to the index
-	b.db.Update(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 100
-		it := txn.NewIterator(opts)
+	_ = b.withUpdate(func(txn *badger.Txn) error {
+		prefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 100))
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			// Extract nodeID from key (skip prefix byte)
 			key := item.Key()
@@ -511,22 +465,16 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 // IterateNodes iterates through all nodes one at a time without loading all into memory.
 // The callback returns true to continue, false to stop.
 func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	return b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
+	return b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 10))
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			// Extract nodeID from key (skip prefix byte)
 			key := item.Key()
@@ -555,22 +503,16 @@ func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.
 // Iterates through all nodes one at a time without loading all into memory.
 func (b *BadgerEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	return b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
+	return b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 10))
 		defer it.Close()
 
-		prefix := []byte{prefixNode}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			// Check context cancellation
 			select {
 			case <-ctx.Done():
@@ -602,22 +544,16 @@ func (b *BadgerEngine) StreamNodes(ctx context.Context, fn func(node *Node) erro
 // StreamEdges implements StreamingEngine.StreamEdges for memory-efficient iteration.
 // Iterates through all edges one at a time without loading all into memory.
 func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	return b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
+	return b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixEdge}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 10))
 		defer it.Close()
 
-		prefix := []byte{prefixEdge}
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			// Check context cancellation
 			select {
 			case <-ctx.Done():
@@ -653,24 +589,18 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 		chunkSize = 1000
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
-	return b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = min(chunkSize, 100)
-		it := txn.NewIterator(opts)
+	return b.withView(func(txn *badger.Txn) error {
+		prefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, min(chunkSize, 100)))
 		defer it.Close()
 
 		chunk := make([]*Node, 0, chunkSize)
-		prefix := []byte{prefixNode}
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			// Check context cancellation
 			select {
 			case <-ctx.Done():
@@ -731,26 +661,20 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 //
 // If idPrefix is empty, clears embeddings for all nodes.
 func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
 	}
-	b.mu.Unlock()
 
 	cleared := 0
 
 	// First, collect all node IDs that have embeddings
 	var nodeIDs []NodeID
-	err := b.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = true
-		opts.PrefetchSize = 100
-		it := txn.NewIterator(opts)
+	err := b.withView(func(txn *badger.Txn) error {
+		keyPrefix := []byte{prefixNode}
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(keyPrefix, 100))
 		defer it.Close()
 
-		keyPrefix := []byte{prefixNode}
-		for it.Seek(keyPrefix); it.ValidForPrefix(keyPrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			// Extract nodeID from key (skip prefix byte)
 			key := item.Key()

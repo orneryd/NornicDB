@@ -66,23 +66,20 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, fmt.Errorf("prefix cannot be empty")
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return 0, 0, ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return 0, 0, err
 	}
-	b.mu.RUnlock()
 
 	var nodeIDs []NodeID
 	var edgeIDs []EdgeID
 
 	// First pass: collect all node IDs with the prefix
-	err = b.db.View(func(txn *badger.Txn) error {
+	err = b.withView(func(txn *badger.Txn) error {
 		nodePrefix := []byte{prefixNode}
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(nodePrefix, 0))
 		defer it.Close()
 
-		for it.Seek(nodePrefix); it.ValidForPrefix(nodePrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			// Extract nodeID from key (skip prefix byte)
 			key := it.Item().Key()
 			if len(key) <= 1 {
@@ -112,12 +109,12 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	// Second pass: collect all edge IDs with the prefix
 	// (in case there are orphaned edges)
-	err = b.db.View(func(txn *badger.Txn) error {
+	err = b.withView(func(txn *badger.Txn) error {
 		edgePrefix := []byte{prefixEdge}
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(edgePrefix, 0))
 		defer it.Close()
 
-		for it.Seek(edgePrefix); it.ValidForPrefix(edgePrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error

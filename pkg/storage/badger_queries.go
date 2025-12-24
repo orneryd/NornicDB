@@ -14,22 +14,13 @@ import (
 // GetFirstNodeByLabel returns the first node with the specified label.
 // This is optimized for MATCH...LIMIT 1 patterns - stops after first match.
 func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var node *Node
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), len(label))
 			if nodeID == "" {
 				continue
@@ -58,24 +49,15 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 
 // GetNodesByLabel returns all nodes with the specified label.
 func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
 	var nodes []*Node
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // Don't need values from index keys
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), len(label))
 			if nodeID == "" {
 				continue
@@ -116,20 +98,13 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var nodes []*Node
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 0))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			// Extract nodeID from key (skip prefix byte)
 			key := it.Item().Key()
 			if len(key) <= 1 {
@@ -157,20 +132,13 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 
 // AllEdges returns all edges (implements Engine interface).
 func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var edges []*Edge
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 0))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
@@ -208,24 +176,15 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	}
 	b.edgeTypeCacheMu.RUnlock()
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var edges []*Edge
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := edgeTypeIndexPrefix(edgeType)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false // We only need the key to get edgeID
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		// Collect edge IDs from index
 		var edgeIDs []EdgeID
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
 			// Extract edgeID from key: prefix + type + 0x00 + edgeID
 			sepIdx := bytes.LastIndexByte(key, 0x00)
@@ -263,8 +222,8 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 
 	// Cache the result (simple LRU-style: clear if too many types)
 	b.edgeTypeCacheMu.Lock()
-	if len(b.edgeTypeCache) > 50 {
-		b.edgeTypeCache = make(map[string][]*Edge, 50)
+	if b.edgeTypeCacheMaxTypes > 0 && len(b.edgeTypeCache) > b.edgeTypeCacheMaxTypes {
+		b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	}
 	b.edgeTypeCache[normalizedType] = edges
 	b.edgeTypeCacheMu.Unlock()
@@ -276,7 +235,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 // Called after bulk edge mutations to ensure cache consistency.
 func (b *BadgerEngine) InvalidateEdgeTypeCache() {
 	b.edgeTypeCacheMu.Lock()
-	b.edgeTypeCache = make(map[string][]*Edge, 50)
+	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 }
 
@@ -300,15 +259,8 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 		return make(map[NodeID]*Node), nil
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	result := make(map[NodeID]*Node, len(ids))
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if id == "" {
 				continue
@@ -346,22 +298,13 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var edges []*Edge
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := outgoingIndexPrefix(nodeID)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			edgeID := extractEdgeIDFromIndexKey(it.Item().Key())
 			if edgeID == "" {
 				continue
@@ -401,22 +344,13 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return nil, ErrStorageClosed
-	}
-	b.mu.RUnlock()
-
 	var edges []*Edge
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := incomingIndexPrefix(nodeID)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			edgeID := extractEdgeIDFromIndexKey(it.Item().Key())
 			if edgeID == "" {
 				continue

@@ -12,12 +12,9 @@ import (
 
 // BulkCreateNodes creates multiple nodes in a single transaction.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Validate all nodes first
 	for _, node := range nodes {
@@ -40,7 +37,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 		}
 	}
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		// Check for duplicates
 		for _, node := range nodes {
 			_, err := txn.Get(nodeKey(node.ID))
@@ -97,8 +94,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 			}
 		}
 
-		// Increment cached node count for O(1) stats lookups
-		b.nodeCount.Add(int64(len(nodes)))
+		b.cacheOnNodesCreated(nodes)
 
 		// Notify listeners (e.g., search service) to index all new nodes
 		for _, node := range nodes {
@@ -111,12 +107,9 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 
 // BulkCreateEdges creates multiple edges in a single transaction.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
-		return ErrStorageClosed
+	if err := b.ensureOpen(); err != nil {
+		return err
 	}
-	b.mu.RUnlock()
 
 	// Validate all edges first
 	for _, edge := range edges {
@@ -128,7 +121,7 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 		}
 	}
 
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		// Validate all edges
 		for _, edge := range edges {
 			// Check edge doesn't exist
@@ -176,10 +169,7 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 
 	// Invalidate edge type cache on successful bulk create
 	if err == nil && len(edges) > 0 {
-		b.InvalidateEdgeTypeCache()
-
-		// Increment cached edge count for O(1) stats lookups
-		b.edgeCount.Add(int64(len(edges)))
+		b.cacheOnEdgesCreated(edges)
 
 		// Notify listeners (e.g., graph analyzers) for all new edges
 		for _, edge := range edges {
@@ -196,22 +186,20 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 
 // GetInDegree returns the number of incoming edges to a node.
 func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
+	if nodeID == "" {
 		return 0
 	}
-	b.mu.RUnlock()
+	if b.ensureOpen() != nil {
+		return 0
+	}
 
 	count := 0
-	_ = b.db.View(func(txn *badger.Txn) error {
+	_ = b.withView(func(txn *badger.Txn) error {
 		prefix := incomingIndexPrefix(nodeID)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
@@ -222,22 +210,20 @@ func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
 
 // GetOutDegree returns the number of outgoing edges from a node.
 func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
-	b.mu.RLock()
-	if b.closed {
-		b.mu.RUnlock()
+	if nodeID == "" {
 		return 0
 	}
-	b.mu.RUnlock()
+	if b.ensureOpen() != nil {
+		return 0
+	}
 
 	count := 0
-	_ = b.db.View(func(txn *badger.Txn) error {
+	_ = b.withView(func(txn *badger.Txn) error {
 		prefix := outgoingIndexPrefix(nodeID)
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}
 		return nil
