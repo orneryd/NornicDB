@@ -1561,6 +1561,13 @@ func TestParseRunMessage(t *testing.T) {
 			t.Errorf("valid bookmark should pass validation: %v", err)
 		}
 
+		// Backward compatibility: legacy placeholder bookmark should be ignored.
+		legacyBookmarks := []any{"nornicdb:tx:auto"}
+		err = session.validateBookmarks(legacyBookmarks)
+		if err != nil {
+			t.Errorf("legacy bookmark should be ignored: %v", err)
+		}
+
 		// Bookmark from the future (sequence > current) - should fail
 		futureBookmarks := []any{"nornicdb:bookmark:200"}
 		err = session.validateBookmarks(futureBookmarks)

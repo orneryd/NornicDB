@@ -1495,9 +1495,14 @@ func (s *Session) handlePull(data []byte) error {
 			queryType = "w"
 		}
 
+		bookmark := s.currentBookmark()
+		if s.lastQueryIsWrite {
+			bookmark = s.generateBookmark()
+		}
+
 		// Build stats matching Neo4j format (only if there are updates)
 		metadata := map[string]any{
-			"bookmark": "nornicdb:tx:auto",
+			"bookmark": bookmark,
 			"type":     queryType,
 			"t_last":   int64(0), // Streaming time
 			"db":       "nornic", // Default database name
@@ -1626,6 +1631,19 @@ func (s *Session) generateBookmark() string {
 	return fmt.Sprintf("nornicdb:bookmark:%d", seqNum)
 }
 
+func (s *Session) currentBookmark() string {
+	if s.server == nil {
+		return "nornicdb:bookmark:0"
+	}
+	s.server.txSequenceMu.RLock()
+	seqNum := s.server.txSequence
+	s.server.txSequenceMu.RUnlock()
+	if seqNum < 0 {
+		seqNum = 0
+	}
+	return fmt.Sprintf("nornicdb:bookmark:%d", seqNum)
+}
+
 // validateBookmarks validates bookmarks for causal consistency.
 // Ensures that all transactions up to the bookmark's sequence number have been committed.
 // This provides causal consistency: reads will see all writes that committed before the bookmark.
@@ -1648,6 +1666,12 @@ func (s *Session) validateBookmarks(bookmarks []any) error {
 		bookmark, ok := bookmarkAny.(string)
 		if !ok {
 			return fmt.Errorf("invalid bookmark type: expected string, got %T", bookmarkAny)
+		}
+
+		// Backward compatibility: older server versions returned this placeholder in SUCCESS.
+		// Treat it as "no bookmark" rather than failing the session.
+		if bookmark == "nornicdb:tx:auto" {
+			continue
 		}
 
 		// Only accept NornicDB bookmark format: "nornicdb:bookmark:<sequence>"
