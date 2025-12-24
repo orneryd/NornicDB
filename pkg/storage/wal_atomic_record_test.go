@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 )
@@ -52,5 +53,25 @@ func TestBuildAtomicRecordV2_FormatAndAlignment(t *testing.T) {
 	storedTrailer := binary.LittleEndian.Uint64(record[payloadEnd+4 : payloadEnd+4+8])
 	if storedTrailer != walTrailer {
 		t.Fatalf("trailer mismatch: got=0x%x want=0x%x", storedTrailer, walTrailer)
+	}
+}
+
+func TestWriteAtomicRecordV2_MatchesBuild(t *testing.T) {
+	payload := bytes.Repeat([]byte{0xAB}, 1024+3) // include non-aligned size
+
+	want, wantLen := buildAtomicRecordV2(payload)
+
+	var buf bytes.Buffer
+	gotLen, err := writeAtomicRecordV2(&buf, payload)
+	if err != nil {
+		t.Fatalf("writeAtomicRecordV2 failed: %v", err)
+	}
+	got := buf.Bytes()
+
+	if gotLen != wantLen {
+		t.Fatalf("aligned len mismatch: got=%d want=%d", gotLen, wantLen)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("record bytes mismatch")
 	}
 }

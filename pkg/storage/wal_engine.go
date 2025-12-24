@@ -205,7 +205,7 @@ func (w *WALEngine) getDatabaseName() string {
 
 func (w *WALEngine) databaseFromNode(node *Node) string {
 	if node != nil {
-		if db, _, ok := parseDatabaseFromID(string(node.ID)); ok {
+		if db, _, ok := ParseDatabasePrefix(string(node.ID)); ok {
 			return db
 		}
 	}
@@ -218,13 +218,13 @@ func (w *WALEngine) databaseFromEdge(edge *Edge) (string, error) {
 	}
 
 	dbCandidates := make([]string, 0, 3)
-	if db, _, ok := parseDatabaseFromID(string(edge.ID)); ok {
+	if db, _, ok := ParseDatabasePrefix(string(edge.ID)); ok {
 		dbCandidates = append(dbCandidates, db)
 	}
-	if db, _, ok := parseDatabaseFromID(string(edge.StartNode)); ok {
+	if db, _, ok := ParseDatabasePrefix(string(edge.StartNode)); ok {
 		dbCandidates = append(dbCandidates, db)
 	}
-	if db, _, ok := parseDatabaseFromID(string(edge.EndNode)); ok {
+	if db, _, ok := ParseDatabasePrefix(string(edge.EndNode)); ok {
 		dbCandidates = append(dbCandidates, db)
 	}
 
@@ -246,7 +246,7 @@ func cloneNodeForWAL(dbName string, node *Node) *Node {
 		return nil
 	}
 	c := *node
-	c.ID = NodeID(unprefixIDForDatabase(dbName, string(node.ID)))
+	c.ID = NodeID(StripDatabasePrefix(dbName, string(node.ID)))
 	return &c
 }
 
@@ -255,9 +255,9 @@ func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
 		return nil
 	}
 	c := *edge
-	c.ID = EdgeID(unprefixIDForDatabase(dbName, string(edge.ID)))
-	c.StartNode = NodeID(unprefixIDForDatabase(dbName, string(edge.StartNode)))
-	c.EndNode = NodeID(unprefixIDForDatabase(dbName, string(edge.EndNode)))
+	c.ID = EdgeID(StripDatabasePrefix(dbName, string(edge.ID)))
+	c.StartNode = NodeID(StripDatabasePrefix(dbName, string(edge.StartNode)))
+	c.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
 	return &c
 }
 
@@ -305,7 +305,7 @@ func (w *WALEngine) UpdateNodeEmbedding(node *Node) error {
 func (w *WALEngine) DeleteNode(id NodeID) error {
 	if config.IsWALEnabled() {
 		dbName, unprefixedID := w.getDatabaseName(), string(id)
-		if parsedDB, parsedID, ok := parseDatabaseFromID(string(id)); ok {
+		if parsedDB, parsedID, ok := ParseDatabasePrefix(string(id)); ok {
 			dbName, unprefixedID = parsedDB, parsedID
 		}
 		if err := w.wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
@@ -347,7 +347,7 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 func (w *WALEngine) DeleteEdge(id EdgeID) error {
 	if config.IsWALEnabled() {
 		dbName, unprefixedID := w.getDatabaseName(), string(id)
-		if parsedDB, parsedID, ok := parseDatabaseFromID(string(id)); ok {
+		if parsedDB, parsedID, ok := ParseDatabasePrefix(string(id)); ok {
 			dbName, unprefixedID = parsedDB, parsedID
 		}
 		if err := w.wal.AppendWithDatabase(OpDeleteEdge, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
@@ -367,7 +367,7 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 				cloned = append(cloned, nil)
 				continue
 			}
-			if db, _, ok := parseDatabaseFromID(string(node.ID)); ok {
+			if db, _, ok := ParseDatabasePrefix(string(node.ID)); ok {
 				if dbName == "" || dbName == "nornic" {
 					dbName = db
 				} else if db != dbName {
@@ -419,7 +419,7 @@ func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
 		dbName := w.getDatabaseName()
 		for i, id := range ids {
 			str := string(id)
-			if db, unprefixed, ok := parseDatabaseFromID(str); ok {
+			if db, unprefixed, ok := ParseDatabasePrefix(str); ok {
 				if dbName == "" || dbName == "nornic" {
 					dbName = db
 				} else if db != dbName {
@@ -444,7 +444,7 @@ func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
 		dbName := w.getDatabaseName()
 		for i, id := range ids {
 			str := string(id)
-			if db, unprefixed, ok := parseDatabaseFromID(str); ok {
+			if db, unprefixed, ok := ParseDatabasePrefix(str); ok {
 				if dbName == "" || dbName == "nornic" {
 					dbName = db
 				} else if db != dbName {

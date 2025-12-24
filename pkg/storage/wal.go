@@ -29,6 +29,7 @@ package storage
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -37,7 +38,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -154,25 +154,6 @@ type WALEntry struct {
 	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
 }
 
-func parseDatabaseFromID(id string) (db string, unprefixed string, ok bool) {
-	idx := strings.IndexByte(id, ':')
-	if idx <= 0 || idx >= len(id)-1 {
-		return "", "", false
-	}
-	return id[:idx], id[idx+1:], true
-}
-
-func unprefixIDForDatabase(dbName, id string) string {
-	if dbName == "" || id == "" {
-		return id
-	}
-	prefix := dbName + ":"
-	if strings.HasPrefix(id, prefix) {
-		return id[len(prefix):]
-	}
-	return id
-}
-
 // WALNodeData holds node data for WAL entries with optional undo support.
 // For update/delete operations, OldNode contains the "before image" for rollback.
 type WALNodeData struct {
@@ -254,6 +235,15 @@ type WALConfig struct {
 
 	// SnapshotInterval for automatic snapshots
 	SnapshotInterval time.Duration
+
+	// Logger receives WAL diagnostics events (optional).
+	// If nil, a default stdlib-backed logger is used.
+	Logger WALLogger
+
+	// OnCorruption is called when WAL corruption diagnostics are produced (optional).
+	// This allows the server layer to surface "WAL degraded" health state without
+	// parsing logs. The callback MUST be fast and non-blocking.
+	OnCorruption func(diag *CorruptionDiagnostics, cause error)
 }
 
 // DefaultWALConfig returns sensible defaults.
@@ -290,6 +280,10 @@ type WAL struct {
 	totalSyncs    atomic.Int64
 	lastSyncTime  atomic.Int64
 	lastEntryTime atomic.Int64
+
+	// Degraded state (set when corruption is detected / recovery actions taken)
+	degraded       atomic.Bool
+	lastCorruption atomic.Value // *CorruptionDiagnostics
 }
 
 // WALStats provides observability into WAL state.
@@ -336,6 +330,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		file:     file,
 		writer:   bufio.NewWriterSize(file, 64*1024), // 64KB buffer
 		stopSync: make(chan struct{}),
+	}
+	if w.config.Logger == nil {
+		w.config.Logger = defaultWALLogger{}
 	}
 	w.encoder = json.NewEncoder(w.writer)
 
@@ -416,8 +413,13 @@ func (w *WAL) AppendWithDatabase(op OperationType, data interface{}, database st
 		return ErrWALClosed
 	}
 
-	// Serialize data
-	dataBytes, err := json.Marshal(data)
+	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	defer walJSONBufPool.Put(dataBuf)
+	defer walJSONBufPool.Put(entryBuf)
+
+	// Serialize data into a reusable buffer (reduces allocs vs json.Marshal).
+	dataBytes, err := marshalJSONCompact(dataBuf, data)
 	if err != nil {
 		return fmt.Errorf("wal: failed to marshal data: %w", err)
 	}
@@ -433,20 +435,18 @@ func (w *WAL) AppendWithDatabase(op OperationType, data interface{}, database st
 		Database:  database, // Store database name for proper recovery
 	}
 
-	// Serialize the entire entry to bytes first
-	entryBytes, err := json.Marshal(&entry)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	entryBytes, err := marshalJSONCompact(entryBuf, &entry)
 	if err != nil {
 		return fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
 
 	// Write atomically: magic + version + length + payload + crc + trailer + padding
 	// Format v2 adds trailer canary and 8-byte alignment for corruption-proof writes.
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	record, alignedRecordLen := buildAtomicRecordV2(entryBytes)
-
-	// Write the complete record in one call
-	if _, err := w.writer.Write(record); err != nil {
+	alignedRecordLen, err := writeAtomicRecordV2(w.writer, entryBytes)
+	if err != nil {
 		return fmt.Errorf("wal: failed to write entry: %w", err)
 	}
 
@@ -559,125 +559,6 @@ func crc32Checksum(data []byte) uint32 {
 // verifyCRC32 verifies the checksum of data matches expected.
 func verifyCRC32(data []byte, expected uint32) bool {
 	return crc32Checksum(data) == expected
-}
-
-// backupCorruptedWAL creates a timestamped backup of a corrupted WAL file
-// for forensic analysis. Returns the backup path or empty string on failure.
-func backupCorruptedWAL(walPath, walDir string) string {
-	timestamp := time.Now().Format("20060102-150405")
-	backupPath := filepath.Join(walDir, fmt.Sprintf("wal-corrupted-%s.log", timestamp))
-
-	// Copy file content (don't move - we still need the original for truncation)
-	src, err := os.Open(walPath)
-	if err != nil {
-		fmt.Printf("⚠️  Failed to open WAL for backup: %v\n", err)
-		return ""
-	}
-	defer src.Close()
-
-	dst, err := os.Create(backupPath)
-	if err != nil {
-		fmt.Printf("⚠️  Failed to create WAL backup file: %v\n", err)
-		return ""
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		fmt.Printf("⚠️  Failed to copy WAL to backup: %v\n", err)
-		os.Remove(backupPath)
-		return ""
-	}
-
-	// Sync backup to ensure it's durable
-	if err := dst.Sync(); err != nil {
-		fmt.Printf("⚠️  Failed to sync WAL backup: %v\n", err)
-	}
-
-	// Sync directory entry so the backup filename itself is durable.
-	if err := syncDir(walDir); err != nil {
-		fmt.Printf("⚠️  Failed to sync WAL backup directory: %v\n", err)
-	}
-
-	return backupPath
-}
-
-// logCorruptionDiagnostics logs detailed corruption information to help
-// diagnose root causes. Also writes to a diagnostics file for later analysis.
-func logCorruptionDiagnostics(diag *CorruptionDiagnostics, origErr error) {
-	// Log to console with high visibility
-	fmt.Printf("\n")
-	fmt.Printf("╔══════════════════════════════════════════════════════════════════╗\n")
-	fmt.Printf("║  ⚠️  WAL CORRUPTION DETECTED                                      ║\n")
-	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
-	fmt.Printf("║  Time: %-57s ║\n", diag.Timestamp.Format(time.RFC3339))
-	fmt.Printf("║  File: %-57s ║\n", truncateString(diag.WALPath, 57))
-	fmt.Printf("║  Size: %-57d ║\n", diag.FileSize)
-	if diag.CorruptedSeq > 0 {
-		fmt.Printf("║  Corrupted at seq: %-46d ║\n", diag.CorruptedSeq)
-	}
-	if diag.LastGoodSeq > 0 {
-		fmt.Printf("║  Last good seq: %-49d ║\n", diag.LastGoodSeq)
-	}
-	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
-	fmt.Printf("║  SUSPECTED CAUSE:                                                ║\n")
-	// Word-wrap the suspected cause
-	for _, line := range wrapText(diag.SuspectedCause, 64) {
-		fmt.Printf("║  %-64s ║\n", line)
-	}
-	fmt.Printf("╠══════════════════════════════════════════════════════════════════╣\n")
-	fmt.Printf("║  Recovery: %-55s ║\n", diag.RecoveryAction)
-	if diag.BackupPath != "" {
-		fmt.Printf("║  Backup: %-57s ║\n", truncateString(diag.BackupPath, 57))
-	}
-	fmt.Printf("╚══════════════════════════════════════════════════════════════════╝\n")
-	fmt.Printf("\n")
-
-	// Also write diagnostics to JSON file for programmatic access
-	diagPath := filepath.Join(filepath.Dir(diag.WALPath),
-		fmt.Sprintf("wal-corruption-%s.json", diag.Timestamp.Format("20060102-150405")))
-	if data, err := json.MarshalIndent(diag, "", "  "); err == nil {
-		os.WriteFile(diagPath, data, 0644)
-	}
-}
-
-// truncateString truncates a string to maxLen, adding "..." if truncated
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
-
-// wrapText wraps text to specified width, returning slice of lines
-func wrapText(text string, width int) []string {
-	if len(text) <= width {
-		return []string{text}
-	}
-
-	var lines []string
-	for len(text) > width {
-		// Find last space before width
-		breakAt := width
-		for i := width - 1; i > 0; i-- {
-			if text[i] == ' ' {
-				breakAt = i
-				break
-			}
-		}
-		lines = append(lines, text[:breakAt])
-		text = text[breakAt:]
-		// Trim leading space
-		for len(text) > 0 && text[0] == ' ' {
-			text = text[1:]
-		}
-	}
-	if len(text) > 0 {
-		lines = append(lines, text)
-	}
-	return lines
 }
 
 // WALIntegrityReport provides detailed integrity check results
@@ -1083,7 +964,7 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	if readErr != nil {
 		// WAL is corrupted, but snapshot was saved successfully.
 		// CRITICAL: Backup corrupted WAL for forensic analysis before modifying
-		backupPath := backupCorruptedWAL(walPath, w.config.Dir)
+			backupPath := w.backupCorruptedWAL(walPath)
 
 		// Log detailed diagnostics
 		diag := &CorruptionDiagnostics{
@@ -1094,9 +975,9 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		}
 		if fi, err := os.Stat(walPath); err == nil {
 			diag.FileSize = fi.Size()
-		}
-		diag.diagnoseCause()
-		logCorruptionDiagnostics(diag, readErr)
+			}
+			diag.diagnoseCause()
+			w.reportCorruption(diag, readErr)
 
 		// Try to salvage entries after snapshot sequence using best-effort read.
 		keptEntries, _ = readWALEntriesForTruncation(walPath, snapshotSeq)
@@ -1128,18 +1009,20 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	var bytesWritten int64
 
 	// Write kept entries using atomic format (v2: with trailer canary and 8-byte alignment)
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	defer walJSONBufPool.Put(entryBuf)
+
 	for _, entry := range keptEntries {
 		// Serialize entry
-		entryBytes, err := json.Marshal(&entry)
+		entryBytes, err := marshalJSONCompact(entryBuf, &entry)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to serialize entry seq %d: %w", entry.Sequence, err)
 		}
-		record, alignedRecordLen := buildAtomicRecordV2(entryBytes)
-
-		if _, err := tmpWriter.Write(record); err != nil {
+		alignedRecordLen, err := writeAtomicRecordV2(tmpWriter, entryBytes)
+		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
 			w.reopenWAL()
@@ -2171,25 +2054,25 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 				dbName = "nornic" // Fallback to "nornic" if not configured
 			}
 
-			if len(snapshot.Nodes) > 0 {
-				if parsedDB, _, ok := parseDatabaseFromID(string(snapshot.Nodes[0].ID)); ok {
-					dbName = parsedDB
+				if len(snapshot.Nodes) > 0 {
+					if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Nodes[0].ID)); ok {
+						dbName = parsedDB
+					}
+				} else if len(snapshot.Edges) > 0 {
+					if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Edges[0].ID)); ok {
+						dbName = parsedDB
+					}
 				}
-			} else if len(snapshot.Edges) > 0 {
-				if parsedDB, _, ok := parseDatabaseFromID(string(snapshot.Edges[0].ID)); ok {
-					dbName = parsedDB
-				}
-			}
 
 			// Unprefix snapshot data for the selected database before restoring via NamespacedEngine.
-			for _, node := range snapshot.Nodes {
-				node.ID = NodeID(unprefixIDForDatabase(dbName, string(node.ID)))
-			}
-			for _, edge := range snapshot.Edges {
-				edge.ID = EdgeID(unprefixIDForDatabase(dbName, string(edge.ID)))
-				edge.StartNode = NodeID(unprefixIDForDatabase(dbName, string(edge.StartNode)))
-				edge.EndNode = NodeID(unprefixIDForDatabase(dbName, string(edge.EndNode)))
-			}
+				for _, node := range snapshot.Nodes {
+					node.ID = NodeID(StripDatabasePrefix(dbName, string(node.ID)))
+				}
+				for _, edge := range snapshot.Edges {
+					edge.ID = EdgeID(StripDatabasePrefix(dbName, string(edge.ID)))
+					edge.StartNode = NodeID(StripDatabasePrefix(dbName, string(edge.StartNode)))
+					edge.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
+				}
 
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
 			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {

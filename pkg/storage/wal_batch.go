@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -123,6 +124,9 @@ func (b *BatchWriter) Commit() error {
 
 	// Assign sequence numbers and write all entries using atomic format
 	var totalBytes int64
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	defer walJSONBufPool.Put(entryBuf)
+
 	for _, pending := range b.pending {
 		// Assign sequence number NOW, at commit time
 		seq := b.wal.sequence.Add(1)
@@ -135,15 +139,14 @@ func (b *BatchWriter) Commit() error {
 			Checksum:  pending.Checksum,
 		}
 
-		// Serialize entry
-		entryBytes, err := json.Marshal(&entry)
+		// Serialize entry into reusable buffer (reduces allocs vs json.Marshal).
+		entryBytes, err := marshalJSONCompact(entryBuf, &entry)
 		if err != nil {
 			return fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
 		}
-		record, alignedRecordLen := buildAtomicRecordV2(entryBytes)
 
-		// Write complete record
-		if _, err := b.wal.writer.Write(record); err != nil {
+		alignedRecordLen, err := writeAtomicRecordV2(b.wal.writer, entryBytes)
+		if err != nil {
 			return fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
 
