@@ -1056,10 +1056,7 @@ func TestConnectionTracker_Concurrent(t *testing.T) {
 	done := make(chan bool, 200)
 	for i := 0; i < 200; i++ {
 		go func() {
-			err := tracker.CheckConnectionLimit(manager, dbName)
-			if err == nil {
-				tracker.IncrementConnection(dbName)
-			}
+			_ = tracker.TryIncrementConnection(manager, dbName)
 			done <- true
 		}()
 	}
@@ -1070,11 +1067,9 @@ func TestConnectionTracker_Concurrent(t *testing.T) {
 	}
 
 	// Should have exactly 100 connections (or at most 100 due to race conditions)
-	// In practice, due to the check-then-increment pattern, we might get slightly more
-	// but it should be close to 100
+	// TryIncrementConnection is atomic, so it should never exceed the limit.
 	count := tracker.GetConnectionCount(dbName)
-	assert.GreaterOrEqual(t, count, 100, "should have at least 100 connections")
-	assert.LessOrEqual(t, count, 105, "should not exceed limit by much due to race conditions")
+	assert.Equal(t, 100, count, "should not exceed connection limit")
 }
 
 func TestConnectionTracker_CheckConnectionLimit_AfterDecrement(t *testing.T) {

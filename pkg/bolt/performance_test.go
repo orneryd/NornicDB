@@ -39,7 +39,7 @@ func startPerfTestServer(t *testing.T) (*Server, int) {
 		Port:            0,
 		MaxConnections:  10,
 		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
+		WriteBufferSize: DefaultConfig().WriteBufferSize,
 	}
 
 	server := New(config, executor)

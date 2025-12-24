@@ -548,6 +548,43 @@ func (t *ConnectionTracker) CheckConnectionLimit(manager *DatabaseManager, datab
 	return nil
 }
 
+// TryIncrementConnection checks the connection limit and increments atomically.
+//
+// This avoids the race window of a "check-then-increment" pattern under
+// concurrent connection attempts.
+func (t *ConnectionTracker) TryIncrementConnection(manager *DatabaseManager, databaseName string) error {
+	manager.mu.RLock()
+	info, exists := manager.databases[databaseName]
+	manager.mu.RUnlock()
+
+	if !exists {
+		return ErrDatabaseNotFound
+	}
+
+	limit := 0
+	if info.Limits != nil {
+		limit = info.Limits.Connection.MaxConnections
+	}
+	if limit == 0 {
+		t.mu.Lock()
+		t.connections[databaseName]++
+		t.mu.Unlock()
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	current := t.connections[databaseName]
+	if current >= limit {
+		return fmt.Errorf("%w: database '%s' has reached max_connections limit (%d/%d)",
+			ErrConnectionLimitExceeded, databaseName, current, limit)
+	}
+
+	t.connections[databaseName]++
+	return nil
+}
+
 // IncrementConnection increments the connection count for a database.
 func (t *ConnectionTracker) IncrementConnection(databaseName string) {
 	t.mu.Lock()

@@ -5,11 +5,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 var packstreamZero8 [8]byte
+var packstreamFallbackHook func(v any)
 
 // ============================================================================
 // PackStream Encoding
@@ -20,7 +22,20 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 		return append(dst, 0xA0)
 	}
 
+	// Some Cypher internals use helper sentinel keys that should not be serialized
+	// to clients. Keep these out of the wire format.
+	//
+	// Note: we cannot skip all "_" keys because Bolt-compatible node/edge maps use
+	// `_nodeId` / `_edgeId`.
+	skipPathResult := false
+	if _, ok := m["_pathResult"]; ok {
+		skipPathResult = true
+	}
+
 	size := len(m)
+	if skipPathResult {
+		size--
+	}
 	if size < 16 {
 		dst = append(dst, byte(0xA0+size))
 	} else if size < 256 {
@@ -30,6 +45,9 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 	}
 
 	for k, v := range m {
+		if k == "_pathResult" {
+			continue
+		}
 		dst = encodePackStreamStringInto(dst, k)
 		dst = encodePackStreamValueInto(dst, v)
 	}
@@ -86,6 +104,18 @@ func encodePackStreamString(s string) []byte {
 	return encodePackStreamStringInto(nil, s)
 }
 
+func encodePackStreamBytesInto(dst []byte, b []byte) []byte {
+	size := len(b)
+	if size < 256 {
+		dst = append(dst, 0xCC, byte(size))
+	} else if size < 65536 {
+		dst = append(dst, 0xCD, byte(size>>8), byte(size))
+	} else {
+		dst = append(dst, 0xCE, byte(size>>24), byte(size>>16), byte(size>>8), byte(size))
+	}
+	return append(dst, b...)
+}
+
 func encodePackStreamValueInto(dst []byte, v any) []byte {
 	switch val := v.(type) {
 	case nil:
@@ -129,6 +159,12 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 		return dst
 	case string:
 		return encodePackStreamStringInto(dst, val)
+	case []byte:
+		return encodePackStreamBytesInto(dst, val)
+	case storage.NodeID:
+		return encodePackStreamStringInto(dst, string(val))
+	case storage.EdgeID:
+		return encodePackStreamStringInto(dst, string(val))
 	// Map types
 	case map[string]any:
 		// Check if this is a node (has _nodeId and labels)
@@ -138,6 +174,23 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			}
 		}
 		return encodePackStreamMapInto(dst, val)
+	case map[string]string:
+		if len(val) == 0 {
+			return append(dst, 0xA0)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0xA0+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD8, byte(size))
+		} else {
+			dst = append(dst, 0xD9, byte(size>>8), byte(size))
+		}
+		for k, v := range val {
+			dst = encodePackStreamStringInto(dst, k)
+			dst = encodePackStreamStringInto(dst, v)
+		}
+		return dst
 	// Storage types - Neo4j compatible node/edge encoding
 	case storage.Node:
 		return encodeStorageNodeInto(dst, &val)
@@ -146,6 +199,38 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			return append(dst, 0xC0)
 		}
 		return encodeStorageNodeInto(dst, val)
+	case []storage.Node:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0x90+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD4, byte(size))
+		} else {
+			dst = append(dst, 0xD5, byte(size>>8), byte(size))
+		}
+		for i := range val {
+			dst = encodeStorageNodeInto(dst, &val[i])
+		}
+		return dst
+	case []*storage.Node:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0x90+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD4, byte(size))
+		} else {
+			dst = append(dst, 0xD5, byte(size>>8), byte(size))
+		}
+		for _, n := range val {
+			dst = encodePackStreamValueInto(dst, n)
+		}
+		return dst
 	case storage.Edge:
 		return encodeStorageEdgeInto(dst, &val)
 	case *storage.Edge:
@@ -153,6 +238,38 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			return append(dst, 0xC0)
 		}
 		return encodeStorageEdgeInto(dst, val)
+	case []storage.Edge:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0x90+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD4, byte(size))
+		} else {
+			dst = append(dst, 0xD5, byte(size>>8), byte(size))
+		}
+		for i := range val {
+			dst = encodeStorageEdgeInto(dst, &val[i])
+		}
+		return dst
+	case []*storage.Edge:
+		if len(val) == 0 {
+			return append(dst, 0x90)
+		}
+		size := len(val)
+		if size < 16 {
+			dst = append(dst, byte(0x90+size))
+		} else if size < 256 {
+			dst = append(dst, 0xD4, byte(size))
+		} else {
+			dst = append(dst, 0xD5, byte(size>>8), byte(size))
+		}
+		for _, e := range val {
+			dst = encodePackStreamValueInto(dst, e)
+		}
+		return dst
 	// List types
 	case []string:
 		if len(val) == 0 {
@@ -256,9 +373,20 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = encodePackStreamMapInto(dst, m)
 		}
 		return dst
+	case time.Time:
+		// Encode as Unix millis to avoid allocations and keep a stable scalar representation.
+		// NOTE: Neo4j has native temporal types; we can upgrade to proper PackStream
+		// temporal structures later without changing the executor.
+		return encodePackStreamIntInto(dst, val.UnixNano()/int64(time.Millisecond))
+	case time.Duration:
+		// Encode duration as milliseconds (signed).
+		return encodePackStreamIntInto(dst, val.Milliseconds())
 	}
 
 	// Fall back to existing implementation for less common types (nodes, relationships, etc.)
+	if packstreamFallbackHook != nil {
+		packstreamFallbackHook(v)
+	}
 	return append(dst, encodePackStreamValue(v)...)
 }
 
@@ -924,6 +1052,41 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 		}
 		bits := binary.BigEndian.Uint64(data[offset+1 : offset+9])
 		return math.Float64frombits(bits), 9, nil
+	}
+
+	// Bytes
+	if marker == 0xCC || marker == 0xCD || marker == 0xCE {
+		var size int
+		var headerLen int
+		switch marker {
+		case 0xCC:
+			if offset+1 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES8")
+			}
+			size = int(data[offset+1])
+			headerLen = 2
+		case 0xCD:
+			if offset+2 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES16")
+			}
+			size = int(data[offset+1])<<8 | int(data[offset+2])
+			headerLen = 3
+		case 0xCE:
+			if offset+4 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete BYTES32")
+			}
+			size = int(data[offset+1])<<24 | int(data[offset+2])<<16 | int(data[offset+3])<<8 | int(data[offset+4])
+			headerLen = 5
+		}
+
+		start := offset + headerLen
+		end := start + size
+		if end > len(data) {
+			return nil, 0, fmt.Errorf("incomplete BYTES payload")
+		}
+		out := make([]byte, size)
+		copy(out, data[start:end])
+		return out, headerLen + size, nil
 	}
 
 	// String
