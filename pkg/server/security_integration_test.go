@@ -105,19 +105,19 @@ func TestSecurityMiddleware_Integration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequest(tt.method, tt.path, nil)
 
-// Add headers
-for key, value := range tt.headers {
-req.Header.Set(key, value)
-}
+			// Add headers
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
 
-w := httptest.NewRecorder()
+			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("%s: got status %d, want %d\nResponse: %s",
-tt.description, w.Code, tt.expectedStatus, w.Body.String())
+					tt.description, w.Code, tt.expectedStatus, w.Body.String())
 			}
 		})
 	}
@@ -162,32 +162,32 @@ func TestSecurityMiddleware_DevelopmentMode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-req := httptest.NewRequest("GET", tt.path, nil)
-req.Header.Set("Authorization", "Bearer "+validToken)
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.path, nil)
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
-w := httptest.NewRecorder()
-handler.ServeHTTP(w, req)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
 
-if w.Code != tt.expectedStatus {
-t.Errorf("%s: got status %d, want %d\nResponse: %s",
-tt.description, w.Code, tt.expectedStatus, w.Body.String())
-}
-})
-}
+			if w.Code != tt.expectedStatus {
+				t.Errorf("%s: got status %d, want %d\nResponse: %s",
+					tt.description, w.Code, tt.expectedStatus, w.Body.String())
+			}
+		})
+	}
 }
 
 // TestSecurityMiddleware_Performance benchmarks overhead
 func BenchmarkSecurityMiddleware(b *testing.B) {
-server, _ := setupTestServer(&testing.T{})
-handler := server.buildRouter()
+	server, _ := setupTestServer(&testing.T{})
+	handler := server.buildRouter()
 
-req := httptest.NewRequest("GET", "/health", nil)
-req.Header.Set("User-Agent", "Benchmark")
+	req := httptest.NewRequest("GET", "/health", nil)
+	req.Header.Set("User-Agent", "Benchmark")
 
-b.ResetTimer()
-for i := 0; i < b.N; i++ {
-w := httptest.NewRecorder()
-handler.ServeHTTP(w, req)
-}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+	}
 }
