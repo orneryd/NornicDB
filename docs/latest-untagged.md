@@ -2,10 +2,6 @@
 
 This document summarizes the changes that are **not yet released as a version tag**, but are being shipped in newly-built images under the `latest` tag.
 
-Source documents:
-- `docs/plans/post-refactor-optimizations.md` (implementation status + shipped hardening)
-- `docs/micro-optimizations.md` (validated micro-optimization notes + what landed)
-
 ---
 
 ## Highlights
@@ -65,4 +61,3 @@ Source documents:
 ## Notes for release tagging
 
 - This changelog intentionally focuses on shipped hardening/performance/correctness work. It is meant to accompany container images pushed as `latest` prior to a formal version tag.
-- For full implementation notes and “why”, see `docs/plans/post-refactor-optimizations.md`.
