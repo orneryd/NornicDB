@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package nornicdb.grpc.v1;
+
+option go_package = "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen;gen";
+
+import "google/protobuf/struct.proto";
+
+// NornicSearch is a NornicDB-native gRPC API for high-performance, typed search.
+//
+// This is additive to the Qdrant-compatible gRPC endpoint: it does not affect
+// Qdrant client compatibility and enables NornicDB-exclusive features like
+// "search by text" (server-side query embedding when enabled).
+service NornicSearch {
+  // SearchText performs hybrid search (vector + BM25) when embeddings are enabled,
+  // falling back to text-only search when embeddings are unavailable.
+  rpc SearchText(SearchTextRequest) returns (SearchTextResponse);
+}
+
+message SearchTextRequest {
+  // Optional database name; empty uses the server default database.
+  string database = 1;
+
+  // Query text. When embeddings are enabled, the server embeds this query and
+  // uses hybrid ranking (vector + BM25). Otherwise, BM25-only is used.
+  string query = 2;
+
+  // Max number of results to return (server clamps to a configured maximum).
+  uint32 limit = 3;
+
+  // Optional label/type filter (matches the behavior of /nornicdb/search).
+  repeated string labels = 4;
+
+  // Optional similarity threshold for vector search. When unset, the server's
+  // configured default threshold applies.
+  optional float min_similarity = 5;
+}
+
+message SearchHit {
+  string node_id = 1;
+  repeated string labels = 2;
+  google.protobuf.Struct properties = 3;
+
+  // Unified score used for ranking (usually RRF score for hybrid search).
+  float score = 4;
+
+  // Optional metadata for explainability/diagnostics.
+  float rrf_score = 5;
+  int32 vector_rank = 6;
+  int32 bm25_rank = 7;
+}
+
+message SearchTextResponse {
+  string search_method = 1;
+  repeated SearchHit hits = 2;
+  bool fallback_triggered = 3;
+  string message = 4;
+  double time_seconds = 5;
+}
+

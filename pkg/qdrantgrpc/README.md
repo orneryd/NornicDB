@@ -22,6 +22,13 @@ export NORNICDB_QDRANT_GRPC_ENABLED=true
 export NORNICDB_QDRANT_GRPC_LISTEN_ADDR=":6334"  # optional, default is :6334
 ```
 
+### Embedding Ownership (Important)
+
+NornicDB can run in two modes:
+
+- **NornicDB-managed embeddings** (`NORNICDB_EMBEDDING_ENABLED=true`): Qdrant vector mutation RPCs (`Upsert`, `UpdateVectors`, `DeleteVectors`) return `FailedPrecondition` to avoid conflicting sources of truth.
+- **Client-managed vectors via Qdrant gRPC** (`NORNICDB_EMBEDDING_ENABLED=false`): Qdrant clients can fully manage stored vectors/embeddings via gRPC (recommended when you are using Qdrant SDKs as-is).
+
 ### Configuration
 
 ```yaml
@@ -347,7 +354,7 @@ The Qdrant gRPC package is a **thin translation layer** that maps Qdrant RPCs to
 | Point | Node with `QdrantPoint` + collection labels |
 | PointId | NodeID: `qdrant:{collection}:{id}` |
 | Payload | Node.Properties |
-| Vector | Node.ChunkEmbeddings[0] |
+| Vector(s) | `Node.ChunkEmbeddings` (named vectors preserved via internal name→index mapping) |
 | Named Vectors | Node.ChunkEmbeddings[N] (future) |
 | Filter | In-memory property filter |
 
@@ -384,6 +391,14 @@ All limits are enforced to prevent OOM conditions:
 - Search result limits enforced
 
 ## Testing
+
+### End-to-End (Core Server Integration)
+
+This verifies the gRPC endpoint is correctly wired into the core server behind feature flags:
+
+```bash
+./scripts/qdrantgrpc_e2e.sh
+```
 
 ```bash
 # Run unit tests

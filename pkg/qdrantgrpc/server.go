@@ -21,7 +21,7 @@
 // # Data Model Mapping
 //
 //   - Qdrant Collection → Collection metadata in registry
-//   - Qdrant Point → NornicDB Node with embedding in ChunkEmbeddings[0]
+//   - Qdrant Point → NornicDB Node with embeddings in ChunkEmbeddings (supports named vectors)
 //   - Qdrant Payload → NornicDB Node properties
 //   - Qdrant PointId → NornicDB NodeID (prefixed: qdrant:<collection>:<id>)
 //
@@ -77,6 +77,17 @@ type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":6334")
 	ListenAddr string
 
+	// AllowVectorMutations controls whether Qdrant points operations are allowed to
+	// directly set/update/delete stored vectors.
+	//
+	// When NornicDB-managed embeddings are enabled, operators typically want to
+	// prevent external clients from overwriting embeddings via the Qdrant API.
+	// In that mode, vector mutation endpoints return FailedPrecondition.
+	//
+	// When NornicDB-managed embeddings are disabled, set this to true to allow
+	// Qdrant clients to fully manage vectors.
+	AllowVectorMutations bool
+
 	// MaxVectorDim is the maximum allowed vector dimension
 	MaxVectorDim int
 
@@ -115,6 +126,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		ListenAddr:           ":6334",
+		AllowVectorMutations: true,
 		MaxVectorDim:         4096,
 		MaxBatchPoints:       1000,
 		MaxPayloadBytes:      1024 * 1024, // 1MB
@@ -138,6 +150,7 @@ type Server struct {
 
 	grpcServer *grpc.Server
 	listener   net.Listener
+	register   []func(*grpc.Server)
 
 	mu      sync.RWMutex
 	started bool
@@ -171,7 +184,25 @@ func NewServer(config *Config, store storage.Engine, registry CollectionRegistry
 		storage:       store,
 		registry:      registry,
 		searchService: searchService,
+		register:      nil,
 	}, nil
+}
+
+// RegisterAdditionalServices registers additional gRPC services on the same server.
+// This must be called before Start().
+func (s *Server) RegisterAdditionalServices(fn func(*grpc.Server)) error {
+	if fn == nil {
+		return fmt.Errorf("registrar is nil")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.started {
+		return fmt.Errorf("cannot register services after start")
+	}
+	s.register = append(s.register, fn)
+	return nil
 }
 
 // Start begins listening for gRPC connections.
@@ -222,6 +253,10 @@ func (s *Server) Start() error {
 
 	healthService := NewHealthService()
 	pb.RegisterHealthServer(s.grpcServer, healthService)
+
+	for _, fn := range s.register {
+		fn(s.grpcServer)
+	}
 
 	// Enable reflection for debugging
 	if s.config.EnableReflection {

@@ -65,7 +65,7 @@ type CollectionRegistry interface {
 //
 // This registry does NOT maintain its own HNSW indexes. Instead:
 // - Collection metadata (name, dimensions, distance) is stored as nodes
-// - Points are stored as nodes with embeddings in ChunkEmbeddings[0]
+// - Points are stored as nodes with embeddings in ChunkEmbeddings (supports named vectors)
 // - Vector search is delegated to the unified search.Service
 type PersistentCollectionRegistry struct {
 	mu          sync.RWMutex

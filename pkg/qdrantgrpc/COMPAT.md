@@ -120,7 +120,7 @@ All Qdrant SDK operations are implemented:
 | Point | Node | With `QdrantPoint` + collection labels |
 | Point ID (num) | NodeID | `"qdrant:{collection}:{num}"` format |
 | Point ID (uuid) | NodeID | `"qdrant:{collection}:{uuid}"` format |
-| Vector | ChunkEmbeddings[0] | First chunk embedding |
+| Vector(s) | ChunkEmbeddings | Single unnamed or multiple named vectors |
 | Named Vectors | ChunkEmbeddings[N] | Multiple embeddings (future) |
 | Payload | Properties | Direct map |
 | Filter | In-memory filter | Applied to Properties |

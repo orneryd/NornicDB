@@ -21,11 +21,12 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, *Persi
 	snapshotDir := t.TempDir()
 
 	config := &Config{
-		ListenAddr:     ":6334",
-		MaxVectorDim:   4096,
-		MaxBatchPoints: 1000,
-		MaxTopK:        1000,
-		SnapshotDir:    snapshotDir,
+		ListenAddr:           ":6334",
+		AllowVectorMutations: true,
+		MaxVectorDim:         4096,
+		MaxBatchPoints:       1000,
+		MaxTopK:              1000,
+		SnapshotDir:          snapshotDir,
 	}
 
 	snapshotsService := NewSnapshotsService(config, store, registry, snapshotDir)
@@ -266,4 +267,3 @@ func TestSnapshotsService_DeleteFull(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
-

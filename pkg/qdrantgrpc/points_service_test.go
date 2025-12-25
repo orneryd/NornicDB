@@ -43,7 +43,7 @@ func TestPointsService_Upsert(t *testing.T) {
 						},
 					},
 					Payload: map[string]*pb.Value{
-						"name": {Kind: &pb.Value_StringValue{StringValue: "test"}},
+						"name":  {Kind: &pb.Value_StringValue{StringValue: "test"}},
 						"count": {Kind: &pb.Value_IntegerValue{IntegerValue: 42}},
 					},
 				},
@@ -624,15 +624,119 @@ func TestPointsService_SearchBatch(t *testing.T) {
 	})
 }
 
+func TestPointsService_NamedVectors(t *testing.T) {
+	ctx := context.Background()
+	service, registry, store := setupPointsTest(t)
+
+	err := registry.CreateCollection(ctx, "named_vectors", 4, pb.Distance_COSINE)
+	require.NoError(t, err)
+
+	_, err = service.Upsert(ctx, &pb.UpsertPointsRequest{
+		CollectionName: "named_vectors",
+		Points: []*pb.PointStruct{
+			{
+				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
+				Vectors: &pb.Vectors{
+					VectorsOptions: &pb.Vectors_Vectors{
+						Vectors: &pb.NamedVectors{
+							Vectors: map[string]*pb.Vector{
+								"a": {Data: []float32{1, 0, 0, 0}},
+								"b": {Data: []float32{0, 1, 0, 0}},
+							},
+						},
+					},
+				},
+				Payload: map[string]*pb.Value{
+					"tag": {Kind: &pb.Value_StringValue{StringValue: "first"}},
+				},
+			},
+			{
+				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p2"}},
+				Vectors: &pb.Vectors{
+					VectorsOptions: &pb.Vectors_Vectors{
+						Vectors: &pb.NamedVectors{
+							Vectors: map[string]*pb.Vector{
+								"a": {Data: []float32{0, 1, 0, 0}},
+								"b": {Data: []float32{1, 0, 0, 0}},
+							},
+						},
+					},
+				},
+				Payload: map[string]*pb.Value{
+					"tag": {Kind: &pb.Value_StringValue{StringValue: "second"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	t.Run("stored as chunk embeddings with name mapping", func(t *testing.T) {
+		node, err := store.GetNode(storage.NodeID("qdrant:named_vectors:p1"))
+		require.NoError(t, err)
+		require.Len(t, node.ChunkEmbeddings, 2)
+		require.NotNil(t, node.Properties)
+		_, ok := node.Properties[qdrantVectorNamesKey]
+		require.True(t, ok)
+	})
+
+	t.Run("search respects vector_name", func(t *testing.T) {
+		vnA := "a"
+		resp, err := service.Search(ctx, &pb.SearchPointsRequest{
+			CollectionName: "named_vectors",
+			Vector:         []float32{1, 0, 0, 0},
+			Limit:          1,
+			VectorName:     &vnA,
+		})
+		require.NoError(t, err)
+		require.Len(t, resp.Result, 1)
+		require.Equal(t, "p1", resp.Result[0].GetId().GetUuid())
+
+		vnB := "b"
+		resp, err = service.Search(ctx, &pb.SearchPointsRequest{
+			CollectionName: "named_vectors",
+			Vector:         []float32{1, 0, 0, 0},
+			Limit:          1,
+			VectorName:     &vnB,
+		})
+		require.NoError(t, err)
+		require.Len(t, resp.Result, 1)
+		require.Equal(t, "p2", resp.Result[0].GetId().GetUuid())
+	})
+
+	t.Run("get can include a subset of named vectors", func(t *testing.T) {
+		resp, err := service.Get(ctx, &pb.GetPointsRequest{
+			CollectionName: "named_vectors",
+			Ids: []*pb.PointId{
+				{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
+			},
+			WithVectors: &pb.WithVectorsSelector{
+				SelectorOptions: &pb.WithVectorsSelector_Include{
+					Include: &pb.VectorsSelector{Names: []string{"b"}},
+				},
+			},
+			WithPayload: &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+		})
+		require.NoError(t, err)
+		require.Len(t, resp.Result, 1)
+
+		point := resp.Result[0]
+		require.NotNil(t, point.Vectors)
+		nv := point.Vectors.GetVectors()
+		require.NotNil(t, nv)
+		require.Len(t, nv.Vectors, 1)
+		require.NotNil(t, nv.Vectors["b"])
+	})
+}
+
 func TestPointsService_Count(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Use PersistentCollectionRegistry for count tests since it counts from storage
 	store := storage.NewMemoryEngine()
 	registry, err := NewPersistentCollectionRegistry(store)
 	require.NoError(t, err)
 	defer registry.Close()
-	
+
 	config := DefaultConfig()
 	service := NewPointsService(config, store, registry, nil)
 
@@ -698,11 +802,11 @@ func TestPointsService_Count(t *testing.T) {
 func TestPayloadConversion(t *testing.T) {
 	t.Run("convert payload to properties", func(t *testing.T) {
 		payload := map[string]*pb.Value{
-			"string":  {Kind: &pb.Value_StringValue{StringValue: "hello"}},
-			"int":     {Kind: &pb.Value_IntegerValue{IntegerValue: 42}},
-			"float":   {Kind: &pb.Value_DoubleValue{DoubleValue: 3.14}},
-			"bool":    {Kind: &pb.Value_BoolValue{BoolValue: true}},
-			"null":    {Kind: &pb.Value_NullValue{NullValue: pb.NullValue_NULL_VALUE}},
+			"string": {Kind: &pb.Value_StringValue{StringValue: "hello"}},
+			"int":    {Kind: &pb.Value_IntegerValue{IntegerValue: 42}},
+			"float":  {Kind: &pb.Value_DoubleValue{DoubleValue: 3.14}},
+			"bool":   {Kind: &pb.Value_BoolValue{BoolValue: true}},
+			"null":   {Kind: &pb.Value_NullValue{NullValue: pb.NullValue_NULL_VALUE}},
 		}
 
 		props := payloadToProperties(payload)
@@ -777,4 +881,3 @@ func TestPointIDConversion(t *testing.T) {
 		assert.Equal(t, storage.NodeID(""), nodeID)
 	})
 }
-

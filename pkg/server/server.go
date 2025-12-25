@@ -179,6 +179,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
 
@@ -467,6 +468,10 @@ type Server struct {
 
 	// GraphQL handler for GraphQL API
 	graphqlHandler *graphql.Handler
+
+	// Qdrant-compatible gRPC server (optional; feature-flagged).
+	qdrantGRPCServer   *qdrantgrpc.Server
+	qdrantGRPCRegistry *qdrantgrpc.PersistentCollectionRegistry
 
 	httpServer *http.Server
 	listener   net.Listener
@@ -976,6 +981,12 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	// Optional gRPC endpoints (feature-flagged).
+	if err := s.startQdrantGRPC(); err != nil {
+		_ = s.httpServer.Shutdown(context.Background())
+		return err
+	}
+
 	return nil
 }
 
@@ -984,6 +995,8 @@ func (s *Server) Stop(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
+
+	s.stopQdrantGRPC()
 
 	// Stop rate limiter cleanup goroutine
 	if s.rateLimiter != nil {

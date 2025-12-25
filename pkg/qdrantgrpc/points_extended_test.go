@@ -18,10 +18,11 @@ func setupExtendedTest(t *testing.T) (*PointsService, *PersistentCollectionRegis
 	require.NoError(t, err)
 
 	config := &Config{
-		ListenAddr:     ":6334",
-		MaxVectorDim:   4096,
-		MaxBatchPoints: 1000,
-		MaxTopK:        1000,
+		ListenAddr:           ":6334",
+		AllowVectorMutations: true,
+		MaxVectorDim:         4096,
+		MaxBatchPoints:       1000,
+		MaxTopK:              1000,
 	}
 
 	service := NewPointsService(config, store, registry, nil)
@@ -135,6 +136,73 @@ func TestPointsService_Scroll(t *testing.T) {
 	t.Run("error on empty collection name", func(t *testing.T) {
 		_, err := service.Scroll(ctx, &pb.ScrollPointsRequest{})
 		assert.Error(t, err)
+	})
+}
+
+func TestPointsService_Search_ReflectsVectorUpdatesAndDeletes(t *testing.T) {
+	service, _, cleanup := setupExtendedTest(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	t.Run("update vectors changes search results", func(t *testing.T) {
+		resp, err := service.Search(ctx, &pb.SearchPointsRequest{
+			CollectionName: "test_collection",
+			Vector:         []float32{1, 0, 0, 0},
+			Limit:          10,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Result)
+		require.Equal(t, "point1", resp.Result[0].GetId().GetUuid())
+
+		_, err = service.UpdateVectors(ctx, &pb.UpdatePointVectorsRequest{
+			CollectionName: "test_collection",
+			Points: []*pb.PointVectors{
+				{
+					Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "point1"}},
+					Vectors: &pb.Vectors{
+						VectorsOptions: &pb.Vectors_Vector{
+							Vector: &pb.Vector{Data: []float32{-1, 0, 0, 0}},
+						},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		resp2, err := service.Search(ctx, &pb.SearchPointsRequest{
+			CollectionName: "test_collection",
+			Vector:         []float32{1, 0, 0, 0},
+			Limit:          10,
+		})
+		require.NoError(t, err)
+		for _, hit := range resp2.Result {
+			require.NotEqual(t, "point1", hit.GetId().GetUuid())
+		}
+	})
+
+	t.Run("delete vectors removes point from vector search", func(t *testing.T) {
+		_, err := service.DeleteVectors(ctx, &pb.DeletePointVectorsRequest{
+			CollectionName: "test_collection",
+			PointsSelector: &pb.PointsSelector{
+				PointsSelectorOneOf: &pb.PointsSelector_Points{
+					Points: &pb.PointsIdsList{
+						Ids: []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "point2"}}},
+					},
+				},
+			},
+			// nil vectors selector => delete all vectors for the point
+		})
+		require.NoError(t, err)
+
+		resp, err := service.Search(ctx, &pb.SearchPointsRequest{
+			CollectionName: "test_collection",
+			Vector:         []float32{0, 1, 0, 0},
+			Limit:          10,
+		})
+		require.NoError(t, err)
+		for _, hit := range resp.Result {
+			require.NotEqual(t, "point2", hit.GetId().GetUuid())
+		}
 	})
 }
 
@@ -651,4 +719,3 @@ func TestCollectionsService_CollectionExists(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
-

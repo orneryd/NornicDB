@@ -3,6 +3,8 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -13,6 +15,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+const qdrantVectorNamesKey = "_qdrant_vector_names"
 
 // PointsService implements the Qdrant Points gRPC service.
 // It integrates with NornicDB's search.Service for unified vector indexing.
@@ -42,6 +46,9 @@ func (s *PointsService) Upsert(ctx context.Context, req *pb.UpsertPointsRequest)
 	if req.CollectionName == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
+	if !s.config.AllowVectorMutations {
+		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+	}
 
 	if len(req.Points) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "points are required")
@@ -58,47 +65,81 @@ func (s *PointsService) Upsert(ctx context.Context, req *pb.UpsertPointsRequest)
 	}
 
 	// Process points
-	nodes := make([]*storage.Node, 0, len(req.Points))
+	nodeIDs := make([]storage.NodeID, 0, len(req.Points))
 	for _, point := range req.Points {
-		// Convert point ID
-		nodeID := pointIDToNodeID(req.CollectionName, point.Id)
+		nodeIDs = append(nodeIDs, pointIDToNodeID(req.CollectionName, point.Id))
+	}
 
-		// Extract vector
-		vec, err := extractVector(point.Vectors)
+	existing, err := s.storage.BatchGetNodes(nodeIDs)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read existing points: %v", err)
+	}
+
+	nodesToCreate := make([]*storage.Node, 0, len(req.Points))
+	nodesToUpdate := make([]*storage.Node, 0, len(req.Points))
+
+	for i, point := range req.Points {
+		nodeID := nodeIDs[i]
+
+		// Extract vectors (single or named).
+		vecNames, vecs, err := extractVectors(point.Vectors)
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid vector: %v", err)
 		}
 
-		// Validate vector dimensions
-		if len(vec) != meta.Dimensions {
-			return nil, status.Errorf(codes.InvalidArgument, "vector dimension mismatch: got %d, expected %d", len(vec), meta.Dimensions)
+		// Validate vector dimensions for all vectors.
+		for _, vec := range vecs {
+			if len(vec) != meta.Dimensions {
+				return nil, status.Errorf(codes.InvalidArgument, "vector dimension mismatch: got %d, expected %d", len(vec), meta.Dimensions)
+			}
 		}
 
-		// Convert payload to properties
-		props := payloadToProperties(point.Payload)
+		// Convert payload to properties (nil payload = keep existing, empty map = clear).
+		var props map[string]any
+		if point.Payload != nil {
+			props = payloadToProperties(point.Payload)
+		} else if prev := existing[nodeID]; prev != nil {
+			props = cloneProperties(prev.Properties)
+		}
 
-		// Create node
 		node := &storage.Node{
 			ID:              nodeID,
 			Labels:          []string{QdrantPointLabel, req.CollectionName},
 			Properties:      props,
-			ChunkEmbeddings: [][]float32{vec},
-			CreatedAt:       time.Now(),
+			ChunkEmbeddings: vecs,
 		}
-		nodes = append(nodes, node)
+		setNodeVectorNames(node, vecNames)
+
+		if prev := existing[nodeID]; prev != nil {
+			node.CreatedAt = prev.CreatedAt
+			node.UpdatedAt = time.Now()
+			nodesToUpdate = append(nodesToUpdate, node)
+		} else {
+			node.CreatedAt = time.Now()
+			nodesToCreate = append(nodesToCreate, node)
+		}
 	}
 
-	// Bulk create nodes in storage
-	if err := s.storage.BulkCreateNodes(nodes); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to store points: %v", err)
+	if len(nodesToCreate) > 0 {
+		if err := s.storage.BulkCreateNodes(nodesToCreate); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to create points: %v", err)
+		}
+	}
+
+	for _, node := range nodesToUpdate {
+		if err := s.storage.UpdateNode(node); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to update point %s: %v", node.ID, err)
+		}
 	}
 
 	// Index nodes in search.Service for unified search
 	if s.searchService != nil {
-		for _, node := range nodes {
-			if err := s.searchService.IndexNode(node); err != nil {
-				// Log but don't fail - storage succeeded
-			}
+		for _, node := range nodesToCreate {
+			_ = s.searchService.IndexNode(node)
+		}
+		for _, node := range nodesToUpdate {
+			_ = s.searchService.RemoveNode(node.ID)
+			_ = s.searchService.IndexNode(node)
 		}
 	}
 
@@ -123,18 +164,7 @@ func (s *PointsService) Get(ctx context.Context, req *pb.GetPointsRequest) (*pb.
 	}
 
 	// Determine what to include
-	includePayload := true
-	includeVectors := false
-	if req.WithPayload != nil {
-		if enable, ok := req.WithPayload.SelectorOptions.(*pb.WithPayloadSelector_Enable); ok {
-			includePayload = enable.Enable
-		}
-	}
-	if req.WithVectors != nil {
-		if enable, ok := req.WithVectors.SelectorOptions.(*pb.WithVectorsSelector_Enable); ok {
-			includeVectors = enable.Enable
-		}
-	}
+	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
 
 	// Fetch points
 	results := make([]*pb.RetrievedPoint, 0, len(req.Ids))
@@ -149,18 +179,12 @@ func (s *PointsService) Get(ctx context.Context, req *pb.GetPointsRequest) (*pb.
 			Id: pointID,
 		}
 
-		if includePayload {
-			point.Payload = propertiesToPayload(node.Properties)
+		if payload := withPayloadSelection(node.Properties, req.WithPayload); payload != nil {
+			point.Payload = propertiesToPayload(payload)
 		}
 
-		if includeVectors && len(node.ChunkEmbeddings) > 0 {
-			point.Vectors = &pb.Vectors{
-				VectorsOptions: &pb.Vectors_Vector{
-					Vector: &pb.Vector{
-						Data: node.ChunkEmbeddings[0],
-					},
-				},
-			}
+		if includeVectors {
+			point.Vectors = vectorsFromNode(node, requestedVectorNames)
 		}
 
 		results = append(results, point)
@@ -192,8 +216,11 @@ func (s *PointsService) Delete(ctx context.Context, req *pb.DeletePointsRequest)
 			nodeIDs = append(nodeIDs, pointIDToNodeID(req.CollectionName, pointID))
 		}
 	case *pb.PointsSelector_Filter:
-		// Filter-based deletion not supported in phase 1
-		return nil, status.Error(codes.Unimplemented, "filter-based deletion not yet supported")
+		ids, err := s.resolvePointsSelector(ctx, req.CollectionName, req.Points)
+		if err != nil {
+			return nil, err
+		}
+		nodeIDs = append(nodeIDs, ids...)
 	default:
 		return nil, status.Error(codes.InvalidArgument, "invalid points selector")
 	}
@@ -256,23 +283,26 @@ func (s *PointsService) Search(ctx context.Context, req *pb.SearchPointsRequest)
 		minSimilarity = float64(*req.ScoreThreshold)
 	}
 
+	vectorName := ""
+	if req.VectorName != nil {
+		vectorName = *req.VectorName
+	}
+
+	offset := 0
+	if req.Offset != nil {
+		if *req.Offset > uint64(^uint(0)>>1) {
+			return nil, status.Error(codes.InvalidArgument, "offset too large")
+		}
+		offset = int(*req.Offset)
+	}
+
 	// Determine what to include
-	includePayload := false
-	includeVectors := false
-	if req.WithPayload != nil {
-		if enable, ok := req.WithPayload.SelectorOptions.(*pb.WithPayloadSelector_Enable); ok {
-			includePayload = enable.Enable
-		}
-	}
-	if req.WithVectors != nil {
-		if enable, ok := req.WithVectors.SelectorOptions.(*pb.WithVectorsSelector_Enable); ok {
-			includeVectors = enable.Enable
-		}
-	}
+	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
+	includePayload := req.WithPayload != nil
 
 	// Perform search - collection-scoped brute force search
 	// We search only within the collection's points
-	results := s.searchCollection(ctx, req.CollectionName, req.Vector, limit, minSimilarity)
+	results := s.searchCollection(ctx, req.CollectionName, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity)
 
 	// Convert results to response
 	scoredPoints := make([]*pb.ScoredPoint, 0, len(results))
@@ -285,21 +315,15 @@ func (s *PointsService) Search(ctx context.Context, req *pb.SearchPointsRequest)
 			Score: float32(sr.Score),
 		}
 
-		// Fetch payload if requested
+		// Fetch payload/vectors if requested
 		if includePayload || includeVectors {
 			node, err := s.storage.GetNode(nodeID)
 			if err == nil {
 				if includePayload {
-					scoredPoint.Payload = propertiesToPayload(node.Properties)
+					scoredPoint.Payload = propertiesToPayload(withPayloadSelection(node.Properties, req.WithPayload))
 				}
-				if includeVectors && len(node.ChunkEmbeddings) > 0 {
-					scoredPoint.Vectors = &pb.Vectors{
-						VectorsOptions: &pb.Vectors_Vector{
-							Vector: &pb.Vector{
-								Data: node.ChunkEmbeddings[0],
-							},
-						},
-					}
+				if includeVectors {
+					scoredPoint.Vectors = vectorsFromNode(node, requestedVectorNames)
 				}
 			}
 		}
@@ -320,7 +344,7 @@ type searchResult struct {
 	Score float64
 }
 
-func (s *PointsService) searchCollection(ctx context.Context, collection string, queryVec []float32, limit int, minSimilarity float64) []searchResult {
+func (s *PointsService) searchCollection(ctx context.Context, collection string, vectorName string, queryVec []float32, filter *pb.Filter, limit int, offset int, minSimilarity float64) []searchResult {
 	// Get all points in the collection
 	nodes, err := s.storage.GetNodesByLabel(collection)
 	if err != nil {
@@ -338,6 +362,12 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 	var scored_results []scored
 
 	for _, node := range nodes {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		// Verify it's a Qdrant point
 		isQdrantPoint := false
 		for _, label := range node.Labels {
@@ -350,13 +380,18 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 			continue
 		}
 
-		// Get embedding
-		if len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0 {
+		if filter != nil && !matchesFilter(node, filter) {
+			continue
+		}
+
+		// Get embedding for the requested vector name (default = "").
+		emb, ok := nodeVectorByName(node, vectorName)
+		if !ok {
 			continue
 		}
 
 		// Compute similarity
-		nodeVec := vector.Normalize(node.ChunkEmbeddings[0])
+		nodeVec := vector.Normalize(emb)
 		similarity := float64(vector.DotProduct(normalizedQuery, nodeVec))
 
 		if similarity >= minSimilarity {
@@ -368,15 +403,18 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 	}
 
 	// Sort by score descending
-	for i := 0; i < len(scored_results); i++ {
-		for j := i + 1; j < len(scored_results); j++ {
-			if scored_results[j].score > scored_results[i].score {
-				scored_results[i], scored_results[j] = scored_results[j], scored_results[i]
-			}
+	sort.Slice(scored_results, func(i, j int) bool {
+		return scored_results[i].score > scored_results[j].score
+	})
+
+	// Apply offset then limit results
+	if offset > 0 {
+		if offset >= len(scored_results) {
+			scored_results = nil
+		} else {
+			scored_results = scored_results[offset:]
 		}
 	}
-
-	// Limit results
 	if len(scored_results) > limit {
 		scored_results = scored_results[:limit]
 	}
@@ -419,7 +457,37 @@ func (s *PointsService) Count(ctx context.Context, req *pb.CountPointsRequest) (
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
-	// Get count from registry
+	// Filtered counts must scan points and apply the filter.
+	if req.Filter != nil {
+		nodes, err := s.storage.GetNodesByLabel(req.CollectionName)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get points: %v", err)
+		}
+
+		count := 0
+		for _, node := range nodes {
+			isQdrantPoint := false
+			for _, label := range node.Labels {
+				if label == QdrantPointLabel {
+					isQdrantPoint = true
+					break
+				}
+			}
+			if !isQdrantPoint {
+				continue
+			}
+			if matchesFilter(node, req.Filter) {
+				count++
+			}
+		}
+
+		return &pb.CountPointsResponse{
+			Result: &pb.CountResult{Count: uint64(count)},
+			Time:   time.Since(start).Seconds(),
+		}, nil
+	}
+
+	// Unfiltered: registry can count efficiently.
 	count, err := s.registry.GetPointCount(ctx, req.CollectionName)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "collection not found: %v", err)
@@ -453,18 +521,7 @@ func (s *PointsService) Scroll(ctx context.Context, req *pb.ScrollPointsRequest)
 	}
 
 	// Determine what to include
-	includePayload := true
-	includeVectors := false
-	if req.WithPayload != nil {
-		if enable, ok := req.WithPayload.SelectorOptions.(*pb.WithPayloadSelector_Enable); ok {
-			includePayload = enable.Enable
-		}
-	}
-	if req.WithVectors != nil {
-		if enable, ok := req.WithVectors.SelectorOptions.(*pb.WithVectorsSelector_Enable); ok {
-			includeVectors = enable.Enable
-		}
-	}
+	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
 
 	// Get all points in the collection
 	nodes, err := s.storage.GetNodesByLabel(req.CollectionName)
@@ -477,6 +534,9 @@ func (s *PointsService) Scroll(ctx context.Context, req *pb.ScrollPointsRequest)
 	for _, node := range nodes {
 		for _, label := range node.Labels {
 			if label == QdrantPointLabel {
+				if req.Filter != nil && !matchesFilter(node, req.Filter) {
+					break
+				}
 				qdrantPoints = append(qdrantPoints, node)
 				break
 			}
@@ -513,18 +573,12 @@ func (s *PointsService) Scroll(ctx context.Context, req *pb.ScrollPointsRequest)
 			Id: pointID,
 		}
 
-		if includePayload {
-			point.Payload = propertiesToPayload(node.Properties)
+		if payload := withPayloadSelection(node.Properties, req.WithPayload); payload != nil {
+			point.Payload = propertiesToPayload(payload)
 		}
 
-		if includeVectors && len(node.ChunkEmbeddings) > 0 {
-			point.Vectors = &pb.Vectors{
-				VectorsOptions: &pb.Vectors_Vector{
-					Vector: &pb.Vector{
-						Data: node.ChunkEmbeddings[0],
-					},
-				},
-			}
+		if includeVectors {
+			point.Vectors = vectorsFromNode(node, requestedVectorNames)
 		}
 
 		results = append(results, point)
@@ -565,6 +619,19 @@ func (s *PointsService) Recommend(ctx context.Context, req *pb.RecommendPointsRe
 		limit = 10
 	}
 
+	vectorName := ""
+	if req.Using != nil {
+		vectorName = *req.Using
+	}
+
+	offset := 0
+	if req.Offset != nil {
+		if *req.Offset > uint64(^uint(0)>>1) {
+			return nil, status.Error(codes.InvalidArgument, "offset too large")
+		}
+		offset = int(*req.Offset)
+	}
+
 	// Collect positive vectors
 	var positiveVectors [][]float32
 	for _, pointID := range req.Positive {
@@ -573,8 +640,8 @@ func (s *PointsService) Recommend(ctx context.Context, req *pb.RecommendPointsRe
 		if err != nil {
 			continue // Skip not found
 		}
-		if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-			positiveVectors = append(positiveVectors, node.ChunkEmbeddings[0])
+		if emb, ok := nodeVectorByName(node, vectorName); ok {
+			positiveVectors = append(positiveVectors, emb)
 		}
 	}
 
@@ -590,8 +657,8 @@ func (s *PointsService) Recommend(ctx context.Context, req *pb.RecommendPointsRe
 		if err != nil {
 			continue
 		}
-		if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-			negativeVectors = append(negativeVectors, node.ChunkEmbeddings[0])
+		if emb, ok := nodeVectorByName(node, vectorName); ok {
+			negativeVectors = append(negativeVectors, emb)
 		}
 	}
 
@@ -625,21 +692,11 @@ func (s *PointsService) Recommend(ctx context.Context, req *pb.RecommendPointsRe
 	}
 
 	// Determine what to include
-	includePayload := false
-	includeVectors := false
-	if req.WithPayload != nil {
-		if enable, ok := req.WithPayload.SelectorOptions.(*pb.WithPayloadSelector_Enable); ok {
-			includePayload = enable.Enable
-		}
-	}
-	if req.WithVectors != nil {
-		if enable, ok := req.WithVectors.SelectorOptions.(*pb.WithVectorsSelector_Enable); ok {
-			includeVectors = enable.Enable
-		}
-	}
+	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
+	includePayload := req.WithPayload != nil
 
 	// Perform search using the recommendation vector
-	results := s.searchCollection(ctx, req.CollectionName, recVec, limit+len(req.Positive)+len(req.Negative), minSimilarity)
+	results := s.searchCollection(ctx, req.CollectionName, vectorName, recVec, req.Filter, limit+len(req.Positive)+len(req.Negative), offset, minSimilarity)
 
 	// Build set of IDs to exclude (positive and negative examples)
 	excludeIDs := make(map[string]bool)
@@ -674,16 +731,10 @@ func (s *PointsService) Recommend(ctx context.Context, req *pb.RecommendPointsRe
 			node, err := s.storage.GetNode(nodeID)
 			if err == nil {
 				if includePayload {
-					scoredPoint.Payload = propertiesToPayload(node.Properties)
+					scoredPoint.Payload = propertiesToPayload(withPayloadSelection(node.Properties, req.WithPayload))
 				}
-				if includeVectors && len(node.ChunkEmbeddings) > 0 {
-					scoredPoint.Vectors = &pb.Vectors{
-						VectorsOptions: &pb.Vectors_Vector{
-							Vector: &pb.Vector{
-								Data: node.ChunkEmbeddings[0],
-							},
-						},
-					}
+				if includeVectors {
+					scoredPoint.Vectors = vectorsFromNode(node, requestedVectorNames)
 				}
 			}
 		}
@@ -760,21 +811,11 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *pb.SearchPointGro
 	}
 
 	// Determine what to include
-	includePayload := false
-	includeVectors := false
-	if req.WithPayload != nil {
-		if enable, ok := req.WithPayload.SelectorOptions.(*pb.WithPayloadSelector_Enable); ok {
-			includePayload = enable.Enable
-		}
-	}
-	if req.WithVectors != nil {
-		if enable, ok := req.WithVectors.SelectorOptions.(*pb.WithVectorsSelector_Enable); ok {
-			includeVectors = enable.Enable
-		}
-	}
+	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
+	includePayload := req.WithPayload != nil
 
 	// Perform search
-	results := s.searchCollection(ctx, req.CollectionName, req.Vector, searchLimit, minSimilarity)
+	results := s.searchCollection(ctx, req.CollectionName, "", req.Vector, req.Filter, searchLimit, 0, minSimilarity)
 
 	// Group results by the specified field
 	groups := make(map[string][]*pb.ScoredPoint)
@@ -811,16 +852,10 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *pb.SearchPointGro
 		}
 
 		if includePayload {
-			scoredPoint.Payload = propertiesToPayload(node.Properties)
+			scoredPoint.Payload = propertiesToPayload(withPayloadSelection(node.Properties, req.WithPayload))
 		}
-		if includeVectors && len(node.ChunkEmbeddings) > 0 {
-			scoredPoint.Vectors = &pb.Vectors{
-				VectorsOptions: &pb.Vectors_Vector{
-					Vector: &pb.Vector{
-						Data: node.ChunkEmbeddings[0],
-					},
-				},
-			}
+		if includeVectors {
+			scoredPoint.Vectors = vectorsFromNode(node, requestedVectorNames)
 		}
 
 		if len(groups[groupKey]) == 0 {
@@ -1042,6 +1077,9 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *pb.UpdatePointVe
 	if req.CollectionName == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
+	if !s.config.AllowVectorMutations {
+		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+	}
 
 	if len(req.Points) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "points are required")
@@ -1063,19 +1101,24 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *pb.UpdatePointVe
 			continue // Skip not found
 		}
 
-		// Extract new vector
-		vec, err := extractVector(pv.Vectors)
+		vecNames, vecs, err := extractVectors(pv.Vectors)
 		if err != nil {
-			continue // Skip invalid vector
+			continue // Skip invalid vectors
 		}
-
-		// Validate dimensions
-		if len(vec) != meta.Dimensions {
+		ok := true
+		for _, vec := range vecs {
+			if len(vec) != meta.Dimensions {
+				ok = false
+				break
+			}
+		}
+		if !ok {
 			continue // Skip dimension mismatch
 		}
 
-		// Update embedding
-		node.ChunkEmbeddings = [][]float32{vec}
+		// Update vectors (merge/update by name).
+		upsertNodeVectors(node, vecNames, vecs)
+		node.UpdatedAt = time.Now()
 
 		// Update in storage
 		if err := s.storage.UpdateNode(node); err != nil {
@@ -1084,6 +1127,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *pb.UpdatePointVe
 
 		// Re-index in search service
 		if s.searchService != nil {
+			_ = s.searchService.RemoveNode(nodeID)
 			_ = s.searchService.IndexNode(node)
 		}
 	}
@@ -1104,6 +1148,15 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *pb.DeletePointVe
 	if req.CollectionName == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
+	if !s.config.AllowVectorMutations {
+		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+	}
+	// For compatibility and convenience, treat a nil vectors selector as "delete all vectors".
+	// (Qdrant clients often omit it when only a single unnamed vector exists.)
+	namesToDelete := []string(nil)
+	if req.Vectors != nil {
+		namesToDelete = req.Vectors.Names
+	}
 
 	// Get points to update
 	nodeIDs, err := s.resolvePointsSelector(ctx, req.CollectionName, req.PointsSelector)
@@ -1118,17 +1171,22 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *pb.DeletePointVe
 			continue
 		}
 
-		// Clear embeddings
-		node.ChunkEmbeddings = nil
-
-		// Remove from search index
+		// Remove from search index first so we can safely re-index (or keep removed).
 		if s.searchService != nil {
 			_ = s.searchService.RemoveNode(nodeID)
 		}
 
+		// Delete selected named vectors (empty list => delete all).
+		deleteNodeVectors(node, namesToDelete)
+
 		// Update in storage
 		if err := s.storage.UpdateNode(node); err != nil {
 			// Log but continue
+		}
+
+		// Re-index remaining vectors (if any).
+		if s.searchService != nil && len(node.ChunkEmbeddings) > 0 {
+			_ = s.searchService.IndexNode(node)
 		}
 	}
 
@@ -1419,13 +1477,9 @@ func pointIDMatchesNode(pointID *pb.PointId, node *storage.Node) bool {
 
 // sortNodesByID sorts nodes by their ID for consistent pagination.
 func sortNodesByID(nodes []*storage.Node) {
-	for i := 0; i < len(nodes); i++ {
-		for j := i + 1; j < len(nodes); j++ {
-			if string(nodes[j].ID) < string(nodes[i].ID) {
-				nodes[i], nodes[j] = nodes[j], nodes[i]
-			}
-		}
-	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return string(nodes[i].ID) < string(nodes[j].ID)
+	})
 }
 
 // pointIDToNodeID converts a Qdrant PointId to a NornicDB NodeID.
@@ -1454,41 +1508,391 @@ func nodeIDToPointID(nodeID storage.NodeID) *pb.PointId {
 			break
 		}
 	}
+	if n, err := strconv.ParseUint(idStr, 10, 64); err == nil {
+		return &pb.PointId{PointIdOptions: &pb.PointId_Num{Num: n}}
+	}
 	return &pb.PointId{
 		PointIdOptions: &pb.PointId_Uuid{Uuid: idStr},
 	}
 }
 
-// extractVector extracts the vector from a Vectors message.
-func extractVector(v *pb.Vectors) ([]float32, error) {
+// extractVectors extracts one or more vectors from a Vectors message.
+//
+// Qdrant supports both a single unnamed vector and named vectors.
+// NornicDB stores these as ChunkEmbeddings (one chunk per vector), with an
+// internal name→index mapping stored in `node.Properties[qdrantVectorNamesKey]`.
+func extractVectors(v *pb.Vectors) ([]string, [][]float32, error) {
 	if v == nil {
-		return nil, fmt.Errorf("vectors is nil")
+		return nil, nil, fmt.Errorf("vectors is nil")
 	}
 
 	switch opt := v.VectorsOptions.(type) {
 	case *pb.Vectors_Vector:
 		if opt.Vector == nil {
-			return nil, fmt.Errorf("vector is nil")
+			return nil, nil, fmt.Errorf("vector is nil")
 		}
-		return opt.Vector.Data, nil
+		return []string{""}, [][]float32{opt.Vector.Data}, nil
 	case *pb.Vectors_Vectors:
-		// Multi-vector: use the first one (or named "default")
 		if opt.Vectors == nil || len(opt.Vectors.Vectors) == 0 {
-			return nil, fmt.Errorf("no vectors in map")
+			return nil, nil, fmt.Errorf("no vectors in map")
 		}
-		// Try "default" first, then take first available
-		if v, ok := opt.Vectors.Vectors[""]; ok && v != nil {
-			return v.Data, nil
+		keys := make([]string, 0, len(opt.Vectors.Vectors))
+		for k := range opt.Vectors.Vectors {
+			keys = append(keys, k)
 		}
-		for _, v := range opt.Vectors.Vectors {
-			if v != nil {
-				return v.Data, nil
+		sort.Strings(keys)
+
+		names := make([]string, 0, len(keys))
+		vectors := make([][]float32, 0, len(keys))
+		for _, name := range keys {
+			vec := opt.Vectors.Vectors[name]
+			if vec == nil {
+				continue
+			}
+			names = append(names, name)
+			vectors = append(vectors, vec.Data)
+		}
+		if len(vectors) == 0 {
+			return nil, nil, fmt.Errorf("no valid vector found")
+		}
+		return names, vectors, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported vectors type")
+	}
+}
+
+// extractVector preserves the existing single-vector helper by returning the "default" vector.
+// Prefer extractVectors for full named-vector support.
+func extractVector(v *pb.Vectors) ([]float32, error) {
+	_, vectors, err := extractVectors(v)
+	if err != nil {
+		return nil, err
+	}
+	return vectors[0], nil
+}
+
+func cloneProperties(props map[string]any) map[string]any {
+	if props == nil {
+		return nil
+	}
+	out := make(map[string]any, len(props))
+	for k, v := range props {
+		out[k] = v
+	}
+	return out
+}
+
+func isQdrantInternalPropertyKey(key string) bool {
+	if key == qdrantVectorNamesKey {
+		return true
+	}
+	// Avoid pulling internal control keys into the Qdrant payload.
+	// Treat any `_qdrant_*` keys as reserved.
+	const prefix = "_qdrant_"
+	return len(key) >= len(prefix) && key[:len(prefix)] == prefix
+}
+
+func nodeVectorNames(node *storage.Node) []string {
+	if node == nil || node.Properties == nil {
+		return nil
+	}
+	raw, ok := node.Properties[qdrantVectorNamesKey]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			out = append(out, s)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func setNodeVectorNames(node *storage.Node, names []string) {
+	if node.Properties == nil {
+		node.Properties = make(map[string]any)
+	}
+	// If this is effectively a single unnamed vector, omit the mapping.
+	if len(names) == 0 || (len(names) == 1 && names[0] == "") {
+		delete(node.Properties, qdrantVectorNamesKey)
+		return
+	}
+	out := make([]string, len(names))
+	copy(out, names)
+	node.Properties[qdrantVectorNamesKey] = out
+}
+
+func nodeVectorIndexByName(node *storage.Node, vectorName string) (int, bool) {
+	if node == nil || len(node.ChunkEmbeddings) == 0 {
+		return 0, false
+	}
+
+	names := nodeVectorNames(node)
+	if len(names) == 0 {
+		// No mapping stored: treat as single unnamed vector at index 0.
+		if vectorName == "" {
+			return 0, true
+		}
+		return 0, false
+	}
+
+	for i, name := range names {
+		if name == vectorName {
+			if i < len(node.ChunkEmbeddings) {
+				return i, true
+			}
+			return 0, false
+		}
+	}
+
+	// Backwards-compatible default selection: if the client didn't specify a
+	// name, fall back to the first embedding.
+	if vectorName == "" && len(node.ChunkEmbeddings) > 0 {
+		return 0, true
+	}
+	return 0, false
+}
+
+func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {
+	idx, ok := nodeVectorIndexByName(node, vectorName)
+	if !ok || idx >= len(node.ChunkEmbeddings) {
+		return nil, false
+	}
+	vec := node.ChunkEmbeddings[idx]
+	if len(vec) == 0 {
+		return nil, false
+	}
+	return vec, true
+}
+
+func withPayloadSelection(props map[string]any, selector *pb.WithPayloadSelector) map[string]any {
+	if props == nil {
+		return nil
+	}
+
+	// Always remove internal keys from payloads.
+	var cleaned map[string]any
+	addAll := func() {
+		if cleaned == nil {
+			cleaned = make(map[string]any, len(props))
+		}
+		for k, v := range props {
+			if isQdrantInternalPropertyKey(k) {
+				continue
+			}
+			cleaned[k] = v
+		}
+	}
+
+	if selector == nil {
+		addAll()
+		return cleaned
+	}
+
+	switch opt := selector.SelectorOptions.(type) {
+	case *pb.WithPayloadSelector_Enable:
+		if !opt.Enable {
+			return nil
+		}
+		addAll()
+		return cleaned
+	case *pb.WithPayloadSelector_Include:
+		if opt.Include == nil || len(opt.Include.Fields) == 0 {
+			addAll()
+			return cleaned
+		}
+		cleaned = make(map[string]any, len(opt.Include.Fields))
+		for _, field := range opt.Include.Fields {
+			if isQdrantInternalPropertyKey(field) {
+				continue
+			}
+			if v, ok := props[field]; ok {
+				cleaned[field] = v
 			}
 		}
-		return nil, fmt.Errorf("no valid vector found")
+		return cleaned
+	case *pb.WithPayloadSelector_Exclude:
+		addAll()
+		if opt.Exclude == nil || len(opt.Exclude.Fields) == 0 {
+			return cleaned
+		}
+		for _, field := range opt.Exclude.Fields {
+			delete(cleaned, field)
+		}
+		return cleaned
 	default:
-		return nil, fmt.Errorf("unsupported vectors type")
+		addAll()
+		return cleaned
 	}
+}
+
+func withVectorsSelection(selector *pb.WithVectorsSelector) (include bool, names []string) {
+	if selector == nil {
+		return false, nil
+	}
+	switch opt := selector.SelectorOptions.(type) {
+	case *pb.WithVectorsSelector_Enable:
+		return opt.Enable, nil
+	case *pb.WithVectorsSelector_Include:
+		if opt.Include == nil {
+			return true, nil
+		}
+		return true, opt.Include.Names
+	default:
+		return false, nil
+	}
+}
+
+func vectorsFromNode(node *storage.Node, requestedNames []string) *pb.Vectors {
+	if node == nil || len(node.ChunkEmbeddings) == 0 {
+		return nil
+	}
+
+	names := nodeVectorNames(node)
+
+	// If we don't have a name map, treat it as a single unnamed vector.
+	if len(names) == 0 {
+		if len(node.ChunkEmbeddings[0]) == 0 {
+			return nil
+		}
+		// If a specific non-default name was requested, we cannot satisfy it.
+		for _, requested := range requestedNames {
+			if requested != "" {
+				return nil
+			}
+		}
+		return &pb.Vectors{
+			VectorsOptions: &pb.Vectors_Vector{
+				Vector: &pb.Vector{Data: node.ChunkEmbeddings[0]},
+			},
+		}
+	}
+
+	// Determine which names to include.
+	includeNames := names
+	if len(requestedNames) > 0 {
+		includeNames = requestedNames
+	}
+
+	out := make(map[string]*pb.Vector, len(includeNames))
+	for _, name := range includeNames {
+		idx, ok := nodeVectorIndexByName(node, name)
+		if !ok || idx >= len(node.ChunkEmbeddings) || len(node.ChunkEmbeddings[idx]) == 0 {
+			continue
+		}
+		out[name] = &pb.Vector{Data: node.ChunkEmbeddings[idx]}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+
+	// If this is effectively a single unnamed vector, return the compact encoding.
+	if len(out) == 1 {
+		if v, ok := out[""]; ok && len(names) == 1 && names[0] == "" {
+			return &pb.Vectors{VectorsOptions: &pb.Vectors_Vector{Vector: v}}
+		}
+	}
+
+	return &pb.Vectors{
+		VectorsOptions: &pb.Vectors_Vectors{
+			Vectors: &pb.NamedVectors{Vectors: out},
+		},
+	}
+}
+
+func upsertNodeVectors(node *storage.Node, names []string, vectors [][]float32) {
+	if node == nil || len(names) == 0 || len(vectors) == 0 {
+		return
+	}
+
+	existingNames := nodeVectorNames(node)
+	// If there's no stored mapping but embeddings exist, treat chunk 0 as the unnamed vector.
+	if len(existingNames) == 0 && len(node.ChunkEmbeddings) > 0 {
+		existingNames = []string{""}
+	}
+
+	// Keep mapping length aligned with embeddings length where possible.
+	if len(existingNames) > len(node.ChunkEmbeddings) {
+		existingNames = existingNames[:len(node.ChunkEmbeddings)]
+	}
+
+	indexByName := make(map[string]int, len(existingNames))
+	for i, name := range existingNames {
+		indexByName[name] = i
+	}
+
+	for i, name := range names {
+		if i >= len(vectors) {
+			break
+		}
+		vec := vectors[i]
+		if idx, ok := indexByName[name]; ok && idx < len(node.ChunkEmbeddings) {
+			node.ChunkEmbeddings[idx] = vec
+			continue
+		}
+
+		node.ChunkEmbeddings = append(node.ChunkEmbeddings, vec)
+		existingNames = append(existingNames, name)
+		indexByName[name] = len(existingNames) - 1
+	}
+
+	setNodeVectorNames(node, existingNames)
+}
+
+func deleteNodeVectors(node *storage.Node, namesToDelete []string) {
+	if node == nil {
+		return
+	}
+
+	// Empty selector means delete all vectors.
+	if len(namesToDelete) == 0 {
+		node.ChunkEmbeddings = nil
+		if node.Properties != nil {
+			delete(node.Properties, qdrantVectorNamesKey)
+		}
+		return
+	}
+
+	del := make(map[string]struct{}, len(namesToDelete))
+	for _, name := range namesToDelete {
+		del[name] = struct{}{}
+	}
+
+	existingNames := nodeVectorNames(node)
+	if len(existingNames) == 0 {
+		// No mapping stored: only unnamed vector exists at index 0.
+		if _, ok := del[""]; ok {
+			node.ChunkEmbeddings = nil
+		}
+		return
+	}
+
+	keptEmbeddings := make([][]float32, 0, len(node.ChunkEmbeddings))
+	keptNames := make([]string, 0, len(existingNames))
+	for i, name := range existingNames {
+		if _, ok := del[name]; ok {
+			continue
+		}
+		if i >= len(node.ChunkEmbeddings) {
+			continue
+		}
+		keptNames = append(keptNames, name)
+		keptEmbeddings = append(keptEmbeddings, node.ChunkEmbeddings[i])
+	}
+
+	node.ChunkEmbeddings = keptEmbeddings
+	setNodeVectorNames(node, keptNames)
 }
 
 // payloadToProperties converts Qdrant Payload to NornicDB Properties.
@@ -1512,6 +1916,9 @@ func propertiesToPayload(props map[string]any) map[string]*pb.Value {
 
 	payload := make(map[string]*pb.Value, len(props))
 	for key, value := range props {
+		if isQdrantInternalPropertyKey(key) {
+			continue
+		}
 		payload[key] = anyToValue(value)
 	}
 	return payload
