@@ -1,50 +1,74 @@
 services:
-  nornicdb:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.amd64-cuda-heimdall
-      args:
-        EMBED_MODEL: "true"  # Include bge-m3.gguf in image
-      tags:
-        - timothyswt/nornicdb-amd64-cuda-bge-heimdall:latest
-    image: timothyswt/nornicdb-amd64-cuda-bge-heimdall:latest
-    container_name: nornicdb
-    volumes:
-      - ./data/test:/data
+  # nornicdb:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/Dockerfile.amd64-cuda-heimdall
+  #     args:
+  #       EMBED_MODEL: "true"  # Include bge-m3.gguf in image
+  #     tags:
+  #       - timothyswt/nornicdb-amd64-cuda-bge-heimdall:latest
+  #   image: timothyswt/nornicdb-amd64-cuda-bge-heimdall:latest
+  #   container_name: nornicdb
+  #   volumes:
+  #     - ./data/test:/data
+  #   ports:
+  #     - "7474:7474" # HTTP API & Browser UI
+  #     - "7687:7687" # Bolt protocol (Neo4j compatible)
+  #   environment:
+  #     - NORNICDB_DATA_DIR=/data
+  #     - NORNICDB_HTTP_PORT=7474
+  #     - NORNICDB_BOLT_PORT=7687
+  #     # - NORNICDB_HEIMDALL_ENABLED=true
+  #     - NORNICDB_AUTO_TLP_ENABLED=false
+  #     - NORNICDB_KMEANS_CLUSTERING_ENABLED=true
+  #     - NORNICDB_EMBEDDING_PROVIDER=local
+  #     - NORNICDB_NO_AUTH=${NORNICDB_NO_AUTH:-true}
+  #     - GOGC=50
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test:
+  #       ["CMD-SHELL", "wget --spider -q http://localhost:7474/health || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 10s
+  #   networks:
+  #     - mcp_network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2GB
+  #       reservations:
+  #         memory: 1GB
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu, compute, utility]
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: neo4j_db
     ports:
-      - "7474:7474" # HTTP API & Browser UI
-      - "7687:7687" # Bolt protocol (Neo4j compatible)
+      - "7475:7474"  # HTTP Browser UI
+      - "7688:7687"  # Bolt protocol
+    volumes:
+      - ./data/neo4j:/data
+      - ./logs/neo4j:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
     environment:
-      - NORNICDB_DATA_DIR=/data
-      - NORNICDB_HTTP_PORT=7474
-      - NORNICDB_BOLT_PORT=7687
-      # - NORNICDB_HEIMDALL_ENABLED=true
-      - NORNICDB_AUTO_TLP_ENABLED=false
-      - NORNICDB_KMEANS_CLUSTERING_ENABLED=true
-      - NORNICDB_EMBEDDING_PROVIDER=local
-      - NORNICDB_NO_AUTH=${NORNICDB_NO_AUTH:-true}
-      - GOGC=50
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password}
+      - NEO4J_dbms_memory_pagecache_size=512M
+      - NEO4J_dbms_memory_heap_initial__size=512M
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_PLUGINS=["apoc"]
     restart: unless-stopped
     healthcheck:
-      test:
-        ["CMD-SHELL", "wget --spider -q http://localhost:7474/health || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-password} 'RETURN 1' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 40s
     networks:
       - mcp_network
-    deploy:
-      resources:
-        limits:
-          memory: 2GB
-        reservations:
-          memory: 1GB
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, compute, utility]
-
 networks:
   mcp_network:
     driver: bridge

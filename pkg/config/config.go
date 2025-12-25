@@ -502,6 +502,31 @@ type FeatureFlagsConfig struct {
 	// Longer user messages (complex queries, multi-line inputs) need more budget.
 	// Environment: NORNICDB_HEIMDALL_MAX_USER_TOKENS (default: 2000)
 	HeimdallMaxUserTokens int
+
+	// === Qdrant gRPC Compatibility Layer ===
+	// When enabled, NornicDB exposes a Qdrant-compatible gRPC endpoint
+	// allowing existing Qdrant SDKs (Python, Go, Rust, etc.) to connect.
+	// This integrates with the existing search.Service for unified indexes.
+
+	// QdrantGRPCEnabled enables the Qdrant-compatible gRPC server
+	// Environment: NORNICDB_QDRANT_GRPC_ENABLED (default: false)
+	QdrantGRPCEnabled bool
+
+	// QdrantGRPCListenAddr is the address for the Qdrant gRPC server
+	// Environment: NORNICDB_QDRANT_GRPC_LISTEN_ADDR (default: ":6334")
+	QdrantGRPCListenAddr string
+
+	// QdrantGRPCMaxVectorDim is the maximum allowed vector dimension
+	// Environment: NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM (default: 4096)
+	QdrantGRPCMaxVectorDim int
+
+	// QdrantGRPCMaxBatchPoints is the max points per upsert batch
+	// Environment: NORNICDB_QDRANT_GRPC_MAX_BATCH_POINTS (default: 1000)
+	QdrantGRPCMaxBatchPoints int
+
+	// QdrantGRPCMaxTopK is the maximum search results
+	// Environment: NORNICDB_QDRANT_GRPC_MAX_TOP_K (default: 1000)
+	QdrantGRPCMaxTopK int
 }
 
 // Heimdall config getter methods for heimdall.FeatureFlagsSource interface
@@ -954,6 +979,23 @@ func legacyLoadFromEnv() *Config {
 	config.Features.HeimdallMaxSystemTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS", 6000)   // System prompt budget
 	config.Features.HeimdallMaxUserTokens = getEnvInt("NORNICDB_HEIMDALL_MAX_USER_TOKENS", 2000)       // User message budget
 
+	// Qdrant gRPC compatibility layer
+	if v := os.Getenv("NORNICDB_QDRANT_GRPC_ENABLED"); v != "" {
+		config.Features.QdrantGRPCEnabled = v == "true" || v == "1"
+	}
+	if v := getEnv("NORNICDB_QDRANT_GRPC_LISTEN_ADDR", ""); v != "" {
+		config.Features.QdrantGRPCListenAddr = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM", 0); v > 0 {
+		config.Features.QdrantGRPCMaxVectorDim = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_BATCH_POINTS", 0); v > 0 {
+		config.Features.QdrantGRPCMaxBatchPoints = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_TOP_K", 0); v > 0 {
+		config.Features.QdrantGRPCMaxTopK = v
+	}
+
 	return config
 }
 
@@ -1346,6 +1388,13 @@ func LoadDefaults() *Config {
 	config.Features.HeimdallMaxContextTokens = 8192
 	config.Features.HeimdallMaxSystemTokens = 6000
 	config.Features.HeimdallMaxUserTokens = 2000
+
+	// Qdrant gRPC defaults
+	config.Features.QdrantGRPCEnabled = false
+	config.Features.QdrantGRPCListenAddr = ":6334"
+	config.Features.QdrantGRPCMaxVectorDim = 4096
+	config.Features.QdrantGRPCMaxBatchPoints = 1000
+	config.Features.QdrantGRPCMaxTopK = 1000
 
 	return config
 }
@@ -1798,6 +1847,23 @@ func applyEnvVars(config *Config) {
 	}
 	if v := getEnvInt("NORNICDB_HEIMDALL_MAX_USER_TOKENS", 0); v > 0 {
 		config.Features.HeimdallMaxUserTokens = v
+	}
+
+	// Qdrant gRPC compatibility layer
+	if getEnv("NORNICDB_QDRANT_GRPC_ENABLED", "") == "true" {
+		config.Features.QdrantGRPCEnabled = true
+	}
+	if v := getEnv("NORNICDB_QDRANT_GRPC_LISTEN_ADDR", ""); v != "" {
+		config.Features.QdrantGRPCListenAddr = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM", 0); v > 0 {
+		config.Features.QdrantGRPCMaxVectorDim = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_BATCH_POINTS", 0); v > 0 {
+		config.Features.QdrantGRPCMaxBatchPoints = v
+	}
+	if v := getEnvInt("NORNICDB_QDRANT_GRPC_MAX_TOP_K", 0); v > 0 {
+		config.Features.QdrantGRPCMaxTopK = v
 	}
 }
 
