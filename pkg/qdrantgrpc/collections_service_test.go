@@ -12,7 +12,7 @@ import (
 func TestCollectionsService_Create(t *testing.T) {
 	ctx := context.Background()
 	registry := NewMemoryCollectionRegistry()
-	service := NewCollectionsService(registry, nil, nil)
+	service := NewCollectionsService(registry, nil, nil, newVectorIndexCache())
 
 	t.Run("create collection successfully", func(t *testing.T) {
 		req := &qpb.CreateCollection{
@@ -98,7 +98,7 @@ func TestCollectionsService_Create(t *testing.T) {
 func TestCollectionsService_Get(t *testing.T) {
 	ctx := context.Background()
 	registry := NewMemoryCollectionRegistry()
-	service := NewCollectionsService(registry, nil, nil)
+	service := NewCollectionsService(registry, nil, nil, newVectorIndexCache())
 
 	// Create a test collection first
 	_ = registry.CreateCollection(ctx, "my_collection", 512, qpb.Distance_Dot)
@@ -147,7 +147,7 @@ func TestCollectionsService_Get(t *testing.T) {
 func TestCollectionsService_List(t *testing.T) {
 	ctx := context.Background()
 	registry := NewMemoryCollectionRegistry()
-	service := NewCollectionsService(registry, nil, nil)
+	service := NewCollectionsService(registry, nil, nil, newVectorIndexCache())
 
 	t.Run("list empty collections", func(t *testing.T) {
 		req := &qpb.ListCollectionsRequest{}
@@ -183,7 +183,7 @@ func TestCollectionsService_List(t *testing.T) {
 func TestCollectionsService_Delete(t *testing.T) {
 	ctx := context.Background()
 	registry := NewMemoryCollectionRegistry()
-	service := NewCollectionsService(registry, nil, nil)
+	service := NewCollectionsService(registry, nil, nil, newVectorIndexCache())
 
 	// Create a collection first
 	_ = registry.CreateCollection(ctx, "to_delete", 128, qpb.Distance_Cosine)

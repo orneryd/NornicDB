@@ -139,8 +139,8 @@ func embeddingPrefix(nodeID NodeID) []byte {
 // extractEdgeIDFromIndexKey extracts the edgeID from an index key.
 // Format: prefix + nodeID + 0x00 + edgeID
 func extractEdgeIDFromIndexKey(key []byte) EdgeID {
-	// Find the separator (0x00)
-	for i := 1; i < len(key); i++ {
+	// Find the separator (0x00) - reverse iteration (separator typically near end)
+	for i := len(key) - 1; i >= 1; i-- {
 		if key[i] == 0x00 {
 			return EdgeID(key[i+1:])
 		}

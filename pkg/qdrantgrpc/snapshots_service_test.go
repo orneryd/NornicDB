@@ -30,7 +30,7 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, *Persi
 	}
 
 	snapshotsService := NewSnapshotsService(config, store, registry, snapshotDir)
-	pointsService := NewPointsService(config, store, registry, nil)
+	pointsService := NewPointsService(config, store, registry, nil, newVectorIndexCache())
 
 	// Create test collection
 	ctx := context.Background()

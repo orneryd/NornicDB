@@ -31,7 +31,7 @@ func setupPointsService(t *testing.T) (*PointsService, CollectionRegistry, stora
 	err = registry.CreateCollection(ctx, "test_vectors", 4, qpb.Distance_Cosine)
 	require.NoError(t, err)
 
-	return NewPointsService(cfg, store, registry, nil), registry, store
+	return NewPointsService(cfg, store, registry, nil, newVectorIndexCache()), registry, store
 }
 
 func TestPointsService_UpsertGetDeleteCountSearch(t *testing.T) {
@@ -208,4 +208,3 @@ func TestPointsService_Query_Document(t *testing.T) {
 }
 
 func ptrU64(v uint64) *uint64 { return &v }
-

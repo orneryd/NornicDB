@@ -705,7 +705,8 @@ func hashStringToInt64(s string) int64 {
 	const prime uint64 = 1099511628211
 
 	hash := offsetBasis
-	for i := 0; i < len(s); i++ {
+	// Reverse iteration: order doesn't matter for XOR hash computation
+	for i := len(s) - 1; i >= 0; i-- {
 		hash ^= uint64(s[i])
 		hash *= prime
 	}

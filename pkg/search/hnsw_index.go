@@ -249,7 +249,9 @@ func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int
 		neighbors := node.neighbors[level]
 		node.mu.RUnlock()
 
-		for _, neighborID := range neighbors {
+		// Reverse iteration: order doesn't matter when finding closest neighbor
+		for i := len(neighbors) - 1; i >= 0; i-- {
+			neighborID := neighbors[i]
 			neighbor := h.nodes[neighborID]
 			dist := 1.0 - vector.DotProduct(query, neighbor.vector)
 			if dist < currentDist {
@@ -296,7 +298,9 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level i
 		neighbors := node.neighbors[level]
 		node.mu.RUnlock()
 
-		for _, neighborID := range neighbors {
+		// Reverse iteration: order doesn't matter when checking all neighbors
+		for i := len(neighbors) - 1; i >= 0; i-- {
+			neighborID := neighbors[i]
 			if visited[neighborID] {
 				continue
 			}

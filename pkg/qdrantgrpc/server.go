@@ -73,9 +73,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 
-	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	qpb "github.com/qdrant/go-client/qdrant"
 )
 
 // Config holds configuration for the Qdrant gRPC server.
@@ -159,6 +159,7 @@ type Server struct {
 	storage       storage.Engine
 	registry      CollectionRegistry
 	searchService *search.Service
+	vecIndex      *vectorIndexCache
 
 	grpcServer *grpc.Server
 	listener   net.Listener
@@ -196,6 +197,7 @@ func NewServer(config *Config, store storage.Engine, registry CollectionRegistry
 		storage:       store,
 		registry:      registry,
 		searchService: searchService,
+		vecIndex:      newVectorIndexCache(),
 		register:      nil,
 	}, nil
 }
@@ -253,10 +255,10 @@ func (s *Server) Start() error {
 
 	s.grpcServer = grpc.NewServer(opts...)
 
-	collectionsService := NewCollectionsService(s.registry, s.storage, s.searchService)
+	collectionsService := NewCollectionsService(s.registry, s.storage, s.searchService, s.vecIndex)
 	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
 
-	pointsService := NewPointsService(s.config, s.storage, s.registry, s.searchService)
+	pointsService := NewPointsService(s.config, s.storage, s.registry, s.searchService, s.vecIndex)
 	qpb.RegisterPointsServer(s.grpcServer, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.storage, s.registry, s.config.SnapshotDir)

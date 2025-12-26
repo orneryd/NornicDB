@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -25,14 +26,16 @@ type PointsService struct {
 	storage       storage.Engine
 	registry      CollectionRegistry
 	searchService *search.Service
+	vecIndex      *vectorIndexCache
 }
 
-func NewPointsService(config *Config, store storage.Engine, registry CollectionRegistry, searchService *search.Service) *PointsService {
+func NewPointsService(config *Config, store storage.Engine, registry CollectionRegistry, searchService *search.Service, vecIndex *vectorIndexCache) *PointsService {
 	return &PointsService{
 		config:        config,
 		storage:       store,
 		registry:      registry,
 		searchService: searchService,
+		vecIndex:      vecIndex,
 	}
 }
 
@@ -73,6 +76,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 	nodesToCreate := make([]*storage.Node, 0, len(req.Points))
 	nodesToUpdate := make([]*storage.Node, 0, len(req.Points))
+	oldVectorNamesByID := make(map[string][]string, len(req.Points))
 
 	for i, point := range req.Points {
 		nodeID := nodeIDs[i]
@@ -100,10 +104,12 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		setNodeVectorNames(node, vecNames)
 
 		if prev := existing[nodeID]; prev != nil {
+			oldVectorNamesByID[string(node.ID)] = nodeVectorNames(prev)
 			node.CreatedAt = prev.CreatedAt
 			node.UpdatedAt = time.Now()
 			nodesToUpdate = append(nodesToUpdate, node)
 		} else {
+			oldVectorNamesByID[string(node.ID)] = nil
 			node.CreatedAt = time.Now()
 			nodesToCreate = append(nodesToCreate, node)
 		}
@@ -127,6 +133,26 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		for _, node := range nodesToUpdate {
 			_ = s.searchService.RemoveNode(node.ID)
 			_ = s.searchService.IndexNode(node)
+		}
+	}
+
+	// Maintain a per-collection in-memory vector index for Qdrant gRPC searches.
+	// This avoids falling back to storage scans when Qdrant collection dimensions
+	// differ from the DB's default embedding dimensions.
+	if s.vecIndex != nil {
+		for _, node := range append(nodesToCreate, nodesToUpdate...) {
+			if node == nil {
+				continue
+			}
+			newNames := nodeVectorNames(node)
+			if len(newNames) == 0 {
+				newNames = []string{""}
+			}
+
+			oldNames := oldVectorNamesByID[string(node.ID)]
+			if err := s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, node.ChunkEmbeddings); err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to index point %s: %v", node.ID, err)
+			}
 		}
 	}
 
@@ -193,6 +219,14 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	for _, nodeID := range nodeIDs {
 		if s.searchService != nil {
 			_ = s.searchService.RemoveNode(nodeID)
+		}
+		if s.vecIndex != nil {
+			node, err := s.storage.GetNode(nodeID)
+			if err == nil {
+				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nodeVectorNames(node))
+			} else {
+				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nil)
+			}
 		}
 		_ = s.storage.DeleteNode(nodeID)
 	}
@@ -1087,23 +1121,107 @@ type searchResult struct {
 }
 
 func (s *PointsService) searchCollection(ctx context.Context, collection string, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64) []searchResult {
+	if s.vecIndex != nil {
+		// Request extra candidates so we can apply payload filters (if any)
+		// and still satisfy limit+offset.
+		want := (limit + offset) * 10
+		if want < limit+offset {
+			want = limit + offset
+		}
+		if want > s.config.MaxTopK*10 {
+			want = s.config.MaxTopK * 10
+		}
+
+		cands := s.vecIndex.search(ctx, collection, len(queryVec), dist, vectorName, queryVec, want, minScore)
+		if len(cands) > 0 {
+			if filter == nil {
+				if offset > 0 {
+					if offset >= len(cands) {
+						return nil
+					}
+					cands = cands[offset:]
+				}
+				if len(cands) > limit {
+					cands = cands[:limit]
+				}
+				return cands
+			}
+
+			filtered := make([]searchResult, 0, len(cands))
+			for _, r := range cands {
+				node, err := s.storage.GetNode(storage.NodeID(r.ID))
+				if err != nil || !matchesFilter(node, filter) {
+					continue
+				}
+				filtered = append(filtered, r)
+				if len(filtered) >= limit+offset {
+					break
+				}
+			}
+
+			if offset > 0 {
+				if offset >= len(filtered) {
+					return nil
+				}
+				filtered = filtered[offset:]
+			}
+			if len(filtered) > limit {
+				filtered = filtered[:limit]
+			}
+			return filtered
+		}
+	}
+
 	// Named vectors require access to specific embeddings; search.Service only indexes chunk 0.
 	if s.searchService != nil && vectorName == "" {
-		var minSimilarity *float64
-		if minScore > 0 {
-			minScoreCopy := minScore
-			minSimilarity = &minScoreCopy
+		// Fast path: avoid per-candidate storage lookups for type filtering.
+		// Qdrant "collections" map to a stable node ID prefix: qdrant:<collection>:<id>.
+		prefix := fmt.Sprintf("qdrant:%s:", collection)
+
+		// Qdrant's score_threshold is optional; if not set, do not apply a threshold.
+		// Our search.Service defaults may otherwise prune results unexpectedly.
+		minSimilarity := float64(-1)
+		if minScore >= 0 {
+			minSimilarity = minScore
 		}
-		resp, err := s.searchService.Search(ctx, "", queryVec, &search.SearchOptions{
-			Limit:         limit + offset,
-			Types:         []string{collection},
-			MinSimilarity: minSimilarity,
+
+		// Ask for extra candidates, since we still need to:
+		// - filter to this collection by ID prefix (and drop chunk-suffixed IDs)
+		// - optionally apply payload filters
+		candidateLimit := (limit + offset) * 10
+		if candidateLimit < limit+offset {
+			candidateLimit = limit + offset
+		}
+		if candidateLimit > s.config.MaxTopK*10 {
+			candidateLimit = s.config.MaxTopK * 10
+		}
+
+		cands, err := s.searchService.VectorSearchCandidates(ctx, queryVec, &search.SearchOptions{
+			Limit:         candidateLimit,
+			MinSimilarity: &minSimilarity,
 		})
-		if err == nil && resp != nil && len(resp.Results) > 0 {
-			results := make([]searchResult, 0, len(resp.Results))
-			for _, r := range resp.Results {
+		if err == nil && len(cands) > 0 {
+			results := make([]searchResult, 0, len(cands))
+			for _, r := range cands {
+				if !strings.HasPrefix(r.ID, prefix) {
+					continue
+				}
+				if strings.Contains(r.ID, "-chunk-") {
+					continue
+				}
+				if filter != nil {
+					node, err := s.storage.GetNode(storage.NodeID(r.ID))
+					if err != nil || !matchesFilter(node, filter) {
+						continue
+					}
+				}
 				results = append(results, searchResult{ID: r.ID, Score: r.Score})
+				if len(results) >= limit+offset {
+					// Enough results after filtering; keep tail latency bounded.
+					break
+				}
 			}
+
 			if offset > 0 {
 				if offset >= len(results) {
 					return nil
@@ -1117,7 +1235,10 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 		}
 	}
 
-	nodes, err := s.storage.GetNodesByLabel(collection)
+	// Brute-force fallback: scan all nodes and filter by label. This keeps the
+	// measured path comparable to the Bolt/Cypher vector procedure and avoids
+	// label-index iterator overhead on some storage backends under high concurrency.
+	nodes, err := s.storage.AllNodes()
 	if err != nil {
 		return nil
 	}
@@ -1133,6 +1254,9 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 		}
 
 		if !isQdrantPointNode(node) {
+			continue
+		}
+		if !nodeHasLabel(node, collection) {
 			continue
 		}
 		if filter != nil && !matchesFilter(node, filter) {
@@ -1174,7 +1298,9 @@ func scoreVector(dist qpb.Distance, normalizedQuery []float32, candidate []float
 	case qpb.Distance_Cosine, qpb.Distance_UnknownDistance:
 		fallthrough
 	default:
-		return float64(vector.DotProduct(normalizedQuery, vector.Normalize(candidate)))
+		// Avoid per-candidate allocations: Normalize(candidate) returns a copy.
+		// CosineSimilarity computes dot/(|a||b|) without allocating.
+		return vector.CosineSimilarity(normalizedQuery, candidate)
 	}
 }
 
@@ -1417,6 +1543,18 @@ func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {
 		return nil, false
 	}
 	return vec, true
+}
+
+func nodeHasLabel(node *storage.Node, label string) bool {
+	if node == nil || label == "" {
+		return false
+	}
+	for _, l := range node.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
 }
 
 func upsertNodeVectors(node *storage.Node, names []string, vectors [][]float32) {

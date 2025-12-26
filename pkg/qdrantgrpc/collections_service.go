@@ -18,14 +18,16 @@ type CollectionsService struct {
 	registry      CollectionRegistry
 	storage       storage.Engine
 	searchService *search.Service
+	vecIndex      *vectorIndexCache
 }
 
 // NewCollectionsService creates a new Collections service.
-func NewCollectionsService(registry CollectionRegistry, store storage.Engine, searchService *search.Service) *CollectionsService {
+func NewCollectionsService(registry CollectionRegistry, store storage.Engine, searchService *search.Service, vecIndex *vectorIndexCache) *CollectionsService {
 	return &CollectionsService{
 		registry:      registry,
 		storage:       store,
 		searchService: searchService,
+		vecIndex:      vecIndex,
 	}
 }
 
@@ -178,6 +180,9 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 	// collection removes its points.
 	if s.storage != nil {
 		_ = deleteCollectionPoints(ctx, s.storage, s.searchService, req.CollectionName)
+	}
+	if s.vecIndex != nil {
+		s.vecIndex.deleteCollection(req.CollectionName)
 	}
 
 	return &qpb.CollectionOperationResponse{

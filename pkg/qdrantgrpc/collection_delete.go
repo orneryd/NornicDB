@@ -49,4 +49,3 @@ func deleteCollectionPoints(ctx context.Context, store storage.Engine, searchSer
 	_, _, _ = store.DeleteByPrefix(fmt.Sprintf("qdrant:%s:", collection))
 	return nil
 }
-

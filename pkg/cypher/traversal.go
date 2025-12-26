@@ -576,7 +576,8 @@ func (e *StorageExecutor) isChainedPattern(pattern string) bool {
 	// Count relationship patterns by counting ]-
 	// A chained pattern has at least 2 relationship segments
 	count := 0
-	for i := 0; i < len(pattern)-1; i++ {
+	// Reverse iteration: order doesn't matter for counting
+	for i := len(pattern) - 2; i >= 0; i-- {
 		if pattern[i] == ']' && (pattern[i+1] == '-' || pattern[i+1] == '>') {
 			count++
 		}

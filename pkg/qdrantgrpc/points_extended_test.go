@@ -29,7 +29,7 @@ func setupExtendedPointsService(t *testing.T) (*PointsService, storage.Engine) {
 
 	require.NoError(t, registry.CreateCollection(ctx, "test_collection", 4, qpb.Distance_Cosine))
 
-	svc := NewPointsService(cfg, store, registry, nil)
+	svc := NewPointsService(cfg, store, registry, nil, newVectorIndexCache())
 
 	_, err = svc.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_collection",
@@ -214,4 +214,3 @@ func TestPointsService_RecommendAndGroupsAndFieldIndex(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-

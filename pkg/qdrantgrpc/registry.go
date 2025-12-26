@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	qpb "github.com/qdrant/go-client/qdrant"
 )
 
 const (

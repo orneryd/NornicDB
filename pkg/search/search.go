@@ -809,6 +809,13 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		return s.fullTextSearchOnly(ctx, query, opts)
 	}
 
+	// For vector-only calls (no text query), skip hybrid and go straight to
+	// vector search. This avoids unnecessary BM25+RRF overhead and matches the
+	// intended semantics of "pure embedding" search.
+	if strings.TrimSpace(query) == "" {
+		return s.vectorSearchOnly(ctx, embedding, opts)
+	}
+
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
 	if err == nil && len(response.Results) > 0 {
@@ -926,6 +933,75 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 			FusedCandidates:  len(fusedResults),
 		},
 	}, nil
+}
+
+// SearchCandidate is a lightweight vector-search result: just the ID and score.
+//
+// This is intended for high-throughput call paths that don’t require node
+// enrichment (e.g. Qdrant-compatible gRPC searches that return IDs+scores).
+type SearchCandidate struct {
+	ID    string
+	Score float64
+}
+
+// VectorSearchCandidates performs vector-only search and returns lightweight
+// candidates without enrichment. It is optimized for throughput: it skips BM25,
+// RRF fusion, and storage fetches.
+func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	if opts == nil {
+		opts = DefaultSearchOptions()
+	}
+
+	opts.MinSimilarity = s.resolveMinSimilarity(opts)
+	if len(embedding) == 0 {
+		return nil, fmt.Errorf("vector search requires embedding")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	candidateLimit := opts.Limit * 2
+	if candidateLimit <= 0 {
+		candidateLimit = 20
+	}
+
+	var results []indexResult
+	var err error
+	useClusteredSearch := s.clusterIndex != nil && s.clusterIndex.IsClustered()
+
+	if useClusteredSearch {
+		numClustersToSearch := 3
+		clusterResults, clusterErr := s.clusterIndex.SearchWithClusters(embedding, candidateLimit, numClustersToSearch)
+		if clusterErr == nil && len(clusterResults) > 0 {
+			results = make([]indexResult, 0, len(clusterResults))
+			for _, r := range clusterResults {
+				results = append(results, indexResult{ID: r.ID, Score: float64(r.Score)})
+			}
+		} else {
+			results, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		results, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(opts.Types) > 0 {
+		results = s.filterByType(results, opts.Types)
+	}
+	if len(results) > opts.Limit && opts.Limit > 0 {
+		results = results[:opts.Limit]
+	}
+
+	out := make([]SearchCandidate, 0, len(results))
+	for _, r := range results {
+		out = append(out, SearchCandidate{ID: r.ID, Score: r.Score})
+	}
+	return out, nil
 }
 
 // fuseRRF implements the Reciprocal Rank Fusion (RRF) algorithm.
