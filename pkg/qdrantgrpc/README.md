@@ -42,77 +42,82 @@ features:
 
 ## Supported Features
 
-### Collections Service (6 RPCs)
+NornicDB exposes a single gRPC surface: the **official upstream Qdrant gRPC contract** (package `qdrant`), so real Qdrant SDKs (Python `qdrant-client`, etc.) work without modification.
+
+Implemented for SDK compatibility (and covered by `scripts/qdrantgrpc_e2e_python.sh`):
+
+#### Collections Service
 
 | RPC | Status | Notes |
 |-----|--------|-------|
-| `CreateCollection` | ✅ | Single and multi-vector configs |
-| `GetCollectionInfo` | ✅ | Returns dimensions, distance, point count |
-| `ListCollections` | ✅ | |
-| `DeleteCollection` | ✅ | Removes collection and all points |
-| `UpdateCollection` | ✅ | Validates existence (NornicDB manages params) |
-| `CollectionExists` | ✅ | Fast existence check |
+| `Create` | ✅ | Single-vector and named-vector configs |
+| `Get` | ✅ | Returns minimal-but-valid `CollectionInfo` with defaults filled for SDK parsing |
+| `List` | ✅ | |
+| `Delete` | ✅ | Deletes collection metadata and points |
+| `Update` | ✅ | Acknowledges existence (NornicDB manages params) |
+| `CollectionExists` | ✅ | |
 
-### Points Service - Core CRUD (4 RPCs)
+#### Points Service (core)
 
 | RPC | Status | Notes |
 |-----|--------|-------|
-| `Upsert` | ✅ | Batch upserts, UUID and numeric IDs |
+| `Upsert` | ✅ | Dense vectors + named vectors |
 | `Get` | ✅ | With payload/vectors selectors |
 | `Delete` | ✅ | By ID list or filter |
-| `Count` | ✅ | Exact count |
+| `Count` | ✅ | |
+| `Search` | ✅ | Score threshold + vector_name supported |
+| `Query` / `QueryBatch` | ✅ | Supports `VectorInput` (Dense/Id) and `Document` when embeddings are enabled |
+| `Scroll` | ✅ | |
+| `SetPayload` / `OverwritePayload` / `DeletePayload` / `ClearPayload` | ✅ | |
+| `UpdateVectors` / `DeleteVectors` | ✅ | Subject to embedding ownership flag |
 
-### Points Service - Search (3 RPCs)
+Other upstream Qdrant RPCs are currently `UNIMPLEMENTED` and can be added as needed.
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `Search` | ✅ | Vector similarity with score threshold |
-| `SearchBatch` | ✅ | Multiple queries in one request |
-| `SearchGroups` | ✅ | Group results by payload field |
+## Text Queries via Upstream Qdrant API (`Points.Query`)
 
-### Points Service - Pagination (1 RPC)
+NornicDB supports Qdrant’s upstream “inference-shaped” query inputs by implementing:
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `Scroll` | ✅ | Paginated iteration through points |
+- `qdrant.Points/Query`
+- `qdrant.Points/QueryBatch`
 
-### Points Service - Recommendations (2 RPCs)
+This allows clients to send a **document/text query** (rather than a numeric vector) using the upstream protobuf contract:
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `Recommend` | ✅ | Find similar to positive, avoid negative |
-| `RecommendBatch` | ✅ | Multiple recommendation queries |
+- `VectorInput.Document` (`Document.text`)
 
-### Points Service - Payload Operations (4 RPCs)
+### Requirements
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `SetPayload` | ✅ | Merge new keys with existing |
-| `OverwritePayload` | ✅ | Replace entire payload |
-| `DeletePayload` | ✅ | Remove specific keys |
-| `ClearPayload` | ✅ | Remove all payload |
+- `NORNICDB_QDRANT_GRPC_ENABLED=true`
+- `NORNICDB_EMBEDDING_ENABLED=true` (so NornicDB can embed the query text). If embeddings are disabled, `VectorInput.Document` returns `FailedPrecondition`.
 
-### Points Service - Vector Operations (2 RPCs)
+### Go Example (direct gRPC call)
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `UpdateVectors` | ✅ | Update vectors without touching payload |
-| `DeleteVectors` | ✅ | Remove vectors (keeps payload) |
+```go
+conn, _ := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+defer conn.Close()
 
-### Points Service - Field Indexes (2 RPCs)
+points := qdrant.NewPointsClient(conn)
 
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `CreateFieldIndex` | ✅ | Create payload field index |
-| `DeleteFieldIndex` | ✅ | Remove payload field index |
-
-### Health Service (1 RPC)
-
-| RPC | Status | Notes |
-|-----|--------|-------|
-| `Check` | ✅ | Standard gRPC health checking |
-
-**Total: 24/24 RPCs implemented**
+resp, err := points.Query(ctx, &qdrant.QueryPoints{
+    CollectionName: "my_collection",
+    Limit:          10,
+    Query: &qdrant.Query{
+        Variant: &qdrant.Query_Nearest{
+            Nearest: &qdrant.VectorInput{
+                Variant: &qdrant.VectorInput_Document{
+                    Document: &qdrant.Document{Text: "database performance"},
+                },
+            },
+        },
+    },
+    WithPayload: &qdrant.WithPayloadSelector{
+        SelectorOptions: &qdrant.WithPayloadSelector_Enable{Enable: true},
+    },
+})
+if err != nil {
+    // handle error
+}
+_ = resp
+```
 
 ## Quick Start
 

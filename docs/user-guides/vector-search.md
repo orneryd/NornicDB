@@ -128,6 +128,19 @@ CALL db.index.vector.queryNodes('idx', 10, $queryVector)
 YIELD node, score
 ```
 
+## Qdrant gRPC: Text Queries (Upstream `Points.Query`)
+
+If you have the Qdrant gRPC endpoint enabled, you can also run **text queries** using the upstream Qdrant protobuf contract (no custom protos).
+
+**Requirements:**
+
+- `NORNICDB_QDRANT_GRPC_ENABLED=true`
+- `NORNICDB_EMBEDDING_ENABLED=true` (needed to embed the query text)
+
+**Concept:**
+
+- Use `qdrant.Points/Query` with `Query.nearest(VectorInput.document(Document{text: ...}))`.
+
 ### Storing Embeddings via Cypher
 
 ```cypher
@@ -469,4 +482,3 @@ curl http://localhost:8080/health
 ---
 
 _Last updated: December 1, 2025_
-

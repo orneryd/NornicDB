@@ -4,46 +4,51 @@ import (
 	"context"
 	"time"
 
+	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // CollectionsService implements the Qdrant Collections gRPC service.
 type CollectionsService struct {
-	pb.UnimplementedCollectionsServer
-	registry CollectionRegistry
+	qpb.UnimplementedCollectionsServer
+	registry      CollectionRegistry
+	storage       storage.Engine
+	searchService *search.Service
 }
 
 // NewCollectionsService creates a new Collections service.
-func NewCollectionsService(registry CollectionRegistry) *CollectionsService {
+func NewCollectionsService(registry CollectionRegistry, store storage.Engine, searchService *search.Service) *CollectionsService {
 	return &CollectionsService{
-		registry: registry,
+		registry:      registry,
+		storage:       store,
+		searchService: searchService,
 	}
 }
 
-// CreateCollection creates a new vector collection.
-func (s *CollectionsService) CreateCollection(ctx context.Context, req *pb.CreateCollectionRequest) (*pb.CollectionOperationResponse, error) {
+func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollection) (*qpb.CollectionOperationResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
 	// Extract vector config
 	var dims int
-	var distance pb.Distance
+	var distance qpb.Distance
 
 	if req.VectorsConfig == nil {
 		return nil, status.Error(codes.InvalidArgument, "vectors_config is required")
 	}
 
 	switch cfg := req.VectorsConfig.Config.(type) {
-	case *pb.VectorsConfig_Params:
+	case *qpb.VectorsConfig_Params:
 		dims = int(cfg.Params.Size)
 		distance = cfg.Params.Distance
-	case *pb.VectorsConfig_ParamsMap:
+	case *qpb.VectorsConfig_ParamsMap:
 		// Multi-vector: use first entry for now
 		for _, params := range cfg.ParamsMap.Map {
 			dims = int(params.Size)
@@ -63,17 +68,16 @@ func (s *CollectionsService) CreateCollection(ctx context.Context, req *pb.Creat
 		return nil, status.Errorf(codes.AlreadyExists, "failed to create collection: %v", err)
 	}
 
-	return &pb.CollectionOperationResponse{
+	return &qpb.CollectionOperationResponse{
 		Result: true,
 		Time:   time.Since(start).Seconds(),
 	}, nil
 }
 
-// GetCollectionInfo returns information about a collection.
-func (s *CollectionsService) GetCollectionInfo(ctx context.Context, req *pb.GetCollectionInfoRequest) (*pb.GetCollectionInfoResponse, error) {
+func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfoRequest) (*qpb.GetCollectionInfoResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
@@ -88,17 +92,50 @@ func (s *CollectionsService) GetCollectionInfo(ctx context.Context, req *pb.GetC
 		pointsCount = uint64(count)
 	}
 
-	return &pb.GetCollectionInfoResponse{
-		Result: &pb.CollectionInfo{
-			Status:       meta.Status,
-			VectorsCount: pointsCount,
-			PointsCount:  pointsCount,
-			Config: &pb.VectorsConfig{
-				Config: &pb.VectorsConfig_Params{
-					Params: &pb.VectorParams{
-						Size:     uint64(meta.Dimensions),
-						Distance: meta.Distance,
+	hnswM := uint64(16)
+	hnswEfConstruct := uint64(100)
+	hnswFullScanThreshold := uint64(10_000)
+
+	optimizerDeletedThreshold := float64(0.2)
+	optimizerVacuumMinVectorNumber := uint64(1000)
+	optimizerDefaultSegmentNumber := uint64(1)
+	optimizerFlushIntervalSec := uint64(5)
+
+	walCapacityMb := uint64(32)
+	walSegmentsAhead := uint64(0)
+	walRetainClosed := uint64(0)
+
+	return &qpb.GetCollectionInfoResponse{
+		Result: &qpb.CollectionInfo{
+			Status:              qpb.CollectionStatus_Green,
+			PointsCount:         &pointsCount,
+			IndexedVectorsCount: &pointsCount,
+			Config: &qpb.CollectionConfig{
+				Params: &qpb.CollectionParams{
+					VectorsConfig: &qpb.VectorsConfig{
+						Config: &qpb.VectorsConfig_Params{
+							Params: &qpb.VectorParams{
+								Size:     uint64(meta.Dimensions),
+								Distance: meta.Distance,
+							},
+						},
 					},
+				},
+				HnswConfig: &qpb.HnswConfigDiff{
+					M:                 &hnswM,
+					EfConstruct:       &hnswEfConstruct,
+					FullScanThreshold: &hnswFullScanThreshold,
+				},
+				OptimizerConfig: &qpb.OptimizersConfigDiff{
+					DeletedThreshold:      &optimizerDeletedThreshold,
+					VacuumMinVectorNumber: &optimizerVacuumMinVectorNumber,
+					DefaultSegmentNumber:  &optimizerDefaultSegmentNumber,
+					FlushIntervalSec:      &optimizerFlushIntervalSec,
+				},
+				WalConfig: &qpb.WalConfigDiff{
+					WalCapacityMb:    &walCapacityMb,
+					WalSegmentsAhead: &walSegmentsAhead,
+					WalRetainClosed:  &walRetainClosed,
 				},
 			},
 		},
@@ -106,8 +143,7 @@ func (s *CollectionsService) GetCollectionInfo(ctx context.Context, req *pb.GetC
 	}, nil
 }
 
-// ListCollections lists all collections.
-func (s *CollectionsService) ListCollections(ctx context.Context, req *pb.ListCollectionsRequest) (*pb.ListCollectionsResponse, error) {
+func (s *CollectionsService) List(ctx context.Context, req *qpb.ListCollectionsRequest) (*qpb.ListCollectionsResponse, error) {
 	start := time.Now()
 
 	names, err := s.registry.ListCollections(ctx)
@@ -115,22 +151,21 @@ func (s *CollectionsService) ListCollections(ctx context.Context, req *pb.ListCo
 		return nil, status.Errorf(codes.Internal, "failed to list collections: %v", err)
 	}
 
-	collections := make([]*pb.CollectionDescription, len(names))
+	collections := make([]*qpb.CollectionDescription, len(names))
 	for i, name := range names {
-		collections[i] = &pb.CollectionDescription{Name: name}
+		collections[i] = &qpb.CollectionDescription{Name: name}
 	}
 
-	return &pb.ListCollectionsResponse{
+	return &qpb.ListCollectionsResponse{
 		Collections: collections,
 		Time:        time.Since(start).Seconds(),
 	}, nil
 }
 
-// DeleteCollection deletes a collection.
-func (s *CollectionsService) DeleteCollection(ctx context.Context, req *pb.DeleteCollectionRequest) (*pb.CollectionOperationResponse, error) {
+func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollection) (*qpb.CollectionOperationResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
@@ -138,18 +173,25 @@ func (s *CollectionsService) DeleteCollection(ctx context.Context, req *pb.Delet
 		return nil, status.Errorf(codes.NotFound, "failed to delete collection: %v", err)
 	}
 
-	return &pb.CollectionOperationResponse{
+	// Best-effort: remove points and search index entries for the collection.
+	// This is required for correctness/compatibility: in Qdrant, deleting a
+	// collection removes its points.
+	if s.storage != nil {
+		_ = deleteCollectionPoints(ctx, s.storage, s.searchService, req.CollectionName)
+	}
+
+	return &qpb.CollectionOperationResponse{
 		Result: true,
 		Time:   time.Since(start).Seconds(),
 	}, nil
 }
 
-// UpdateCollection updates collection parameters.
-// NornicDB manages HNSW parameters internally, so this is a no-op that validates the collection exists.
-func (s *CollectionsService) UpdateCollection(ctx context.Context, req *pb.UpdateCollectionRequest) (*pb.CollectionOperationResponse, error) {
+// Update acknowledges the update request if the collection exists.
+// NornicDB manages tuning parameters internally.
+func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollection) (*qpb.CollectionOperationResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
@@ -161,25 +203,23 @@ func (s *CollectionsService) UpdateCollection(ctx context.Context, req *pb.Updat
 	// NornicDB manages HNSW/optimizer parameters automatically
 	// This call succeeds if the collection exists
 
-	return &pb.CollectionOperationResponse{
+	return &qpb.CollectionOperationResponse{
 		Result: true,
 		Time:   time.Since(start).Seconds(),
 	}, nil
 }
 
-// CollectionExists checks if a collection exists.
-func (s *CollectionsService) CollectionExists(ctx context.Context, req *pb.CollectionExistsRequest) (*pb.CollectionExistsResponse, error) {
+func (s *CollectionsService) CollectionExists(ctx context.Context, req *qpb.CollectionExistsRequest) (*qpb.CollectionExistsResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
 	exists := s.registry.CollectionExists(req.CollectionName)
 
-	return &pb.CollectionExistsResponse{
-		Result: exists,
+	return &qpb.CollectionExistsResponse{
+		Result: &qpb.CollectionExists{Exists: exists},
 		Time:   time.Since(start).Seconds(),
 	}, nil
 }
-

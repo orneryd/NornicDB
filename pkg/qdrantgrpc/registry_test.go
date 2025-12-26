@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"testing"
 
+	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -21,7 +21,7 @@ func TestPersistentCollectionRegistry_CreateAndGet(t *testing.T) {
 	defer registry.Close()
 
 	t.Run("create collection successfully", func(t *testing.T) {
-		err := registry.CreateCollection(ctx, "test_collection", 1024, pb.Distance_COSINE)
+		err := registry.CreateCollection(ctx, "test_collection", 1024, qpb.Distance_Cosine)
 		require.NoError(t, err)
 
 		// Verify it exists
@@ -29,12 +29,12 @@ func TestPersistentCollectionRegistry_CreateAndGet(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "test_collection", meta.Name)
 		assert.Equal(t, 1024, meta.Dimensions)
-		assert.Equal(t, pb.Distance_COSINE, meta.Distance)
-		assert.Equal(t, pb.CollectionStatus_GREEN, meta.Status)
+		assert.Equal(t, qpb.Distance_Cosine, meta.Distance)
+		assert.Equal(t, qpb.CollectionStatus_Green, meta.Status)
 	})
 
 	t.Run("error on duplicate collection", func(t *testing.T) {
-		err := registry.CreateCollection(ctx, "test_collection", 512, pb.Distance_DOT)
+		err := registry.CreateCollection(ctx, "test_collection", 512, qpb.Distance_Dot)
 		require.Error(t, err)
 	})
 
@@ -53,9 +53,9 @@ func TestPersistentCollectionRegistry_ListAndDelete(t *testing.T) {
 	defer registry.Close()
 
 	// Create multiple collections
-	_ = registry.CreateCollection(ctx, "col_a", 128, pb.Distance_COSINE)
-	_ = registry.CreateCollection(ctx, "col_b", 256, pb.Distance_DOT)
-	_ = registry.CreateCollection(ctx, "col_c", 512, pb.Distance_EUCLID)
+	_ = registry.CreateCollection(ctx, "col_a", 128, qpb.Distance_Cosine)
+	_ = registry.CreateCollection(ctx, "col_b", 256, qpb.Distance_Dot)
+	_ = registry.CreateCollection(ctx, "col_c", 512, qpb.Distance_Euclid)
 
 	t.Run("list all collections", func(t *testing.T) {
 		names, err := registry.ListCollections(ctx)
@@ -98,7 +98,7 @@ func TestPersistentCollectionRegistry_PointCount(t *testing.T) {
 	require.NoError(t, err)
 	defer registry.Close()
 
-	_ = registry.CreateCollection(ctx, "count_test", 4, pb.Distance_COSINE)
+	_ = registry.CreateCollection(ctx, "count_test", 4, qpb.Distance_Cosine)
 
 	t.Run("initially zero points", func(t *testing.T) {
 		count, err := registry.GetPointCount(ctx, "count_test")
@@ -136,7 +136,7 @@ func TestPersistentCollectionRegistry_Persistence(t *testing.T) {
 	registry1, err := NewPersistentCollectionRegistry(store)
 	require.NoError(t, err)
 
-	err = registry1.CreateCollection(ctx, "persistent_col", 256, pb.Distance_DOT)
+	err = registry1.CreateCollection(ctx, "persistent_col", 256, qpb.Distance_Dot)
 	require.NoError(t, err)
 
 	// Add a point to storage
@@ -160,7 +160,7 @@ func TestPersistentCollectionRegistry_Persistence(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "persistent_col", meta.Name)
 		assert.Equal(t, 256, meta.Dimensions)
-		assert.Equal(t, pb.Distance_DOT, meta.Distance)
+		assert.Equal(t, qpb.Distance_Dot, meta.Distance)
 	})
 
 	t.Run("list shows reloaded collection", func(t *testing.T) {
@@ -184,7 +184,7 @@ func TestPersistentCollectionRegistry_CollectionExists(t *testing.T) {
 	require.NoError(t, err)
 	defer registry.Close()
 
-	_ = registry.CreateCollection(ctx, "exists_test", 64, pb.Distance_COSINE)
+	_ = registry.CreateCollection(ctx, "exists_test", 64, qpb.Distance_Cosine)
 
 	t.Run("existing collection", func(t *testing.T) {
 		assert.True(t, registry.CollectionExists("exists_test"))
@@ -203,8 +203,8 @@ func TestPersistentCollectionRegistry_GetAllCollections(t *testing.T) {
 	require.NoError(t, err)
 	defer registry.Close()
 
-	_ = registry.CreateCollection(ctx, "all_a", 64, pb.Distance_COSINE)
-	_ = registry.CreateCollection(ctx, "all_b", 128, pb.Distance_DOT)
+	_ = registry.CreateCollection(ctx, "all_a", 64, qpb.Distance_Cosine)
+	_ = registry.CreateCollection(ctx, "all_b", 128, qpb.Distance_Dot)
 
 	t.Run("get all collections metadata", func(t *testing.T) {
 		all, err := registry.GetAllCollections(ctx)
@@ -228,7 +228,7 @@ func TestPersistentCollectionRegistry_ExportImport(t *testing.T) {
 	require.NoError(t, err)
 	defer registry.Close()
 
-	_ = registry.CreateCollection(ctx, "export_test", 512, pb.Distance_EUCLID)
+	_ = registry.CreateCollection(ctx, "export_test", 512, qpb.Distance_Euclid)
 
 	t.Run("export collection metadata", func(t *testing.T) {
 		data, err := registry.ExportCollectionMeta("export_test")
@@ -247,7 +247,7 @@ func TestPersistentCollectionRegistry_ExportImport(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "imported_col", meta.Name)
 		assert.Equal(t, 256, meta.Dimensions)
-		assert.Equal(t, pb.Distance_COSINE, meta.Distance) // 1 = COSINE
+		assert.Equal(t, qpb.Distance_Cosine, meta.Distance) // 1 = COSINE
 	})
 
 	t.Run("import invalid JSON", func(t *testing.T) {
@@ -269,7 +269,7 @@ func TestPersistentCollectionRegistry_DeleteWithPoints(t *testing.T) {
 	require.NoError(t, err)
 	defer registry.Close()
 
-	_ = registry.CreateCollection(ctx, "delete_with_points", 4, pb.Distance_COSINE)
+	_ = registry.CreateCollection(ctx, "delete_with_points", 4, qpb.Distance_Cosine)
 
 	// Add points
 	for i := 0; i < 5; i++ {
@@ -317,7 +317,7 @@ func TestMemoryCollectionRegistry(t *testing.T) {
 	registry := NewMemoryCollectionRegistry()
 
 	t.Run("create and get collection", func(t *testing.T) {
-		err := registry.CreateCollection(ctx, "mem_test", 128, pb.Distance_COSINE)
+		err := registry.CreateCollection(ctx, "mem_test", 128, qpb.Distance_Cosine)
 		require.NoError(t, err)
 
 		meta, err := registry.GetCollection(ctx, "mem_test")
@@ -348,8 +348,8 @@ func TestMemoryCollectionRegistry(t *testing.T) {
 	})
 
 	t.Run("list collections", func(t *testing.T) {
-		_ = registry.CreateCollection(ctx, "list_a", 64, pb.Distance_DOT)
-		_ = registry.CreateCollection(ctx, "list_b", 64, pb.Distance_DOT)
+		_ = registry.CreateCollection(ctx, "list_a", 64, qpb.Distance_Dot)
+		_ = registry.CreateCollection(ctx, "list_b", 64, qpb.Distance_Dot)
 
 		names, err := registry.ListCollections(ctx)
 		require.NoError(t, err)

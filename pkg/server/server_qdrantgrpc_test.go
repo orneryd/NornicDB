@@ -6,7 +6,7 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
+	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -45,33 +45,33 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndSharesDefaultDB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collections := pb.NewCollectionsClient(conn)
-	points := pb.NewPointsClient(conn)
+	collections := qpb.NewCollectionsClient(conn)
+	points := qpb.NewPointsClient(conn)
 
-	_, err = collections.CreateCollection(ctx, &pb.CreateCollectionRequest{
+	_, err = collections.Create(ctx, &qpb.CreateCollection{
 		CollectionName: "grpc_col",
-		VectorsConfig: &pb.VectorsConfig{
-			Config: &pb.VectorsConfig_Params{
-				Params: &pb.VectorParams{
+		VectorsConfig: &qpb.VectorsConfig{
+			Config: &qpb.VectorsConfig_Params{
+				Params: &qpb.VectorParams{
 					Size:     4,
-					Distance: pb.Distance_COSINE,
+					Distance: qpb.Distance_Cosine,
 				},
 			},
 		},
 	})
 	require.NoError(t, err)
 
-	_, err = points.Upsert(ctx, &pb.UpsertPointsRequest{
+	_, err = points.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "grpc_col",
-		Points: []*pb.PointStruct{
+		Points: []*qpb.PointStruct{
 			{
-				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-				Vectors: &pb.Vectors{
-					VectorsOptions: &pb.Vectors_Vectors{
-						Vectors: &pb.NamedVectors{
-							Vectors: map[string]*pb.Vector{
-								"a": {Data: []float32{1, 0, 0, 0}},
-								"b": {Data: []float32{0, 1, 0, 0}},
+				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
+				Vectors: &qpb.Vectors{
+					VectorsOptions: &qpb.Vectors_Vectors{
+						Vectors: &qpb.NamedVectors{
+							Vectors: map[string]*qpb.Vector{
+								"a": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
+								"b": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 1, 0, 0}}}},
 							},
 						},
 					},
@@ -118,30 +118,30 @@ func TestServer_QdrantGRPC_ManagedEmbeddings_DisablesVectorMutations(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	collections := pb.NewCollectionsClient(conn)
-	points := pb.NewPointsClient(conn)
+	collections := qpb.NewCollectionsClient(conn)
+	points := qpb.NewPointsClient(conn)
 
-	_, err = collections.CreateCollection(ctx, &pb.CreateCollectionRequest{
+	_, err = collections.Create(ctx, &qpb.CreateCollection{
 		CollectionName: "grpc_col",
-		VectorsConfig: &pb.VectorsConfig{
-			Config: &pb.VectorsConfig_Params{
-				Params: &pb.VectorParams{
+		VectorsConfig: &qpb.VectorsConfig{
+			Config: &qpb.VectorsConfig_Params{
+				Params: &qpb.VectorParams{
 					Size:     4,
-					Distance: pb.Distance_COSINE,
+					Distance: qpb.Distance_Cosine,
 				},
 			},
 		},
 	})
 	require.NoError(t, err)
 
-	_, err = points.Upsert(ctx, &pb.UpsertPointsRequest{
+	_, err = points.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "grpc_col",
-		Points: []*pb.PointStruct{
+		Points: []*qpb.PointStruct{
 			{
-				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-				Vectors: &pb.Vectors{
-					VectorsOptions: &pb.Vectors_Vector{
-						Vector: &pb.Vector{Data: []float32{1, 0, 0, 0}},
+				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
+				Vectors: &qpb.Vectors{
+					VectorsOptions: &qpb.Vectors_Vector{
+						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
 					},
 				},
 			},

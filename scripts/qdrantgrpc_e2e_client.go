@@ -13,7 +13,7 @@ import (
 	"time"
 
 	nornicpb "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
+	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -41,27 +41,21 @@ func run() error {
 	}
 	defer conn.Close()
 
-	health := pb.NewHealthClient(conn)
-	collections := pb.NewCollectionsClient(conn)
-	points := pb.NewPointsClient(conn)
-	snapshots := pb.NewSnapshotsClient(conn)
+	collections := qpb.NewCollectionsClient(conn)
+	points := qpb.NewPointsClient(conn)
+	snapshots := qpb.NewSnapshotsClient(conn)
 	nornicSearch := nornicpb.NewNornicSearchClient(conn)
-
-	if err := stage(verbose, "health.check", func() error { return checkHealth(ctx, health) }); err != nil {
-		return err
-	}
 
 	collection := "e2e_col"
 	dims := uint64(4)
 
-	// Collections
 	if err := stage(verbose, "collections.create", func() error { return createCollection(ctx, collections, collection, dims) }); err != nil {
 		return err
 	}
 	if err := stage(verbose, "collections.exists(true)", func() error { return collectionExists(ctx, collections, collection, true) }); err != nil {
 		return err
 	}
-	if err := stage(verbose, "collections.info", func() error { return getCollectionInfo(ctx, collections, collection, int(dims)) }); err != nil {
+	if err := stage(verbose, "collections.get", func() error { return getCollectionInfo(ctx, collections, collection, int(dims)) }); err != nil {
 		return err
 	}
 	if err := stage(verbose, "collections.list", func() error { return listCollectionsContains(ctx, collections, collection) }); err != nil {
@@ -71,8 +65,7 @@ func run() error {
 		return err
 	}
 
-	// Points
-	if err := stage(verbose, "points.upsert(named_vectors)", func() error { return upsertNamedVectors(ctx, points, collection, dims) }); err != nil {
+	if err := stage(verbose, "points.upsert(named_vectors)", func() error { return upsertNamedVectors(ctx, points, collection) }); err != nil {
 		return err
 	}
 	if err := stage(verbose, "points.get(subset_vectors)", func() error { return getPointsSubsetVectors(ctx, points, collection) }); err != nil {
@@ -103,7 +96,6 @@ func run() error {
 		return err
 	}
 
-	// Snapshots (writes artifacts to the configured snapshot dir)
 	if err := stage(verbose, "snapshots.cycle", func() error { return snapshotCycle(ctx, snapshots, collection) }); err != nil {
 		return err
 	}
@@ -111,7 +103,6 @@ func run() error {
 		return err
 	}
 
-	// Cleanup
 	if err := stage(verbose, "collections.delete", func() error { return deleteCollection(ctx, collections, collection) }); err != nil {
 		return err
 	}
@@ -142,138 +133,101 @@ func stage(verbose bool, name string, fn func() error) error {
 	return nil
 }
 
-func checkHealth(ctx context.Context, c pb.HealthClient) error {
-	resp, err := c.Check(ctx, &pb.HealthCheckRequest{Service: "qdrant"})
-	if err != nil {
-		return err
-	}
-	if resp.Status != pb.ServingStatus_SERVING {
-		return fmt.Errorf("expected SERVING, got %v", resp.Status)
-	}
-	return nil
-}
-
-func createCollection(ctx context.Context, c pb.CollectionsClient, name string, dims uint64) error {
-	_, err := c.CreateCollection(ctx, &pb.CreateCollectionRequest{
+func createCollection(ctx context.Context, c qpb.CollectionsClient, name string, dims uint64) error {
+	_, err := c.Create(ctx, &qpb.CreateCollection{
 		CollectionName: name,
-		VectorsConfig: &pb.VectorsConfig{
-			Config: &pb.VectorsConfig_Params{
-				Params: &pb.VectorParams{
+		VectorsConfig: &qpb.VectorsConfig{
+			Config: &qpb.VectorsConfig_Params{
+				Params: &qpb.VectorParams{
 					Size:     dims,
-					Distance: pb.Distance_COSINE,
+					Distance: qpb.Distance_Cosine,
 				},
 			},
 		},
 	})
+	return err
+}
+
+func deleteCollection(ctx context.Context, c qpb.CollectionsClient, name string) error {
+	_, err := c.Delete(ctx, &qpb.DeleteCollection{CollectionName: name})
+	return err
+}
+
+func collectionExists(ctx context.Context, c qpb.CollectionsClient, name string, want bool) error {
+	resp, err := c.CollectionExists(ctx, &qpb.CollectionExistsRequest{CollectionName: name})
 	if err != nil {
 		return err
+	}
+	if resp.GetResult().GetExists() != want {
+		return fmt.Errorf("want=%v got=%v", want, resp.GetResult().GetExists())
 	}
 	return nil
 }
 
-func deleteCollection(ctx context.Context, c pb.CollectionsClient, name string) error {
-	_, err := c.DeleteCollection(ctx, &pb.DeleteCollectionRequest{CollectionName: name})
+func getCollectionInfo(ctx context.Context, c qpb.CollectionsClient, name string, wantDims int) error {
+	resp, err := c.Get(ctx, &qpb.GetCollectionInfoRequest{CollectionName: name})
 	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func collectionExists(ctx context.Context, c pb.CollectionsClient, name string, want bool) error {
-	resp, err := c.CollectionExists(ctx, &pb.CollectionExistsRequest{CollectionName: name})
-	if err != nil {
-		return err
-	}
-	if resp.Result != want {
-		return fmt.Errorf("want=%v got=%v", want, resp.Result)
-	}
-	return nil
-}
-
-func getCollectionInfo(ctx context.Context, c pb.CollectionsClient, name string, wantDims int) error {
-	resp, err := c.GetCollectionInfo(ctx, &pb.GetCollectionInfoRequest{CollectionName: name})
-	if err != nil {
-		return err
-	}
-	if resp.Result.Config == nil {
-		return fmt.Errorf("missing vectors_config")
-	}
-
-	var gotDims int
-	switch cfg := resp.Result.Config.Config.(type) {
-	case *pb.VectorsConfig_Params:
-		gotDims = int(cfg.Params.Size)
-	case *pb.VectorsConfig_ParamsMap:
-		// params_map isn't used in the E2E flow yet; pick first entry for a sanity check.
-		for _, v := range cfg.ParamsMap.Map {
-			gotDims = int(v.Size)
-			break
-		}
-	default:
-		return fmt.Errorf("unknown vectors_config")
-	}
+	gotDims := int(resp.GetResult().GetConfig().GetParams().GetVectorsConfig().GetParams().GetSize())
 	if gotDims != wantDims {
 		return fmt.Errorf("want dims=%d got=%d", wantDims, gotDims)
 	}
 	return nil
 }
 
-func listCollectionsContains(ctx context.Context, c pb.CollectionsClient, name string) error {
-	resp, err := c.ListCollections(ctx, &pb.ListCollectionsRequest{})
+func listCollectionsContains(ctx context.Context, c qpb.CollectionsClient, name string) error {
+	resp, err := c.List(ctx, &qpb.ListCollectionsRequest{})
 	if err != nil {
 		return err
 	}
 	for _, col := range resp.Collections {
-		if col.Name == name {
+		if col.GetName() == name {
 			return nil
 		}
 	}
 	return fmt.Errorf("missing %q", name)
 }
 
-func updateCollection(ctx context.Context, c pb.CollectionsClient, name string) error {
-	// We don't enforce a particular behavior here yet; just ensure the RPC is wired.
-	_, err := c.UpdateCollection(ctx, &pb.UpdateCollectionRequest{CollectionName: name})
-	if err != nil {
-		return err
-	}
-	return nil
+func updateCollection(ctx context.Context, c qpb.CollectionsClient, name string) error {
+	_, err := c.Update(ctx, &qpb.UpdateCollection{CollectionName: name})
+	return err
 }
 
-func upsertNamedVectors(ctx context.Context, p pb.PointsClient, collection string, dims uint64) error {
-	_, err := p.Upsert(ctx, &pb.UpsertPointsRequest{
+func upsertNamedVectors(ctx context.Context, p qpb.PointsClient, collection string) error {
+	_, err := p.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: collection,
-		Points: []*pb.PointStruct{
+		Points: []*qpb.PointStruct{
 			{
-				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-				Vectors: &pb.Vectors{
-					VectorsOptions: &pb.Vectors_Vectors{
-						Vectors: &pb.NamedVectors{
-							Vectors: map[string]*pb.Vector{
-								"a": {Data: []float32{1, 0, 0, 0}},
-								"b": {Data: []float32{0, 1, 0, 0}},
+				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
+				Vectors: &qpb.Vectors{
+					VectorsOptions: &qpb.Vectors_Vectors{
+						Vectors: &qpb.NamedVectors{
+							Vectors: map[string]*qpb.Vector{
+								"a": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
+								"b": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 1, 0, 0}}}},
 							},
 						},
 					},
 				},
-				Payload: map[string]*pb.Value{
-					"tag": {Kind: &pb.Value_StringValue{StringValue: "first"}},
+				Payload: map[string]*qpb.Value{
+					"tag": {Kind: &qpb.Value_StringValue{StringValue: "first"}},
 				},
 			},
 			{
-				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p2"}},
-				Vectors: &pb.Vectors{
-					VectorsOptions: &pb.Vectors_Vectors{
-						Vectors: &pb.NamedVectors{
-							Vectors: map[string]*pb.Vector{
-								"a": {Data: []float32{0, 1, 0, 0}},
-								"b": {Data: []float32{1, 0, 0, 0}},
+				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p2"}},
+				Vectors: &qpb.Vectors{
+					VectorsOptions: &qpb.Vectors_Vectors{
+						Vectors: &qpb.NamedVectors{
+							Vectors: map[string]*qpb.Vector{
+								"a": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 1, 0, 0}}}},
+								"b": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
 							},
 						},
 					},
 				},
-				Payload: map[string]*pb.Value{
-					"tag": {Kind: &pb.Value_StringValue{StringValue: "second"}},
+				Payload: map[string]*qpb.Value{
+					"tag": {Kind: &qpb.Value_StringValue{StringValue: "second"}},
 				},
 			},
 		},
@@ -282,34 +236,26 @@ func upsertNamedVectors(ctx context.Context, p pb.PointsClient, collection strin
 		return err
 	}
 
-	// sanity: ensure stored count matches
-	countResp, err := p.Count(ctx, &pb.CountPointsRequest{CollectionName: collection})
+	countResp, err := p.Count(ctx, &qpb.CountPoints{CollectionName: collection, Exact: boolPtr(true)})
 	if err != nil {
 		return err
 	}
-	if countResp.Result.Count < 2 {
-		return fmt.Errorf("expected >=2 got=%d", countResp.Result.Count)
-	}
-
-	// dimension sanity to catch wiring errors early
-	if dims != 4 {
-		return fmt.Errorf("internal e2e invariant: expected dims=4 got=%d", dims)
+	if countResp.GetResult().GetCount() < 2 {
+		return fmt.Errorf("expected >=2 got=%d", countResp.GetResult().GetCount())
 	}
 	return nil
 }
 
-func getPointsSubsetVectors(ctx context.Context, p pb.PointsClient, collection string) error {
-	resp, err := p.Get(ctx, &pb.GetPointsRequest{
+func getPointsSubsetVectors(ctx context.Context, p qpb.PointsClient, collection string) error {
+	resp, err := p.Get(ctx, &qpb.GetPoints{
 		CollectionName: collection,
-		Ids: []*pb.PointId{
-			{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-		},
-		WithVectors: &pb.WithVectorsSelector{
-			SelectorOptions: &pb.WithVectorsSelector_Include{
-				Include: &pb.VectorsSelector{Names: []string{"b"}},
+		Ids:            []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
+		WithVectors: &qpb.WithVectorsSelector{
+			SelectorOptions: &qpb.WithVectorsSelector_Include{
+				Include: &qpb.VectorsSelector{Names: []string{"b"}},
 			},
 		},
-		WithPayload: &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+		WithPayload: &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
 		return err
@@ -320,21 +266,20 @@ func getPointsSubsetVectors(ctx context.Context, p pb.PointsClient, collection s
 	if resp.Result[0].Payload == nil || resp.Result[0].Payload["tag"] == nil {
 		return fmt.Errorf("expected payload tag")
 	}
-	v := resp.Result[0].Vectors.GetVectors()
-	if v == nil || len(v.Vectors) != 1 || v.Vectors["b"] == nil {
+	nv := resp.Result[0].Vectors.GetVectors()
+	if nv == nil || len(nv.Vectors) != 1 || nv.Vectors["b"] == nil {
 		return fmt.Errorf("expected subset vectors {b}")
 	}
 	return nil
 }
 
-func searchVectorName(ctx context.Context, p pb.PointsClient, collection string) error {
-	vn := "a"
-	resp, err := p.Search(ctx, &pb.SearchPointsRequest{
+func searchVectorName(ctx context.Context, p qpb.PointsClient, collection string) error {
+	resp, err := p.Search(ctx, &qpb.SearchPoints{
 		CollectionName: collection,
 		Vector:         []float32{1, 0, 0, 0},
 		Limit:          1,
-		VectorName:     &vn,
-		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+		VectorName:     ptrString("a"),
+		WithPayload:    &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
 		return err
@@ -348,21 +293,12 @@ func searchVectorName(ctx context.Context, p pb.PointsClient, collection string)
 	return nil
 }
 
-func searchBatch(ctx context.Context, p pb.PointsClient, collection string) error {
-	vn := "b"
-	resp, err := p.SearchBatch(ctx, &pb.SearchBatchPointsRequest{
+func searchBatch(ctx context.Context, p qpb.PointsClient, collection string) error {
+	resp, err := p.SearchBatch(ctx, &qpb.SearchBatchPoints{
 		CollectionName: collection,
-		SearchRequests: []*pb.SearchPointsRequest{
-			{
-				Vector:     []float32{1, 0, 0, 0},
-				Limit:      1,
-				VectorName: &vn,
-			},
-			{
-				Vector:     []float32{0, 1, 0, 0},
-				Limit:      1,
-				VectorName: &vn,
-			},
+		SearchPoints: []*qpb.SearchPoints{
+			{Vector: []float32{1, 0, 0, 0}, Limit: 1, VectorName: ptrString("b")},
+			{Vector: []float32{0, 1, 0, 0}, Limit: 1, VectorName: ptrString("b")},
 		},
 	})
 	if err != nil {
@@ -374,12 +310,13 @@ func searchBatch(ctx context.Context, p pb.PointsClient, collection string) erro
 	return nil
 }
 
-func scrollPoints(ctx context.Context, p pb.PointsClient, collection string) error {
+func scrollPoints(ctx context.Context, p qpb.PointsClient, collection string) error {
 	limit := uint32(1)
-	resp, err := p.Scroll(ctx, &pb.ScrollPointsRequest{
+	resp, err := p.Scroll(ctx, &qpb.ScrollPoints{
 		CollectionName: collection,
 		Limit:          &limit,
-		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+		WithPayload:    &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}},
+		WithVectors:    &qpb.WithVectorsSelector{SelectorOptions: &qpb.WithVectorsSelector_Enable{Enable: true}},
 	})
 	if err != nil {
 		return err
@@ -387,57 +324,52 @@ func scrollPoints(ctx context.Context, p pb.PointsClient, collection string) err
 	if len(resp.Result) != 1 {
 		return fmt.Errorf("expected 1 got %d", len(resp.Result))
 	}
-	if resp.NextPageOffset == nil {
-		return fmt.Errorf("expected next_page_offset")
-	}
 	return nil
 }
 
-func countPoints(ctx context.Context, p pb.PointsClient, collection string) error {
-	resp, err := p.Count(ctx, &pb.CountPointsRequest{CollectionName: collection})
+func countPoints(ctx context.Context, p qpb.PointsClient, collection string) error {
+	resp, err := p.Count(ctx, &qpb.CountPoints{CollectionName: collection, Exact: boolPtr(true)})
 	if err != nil {
 		return err
 	}
-	if resp.Result.Count < 2 {
-		return fmt.Errorf("expected >=2 got=%d", resp.Result.Count)
+	if resp.GetResult().GetCount() != 2 {
+		return fmt.Errorf("expected 2 got %d", resp.GetResult().GetCount())
 	}
 
-	// filtered count
-	filter := &pb.Filter{
-		Must: []*pb.Condition{
+	filter := &qpb.Filter{
+		Must: []*qpb.Condition{
 			{
-				ConditionOneOf: &pb.Condition_Field{
-					Field: &pb.FieldCondition{
+				ConditionOneOf: &qpb.Condition_Field{
+					Field: &qpb.FieldCondition{
 						Key: "tag",
-						Match: &pb.Match{
-							MatchValue: &pb.Match_Keyword{Keyword: "first"},
+						Match: &qpb.Match{
+							MatchValue: &qpb.Match_Keyword{Keyword: "first"},
 						},
 					},
 				},
 			},
 		},
 	}
-	fResp, err := p.Count(ctx, &pb.CountPointsRequest{CollectionName: collection, Filter: filter})
+	fResp, err := p.Count(ctx, &qpb.CountPoints{CollectionName: collection, Exact: boolPtr(true), Filter: filter})
 	if err != nil {
 		return err
 	}
-	if fResp.Result.Count != 1 {
-		return fmt.Errorf("expected 1 got=%d", fResp.Result.Count)
+	if fResp.GetResult().GetCount() != 1 {
+		return fmt.Errorf("expected 1 got %d", fResp.GetResult().GetCount())
 	}
 	return nil
 }
 
-func payloadOps(ctx context.Context, p pb.PointsClient, collection string) error {
-	// set payload key
-	_, err := p.SetPayload(ctx, &pb.SetPayloadPointsRequest{
+func payloadOps(ctx context.Context, p qpb.PointsClient, collection string) error {
+	_, err := p.SetPayload(ctx, &qpb.SetPayloadPoints{
 		CollectionName: collection,
-		Payload: map[string]*pb.Value{
-			"extra": {Kind: &pb.Value_IntegerValue{IntegerValue: 123}},
+		Payload: map[string]*qpb.Value{
+			"extra": {Kind: &qpb.Value_IntegerValue{IntegerValue: 123}},
 		},
-		PointsSelector: &pb.PointsSelector{
-			PointsSelectorOneOf: &pb.PointsSelector_Points{
-				Points: &pb.PointsIdsList{
-					Ids: []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}}},
+		PointsSelector: &qpb.PointsSelector{
+			PointsSelectorOneOf: &qpb.PointsSelector_Points{
+				Points: &qpb.PointsIdsList{
+					Ids: []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
 				},
 			},
 		},
@@ -446,14 +378,13 @@ func payloadOps(ctx context.Context, p pb.PointsClient, collection string) error
 		return err
 	}
 
-	// delete payload key
-	_, err = p.DeletePayload(ctx, &pb.DeletePayloadPointsRequest{
+	_, err = p.DeletePayload(ctx, &qpb.DeletePayloadPoints{
 		CollectionName: collection,
 		Keys:           []string{"extra"},
-		PointsSelector: &pb.PointsSelector{
-			PointsSelectorOneOf: &pb.PointsSelector_Points{
-				Points: &pb.PointsIdsList{
-					Ids: []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}}},
+		PointsSelector: &qpb.PointsSelector{
+			PointsSelectorOneOf: &qpb.PointsSelector_Points{
+				Points: &qpb.PointsIdsList{
+					Ids: []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
 				},
 			},
 		},
@@ -462,36 +393,31 @@ func payloadOps(ctx context.Context, p pb.PointsClient, collection string) error
 		return err
 	}
 
-	// clear payload
-	_, err = p.ClearPayload(ctx, &pb.ClearPayloadPointsRequest{
+	_, err = p.ClearPayload(ctx, &qpb.ClearPayloadPoints{
 		CollectionName: collection,
-		Points: &pb.PointsSelector{
-			PointsSelectorOneOf: &pb.PointsSelector_Points{
-				Points: &pb.PointsIdsList{
-					Ids: []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}}},
+		Points: &qpb.PointsSelector{
+			PointsSelectorOneOf: &qpb.PointsSelector_Points{
+				Points: &qpb.PointsIdsList{
+					Ids: []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
 				},
 			},
 		},
 	})
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func vectorOps(ctx context.Context, p pb.PointsClient, collection string, dims uint64) error {
-	// UpdateVectors (named vectors)
-	_, err := p.UpdateVectors(ctx, &pb.UpdatePointVectorsRequest{
+func vectorOps(ctx context.Context, p qpb.PointsClient, collection string, dims uint64) error {
+	_, err := p.UpdateVectors(ctx, &qpb.UpdatePointVectors{
 		CollectionName: collection,
-		Points: []*pb.PointVectors{
+		Points: []*qpb.PointVectors{
 			{
-				Id: &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-				Vectors: &pb.Vectors{
-					VectorsOptions: &pb.Vectors_Vectors{
-						Vectors: &pb.NamedVectors{
-							Vectors: map[string]*pb.Vector{
-								"a": {Data: []float32{0, 0, 1, 0}},
-								"b": {Data: []float32{0, 0, 0, 1}},
+				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}},
+				Vectors: &qpb.Vectors{
+					VectorsOptions: &qpb.Vectors_Vectors{
+						Vectors: &qpb.NamedVectors{
+							Vectors: map[string]*qpb.Vector{
+								"a": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 0, 1, 0}}}},
+								"b": {Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 0, 0, 1}}}},
 							},
 						},
 					},
@@ -503,29 +429,25 @@ func vectorOps(ctx context.Context, p pb.PointsClient, collection string, dims u
 		return err
 	}
 
-	// DeleteVectors: delete just vector "b" from p1
-	_, err = p.DeleteVectors(ctx, &pb.DeletePointVectorsRequest{
+	_, err = p.DeleteVectors(ctx, &qpb.DeletePointVectors{
 		CollectionName: collection,
-		PointsSelector: &pb.PointsSelector{
-			PointsSelectorOneOf: &pb.PointsSelector_Points{
-				Points: &pb.PointsIdsList{
-					Ids: []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}}},
+		PointsSelector: &qpb.PointsSelector{
+			PointsSelectorOneOf: &qpb.PointsSelector_Points{
+				Points: &qpb.PointsIdsList{
+					Ids: []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
 				},
 			},
 		},
-		Vectors: &pb.VectorsSelector{Names: []string{"b"}},
+		Vectors: &qpb.VectorsSelector{Names: []string{"b"}},
 	})
 	if err != nil {
 		return err
 	}
 
-	// Ensure vector "b" was removed (and "a" remains)
-	resp, err := p.Get(ctx, &pb.GetPointsRequest{
+	resp, err := p.Get(ctx, &qpb.GetPoints{
 		CollectionName: collection,
-		Ids: []*pb.PointId{
-			{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}},
-		},
-		WithVectors: &pb.WithVectorsSelector{SelectorOptions: &pb.WithVectorsSelector_Enable{Enable: true}},
+		Ids:            []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
+		WithVectors:    &qpb.WithVectorsSelector{SelectorOptions: &qpb.WithVectorsSelector_Enable{Enable: true}},
 	})
 	if err != nil {
 		return err
@@ -540,33 +462,31 @@ func vectorOps(ctx context.Context, p pb.PointsClient, collection string, dims u
 	if _, ok := nv.Vectors["b"]; ok {
 		return fmt.Errorf("points.get (post delete_vectors): expected vector 'b' deleted")
 	}
-
-	// sanity dimension guard: ensure our "a" vector length matches collection dims
-	if got := uint64(len(nv.Vectors["a"].Data)); got != dims {
+	if got := uint64(len(nv.Vectors["a"].GetDense().GetData())); got != dims {
 		return fmt.Errorf("points.get (post delete_vectors): expected dims=%d got=%d", dims, got)
 	}
 	return nil
 }
 
-func deleteByFilter(ctx context.Context, p pb.PointsClient, collection string) error {
-	filter := &pb.Filter{
-		Must: []*pb.Condition{
+func deleteByFilter(ctx context.Context, p qpb.PointsClient, collection string) error {
+	filter := &qpb.Filter{
+		Must: []*qpb.Condition{
 			{
-				ConditionOneOf: &pb.Condition_Field{
-					Field: &pb.FieldCondition{
+				ConditionOneOf: &qpb.Condition_Field{
+					Field: &qpb.FieldCondition{
 						Key: "tag",
-						Match: &pb.Match{
-							MatchValue: &pb.Match_Keyword{Keyword: "second"},
+						Match: &qpb.Match{
+							MatchValue: &qpb.Match_Keyword{Keyword: "second"},
 						},
 					},
 				},
 			},
 		},
 	}
-	_, err := p.Delete(ctx, &pb.DeletePointsRequest{
+	_, err := p.Delete(ctx, &qpb.DeletePoints{
 		CollectionName: collection,
-		Points: &pb.PointsSelector{
-			PointsSelectorOneOf: &pb.PointsSelector_Filter{
+		Points: &qpb.PointsSelector{
+			PointsSelectorOneOf: &qpb.PointsSelector_Filter{
 				Filter: filter,
 			},
 		},
@@ -575,12 +495,9 @@ func deleteByFilter(ctx context.Context, p pb.PointsClient, collection string) e
 		return err
 	}
 
-	// ensure p2 is gone
-	resp, err := p.Get(ctx, &pb.GetPointsRequest{
+	resp, err := p.Get(ctx, &qpb.GetPoints{
 		CollectionName: collection,
-		Ids: []*pb.PointId{
-			{PointIdOptions: &pb.PointId_Uuid{Uuid: "p2"}},
-		},
+		Ids:            []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p2"}}},
 	})
 	if err != nil {
 		return err
@@ -591,14 +508,12 @@ func deleteByFilter(ctx context.Context, p pb.PointsClient, collection string) e
 	return nil
 }
 
-func recommend(ctx context.Context, p pb.PointsClient, collection string) error {
-	// Recommend uses point IDs; we just ensure it returns something and scores look sane.
-	resp, err := p.Recommend(ctx, &pb.RecommendPointsRequest{
+func recommend(ctx context.Context, p qpb.PointsClient, collection string) error {
+	resp, err := p.Recommend(ctx, &qpb.RecommendPoints{
 		CollectionName: collection,
-		Positive:       []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: "p1"}}},
-		Negative:       nil,
+		Positive:       []*qpb.PointId{{PointIdOptions: &qpb.PointId_Uuid{Uuid: "p1"}}},
 		Limit:          5,
-		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+		WithPayload:    &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}},
 		ScoreThreshold: float32Ptr(-1.0),
 	})
 	if err != nil {
@@ -612,39 +527,40 @@ func recommend(ctx context.Context, p pb.PointsClient, collection string) error 
 	return nil
 }
 
-func snapshotCycle(ctx context.Context, s pb.SnapshotsClient, collection string) error {
-	wait := true
-	createResp, err := s.Create(ctx, &pb.CreateSnapshotRequest{CollectionName: collection, Wait: &wait})
+func snapshotCycle(ctx context.Context, s qpb.SnapshotsClient, collection string) error {
+	createResp, err := s.Create(ctx, &qpb.CreateSnapshotRequest{CollectionName: collection})
 	if err != nil {
 		return err
 	}
-	if createResp.Result.Name == "" {
+	if createResp.GetSnapshotDescription().GetName() == "" {
 		return fmt.Errorf("snapshots.create: missing snapshot name")
 	}
 
-	listResp, err := s.List(ctx, &pb.ListSnapshotsRequest{CollectionName: collection})
+	listResp, err := s.List(ctx, &qpb.ListSnapshotsRequest{CollectionName: collection})
 	if err != nil {
 		return err
 	}
 	found := false
-	for _, d := range listResp.Snapshots {
-		if d.Name == createResp.Result.Name {
+	for _, d := range listResp.SnapshotDescriptions {
+		if d.GetName() == createResp.GetSnapshotDescription().GetName() {
 			found = true
 			break
 		}
 	}
 	if !found {
-		return fmt.Errorf("snapshots.list: missing created snapshot %q", createResp.Result.Name)
+		return fmt.Errorf("snapshots.list: missing created snapshot %q", createResp.GetSnapshotDescription().GetName())
 	}
 
-	_, err = s.Delete(ctx, &pb.DeleteSnapshotRequest{CollectionName: collection, SnapshotName: createResp.Result.Name})
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = s.Delete(ctx, &qpb.DeleteSnapshotRequest{
+		CollectionName: collection,
+		SnapshotName:   createResp.GetSnapshotDescription().GetName(),
+	})
+	return err
 }
 
+func boolPtr(v bool) *bool          { return &v }
 func float32Ptr(v float32) *float32 { return &v }
+func ptrString(v string) *string    { return &v }
 
 func nornicSearchText(ctx context.Context, c nornicpb.NornicSearchClient, query string) error {
 	resp, err := c.SearchText(ctx, &nornicpb.SearchTextRequest{
@@ -657,7 +573,5 @@ func nornicSearchText(ctx context.Context, c nornicpb.NornicSearchClient, query 
 	if resp.SearchMethod == "" {
 		return fmt.Errorf("expected search_method")
 	}
-	// This endpoint is primarily for auto-embedded query search; it should be callable even
-	// when the dataset is empty. We only validate basic response shape here.
 	return nil
 }

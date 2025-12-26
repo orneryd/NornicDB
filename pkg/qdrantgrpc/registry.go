@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
+	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -25,7 +25,7 @@ const (
 type collectionMetaData struct {
 	Name       string `json:"name"`
 	Dimensions int    `json:"dimensions"`
-	Distance   int32  `json:"distance"` // pb.Distance enum value
+	Distance   int32  `json:"distance"` // qpb.Distance enum value
 	CreatedAt  int64  `json:"created_at"`
 }
 
@@ -33,8 +33,8 @@ type collectionMetaData struct {
 type CollectionMeta struct {
 	Name       string
 	Dimensions int
-	Distance   pb.Distance
-	Status     pb.CollectionStatus
+	Distance   qpb.Distance
+	Status     qpb.CollectionStatus
 }
 
 // CollectionRegistry manages vector collections (indexes).
@@ -42,7 +42,7 @@ type CollectionMeta struct {
 // and MemoryCollectionRegistry (testing).
 type CollectionRegistry interface {
 	// CreateCollection creates a new collection with the given parameters.
-	CreateCollection(ctx context.Context, name string, dims int, distance pb.Distance) error
+	CreateCollection(ctx context.Context, name string, dims int, distance qpb.Distance) error
 
 	// GetCollection returns collection metadata.
 	GetCollection(ctx context.Context, name string) (*CollectionMeta, error)
@@ -141,30 +141,30 @@ func (r *PersistentCollectionRegistry) parseCollectionMeta(node *storage.Node) (
 		return nil, fmt.Errorf("invalid dimensions: %d", dims)
 	}
 
-	var distance pb.Distance
+	var distance qpb.Distance
 	switch v := node.Properties["distance"].(type) {
 	case float64:
-		distance = pb.Distance(int32(v))
+		distance = qpb.Distance(int32(v))
 	case int:
-		distance = pb.Distance(int32(v))
+		distance = qpb.Distance(int32(v))
 	case int64:
-		distance = pb.Distance(int32(v))
+		distance = qpb.Distance(int32(v))
 	case int32:
-		distance = pb.Distance(v)
+		distance = qpb.Distance(v)
 	default:
-		distance = pb.Distance_COSINE
+		distance = qpb.Distance_Cosine
 	}
 
 	return &CollectionMeta{
 		Name:       name,
 		Dimensions: dims,
 		Distance:   distance,
-		Status:     pb.CollectionStatus_GREEN,
+		Status:     qpb.CollectionStatus_Green,
 	}, nil
 }
 
 // CreateCollection creates a new collection with the given parameters.
-func (r *PersistentCollectionRegistry) CreateCollection(ctx context.Context, name string, dims int, distance pb.Distance) error {
+func (r *PersistentCollectionRegistry) CreateCollection(ctx context.Context, name string, dims int, distance qpb.Distance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -194,7 +194,7 @@ func (r *PersistentCollectionRegistry) CreateCollection(ctx context.Context, nam
 		Name:       name,
 		Dimensions: dims,
 		Distance:   distance,
-		Status:     pb.CollectionStatus_GREEN,
+		Status:     qpb.CollectionStatus_Green,
 	}
 
 	log.Printf("created collection %q: %d dimensions, distance=%s", name, dims, distance.String())
@@ -357,7 +357,7 @@ func (r *PersistentCollectionRegistry) ImportCollectionMeta(ctx context.Context,
 		return fmt.Errorf("invalid collection metadata: %w", err)
 	}
 
-	return r.CreateCollection(ctx, meta.Name, meta.Dimensions, pb.Distance(meta.Distance))
+	return r.CreateCollection(ctx, meta.Name, meta.Dimensions, qpb.Distance(meta.Distance))
 }
 
 // Close releases any resources held by the registry.
@@ -389,7 +389,7 @@ func NewMemoryCollectionRegistry() *MemoryCollectionRegistry {
 }
 
 // CreateCollection creates a new collection.
-func (r *MemoryCollectionRegistry) CreateCollection(ctx context.Context, name string, dims int, distance pb.Distance) error {
+func (r *MemoryCollectionRegistry) CreateCollection(ctx context.Context, name string, dims int, distance qpb.Distance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -401,7 +401,7 @@ func (r *MemoryCollectionRegistry) CreateCollection(ctx context.Context, name st
 		Name:       name,
 		Dimensions: dims,
 		Distance:   distance,
-		Status:     pb.CollectionStatus_GREEN,
+		Status:     qpb.CollectionStatus_Green,
 	}
 	r.pointCounts[name] = 0
 	return nil

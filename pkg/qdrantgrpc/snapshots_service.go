@@ -9,17 +9,18 @@ import (
 	"strings"
 	"time"
 
+	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // SnapshotsService implements the Qdrant Snapshots gRPC service.
 // It maps to NornicDB's storage.Snapshot and BadgerEngine.Backup functionality.
 type SnapshotsService struct {
-	pb.UnimplementedSnapshotsServer
+	qpb.UnimplementedSnapshotsServer
 	config      *Config
 	storage     storage.Engine
 	registry    CollectionRegistry
@@ -45,10 +46,10 @@ func NewSnapshotsService(config *Config, store storage.Engine, registry Collecti
 
 // Create creates a new snapshot of a collection.
 // Maps to: Export collection nodes as JSON snapshot
-func (s *SnapshotsService) Create(ctx context.Context, req *pb.CreateSnapshotRequest) (*pb.CreateSnapshotResponse, error) {
+func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
@@ -106,10 +107,10 @@ func (s *SnapshotsService) Create(ctx context.Context, req *pb.CreateSnapshotReq
 		size = fileInfo.Size()
 	}
 
-	return &pb.CreateSnapshotResponse{
-		Result: &pb.SnapshotDescription{
+	return &qpb.CreateSnapshotResponse{
+		SnapshotDescription: &qpb.SnapshotDescription{
 			Name:         snapshotName,
-			CreationTime: timestamp.Unix(),
+			CreationTime: timestamppb.New(timestamp),
 			Size:         size,
 		},
 		Time: time.Since(start).Seconds(),
@@ -118,10 +119,10 @@ func (s *SnapshotsService) Create(ctx context.Context, req *pb.CreateSnapshotReq
 
 // List lists all snapshots for a collection.
 // Maps to: List files in collection snapshot directory
-func (s *SnapshotsService) List(ctx context.Context, req *pb.ListSnapshotsRequest) (*pb.ListSnapshotsResponse, error) {
+func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsRequest) (*qpb.ListSnapshotsResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
@@ -136,16 +137,16 @@ func (s *SnapshotsService) List(ctx context.Context, req *pb.ListSnapshotsReques
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No snapshots yet
-			return &pb.ListSnapshotsResponse{
-				Snapshots: []*pb.SnapshotDescription{},
-				Time:      time.Since(start).Seconds(),
+			return &qpb.ListSnapshotsResponse{
+				SnapshotDescriptions: []*qpb.SnapshotDescription{},
+				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to list snapshots: %v", err)
 	}
 
 	// Build snapshot list
-	var snapshots []*pb.SnapshotDescription
+	var snapshots []*qpb.SnapshotDescription
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".snapshot") {
 			continue
@@ -156,34 +157,39 @@ func (s *SnapshotsService) List(ctx context.Context, req *pb.ListSnapshotsReques
 			continue
 		}
 
-		snapshots = append(snapshots, &pb.SnapshotDescription{
+		snapshots = append(snapshots, &qpb.SnapshotDescription{
 			Name:         entry.Name(),
-			CreationTime: info.ModTime().Unix(),
+			CreationTime: timestamppb.New(info.ModTime().UTC()),
 			Size:         info.Size(),
 		})
 	}
 
 	// Sort by creation time descending (newest first)
 	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].CreationTime > snapshots[j].CreationTime
+		ai := snapshots[i].CreationTime
+		aj := snapshots[j].CreationTime
+		if ai == nil || aj == nil {
+			return snapshots[i].Name > snapshots[j].Name
+		}
+		return ai.AsTime().After(aj.AsTime())
 	})
 
-	return &pb.ListSnapshotsResponse{
-		Snapshots: snapshots,
-		Time:      time.Since(start).Seconds(),
+	return &qpb.ListSnapshotsResponse{
+		SnapshotDescriptions: snapshots,
+		Time:                 time.Since(start).Seconds(),
 	}, nil
 }
 
 // Delete removes a snapshot.
 // Maps to: Delete snapshot file
-func (s *SnapshotsService) Delete(ctx context.Context, req *pb.DeleteSnapshotRequest) (*pb.DeleteSnapshotResponse, error) {
+func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRequest) (*qpb.DeleteSnapshotResponse, error) {
 	start := time.Now()
 
-	if req.CollectionName == "" {
+	if req.GetCollectionName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
 	}
 
-	if req.SnapshotName == "" {
+	if req.GetSnapshotName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "snapshot_name is required")
 	}
 
@@ -201,15 +207,14 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *pb.DeleteSnapshotReq
 		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
 	}
 
-	return &pb.DeleteSnapshotResponse{
-		Result: true,
-		Time:   time.Since(start).Seconds(),
+	return &qpb.DeleteSnapshotResponse{
+		Time: time.Since(start).Seconds(),
 	}, nil
 }
 
 // CreateFull creates a full storage snapshot (all collections).
 // Maps to: BadgerEngine.Backup or WAL.CreateSnapshot for all data
-func (s *SnapshotsService) CreateFull(ctx context.Context, req *pb.CreateFullSnapshotRequest) (*pb.CreateSnapshotResponse, error) {
+func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
 	start := time.Now()
 
 	// Create full snapshots directory
@@ -260,10 +265,10 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *pb.CreateFullSna
 		size = fileInfo.Size()
 	}
 
-	return &pb.CreateSnapshotResponse{
-		Result: &pb.SnapshotDescription{
+	return &qpb.CreateSnapshotResponse{
+		SnapshotDescription: &qpb.SnapshotDescription{
 			Name:         snapshotName,
-			CreationTime: timestamp.Unix(),
+			CreationTime: timestamppb.New(timestamp),
 			Size:         size,
 		},
 		Time: time.Since(start).Seconds(),
@@ -272,7 +277,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *pb.CreateFullSna
 
 // ListFull lists all full storage snapshots.
 // Maps to: List files in full snapshot directory
-func (s *SnapshotsService) ListFull(ctx context.Context, req *pb.ListFullSnapshotsRequest) (*pb.ListSnapshotsResponse, error) {
+func (s *SnapshotsService) ListFull(ctx context.Context, req *qpb.ListFullSnapshotsRequest) (*qpb.ListSnapshotsResponse, error) {
 	start := time.Now()
 
 	// List snapshots in full directory
@@ -281,16 +286,16 @@ func (s *SnapshotsService) ListFull(ctx context.Context, req *pb.ListFullSnapsho
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No snapshots yet
-			return &pb.ListSnapshotsResponse{
-				Snapshots: []*pb.SnapshotDescription{},
-				Time:      time.Since(start).Seconds(),
+			return &qpb.ListSnapshotsResponse{
+				SnapshotDescriptions: []*qpb.SnapshotDescription{},
+				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to list snapshots: %v", err)
 	}
 
 	// Build snapshot list
-	var snapshots []*pb.SnapshotDescription
+	var snapshots []*qpb.SnapshotDescription
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -301,30 +306,35 @@ func (s *SnapshotsService) ListFull(ctx context.Context, req *pb.ListFullSnapsho
 			continue
 		}
 
-		snapshots = append(snapshots, &pb.SnapshotDescription{
+		snapshots = append(snapshots, &qpb.SnapshotDescription{
 			Name:         entry.Name(),
-			CreationTime: info.ModTime().Unix(),
+			CreationTime: timestamppb.New(info.ModTime().UTC()),
 			Size:         info.Size(),
 		})
 	}
 
 	// Sort by creation time descending (newest first)
 	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].CreationTime > snapshots[j].CreationTime
+		ai := snapshots[i].CreationTime
+		aj := snapshots[j].CreationTime
+		if ai == nil || aj == nil {
+			return snapshots[i].Name > snapshots[j].Name
+		}
+		return ai.AsTime().After(aj.AsTime())
 	})
 
-	return &pb.ListSnapshotsResponse{
-		Snapshots: snapshots,
-		Time:      time.Since(start).Seconds(),
+	return &qpb.ListSnapshotsResponse{
+		SnapshotDescriptions: snapshots,
+		Time:                 time.Since(start).Seconds(),
 	}, nil
 }
 
 // DeleteFull removes a full storage snapshot.
 // Maps to: Delete full snapshot file
-func (s *SnapshotsService) DeleteFull(ctx context.Context, req *pb.DeleteFullSnapshotRequest) (*pb.DeleteSnapshotResponse, error) {
+func (s *SnapshotsService) DeleteFull(ctx context.Context, req *qpb.DeleteFullSnapshotRequest) (*qpb.DeleteSnapshotResponse, error) {
 	start := time.Now()
 
-	if req.SnapshotName == "" {
+	if req.GetSnapshotName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "snapshot_name is required")
 	}
 
@@ -337,9 +347,7 @@ func (s *SnapshotsService) DeleteFull(ctx context.Context, req *pb.DeleteFullSna
 		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
 	}
 
-	return &pb.DeleteSnapshotResponse{
-		Result: true,
-		Time:   time.Since(start).Seconds(),
+	return &qpb.DeleteSnapshotResponse{
+		Time: time.Since(start).Seconds(),
 	}, nil
 }
-

@@ -132,11 +132,9 @@ Recommended integration options:
   - `mapping/` (payload + id + vector mapping helpers)
   - `internal/` (hot-path utilities, pooling, validation)
 
-### Generated protobufs (vendored and pinned)
-- `pkg/qdrantgrpc/proto/` (vendored `.proto` files for pinned Qdrant version)
-- `pkg/qdrantgrpc/gen/` (generated `.pb.go` / `_grpc.pb.go`)
-
-**Policy:** never “hand edit” generated code. Any proto changes must be done by bumping pinned version and regenerating.
+### Protobuf contract (upstream, pinned)
+- Use the upstream Qdrant protobuf contract via `github.com/qdrant/go-client/qdrant` (generated types live in the Go module).
+- Pin the exact upstream version in `go.mod` and validate compatibility via the Python SDK E2E suite.
 
 ---
 
@@ -233,15 +231,15 @@ Qdrant filters can be complex. A high-performance approach:
 
 These are intentionally designed so multiple agents can work independently with minimal merge conflicts. Each workstream owns a directory/file subset and produces clear artifacts.
 
-### Workstream 1 — Contract + Codegen (Proto/Gen)
+### Workstream 1 — Contract Version Pinning + SDK E2E
 **Owner files:**
-- `pkg/qdrantgrpc/proto/**`
-- `pkg/qdrantgrpc/gen/**`
-- build scripts/docs for generation
+- `go.mod`, `go.sum` (pin Qdrant Go client version)
+- `scripts/qdrantgrpc_e2e_python.*` (driver-level compatibility)
+- `pkg/qdrantgrpc/README.md` / `pkg/qdrantgrpc/COMPAT.md`
 **Deliverables:**
-- pinned Qdrant version documented
-- reproducible generation command
-- generated Go stubs compile
+- pinned Qdrant version documented (and validated in CI)
+- Python `qdrant-client` E2E passes against NornicDB gRPC
+- compatibility notes for any unimplemented RPCs
 
 ### Workstream 2 — gRPC Server Skeleton (Runtime/Config)
 **Owner files:**

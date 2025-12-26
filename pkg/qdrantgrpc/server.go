@@ -1,8 +1,11 @@
-// Package qdrantgrpc provides a Qdrant-compatible gRPC API for NornicDB.
+// Package qdrantgrpc provides Qdrant-compatible gRPC APIs for NornicDB.
 //
 // This package enables existing Qdrant SDKs (Python, Go, Rust, etc.) to connect
-// to NornicDB without modification. It implements a subset of the Qdrant gRPC API
-// pinned to v1.16.x, providing vector search operations via NornicDB's search.Service.
+// to NornicDB without modification by implementing the upstream Qdrant protobuf
+// contract (package `qdrant`, pinned to v1.16.x).
+//
+// NornicDB does not expose any additional “compat” gRPC contract for Qdrant.
+// The only public Qdrant surface is the upstream Qdrant protobuf contract.
 //
 // # Integration with NornicDB Search
 //
@@ -13,10 +16,12 @@
 //
 // # Compatibility
 //
-// The following Qdrant services are implemented:
-//   - Collections: CreateCollection, GetCollectionInfo, ListCollections, DeleteCollection
-//   - Points: Upsert, Get, Delete, Search, SearchBatch, Count
-//   - Health: Standard gRPC health checking
+// The upstream Qdrant SDK surface currently implements the core methods used by
+// qdrant-client (Python) and other SDKs for typical vector workloads:
+//   - Collections: Create, Get, List, Delete, Update, CollectionExists
+//   - Points: Upsert, Get, Delete, Count, Search, Scroll, payload ops, vector ops
+//
+// Additional upstream Qdrant RPCs can be added incrementally as needed.
 //
 // # Data Model Mapping
 //
@@ -57,6 +62,7 @@
 package qdrantgrpc
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -67,7 +73,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 
-	pb "github.com/orneryd/nornicdb/pkg/qdrantgrpc/gen"
+	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -120,6 +126,12 @@ type Config struct {
 
 	// SnapshotDir is the directory for storing snapshots
 	SnapshotDir string
+
+	// EmbedQuery, when set, allows the Qdrant Query API to accept text/inference
+	// inputs (e.g. VectorInput.Document) and have NornicDB embed the query text.
+	//
+	// If nil, those query variants return FailedPrecondition.
+	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 }
 
 // DefaultConfig returns sensible defaults for the Qdrant gRPC server.
@@ -241,18 +253,14 @@ func (s *Server) Start() error {
 
 	s.grpcServer = grpc.NewServer(opts...)
 
-	// Register services
-	collectionsService := NewCollectionsService(s.registry)
-	pb.RegisterCollectionsServer(s.grpcServer, collectionsService)
+	collectionsService := NewCollectionsService(s.registry, s.storage, s.searchService)
+	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
 
 	pointsService := NewPointsService(s.config, s.storage, s.registry, s.searchService)
-	pb.RegisterPointsServer(s.grpcServer, pointsService)
+	qpb.RegisterPointsServer(s.grpcServer, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.storage, s.registry, s.config.SnapshotDir)
-	pb.RegisterSnapshotsServer(s.grpcServer, snapshotsService)
-
-	healthService := NewHealthService()
-	pb.RegisterHealthServer(s.grpcServer, healthService)
+	qpb.RegisterSnapshotsServer(s.grpcServer, snapshotsService)
 
 	for _, fn := range s.register {
 		fn(s.grpcServer)

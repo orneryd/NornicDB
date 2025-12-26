@@ -58,6 +58,9 @@ func (s *Server) startQdrantGRPC() error {
 	if features.QdrantGRPCMaxTopK > 0 {
 		cfg.MaxTopK = features.QdrantGRPCMaxTopK
 	}
+	if s.config.EmbeddingEnabled {
+		cfg.EmbedQuery = s.db.EmbedQuery
+	}
 
 	grpcServer, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(cfg, storageEngine, searchSvc)
 	if err != nil {
