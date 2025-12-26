@@ -1209,6 +1209,50 @@ func TestSerialization(t *testing.T) {
 		assert.Equal(t, original.ChunkEmbeddings, decoded.ChunkEmbeddings)
 	})
 
+	t.Run("node with NamedEmbeddings round-trip", func(t *testing.T) {
+		original := &Node{
+			ID:     NodeID(prefixTestID("test-named-emb")),
+			Labels: []string{"Document"},
+			NamedEmbeddings: map[string][]float32{
+				"default": {0.1, 0.2, 0.3},
+				"title":   {0.4, 0.5, 0.6},
+				"content": {0.7, 0.8, 0.9},
+			},
+		}
+
+		data, _, err := encodeNode(original)
+		require.NoError(t, err)
+
+		decoded, err := decodeNode(data)
+		require.NoError(t, err)
+
+		assert.Equal(t, original.ID, decoded.ID)
+		assert.Equal(t, len(original.NamedEmbeddings), len(decoded.NamedEmbeddings))
+		assert.Equal(t, original.NamedEmbeddings["default"], decoded.NamedEmbeddings["default"])
+		assert.Equal(t, original.NamedEmbeddings["title"], decoded.NamedEmbeddings["title"])
+		assert.Equal(t, original.NamedEmbeddings["content"], decoded.NamedEmbeddings["content"])
+	})
+
+	t.Run("node with both NamedEmbeddings and ChunkEmbeddings", func(t *testing.T) {
+		original := &Node{
+			ID:     NodeID(prefixTestID("test-mixed-emb")),
+			Labels: []string{"Document"},
+			NamedEmbeddings: map[string][]float32{
+				"default": {0.1, 0.2, 0.3},
+			},
+			ChunkEmbeddings: [][]float32{{0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}},
+		}
+
+		data, _, err := encodeNode(original)
+		require.NoError(t, err)
+
+		decoded, err := decodeNode(data)
+		require.NoError(t, err)
+
+		assert.Equal(t, original.NamedEmbeddings, decoded.NamedEmbeddings)
+		assert.Equal(t, original.ChunkEmbeddings, decoded.ChunkEmbeddings)
+	})
+
 	t.Run("edge round-trip", func(t *testing.T) {
 		original := &Edge{
 			ID:            EdgeID(prefixTestID("test-edge")),

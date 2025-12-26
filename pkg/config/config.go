@@ -33,6 +33,12 @@
 //   - NORNICDB_EMBEDDING_MODEL="bge-m3"
 //   - NORNICDB_HEIMDALL_ENABLED=true
 //
+// Vector Search (HNSW):
+//   - NORNICDB_VECTOR_ANN_QUALITY="fast"|"balanced"|"accurate" (default: balanced)
+//   - NORNICDB_VECTOR_HNSW_M: Max connections per node (default: based on quality preset)
+//   - NORNICDB_VECTOR_HNSW_EF_CONSTRUCTION: Construction candidate list size (default: based on quality preset)
+//   - NORNICDB_VECTOR_HNSW_EF_SEARCH: Search candidate list size (default: based on quality preset)
+//
 // Logging:
 //   - NORNICDB_LOG_LEVEL="INFO"
 //   - NORNICDB_LOG_FORMAT="json"

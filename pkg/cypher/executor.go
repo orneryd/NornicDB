@@ -121,6 +121,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/vectorspace"
 )
 
 // Pre-compiled regexes for subquery detection (whitespace-flexible)
@@ -216,6 +217,10 @@ type StorageExecutor struct {
 	// System commands require DatabaseManager to manage multiple databases
 	// This is an interface to avoid import cycles with multidb package
 	dbManager DatabaseManagerInterface
+
+	// vectorRegistry maps Cypher vector index definitions to concrete vector spaces.
+	vectorRegistry    *vectorspace.IndexRegistry
+	vectorIndexSpaces map[string]vectorspace.VectorSpaceKey
 }
 
 // DatabaseManagerInterface is a minimal interface to avoid import cycles with multidb package.
@@ -278,12 +283,14 @@ type QueryEmbedder interface {
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
 func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	return &StorageExecutor{
-		parser:          NewParser(),
-		storage:         store,
-		cache:           NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
-		planCache:       NewQueryPlanCache(500),   // Cache 500 parsed query plans
-		analyzer:        NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
-		nodeLookupCache: make(map[string]*storage.Node, 1000),
+		parser:            NewParser(),
+		storage:           store,
+		cache:             NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
+		planCache:         NewQueryPlanCache(500),   // Cache 500 parsed query plans
+		analyzer:          NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
+		nodeLookupCache:   make(map[string]*storage.Node, 1000),
+		vectorRegistry:    vectorspace.NewIndexRegistry(),
+		vectorIndexSpaces: make(map[string]vectorspace.VectorSpaceKey),
 	}
 }
 
@@ -313,6 +320,20 @@ func (e *StorageExecutor) SetDatabaseManager(dbManager DatabaseManagerInterface)
 //	// CALL db.index.vector.queryNodes('idx', 10, 'search query')   // String (auto-embedded)
 func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
 	e.embedder = embedder
+}
+
+// SetVectorRegistry allows wiring a shared index registry (e.g., per database).
+// Defaults to an internal registry when not set.
+func (e *StorageExecutor) SetVectorRegistry(reg *vectorspace.IndexRegistry) {
+	if reg == nil {
+		reg = vectorspace.NewIndexRegistry()
+	}
+	e.vectorRegistry = reg
+}
+
+// GetVectorRegistry exposes the current registry (for tests and adapters).
+func (e *StorageExecutor) GetVectorRegistry() *vectorspace.IndexRegistry {
+	return e.vectorRegistry
 }
 
 // GetEmbedder returns the query embedder if set.

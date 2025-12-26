@@ -1057,6 +1057,57 @@ func TestMemoryEngine_copyNode(t *testing.T) {
 	assert.Equal(t, float32(0.1), copied.ChunkEmbeddings[0][0])
 }
 
+func TestMemoryEngine_CopyNodeWithNamedEmbeddings(t *testing.T) {
+	original := &Node{
+		ID:     NodeID(prefixTestID("test-named")),
+		Labels: []string{"A", "B"},
+		Properties: map[string]any{
+			"key": "value",
+		},
+		NamedEmbeddings: map[string][]float32{
+			"default": {0.1, 0.2, 0.3},
+			"title":   {0.4, 0.5, 0.6},
+		},
+	}
+
+	copied := CopyNode(original)
+
+	// Verify values copied
+	assert.Equal(t, original.ID, copied.ID)
+	assert.Equal(t, original.Labels, copied.Labels)
+	assert.Equal(t, len(original.NamedEmbeddings), len(copied.NamedEmbeddings))
+	assert.Equal(t, original.NamedEmbeddings["default"], copied.NamedEmbeddings["default"])
+	assert.Equal(t, original.NamedEmbeddings["title"], copied.NamedEmbeddings["title"])
+
+	// Verify independent copies
+	original.NamedEmbeddings["default"][0] = 9.9
+	assert.Equal(t, float32(0.1), copied.NamedEmbeddings["default"][0])
+}
+
+func TestMemoryEngine_CopyNodeWithMixedEmbeddings(t *testing.T) {
+	original := &Node{
+		ID:     NodeID(prefixTestID("test-mixed")),
+		Labels: []string{"Document"},
+		NamedEmbeddings: map[string][]float32{
+			"default": {0.1, 0.2, 0.3},
+		},
+		ChunkEmbeddings: [][]float32{{0.4, 0.5, 0.6}},
+	}
+
+	copied := CopyNode(original)
+
+	// Verify both types of embeddings are copied
+	assert.Equal(t, original.NamedEmbeddings, copied.NamedEmbeddings)
+	assert.Equal(t, original.ChunkEmbeddings, copied.ChunkEmbeddings)
+
+	// Verify independent copies
+	original.NamedEmbeddings["default"][0] = 9.9
+	original.ChunkEmbeddings[0][0] = 9.9
+
+	assert.Equal(t, float32(0.1), copied.NamedEmbeddings["default"][0])
+	assert.Equal(t, float32(0.4), copied.ChunkEmbeddings[0][0])
+}
+
 func TestMemoryEngine_copyEdge(t *testing.T) {
 	original := &Edge{
 		ID:            EdgeID(prefixTestID("test")),

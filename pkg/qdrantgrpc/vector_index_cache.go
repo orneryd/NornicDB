@@ -1,9 +1,18 @@
+// Package qdrantgrpc - In-memory vector index cache for Qdrant gRPC searches.
+//
+// DEPRECATED: This endpoint-specific indexing cache is being phased out in favor
+// of the unified IndexRegistry and NamedEmbeddings data model. The cache is kept
+// as a fallback during migration but will be removed once IndexRegistry integration
+// is stable.
+//
+// This cache maintains per-collection, per-vector-name indexes to avoid
+// falling back to storage scans when Qdrant collection dimensions differ
+// from the DB's default embedding dimensions.
 package qdrantgrpc
 
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -249,9 +258,13 @@ type hnswVectorIndex struct {
 }
 
 func newHNSWVectorIndex(dim int, dist qpb.Distance) *hnswVectorIndex {
-	cfg := search.DefaultHNSWConfig()
+	// Load HNSW configuration from environment variables (respects quality presets)
+	cfg := search.HNSWConfigFromEnv()
 	// Slightly higher search ef improves recall while still being fast.
-	cfg.EfSearch = int(math.Max(float64(cfg.EfSearch), 128))
+	// Only override if environment didn't set a higher value.
+	if cfg.EfSearch < 128 {
+		cfg.EfSearch = 128
+	}
 	return &hnswVectorIndex{
 		dim:  dim,
 		dist: dist,

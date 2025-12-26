@@ -151,8 +151,147 @@ def main() -> int:
         lambda: client.count(collection_name=col, exact=True),
     )
 
+    # Named vectors tests (PR7: IndexRegistry + NamedEmbeddings integration)
+    col_named = f"{col}_named"
+    try:
+        client.delete_collection(collection_name=col_named)
+    except Exception:
+        pass
+
+    stage(
+        "collections.create_collection(named_vectors)",
+        lambda: client.create_collection(
+            collection_name=col_named,
+            vectors_config={
+                "title": m.VectorParams(size=dims, distance=m.Distance.COSINE),
+                "content": m.VectorParams(size=dims, distance=m.Distance.COSINE),
+            },
+        ),
+    )
+
+    # Upsert points with named vectors
+    points_named = [
+        m.PointStruct(
+            id="np1",
+            vector={
+                "title": [1.0, 0.0, 0.0, 0.0],
+                "content": [0.5, 0.5, 0.0, 0.0],
+            },
+            payload={"doc": "first", "type": "article"},
+        ),
+        m.PointStruct(
+            id="np2",
+            vector={
+                "title": [0.0, 1.0, 0.0, 0.0],
+                "content": [0.0, 0.5, 0.5, 0.0],
+            },
+            payload={"doc": "second", "type": "article"},
+        ),
+    ]
+
+    stage(
+        "points.upsert(named_vectors)",
+        lambda: client.upsert(collection_name=col_named, points=points_named),
+    )
+
+    stage(
+        "points.retrieve(named_vectors)",
+        lambda: client.retrieve(
+            collection_name=col_named,
+            ids=["np1"],
+            with_payload=True,
+            with_vectors=True,
+        ),
+    )
+
+    # Search with specific vectorName
+    stage(
+        "points.search(vectorName=title)",
+        lambda: client.search(
+            collection_name=col_named,
+            query_vector=[1.0, 0.0, 0.0, 0.0],
+            query_filter=None,
+            limit=3,
+            with_payload=True,
+            with_vectors=True,
+            using="title",  # Search using the "title" named vector
+        ),
+    )
+
+    stage(
+        "points.search(vectorName=content)",
+        lambda: client.search(
+            collection_name=col_named,
+            query_vector=[0.5, 0.5, 0.0, 0.0],
+            query_filter=None,
+            limit=3,
+            with_payload=True,
+            with_vectors=True,
+            using="content",  # Search using the "content" named vector
+        ),
+    )
+
+    # Update vectors (named vector operations)
+    stage(
+        "points.update_vectors(named)",
+        lambda: client.update_vectors(
+            collection_name=col_named,
+            points=[
+                m.PointVectors(
+                    id="np1",
+                    vector={
+                        "title": [0.9, 0.1, 0.0, 0.0],  # Update title vector
+                    },
+                )
+            ],
+        ),
+    )
+
+    # Verify updated vector
+    stage(
+        "points.retrieve(after_update)",
+        lambda: client.retrieve(
+            collection_name=col_named,
+            ids=["np1"],
+            with_payload=True,
+            with_vectors=True,
+        ),
+    )
+
+    # Delete specific named vector
+    stage(
+        "points.delete_vectors(named)",
+        lambda: client.delete_vectors(
+            collection_name=col_named,
+            points_selector=m.FilterSelector(
+                filter=m.Filter(
+                    must=[
+                        m.FieldCondition(
+                            key="doc",
+                            match=m.MatchValue(value="second"),
+                        )
+                    ]
+                )
+            ),
+            vectors=["content"],  # Delete only the "content" vector
+        ),
+    )
+
+    # Verify deletion
+    stage(
+        "points.retrieve(after_delete_vector)",
+        lambda: client.retrieve(
+            collection_name=col_named,
+            ids=["np2"],
+            with_payload=True,
+            with_vectors=True,
+        ),
+    )
+
+    stage("collections.delete_collection(named)", lambda: client.delete_collection(collection_name=col_named))
+
     stage("collections.delete_collection", lambda: client.delete_collection(collection_name=col))
-    print("[PY-E2E] PASS")
+    print("[PY-E2E] PASS (including named vectors)")
     return 0
 
 

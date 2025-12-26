@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/vectorspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +45,46 @@ func TestCallDbIndexVectorCreateNodeIndex(t *testing.T) {
 
 		assert.Equal(t, "euclidean", result.Rows[0][4])
 	})
+}
+
+func TestVectorIndexRegistryAndNamedEmbeddings(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	store := storage.NewNamespacedEngine(base, "nornic")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	node := &storage.Node{
+		ID:              storage.NodeID(storage.EnsureDatabasePrefix("nornic", "doc-1")),
+		Labels:          []string{"Doc"},
+		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+	}
+	_, err := store.CreateNode(node)
+	require.NoError(t, err)
+	storedNode, _ := store.GetNode(node.ID)
+	require.NotNil(t, storedNode)
+	require.NotNil(t, storedNode.NamedEmbeddings)
+
+	_, err = exec.Execute(ctx, "CALL db.index.vector.createNodeIndex('title_idx', 'Doc', 'title', 3, 'dot')", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 1, [1,0,0]) YIELD node, score", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	row := result.Rows[0]
+	nodeObj, ok := row[0].(*storage.Node)
+	require.True(t, ok)
+	assert.True(t, strings.HasSuffix(string(nodeObj.ID), "doc-1"))
+	score, ok := row[1].(float64)
+	require.True(t, ok)
+	assert.Greater(t, score, 0.0)
+
+	stats := exec.GetVectorRegistry().Stats()
+	require.Len(t, stats, 1)
+	assert.Equal(t, "doc", stats[0].Key.Type)
+	assert.Equal(t, "title", stats[0].Key.VectorName)
+	assert.Equal(t, 3, stats[0].Dimensions)
+	assert.Equal(t, vectorspace.DistanceDot, stats[0].Distance)
 }
 
 func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {

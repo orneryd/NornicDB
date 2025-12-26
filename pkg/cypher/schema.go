@@ -310,5 +310,7 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 		return nil, err
 	}
 
+	e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

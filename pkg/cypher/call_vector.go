@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/vectorspace"
 )
 
 // ========================================
@@ -188,10 +189,15 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 			}
 		}
 
-		// Get embeddings - check property first, then ChunkEmbeddings
-		// For nodes with multiple chunks, we compare against ALL chunks and use the best match
+		// Get embeddings - prefer named embeddings by property/vectorName, then property value, then chunks.
 		var embeddingsToCompare [][]float32
-		if targetProperty != "" {
+		vectorName := targetProperty
+		if vectorName == "" {
+			vectorName = vectorspace.DefaultVectorName
+		}
+		if emb, ok := node.NamedEmbeddings[vectorName]; ok && len(emb) > 0 {
+			embeddingsToCompare = [][]float32{emb}
+		} else if targetProperty != "" {
 			if emb, ok := node.Properties[targetProperty]; ok {
 				if floatSlice := toFloat32Slice(emb); len(floatSlice) > 0 {
 					embeddingsToCompare = [][]float32{floatSlice}

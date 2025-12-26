@@ -383,6 +383,8 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, 
 		return nil, fmt.Errorf("failed to create vector index: %w", err)
 	}
 
+	e.registerVectorSpace(indexName, label, property, dimension, similarity)
+
 	return &ExecuteResult{
 		Columns: []string{"name", "label", "property", "dimension", "similarityFunction"},
 		Rows:    [][]interface{}{{indexName, label, property, dimension, similarity}},
@@ -431,6 +433,8 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to create relationship vector index: %w", err)
 	}
+
+	e.registerVectorSpace(indexName, relType, property, dimension, similarity)
 
 	return &ExecuteResult{
 		Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
@@ -562,6 +566,8 @@ func (e *StorageExecutor) callDbIndexVectorDrop(cypher string) (*ExecuteResult, 
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
+
+	e.unregisterVectorSpace(indexName)
 
 	// Drop vector index - NornicDB manages indexes internally, so this is a no-op but returns success
 	return &ExecuteResult{

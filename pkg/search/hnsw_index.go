@@ -1,4 +1,22 @@
 // Package search provides HNSW vector indexing for fast approximate nearest neighbor search.
+//
+// HNSW Delete/Update Policy:
+//
+// Delete:
+//   - Remove() removes a vector and updates all neighbor connections
+//   - The graph structure is maintained (no tombstones)
+//   - Entry point is updated if the removed node was the entry point
+//
+// Update:
+//   - Current policy: Remove() + Add() pattern
+//   - Call Remove(id) then Add(id, newVector) to update a vector
+//   - This ensures the graph structure is correctly maintained
+//   - Future: A dedicated Update() method may be added for efficiency
+//
+// Graph Quality:
+//   - High-churn workloads (many updates/deletes) can degrade graph quality
+//   - Periodic rebuilds are recommended (see NORNICDB_VECTOR_ANN_REBUILD_INTERVAL)
+//   - Rebuilds restore optimal graph structure and improve recall
 package search
 
 import (
@@ -129,6 +147,32 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 	}
 
 	return nil
+}
+
+// Update updates an existing vector in the index.
+//
+// Update policy: Remove + Add pattern
+//   - Removes the old vector and all its connections
+//   - Adds the new vector with fresh connections
+//   - This ensures graph structure is correctly maintained
+//
+// If the vector doesn't exist, this is equivalent to Add().
+//
+// Performance: O(M * log(N)) where M is max connections, N is dataset size
+// For high-churn workloads, consider periodic rebuilds to restore graph quality.
+func (h *HNSWIndex) Update(id string, vec []float32) error {
+	// Check if vector exists
+	h.mu.RLock()
+	exists := h.nodes[id] != nil
+	h.mu.RUnlock()
+
+	if exists {
+		// Remove old vector first
+		h.Remove(id)
+	}
+
+	// Add new vector
+	return h.Add(id, vec)
 }
 
 // Remove removes a vector from the index by ID.

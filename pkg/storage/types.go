@@ -106,7 +106,8 @@ type EdgeID string
 //   - DecayScore: Memory importance (1.0=fresh, 0.0=decayed)
 //   - LastAccessed: Last time node was queried/updated
 //   - AccessCount: Total access frequency
-//   - Embedding: 1024-dim vector for semantic similarity
+//   - NamedEmbeddings: Named vector embeddings (e.g., "title", "content", "default")
+//   - ChunkEmbeddings: Chunked embeddings for long documents (legacy, migration support)
 //
 // Example 1 - Basic User Node:
 //
@@ -187,12 +188,13 @@ type Node struct {
 	Properties map[string]any `json:"properties"`
 
 	// NornicDB extensions
-	CreatedAt       time.Time   `json:"-"`
-	UpdatedAt       time.Time   `json:"-"`
-	DecayScore      float64     `json:"-"`
-	LastAccessed    time.Time   `json:"-"`
-	AccessCount     int64       `json:"-"`
-	ChunkEmbeddings [][]float32 `json:"-"` // All embeddings stored as chunks (even single chunk = array of 1) - opaque to users
+	CreatedAt       time.Time              `json:"-"`
+	UpdatedAt       time.Time              `json:"-"`
+	DecayScore      float64                `json:"-"`
+	LastAccessed    time.Time              `json:"-"`
+	AccessCount     int64                  `json:"-"`
+	NamedEmbeddings map[string][]float32   `json:"-"` // Named vector embeddings (e.g., "title", "content", "default")
+	ChunkEmbeddings [][]float32            `json:"-"` // Chunked embeddings for long documents (legacy, migration support)
 }
 
 // Edge represents a directed graph relationship (arc) between two nodes.
@@ -756,6 +758,53 @@ func (n *Node) ExtractInternalProperties() {
 		n.AccessCount = int64(v)
 		delete(n.Properties, "_accessCount")
 	}
+}
+
+// GetDefaultEmbedding returns the default embedding for a node, implementing
+// migration behavior from ChunkEmbeddings to NamedEmbeddings.
+//
+// Migration behavior (temporary):
+//   - If NamedEmbeddings["default"] exists, return it
+//   - Otherwise, if ChunkEmbeddings has at least one vector, treat ChunkEmbeddings[0] as "default"
+//   - Otherwise, return nil
+//
+// This allows backward compatibility with existing nodes that only have ChunkEmbeddings
+// while transitioning to the new NamedEmbeddings model.
+//
+// Example:
+//
+//	node := &storage.Node{
+//		ID: storage.NodeID("doc-1"),
+//		NamedEmbeddings: map[string][]float32{
+//			"default": []float32{0.1, 0.2, 0.3},
+//		},
+//	}
+//	emb := node.GetDefaultEmbedding() // Returns []float32{0.1, 0.2, 0.3}
+//
+//	// Legacy node with ChunkEmbeddings
+//	legacyNode := &storage.Node{
+//		ID: storage.NodeID("doc-2"),
+//		ChunkEmbeddings: [][]float32{{0.4, 0.5, 0.6}},
+//	}
+//	emb = legacyNode.GetDefaultEmbedding() // Returns []float32{0.4, 0.5, 0.6}
+func (n *Node) GetDefaultEmbedding() []float32 {
+	if n == nil {
+		return nil
+	}
+	
+	// First, check NamedEmbeddings["default"]
+	if n.NamedEmbeddings != nil {
+		if emb, ok := n.NamedEmbeddings["default"]; ok && len(emb) > 0 {
+			return emb
+		}
+	}
+	
+	// Migration behavior: treat ChunkEmbeddings[0] as "default"
+	if len(n.ChunkEmbeddings) > 0 && len(n.ChunkEmbeddings[0]) > 0 {
+		return n.ChunkEmbeddings[0]
+	}
+	
+	return nil
 }
 
 // =============================================================================

@@ -1589,6 +1589,57 @@ func TestEmbeddingIndexSearchCPUPath(t *testing.T) {
 	}
 }
 
+func TestEmbeddingIndexScoreSubsetCPU(t *testing.T) {
+	m, _ := NewManager(nil)
+	ei := NewEmbeddingIndex(m, &EmbeddingIndexConfig{Dimensions: 3})
+
+	if err := ei.Add("a", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if err := ei.Add("b", []float32{0, 1, 0}); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if err := ei.Add("c", []float32{1, 1, 0}); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+
+	results, err := ei.ScoreSubset([]float32{1, 0, 0}, []string{"b", "c", "a", "missing"})
+	if err != nil {
+		t.Fatalf("ScoreSubset() error = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results[0].ID != "a" || results[1].ID != "c" || results[2].ID != "b" {
+		t.Fatalf("unexpected ordering: %+v", results)
+	}
+
+	stats := ei.Stats()
+	if stats.SearchesCPU == 0 {
+		t.Error("expected CPU subset scoring to increment CPU counter")
+	}
+}
+
+func TestEmbeddingIndexScoreSubsetValidation(t *testing.T) {
+	m, _ := NewManager(nil)
+	ei := NewEmbeddingIndex(m, &EmbeddingIndexConfig{Dimensions: 3})
+	if err := ei.Add("a", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+
+	if _, err := ei.ScoreSubset([]float32{1, 0}, []string{"a"}); err == nil {
+		t.Fatal("expected dimension mismatch error")
+	}
+
+	results, err := ei.ScoreSubset([]float32{1, 0, 0}, nil)
+	if err != nil {
+		t.Fatalf("ScoreSubset nil ids error = %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results for empty id list, got %v", results)
+	}
+}
+
 func TestProbeBackendVariants(t *testing.T) {
 	// Test all backend variants
 	// Note: probeBackend may return DeviceInfo with Available=false when GPU hardware

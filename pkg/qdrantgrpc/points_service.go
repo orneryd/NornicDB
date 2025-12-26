@@ -96,10 +96,33 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 		props := payloadToProperties(point.Payload)
 		node := &storage.Node{
-			ID:              nodeID,
-			Labels:          []string{QdrantPointLabel, req.CollectionName},
-			Properties:      props,
-			ChunkEmbeddings: vecs,
+			ID:         nodeID,
+			Labels:     []string{QdrantPointLabel, req.CollectionName},
+			Properties: props,
+		}
+		
+		// Write vectors to NamedEmbeddings instead of ChunkEmbeddings
+		// Qdrant unnamed vector → NamedEmbeddings["default"]
+		// Qdrant named vectors → NamedEmbeddings[name]
+		if node.NamedEmbeddings == nil {
+			node.NamedEmbeddings = make(map[string][]float32)
+		}
+		for i, name := range vecNames {
+			if i >= len(vecs) {
+				break
+			}
+			// Map empty string to "default" for unnamed vectors
+			vectorName := name
+			if vectorName == "" {
+				vectorName = "default"
+			}
+			node.NamedEmbeddings[vectorName] = vecs[i]
+		}
+		
+		// Keep ChunkEmbeddings for backward compatibility during migration
+		// TODO: Remove ChunkEmbeddings once all code paths use NamedEmbeddings
+		if len(vecs) > 0 {
+			node.ChunkEmbeddings = vecs
 		}
 		setNodeVectorNames(node, vecNames)
 
@@ -1172,8 +1195,16 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 		}
 	}
 
-	// Named vectors require access to specific embeddings; search.Service only indexes chunk 0.
-	if s.searchService != nil && vectorName == "" {
+	// Use search service for default vector (vectorName == "" or "default")
+	// TODO: Once IndexRegistry supports named vectors, use it for all vectorName searches
+	// For named vectors, we currently use vecIndex (deprecated) or brute-force fallback
+	effectiveVectorName := vectorName
+	if effectiveVectorName == "" {
+		effectiveVectorName = "default"
+	}
+	
+	// Try search service for default vector (uses unified pipeline with HNSW/k-means)
+	if s.searchService != nil && effectiveVectorName == "default" {
 		// Fast path: avoid per-candidate storage lookups for type filtering.
 		// Qdrant "collections" map to a stable node ID prefix: qdrant:<collection>:<id>.
 		prefix := fmt.Sprintf("qdrant:%s:", collection)
@@ -1534,6 +1565,18 @@ func nodeVectorIndexByName(node *storage.Node, vectorName string) (int, bool) {
 }
 
 func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {
+	// First, try NamedEmbeddings (new data model)
+	effectiveName := vectorName
+	if effectiveName == "" {
+		effectiveName = "default"
+	}
+	if node.NamedEmbeddings != nil {
+		if vec, ok := node.NamedEmbeddings[effectiveName]; ok && len(vec) > 0 {
+			return vec, true
+		}
+	}
+	
+	// Fall back to ChunkEmbeddings for backward compatibility
 	idx, ok := nodeVectorIndexByName(node, vectorName)
 	if !ok || idx >= len(node.ChunkEmbeddings) {
 		return nil, false
@@ -1561,6 +1604,27 @@ func upsertNodeVectors(node *storage.Node, names []string, vectors [][]float32) 
 	if node == nil || len(vectors) == 0 {
 		return
 	}
+	
+	// Write vectors to NamedEmbeddings instead of ChunkEmbeddings
+	// Qdrant unnamed vector → NamedEmbeddings["default"]
+	// Qdrant named vectors → NamedEmbeddings[name]
+	if node.NamedEmbeddings == nil {
+		node.NamedEmbeddings = make(map[string][]float32)
+	}
+	for i, name := range names {
+		if i >= len(vectors) {
+			break
+		}
+		// Map empty string to "default" for unnamed vectors
+		vectorName := name
+		if vectorName == "" {
+			vectorName = "default"
+		}
+		node.NamedEmbeddings[vectorName] = vectors[i]
+	}
+	
+	// Keep ChunkEmbeddings for backward compatibility during migration
+	// TODO: Remove ChunkEmbeddings once all code paths use NamedEmbeddings
 	node.ChunkEmbeddings = vectors
 	setNodeVectorNames(node, names)
 }
@@ -1676,7 +1740,83 @@ func withVectorsSelection(selector *qpb.WithVectorsSelector) (include bool, name
 }
 
 func vectorsOutputFromNode(node *storage.Node, requestedNames []string) *qpb.VectorsOutput {
-	if node == nil || len(node.ChunkEmbeddings) == 0 {
+	if node == nil {
+		return nil
+	}
+
+	// First, try NamedEmbeddings (new data model)
+	if node.NamedEmbeddings != nil && len(node.NamedEmbeddings) > 0 {
+		// Determine which names to include
+		includeNames := make([]string, 0)
+		if len(requestedNames) > 0 {
+			// Include only requested names
+			for _, reqName := range requestedNames {
+				effectiveName := reqName
+				if effectiveName == "" {
+					effectiveName = "default"
+				}
+				if _, ok := node.NamedEmbeddings[effectiveName]; ok {
+					includeNames = append(includeNames, reqName) // Keep original name for output
+				}
+			}
+		} else {
+			// Include all names (map keys)
+			for name := range node.NamedEmbeddings {
+				// Map "default" back to empty string for unnamed vector
+				if name == "default" {
+					includeNames = append(includeNames, "")
+				} else {
+					includeNames = append(includeNames, name)
+				}
+			}
+		}
+
+		if len(includeNames) == 0 {
+			return nil
+		}
+
+		// Single unnamed vector
+		if len(includeNames) == 1 && includeNames[0] == "" {
+			vec, ok := node.NamedEmbeddings["default"]
+			if !ok || len(vec) == 0 {
+				return nil
+			}
+			return &qpb.VectorsOutput{
+				VectorsOptions: &qpb.VectorsOutput_Vector{
+					Vector: &qpb.VectorOutput{
+						Vector: &qpb.VectorOutput_Dense{Dense: &qpb.DenseVector{Data: vec}},
+					},
+				},
+			}
+		}
+
+		// Multiple named vectors
+		out := make(map[string]*qpb.VectorOutput, len(includeNames))
+		for _, name := range includeNames {
+			effectiveName := name
+			if effectiveName == "" {
+				effectiveName = "default"
+			}
+			vec, ok := node.NamedEmbeddings[effectiveName]
+			if !ok || len(vec) == 0 {
+				continue
+			}
+			out[name] = &qpb.VectorOutput{
+				Vector: &qpb.VectorOutput_Dense{Dense: &qpb.DenseVector{Data: vec}},
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return &qpb.VectorsOutput{
+			VectorsOptions: &qpb.VectorsOutput_Vectors{
+				Vectors: &qpb.NamedVectorsOutput{Vectors: out},
+			},
+		}
+	}
+
+	// Fall back to ChunkEmbeddings for backward compatibility
+	if len(node.ChunkEmbeddings) == 0 {
 		return nil
 	}
 
@@ -1716,11 +1856,11 @@ func vectorsOutputFromNode(node *storage.Node, requestedNames []string) *qpb.Vec
 		return nil
 	}
 
-	return &qpb.VectorsOutput{
-		VectorsOptions: &qpb.VectorsOutput_Vectors{
-			Vectors: &qpb.NamedVectorsOutput{Vectors: out},
-		},
-	}
+		return &qpb.VectorsOutput{
+			VectorsOptions: &qpb.VectorsOutput_Vectors{
+				Vectors: &qpb.NamedVectorsOutput{Vectors: out},
+			},
+		}
 }
 
 func payloadToProperties(payload map[string]*qpb.Value) map[string]any {

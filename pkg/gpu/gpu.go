@@ -143,6 +143,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1250,6 +1251,11 @@ type EmbeddingIndex struct {
 	uploadsCount int64
 	uploadBytes  int64
 
+	// Sync policy
+	autoSync         bool  // Auto-sync to GPU after batch operations
+	batchThreshold   int   // Threshold for auto-sync
+	pendingSinceSync int64 // Number of pending updates since last sync
+
 	mu sync.RWMutex
 }
 
@@ -1324,6 +1330,13 @@ func NewEmbeddingIndex(manager *Manager, config *EmbeddingIndexConfig) *Embeddin
 		idToIndex:   make(map[string]int, config.InitialCap),
 		cpuVectors:  make([]float32, 0, config.InitialCap*config.Dimensions),
 		gpuCapacity: config.InitialCap,
+		autoSync:    config.AutoSync,
+		batchThreshold: func() int {
+			if config.BatchThreshold <= 0 {
+				return DefaultEmbeddingIndexConfig(config.Dimensions).BatchThreshold
+			}
+			return config.BatchThreshold
+		}(),
 	}
 }
 
@@ -1381,6 +1394,10 @@ func (ei *EmbeddingIndex) Add(nodeID string, embedding []float32) error {
 	}
 
 	ei.gpuSynced = false
+	if ei.shouldAutoSync(1) {
+		// Best-effort; auto sync failures fall back to manual sync paths.
+		_ = ei.SyncToGPU()
+	}
 	return nil
 }
 
@@ -1408,6 +1425,9 @@ func (ei *EmbeddingIndex) AddBatch(nodeIDs []string, embeddings [][]float32) err
 	}
 
 	ei.gpuSynced = false
+	if ei.shouldAutoSync(len(nodeIDs)) {
+		_ = ei.SyncToGPU()
+	}
 	return nil
 }
 
@@ -1441,6 +1461,24 @@ func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 	delete(ei.idToIndex, nodeID)
 
 	ei.gpuSynced = false
+	if ei.shouldAutoSync(1) {
+		_ = ei.SyncToGPU()
+	}
+	return true
+}
+
+func (ei *EmbeddingIndex) shouldAutoSync(delta int) bool {
+	if !ei.autoSync || delta <= 0 {
+		return false
+	}
+	if ei.manager == nil || !ei.manager.IsEnabled() || ei.manager.device == nil {
+		return false
+	}
+	pending := atomic.AddInt64(&ei.pendingSinceSync, int64(delta))
+	if pending < int64(ei.batchThreshold) {
+		return false
+	}
+	atomic.StoreInt64(&ei.pendingSinceSync, 0)
 	return true
 }
 
@@ -1506,6 +1544,54 @@ func (ei *EmbeddingIndex) Search(query []float32, k int) ([]SearchResult, error)
 	}
 
 	return ei.searchCPU(query, k)
+}
+
+// ScoreSubset computes similarity scores for a specific subset of node IDs.
+// Missing IDs are ignored. Results are sorted by score descending.
+func (ei *EmbeddingIndex) ScoreSubset(query []float32, ids []string) ([]SearchResult, error) {
+	if len(query) != ei.dimensions {
+		return nil, ErrInvalidDimensions
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	ei.mu.RLock()
+	validIndices := make([]int, 0, len(ids))
+	validIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if idx, ok := ei.idToIndex[id]; ok {
+			validIndices = append(validIndices, idx)
+			validIDs = append(validIDs, id)
+		}
+	}
+
+	if len(validIndices) == 0 {
+		ei.mu.RUnlock()
+		return nil, nil
+	}
+
+	useGPU := ei.manager != nil && ei.manager.IsEnabled() && ei.gpuSynced && ei.manager.device != nil
+	var subsetVectors []float32
+	if useGPU {
+		subsetVectors = make([]float32, 0, len(validIndices)*ei.dimensions)
+		for _, idx := range validIndices {
+			start := idx * ei.dimensions
+			end := start + ei.dimensions
+			subsetVectors = append(subsetVectors, ei.cpuVectors[start:end]...)
+		}
+		normalizeFlatVectors(subsetVectors, ei.dimensions)
+	}
+	ei.mu.RUnlock()
+
+	if useGPU {
+		if results, err := ei.scoreSubsetGPU(subsetVectors, validIDs, query); err == nil {
+			return results, nil
+		}
+		// GPU errors fall back to CPU subset scoring.
+	}
+
+	return ei.scoreSubsetCPU(validIndices, validIDs, query), nil
 }
 
 // searchGPU performs similarity search on GPU.
@@ -1740,6 +1826,176 @@ func (ei *EmbeddingIndex) searchCPU(query []float32, k int) ([]SearchResult, err
 	return results, nil
 }
 
+func (ei *EmbeddingIndex) scoreSubsetCPU(indices []int, ids []string, query []float32) []SearchResult {
+	atomic.AddInt64(&ei.searchesCPU, 1)
+
+	ei.mu.RLock()
+	results := make([]SearchResult, len(indices))
+	for i, idx := range indices {
+		start := idx * ei.dimensions
+		end := start + ei.dimensions
+		score := cosineSimilarityFlat(query, ei.cpuVectors[start:end])
+		results[i] = SearchResult{
+			ID:       ids[i],
+			Score:    score,
+			Distance: 1 - score,
+		}
+	}
+	ei.mu.RUnlock()
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	return results
+}
+
+func (ei *EmbeddingIndex) scoreSubsetGPU(vectors []float32, ids []string, query []float32) ([]SearchResult, error) {
+	atomic.AddInt64(&ei.searchesGPU, 1)
+
+	if len(vectors) == 0 || len(ids) == 0 {
+		return nil, nil
+	}
+
+	if ei.manager == nil || ei.manager.device == nil {
+		return nil, ErrGPUNotAvailable
+	}
+
+	switch ei.manager.device.Backend {
+	case BackendMetal:
+		return ei.scoreSubsetMetal(vectors, ids, query)
+	case BackendCUDA:
+		return ei.scoreSubsetCUDA(vectors, ids, query)
+	case BackendVulkan:
+		return ei.scoreSubsetVulkan(vectors, ids, query)
+	default:
+		return nil, ErrGPUNotAvailable
+	}
+}
+
+func (ei *EmbeddingIndex) scoreSubsetMetal(vectors []float32, ids []string, query []float32) ([]SearchResult, error) {
+	if ei.metalDevice == nil {
+		return nil, ErrGPUNotAvailable
+	}
+
+	buffer, err := ei.metalDevice.NewBuffer(vectors, metal.StorageShared)
+	if err != nil {
+		return nil, err
+	}
+	defer buffer.Release()
+
+	n := uint32(len(ids))
+	results, err := ei.metalDevice.Search(buffer, query, n, uint32(ei.dimensions), int(n), true)
+	if err != nil {
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
+		return nil, err
+	}
+
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2)
+	}
+
+	output := make([]SearchResult, 0, len(results))
+	for _, r := range results {
+		if int(r.Index) < len(ids) {
+			output = append(output, SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			})
+		}
+	}
+
+	return output, nil
+}
+
+func (ei *EmbeddingIndex) scoreSubsetCUDA(vectors []float32, ids []string, query []float32) ([]SearchResult, error) {
+	if ei.cudaDevice == nil {
+		return nil, ErrGPUNotAvailable
+	}
+
+	buffer, err := ei.cudaDevice.NewBuffer(vectors, cuda.MemoryDevice)
+	if err != nil {
+		return nil, err
+	}
+	defer buffer.Release()
+
+	n := uint32(len(ids))
+	results, err := ei.cudaDevice.Search(buffer, query, n, uint32(ei.dimensions), len(ids), true)
+	if err != nil {
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
+		return nil, err
+	}
+
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2)
+	}
+
+	output := make([]SearchResult, 0, len(results))
+	for _, r := range results {
+		if int(r.Index) < len(ids) {
+			output = append(output, SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			})
+		}
+	}
+
+	return output, nil
+}
+
+func (ei *EmbeddingIndex) scoreSubsetVulkan(vectors []float32, ids []string, query []float32) ([]SearchResult, error) {
+	if ei.vulkanDevice == nil {
+		return nil, ErrGPUNotAvailable
+	}
+
+	buffer, err := ei.vulkanDevice.NewBuffer(vectors)
+	if err != nil {
+		return nil, err
+	}
+	defer buffer.Release()
+
+	n := uint32(len(ids))
+	var results []vulkan.SearchResult
+
+	if ei.vulkanCompute != nil {
+		results, err = ei.vulkanCompute.SearchGPU(buffer, query, n, uint32(ei.dimensions), len(ids), true)
+	} else {
+		results, err = ei.vulkanDevice.Search(buffer, query, n, uint32(ei.dimensions), len(ids), true)
+	}
+	if err != nil {
+		if ei.manager != nil {
+			atomic.AddInt64(&ei.manager.stats.FallbackCount, 1)
+		}
+		return nil, err
+	}
+
+	if ei.manager != nil {
+		atomic.AddInt64(&ei.manager.stats.OperationsGPU, 1)
+		atomic.AddInt64(&ei.manager.stats.KernelExecutions, 2)
+	}
+
+	output := make([]SearchResult, 0, len(results))
+	for _, r := range results {
+		if int(r.Index) < len(ids) {
+			output = append(output, SearchResult{
+				ID:       ids[r.Index],
+				Score:    r.Score,
+				Distance: 1 - r.Score,
+			})
+		}
+	}
+
+	return output, nil
+}
+
 // SyncToGPU uploads the current embeddings to GPU memory.
 func (ei *EmbeddingIndex) SyncToGPU() error {
 	if ei.manager == nil || !ei.manager.IsEnabled() {
@@ -1751,6 +2007,7 @@ func (ei *EmbeddingIndex) SyncToGPU() error {
 
 	if len(ei.cpuVectors) == 0 {
 		ei.gpuSynced = true
+		atomic.StoreInt64(&ei.pendingSinceSync, 0)
 		return nil
 	}
 
@@ -1758,11 +2015,23 @@ func (ei *EmbeddingIndex) SyncToGPU() error {
 	if ei.manager.device != nil {
 		switch ei.manager.device.Backend {
 		case BackendMetal:
-			return ei.syncToMetal()
+			err := ei.syncToMetal()
+			if err == nil {
+				atomic.StoreInt64(&ei.pendingSinceSync, 0)
+			}
+			return err
 		case BackendCUDA:
-			return ei.syncToCUDA()
+			err := ei.syncToCUDA()
+			if err == nil {
+				atomic.StoreInt64(&ei.pendingSinceSync, 0)
+			}
+			return err
 		case BackendVulkan:
-			return ei.syncToVulkan()
+			err := ei.syncToVulkan()
+			if err == nil {
+				atomic.StoreInt64(&ei.pendingSinceSync, 0)
+			}
+			return err
 		}
 	}
 
@@ -2182,6 +2451,26 @@ func cosineSimilarityFlat(a, b []float32) float32 {
 	}
 
 	return dot / (sqrt32(normA) * sqrt32(normB))
+}
+
+func normalizeFlatVectors(vectors []float32, dims int) {
+	if dims <= 0 || len(vectors)%dims != 0 {
+		return
+	}
+	for offset := 0; offset < len(vectors); offset += dims {
+		var norm float32
+		for i := 0; i < dims; i++ {
+			v := vectors[offset+i]
+			norm += v * v
+		}
+		if norm == 0 {
+			continue
+		}
+		norm = 1 / sqrt32(norm)
+		for i := 0; i < dims; i++ {
+			vectors[offset+i] *= norm
+		}
+	}
 }
 
 // partialSort performs partial quicksort to get top-k elements.

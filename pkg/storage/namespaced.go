@@ -168,17 +168,8 @@ func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
 func (n *NamespacedEngine) CreateNode(node *Node) (NodeID, error) {
 	// Create a copy with namespaced ID
 	namespacedID := n.prefixNodeID(node.ID)
-	namespacedNode := &Node{
-		ID:              namespacedID,
-		Labels:          node.Labels,
-		Properties:      node.Properties,
-		CreatedAt:       node.CreatedAt,
-		UpdatedAt:       node.UpdatedAt,
-		DecayScore:      node.DecayScore,
-		LastAccessed:    node.LastAccessed,
-		AccessCount:     node.AccessCount,
-		ChunkEmbeddings: node.ChunkEmbeddings,
-	}
+	namespacedNode := copyNode(node)
+	namespacedNode.ID = namespacedID
 	actualID, err := n.inner.CreateNode(namespacedNode)
 	if err != nil {
 		return "", err
@@ -205,17 +196,8 @@ func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
 func (n *NamespacedEngine) UpdateNode(node *Node) error {
 	// Always prefix the ID (user-facing API always receives unprefixed IDs)
 	namespacedID := n.prefixNodeID(node.ID)
-	namespacedNode := &Node{
-		ID:              namespacedID,
-		Labels:          node.Labels,
-		Properties:      node.Properties,
-		CreatedAt:       node.CreatedAt,
-		UpdatedAt:       node.UpdatedAt,
-		DecayScore:      node.DecayScore,
-		LastAccessed:    node.LastAccessed,
-		AccessCount:     node.AccessCount,
-		ChunkEmbeddings: node.ChunkEmbeddings,
-	}
+	namespacedNode := copyNode(node)
+	namespacedNode.ID = namespacedID
 	return n.inner.UpdateNode(namespacedNode)
 }
 

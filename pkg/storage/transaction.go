@@ -121,6 +121,15 @@ func copyNode(node *Node) *Node {
 		}
 	}
 
+	if node.NamedEmbeddings != nil {
+		nodeCopy.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
+		for name, emb := range node.NamedEmbeddings {
+			embCopy := make([]float32, len(emb))
+			copy(embCopy, emb)
+			nodeCopy.NamedEmbeddings[name] = embCopy
+		}
+	}
+
 	return nodeCopy
 }
 

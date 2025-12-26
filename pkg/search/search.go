@@ -80,6 +80,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -237,6 +238,10 @@ type Service struct {
 	crossEncoder  *CrossEncoder
 	mu            sync.RWMutex
 
+	// HNSW index for approximate nearest neighbor search (optional, lazy-initialized)
+	hnswIndex *HNSWIndex
+	hnswMu    sync.RWMutex
+
 	// GPU k-means clustering for accelerated search (optional)
 	clusterIndex   *gpu.ClusterIndex
 	clusterEnabled bool
@@ -251,6 +256,10 @@ type Service struct {
 	// Configurable via SetDefaultMinSimilarity(). Default: -1 (not set, use SearchOptions default)
 	// Set to 0.0 to let RRF handle relevance filtering.
 	defaultMinSimilarity float64
+
+	// Vector search pipeline (lazy-initialized)
+	vectorPipeline *VectorSearchPipeline
+	pipelineMu      sync.RWMutex
 }
 
 // NewService creates a new search Service with empty indexes.
@@ -444,7 +453,15 @@ func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
 const DefaultMinEmbeddingsForClustering = 1000
 
 // TriggerClustering runs k-means clustering on all indexed embeddings.
-// Call this after BuildIndexes() completes to organize embeddings into clusters.
+//
+// Trigger Policies:
+//   - After bulk loads: Automatically called after BuildIndexes() completes
+//   - Periodic clustering: Background timer runs clustering at regular intervals
+//   - Manual trigger: Call this after bulk data loading to enable k-means routing
+//
+// Once clustering completes, the vector search pipeline automatically uses
+// KMeansCandidateGen for candidate generation, providing significant speedup
+// for very large datasets (N > 100K).
 //
 // Returns nil (not error) if there are too few embeddings - clustering will
 // be skipped silently as brute-force search is faster for small datasets.
@@ -630,6 +647,14 @@ func (s *Service) IndexNode(node *storage.Node) error {
 					node.ID, len(mainEmbedding), s.vectorIndex.dimensions)
 			}
 		} else {
+			// Also add/update to HNSW index if it exists (for large datasets)
+			s.hnswMu.RLock()
+			if s.hnswIndex != nil {
+				// Use Update() to handle both new and existing vectors correctly
+				_ = s.hnswIndex.Update(string(node.ID), mainEmbedding) // Best effort
+			}
+			s.hnswMu.RUnlock()
+
 			// Also add to cluster index if enabled
 			if s.clusterIndex != nil {
 				_ = s.clusterIndex.Add(string(node.ID), mainEmbedding) // Best effort
@@ -682,6 +707,13 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// Remove main embedding
 	s.vectorIndex.Remove(nodeIDStr)
 	s.fulltextIndex.Remove(nodeIDStr)
+
+	// Also remove from HNSW index if it exists
+	s.hnswMu.RLock()
+	if s.hnswIndex != nil {
+		s.hnswIndex.Remove(nodeIDStr)
+	}
+	s.hnswMu.RUnlock()
 
 	// Also remove from cluster index if enabled
 	if s.clusterIndex != nil {
@@ -947,6 +979,9 @@ type SearchCandidate struct {
 // VectorSearchCandidates performs vector-only search and returns lightweight
 // candidates without enrichment. It is optimized for throughput: it skips BM25,
 // RRF fusion, and storage fetches.
+//
+// This method uses the unified vector search pipeline (CandidateGen + ExactScore)
+// with automatic strategy selection (brute-force for small N, HNSW for large N).
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
 	if opts == nil {
 		opts = DefaultSearchOptions()
@@ -957,51 +992,195 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 		return nil, fmt.Errorf("vector search requires embedding")
 	}
 
+	// Try cluster-accelerated search first if available (preserves existing behavior)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	candidateLimit := opts.Limit * 2
-	if candidateLimit <= 0 {
-		candidateLimit = 20
-	}
-
-	var results []indexResult
-	var err error
 	useClusteredSearch := s.clusterIndex != nil && s.clusterIndex.IsClustered()
+	s.mu.RUnlock()
 
 	if useClusteredSearch {
+		candidateLimit := opts.Limit * 2
+		if candidateLimit <= 0 {
+			candidateLimit = 20
+		}
 		numClustersToSearch := 3
 		clusterResults, clusterErr := s.clusterIndex.SearchWithClusters(embedding, candidateLimit, numClustersToSearch)
 		if clusterErr == nil && len(clusterResults) > 0 {
-			results = make([]indexResult, 0, len(clusterResults))
+			results := make([]SearchCandidate, 0, len(clusterResults))
 			for _, r := range clusterResults {
-				results = append(results, indexResult{ID: r.ID, Score: float64(r.Score)})
+				results = append(results, SearchCandidate{ID: r.ID, Score: float64(r.Score)})
 			}
-		} else {
-			results, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
-			if err != nil {
-				return nil, err
+			// Apply filters
+			if len(opts.Types) > 0 {
+				results = s.filterCandidatesByType(results, opts.Types)
 			}
+			if len(results) > opts.Limit && opts.Limit > 0 {
+				results = results[:opts.Limit]
+			}
+			return results, nil
 		}
-	} else {
-		results, err = s.vectorIndex.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
-		if err != nil {
-			return nil, err
-		}
+		// Fall through to pipeline if cluster search fails
 	}
 
+	// Use unified vector search pipeline
+	pipeline, err := s.getOrCreateVectorPipeline()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vector pipeline: %w", err)
+	}
+
+	scored, err := pipeline.Search(ctx, embedding, opts.Limit, opts.GetMinSimilarity(0.5))
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to SearchCandidate
+	candidates := make([]SearchCandidate, len(scored))
+	for i, s := range scored {
+		candidates[i] = SearchCandidate{ID: s.ID, Score: s.Score}
+	}
+
+	// Apply type filters
 	if len(opts.Types) > 0 {
-		results = s.filterByType(results, opts.Types)
-	}
-	if len(results) > opts.Limit && opts.Limit > 0 {
-		results = results[:opts.Limit]
+		candidates = s.filterCandidatesByType(candidates, opts.Types)
 	}
 
-	out := make([]SearchCandidate, 0, len(results))
-	for _, r := range results {
-		out = append(out, SearchCandidate{ID: r.ID, Score: r.Score})
+	return candidates, nil
+}
+
+// getOrCreateVectorPipeline returns the vector search pipeline, creating it if needed.
+//
+// The pipeline uses auto strategy selection:
+//   - K-means routing for very large datasets with clustering enabled (N > 100K, optimal)
+//   - Brute-force for small datasets (N < NSmallMax)
+//   - HNSW for large datasets (N >= NSmallMax, no clustering)
+func (s *Service) getOrCreateVectorPipeline() (*VectorSearchPipeline, error) {
+	s.pipelineMu.RLock()
+	if s.vectorPipeline != nil {
+		s.pipelineMu.RUnlock()
+		return s.vectorPipeline, nil
 	}
-	return out, nil
+	s.pipelineMu.RUnlock()
+
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if s.vectorPipeline != nil {
+		return s.vectorPipeline, nil
+	}
+
+	s.mu.RLock()
+	vectorCount := s.vectorIndex.Count()
+	dimensions := s.vectorIndex.GetDimensions()
+	s.mu.RUnlock()
+
+	// Auto strategy: choose candidate generator based on dataset size and clustering
+	var candidateGen CandidateGenerator
+	
+	// Check if k-means clustering is available and clustered (optimal for very large N)
+	useKMeans := s.clusterIndex != nil && s.clusterIndex.IsClustered()
+	
+	if useKMeans {
+		// Very large dataset with clustering: use k-means routing
+		// K-means is optimal for N > 100K where cluster routing provides significant speedup
+		numClustersToSearch := 3 // Default: search 3 nearest clusters
+		candidateGen = NewKMeansCandidateGen(s.clusterIndex, s.vectorIndex, numClustersToSearch)
+	} else if vectorCount < NSmallMax {
+		// Small dataset: use brute-force
+		candidateGen = NewBruteForceCandidateGen(s.vectorIndex)
+	} else {
+		// Large dataset: use HNSW (lazy-initialize if needed)
+		hnswIndex, err := s.getOrCreateHNSWIndex(dimensions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HNSW index: %w", err)
+		}
+		candidateGen = NewHNSWCandidateGen(hnswIndex)
+	}
+
+	// Create exact scorer (CPU for now, GPU will be added in PR5)
+	exactScorer := NewCPUExactScorer(s.vectorIndex)
+
+	s.vectorPipeline = NewVectorSearchPipeline(candidateGen, exactScorer)
+	return s.vectorPipeline, nil
+}
+
+// getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
+func (s *Service) getOrCreateHNSWIndex(dimensions int) (*HNSWIndex, error) {
+	s.hnswMu.RLock()
+	if s.hnswIndex != nil {
+		s.hnswMu.RUnlock()
+		return s.hnswIndex, nil
+	}
+	s.hnswMu.RUnlock()
+
+	s.hnswMu.Lock()
+	defer s.hnswMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if s.hnswIndex != nil {
+		return s.hnswIndex, nil
+	}
+
+	// Create HNSW index with config from environment variables
+	config := HNSWConfigFromEnv()
+	s.hnswIndex = NewHNSWIndex(dimensions, config)
+	
+	// Log configuration for observability
+	quality := os.Getenv("NORNICDB_VECTOR_ANN_QUALITY")
+	if quality == "" {
+		quality = "balanced"
+	}
+	log.Printf("🔍 HNSW index created: quality=%s M=%d efConstruction=%d efSearch=%d",
+		quality, config.M, config.EfConstruction, config.EfSearch)
+
+	// Populate HNSW index from vector index
+	s.mu.RLock()
+	s.vectorIndex.mu.RLock()
+	for id, vec := range s.vectorIndex.vectors {
+		if err := s.hnswIndex.Add(id, vec); err != nil {
+			s.vectorIndex.mu.RUnlock()
+			s.mu.RUnlock()
+			return nil, fmt.Errorf("failed to add vector to HNSW: %w", err)
+		}
+	}
+	s.vectorIndex.mu.RUnlock()
+	s.mu.RUnlock()
+
+	return s.hnswIndex, nil
+}
+
+// filterCandidatesByType filters candidates by node type/label.
+func (s *Service) filterCandidatesByType(candidates []SearchCandidate, types []string) []SearchCandidate {
+	if len(types) == 0 {
+		return candidates
+	}
+
+	typeSet := make(map[string]bool, len(types))
+	for _, t := range types {
+		typeSet[strings.ToLower(t)] = true
+	}
+
+	filtered := make([]SearchCandidate, 0, len(candidates))
+	for _, cand := range candidates {
+		node, err := s.engine.GetNode(storage.NodeID(cand.ID))
+		if err != nil {
+			continue // Skip if node not found
+		}
+
+		// Check if any label matches
+		matches := false
+		for _, label := range node.Labels {
+			if typeSet[strings.ToLower(label)] {
+				matches = true
+				break
+			}
+		}
+
+		if matches {
+			filtered = append(filtered, cand)
+		}
+	}
+
+	return filtered
 }
 
 // fuseRRF implements the Reciprocal Rank Fusion (RRF) algorithm.
