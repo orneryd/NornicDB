@@ -509,9 +509,27 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		key := nodeKey(id)
 
+		// CRITICAL: Delete separately stored embeddings FIRST, before checking if node exists.
+		// This ensures embeddings are cleaned up even if the node record is missing or corrupted.
+		// Embeddings use namespaced keys (prefixEmbedding + nodeID + 0x00 + chunkIndex),
+		// so we must use the same prefixed ID that was used when storing them.
+		embPrefix := embeddingPrefix(id)
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = embPrefix
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			if err := txn.Delete(it.Item().Key()); err != nil {
+				return fmt.Errorf("failed to delete embedding chunk: %w", err)
+			}
+		}
+
 		// Get node for label cleanup
 		item, err := txn.Get(key)
 		if err == badger.ErrKeyNotFound {
+			// Node doesn't exist, but we've already cleaned up embeddings above
+			// Also clean up pending embeddings index
+			txn.Delete(pendingEmbedKey(id))
 			return ErrNotFound
 		}
 		if err != nil {
@@ -525,18 +543,6 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			return decodeErr
 		}); err != nil {
 			return err
-		}
-
-		// Delete separately stored embeddings (if any)
-		embPrefix := embeddingPrefix(id)
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = embPrefix
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			if err := txn.Delete(it.Item().Key()); err != nil {
-				return fmt.Errorf("failed to delete embedding chunk: %w", err)
-			}
 		}
 
 		// Delete label indexes
