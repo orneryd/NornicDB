@@ -20,7 +20,6 @@
 package search
 
 import (
-	"container/heap"
 	"context"
 	"math"
 	"math/rand"
@@ -65,6 +64,10 @@ type HNSWIndex struct {
 	nodes      map[string]*hnswNode
 	entryPoint string
 	maxLevel   int
+
+	queryBufPool sync.Pool
+	visitedPool  sync.Pool
+	heapPool     sync.Pool
 }
 
 // NewHNSWIndex creates a new HNSW index with the given dimensions and config.
@@ -72,12 +75,22 @@ func NewHNSWIndex(dimensions int, config HNSWConfig) *HNSWIndex {
 	if config.M == 0 {
 		config = DefaultHNSWConfig()
 	}
-	return &HNSWIndex{
+	h := &HNSWIndex{
 		config:     config,
 		dimensions: dimensions,
 		nodes:      make(map[string]*hnswNode),
 		maxLevel:   0,
 	}
+	h.queryBufPool.New = func() any {
+		return make([]float32, dimensions)
+	}
+	h.visitedPool.New = func() any {
+		return make(map[string]struct{}, config.EfSearch*8)
+	}
+	h.heapPool.New = func() any {
+		return &distHeap{items: make([]hnswDistItem, 0, config.EfSearch*2)}
+	}
+	return h
 }
 
 // Add inserts a vector into the index.
@@ -234,7 +247,17 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, minSimil
 		return []SearchResult{}, nil
 	}
 
-	normalized := vector.Normalize(query)
+	bufAny := h.queryBufPool.Get()
+	buf := bufAny.([]float32)
+	if cap(buf) < h.dimensions {
+		buf = make([]float32, h.dimensions)
+	}
+	normalized := buf[:h.dimensions]
+	copy(normalized, query)
+	vector.NormalizeInPlace(normalized)
+	defer h.queryBufPool.Put(buf)
+
+	minSim32 := float32(minSimilarity)
 	ep := h.entryPoint
 
 	for l := h.maxLevel; l > 0; l-- {
@@ -250,12 +273,12 @@ func (h *HNSWIndex) Search(ctx context.Context, query []float32, k int, minSimil
 		}
 
 		node := h.nodes[candidateID]
-		similarity := vector.DotProduct(normalized, node.vector)
+		similarity := vector.DotProductSIMD(normalized, node.vector)
 
-		if similarity >= minSimilarity {
+		if similarity >= minSim32 {
 			results = append(results, SearchResult{
 				ID:    candidateID,
-				Score: similarity,
+				Score: float64(similarity),
 			})
 		}
 
@@ -284,7 +307,7 @@ func (h *HNSWIndex) Size() int {
 
 func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int) string {
 	current := entryID
-	currentDist := 1.0 - vector.DotProduct(query, h.nodes[current].vector)
+	currentDist := float32(1.0) - vector.DotProductSIMD(query, h.nodes[current].vector)
 
 	for {
 		changed := false
@@ -297,7 +320,7 @@ func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int
 		for i := len(neighbors) - 1; i >= 0; i-- {
 			neighborID := neighbors[i]
 			neighbor := h.nodes[neighborID]
-			dist := 1.0 - vector.DotProduct(query, neighbor.vector)
+			dist := float32(1.0) - vector.DotProductSIMD(query, neighbor.vector)
 			if dist < currentDist {
 				current = neighborID
 				currentDist = dist
@@ -314,24 +337,36 @@ func (h *HNSWIndex) searchLayerSingle(query []float32, entryID string, level int
 }
 
 func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level int) []string {
-	visited := make(map[string]bool)
-	visited[entryID] = true
+	if ef <= 0 {
+		return nil
+	}
 
-	candidates := &hnswDistHeap{}
-	heap.Init(candidates)
+	visited := h.visitedPool.Get().(map[string]struct{})
+	visited[entryID] = struct{}{}
+	defer func() {
+		for k := range visited {
+			delete(visited, k)
+		}
+		h.visitedPool.Put(visited)
+	}()
 
-	results := &hnswDistHeap{}
-	heap.Init(results)
+	candidates := h.heapPool.Get().(*distHeap)
+	candidates.Reset(false, ef*2)
+	defer h.heapPool.Put(candidates)
 
-	entryDist := 1.0 - vector.DotProduct(query, h.nodes[entryID].vector)
-	heap.Push(candidates, hnswDistItem{id: entryID, dist: entryDist, isMax: false})
-	heap.Push(results, hnswDistItem{id: entryID, dist: entryDist, isMax: true})
+	results := h.heapPool.Get().(*distHeap)
+	results.Reset(true, ef*2)
+	defer h.heapPool.Put(results)
+
+	entryDist := float32(1.0) - vector.DotProductSIMD(query, h.nodes[entryID].vector)
+	candidates.Push(hnswDistItem{id: entryID, dist: entryDist})
+	results.Push(hnswDistItem{id: entryID, dist: entryDist})
 
 	for candidates.Len() > 0 {
-		closest := heap.Pop(candidates).(hnswDistItem)
+		closest := candidates.Pop()
 
 		if results.Len() >= ef {
-			furthest := (*results)[0]
+			furthest := results.Peek()
 			if closest.dist > furthest.dist {
 				break
 			}
@@ -345,20 +380,20 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level i
 		// Reverse iteration: order doesn't matter when checking all neighbors
 		for i := len(neighbors) - 1; i >= 0; i-- {
 			neighborID := neighbors[i]
-			if visited[neighborID] {
+			if _, ok := visited[neighborID]; ok {
 				continue
 			}
-			visited[neighborID] = true
+			visited[neighborID] = struct{}{}
 
 			neighbor := h.nodes[neighborID]
-			dist := 1.0 - vector.DotProduct(query, neighbor.vector)
+			dist := float32(1.0) - vector.DotProductSIMD(query, neighbor.vector)
 
-			if results.Len() < ef || dist < (*results)[0].dist {
-				heap.Push(candidates, hnswDistItem{id: neighborID, dist: dist, isMax: false})
-				heap.Push(results, hnswDistItem{id: neighborID, dist: dist, isMax: true})
+			if results.Len() < ef || dist < results.Peek().dist {
+				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
+				results.Push(hnswDistItem{id: neighborID, dist: dist})
 
 				if results.Len() > ef {
-					heap.Pop(results)
+					_ = results.Pop()
 				}
 			}
 		}
@@ -366,7 +401,7 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID string, ef int, level i
 
 	resultList := make([]string, results.Len())
 	for i := results.Len() - 1; i >= 0; i-- {
-		item := heap.Pop(results).(hnswDistItem)
+		item := results.Pop()
 		resultList[i] = item.id
 	}
 
@@ -380,13 +415,13 @@ func (h *HNSWIndex) selectNeighbors(query []float32, candidates []string, m int)
 
 	type distNode struct {
 		id   string
-		dist float64
+		dist float32
 	}
 	dists := make([]distNode, len(candidates))
 	for i, cid := range candidates {
 		dists[i] = distNode{
 			id:   cid,
-			dist: 1.0 - vector.DotProduct(query, h.nodes[cid].vector),
+			dist: float32(1.0) - vector.DotProductSIMD(query, h.nodes[cid].vector),
 		}
 	}
 
@@ -408,30 +443,90 @@ func (h *HNSWIndex) randomLevel() int {
 
 // Heap types for HNSW search
 type hnswDistItem struct {
-	id    string
-	dist  float64
-	isMax bool
+	id   string
+	dist float32
 }
 
-type hnswDistHeap []hnswDistItem
+type distHeap struct {
+	max   bool
+	items []hnswDistItem
+}
 
-func (dh hnswDistHeap) Len() int { return len(dh) }
-func (dh hnswDistHeap) Less(i, j int) bool {
-	if dh[i].isMax {
-		return dh[i].dist > dh[j].dist
+func newDistHeap(max bool, capHint int) *distHeap {
+	if capHint < 0 {
+		capHint = 0
 	}
-	return dh[i].dist < dh[j].dist
-}
-func (dh hnswDistHeap) Swap(i, j int) { dh[i], dh[j] = dh[j], dh[i] }
-
-func (dh *hnswDistHeap) Push(x interface{}) {
-	*dh = append(*dh, x.(hnswDistItem))
+	return &distHeap{
+		max:   max,
+		items: make([]hnswDistItem, 0, capHint),
+	}
 }
 
-func (dh *hnswDistHeap) Pop() interface{} {
-	old := *dh
-	n := len(old)
-	x := old[n-1]
-	*dh = old[0 : n-1]
-	return x
+func (h *distHeap) Reset(max bool, capHint int) {
+	h.max = max
+	h.items = h.items[:0]
+	if capHint > cap(h.items) {
+		h.items = make([]hnswDistItem, 0, capHint)
+	}
+}
+
+func (h *distHeap) Len() int { return len(h.items) }
+
+func (h *distHeap) Peek() hnswDistItem {
+	return h.items[0]
+}
+
+func (h *distHeap) Push(item hnswDistItem) {
+	h.items = append(h.items, item)
+	h.siftUp(len(h.items) - 1)
+}
+
+func (h *distHeap) Pop() hnswDistItem {
+	n := len(h.items)
+	out := h.items[0]
+	last := h.items[n-1]
+	h.items = h.items[:n-1]
+	if len(h.items) > 0 {
+		h.items[0] = last
+		h.siftDown(0)
+	}
+	return out
+}
+
+func (h *distHeap) less(i, j int) bool {
+	if h.max {
+		return h.items[i].dist > h.items[j].dist
+	}
+	return h.items[i].dist < h.items[j].dist
+}
+
+func (h *distHeap) siftUp(i int) {
+	for i > 0 {
+		p := (i - 1) / 2
+		if !h.less(i, p) {
+			return
+		}
+		h.items[i], h.items[p] = h.items[p], h.items[i]
+		i = p
+	}
+}
+
+func (h *distHeap) siftDown(i int) {
+	n := len(h.items)
+	for {
+		l := 2*i + 1
+		if l >= n {
+			return
+		}
+		best := l
+		r := l + 1
+		if r < n && h.less(r, l) {
+			best = r
+		}
+		if !h.less(best, i) {
+			return
+		}
+		h.items[i], h.items[best] = h.items[best], h.items[i]
+		i = best
+	}
 }

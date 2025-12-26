@@ -74,6 +74,7 @@ func (c *vectorIndexCache) deletePoint(collection, pointID string, vectorNames [
 	if c == nil {
 		return
 	}
+	pointID = compactPointID(collection, pointID)
 	if len(vectorNames) == 0 {
 		vectorNames = []string{""}
 	}
@@ -90,6 +91,7 @@ func (c *vectorIndexCache) replacePoint(collection string, dim int, dist qpb.Dis
 	if c == nil {
 		return nil
 	}
+	pointID = compactPointID(collection, pointID)
 	if len(newNames) != len(newVecs) {
 		return fmt.Errorf("invalid vectors: names=%d vecs=%d", len(newNames), len(newVecs))
 	}
@@ -248,6 +250,23 @@ func (v *bruteVectorIndex) search(ctx context.Context, query []float32, limit in
 		out = append(out, searchResult{ID: item.id, Score: item.score})
 	}
 	return out
+}
+
+func compactPointID(collection, pointID string) string {
+	// Point nodes are stored as "qdrant:<collection>:<id>".
+	prefix := "qdrant:" + collection + ":"
+	if strings.HasPrefix(pointID, prefix) {
+		return pointID[len(prefix):]
+	}
+	return pointID
+}
+
+func expandPointID(collection, compact string) string {
+	// Avoid double-prefixing in case some callers use non-standard IDs.
+	if strings.HasPrefix(compact, "qdrant:") {
+		return compact
+	}
+	return "qdrant:" + collection + ":" + compact
 }
 
 type hnswVectorIndex struct {

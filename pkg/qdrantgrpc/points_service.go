@@ -100,7 +100,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 			Labels:     []string{QdrantPointLabel, req.CollectionName},
 			Properties: props,
 		}
-		
+
 		// Write vectors to NamedEmbeddings instead of ChunkEmbeddings
 		// Qdrant unnamed vector → NamedEmbeddings["default"]
 		// Qdrant named vectors → NamedEmbeddings[name]
@@ -118,7 +118,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 			}
 			node.NamedEmbeddings[vectorName] = vecs[i]
 		}
-		
+
 		// Keep ChunkEmbeddings for backward compatibility during migration
 		// TODO: Remove ChunkEmbeddings once all code paths use NamedEmbeddings
 		if len(vecs) > 0 {
@@ -353,8 +353,18 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 
 	out := make([]*qpb.ScoredPoint, 0, len(results))
 	for _, r := range results {
-		nodeID := storage.NodeID(r.ID)
-		pid := nodeIDToPointID(nodeID)
+		var (
+			nodeID storage.NodeID
+			pid    *qpb.PointId
+		)
+		if strings.HasPrefix(r.ID, "qdrant:") {
+			nodeID = storage.NodeID(r.ID)
+			pid = nodeIDToPointID(nodeID)
+		} else {
+			// Fast path for vecIndex results: IDs are compact "<id>" (no "qdrant:<collection>:" prefix).
+			nodeID = storage.NodeID(expandPointID(req.CollectionName, r.ID))
+			pid = pointIDFromCompactString(r.ID)
+		}
 
 		sp := &qpb.ScoredPoint{
 			Id:    pid,
@@ -1145,14 +1155,18 @@ type searchResult struct {
 
 func (s *PointsService) searchCollection(ctx context.Context, collection string, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64) []searchResult {
 	if s.vecIndex != nil {
-		// Request extra candidates so we can apply payload filters (if any)
-		// and still satisfy limit+offset.
-		want := (limit + offset) * 10
-		if want < limit+offset {
-			want = limit + offset
-		}
-		if want > s.config.MaxTopK*10 {
-			want = s.config.MaxTopK * 10
+		// Request extra candidates only when we need to apply payload filters.
+		// For filter-free searches, returning exactly limit+offset avoids unnecessary
+		// ANN work (and is closer to Qdrant's behavior).
+		want := limit + offset
+		if filter != nil {
+			want = (limit + offset) * 10
+			if want < limit+offset {
+				want = limit + offset
+			}
+			if want > s.config.MaxTopK*10 {
+				want = s.config.MaxTopK * 10
+			}
 		}
 
 		cands := s.vecIndex.search(ctx, collection, len(queryVec), dist, vectorName, queryVec, want, minScore)
@@ -1172,7 +1186,7 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 
 			filtered := make([]searchResult, 0, len(cands))
 			for _, r := range cands {
-				node, err := s.storage.GetNode(storage.NodeID(r.ID))
+				node, err := s.storage.GetNode(storage.NodeID(expandPointID(collection, r.ID)))
 				if err != nil || !matchesFilter(node, filter) {
 					continue
 				}
@@ -1202,7 +1216,7 @@ func (s *PointsService) searchCollection(ctx context.Context, collection string,
 	if effectiveVectorName == "" {
 		effectiveVectorName = "default"
 	}
-	
+
 	// Try search service for default vector (uses unified pipeline with HNSW/k-means)
 	if s.searchService != nil && effectiveVectorName == "default" {
 		// Fast path: avoid per-candidate storage lookups for type filtering.
@@ -1429,6 +1443,14 @@ func nodeIDToPointID(id storage.NodeID) *qpb.PointId {
 	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
 }
 
+func pointIDFromCompactString(raw string) *qpb.PointId {
+	// Qdrant PointId is either uint64 or UUID string.
+	if n, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		return &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: n}}
+	}
+	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
+}
+
 func splitNodeID(nodeID string) []string {
 	// Expected: qdrant:<collection>:<id>
 	parts := make([]string, 0, 3)
@@ -1575,7 +1597,7 @@ func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {
 			return vec, true
 		}
 	}
-	
+
 	// Fall back to ChunkEmbeddings for backward compatibility
 	idx, ok := nodeVectorIndexByName(node, vectorName)
 	if !ok || idx >= len(node.ChunkEmbeddings) {
@@ -1604,7 +1626,7 @@ func upsertNodeVectors(node *storage.Node, names []string, vectors [][]float32) 
 	if node == nil || len(vectors) == 0 {
 		return
 	}
-	
+
 	// Write vectors to NamedEmbeddings instead of ChunkEmbeddings
 	// Qdrant unnamed vector → NamedEmbeddings["default"]
 	// Qdrant named vectors → NamedEmbeddings[name]
@@ -1622,7 +1644,7 @@ func upsertNodeVectors(node *storage.Node, names []string, vectors [][]float32) 
 		}
 		node.NamedEmbeddings[vectorName] = vectors[i]
 	}
-	
+
 	// Keep ChunkEmbeddings for backward compatibility during migration
 	// TODO: Remove ChunkEmbeddings once all code paths use NamedEmbeddings
 	node.ChunkEmbeddings = vectors
@@ -1856,11 +1878,11 @@ func vectorsOutputFromNode(node *storage.Node, requestedNames []string) *qpb.Vec
 		return nil
 	}
 
-		return &qpb.VectorsOutput{
-			VectorsOptions: &qpb.VectorsOutput_Vectors{
-				Vectors: &qpb.NamedVectorsOutput{Vectors: out},
-			},
-		}
+	return &qpb.VectorsOutput{
+		VectorsOptions: &qpb.VectorsOutput_Vectors{
+			Vectors: &qpb.NamedVectorsOutput{Vectors: out},
+		},
+	}
 }
 
 func payloadToProperties(payload map[string]*qpb.Value) map[string]any {
