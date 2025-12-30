@@ -40,7 +40,7 @@
 //
 //	// Create server with NornicDB storage and search
 //	cfg := qdrantgrpc.DefaultConfig()
-//	srv, err := qdrantgrpc.NewServer(cfg, storage, registry, searchService)
+//	srv, err := qdrantgrpc.NewServer(cfg, storage, registry, searchService, authenticator)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
@@ -63,16 +63,22 @@ package qdrantgrpc
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -132,6 +138,19 @@ type Config struct {
 	//
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
+
+	// MethodPermissions optionally overrides the default RBAC requirements for
+	// specific RPCs.
+	//
+	// Keys are of the form "<Service>/<Method>", using the short gRPC service name:
+	//   - "Collections/Create"
+	//   - "Points/Upsert"
+	//   - "Snapshots/List"
+	//   - "ServerReflection/ServerReflectionInfo"
+	//
+	// If a request's method is not found in either this map or the built-in
+	// defaults, the request is denied (default-deny).
+	MethodPermissions map[string]auth.Permission
 }
 
 // DefaultConfig returns sensible defaults for the Qdrant gRPC server.
@@ -160,6 +179,7 @@ type Server struct {
 	registry      CollectionRegistry
 	searchService *search.Service
 	vecIndex      *vectorIndexCache
+	authenticator *auth.Authenticator // Authentication for gRPC requests
 
 	grpcServer *grpc.Server
 	listener   net.Listener
@@ -169,19 +189,22 @@ type Server struct {
 	started bool
 }
 
+type contextKeyClaims struct{}
+
 // NewServer creates a new Qdrant gRPC server.
 //
 // Parameters:
 //   - config: Server configuration (use DefaultConfig() for sensible defaults)
-//   - storage: NornicDB storage engine for persisting points
+//   - store: NornicDB storage engine for persisting points
 //   - registry: Collection registry for managing collection metadata
 //   - searchService: NornicDB search service for unified vector indexing (can be nil)
+//   - authenticator: Authentication for gRPC requests (can be nil if auth disabled)
 //
 // If searchService is nil, points are still stored but not indexed for search.
 // For production use, always provide a search.Service.
 //
 // Returns the server instance ready to Start().
-func NewServer(config *Config, store storage.Engine, registry CollectionRegistry, searchService *search.Service) (*Server, error) {
+func NewServer(config *Config, store storage.Engine, registry CollectionRegistry, searchService *search.Service, authenticator *auth.Authenticator) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -198,6 +221,7 @@ func NewServer(config *Config, store storage.Engine, registry CollectionRegistry
 		registry:      registry,
 		searchService: searchService,
 		vecIndex:      newVectorIndexCache(),
+		authenticator: authenticator,
 		register:      nil,
 	}, nil
 }
@@ -251,6 +275,12 @@ func (s *Server) Start() error {
 			MinTime:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
+	}
+
+	// Add authentication interceptor if authenticator is provided
+	if s.authenticator != nil && s.authenticator.IsSecurityEnabled() {
+		opts = append(opts, grpc.UnaryInterceptor(s.unaryAuthInterceptor))
+		opts = append(opts, grpc.StreamInterceptor(s.streamAuthInterceptor))
 	}
 
 	s.grpcServer = grpc.NewServer(opts...)
@@ -320,6 +350,299 @@ func (s *Server) IsRunning() bool {
 	return s.started
 }
 
+func (s *Server) authorizeMethod(fullMethod string, claims *auth.JWTClaims) error {
+	required, ok := requiredPermissionForMethod(fullMethod)
+	if !ok {
+		// Default-deny: unknown method should not be allowed implicitly.
+		return status.Errorf(codes.PermissionDenied, "permission denied")
+	}
+	if s.config != nil && s.config.MethodPermissions != nil {
+		if key, ok := methodKey(fullMethod); ok {
+			if override, ok := s.config.MethodPermissions[key]; ok {
+				required = override
+			}
+		}
+	}
+	if hasPermissionFromClaims(claims, required) {
+		return nil
+	}
+	return status.Errorf(codes.PermissionDenied, "permission denied")
+}
+
+// unaryAuthInterceptor authenticates unary gRPC requests.
+// Supports both Basic Auth (username/password) and Bearer JWT tokens, matching HTTP endpoint behavior.
+func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// Check if auth is enabled
+	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
+		return handler(ctx, req)
+	}
+
+	var claims *auth.JWTClaims
+	var err error
+
+	// Try Basic Auth first (Neo4j compatibility, same as HTTP endpoints)
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
+			authHeader := authHeaders[0]
+			if strings.HasPrefix(authHeader, "Basic ") {
+				claims, err = s.handleBasicAuth(ctx, authHeader)
+				if err == nil {
+					if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+						return nil, err
+					}
+					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					return handler(ctx, req)
+				}
+				// If Basic Auth fails, fall through to try Bearer token
+			}
+		}
+	}
+
+	// Try Bearer/JWT token extraction
+	token, err := s.extractTokenFromMetadata(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "authentication required: %v", err)
+	}
+
+	// Validate token
+	claims, err = s.authenticator.ValidateToken(token)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid or expired token")
+	}
+
+	// Add claims to context for use in handlers
+	if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	return handler(ctx, req)
+}
+
+// streamAuthInterceptor authenticates streaming gRPC requests.
+// Supports both Basic Auth (username/password) and Bearer JWT tokens, matching HTTP endpoint behavior.
+func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	// Check if auth is enabled
+	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
+		return handler(srv, ss)
+	}
+
+	ctx := ss.Context()
+	var claims *auth.JWTClaims
+	var err error
+
+	// Try Basic Auth first (Neo4j compatibility, same as HTTP endpoints)
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
+			authHeader := authHeaders[0]
+			if strings.HasPrefix(authHeader, "Basic ") {
+				claims, err = s.handleBasicAuth(ctx, authHeader)
+				if err == nil {
+					if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+						return err
+					}
+					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					return handler(srv, &authServerStream{ServerStream: ss, ctx: ctx})
+				}
+				// If Basic Auth fails, fall through to try Bearer token
+			}
+		}
+	}
+
+	// Try Bearer/JWT token extraction
+	token, err := s.extractTokenFromMetadata(ctx)
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "authentication required: %v", err)
+	}
+
+	// Validate token
+	claims, err = s.authenticator.ValidateToken(token)
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "invalid or expired token")
+	}
+
+	// Add claims to context for use in handlers
+	if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	return handler(srv, &authServerStream{ServerStream: ss, ctx: ctx})
+}
+
+// handleBasicAuth handles Basic authentication for gRPC requests.
+// Matches the behavior of HTTP endpoint Basic Auth.
+func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.JWTClaims, error) {
+	encoded := strings.TrimPrefix(authHeader, "Basic ")
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("invalid basic auth encoding")
+	}
+
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid basic auth format")
+	}
+
+	username, password := parts[0], parts[1]
+
+	// Get client IP from metadata if available
+	clientIP := "unknown"
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if forwarded := md.Get("x-forwarded-for"); len(forwarded) > 0 {
+			clientIP = forwarded[0]
+		} else if realIP := md.Get("x-real-ip"); len(realIP) > 0 {
+			clientIP = realIP[0]
+		}
+	}
+
+	// Authenticate and get user
+	_, user, err := s.authenticator.Authenticate(username, password, clientIP, "gRPC")
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert user to claims
+	roles := make([]string, len(user.Roles))
+	for i, role := range user.Roles {
+		roles[i] = string(role)
+	}
+
+	return &auth.JWTClaims{
+		Sub:      user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Roles:    roles,
+	}, nil
+}
+
+func hasPermissionFromClaims(claims *auth.JWTClaims, required auth.Permission) bool {
+	if claims == nil {
+		return false
+	}
+	for _, roleStr := range claims.Roles {
+		role := auth.Role(roleStr)
+		perms, ok := auth.RolePermissions[role]
+		if !ok {
+			continue
+		}
+		for _, p := range perms {
+			if p == required {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func methodKey(fullMethod string) (string, bool) {
+	if fullMethod == "" {
+		return "", false
+	}
+
+	trimmed := strings.TrimPrefix(fullMethod, "/")
+	serviceFull, method, ok := strings.Cut(trimmed, "/")
+	if !ok || serviceFull == "" || method == "" {
+		return "", false
+	}
+
+	// Use short service name (after last '.') for stability.
+	serviceShort := serviceFull
+	if idx := strings.LastIndexByte(serviceFull, '.'); idx >= 0 && idx+1 < len(serviceFull) {
+		serviceShort = serviceFull[idx+1:]
+	}
+	return serviceShort + "/" + method, true
+}
+
+var defaultMethodPermissions = map[string]auth.Permission{
+	// Collections (admin/DDL-ish)
+	"Collections/Create":                   auth.PermCreate,
+	"Collections/Update":                   auth.PermCreate,
+	"Collections/UpdateAliases":            auth.PermCreate,
+	"Collections/CreateAlias":              auth.PermCreate,
+	"Collections/DeleteAlias":              auth.PermCreate,
+	"Collections/RenameAlias":              auth.PermCreate,
+	"Collections/Delete":                   auth.PermDelete,
+	"Collections/Get":                      auth.PermRead,
+	"Collections/List":                     auth.PermRead,
+	"Collections/GetAliases":               auth.PermRead,
+	"Collections/CollectionExists":         auth.PermRead,
+	"Collections/GetCollectionClusterInfo": auth.PermRead,
+
+	// Points (data plane)
+	"Points/Search":         auth.PermRead,
+	"Points/SearchBatch":    auth.PermRead,
+	"Points/Scroll":         auth.PermRead,
+	"Points/Get":            auth.PermRead,
+	"Points/Count":          auth.PermRead,
+	"Points/Recommend":      auth.PermRead,
+	"Points/RecommendBatch": auth.PermRead,
+	"Points/Discover":       auth.PermRead,
+	"Points/DiscoverBatch":  auth.PermRead,
+
+	"Points/Upsert":           auth.PermWrite,
+	"Points/UpdateVectors":    auth.PermWrite,
+	"Points/DeleteVectors":    auth.PermWrite,
+	"Points/SetPayload":       auth.PermWrite,
+	"Points/OverwritePayload": auth.PermWrite,
+	"Points/ClearPayload":     auth.PermWrite,
+
+	"Points/Delete": auth.PermDelete,
+
+	// Snapshots are privileged operations.
+	"Snapshots/Create":  auth.PermAdmin,
+	"Snapshots/List":    auth.PermAdmin,
+	"Snapshots/Delete":  auth.PermAdmin,
+	"Snapshots/Recover": auth.PermAdmin,
+
+	// gRPC reflection is useful for debugging but should be gated.
+	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,
+}
+
+func requiredPermissionForMethod(fullMethod string) (auth.Permission, bool) {
+	key, ok := methodKey(fullMethod)
+	if !ok {
+		return "", false
+	}
+	p, ok := defaultMethodPermissions[key]
+	return p, ok
+}
+
+// extractTokenFromMetadata extracts JWT token from gRPC metadata.
+// Supports both "authorization" (Bearer token) and "x-api-key" headers.
+func (s *Server) extractTokenFromMetadata(ctx context.Context) (string, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("no metadata found")
+	}
+
+	// Try Authorization header (Bearer token)
+	if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
+		authHeader := authHeaders[0]
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			return strings.TrimPrefix(authHeader, "Bearer "), nil
+		}
+		// Basic auth is handled separately in handleBasicAuth
+	}
+
+	// Try X-API-Key header
+	if apiKeys := md.Get("x-api-key"); len(apiKeys) > 0 {
+		return apiKeys[0], nil
+	}
+
+	return "", fmt.Errorf("no authentication token found in metadata")
+}
+
+// authServerStream wraps grpc.ServerStream to provide a custom context.
+type authServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (a *authServerStream) Context() context.Context {
+	return a.ctx
+}
+
 // NewServerWithPersistentRegistry creates a server with a persistent collection registry.
 // This is the recommended way to create a production Qdrant gRPC server.
 //
@@ -335,13 +658,14 @@ func (s *Server) IsRunning() bool {
 //
 //	storage := badger.NewEngine("./data")
 //	searchSvc := search.NewService(storage)
-//	srv, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(nil, storage, searchSvc)
+//	authenticator := auth.NewAuthenticator(auth.DefaultAuthConfig())
+//	srv, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(nil, storage, searchSvc, authenticator)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
 //	defer registry.Close()
 //	srv.Start()
-func NewServerWithPersistentRegistry(config *Config, store storage.Engine, searchService *search.Service) (*Server, *PersistentCollectionRegistry, error) {
+func NewServerWithPersistentRegistry(config *Config, store storage.Engine, searchService *search.Service, authenticator *auth.Authenticator) (*Server, *PersistentCollectionRegistry, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("storage engine required")
 	}
@@ -351,7 +675,7 @@ func NewServerWithPersistentRegistry(config *Config, store storage.Engine, searc
 		return nil, nil, fmt.Errorf("failed to create collection registry: %w", err)
 	}
 
-	server, err := NewServer(config, store, registry, searchService)
+	server, err := NewServer(config, store, registry, searchService, authenticator)
 	if err != nil {
 		registry.Close()
 		return nil, nil, err

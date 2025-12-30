@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/nornicgrpc"
 	nornicpb "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
@@ -61,8 +63,19 @@ func (s *Server) startQdrantGRPC() error {
 	if s.config.EmbeddingEnabled {
 		cfg.EmbedQuery = s.db.EmbedQuery
 	}
+	if len(features.QdrantGRPCMethodPermissions) > 0 {
+		overrides := make(map[string]auth.Permission, len(features.QdrantGRPCMethodPermissions))
+		for k, v := range features.QdrantGRPCMethodPermissions {
+			p, ok := parsePermissionString(v)
+			if !ok {
+				return fmt.Errorf("qdrant grpc: invalid RBAC permission %q for method %q", v, k)
+			}
+			overrides[k] = p
+		}
+		cfg.MethodPermissions = overrides
+	}
 
-	grpcServer, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(cfg, storageEngine, searchSvc)
+	grpcServer, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(cfg, storageEngine, searchSvc, s.auth)
 	if err != nil {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
 	}
@@ -99,6 +112,27 @@ func (s *Server) startQdrantGRPC() error {
 
 	log.Printf("✓ Qdrant gRPC enabled (db=%s, addr=%s)", dbName, grpcServer.Addr())
 	return nil
+}
+
+func parsePermissionString(v string) (auth.Permission, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "read":
+		return auth.PermRead, true
+	case "write":
+		return auth.PermWrite, true
+	case "create":
+		return auth.PermCreate, true
+	case "delete":
+		return auth.PermDelete, true
+	case "admin":
+		return auth.PermAdmin, true
+	case "schema":
+		return auth.PermSchema, true
+	case "user_manage":
+		return auth.PermUserManage, true
+	default:
+		return "", false
+	}
 }
 
 func (s *Server) stopQdrantGRPC() {

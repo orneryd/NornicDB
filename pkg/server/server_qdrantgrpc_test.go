@@ -11,11 +11,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 func TestServer_QdrantGRPCFeatureFlag_StartsAndSharesDefaultDB(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, authenticator := setupTestServer(t)
 
 	// Allow Qdrant clients to manage vectors by disabling NornicDB-managed embeddings.
 	server.config.EmbeddingEnabled = false
@@ -44,6 +45,7 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndSharesDefaultDB(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, authenticator, "admin")))
 
 	collections := qpb.NewCollectionsClient(conn)
 	points := qpb.NewPointsClient(conn)
@@ -92,7 +94,7 @@ func TestServer_QdrantGRPCFeatureFlag_StartsAndSharesDefaultDB(t *testing.T) {
 }
 
 func TestServer_QdrantGRPC_ManagedEmbeddings_DisablesVectorMutations(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server, authenticator := setupTestServer(t)
 
 	// Managed embeddings enabled (default) => Qdrant vector mutation endpoints should be rejected.
 	server.config.EmbeddingEnabled = true
@@ -117,6 +119,7 @@ func TestServer_QdrantGRPC_ManagedEmbeddings_DisablesVectorMutations(t *testing.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, authenticator, "admin")))
 
 	collections := qpb.NewCollectionsClient(conn)
 	points := qpb.NewPointsClient(conn)

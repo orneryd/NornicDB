@@ -242,6 +242,14 @@ features:
   qdrant_grpc_max_vector_dim: 4096
   qdrant_grpc_max_batch_points: 1000
   qdrant_grpc_max_top_k: 1000
+
+  # Optional: override required permissions per RPC (advanced)
+  qdrant_grpc_rbac:
+    methods:
+      # Key format: "<Service>/<Method>" (short service name)
+      # Values: read, write, create, delete, admin, schema, user_manage
+      "Points/Upsert": "write"
+      "Points/Search": "read"
 ```
 
 ### Environment variables

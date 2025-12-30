@@ -533,6 +533,18 @@ type FeatureFlagsConfig struct {
 	// QdrantGRPCMaxTopK is the maximum search results
 	// Environment: NORNICDB_QDRANT_GRPC_MAX_TOP_K (default: 1000)
 	QdrantGRPCMaxTopK int
+
+	// QdrantGRPCMethodPermissions optionally overrides required permissions for
+	// specific Qdrant gRPC RPCs.
+	//
+	// This is configured via YAML config only (not env vars) under:
+	//   qdrant_grpc:
+	//     rbac:
+	//       methods:
+	//         "Points/Upsert": "write"
+	//
+	// Values are one of: read, write, create, delete, admin, schema, user_manage.
+	QdrantGRPCMethodPermissions map[string]string
 }
 
 // Heimdall config getter methods for heimdall.FeatureFlagsSource interface
@@ -1194,6 +1206,33 @@ type YAMLConfig struct {
 		MaxUserTokens    int     `yaml:"max_user_tokens"`
 	} `yaml:"heimdall"`
 
+	// Feature flags (subset supported in YAML).
+	Features struct {
+		// Qdrant gRPC compatibility endpoint.
+		QdrantGRPCEnabled        bool   `yaml:"qdrant_grpc_enabled"`
+		QdrantGRPCListenAddr     string `yaml:"qdrant_grpc_listen_addr"`
+		QdrantGRPCMaxVectorDim   int    `yaml:"qdrant_grpc_max_vector_dim"`
+		QdrantGRPCMaxBatchPoints int    `yaml:"qdrant_grpc_max_batch_points"`
+		QdrantGRPCMaxTopK        int    `yaml:"qdrant_grpc_max_top_k"`
+
+		QdrantGRPCRBAC struct {
+			Methods map[string]string `yaml:"methods"`
+		} `yaml:"qdrant_grpc_rbac"`
+	} `yaml:"features"`
+
+	// Qdrant gRPC compatibility endpoint (legacy YAML shape; supported for compatibility).
+	QdrantGRPC struct {
+		Enabled        bool   `yaml:"enabled"`
+		ListenAddr     string `yaml:"listen_addr"`
+		MaxVectorDim   int    `yaml:"max_vector_dim"`
+		MaxBatchPoints int    `yaml:"max_batch_points"`
+		MaxTopK        int    `yaml:"max_top_k"`
+
+		RBAC struct {
+			Methods map[string]string `yaml:"methods"`
+		} `yaml:"rbac"`
+	} `yaml:"qdrant_grpc"`
+
 	// Compliance settings
 	Compliance struct {
 		// Audit
@@ -1401,6 +1440,7 @@ func LoadDefaults() *Config {
 	config.Features.QdrantGRPCMaxVectorDim = 4096
 	config.Features.QdrantGRPCMaxBatchPoints = 1000
 	config.Features.QdrantGRPCMaxTopK = 1000
+	config.Features.QdrantGRPCMethodPermissions = nil
 
 	return config
 }
@@ -2150,6 +2190,26 @@ func LoadFromFile(configPath string) (*Config, error) {
 		config.Features.KalmanEnabled = true
 	}
 
+	// Qdrant gRPC feature flags (YAML).
+	if yamlCfg.Features.QdrantGRPCEnabled {
+		config.Features.QdrantGRPCEnabled = true
+	}
+	if yamlCfg.Features.QdrantGRPCListenAddr != "" {
+		config.Features.QdrantGRPCListenAddr = yamlCfg.Features.QdrantGRPCListenAddr
+	}
+	if yamlCfg.Features.QdrantGRPCMaxVectorDim > 0 {
+		config.Features.QdrantGRPCMaxVectorDim = yamlCfg.Features.QdrantGRPCMaxVectorDim
+	}
+	if yamlCfg.Features.QdrantGRPCMaxBatchPoints > 0 {
+		config.Features.QdrantGRPCMaxBatchPoints = yamlCfg.Features.QdrantGRPCMaxBatchPoints
+	}
+	if yamlCfg.Features.QdrantGRPCMaxTopK > 0 {
+		config.Features.QdrantGRPCMaxTopK = yamlCfg.Features.QdrantGRPCMaxTopK
+	}
+	if yamlCfg.Features.QdrantGRPCRBAC.Methods != nil {
+		config.Features.QdrantGRPCMethodPermissions = yamlCfg.Features.QdrantGRPCRBAC.Methods
+	}
+
 	// Auto-TLP settings
 	if yamlCfg.AutoTLP.Enabled {
 		config.Features.TopologyAutoIntegrationEnabled = true
@@ -2213,6 +2273,26 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Heimdall.MaxUserTokens > 0 {
 		config.Features.HeimdallMaxUserTokens = yamlCfg.Heimdall.MaxUserTokens
+	}
+
+	// Qdrant gRPC settings
+	if yamlCfg.QdrantGRPC.Enabled {
+		config.Features.QdrantGRPCEnabled = true
+	}
+	if yamlCfg.QdrantGRPC.ListenAddr != "" {
+		config.Features.QdrantGRPCListenAddr = yamlCfg.QdrantGRPC.ListenAddr
+	}
+	if yamlCfg.QdrantGRPC.MaxVectorDim > 0 {
+		config.Features.QdrantGRPCMaxVectorDim = yamlCfg.QdrantGRPC.MaxVectorDim
+	}
+	if yamlCfg.QdrantGRPC.MaxBatchPoints > 0 {
+		config.Features.QdrantGRPCMaxBatchPoints = yamlCfg.QdrantGRPC.MaxBatchPoints
+	}
+	if yamlCfg.QdrantGRPC.MaxTopK > 0 {
+		config.Features.QdrantGRPCMaxTopK = yamlCfg.QdrantGRPC.MaxTopK
+	}
+	if yamlCfg.QdrantGRPC.RBAC.Methods != nil {
+		config.Features.QdrantGRPCMethodPermissions = yamlCfg.QdrantGRPC.RBAC.Methods
 	}
 
 	// === Compliance Settings ===

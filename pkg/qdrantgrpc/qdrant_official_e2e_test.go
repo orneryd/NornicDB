@@ -25,7 +25,7 @@ func TestOfficialQdrantGRPC_BasicFlow(t *testing.T) {
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServer(cfg, store, registry, nil)
+	srv, err := NewServer(cfg, store, registry, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
@@ -186,7 +186,7 @@ func TestOfficialQdrantGRPC_NamedVectorsRoundTrip(t *testing.T) {
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServer(cfg, store, registry, nil)
+	srv, err := NewServer(cfg, store, registry, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
