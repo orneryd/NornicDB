@@ -17,6 +17,8 @@ NornicDB provides production-ready vector search with:
 - **Hybrid search** - RRF fusion of vector + BM25
 - **Caching** - 450,000x speedup for repeated queries
 
+> Important: semantic search requires embeddings. Embedding generation is disabled by default in current releases; enable it with `NORNICDB_EMBEDDING_ENABLED=true` (or `nornicdb serve --embedding-enabled`) or provide vectors yourself.
+
 ---
 
 ## How Vector Search Works

@@ -7,10 +7,29 @@ This guide covers all configuration options for NornicDB, including the new asyn
 NornicDB uses a YAML configuration file (typically `nornicdb.yaml`) that can be specified via:
 
 ```bash
-./nornicdb serve --config /path/to/config.yaml
+./nornicdb serve --config /path/to/nornicdb.yaml
 ```
 
 Or via environment variables (see Environment Variables section).
+
+### Config file discovery (when `--config` is not provided)
+
+NornicDB searches for a config file in this order:
+
+1. `NORNICDB_CONFIG` (explicit path)
+2. `~/.nornicdb/config.yaml`
+3. next to the binary: `config.yaml` or `nornicdb.yaml`
+4. current working directory: `config.yaml` or `nornicdb.yaml`
+5. container mount path: `/config/nornicdb.yaml` or `/config/config.yaml`
+6. OS user config dirs:
+   - macOS: `~/Library/Application Support/NornicDB/config.yaml`
+   - Linux: `~/.config/nornicdb/config.yaml`
+
+To avoid ambiguity in Docker/Kubernetes, prefer:
+
+```bash
+export NORNICDB_CONFIG=/config/nornicdb.yaml
+```
 
 ## Core Configuration
 
@@ -123,6 +142,8 @@ embeddings:
   model: bge-m3
   dimensions: 1024
 ```
+
+> Note: embedding generation is **disabled by default** in current releases. Enable it explicitly with `NORNICDB_EMBEDDING_ENABLED=true` (or `nornicdb serve --embedding-enabled`) to get semantic search without manually storing vectors.
 
 ### Search Similarity ⭐ New
 

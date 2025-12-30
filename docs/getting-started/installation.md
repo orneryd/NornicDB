@@ -214,6 +214,25 @@ When `AsyncWritesEnabled` is true:
 - ⚠️ Data may be lost if crash before flush (use with WAL for durability)
 - ⚠️ Reads may see slightly stale data (within flush interval)
 
+## Enable Semantic Search (Embeddings)
+
+Embedding generation is **disabled by default** in current releases. If you want semantic search without manually providing vectors, enable embeddings:
+
+```bash
+export NORNICDB_EMBEDDING_ENABLED=true
+```
+
+Or via CLI:
+
+```bash
+./nornicdb serve --embedding-enabled
+```
+
+Then you can verify embeddings are enabled via:
+
+- logs at startup (`✅ Embeddings ready: ...`) and
+- API: `GET /nornicdb/embed/stats` (requires auth)
+
 ## Optional: Qdrant gRPC Endpoint (Qdrant SDK Compatibility)
 
 NornicDB can expose a **Qdrant-compatible gRPC endpoint** (default port `6334`) so you can use Qdrant SDKs against NornicDB.

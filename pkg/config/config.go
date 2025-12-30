@@ -1181,7 +1181,7 @@ type YAMLConfig struct {
 	Heimdall struct {
 		Enabled          bool    `yaml:"enabled"`
 		Model            string  `yaml:"model"`
-		GPULayers        int     `yaml:"gpu_layers"`
+		GPULayers        *int    `yaml:"gpu_layers"`
 		ContextSize      int     `yaml:"context_size"`
 		BatchSize        int     `yaml:"batch_size"`
 		MaxTokens        int     `yaml:"max_tokens"`
@@ -2181,8 +2181,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Heimdall.Model != "" {
 		config.Features.HeimdallModel = yamlCfg.Heimdall.Model
 	}
-	if yamlCfg.Heimdall.GPULayers != 0 {
-		config.Features.HeimdallGPULayers = yamlCfg.Heimdall.GPULayers
+	if yamlCfg.Heimdall.GPULayers != nil {
+		config.Features.HeimdallGPULayers = *yamlCfg.Heimdall.GPULayers
 	}
 	if yamlCfg.Heimdall.ContextSize > 0 {
 		config.Features.HeimdallContextSize = yamlCfg.Heimdall.ContextSize
@@ -2340,6 +2340,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 func FindConfigFile() string {
 	var candidates []string
 
+	// Priority 0: explicit env override (common in Docker/K8s)
+	// Env: NORNICDB_CONFIG=/config/nornicdb.yaml
+	if v := strings.TrimSpace(os.Getenv("NORNICDB_CONFIG")); v != "" {
+		candidates = append(candidates, v)
+	}
+
 	// Priority 1: User home directory ~/.nornicdb/config.yaml (highest priority)
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, filepath.Join(home, ".nornicdb", "config.yaml"))
@@ -2360,6 +2366,12 @@ func FindConfigFile() string {
 		"nornicdb.yaml",
 	)
 
+	// Priority 3.5: Container-friendly mount point (used by docs/images)
+	candidates = append(candidates,
+		"/config/nornicdb.yaml",
+		"/config/config.yaml",
+	)
+
 	// Priority 4: OS-specific user config paths
 	if home, err := os.UserHomeDir(); err == nil {
 		// macOS
@@ -2369,6 +2381,9 @@ func FindConfigFile() string {
 	}
 
 	for _, path := range candidates {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}

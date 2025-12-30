@@ -807,16 +807,14 @@ func TestNewManager_CPUOnlyMode(t *testing.T) {
 		Enabled:   true,
 		ModelsDir: tmpDir,
 		Model:     "test-model",
-		GPULayers: 0, // Explicit CPU only - but code converts 0 to -1 (auto)
+		GPULayers: 0, // Explicit CPU only
 	}
 
 	manager, err := NewManager(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
-	// Note: Current implementation converts GPULayers 0 to -1 (auto)
-	// This test validates current behavior
-	assert.Equal(t, -1, loadedGPULayers)
+	assert.Equal(t, 0, loadedGPULayers)
 
 	manager.Close()
 }

@@ -86,9 +86,6 @@ func NewManager(cfg Config) (*Manager, error) {
 
 	// Get GPU layers config - defaults to auto (-1), falls back to CPU if needed
 	gpuLayers := cfg.GPULayers
-	if gpuLayers == 0 {
-		gpuLayers = -1 // Auto
-	}
 
 	// Context and batch size - balanced for memory efficiency
 	// Heimdall produces structured JSON (~500-2000 tokens max), so 8K context is ample.
@@ -117,9 +114,21 @@ func NewManager(cfg Config) (*Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load SLM model: %w", err)
 		}
-		fmt.Printf("✅ SLM model loaded on CPU (slower but functional)\n")
+		fmt.Printf("✅ SLM model loaded (gpu_layers=0)\n")
 	} else {
 		fmt.Printf("✅ SLM model loaded: %s\n", modelName)
+	}
+
+	// Best-effort GPU status logging (implementation-specific).
+	// Some generator backends can report whether GPU acceleration is active.
+	type gpuInfo interface {
+		UsingGPU() bool
+		GPULayers() int
+	}
+	if gi, ok := generator.(gpuInfo); ok {
+		fmt.Printf("   Compute: GPU=%v (gpu_layers=%d)\n", gi.UsingGPU(), gi.GPULayers())
+	} else {
+		fmt.Printf("   Compute: GPU=unknown (generator does not report backend)\n")
 	}
 
 	// Log token budget allocation

@@ -77,8 +77,10 @@ func (s *Server) registerNeo4jRoutes(mux *http.ServeMux, uiHandler *uiHandler) {
 	// Discovery endpoint (no auth required) - Neo4j compatible
 	// Also serves UI for browser requests (unless headless)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Serve UI for browser requests at root (unless headless)
-		if uiHandler != nil && isUIRequest(r) && r.URL.Path == "/" {
+		// Serve UI for browser requests (SPA) unless headless.
+		// This enables deep links like /help or /security/admin to render correctly
+		// instead of falling through to the Neo4j discovery JSON.
+		if uiHandler != nil && isUIRequest(r) {
 			uiHandler.ServeHTTP(w, r)
 			return
 		}

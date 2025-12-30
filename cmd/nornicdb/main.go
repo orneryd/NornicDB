@@ -84,6 +84,11 @@ Features:
   • Server-side embedding generation`,
 	}
 
+	// Global config flag (applies to all subcommands that load config).
+	// This is the primary configuration mechanism for Docker/K8s where the config
+	// is commonly mounted at a fixed path (e.g. /config/nornicdb.yaml).
+	rootCmd.PersistentFlags().String("config", getEnvStr("NORNICDB_CONFIG", ""), "Path to YAML config file (overrides auto-discovery)")
+
 	// Version command
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -112,6 +117,7 @@ Features:
 	serveCmd.Flags().Int("embedding-dim", getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024), "Embedding dimensions")
 	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), "Embedding cache size (0=disabled, default 10000)")
 	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), "GPU layers for local provider: -1=auto, 0=CPU only")
+	serveCmd.Flags().Bool("embedding-enabled", getEnvBool("NORNICDB_EMBEDDING_ENABLED", false), "Enable embedding generation (semantic search). Default is off unless enabled via config/env.")
 	serveCmd.Flags().String("gpu-backend", getEnvStr("NORNICDB_GPU_BACKEND", ""), "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
 	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
@@ -214,6 +220,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	embeddingDim, _ := cmd.Flags().GetInt("embedding-dim")
 	embeddingCache, _ := cmd.Flags().GetInt("embedding-cache")
 	embeddingGPULayers, _ := cmd.Flags().GetInt("embedding-gpu-layers")
+	embeddingEnabledFlag, _ := cmd.Flags().GetBool("embedding-enabled")
 	gpuBackend, _ := cmd.Flags().GetString("gpu-backend")
 	noAuth, _ := cmd.Flags().GetBool("no-auth")
 
@@ -239,18 +246,28 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Apply memory configuration FIRST (before heavy allocations)
 	// First, try to load from config file, then fall back to environment variables
 	var cfg *config.Config
-	configPath := config.FindConfigFile()
-	if configPath != "" {
+	explicitConfigPath, _ := cmd.Flags().GetString("config") // persistent
+	configPath := strings.TrimSpace(explicitConfigPath)
+	if configPath == "" {
+		configPath = config.FindConfigFile()
+	}
+
+	if configPath == "" {
+		cfg = config.LoadFromEnv()
+		fmt.Println("📄 No config file found (using defaults + environment variables)")
+	} else {
 		var err error
 		cfg, err = config.LoadFromFile(configPath)
 		if err != nil {
+			// If the user explicitly set --config, fail fast.
+			if strings.TrimSpace(explicitConfigPath) != "" {
+				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+			}
 			fmt.Printf("⚠️  Warning: failed to load config from %s: %v\n", configPath, err)
 			cfg = config.LoadFromEnv()
 		} else {
 			fmt.Printf("📄 Loaded config from: %s\n", configPath)
 		}
-	} else {
-		cfg = config.LoadFromEnv()
 	}
 
 	// YAML config file is the source of truth for embedding settings
@@ -266,6 +283,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Memory.EmbeddingAPIURL != "" {
 		embeddingURL = cfg.Memory.EmbeddingAPIURL
+	}
+	// Allow explicit CLI override for embedding enablement.
+	if cmd.Flags().Changed("embedding-enabled") {
+		cfg.Memory.EmbeddingEnabled = embeddingEnabledFlag
+	}
+	// Allow explicit CLI override for embedding cache.
+	if cmd.Flags().Changed("embedding-cache") {
+		cfg.Memory.EmbeddingCacheSize = embeddingCache
 	}
 
 	// Override with CLI flags if provided
@@ -307,6 +332,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   Data directory:  %s\n", dataDir)
 	fmt.Printf("   Bolt protocol:   bolt://localhost:%d\n", boltPort)
 	fmt.Printf("   HTTP API:        http://localhost:%d\n", httpPort)
+	if cfg.Memory.EmbeddingEnabled {
+		fmt.Printf("   Embeddings:      ✅ enabled (%s, %s, %d dims)\n", embeddingProvider, embeddingModel, embeddingDim)
+	} else {
+		fmt.Printf("   Embeddings:      ❌ disabled (set NORNICDB_EMBEDDING_ENABLED=true or use --embedding-enabled)\n")
+	}
 	if embeddingProvider == "local" {
 		modelsDir := cfg.Memory.ModelsDir
 		if modelsDir == "" {
