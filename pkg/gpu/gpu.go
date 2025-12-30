@@ -1396,7 +1396,8 @@ func (ei *EmbeddingIndex) Add(nodeID string, embedding []float32) error {
 	ei.gpuSynced = false
 	if ei.shouldAutoSync(1) {
 		// Best-effort; auto sync failures fall back to manual sync paths.
-		_ = ei.SyncToGPU()
+		// Use unlocked version since we already hold the lock.
+		_ = ei.syncToGPUUnlocked()
 	}
 	return nil
 }
@@ -1426,7 +1427,8 @@ func (ei *EmbeddingIndex) AddBatch(nodeIDs []string, embeddings [][]float32) err
 
 	ei.gpuSynced = false
 	if ei.shouldAutoSync(len(nodeIDs)) {
-		_ = ei.SyncToGPU()
+		// Use unlocked version since we already hold the lock.
+		_ = ei.syncToGPUUnlocked()
 	}
 	return nil
 }
@@ -1462,7 +1464,8 @@ func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 
 	ei.gpuSynced = false
 	if ei.shouldAutoSync(1) {
-		_ = ei.SyncToGPU()
+		// Use unlocked version since we already hold the lock.
+		_ = ei.syncToGPUUnlocked()
 	}
 	return true
 }
@@ -2020,12 +2023,17 @@ func (ei *EmbeddingIndex) scoreSubsetVulkan(vectors []float32, ids []string, que
 
 // SyncToGPU uploads the current embeddings to GPU memory.
 func (ei *EmbeddingIndex) SyncToGPU() error {
+	ei.mu.Lock()
+	defer ei.mu.Unlock()
+	return ei.syncToGPUUnlocked()
+}
+
+// syncToGPUUnlocked uploads embeddings to GPU memory.
+// Caller must hold ei.mu.Lock().
+func (ei *EmbeddingIndex) syncToGPUUnlocked() error {
 	if ei.manager == nil || !ei.manager.IsEnabled() {
 		return ErrGPUDisabled
 	}
-
-	ei.mu.Lock()
-	defer ei.mu.Unlock()
 
 	if len(ei.cpuVectors) == 0 {
 		ei.gpuSynced = true

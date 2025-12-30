@@ -1856,8 +1856,8 @@ func applyEnvVars(config *Config) {
 	}
 
 	// Qdrant gRPC compatibility layer
-	if getEnv("NORNICDB_QDRANT_GRPC_ENABLED", "") == "true" {
-		config.Features.QdrantGRPCEnabled = true
+	if v := getEnv("NORNICDB_QDRANT_GRPC_ENABLED", ""); v != "" {
+		config.Features.QdrantGRPCEnabled = v == "true" || v == "1"
 	}
 	if v := getEnv("NORNICDB_QDRANT_GRPC_LISTEN_ADDR", ""); v != "" {
 		config.Features.QdrantGRPCListenAddr = v
