@@ -129,6 +129,7 @@ services:
     ports:
       - "7474:7474"
       - "7687:7687"
+      - "6334:6334"  # Qdrant gRPC (optional)
     volumes:
       - nornicdb-data:/data
       - nornicdb-logs:/logs
@@ -140,6 +141,9 @@ services:
       - NORNICDB_EMBEDDING_PROVIDER=ollama
       - NORNICDB_EMBEDDING_URL=http://ollama:11434
       - NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
+      # Qdrant gRPC endpoint (optional, disabled by default)
+      - NORNICDB_QDRANT_GRPC_ENABLED=true
+      - NORNICDB_QDRANT_GRPC_LISTEN_ADDR=:6334
     restart: unless-stopped
 
 volumes:
@@ -163,6 +167,7 @@ volumes:
 | `NORNICDB_EMBEDDING_URL` | `http://localhost:11434` | Ollama URL |
 | `NORNICDB_EMBEDDING_MODEL` | `mxbai-embed-large` | Embedding model |
 | `NORNICDB_OPENAI_API_KEY` | - | OpenAI API key (if using OpenAI) |
+| `NORNICDB_QDRANT_GRPC_ENABLED` | `false` | Enable Qdrant-compatible gRPC endpoint |
 | `NORNICDB_LOG_LEVEL` | `info` | Log level (debug/info/warn/error) |
 | `NORNICDB_MAX_MEMORY` | `4GB` | Maximum memory usage |
 | `NORNICDB_CACHE_SIZE` | `1000` | Query cache size |

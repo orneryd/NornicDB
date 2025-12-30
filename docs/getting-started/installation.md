@@ -214,6 +214,25 @@ When `AsyncWritesEnabled` is true:
 - ⚠️ Data may be lost if crash before flush (use with WAL for durability)
 - ⚠️ Reads may see slightly stale data (within flush interval)
 
+## Optional: Qdrant gRPC Endpoint (Qdrant SDK Compatibility)
+
+NornicDB can expose a **Qdrant-compatible gRPC endpoint** (default port `6334`) so you can use Qdrant SDKs against NornicDB.
+
+Enable via env:
+
+```bash
+export NORNICDB_QDRANT_GRPC_ENABLED=true
+export NORNICDB_QDRANT_GRPC_LISTEN_ADDR=":6334"  # optional
+```
+
+If you want Qdrant clients to upsert/update/delete vectors directly, also set:
+
+```bash
+export NORNICDB_EMBEDDING_ENABLED=false
+```
+
+User guide: `docs/user-guides/qdrant-grpc.md`
+
 ## Memory Tiers
 
 NornicDB simulates human memory with three tiers:

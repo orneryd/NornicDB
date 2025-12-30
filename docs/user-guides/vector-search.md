@@ -141,6 +141,8 @@ If you have the Qdrant gRPC endpoint enabled, you can also run **text queries** 
 
 - Use `qdrant.Points/Query` with `Query.nearest(VectorInput.document(Document{text: ...}))`.
 
+See **[Qdrant gRPC Endpoint](qdrant-grpc.md)** for setup, configuration, and multi-language client examples.
+
 ### Storing Embeddings via Cypher
 
 ```cypher

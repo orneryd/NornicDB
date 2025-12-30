@@ -206,6 +206,38 @@ export NORNICDB_EMBEDDINGS_PROVIDER=local
 export NORNICDB_EMBEDDINGS_MODEL=bge-m3
 ```
 
+## Qdrant gRPC Endpoint (Qdrant SDK Compatibility)
+
+NornicDB can expose a **Qdrant-compatible gRPC endpoint** so existing Qdrant SDKs can connect without modification.
+
+User guide: `docs/user-guides/qdrant-grpc.md`
+
+### Configuration (YAML)
+
+```yaml
+features:
+  qdrant_grpc_enabled: true
+  qdrant_grpc_listen_addr: ":6334"
+  qdrant_grpc_max_vector_dim: 4096
+  qdrant_grpc_max_batch_points: 1000
+  qdrant_grpc_max_top_k: 1000
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---:|---|
+| `NORNICDB_QDRANT_GRPC_ENABLED` | `false` | Enable the Qdrant-compatible gRPC server |
+| `NORNICDB_QDRANT_GRPC_LISTEN_ADDR` | `:6334` | gRPC listen address |
+| `NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM` | `4096` | Maximum vector dimension |
+| `NORNICDB_QDRANT_GRPC_MAX_BATCH_POINTS` | `1000` | Max points per upsert |
+| `NORNICDB_QDRANT_GRPC_MAX_TOP_K` | `1000` | Max search results per query |
+
+### Embedding ownership
+
+- If `NORNICDB_EMBEDDING_ENABLED=true`, NornicDB owns embeddings; Qdrant vector mutation RPCs may be rejected to avoid conflicting sources of truth.
+- If you want Qdrant clients to upsert/update/delete vectors directly, set `NORNICDB_EMBEDDING_ENABLED=false`.
+
 ## Configuration Validation
 
 NornicDB validates configuration on startup and will:

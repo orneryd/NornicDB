@@ -7,6 +7,7 @@
 ### Core Features
 - **[Vector Search](vector-search.md)** - Semantic search with embeddings
 - **[Hybrid Search (RRF)](hybrid-search.md)** - Combine vector + BM25 search
+- **[Qdrant gRPC Endpoint](qdrant-grpc.md)** - Use Qdrant SDKs against NornicDB
 - **[Transactions](transactions.md)** - ACID guarantees and transaction management
 - **[Clustering](clustering.md)** - High availability and replication
 - **[Heimdall AI Assistant](heimdall-ai-assistant.md)** - Built-in AI for natural language database interaction
