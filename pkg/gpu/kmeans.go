@@ -666,8 +666,12 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 	ci.clusterMu.RLock()
 	defer ci.clusterMu.RUnlock()
 
+	ci.mu.RLock()
+	embeddingCount := len(ci.nodeIDs)
+	ci.mu.RUnlock()
+
 	stats := ClusterStats{
-		EmbeddingCount:  len(ci.nodeIDs),
+		EmbeddingCount:  embeddingCount,
 		NumClusters:     len(ci.centroids),
 		Iterations:      ci.iterations,
 		LastClusterTime: ci.lastClusterDuration,

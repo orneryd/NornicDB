@@ -1096,7 +1096,7 @@ func rowFromSummary(protocol, scenario string, points, dim, k, conc int, s summa
 	}
 }
 
-func appendCSV(path string, rows []csvRow) error {
+func appendCSV(path string, rows []csvRow) (err error) {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1113,18 +1113,31 @@ func appendCSV(path string, rows []csvRow) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	w := csv.NewWriter(f)
+	defer func() {
+		// Ensure CSV writer buffer is flushed before closing file
+		w.Flush()
+		if flushErr := w.Error(); flushErr != nil && err == nil {
+			err = flushErr
+		}
+		// Close file after ensuring all data is flushed
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
 	if needHeader {
-		_ = w.Write([]string{
+		if err := w.Write([]string{
 			"timestamp", "protocol", "scenario", "points", "dim", "k", "concurrency",
 			"ops", "seconds", "ops_per_sec",
 			"p50_ms", "p95_ms", "p99_ms", "mean_ms", "min_ms", "max_ms",
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	for _, r := range rows {
-		_ = w.Write([]string{
+		if err := w.Write([]string{
 			r.Timestamp,
 			r.Protocol,
 			r.Scenario,
@@ -1141,10 +1154,11 @@ func appendCSV(path string, rows []csvRow) error {
 			fmt.Sprintf("%.6f", r.Meanms),
 			fmt.Sprintf("%.6f", r.Minms),
 			fmt.Sprintf("%.6f", r.Maxms),
-		})
+		}); err != nil {
+			return err
+		}
 	}
-	w.Flush()
-	return w.Error()
+	return nil
 }
 
 // =============================================================================

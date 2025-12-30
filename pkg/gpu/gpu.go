@@ -1581,17 +1581,35 @@ func (ei *EmbeddingIndex) ScoreSubset(query []float32, ids []string) ([]SearchRe
 			subsetVectors = append(subsetVectors, ei.cpuVectors[start:end]...)
 		}
 		normalizeFlatVectors(subsetVectors, ei.dimensions)
-	}
-	ei.mu.RUnlock()
+		ei.mu.RUnlock()
 
-	if useGPU {
 		if results, err := ei.scoreSubsetGPU(subsetVectors, validIDs, query); err == nil {
 			return results, nil
 		}
 		// GPU errors fall back to CPU subset scoring.
+		return ei.scoreSubsetCPUByIDs(validIDs, query), nil
 	}
 
-	return ei.scoreSubsetCPU(validIndices, validIDs, query), nil
+	// CPU path must score while holding the same read lock used to resolve indices.
+	// Otherwise, concurrent Remove() can swap/truncate cpuVectors, invalidating captured indices.
+	atomic.AddInt64(&ei.searchesCPU, 1)
+	results := make([]SearchResult, len(validIndices))
+	for i, idx := range validIndices {
+		start := idx * ei.dimensions
+		end := start + ei.dimensions
+		score := cosineSimilarityFlat(query, ei.cpuVectors[start:end])
+		results[i] = SearchResult{
+			ID:       validIDs[i],
+			Score:    score,
+			Distance: 1 - score,
+		}
+	}
+	ei.mu.RUnlock()
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+	return results, nil
 }
 
 // searchGPU performs similarity search on GPU.
@@ -1826,20 +1844,24 @@ func (ei *EmbeddingIndex) searchCPU(query []float32, k int) ([]SearchResult, err
 	return results, nil
 }
 
-func (ei *EmbeddingIndex) scoreSubsetCPU(indices []int, ids []string, query []float32) []SearchResult {
+func (ei *EmbeddingIndex) scoreSubsetCPUByIDs(ids []string, query []float32) []SearchResult {
 	atomic.AddInt64(&ei.searchesCPU, 1)
 
 	ei.mu.RLock()
-	results := make([]SearchResult, len(indices))
-	for i, idx := range indices {
+	results := make([]SearchResult, 0, len(ids))
+	for _, id := range ids {
+		idx, ok := ei.idToIndex[id]
+		if !ok {
+			continue
+		}
 		start := idx * ei.dimensions
 		end := start + ei.dimensions
 		score := cosineSimilarityFlat(query, ei.cpuVectors[start:end])
-		results[i] = SearchResult{
-			ID:       ids[i],
+		results = append(results, SearchResult{
+			ID:       id,
 			Score:    score,
 			Distance: 1 - score,
-		}
+		})
 	}
 	ei.mu.RUnlock()
 

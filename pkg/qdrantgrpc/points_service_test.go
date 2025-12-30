@@ -253,3 +253,89 @@ func TestPointsService_Query_Document(t *testing.T) {
 }
 
 func ptrU64(v uint64) *uint64 { return &v }
+
+// TestAverageVectors verifies that averageVectors correctly computes averages
+// and handles vectors with mismatched dimensions.
+func TestAverageVectors(t *testing.T) {
+	t.Run("normal averaging", func(t *testing.T) {
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},
+			{4.0, 5.0, 6.0},
+			{7.0, 8.0, 9.0},
+		}
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		assert.Equal(t, []float32{4.0, 5.0, 6.0}, result) // (1+4+7)/3, (2+5+8)/3, (3+6+9)/3
+	})
+
+	t.Run("skips mismatched dimensions", func(t *testing.T) {
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},
+			{4.0, 5.0},        // Wrong dimension - should be skipped
+			{7.0, 8.0, 9.0},
+			{10.0, 11.0, 12.0, 13.0}, // Wrong dimension - should be skipped
+		}
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		// Should average only the 2 vectors with correct dimension: [1,2,3] and [7,8,9]
+		// Average: (1+7)/2, (2+8)/2, (3+9)/2 = [4.0, 5.0, 6.0]
+		assert.Equal(t, []float32{4.0, 5.0, 6.0}, result)
+	})
+
+	t.Run("all vectors have mismatched dimensions", func(t *testing.T) {
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},   // First vector determines dimension (3)
+			{4.0, 5.0},        // Wrong dimension - skipped
+			{6.0, 7.0, 8.0, 9.0}, // Wrong dimension - skipped
+		}
+		// First vector determines dimension (3), but only first vector matches
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		// Should return the first vector (averaged by itself)
+		assert.Equal(t, []float32{1.0, 2.0, 3.0}, result)
+	})
+
+	t.Run("no vectors match reference dimension", func(t *testing.T) {
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},   // First vector determines dimension (3)
+			{4.0, 5.0},        // Wrong dimension - skipped
+			{6.0, 7.0},        // Wrong dimension - skipped
+		}
+		// First vector determines dimension (3), but no other vectors match
+		// Only the first vector matches, so it's averaged by itself
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		assert.Equal(t, []float32{1.0, 2.0, 3.0}, result)
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		result := averageVectors(nil)
+		assert.Nil(t, result)
+		result = averageVectors([][]float32{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("single vector", func(t *testing.T) {
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},
+		}
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		assert.Equal(t, []float32{1.0, 2.0, 3.0}, result)
+	})
+
+	t.Run("mixed dimensions with correct average", func(t *testing.T) {
+		// This test demonstrates the bug fix: if we have 3 vectors but only 2 match,
+		// we should divide by 2, not 3
+		vectors := [][]float32{
+			{1.0, 2.0, 3.0},   // First vector determines dimension (3) - included
+			{10.0, 20.0},      // Wrong dimension - skipped
+			{4.0, 5.0, 6.0},   // Included
+		}
+		result := averageVectors(vectors)
+		require.NotNil(t, result)
+		// Should be (1+4)/2, (2+5)/2, (3+6)/2 = [2.5, 3.5, 4.5]
+		// NOT (1+4)/3, (2+5)/3, (3+6)/3 = [1.67, 2.33, 3.0] (wrong!)
+		assert.Equal(t, []float32{2.5, 3.5, 4.5}, result)
+	})
+}

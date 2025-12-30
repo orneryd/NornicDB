@@ -1146,6 +1146,7 @@ func averageVectors(vectors [][]float32) []float32 {
 	}
 	dim := len(vectors[0])
 	out := make([]float32, dim)
+	count := 0
 	for _, v := range vectors {
 		if len(v) != dim {
 			continue
@@ -1153,8 +1154,12 @@ func averageVectors(vectors [][]float32) []float32 {
 		for i := range v {
 			out[i] += v[i]
 		}
+		count++
 	}
-	inv := float32(1.0 / float32(len(vectors)))
+	if count == 0 {
+		return nil
+	}
+	inv := float32(1.0 / float32(count))
 	for i := range out {
 		out[i] *= inv
 	}

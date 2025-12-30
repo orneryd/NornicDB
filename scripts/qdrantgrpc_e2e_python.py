@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 
 def stage(name: str, fn: Callable[[], Any]) -> Any:
@@ -57,6 +57,7 @@ def main() -> int:
         try:
             client.delete_collection(collection_name=col)
         except Exception:
+            # Ignore errors - collection may not exist from previous runs
             pass
 
     cleanup_collection()
@@ -156,6 +157,7 @@ def main() -> int:
     try:
         client.delete_collection(collection_name=col_named)
     except Exception:
+        # Best-effort cleanup: collection may not exist from previous runs.
         pass
 
     stage(
@@ -297,4 +299,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
