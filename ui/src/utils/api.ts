@@ -195,6 +195,98 @@ class NornicDBClient {
     });
     return await res.json();
   }
+
+  async deleteNodes(nodeIds: string[]): Promise<{ success: boolean; deleted: number; errors: string[] }> {
+    if (nodeIds.length === 0) {
+      return { success: true, deleted: 0, errors: [] };
+    }
+
+    const dbName = await this.getDefaultDatabase();
+    // Build Cypher query to delete multiple nodes
+    // Use id(n) function for matching internal storage ID, or fallback to n.id property
+    const statement = `MATCH (n) WHERE id(n) IN $ids OR n.id IN $ids DETACH DELETE n RETURN count(n) as deleted`;
+    const parameters = { ids: nodeIds };
+
+    try {
+      const res = await fetch(`${BASE_PATH}/db/${dbName}/tx/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          statements: [{ statement, parameters }],
+        }),
+      });
+
+      const result: CypherResponse = await res.json();
+      
+      if (result.errors && result.errors.length > 0) {
+        return {
+          success: false,
+          deleted: 0,
+          errors: result.errors.map(e => e.message),
+        };
+      }
+
+      // Extract deleted count from result
+      const deleted = result.results[0]?.data[0]?.row[0] as number || 0;
+      return { success: true, deleted, errors: [] };
+    } catch (err) {
+      return {
+        success: false,
+        deleted: 0,
+        errors: [err instanceof Error ? err.message : 'Failed to delete nodes'],
+      };
+    }
+  }
+
+  async updateNodeProperties(nodeId: string, properties: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+    const dbName = await this.getDefaultDatabase();
+    
+    // Build SET clause
+    const setParts: string[] = [];
+    const parameters: Record<string, unknown> = { nodeId };
+    let paramIndex = 0;
+    
+    for (const [key, value] of Object.entries(properties)) {
+      const paramName = `p${paramIndex}`;
+      setParts.push(`n.${key} = $${paramName}`);
+      parameters[paramName] = value;
+      paramIndex++;
+    }
+
+    if (setParts.length === 0) {
+      return { success: true };
+    }
+
+    const statement = `MATCH (n) WHERE id(n) = $nodeId OR n.id = $nodeId SET ${setParts.join(', ')} RETURN n`;
+    
+    try {
+      const res = await fetch(`${BASE_PATH}/db/${dbName}/tx/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          statements: [{ statement, parameters }],
+        }),
+      });
+
+      const result: CypherResponse = await res.json();
+      
+      if (result.errors && result.errors.length > 0) {
+        return {
+          success: false,
+          error: result.errors.map(e => e.message).join('; '),
+        };
+      }
+
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to update node',
+      };
+    }
+  }
 }
 
 export const api = new NornicDBClient();

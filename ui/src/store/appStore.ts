@@ -32,6 +32,7 @@ interface AppState {
   
   // Selected
   selectedNode: SearchResult | null;
+  selectedNodeIds: Set<string>;
   
   // Similar - inline expansion
   expandedSimilar: SimilarExpansion | null;
@@ -46,6 +47,9 @@ interface AppState {
   setSearchQuery: (query: string) => void;
   executeSearch: () => Promise<void>;
   setSelectedNode: (node: SearchResult | null) => void;
+  toggleNodeSelection: (nodeId: string) => void;
+  selectAllNodes: (nodeIds: string[]) => void;
+  clearNodeSelection: () => void;
   findSimilar: (nodeId: string) => Promise<void>;
   collapseSimilar: () => void;
 }
@@ -66,6 +70,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   searchResults: [],
   searchLoading: false,
   selectedNode: null,
+  selectedNodeIds: new Set<string>(),
   expandedSimilar: null,
 
   // Auth actions
@@ -161,6 +166,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Node actions
   setSelectedNode: (node) => set({ selectedNode: node }),
+
+  toggleNodeSelection: (nodeId) => set((state) => {
+    const newSet = new Set(state.selectedNodeIds);
+    if (newSet.has(nodeId)) {
+      newSet.delete(nodeId);
+    } else {
+      newSet.add(nodeId);
+    }
+    return { selectedNodeIds: newSet };
+  }),
+
+  selectAllNodes: (nodeIds) => set({ selectedNodeIds: new Set(nodeIds) }),
+
+  clearNodeSelection: () => set({ selectedNodeIds: new Set<string>() }),
 
   // Find similar with inline expansion (doesn't replace search results)
   findSimilar: async (nodeId) => {

@@ -21,9 +21,14 @@ import {
   Loader2,
   MessageCircle,
   Shield,
+  Trash2,
+  Edit,
+  Check,
+  Plus,
 } from "lucide-react";
 import { useAppStore } from "../store/appStore";
 import { Bifrost } from "../../Bifrost";
+import { api } from "../utils/api";
 
 interface EmbedStats {
   running: boolean;
@@ -56,6 +61,10 @@ export function Browser() {
     searchLoading,
     selectedNode,
     setSelectedNode,
+    selectedNodeIds,
+    toggleNodeSelection,
+    selectAllNodes,
+    clearNodeSelection,
     findSimilar,
     expandedSimilar,
     collapseSimilar,
@@ -72,6 +81,9 @@ export function Browser() {
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
   const [showAIChat, setShowAIChat] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [editingProperties, setEditingProperties] = useState<Record<string, unknown>>({});
+  const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
 
   // Fetch embed stats periodically
@@ -432,54 +444,149 @@ export function Browser() {
 
               {/* Query Results */}
               {cypherResult && cypherResult.results[0] && (
-                <div className="flex-1 overflow-auto">
-                  <table className="result-table">
-                    <thead>
-                      <tr>
-                        {cypherResult.results[0].columns.map((col, i) => (
-                          <th key={i}>{col}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cypherResult.results[0].data.map((row, i) => (
-                        <tr
-                          key={i}
-                          onClick={() => {
-                            // Find first node-like object in row and select it
-                            for (const cell of row.row) {
-                              if (cell && typeof cell === "object") {
-                                const cellObj = cell as Record<string, unknown>;
-                                // Check for node-like object: Neo4j uses elementId, legacy uses id/_nodeId
-                                if (
-                                  cellObj.elementId ||
-                                  cellObj.id ||
-                                  cellObj._nodeId
-                                ) {
-                                  const nodeData =
-                                    extractNodeFromResult(cellObj);
-                                  if (nodeData) {
-                                    setSelectedNode({
-                                      node: { ...nodeData, created_at: "" },
-                                      score: 0,
-                                    });
-                                    break;
-                                  }
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  {/* Toolbar */}
+                  {selectedNodeIds.size > 0 && (
+                    <div className="flex items-center gap-2 p-2 bg-norse-shadow border-b border-norse-rune">
+                      <span className="text-sm text-norse-silver">
+                        {selectedNodeIds.size} selected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (confirm(`Delete ${selectedNodeIds.size} node(s)?`)) {
+                            setDeleting(true);
+                            try {
+                              const result = await api.deleteNodes(Array.from(selectedNodeIds));
+                              if (result.success) {
+                                clearNodeSelection();
+                                // Refresh query results
+                                executeCypher();
+                              } else {
+                                alert(`Failed to delete: ${result.errors.join(', ')}`);
+                              }
+                            } catch (err) {
+                              alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                            } finally {
+                              setDeleting(false);
+                            }
+                          }
+                        }}
+                        disabled={deleting}
+                        className="flex items-center gap-1 px-3 py-1 text-sm bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded disabled:opacity-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => clearNodeSelection()}
+                        className="px-3 py-1 text-sm text-norse-silver hover:text-white"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                  
+                  <div className="flex-1 overflow-auto">
+                    <table className="result-table">
+                      <thead>
+                        <tr>
+                          <th className="w-12">
+                            <input
+                              type="checkbox"
+                              checked={selectedNodeIds.size > 0 && getAllNodeIdsFromQueryResults().every(id => selectedNodeIds.has(id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  selectAllNodes(getAllNodeIdsFromQueryResults());
+                                } else {
+                                  clearNodeSelection();
+                                }
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="cursor-pointer"
+                            />
+                          </th>
+                          {cypherResult.results[0].columns.map((col, i) => (
+                            <th key={i}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cypherResult.results[0].data.map((row, i) => {
+                          // Extract node ID from first node-like object in row
+                          let nodeId: string | null = null;
+                          for (const cell of row.row) {
+                            if (cell && typeof cell === "object") {
+                              const cellObj = cell as Record<string, unknown>;
+                              if (cellObj.elementId || cellObj.id || cellObj._nodeId) {
+                                const nodeData = extractNodeFromResult(cellObj);
+                                if (nodeData) {
+                                  nodeId = nodeData.id;
+                                  break;
                                 }
                               }
                             }
-                          }}
-                          className="cursor-pointer hover:bg-nornic-primary/10"
-                        >
-                          {row.row.map((cell, j) => (
-                            <td key={j} className="font-mono text-xs">
-                              <ExpandableCell data={cell} />
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          }
+
+                          return (
+                            <tr
+                              key={i}
+                              onClick={() => {
+                                if (nodeId) {
+                                  // Find first node-like object in row and select it
+                                  for (const cell of row.row) {
+                                    if (cell && typeof cell === "object") {
+                                      const cellObj = cell as Record<string, unknown>;
+                                      if (
+                                        cellObj.elementId ||
+                                        cellObj.id ||
+                                        cellObj._nodeId
+                                      ) {
+                                        const nodeData =
+                                          extractNodeFromResult(cellObj);
+                                        if (nodeData) {
+                                          setSelectedNode({
+                                            node: { ...nodeData, created_at: "" },
+                                            score: 0,
+                                          });
+                                          break;
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }}
+                              className={`cursor-pointer hover:bg-nornic-primary/10 ${
+                                nodeId && selectedNodeIds.has(nodeId)
+                                  ? "bg-nornic-primary/20"
+                                  : ""
+                              }`}
+                            >
+                              <td onClick={(e) => e.stopPropagation()}>
+                                {nodeId && (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedNodeIds.has(nodeId)}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      toggleNodeSelection(nodeId);
+                                    }}
+                                    className="cursor-pointer"
+                                  />
+                                )}
+                              </td>
+                              {row.row.map((cell, j) => (
+                                <td key={j} className="font-mono text-xs">
+                                  <ExpandableCell data={cell} />
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="text-xs text-norse-silver mt-2 px-2">
                     {cypherResult.results[0].data.length} row(s) returned
                   </p>
@@ -512,19 +619,97 @@ export function Browser() {
               </form>
 
               {/* Search Results */}
-              <div className="flex-1 overflow-auto space-y-2">
-                {searchResults.map((result) => (
-                  <div key={result.node.id}>
-                    {/* Main result card */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Toolbar */}
+                {selectedNodeIds.size > 0 && (
+                  <div className="flex items-center gap-2 p-2 bg-norse-shadow border-b border-norse-rune">
+                    <span className="text-sm text-norse-silver">
+                      {selectedNodeIds.size} selected
+                    </span>
                     <button
                       type="button"
-                      onClick={() => setSelectedNode(result)}
-                      className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                        selectedNode?.node.id === result.node.id
-                          ? "bg-nornic-primary/20 border-nornic-primary"
-                          : "bg-norse-stone border-norse-rune hover:border-norse-fog"
-                      }`}
+                      onClick={async () => {
+                        if (confirm(`Delete ${selectedNodeIds.size} node(s)?`)) {
+                          setDeleting(true);
+                          try {
+                            const result = await api.deleteNodes(Array.from(selectedNodeIds));
+                            if (result.success) {
+                              clearNodeSelection();
+                              // Refresh search results
+                              executeSearch();
+                            } else {
+                              alert(`Failed to delete: ${result.errors.join(', ')}`);
+                            }
+                          } catch (err) {
+                            alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                          } finally {
+                            setDeleting(false);
+                          }
+                        }
+                      }}
+                      disabled={deleting}
+                      className="flex items-center gap-1 px-3 py-1 text-sm bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded disabled:opacity-50"
                     >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => clearNodeSelection()}
+                      className="px-3 py-1 text-sm text-norse-silver hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-auto space-y-2 p-2">
+                  {searchResults.length > 0 && (
+                    <div className="mb-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedNodeIds.size > 0 && searchResults.every(r => selectedNodeIds.has(r.node.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            selectAllNodes(searchResults.map(r => r.node.id));
+                          } else {
+                            clearNodeSelection();
+                          }
+                        }}
+                        className="cursor-pointer mr-2"
+                      />
+                      <span className="text-xs text-norse-silver">Select all</span>
+                    </div>
+                  )}
+                  
+                  {searchResults.map((result) => (
+                    <div key={result.node.id}>
+                      {/* Main result card */}
+                      <div
+                        className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                          selectedNode?.node.id === result.node.id
+                            ? "bg-nornic-primary/20 border-nornic-primary"
+                            : selectedNodeIds.has(result.node.id)
+                            ? "bg-nornic-primary/10 border-nornic-primary/50"
+                            : "bg-norse-stone border-norse-rune hover:border-norse-fog"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedNodeIds.has(result.node.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleNodeSelection(result.node.id);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1 cursor-pointer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedNode(result)}
+                            className="flex-1 text-left"
+                          >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           {result.node.labels.map((label) => (
@@ -540,10 +725,12 @@ export function Browser() {
                           Score: {result.score.toFixed(2)}
                         </span>
                       </div>
-                      <p className="text-sm text-norse-silver truncate">
-                        {getNodePreview(result.node.properties)}
-                      </p>
-                    </button>
+                            <p className="text-sm text-norse-silver truncate">
+                              {getNodePreview(result.node.properties)}
+                            </p>
+                          </button>
+                        </div>
+                      </div>
 
                     {/* Inline Similar Expansion */}
                     {expandedSimilar?.nodeId === result.node.id && (
@@ -606,16 +793,17 @@ export function Browser() {
                         )}
                       </div>
                     )}
-                  </div>
-                ))}
+                    </div>
+                  ))}
 
-                {searchResults.length === 0 &&
-                  searchQuery &&
-                  !searchLoading && (
-                    <p className="text-center text-norse-silver py-8">
-                      No results found
-                    </p>
-                  )}
+                  {searchResults.length === 0 &&
+                    searchQuery &&
+                    !searchLoading && (
+                      <p className="text-center text-norse-silver py-8">
+                        No results found
+                      </p>
+                    )}
+                </div>
               </div>
             </div>
           )}
@@ -740,29 +928,80 @@ export function Browser() {
 
                 {/* Properties (excluding embedding - shown above) */}
                 <div className="mb-4">
-                  <h3 className="text-xs font-medium text-norse-silver mb-2">
-                    PROPERTIES
-                  </h3>
-                  <div className="space-y-2">
-                    {Object.entries(selectedNode.node.properties)
-                      .filter(([key]) => key !== "embedding")
-                      .map(([key, value]) => (
-                        <div
-                          key={key}
-                          className="bg-norse-stone rounded-lg p-3"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <ChevronRight className="w-3 h-3 text-norse-fog" />
-                            <span className="text-sm text-frost-ice font-medium">
-                              {key}
-                            </span>
-                          </div>
-                          <div className="pl-5">
-                            <JsonPreview data={value} expanded />
-                          </div>
-                        </div>
-                      ))}
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-medium text-norse-silver">
+                      PROPERTIES
+                    </h3>
+                    {editingNodeId !== selectedNode.node.id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingNodeId(selectedNode.node.id);
+                          setEditingProperties({ ...selectedNode.node.properties });
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-nornic-primary/20 hover:bg-nornic-primary/30 text-nornic-primary rounded"
+                      >
+                        <Edit className="w-3 h-3" />
+                        Edit
+                      </button>
+                    )}
                   </div>
+                  
+                  {editingNodeId === selectedNode.node.id ? (
+                    <PropertyEditor
+                      properties={editingProperties}
+                      onSave={async (updatedProps) => {
+                        const result = await api.updateNodeProperties(selectedNode.node.id, updatedProps);
+                        if (result.success) {
+                          setEditingNodeId(null);
+                          setEditingProperties({});
+                          // Refresh the selected node by re-executing query or search
+                          if (activeTab === "query") {
+                            executeCypher();
+                          } else {
+                            executeSearch();
+                          }
+                        } else {
+                          alert(`Failed to update: ${result.error}`);
+                        }
+                      }}
+                      onCancel={() => {
+                        setEditingNodeId(null);
+                        setEditingProperties({});
+                      }}
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {Object.entries(selectedNode.node.properties)
+                        .filter(([key]) => key !== "embedding")
+                        .map(([key, value]) => {
+                          const isReadOnly = isReadOnlyProperty(key);
+                          return (
+                            <div
+                              key={key}
+                              className={`bg-norse-stone rounded-lg p-3 ${
+                                isReadOnly ? "opacity-75" : ""
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-1">
+                                <ChevronRight className="w-3 h-3 text-norse-fog" />
+                                <span className="text-sm text-frost-ice font-medium">
+                                  {key}
+                                </span>
+                                {isReadOnly && (
+                                  <span className="text-xs text-norse-fog italic">
+                                    (read-only)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="pl-5">
+                                <JsonPreview data={value} expanded />
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Similar Items Section - Shows when Find Similar is clicked */}
@@ -1055,6 +1294,30 @@ function getNodePreview(properties: Record<string, unknown>): string {
   return JSON.stringify(properties).slice(0, 100);
 }
 
+// Helper function to get all node IDs from query results
+function getAllNodeIdsFromQueryResults(): string[] {
+  const { cypherResult } = useAppStore.getState();
+  if (!cypherResult || !cypherResult.results[0]) {
+    return [];
+  }
+
+  const nodeIds: string[] = [];
+  for (const row of cypherResult.results[0].data) {
+    for (const cell of row.row) {
+      if (cell && typeof cell === "object") {
+        const cellObj = cell as Record<string, unknown>;
+        if (cellObj.elementId || cellObj.id || cellObj._nodeId) {
+          const nodeData = extractNodeFromResult(cellObj);
+          if (nodeData && !nodeIds.includes(nodeData.id)) {
+            nodeIds.push(nodeData.id);
+          }
+        }
+      }
+    }
+  }
+  return nodeIds;
+}
+
 // Extract node data from Cypher result cell
 // Supports both Neo4j format (nested properties) and legacy format (flat properties)
 function extractNodeFromResult(
@@ -1117,6 +1380,285 @@ function extractNodeFromResult(
   }
 
   return { id, labels, properties };
+}
+
+// Check if a property is read-only
+function isReadOnlyProperty(key: string): boolean {
+  const readOnlyKeys = [
+    "embedded_at",
+    "embedding_dimensions",
+    "embedding_model",
+    "has_embedding",
+    "db",
+    "chunk_count",
+    "embedding", // Also exclude embedding from editing
+  ];
+  return readOnlyKeys.includes(key);
+}
+
+// Property Editor Component
+function PropertyEditor({
+  properties,
+  onSave,
+  onCancel,
+}: {
+  properties: Record<string, unknown>;
+  onSave: (props: Record<string, unknown>) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [editedProps, setEditedProps] = useState<Record<string, { key: string; value: string; type: string }>>(() => {
+    const props: Record<string, { key: string; value: string; type: string }> = {};
+    for (const [key, value] of Object.entries(properties)) {
+      if (isReadOnlyProperty(key)) continue;
+      props[key] = {
+        key,
+        value: JSON.stringify(value),
+        type: typeof value === "string" ? "string" : typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "json",
+      };
+    }
+    return props;
+  });
+  const [newPropKey, setNewPropKey] = useState("");
+  const [newPropValue, setNewPropValue] = useState("");
+  const [newPropType, setNewPropType] = useState<"string" | "number" | "boolean" | "json">("string");
+  const [saving, setSaving] = useState(false);
+
+  const addNewProperty = () => {
+    if (!newPropKey.trim()) return;
+    
+    let parsedValue: unknown;
+    try {
+      if (newPropType === "json") {
+        parsedValue = JSON.parse(newPropValue);
+      } else if (newPropType === "number") {
+        parsedValue = parseFloat(newPropValue);
+        if (Number.isNaN(parsedValue)) {
+          alert("Invalid number");
+          return;
+        }
+      } else if (newPropType === "boolean") {
+        parsedValue = newPropValue.toLowerCase() === "true";
+      } else {
+        parsedValue = newPropValue;
+      }
+    } catch (err) {
+      alert(`Invalid ${newPropType}: ${err instanceof Error ? err.message : 'Parse error'}`);
+      return;
+    }
+
+    setEditedProps({
+      ...editedProps,
+      [newPropKey]: {
+        key: newPropKey,
+        value: JSON.stringify(parsedValue),
+        type: newPropType,
+      },
+    });
+    setNewPropKey("");
+    setNewPropValue("");
+    setNewPropType("string");
+  };
+
+  const removeProperty = (key: string) => {
+    const newProps = { ...editedProps };
+    delete newProps[key];
+    setEditedProps(newProps);
+  };
+
+  const updateProperty = (oldKey: string, newKey: string, value: string, type: string) => {
+    const newProps = { ...editedProps };
+    if (oldKey !== newKey) {
+      delete newProps[oldKey];
+    }
+    newProps[newKey] = { key: newKey, value, type };
+    setEditedProps(newProps);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const propsToSave: Record<string, unknown> = {};
+      
+      for (const prop of Object.values(editedProps)) {
+        try {
+          let parsedValue: unknown;
+          if (prop.type === "json") {
+            parsedValue = JSON.parse(prop.value);
+          } else if (prop.type === "number") {
+            parsedValue = parseFloat(prop.value);
+            if (Number.isNaN(parsedValue)) {
+              throw new Error(`Invalid number: ${prop.value}`);
+            }
+          } else if (prop.type === "boolean") {
+            parsedValue = prop.value.toLowerCase() === "true";
+          } else {
+            parsedValue = prop.value;
+          }
+          propsToSave[prop.key] = parsedValue;
+        } catch (err) {
+          alert(`Invalid value for ${prop.key}: ${err instanceof Error ? err.message : 'Parse error'}`);
+          setSaving(false);
+          return;
+        }
+      }
+
+      await onSave(propsToSave);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Separate read-only and editable properties
+  const readOnlyProps = Object.entries(properties)
+    .filter(([key]) => isReadOnlyProperty(key))
+    .map(([key, value]) => ({ key, value }));
+
+  return (
+    <div className="space-y-3">
+      {/* Read-only properties display */}
+      {readOnlyProps.length > 0 && (
+        <div className="mb-4">
+          <h4 className="text-xs font-medium text-norse-silver mb-2">
+            READ-ONLY PROPERTIES
+          </h4>
+          <div className="space-y-2">
+            {readOnlyProps.map(({ key, value }) => (
+              <div
+                key={key}
+                className="bg-norse-shadow/50 rounded-lg p-3 opacity-75"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <ChevronRight className="w-3 h-3 text-norse-fog" />
+                  <span className="text-sm text-frost-ice font-medium">
+                    {key}
+                  </span>
+                  <span className="text-xs text-norse-fog italic">
+                    (read-only)
+                  </span>
+                </div>
+                <div className="pl-5">
+                  <JsonPreview data={value} expanded />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Editable properties */}
+      <div>
+        <h4 className="text-xs font-medium text-norse-silver mb-2">
+          EDITABLE PROPERTIES
+        </h4>
+        {Object.values(editedProps).map((prop) => (
+          <div key={prop.key} className="bg-norse-stone rounded-lg p-3 mb-2">
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="text"
+                value={prop.key}
+                onChange={(e) => updateProperty(prop.key, e.target.value, prop.value, prop.type)}
+                className="flex-1 px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white"
+                placeholder="Property key"
+              />
+              <select
+                value={prop.type}
+                onChange={(e) => updateProperty(prop.key, prop.key, prop.value, e.target.value as "string" | "number" | "boolean" | "json")}
+                className="px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white"
+              >
+                <option value="string">String</option>
+                <option value="number">Number</option>
+                <option value="boolean">Boolean</option>
+                <option value="json">JSON</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => removeProperty(prop.key)}
+                className="p-1 hover:bg-red-500/20 rounded"
+              >
+                <X className="w-4 h-4 text-red-400" />
+              </button>
+            </div>
+            <textarea
+              value={prop.value}
+              onChange={(e) => updateProperty(prop.key, prop.key, e.target.value, prop.type)}
+              className="w-full px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white font-mono"
+              rows={prop.type === "json" ? 4 : 1}
+              placeholder={`Enter ${prop.type} value`}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Add new property */}
+      <div className="bg-norse-stone rounded-lg p-3 border-2 border-dashed border-norse-rune">
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            type="text"
+            value={newPropKey}
+            onChange={(e) => setNewPropKey(e.target.value)}
+            className="flex-1 px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white"
+            placeholder="New property key"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addNewProperty();
+              }
+            }}
+          />
+          <select
+            value={newPropType}
+            onChange={(e) => setNewPropType(e.target.value as "string" | "number" | "boolean" | "json")}
+            className="px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white"
+          >
+            <option value="string">String</option>
+            <option value="number">Number</option>
+            <option value="boolean">Boolean</option>
+            <option value="json">JSON</option>
+          </select>
+          <button
+            type="button"
+            onClick={addNewProperty}
+            className="px-2 py-1 bg-nornic-primary/20 hover:bg-nornic-primary/30 text-nornic-primary rounded text-sm"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+        <textarea
+          value={newPropValue}
+          onChange={(e) => setNewPropValue(e.target.value)}
+          className="w-full px-2 py-1 bg-norse-shadow border border-norse-rune rounded text-sm text-white font-mono"
+          rows={newPropType === "json" ? 4 : 1}
+          placeholder={`Enter ${newPropType} value`}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              addNewProperty();
+            }
+          }}
+        />
+      </div>
+
+      {/* Save/Cancel buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1 px-4 py-2 bg-nornic-primary text-white rounded hover:bg-nornic-secondary disabled:opacity-50"
+        >
+          <Check className="w-4 h-4" />
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-4 py-2 bg-norse-rune text-norse-silver rounded hover:bg-norse-fog"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // Display embedding status nicely
