@@ -522,6 +522,10 @@ make cross-all             # All platforms
 - [x] SIMD Implementation
 - [x] Clustering support
 
+## Contributors
+
+Thank you to all our [contributors](CONTRIBUTORS.md) who have helped make NornicDB better! 🎉
+
 ## License
 
 MIT License — Originally part of the [Mimir](https://github.com/orneryd/mimir) project, now maintained as a standalone repository.
