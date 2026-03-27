@@ -11,7 +11,7 @@ require (
 	github.com/hybridgroup/yzma v1.3.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.3
 	github.com/qdrant/go-client v1.16.2
-	github.com/spf13/cobra v1.9.1
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/vektah/gqlparser/v2 v2.5.31
 	github.com/viterin/vek v0.4.3
@@ -41,7 +41,7 @@ require (
 	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/sosodev/duration v1.3.1 // indirect
-	github.com/spf13/pflag v1.0.6 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/viterin/partial v1.1.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
