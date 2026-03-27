@@ -4,7 +4,7 @@
 # Build: docker build -f docker/Dockerfile.llama-cuda -t timothyswt/llama-cuda-libs:b8157 .
 # Push:  docker push timothyswt/llama-cuda-libs:b8157
 
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
+FROM nvidia/cuda:13.2.0-devel-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*

@@ -34,7 +34,7 @@ FROM ${LLAMA_CUDA_IMAGE} AS llama
 # =============================================================================
 # Stage 3: Go build
 # =============================================================================
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:13.2.0-devel-ubuntu22.04 AS builder
 
 ENV GO_VERSION=1.26.0
 RUN apt-get update && apt-get install -y wget git gcc g++ libgomp1 && \
@@ -82,7 +82,7 @@ RUN echo "Building Heimdall plugin..." && \
 # =============================================================================
 # Stage 4: Runtime
 # =============================================================================
-FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+FROM nvidia/cuda:13.2.0-runtime-ubuntu22.04
 WORKDIR /app
 
 # Install gcc for CUDA stub compilation (graceful fallback when no GPU)
