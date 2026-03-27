@@ -6,7 +6,7 @@ require (
 	github.com/99designs/gqlgen v0.17.84
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/dgraph-io/badger/v4 v4.9.0
-	github.com/ebitengine/purego v0.9.1
+	github.com/ebitengine/purego v0.10.0
 	github.com/google/uuid v1.6.0
 	github.com/hybridgroup/yzma v1.3.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.3
