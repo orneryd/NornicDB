@@ -9,7 +9,7 @@ require (
 	github.com/ebitengine/purego v0.9.1
 	github.com/google/uuid v1.6.0
 	github.com/hybridgroup/yzma v1.3.0
-	github.com/neo4j/neo4j-go-driver/v5 v5.28.3
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/qdrant/go-client v1.16.2
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
