@@ -11,7 +11,7 @@
 # =============================================================================
 # Stage 1: UI (skipped in headless mode)
 # =============================================================================
-FROM public.ecr.aws/docker/library/node:20-alpine AS ui
+FROM public.ecr.aws/docker/library/node:25-alpine AS ui
 ARG HEADLESS=false
 WORKDIR /ui
 COPY ui/package*.json ./
