@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "./api";
+import { buildGraphRoute } from "../graph/requests";
 
 describe("graph api client", () => {
   afterEach(() => {
@@ -33,7 +34,7 @@ describe("graph api client", () => {
     ).resolves.toEqual(response);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/nornicdb/graph/tenant-a/neighborhood",
+      buildGraphRoute("tenant-a", "/neighborhood"),
       expect.objectContaining({
         method: "POST",
         credentials: "include",

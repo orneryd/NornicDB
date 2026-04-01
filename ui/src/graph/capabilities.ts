@@ -10,6 +10,7 @@ export interface GraphFeatureFlags {
   expand: boolean;
   path: boolean;
   temporal: boolean;
+  diff: boolean;
   mutate: boolean;
 }
 
@@ -20,6 +21,7 @@ export interface GraphCapabilities {
   canExpandGraph: boolean;
   canTracePaths: boolean;
   canViewTemporalHistory: boolean;
+  canViewDiff: boolean;
   canMutateGraph: boolean;
 }
 
@@ -36,6 +38,7 @@ const defaultFeatureFlags: GraphFeatureFlags = {
   expand: true,
   path: true,
   temporal: false,
+  diff: false,
   mutate: false,
 };
 
@@ -106,6 +109,7 @@ export function deriveGraphCapabilities(
     canExpandGraph: canRead && featureFlags.expand,
     canTracePaths: canRead && featureFlags.path,
     canViewTemporalHistory: canRead && featureFlags.temporal,
+    canViewDiff: canRead && featureFlags.diff,
     canMutateGraph: canWrite && featureFlags.mutate,
   };
 }

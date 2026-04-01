@@ -95,6 +95,7 @@ describe("deriveGraphCapabilities", () => {
       canExpandGraph: false,
       canTracePaths: false,
       canViewTemporalHistory: false,
+      canViewDiff: false,
       canMutateGraph: false,
     });
   });
