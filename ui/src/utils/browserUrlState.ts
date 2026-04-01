@@ -1,4 +1,4 @@
-export type BrowserTab = "query" | "search";
+export type BrowserViewMode = "query" | "search" | "graph";
 export type GraphHandoffMode = "neighborhood" | "expand" | "path" | "temporal" | "diff";
 
 export interface BrowserGraphHandoff {
@@ -12,11 +12,12 @@ export interface BrowserGraphHandoff {
 
 export interface BrowserUrlState {
   database: string | null;
-  tab: BrowserTab;
+  view: BrowserViewMode;
   graph: BrowserGraphHandoff | null;
 }
 
-const TAB_PARAM = "tab";
+const VIEW_PARAM = "view";
+const LEGACY_TAB_PARAM = "tab";
 const DATABASE_PARAM = "database";
 const GRAPH_MODE_PARAM = "graph";
 const GRAPH_NODE_IDS_PARAM = "graphNodeIds";
@@ -33,13 +34,27 @@ function normalizeOptional(value: string | null | undefined): string | undefined
 
 function normalizeList(value: string | null): string[] {
   if (!value) return [];
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
 }
 
-function normalizeTab(value: string | null): BrowserTab {
+function normalizeView(value: string | null): BrowserViewMode {
+  switch (value) {
+    case "search":
+    case "graph":
+      return value;
+    default:
+      return "query";
+  }
+}
+
+function normalizeLegacyTab(value: string | null): BrowserViewMode {
   return value === "search" ? "search" : "query";
 }
 
@@ -72,7 +87,10 @@ export function readBrowserUrlState(searchParams: URLSearchParams): BrowserUrlSt
 
   return {
     database: normalizeOptional(searchParams.get(DATABASE_PARAM)) ?? null,
-    tab: normalizeTab(searchParams.get(TAB_PARAM)),
+    view:
+      searchParams.get(VIEW_PARAM) !== null
+        ? normalizeView(searchParams.get(VIEW_PARAM))
+        : normalizeLegacyTab(searchParams.get(LEGACY_TAB_PARAM)),
     graph,
   };
 }
@@ -84,7 +102,7 @@ export function mergeBrowserUrlState(
   const current = readBrowserUrlState(currentSearchParams);
   const merged: BrowserUrlState = {
     database: nextState.database === undefined ? current.database : nextState.database,
-    tab: nextState.tab ?? current.tab,
+    view: nextState.view ?? current.view,
     graph: nextState.graph === undefined ? current.graph : nextState.graph,
   };
 
@@ -96,10 +114,12 @@ export function mergeBrowserUrlState(
     nextParams.delete(DATABASE_PARAM);
   }
 
-  if (merged.tab === "search") {
-    nextParams.set(TAB_PARAM, merged.tab);
+  nextParams.delete(LEGACY_TAB_PARAM);
+
+  if (merged.view !== "query") {
+    nextParams.set(VIEW_PARAM, merged.view);
   } else {
-    nextParams.delete(TAB_PARAM);
+    nextParams.delete(VIEW_PARAM);
   }
 
   if (merged.graph) {
@@ -138,5 +158,16 @@ export function mergeBrowserUrlState(
 }
 
 export function buildGraphHandoffParams(graph: BrowserGraphHandoff): URLSearchParams {
-  return mergeBrowserUrlState(new URLSearchParams(), { graph });
+  return mergeBrowserUrlState(new URLSearchParams(), { view: "graph", graph });
+}
+
+export function readBrowserRouteState(searchParams: URLSearchParams): BrowserUrlState {
+  return readBrowserUrlState(searchParams);
+}
+
+export function patchBrowserRouteState(
+  currentSearchParams: URLSearchParams,
+  nextState: Partial<BrowserUrlState>,
+): URLSearchParams {
+  return mergeBrowserUrlState(currentSearchParams, nextState);
 }

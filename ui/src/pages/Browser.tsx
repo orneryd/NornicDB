@@ -12,9 +12,9 @@ import { DeleteConfirmModal } from "../components/modals/DeleteConfirmModal";
 import { RegenerateConfirmModal } from "../components/modals/RegenerateConfirmModal";
 import { BASE_PATH, joinBasePath } from "../utils/basePath";
 import {
-  mergeBrowserUrlState,
-  readBrowserUrlState,
-  type BrowserTab,
+  patchBrowserRouteState,
+  readBrowserRouteState,
+  type BrowserViewMode,
 } from "../utils/browserUrlState";
 
 interface EmbedStats {
@@ -32,7 +32,7 @@ interface EmbedData {
 
 export function Browser() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const routeState = readBrowserUrlState(searchParams);
+  const routeState = readBrowserRouteState(searchParams);
   const {
     stats,
     connected,
@@ -66,7 +66,6 @@ export function Browser() {
     collapseSimilar,
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<BrowserTab>(routeState.tab);
   const [embedData, setEmbedData] = useState<EmbedData>({
     stats: null,
     totalEmbeddings: 0,
@@ -141,12 +140,6 @@ export function Browser() {
   }, [fetchDatabases]);
 
   useEffect(() => {
-    if (activeTab !== routeState.tab) {
-      setActiveTab(routeState.tab);
-    }
-  }, [activeTab, routeState.tab]);
-
-  useEffect(() => {
     if (routeState.database) {
       if (databaseList.length > 0 && databaseList.includes(routeState.database)) {
         if (selectedDatabase !== routeState.database) {
@@ -161,8 +154,8 @@ export function Browser() {
     }
   }, [databaseList, routeState.database, selectedDatabase, setSelectedDatabase]);
 
-  const updateRouteState = (nextState: Parameters<typeof mergeBrowserUrlState>[1]) => {
-    setSearchParams(mergeBrowserUrlState(searchParams, nextState));
+  const updateRouteState = (nextState: Parameters<typeof patchBrowserRouteState>[1]) => {
+    setSearchParams(patchBrowserRouteState(searchParams, nextState));
   };
 
   const handleDatabaseChange = (dbName: string) => {
@@ -171,9 +164,8 @@ export function Browser() {
     updateRouteState({ database: value });
   };
 
-  const handleTabChange = (tab: BrowserTab) => {
-    setActiveTab(tab);
-    updateRouteState({ tab });
+  const handleViewChange = (view: BrowserViewMode) => {
+    updateRouteState({ view });
   };
 
   const handleDeleteNodes = async () => {
@@ -185,9 +177,9 @@ export function Browser() {
 
       if (result.success) {
         clearNodeSelection();
-        if (activeTab === "query") {
+        if (routeState.view === "query") {
           executeCypher();
-        } else {
+        } else if (routeState.view === "search") {
           executeSearch();
         }
       } else {
@@ -209,9 +201,9 @@ export function Browser() {
   };
 
   const handleRefresh = () => {
-    if (activeTab === "query") {
+    if (routeState.view === "query") {
       executeCypher();
-    } else {
+    } else if (routeState.view === "search") {
       executeSearch();
     }
   };
@@ -255,9 +247,9 @@ export function Browser() {
           <div className="flex border-b border-norse-rune">
             <button
               type="button"
-              onClick={() => handleTabChange("query")}
+              onClick={() => handleViewChange("query")}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                activeTab === "query"
+                routeState.view === "query"
                   ? "text-nornic-primary border-b-2 border-nornic-primary bg-norse-shadow/50"
                   : "text-norse-silver hover:text-white"
               }`}
@@ -267,9 +259,9 @@ export function Browser() {
             </button>
             <button
               type="button"
-              onClick={() => handleTabChange("search")}
+              onClick={() => handleViewChange("search")}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                activeTab === "search"
+                routeState.view === "search"
                   ? "text-nornic-primary border-b-2 border-nornic-primary bg-norse-shadow/50"
                   : "text-norse-silver hover:text-white"
               }`}
@@ -277,9 +269,21 @@ export function Browser() {
               <Sparkles className="w-4 h-4" />
               Semantic Search
             </button>
+            <button
+              type="button"
+              onClick={() => handleViewChange("graph")}
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+                routeState.view === "graph"
+                  ? "text-nornic-primary border-b-2 border-nornic-primary bg-norse-shadow/50"
+                  : "text-norse-silver hover:text-white"
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              Graph Explorer
+            </button>
           </div>
 
-          {activeTab === "query" && (
+          {routeState.view === "query" && (
             <QueryPanel
               cypherQuery={cypherQuery}
               setCypherQuery={setCypherQuery}
@@ -308,7 +312,7 @@ export function Browser() {
             />
           )}
 
-          {activeTab === "search" && (
+          {routeState.view === "search" && (
             <SearchPanel
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
@@ -333,6 +337,36 @@ export function Browser() {
               onCollapseSimilar={collapseSimilar}
               deleting={deleting}
             />
+          )}
+
+          {routeState.view === "graph" && (
+            <div className="flex-1 p-6">
+              <div className="rounded-2xl border border-dashed border-norse-rune bg-norse-shadow/40 p-6">
+                <div className="text-lg font-semibold text-white">Graph Explorer shell</div>
+                <p className="mt-2 text-sm text-norse-silver">
+                  Route-driven graph handoff is in place. Full canvas and inspector work stays in
+                  follow-up slices.
+                </p>
+                <dl className="mt-6 space-y-3 text-sm">
+                  <div>
+                    <dt className="text-norse-fog">Database</dt>
+                    <dd className="text-white">{routeState.database ?? "(server default)"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-norse-fog">Graph mode</dt>
+                    <dd className="text-white">{routeState.graph?.mode ?? "not set"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-norse-fog">Focused nodes</dt>
+                    <dd className="text-white">
+                      {routeState.graph?.nodeIds.length
+                        ? routeState.graph.nodeIds.join(", ")
+                        : "none"}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
           )}
         </div>
 

@@ -10,13 +10,13 @@ describe("browser URL state helpers", () => {
   it("reads browser state from shareable query params", () => {
     const state = readBrowserUrlState(
       new URLSearchParams(
-        "database=tenant-a&tab=search&graph=path&graphNodeIds=node-1,node-2&graphSource=node-1&graphTarget=node-2&graphAsOf=2026-04-01T00:00:00Z&graphCompareTo=2026-04-02T00:00:00Z",
+        "database=tenant-a&view=graph&graph=path&graphNodeIds=node-2,node-1,node-2&graphSource=node-1&graphTarget=node-2&graphAsOf=2026-04-01T00:00:00Z&graphCompareTo=2026-04-02T00:00:00Z",
       ),
     );
 
     expect(state).toEqual({
       database: "tenant-a",
-      tab: "search",
+      view: "graph",
       graph: {
         mode: "path",
         nodeIds: ["node-1", "node-2"],
@@ -28,24 +28,24 @@ describe("browser URL state helpers", () => {
     });
   });
 
-  it("merges database and tab updates without clobbering other route state", () => {
+  it("merges database and view updates without clobbering other route state", () => {
     const next = mergeBrowserUrlState(
       new URLSearchParams("graph=expand&graphNodeIds=node-9&view=compact"),
-      { database: "tenant-a", tab: "search" },
+      { database: "tenant-a", view: "search" },
     );
 
     expect(next.toString()).toBe(
-      "graph=expand&graphNodeIds=node-9&view=compact&database=tenant-a&tab=search",
+      "graph=expand&graphNodeIds=node-9&view=search&database=tenant-a",
     );
   });
 
-  it("drops default query-tab routing and clears graph params cleanly", () => {
+  it("drops default query-view routing and clears graph params cleanly", () => {
     const next = mergeBrowserUrlState(
       new URLSearchParams(
-        "database=tenant-a&tab=search&graph=diff&graphNodeIds=node-1&graphCompareTo=2026-04-02T00:00:00Z",
+        "database=tenant-a&view=search&graph=diff&graphNodeIds=node-1&graphCompareTo=2026-04-02T00:00:00Z",
       ),
       {
-        tab: "query",
+        view: "query",
         graph: null,
       },
     );
@@ -61,7 +61,7 @@ describe("browser URL state helpers", () => {
     });
 
     expect(params.toString()).toBe(
-      "graph=neighborhood&graphNodeIds=node-1%2Cnode-2&graphAsOf=2026-04-01T00%3A00%3A00Z",
+      "view=graph&graph=neighborhood&graphNodeIds=node-1%2Cnode-2&graphAsOf=2026-04-01T00%3A00%3A00Z",
     );
   });
 
@@ -72,7 +72,17 @@ describe("browser URL state helpers", () => {
 
     expect(state).toEqual({
       database: null,
-      tab: "query",
+      view: "query",
+      graph: null,
+    });
+  });
+
+  it("accepts legacy tab params when restoring browser state", () => {
+    const state = readBrowserUrlState(new URLSearchParams("database=tenant-a&tab=search"));
+
+    expect(state).toEqual({
+      database: "tenant-a",
+      view: "search",
       graph: null,
     });
   });
