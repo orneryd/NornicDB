@@ -11,6 +11,11 @@ import { NodeDetailsPanel } from "../components/browser/NodeDetailsPanel";
 import { DeleteConfirmModal } from "../components/modals/DeleteConfirmModal";
 import { RegenerateConfirmModal } from "../components/modals/RegenerateConfirmModal";
 import { BASE_PATH, joinBasePath } from "../utils/basePath";
+import {
+  mergeBrowserUrlState,
+  readBrowserUrlState,
+  type BrowserTab,
+} from "../utils/browserUrlState";
 
 interface EmbedStats {
   running: boolean;
@@ -27,6 +32,7 @@ interface EmbedData {
 
 export function Browser() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const routeState = readBrowserUrlState(searchParams);
   const {
     stats,
     connected,
@@ -60,7 +66,7 @@ export function Browser() {
     collapseSimilar,
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<"query" | "search">("query");
+  const [activeTab, setActiveTab] = useState<BrowserTab>(routeState.tab);
   const [embedData, setEmbedData] = useState<EmbedData>({
     stats: null,
     totalEmbeddings: 0,
@@ -77,7 +83,6 @@ export function Browser() {
   const navigate = useNavigate();
   const databaseSelectId = useId();
 
-  // Fetch embed stats periodically
   useEffect(() => {
     const fetchEmbedStats = async () => {
       try {
@@ -95,6 +100,7 @@ export function Browser() {
         // Ignore errors
       }
     };
+
     fetchEmbedStats();
     const interval = setInterval(fetchEmbedStats, 3000);
     return () => clearInterval(interval);
@@ -134,22 +140,40 @@ export function Browser() {
     fetchDatabases();
   }, [fetchDatabases]);
 
-  // Sync URL ?database= with selected database (apply URL when list is loaded)
   useEffect(() => {
-    const dbFromUrl = searchParams.get("database");
-    if (dbFromUrl && databaseList.length > 0 && databaseList.includes(dbFromUrl)) {
-      setSelectedDatabase(dbFromUrl);
+    if (activeTab !== routeState.tab) {
+      setActiveTab(routeState.tab);
     }
-  }, [databaseList, searchParams, setSelectedDatabase]);
+  }, [activeTab, routeState.tab]);
+
+  useEffect(() => {
+    if (routeState.database) {
+      if (databaseList.length > 0 && databaseList.includes(routeState.database)) {
+        if (selectedDatabase !== routeState.database) {
+          setSelectedDatabase(routeState.database);
+        }
+      }
+      return;
+    }
+
+    if (selectedDatabase !== null) {
+      setSelectedDatabase(null);
+    }
+  }, [databaseList, routeState.database, selectedDatabase, setSelectedDatabase]);
+
+  const updateRouteState = (nextState: Parameters<typeof mergeBrowserUrlState>[1]) => {
+    setSearchParams(mergeBrowserUrlState(searchParams, nextState));
+  };
 
   const handleDatabaseChange = (dbName: string) => {
     const value = dbName === "" ? null : dbName;
     setSelectedDatabase(value);
-    if (value) {
-      setSearchParams({ database: value });
-    } else {
-      setSearchParams({});
-    }
+    updateRouteState({ database: value });
+  };
+
+  const handleTabChange = (tab: BrowserTab) => {
+    setActiveTab(tab);
+    updateRouteState({ tab });
   };
 
   const handleDeleteNodes = async () => {
@@ -179,7 +203,7 @@ export function Browser() {
 
   const handleUpdateProperties = async (
     nodeId: string,
-    props: Record<string, unknown>
+    props: Record<string, unknown>,
   ) => {
     return await api.updateNodeProperties(nodeId, props, selectedDatabase ?? undefined);
   };
@@ -205,11 +229,8 @@ export function Browser() {
         onSecurityClick={() => navigate("/security")}
       />
 
-      {/* Main Content */}
       <div className="flex-1 flex">
-        {/* Left Panel - Query/Search */}
         <div className="w-1/2 border-r border-norse-rune flex flex-col">
-          {/* Database selector - all queries run against this database */}
           <div className="flex items-center gap-2 px-4 py-2 border-b border-norse-rune bg-norse-shadow/30">
             <Database className="w-4 h-4 text-norse-silver shrink-0" aria-hidden />
             <label htmlFor={databaseSelectId} className="text-sm text-norse-silver shrink-0">
@@ -230,11 +251,11 @@ export function Browser() {
               ))}
             </select>
           </div>
-          {/* Tabs */}
+
           <div className="flex border-b border-norse-rune">
             <button
               type="button"
-              onClick={() => setActiveTab("query")}
+              onClick={() => handleTabChange("query")}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
                 activeTab === "query"
                   ? "text-nornic-primary border-b-2 border-nornic-primary bg-norse-shadow/50"
@@ -246,7 +267,7 @@ export function Browser() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("search")}
+              onClick={() => handleTabChange("search")}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
                 activeTab === "search"
                   ? "text-nornic-primary border-b-2 border-nornic-primary bg-norse-shadow/50"
@@ -258,7 +279,6 @@ export function Browser() {
             </button>
           </div>
 
-          {/* Query Panel */}
           {activeTab === "query" && (
             <QueryPanel
               cypherQuery={cypherQuery}
@@ -288,7 +308,6 @@ export function Browser() {
             />
           )}
 
-          {/* Search Panel */}
           {activeTab === "search" && (
             <SearchPanel
               searchQuery={searchQuery}
@@ -317,7 +336,6 @@ export function Browser() {
           )}
         </div>
 
-        {/* Right Panel - Node Details */}
         <div className="w-1/2 flex flex-col bg-norse-shadow/30">
           <NodeDetailsPanel
             selectedNode={selectedNode}
@@ -332,10 +350,8 @@ export function Browser() {
         </div>
       </div>
 
-      {/* AI Assistant Chat */}
       <Bifrost isOpen={showAIChat} onClose={() => setShowAIChat(false)} />
 
-      {/* Regenerate Embeddings Confirmation Dialog */}
       <RegenerateConfirmModal
         isOpen={showRegenerateConfirm}
         totalEmbeddings={embedData.totalEmbeddings}
@@ -346,7 +362,6 @@ export function Browser() {
         onCancel={() => setShowRegenerateConfirm(false)}
       />
 
-      {/* Delete Nodes Confirmation Dialog */}
       <DeleteConfirmModal
         isOpen={showDeleteConfirm}
         nodeCount={selectedNodeIds.size}
