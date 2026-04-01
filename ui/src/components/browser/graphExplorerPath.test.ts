@@ -37,14 +37,30 @@ describe("graph explorer path helpers", () => {
     ).toEqual({
       sourceNodeId: "node-2",
       targetNodeId: "node-1",
+      inferred: false,
+    });
+  });
+
+  it("can infer a path draft from focused or selected nodes when no path is active yet", () => {
+    expect(
+      getGraphExplorerPathDraft(
+        neighborhoodHandoff,
+        ["node-1", "node-2", "node-3"],
+        ["node-3", "node-2"],
+      ),
+    ).toEqual({
+      sourceNodeId: "node-3",
+      targetNodeId: "node-2",
+      inferred: true,
     });
   });
 
   it("falls back to the first available pair when the handoff does not carry a path yet", () => {
     expect(getGraphExplorerPathDraft(neighborhoodHandoff, ["node-3", "node-1", "node-2"]))
       .toEqual({
-        sourceNodeId: "node-1",
-        targetNodeId: "node-2",
+        sourceNodeId: "node-2",
+        targetNodeId: "node-1",
+        inferred: true,
       });
   });
 });

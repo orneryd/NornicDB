@@ -44,6 +44,16 @@ function normalizeList(value: string | null): string[] {
   ).sort((left, right) => left.localeCompare(right));
 }
 
+function normalizeNodeIds(nodeIds: string[]): string[] {
+  return Array.from(
+    new Set(
+      nodeIds
+        .map((nodeId) => nodeId.trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
 function normalizeView(value: string | null): BrowserViewMode {
   switch (value) {
     case "search":
@@ -71,18 +81,81 @@ function normalizeGraphMode(value: string | null): GraphHandoffMode | null {
   }
 }
 
+export function normalizeGraphHandoff(graph: BrowserGraphHandoff): BrowserGraphHandoff {
+  const normalizedNodeIds = normalizeNodeIds(graph.nodeIds);
+  const normalizedSourceNodeId = normalizeOptional(graph.sourceNodeId);
+  const normalizedTargetNodeId = normalizeOptional(graph.targetNodeId);
+  const normalizedAsOf = normalizeOptional(graph.asOf);
+  const normalizedCompareTo = normalizeOptional(graph.compareTo);
+
+  switch (graph.mode) {
+    case "path": {
+      const pathNodeIds = normalizeNodeIds(
+        [normalizedSourceNodeId, normalizedTargetNodeId].filter(
+          (value): value is string => value !== undefined,
+        ),
+      );
+
+      return {
+        mode: "path",
+        nodeIds: pathNodeIds,
+        sourceNodeId: normalizedSourceNodeId,
+        targetNodeId: normalizedTargetNodeId,
+        asOf: undefined,
+        compareTo: undefined,
+      };
+    }
+    case "temporal":
+      return {
+        mode: "temporal",
+        nodeIds: normalizedNodeIds,
+        sourceNodeId: undefined,
+        targetNodeId: undefined,
+        asOf: normalizedAsOf,
+        compareTo: undefined,
+      };
+    case "diff":
+      return {
+        mode: "diff",
+        nodeIds: normalizedNodeIds,
+        sourceNodeId: undefined,
+        targetNodeId: undefined,
+        asOf: normalizedAsOf,
+        compareTo: normalizedCompareTo,
+      };
+    case "expand":
+      return {
+        mode: "expand",
+        nodeIds: normalizedNodeIds,
+        sourceNodeId: undefined,
+        targetNodeId: undefined,
+        asOf: undefined,
+        compareTo: undefined,
+      };
+    default:
+      return {
+        mode: "neighborhood",
+        nodeIds: normalizedNodeIds,
+        sourceNodeId: undefined,
+        targetNodeId: undefined,
+        asOf: undefined,
+        compareTo: undefined,
+      };
+  }
+}
+
 export function readBrowserUrlState(searchParams: URLSearchParams): BrowserUrlState {
   const mode = normalizeGraphMode(searchParams.get(GRAPH_MODE_PARAM));
   const nodeIds = normalizeList(searchParams.get(GRAPH_NODE_IDS_PARAM));
   const graph = mode
-    ? {
+    ? normalizeGraphHandoff({
         mode,
         nodeIds,
         sourceNodeId: normalizeOptional(searchParams.get(GRAPH_SOURCE_NODE_ID_PARAM)),
         targetNodeId: normalizeOptional(searchParams.get(GRAPH_TARGET_NODE_ID_PARAM)),
         asOf: normalizeOptional(searchParams.get(GRAPH_AS_OF_PARAM)),
         compareTo: normalizeOptional(searchParams.get(GRAPH_COMPARE_TO_PARAM)),
-      }
+      })
     : null;
 
   return {
@@ -123,19 +196,20 @@ export function mergeBrowserUrlState(
   }
 
   if (merged.graph) {
-    nextParams.set(GRAPH_MODE_PARAM, merged.graph.mode);
+    const normalizedGraph = normalizeGraphHandoff(merged.graph);
+    nextParams.set(GRAPH_MODE_PARAM, normalizedGraph.mode);
 
-    if (merged.graph.nodeIds.length > 0) {
-      nextParams.set(GRAPH_NODE_IDS_PARAM, merged.graph.nodeIds.join(","));
+    if (normalizedGraph.nodeIds.length > 0) {
+      nextParams.set(GRAPH_NODE_IDS_PARAM, normalizedGraph.nodeIds.join(","));
     } else {
       nextParams.delete(GRAPH_NODE_IDS_PARAM);
     }
 
     const graphOptionalParams: Array<[string, string | undefined]> = [
-      [GRAPH_SOURCE_NODE_ID_PARAM, merged.graph.sourceNodeId],
-      [GRAPH_TARGET_NODE_ID_PARAM, merged.graph.targetNodeId],
-      [GRAPH_AS_OF_PARAM, merged.graph.asOf],
-      [GRAPH_COMPARE_TO_PARAM, merged.graph.compareTo],
+      [GRAPH_SOURCE_NODE_ID_PARAM, normalizedGraph.sourceNodeId],
+      [GRAPH_TARGET_NODE_ID_PARAM, normalizedGraph.targetNodeId],
+      [GRAPH_AS_OF_PARAM, normalizedGraph.asOf],
+      [GRAPH_COMPARE_TO_PARAM, normalizedGraph.compareTo],
     ];
 
     for (const [key, value] of graphOptionalParams) {
@@ -163,23 +237,21 @@ export function buildGraphHandoffParams(graph: BrowserGraphHandoff): URLSearchPa
 
 export function buildNeighborhoodGraphHandoff(
   nodeIds: string[],
+  focusedNodeId?: string | null,
 ): BrowserGraphHandoff | null {
-  const normalizedNodeIds = Array.from(
-    new Set(
-      nodeIds
-        .map((nodeId) => nodeId.trim())
-        .filter(Boolean),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
+  const normalizedNodeIds = normalizeNodeIds([
+    ...nodeIds,
+    normalizeOptional(focusedNodeId) ?? "",
+  ]);
 
   if (normalizedNodeIds.length === 0) {
     return null;
   }
 
-  return {
+  return normalizeGraphHandoff({
     mode: "neighborhood",
     nodeIds: normalizedNodeIds,
-  };
+  });
 }
 
 export function readBrowserRouteState(searchParams: URLSearchParams): BrowserUrlState {

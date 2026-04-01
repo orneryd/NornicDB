@@ -54,6 +54,8 @@ describe("graph explorer temporal helpers", () => {
     ).toEqual({
       mode: "temporal",
       nodeIds: ["node-1", "node-2"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
       asOf: "2026-03-15T00:00:00Z",
       compareTo: undefined,
     });
@@ -68,6 +70,8 @@ describe("graph explorer temporal helpers", () => {
     ).toEqual({
       mode: "diff",
       nodeIds: ["node-1", "node-2"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
       asOf: "2026-03-15T00:00:00Z",
       compareTo: "2026-03-20T00:00:00Z",
     });
@@ -89,6 +93,8 @@ describe("graph explorer temporal helpers", () => {
     ).toEqual({
       mode: "neighborhood",
       nodeIds: ["node-1", "node-2"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
       asOf: undefined,
       compareTo: undefined,
     });

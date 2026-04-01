@@ -4,6 +4,7 @@ import {
   buildGraphHandoffParams,
   buildNeighborhoodGraphHandoff,
   mergeBrowserUrlState,
+  normalizeGraphHandoff,
   readBrowserUrlState,
 } from "./browserUrlState";
 
@@ -23,8 +24,8 @@ describe("browser URL state helpers", () => {
         nodeIds: ["node-1", "node-2"],
         sourceNodeId: "node-1",
         targetNodeId: "node-2",
-        asOf: "2026-04-01T00:00:00Z",
-        compareTo: "2026-04-02T00:00:00Z",
+        asOf: undefined,
+        compareTo: undefined,
       },
     });
   });
@@ -61,9 +62,7 @@ describe("browser URL state helpers", () => {
       asOf: "2026-04-01T00:00:00Z",
     });
 
-    expect(params.toString()).toBe(
-      "view=graph&graph=neighborhood&graphNodeIds=node-1%2Cnode-2&graphAsOf=2026-04-01T00%3A00%3A00Z",
-    );
+    expect(params.toString()).toBe("view=graph&graph=neighborhood&graphNodeIds=node-1%2Cnode-2");
   });
 
   it("builds normalized neighborhood handoffs from selected node ids", () => {
@@ -72,6 +71,21 @@ describe("browser URL state helpers", () => {
     ).toEqual({
       mode: "neighborhood",
       nodeIds: ["node-1", "node-2"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
+      asOf: undefined,
+      compareTo: undefined,
+    });
+  });
+
+  it("falls back to the focused node when graph handoff selections are empty", () => {
+    expect(buildNeighborhoodGraphHandoff([], " node-4 ")).toEqual({
+      mode: "neighborhood",
+      nodeIds: ["node-4"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
+      asOf: undefined,
+      compareTo: undefined,
     });
   });
 
@@ -98,6 +112,26 @@ describe("browser URL state helpers", () => {
       database: "tenant-a",
       view: "search",
       graph: null,
+    });
+  });
+
+  it("normalizes graph handoffs by clearing stale fields for node-centered modes", () => {
+    expect(
+      normalizeGraphHandoff({
+        mode: "expand",
+        nodeIds: ["node-2", "node-1"],
+        sourceNodeId: "node-9",
+        targetNodeId: "node-8",
+        asOf: "2026-04-01T00:00:00Z",
+        compareTo: "2026-04-02T00:00:00Z",
+      }),
+    ).toEqual({
+      mode: "expand",
+      nodeIds: ["node-1", "node-2"],
+      sourceNodeId: undefined,
+      targetNodeId: undefined,
+      asOf: undefined,
+      compareTo: undefined,
     });
   });
 });

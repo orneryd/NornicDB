@@ -38,6 +38,8 @@ import {
 interface GraphExplorerPanelProps {
   handoff: BrowserGraphHandoff | null;
   selectedDatabase: string | null;
+  selectedNodeId?: string | null;
+  selectedNodeIds?: string[];
   onNodeSelect: (node: SearchResult) => void;
   onClearGraph: () => void;
   onUpdateHandoff: (handoff: BrowserGraphHandoff) => void;
@@ -138,6 +140,8 @@ function toSearchResult(node: GraphNodeModel): SearchResult {
 export function GraphExplorerPanel({
   handoff,
   selectedDatabase,
+  selectedNodeId,
+  selectedNodeIds = [],
   onNodeSelect,
   onClearGraph,
   onUpdateHandoff,
@@ -157,6 +161,7 @@ export function GraphExplorerPanel({
   const [compareToInput, setCompareToInput] = useState("");
   const [pathSourceInput, setPathSourceInput] = useState("");
   const [pathTargetInput, setPathTargetInput] = useState("");
+  const [pathDraftWasInferred, setPathDraftWasInferred] = useState(false);
   const [state, setState] = useState<GraphExplorerState>({
     loading: false,
     error: null,
@@ -183,6 +188,7 @@ export function GraphExplorerPanel({
       setCompareToInput("");
       setPathSourceInput("");
       setPathTargetInput("");
+      setPathDraftWasInferred(false);
       return;
     }
 
@@ -244,6 +250,10 @@ export function GraphExplorerPanel({
   const focusNodeIds = useMemo(() => new Set(handoff?.nodeIds ?? []), [handoff]);
   const supportsDepth = handoff ? supportsGraphDepthControl(handoff.mode) : false;
   const supportsTemporalFlow = handoff ? supportsGraphExplorerTemporalFlow(handoff) : false;
+  const preferredPathNodeIds = useMemo(
+    () => Array.from(new Set([selectedNodeId ?? "", ...selectedNodeIds])).filter(Boolean),
+    [selectedNodeId, selectedNodeIds],
+  );
   const viewModel = useMemo(() => {
     if (!state.graph) {
       return null;
@@ -261,13 +271,15 @@ export function GraphExplorerPanel({
     if (!handoff || pathOptions.length === 0) {
       setPathSourceInput("");
       setPathTargetInput("");
+      setPathDraftWasInferred(false);
       return;
     }
 
-    const draft = getGraphExplorerPathDraft(handoff, pathOptions);
+    const draft = getGraphExplorerPathDraft(handoff, pathOptions, preferredPathNodeIds);
     setPathSourceInput(draft.sourceNodeId);
     setPathTargetInput(draft.targetNodeId);
-  }, [handoff, pathOptions]);
+    setPathDraftWasInferred(draft.inferred);
+  }, [handoff, pathOptions, preferredPathNodeIds]);
 
   useEffect(() => {
     if (!viewModel) {
@@ -342,8 +354,8 @@ export function GraphExplorerPanel({
               type="button"
               onClick={() =>
                 onUpdateHandoff({
-                  ...handoff,
                   mode: "expand",
+                  nodeIds: handoff.nodeIds,
                 })
               }
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog"
@@ -445,6 +457,7 @@ export function GraphExplorerPanel({
                       <legend className="px-1 text-sm font-medium text-white">Path request</legend>
                       <p id={pathHelpId} className="mt-1 text-xs text-norse-silver">
                         Choose two different node ids to replace the current graph with a path request.
+                        {pathDraftWasInferred ? " Drafts were inferred from the current graph focus or selected nodes." : ""}
                       </p>
                       <div className="mt-3 flex flex-wrap items-end gap-4">
                         <label className="flex flex-col gap-2 text-sm text-norse-silver">
@@ -453,7 +466,10 @@ export function GraphExplorerPanel({
                             type="text"
                             list="graph-path-node-options"
                             value={pathSourceInput}
-                            onChange={(event) => setPathSourceInput(event.target.value)}
+                            onChange={(event) => {
+                              setPathSourceInput(event.target.value);
+                              setPathDraftWasInferred(false);
+                            }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
                                 event.preventDefault();
@@ -471,7 +487,10 @@ export function GraphExplorerPanel({
                             type="text"
                             list="graph-path-node-options"
                             value={pathTargetInput}
-                            onChange={(event) => setPathTargetInput(event.target.value)}
+                            onChange={(event) => {
+                              setPathTargetInput(event.target.value);
+                              setPathDraftWasInferred(false);
+                            }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
                                 event.preventDefault();

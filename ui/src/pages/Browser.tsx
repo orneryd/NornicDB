@@ -171,7 +171,10 @@ export function Browser() {
   };
 
   const handleGraphSelectionHandoff = () => {
-    const graph = buildNeighborhoodGraphHandoff(Array.from(selectedNodeIds));
+    const graph = buildNeighborhoodGraphHandoff(
+      Array.from(selectedNodeIds),
+      selectedNode?.node.id,
+    );
     if (!graph) {
       return;
     }
@@ -359,6 +362,8 @@ export function Browser() {
             <GraphExplorerPanel
               handoff={routeState.graph}
               selectedDatabase={selectedDatabase}
+              selectedNodeId={selectedNode?.node.id}
+              selectedNodeIds={Array.from(selectedNodeIds)}
               onNodeSelect={setSelectedNode}
               onClearGraph={() => updateRouteState({ graph: null })}
               onUpdateHandoff={(graph) => updateRouteState({ graph })}

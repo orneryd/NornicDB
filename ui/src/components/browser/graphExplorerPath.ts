@@ -1,4 +1,5 @@
 import type { BrowserGraphHandoff } from "../../utils/browserUrlState";
+import { normalizeGraphHandoff } from "../../utils/browserUrlState";
 
 function normalizeNodeId(value: string | undefined): string | undefined {
   if (!value) {
@@ -9,8 +10,18 @@ function normalizeNodeId(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isDefined<T>(value: T | undefined): value is T {
-  return value !== undefined;
+function normalizeNodeIds(nodeIds: string[]): string[] {
+  return Array.from(
+    new Set(
+      nodeIds
+        .map((nodeId) => nodeId.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function pickPreferredNodeId(candidates: string[], availableNodeIds: string[]): string | undefined {
+  return normalizeNodeIds(candidates).find((nodeId) => availableNodeIds.includes(nodeId));
 }
 
 export function buildGraphExplorerPathHandoff(
@@ -18,51 +29,51 @@ export function buildGraphExplorerPathHandoff(
   sourceNodeId: string,
   targetNodeId: string,
 ): BrowserGraphHandoff {
-  const normalizedSourceNodeId = normalizeNodeId(sourceNodeId);
-  const normalizedTargetNodeId = normalizeNodeId(targetNodeId);
-
-  return {
+  return normalizeGraphHandoff({
     ...handoff,
     mode: "path",
-    nodeIds: Array.from(
-      new Set([normalizedSourceNodeId, normalizedTargetNodeId].filter(isDefined)),
-    ).sort((left, right) => left.localeCompare(right)),
-    sourceNodeId: normalizedSourceNodeId,
-    targetNodeId: normalizedTargetNodeId,
-    asOf: undefined,
-    compareTo: undefined,
-  };
+    nodeIds: [sourceNodeId, targetNodeId],
+    sourceNodeId: normalizeNodeId(sourceNodeId),
+    targetNodeId: normalizeNodeId(targetNodeId),
+  });
 }
 
 export function getGraphExplorerPathDraft(
   handoff: BrowserGraphHandoff,
   availableNodeIds: string[],
-): { sourceNodeId: string; targetNodeId: string } {
-  const normalizedAvailableNodeIds = Array.from(
-    new Set(
-      availableNodeIds
-        .map((nodeId) => nodeId.trim())
-        .filter(Boolean),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
+  preferredNodeIds: string[] = [],
+): { sourceNodeId: string; targetNodeId: string; inferred: boolean } {
+  const normalizedAvailableNodeIds = normalizeNodeIds(availableNodeIds);
 
   const normalizedSourceNodeId = normalizeNodeId(handoff.sourceNodeId);
   const normalizedTargetNodeId = normalizeNodeId(handoff.targetNodeId);
+  const preferredSourceNodeId = pickPreferredNodeId(
+    [normalizedSourceNodeId ?? "", ...preferredNodeIds, ...handoff.nodeIds],
+    normalizedAvailableNodeIds,
+  );
 
-  const defaultSourceNodeId =
-    normalizedSourceNodeId && normalizedAvailableNodeIds.includes(normalizedSourceNodeId)
-      ? normalizedSourceNodeId
-      : normalizedAvailableNodeIds[0] ?? "";
+  const defaultSourceNodeId = preferredSourceNodeId ?? normalizedAvailableNodeIds[0] ?? "";
+
+  const preferredTargetNodeId = pickPreferredNodeId(
+    [
+      normalizedTargetNodeId ?? "",
+      ...preferredNodeIds.filter((nodeId) => nodeId !== defaultSourceNodeId),
+      ...handoff.nodeIds.filter((nodeId) => nodeId !== defaultSourceNodeId),
+    ],
+    normalizedAvailableNodeIds.filter((nodeId) => nodeId !== defaultSourceNodeId),
+  );
 
   const defaultTargetNodeId =
-    normalizedTargetNodeId && normalizedAvailableNodeIds.includes(normalizedTargetNodeId)
-      ? normalizedTargetNodeId
-      : normalizedAvailableNodeIds.find((nodeId) => nodeId !== defaultSourceNodeId) ??
-        normalizedAvailableNodeIds[0] ??
-        "";
+    preferredTargetNodeId ??
+    normalizedAvailableNodeIds.find((nodeId) => nodeId !== defaultSourceNodeId) ??
+    normalizedAvailableNodeIds[0] ??
+    "";
 
   return {
     sourceNodeId: defaultSourceNodeId,
     targetNodeId: defaultTargetNodeId,
+    inferred:
+      defaultSourceNodeId !== (normalizedSourceNodeId ?? "") ||
+      defaultTargetNodeId !== (normalizedTargetNodeId ?? ""),
   };
 }

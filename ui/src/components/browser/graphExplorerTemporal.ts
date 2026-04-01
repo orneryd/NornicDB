@@ -1,4 +1,5 @@
 import type { BrowserGraphHandoff } from "../../utils/browserUrlState";
+import { normalizeGraphHandoff } from "../../utils/browserUrlState";
 
 export type GraphExplorerRequestMode = "standard" | "temporal" | "diff";
 
@@ -41,25 +42,25 @@ export function buildGraphExplorerTemporalHandoff(
 
   switch (requestMode) {
     case "temporal":
-      return {
+      return normalizeGraphHandoff({
         ...handoff,
         mode: "temporal",
         asOf: nextAsOf,
         compareTo: undefined,
-      };
+      });
     case "diff":
-      return {
+      return normalizeGraphHandoff({
         ...handoff,
         mode: "diff",
         asOf: nextAsOf,
         compareTo: nextCompareTo,
-      };
+      });
     default:
-      return {
+      return normalizeGraphHandoff({
         ...handoff,
         mode: "neighborhood",
         asOf: undefined,
         compareTo: undefined,
-      };
+      });
   }
 }
