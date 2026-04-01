@@ -1,5 +1,21 @@
 // NornicDB API Client
 
+import {
+  buildGraphDiffRequest,
+  buildGraphExpandRequest,
+  buildGraphNeighborhoodRequest,
+  buildGraphPathRequest,
+  buildGraphTemporalRequest,
+} from "../graph/requests";
+import type {
+  GraphContractResponse,
+  GraphDiffRequest,
+  GraphExpandRequest,
+  GraphNeighborhoodRequest,
+  GraphPathRequest,
+  GraphRequestDescriptor,
+  GraphTemporalRequest,
+} from "../graph/types";
 import { BASE_PATH, joinBasePath } from "./basePath";
 
 export interface AuthConfig {
@@ -251,6 +267,21 @@ class NornicDBClient {
     }
   }
 
+  private async postGraphRequest<TBody>(
+    descriptor: GraphRequestDescriptor<TBody>,
+    fallback: string,
+  ): Promise<GraphContractResponse> {
+    const res = await fetch(descriptor.url, descriptor.init);
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(
+        res,
+        `${fallback} (${res.status})`,
+      );
+      throw new Error(message);
+    }
+    return (await res.json()) as GraphContractResponse;
+  }
+
   private async postCypherCommit(
     dbName: string,
     statement: string,
@@ -461,6 +492,43 @@ class NornicDBClient {
     parameters?: Record<string, unknown>,
   ): Promise<CypherResponse> {
     return this.executeCypherOnDatabase("system", statement, parameters);
+  }
+
+  async neighborhood(
+    request: GraphNeighborhoodRequest,
+  ): Promise<GraphContractResponse> {
+    return this.postGraphRequest(
+      buildGraphNeighborhoodRequest(request),
+      "Graph neighborhood request failed",
+    );
+  }
+
+  async expand(request: GraphExpandRequest): Promise<GraphContractResponse> {
+    return this.postGraphRequest(
+      buildGraphExpandRequest(request),
+      "Graph expand request failed",
+    );
+  }
+
+  async path(request: GraphPathRequest): Promise<GraphContractResponse> {
+    return this.postGraphRequest(
+      buildGraphPathRequest(request),
+      "Graph path request failed",
+    );
+  }
+
+  async temporal(request: GraphTemporalRequest): Promise<GraphContractResponse> {
+    return this.postGraphRequest(
+      buildGraphTemporalRequest(request),
+      "Graph temporal request failed",
+    );
+  }
+
+  async diff(request: GraphDiffRequest): Promise<GraphContractResponse> {
+    return this.postGraphRequest(
+      buildGraphDiffRequest(request),
+      "Graph diff request failed",
+    );
   }
 
   async getDatabaseInfo(name: string): Promise<DatabaseInfo> {
