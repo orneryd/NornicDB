@@ -254,13 +254,3 @@ export function buildNeighborhoodGraphHandoff(
   });
 }
 
-export function readBrowserRouteState(searchParams: URLSearchParams): BrowserUrlState {
-  return readBrowserUrlState(searchParams);
-}
-
-export function patchBrowserRouteState(
-  currentSearchParams: URLSearchParams,
-  nextState: Partial<BrowserUrlState>,
-): URLSearchParams {
-  return mergeBrowserUrlState(currentSearchParams, nextState);
-}

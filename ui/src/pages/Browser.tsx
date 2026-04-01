@@ -14,8 +14,8 @@ import { RegenerateConfirmModal } from "../components/modals/RegenerateConfirmMo
 import { BASE_PATH, joinBasePath } from "../utils/basePath";
 import {
   buildNeighborhoodGraphHandoff,
-  patchBrowserRouteState,
-  readBrowserRouteState,
+  mergeBrowserUrlState,
+  readBrowserUrlState,
   type BrowserViewMode,
 } from "../utils/browserUrlState";
 
@@ -34,7 +34,7 @@ interface EmbedData {
 
 export function Browser() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const routeState = readBrowserRouteState(searchParams);
+  const routeState = readBrowserUrlState(searchParams);
   const {
     stats,
     connected,
@@ -156,8 +156,8 @@ export function Browser() {
     }
   }, [databaseList, routeState.database, selectedDatabase, setSelectedDatabase]);
 
-  const updateRouteState = (nextState: Parameters<typeof patchBrowserRouteState>[1]) => {
-    setSearchParams(patchBrowserRouteState(searchParams, nextState));
+  const updateRouteState = (nextState: Parameters<typeof mergeBrowserUrlState>[1]) => {
+    setSearchParams(mergeBrowserUrlState(searchParams, nextState));
   };
 
   const handleDatabaseChange = (dbName: string) => {

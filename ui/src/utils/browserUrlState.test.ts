@@ -55,7 +55,7 @@ describe("browser URL state helpers", () => {
     expect(next.toString()).toBe("database=tenant-a");
   });
 
-  it("builds graph handoff params for future graph shell entry points", () => {
+  it("builds shareable graph handoff params", () => {
     const params = buildGraphHandoffParams({
       mode: "neighborhood",
       nodeIds: ["node-1", "node-2"],
