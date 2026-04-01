@@ -30,6 +30,7 @@ export interface GraphContractMetadata {
   node_count: number;
   edge_count: number;
   truncated: boolean;
+  warnings?: string[];
 }
 
 export interface GraphContractResponse {

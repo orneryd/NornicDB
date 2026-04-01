@@ -360,6 +360,8 @@ export function Browser() {
               handoff={routeState.graph}
               selectedDatabase={selectedDatabase}
               onNodeSelect={setSelectedNode}
+              onClearGraph={() => updateRouteState({ graph: null })}
+              onUpdateHandoff={(graph) => updateRouteState({ graph })}
             />
           )}
         </div>
