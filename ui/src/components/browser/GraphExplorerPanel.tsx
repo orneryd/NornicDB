@@ -26,6 +26,10 @@ import {
   supportsGraphExplorerTemporalFlow,
   type GraphExplorerRequestMode,
 } from "./graphExplorerTemporal";
+import {
+  buildGraphExplorerPathHandoff,
+  getGraphExplorerPathDraft,
+} from "./graphExplorerPath";
 
 interface GraphExplorerPanelProps {
   handoff: BrowserGraphHandoff | null;
@@ -140,6 +144,8 @@ export function GraphExplorerPanel({
   const [requestMode, setRequestMode] = useState<GraphExplorerRequestMode>("standard");
   const [asOfInput, setAsOfInput] = useState("");
   const [compareToInput, setCompareToInput] = useState("");
+  const [pathSourceInput, setPathSourceInput] = useState("");
+  const [pathTargetInput, setPathTargetInput] = useState("");
   const [state, setState] = useState<GraphExplorerState>({
     loading: false,
     error: null,
@@ -164,6 +170,8 @@ export function GraphExplorerPanel({
       setRequestMode("standard");
       setAsOfInput("");
       setCompareToInput("");
+      setPathSourceInput("");
+      setPathTargetInput("");
       return;
     }
 
@@ -231,6 +239,22 @@ export function GraphExplorerPanel({
     }
     return buildGraphExplorerViewModel(state.graph, filters);
   }, [filters, state.graph]);
+  const pathOptions = useMemo(
+    () => (state.graph ? state.graph.nodes.map((node) => node.id) : []),
+    [state.graph],
+  );
+
+  useEffect(() => {
+    if (!handoff || pathOptions.length === 0) {
+      setPathSourceInput("");
+      setPathTargetInput("");
+      return;
+    }
+
+    const draft = getGraphExplorerPathDraft(handoff, pathOptions);
+    setPathSourceInput(draft.sourceNodeId);
+    setPathTargetInput(draft.targetNodeId);
+  }, [handoff, pathOptions]);
 
   useEffect(() => {
     if (!viewModel) {
@@ -318,7 +342,7 @@ export function GraphExplorerPanel({
       </div>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <div className="rounded-xl border border-norse-rune bg-norse-shadow/40 p-4">
             <div className="text-xs uppercase tracking-wide text-norse-fog">Database</div>
             <div className="mt-2 text-sm text-white">{state.resolvedDatabase ?? "resolving"}</div>
@@ -326,6 +350,14 @@ export function GraphExplorerPanel({
           <div className="rounded-xl border border-norse-rune bg-norse-shadow/40 p-4">
             <div className="text-xs uppercase tracking-wide text-norse-fog">Focus nodes</div>
             <div className="mt-2 text-sm text-white">{handoff.nodeIds.length || 0}</div>
+          </div>
+          <div className="rounded-xl border border-norse-rune bg-norse-shadow/40 p-4">
+            <div className="text-xs uppercase tracking-wide text-norse-fog">Path Source</div>
+            <div className="mt-2 text-sm text-white">{handoff.sourceNodeId ?? "not set"}</div>
+          </div>
+          <div className="rounded-xl border border-norse-rune bg-norse-shadow/40 p-4">
+            <div className="text-xs uppercase tracking-wide text-norse-fog">Path Target</div>
+            <div className="mt-2 text-sm text-white">{handoff.targetNodeId ?? "not set"}</div>
           </div>
           <div className="rounded-xl border border-norse-rune bg-norse-shadow/40 p-4">
             <div className="text-xs uppercase tracking-wide text-norse-fog">As Of</div>
@@ -355,6 +387,53 @@ export function GraphExplorerPanel({
           <>
             <div className="rounded-2xl border border-norse-rune bg-norse-shadow/40 p-4 space-y-4">
               <div className="flex flex-wrap items-end gap-4">
+                {pathOptions.length > 0 && (
+                  <>
+                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                      Path Source
+                      <input
+                        type="text"
+                        list="graph-path-node-options"
+                        value={pathSourceInput}
+                        onChange={(event) => setPathSourceInput(event.target.value)}
+                        placeholder="node id"
+                        className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                      Path Target
+                      <input
+                        type="text"
+                        list="graph-path-node-options"
+                        value={pathTargetInput}
+                        onChange={(event) => setPathTargetInput(event.target.value)}
+                        placeholder="node id"
+                        className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateHandoff(
+                          buildGraphExplorerPathHandoff(handoff, pathSourceInput, pathTargetInput),
+                        )
+                      }
+                      disabled={
+                        pathSourceInput.trim().length === 0 ||
+                        pathTargetInput.trim().length === 0 ||
+                        pathSourceInput.trim() === pathTargetInput.trim()
+                      }
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+                    >
+                      Find Path
+                    </button>
+                    <datalist id="graph-path-node-options">
+                      {pathOptions.map((nodeId) => (
+                        <option key={nodeId} value={nodeId} />
+                      ))}
+                    </datalist>
+                  </>
+                )}
                 {supportsTemporalFlow && (
                   <>
                     <label className="flex flex-col gap-2 text-sm text-norse-silver">
@@ -505,6 +584,16 @@ export function GraphExplorerPanel({
                 <span className="text-norse-silver">
                   Source: <span className="text-white">{state.graph.meta.generated_from}</span>
                 </span>
+                {handoff.sourceNodeId && (
+                  <span className="text-norse-silver">
+                    Path source: <span className="text-white">{handoff.sourceNodeId}</span>
+                  </span>
+                )}
+                {handoff.targetNodeId && (
+                  <span className="text-norse-silver">
+                    Path target: <span className="text-white">{handoff.targetNodeId}</span>
+                  </span>
+                )}
                 <span className="text-norse-silver">
                   As of: <span className="text-white">{formatTimestamp(state.graph.meta.as_of)}</span>
                 </span>
