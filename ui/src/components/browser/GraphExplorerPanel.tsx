@@ -20,6 +20,12 @@ import {
   type GraphExplorerFilters,
 } from "../../graph/viewModel";
 import { getNodePreview } from "../../utils/nodeUtils";
+import {
+  buildGraphExplorerTemporalHandoff,
+  getGraphExplorerRequestMode,
+  supportsGraphExplorerTemporalFlow,
+  type GraphExplorerRequestMode,
+} from "./graphExplorerTemporal";
 
 interface GraphExplorerPanelProps {
   handoff: BrowserGraphHandoff | null;
@@ -39,6 +45,19 @@ interface GraphExplorerState {
 function formatTimestamp(value?: string): string {
   if (!value) return "not set";
   return value;
+}
+
+function getDiffStatusClasses(status?: GraphNodeModel["status"]): string {
+  switch (status) {
+    case "added":
+      return "border-emerald-400/30 bg-emerald-500/10 text-emerald-200";
+    case "removed":
+      return "border-red-400/30 bg-red-500/10 text-red-200";
+    case "changed":
+      return "border-amber-400/30 bg-amber-500/10 text-amber-200";
+    default:
+      return "border-norse-rune bg-norse-shadow/30 text-norse-silver";
+  }
 }
 
 async function executeGraphHandoff(
@@ -118,6 +137,9 @@ export function GraphExplorerPanel({
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [depth, setDepth] = useState(1);
   const [filters, setFilters] = useState<GraphExplorerFilters>(getDefaultGraphExplorerFilters);
+  const [requestMode, setRequestMode] = useState<GraphExplorerRequestMode>("standard");
+  const [asOfInput, setAsOfInput] = useState("");
+  const [compareToInput, setCompareToInput] = useState("");
   const [state, setState] = useState<GraphExplorerState>({
     loading: false,
     error: null,
@@ -136,6 +158,19 @@ export function GraphExplorerPanel({
     handoff?.compareTo,
     handoff?.nodeIds.join(","),
   ]);
+
+  useEffect(() => {
+    if (!handoff) {
+      setRequestMode("standard");
+      setAsOfInput("");
+      setCompareToInput("");
+      return;
+    }
+
+    setRequestMode(getGraphExplorerRequestMode(handoff));
+    setAsOfInput(handoff.asOf ?? "");
+    setCompareToInput(handoff.compareTo ?? "");
+  }, [handoff]);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,6 +224,7 @@ export function GraphExplorerPanel({
 
   const focusNodeIds = useMemo(() => new Set(handoff?.nodeIds ?? []), [handoff]);
   const supportsDepth = handoff ? supportsGraphDepthControl(handoff.mode) : false;
+  const supportsTemporalFlow = handoff ? supportsGraphExplorerTemporalFlow(handoff) : false;
   const viewModel = useMemo(() => {
     if (!state.graph) {
       return null;
@@ -319,6 +355,66 @@ export function GraphExplorerPanel({
           <>
             <div className="rounded-2xl border border-norse-rune bg-norse-shadow/40 p-4 space-y-4">
               <div className="flex flex-wrap items-end gap-4">
+                {supportsTemporalFlow && (
+                  <>
+                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                      Request Mode
+                      <select
+                        value={requestMode}
+                        onChange={(event) =>
+                          setRequestMode(event.target.value as GraphExplorerRequestMode)
+                        }
+                        className="min-w-40 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                      >
+                        <option value="standard">Live neighborhood</option>
+                        <option value="temporal">As-of snapshot</option>
+                        <option value="diff">Diff</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                      As Of
+                      <input
+                        type="text"
+                        value={asOfInput}
+                        onChange={(event) => setAsOfInput(event.target.value)}
+                        placeholder="2026-03-15T00:00:00Z"
+                        className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                      />
+                    </label>
+                    {requestMode === "diff" && (
+                      <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                        Compare To
+                        <input
+                          type="text"
+                          value={compareToInput}
+                          onChange={(event) => setCompareToInput(event.target.value)}
+                          placeholder="2026-03-20T00:00:00Z"
+                          className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                        />
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateHandoff(
+                          buildGraphExplorerTemporalHandoff(
+                            handoff,
+                            requestMode,
+                            asOfInput,
+                            compareToInput,
+                          ),
+                        )
+                      }
+                      disabled={
+                        (requestMode === "temporal" || requestMode === "diff") &&
+                        asOfInput.trim().length === 0
+                      }
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+                    >
+                      Apply Request
+                    </button>
+                  </>
+                )}
                 {supportsDepth && (
                   <label className="flex flex-col gap-2 text-sm text-norse-silver">
                     Depth
@@ -409,6 +505,13 @@ export function GraphExplorerPanel({
                 <span className="text-norse-silver">
                   Source: <span className="text-white">{state.graph.meta.generated_from}</span>
                 </span>
+                <span className="text-norse-silver">
+                  As of: <span className="text-white">{formatTimestamp(state.graph.meta.as_of)}</span>
+                </span>
+                <span className="text-norse-silver">
+                  Compare to:{" "}
+                  <span className="text-white">{formatTimestamp(state.graph.meta.compare_to)}</span>
+                </span>
                 {state.graph.meta.depth !== undefined && (
                   <span className="text-norse-silver">
                     Server depth: <span className="text-white">{state.graph.meta.depth}</span>
@@ -427,6 +530,35 @@ export function GraphExplorerPanel({
                   {state.graph.meta.warnings.join(" ")}
                 </div>
               )}
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border border-norse-rune bg-norse-night/40 p-3">
+                  <div className="text-xs uppercase tracking-wide text-norse-fog">
+                    Generated From
+                  </div>
+                  <div className="mt-2 text-sm text-white">{state.graph.meta.generated_from}</div>
+                </div>
+                <div className="rounded-xl border border-norse-rune bg-norse-night/40 p-3">
+                  <div className="text-xs uppercase tracking-wide text-norse-fog">As Of</div>
+                  <div className="mt-2 text-sm text-white">
+                    {formatTimestamp(state.graph.meta.as_of)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-norse-rune bg-norse-night/40 p-3">
+                  <div className="text-xs uppercase tracking-wide text-norse-fog">Compare To</div>
+                  <div className="mt-2 text-sm text-white">
+                    {formatTimestamp(state.graph.meta.compare_to)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-norse-rune bg-norse-night/40 p-3">
+                  <div className="text-xs uppercase tracking-wide text-norse-fog">
+                    Response Flags
+                  </div>
+                  <div className="mt-2 text-sm text-white">
+                    {state.graph.meta.truncated ? "truncated" : "complete"}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {state.graph.nodes.length === 0 && state.graph.edges.length === 0 ? (
@@ -461,7 +593,11 @@ export function GraphExplorerPanel({
                             </div>
                           </div>
                           {node.status && (
-                            <span className="text-xs uppercase tracking-wide text-norse-silver">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide ${getDiffStatusClasses(
+                                node.status,
+                              )}`}
+                            >
                               {node.status}
                             </span>
                           )}
@@ -489,7 +625,11 @@ export function GraphExplorerPanel({
                             {edge.source} → {edge.target}
                           </div>
                           {edge.status && (
-                            <div className="mt-2 text-xs uppercase tracking-wide text-norse-silver">
+                            <div
+                              className={`mt-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide ${getDiffStatusClasses(
+                                edge.status,
+                              )}`}
+                            >
                               {edge.status}
                             </div>
                           )}

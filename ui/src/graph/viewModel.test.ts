@@ -64,6 +64,23 @@ describe("graph explorer view model", () => {
     expect(viewModel.renderedEdges.map((edge) => edge.id)).toEqual(["edge-1", "edge-3"]);
   });
 
+  it("preserves diff statuses in the rendered list model", () => {
+    const viewModel = buildGraphExplorerViewModel(
+      {
+        ...graphFixture,
+        nodes: [
+          { ...graphFixture.nodes[0], status: "added" },
+          { ...graphFixture.nodes[1], status: "changed" },
+        ],
+        edges: [{ ...graphFixture.edges[0], status: "removed" }],
+      },
+      getDefaultGraphExplorerFilters(),
+    );
+
+    expect(viewModel.renderedNodes.map((node) => node.status)).toEqual(["added", "changed"]);
+    expect(viewModel.renderedEdges.map((edge) => edge.status)).toEqual(["removed"]);
+  });
+
   it("only enables depth controls for supported graph modes", () => {
     expect(supportsGraphDepthControl("neighborhood")).toBe(true);
     expect(supportsGraphDepthControl("expand")).toBe(true);
