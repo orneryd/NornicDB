@@ -10,6 +10,9 @@ interface SelectionToolbarProps {
   onDelete: () => void;
   onClear: () => void;
   deleting?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionDisabled?: boolean;
 }
 
 export function SelectionToolbar({
@@ -17,14 +20,28 @@ export function SelectionToolbar({
   onDelete,
   onClear,
   deleting = false,
+  actionLabel,
+  onAction,
+  actionDisabled = false,
 }: SelectionToolbarProps) {
   const hasSelection = selectedCount > 0;
+  const showAction = actionLabel && onAction;
 
   return (
     <div className="flex items-center gap-2 p-2 bg-norse-shadow border-b border-norse-rune">
       <span className="text-sm text-norse-silver">
         {selectedCount} selected
       </span>
+      {showAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          disabled={!hasSelection || actionDisabled}
+          className="px-3 py-1 text-sm bg-nornic-primary/20 hover:bg-nornic-primary/30 text-nornic-primary rounded disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {actionLabel}
+        </button>
+      )}
       <button
         type="button"
         onClick={onDelete}

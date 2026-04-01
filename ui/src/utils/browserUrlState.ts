@@ -161,6 +161,27 @@ export function buildGraphHandoffParams(graph: BrowserGraphHandoff): URLSearchPa
   return mergeBrowserUrlState(new URLSearchParams(), { view: "graph", graph });
 }
 
+export function buildNeighborhoodGraphHandoff(
+  nodeIds: string[],
+): BrowserGraphHandoff | null {
+  const normalizedNodeIds = Array.from(
+    new Set(
+      nodeIds
+        .map((nodeId) => nodeId.trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+
+  if (normalizedNodeIds.length === 0) {
+    return null;
+  }
+
+  return {
+    mode: "neighborhood",
+    nodeIds: normalizedNodeIds,
+  };
+}
+
 export function readBrowserRouteState(searchParams: URLSearchParams): BrowserUrlState {
   return readBrowserUrlState(searchParams);
 }

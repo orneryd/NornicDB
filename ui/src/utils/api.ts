@@ -329,6 +329,13 @@ class NornicDBClient {
     return this.defaultDatabase;
   }
 
+  async resolveDatabaseName(database?: string | null): Promise<string> {
+    if (database != null && database !== "") {
+      return database;
+    }
+    return this.getDefaultDatabase();
+  }
+
   async getAuthConfig(): Promise<AuthConfig> {
     try {
       const res = await fetch(joinBasePath(BASE_PATH, "/auth/config"), {

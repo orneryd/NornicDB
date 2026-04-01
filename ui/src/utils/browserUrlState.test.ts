@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGraphHandoffParams,
+  buildNeighborhoodGraphHandoff,
   mergeBrowserUrlState,
   readBrowserUrlState,
 } from "./browserUrlState";
@@ -63,6 +64,19 @@ describe("browser URL state helpers", () => {
     expect(params.toString()).toBe(
       "view=graph&graph=neighborhood&graphNodeIds=node-1%2Cnode-2&graphAsOf=2026-04-01T00%3A00%3A00Z",
     );
+  });
+
+  it("builds normalized neighborhood handoffs from selected node ids", () => {
+    expect(
+      buildNeighborhoodGraphHandoff(["node-2", " node-1 ", "node-2"]),
+    ).toEqual({
+      mode: "neighborhood",
+      nodeIds: ["node-1", "node-2"],
+    });
+  });
+
+  it("returns null when graph handoff selections are empty", () => {
+    expect(buildNeighborhoodGraphHandoff([" ", ""])).toBeNull();
   });
 
   it("falls back to safe defaults for invalid URL values", () => {

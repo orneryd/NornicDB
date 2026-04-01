@@ -30,6 +30,7 @@ interface SearchPanelProps {
   onSelectAll: (nodeIds: string[]) => void;
   onClearSelection: () => void;
   onDeleteClick: () => void;
+  onExploreSelection: () => void;
   onFindSimilar: (nodeId: string) => void;
   onCollapseSimilar: () => void;
   deleting?: boolean;
@@ -52,6 +53,7 @@ export function SearchPanel({
   onSelectAll,
   onClearSelection,
   onDeleteClick,
+  onExploreSelection,
   onFindSimilar,
   onCollapseSimilar,
   deleting = false,
@@ -102,6 +104,8 @@ export function SearchPanel({
       <div className="flex-1 flex flex-col overflow-hidden">
         <SelectionToolbar
           selectedCount={selectedNodeIds.size}
+          actionLabel="Open in Graph"
+          onAction={onExploreSelection}
           onDelete={onDeleteClick}
           onClear={onClearSelection}
           deleting={deleting}
@@ -163,4 +167,3 @@ export function SearchPanel({
     </div>
   );
 }
-

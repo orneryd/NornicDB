@@ -8,10 +8,12 @@ import { Header } from "../components/browser/Header";
 import { QueryPanel } from "../components/browser/QueryPanel";
 import { SearchPanel } from "../components/browser/SearchPanel";
 import { NodeDetailsPanel } from "../components/browser/NodeDetailsPanel";
+import { GraphExplorerPanel } from "../components/browser/GraphExplorerPanel";
 import { DeleteConfirmModal } from "../components/modals/DeleteConfirmModal";
 import { RegenerateConfirmModal } from "../components/modals/RegenerateConfirmModal";
 import { BASE_PATH, joinBasePath } from "../utils/basePath";
 import {
+  buildNeighborhoodGraphHandoff,
   patchBrowserRouteState,
   readBrowserRouteState,
   type BrowserViewMode,
@@ -168,6 +170,18 @@ export function Browser() {
     updateRouteState({ view });
   };
 
+  const handleGraphSelectionHandoff = () => {
+    const graph = buildNeighborhoodGraphHandoff(Array.from(selectedNodeIds));
+    if (!graph) {
+      return;
+    }
+
+    updateRouteState({
+      view: "graph",
+      graph,
+    });
+  };
+
   const handleDeleteNodes = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -308,6 +322,7 @@ export function Browser() {
                 setDeleteError(null);
                 setShowDeleteConfirm(true);
               }}
+              onExploreSelection={handleGraphSelectionHandoff}
               deleting={deleting}
             />
           )}
@@ -333,6 +348,7 @@ export function Browser() {
                 setDeleteError(null);
                 setShowDeleteConfirm(true);
               }}
+              onExploreSelection={handleGraphSelectionHandoff}
               onFindSimilar={findSimilar}
               onCollapseSimilar={collapseSimilar}
               deleting={deleting}
@@ -340,33 +356,11 @@ export function Browser() {
           )}
 
           {routeState.view === "graph" && (
-            <div className="flex-1 p-6">
-              <div className="rounded-2xl border border-dashed border-norse-rune bg-norse-shadow/40 p-6">
-                <div className="text-lg font-semibold text-white">Graph Explorer shell</div>
-                <p className="mt-2 text-sm text-norse-silver">
-                  Route-driven graph handoff is in place. Full canvas and inspector work stays in
-                  follow-up slices.
-                </p>
-                <dl className="mt-6 space-y-3 text-sm">
-                  <div>
-                    <dt className="text-norse-fog">Database</dt>
-                    <dd className="text-white">{routeState.database ?? "(server default)"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-norse-fog">Graph mode</dt>
-                    <dd className="text-white">{routeState.graph?.mode ?? "not set"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-norse-fog">Focused nodes</dt>
-                    <dd className="text-white">
-                      {routeState.graph?.nodeIds.length
-                        ? routeState.graph.nodeIds.join(", ")
-                        : "none"}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-            </div>
+            <GraphExplorerPanel
+              handoff={routeState.graph}
+              selectedDatabase={selectedDatabase}
+              onNodeSelect={setSelectedNode}
+            />
           )}
         </div>
 

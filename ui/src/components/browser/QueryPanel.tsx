@@ -48,6 +48,7 @@ interface QueryPanelProps {
   onSelectAll: (nodeIds: string[]) => void;
   onClearSelection: () => void;
   onDeleteClick: () => void;
+  onExploreSelection: () => void;
   deleting?: boolean;
 }
 
@@ -67,6 +68,7 @@ export function QueryPanel({
   onSelectAll,
   onClearSelection,
   onDeleteClick,
+  onExploreSelection,
   deleting = false,
 }: QueryPanelProps) {
   const [showHistory, setShowHistory] = useState(false);
@@ -207,6 +209,8 @@ export function QueryPanel({
         <div className="flex-1 flex flex-col overflow-hidden">
           <SelectionToolbar
             selectedCount={selectedNodeIds.size}
+            actionLabel="Open in Graph"
+            onAction={onExploreSelection}
             onDelete={onDeleteClick}
             onClear={onClearSelection}
             deleting={deleting}
