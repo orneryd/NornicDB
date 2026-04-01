@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   AlertCircle,
   FilterX,
@@ -30,6 +30,10 @@ import {
   buildGraphExplorerPathHandoff,
   getGraphExplorerPathDraft,
 } from "./graphExplorerPath";
+import {
+  isGraphPathRequestDisabled,
+  isGraphTemporalRequestDisabled,
+} from "./graphExplorerA11y";
 
 interface GraphExplorerPanelProps {
   handoff: BrowserGraphHandoff | null;
@@ -138,6 +142,13 @@ export function GraphExplorerPanel({
   onClearGraph,
   onUpdateHandoff,
 }: GraphExplorerPanelProps) {
+  const controlsHeadingId = useId();
+  const pathHelpId = useId();
+  const temporalHelpId = useId();
+  const displayHelpId = useId();
+  const loadingStatusId = useId();
+  const errorStatusId = useId();
+  const summaryStatusId = useId();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [depth, setDepth] = useState(1);
   const [filters, setFilters] = useState<GraphExplorerFilters>(getDefaultGraphExplorerFilters);
@@ -243,6 +254,8 @@ export function GraphExplorerPanel({
     () => (state.graph ? state.graph.nodes.map((node) => node.id) : []),
     [state.graph],
   );
+  const isPathSubmitDisabled = isGraphPathRequestDisabled(pathSourceInput, pathTargetInput);
+  const isTemporalSubmitDisabled = isGraphTemporalRequestDisabled(requestMode, asOfInput);
 
   useEffect(() => {
     if (!handoff || pathOptions.length === 0) {
@@ -281,6 +294,24 @@ export function GraphExplorerPanel({
       return next;
     });
   }, [viewModel]);
+
+  const applyPathRequest = () => {
+    if (!handoff || isPathSubmitDisabled) {
+      return;
+    }
+
+    onUpdateHandoff(buildGraphExplorerPathHandoff(handoff, pathSourceInput, pathTargetInput));
+  };
+
+  const applyTemporalRequest = () => {
+    if (!handoff || isTemporalSubmitDisabled) {
+      return;
+    }
+
+    onUpdateHandoff(
+      buildGraphExplorerTemporalHandoff(handoff, requestMode, asOfInput, compareToInput),
+    );
+  };
 
   if (!handoff) {
     return (
@@ -370,14 +401,23 @@ export function GraphExplorerPanel({
         </div>
 
         {state.loading && (
-          <div className="rounded-2xl border border-norse-rune bg-norse-shadow/40 p-6 text-sm text-norse-silver flex items-center gap-3">
+          <div
+            id={loadingStatusId}
+            role="status"
+            aria-live="polite"
+            className="rounded-2xl border border-norse-rune bg-norse-shadow/40 p-6 text-sm text-norse-silver flex items-center gap-3"
+          >
             <LoaderCircle className="w-4 h-4 animate-spin" />
             Loading graph data...
           </div>
         )}
 
         {state.error && (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-300 flex items-start gap-3">
+          <div
+            id={errorStatusId}
+            role="alert"
+            className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-300 flex items-start gap-3"
+          >
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <div>{state.error}</div>
           </div>
@@ -386,192 +426,249 @@ export function GraphExplorerPanel({
         {!state.loading && !state.error && state.graph && (
           <>
             <div className="rounded-2xl border border-norse-rune bg-norse-shadow/40 p-4 space-y-4">
-              <div className="flex flex-wrap items-end gap-4">
-                {pathOptions.length > 0 && (
-                  <>
-                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                      Path Source
-                      <input
-                        type="text"
-                        list="graph-path-node-options"
-                        value={pathSourceInput}
-                        onChange={(event) => setPathSourceInput(event.target.value)}
-                        placeholder="node id"
-                        className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                      Path Target
-                      <input
-                        type="text"
-                        list="graph-path-node-options"
-                        value={pathTargetInput}
-                        onChange={(event) => setPathTargetInput(event.target.value)}
-                        placeholder="node id"
-                        className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateHandoff(
-                          buildGraphExplorerPathHandoff(handoff, pathSourceInput, pathTargetInput),
-                        )
-                      }
-                      disabled={
-                        pathSourceInput.trim().length === 0 ||
-                        pathTargetInput.trim().length === 0 ||
-                        pathSourceInput.trim() === pathTargetInput.trim()
-                      }
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
-                    >
-                      Find Path
-                    </button>
-                    <datalist id="graph-path-node-options">
-                      {pathOptions.map((nodeId) => (
-                        <option key={nodeId} value={nodeId} />
-                      ))}
-                    </datalist>
-                  </>
-                )}
-                {supportsTemporalFlow && (
-                  <>
-                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                      Request Mode
-                      <select
-                        value={requestMode}
-                        onChange={(event) =>
-                          setRequestMode(event.target.value as GraphExplorerRequestMode)
-                        }
-                        className="min-w-40 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                      >
-                        <option value="standard">Live neighborhood</option>
-                        <option value="temporal">As-of snapshot</option>
-                        <option value="diff">Diff</option>
-                      </select>
-                    </label>
-                    <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                      As Of
-                      <input
-                        type="text"
-                        value={asOfInput}
-                        onChange={(event) => setAsOfInput(event.target.value)}
-                        placeholder="2026-03-15T00:00:00Z"
-                        className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                      />
-                    </label>
-                    {requestMode === "diff" && (
-                      <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                        Compare To
-                        <input
-                          type="text"
-                          value={compareToInput}
-                          onChange={(event) => setCompareToInput(event.target.value)}
-                          placeholder="2026-03-20T00:00:00Z"
-                          className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                        />
-                      </label>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateHandoff(
-                          buildGraphExplorerTemporalHandoff(
-                            handoff,
-                            requestMode,
-                            asOfInput,
-                            compareToInput,
-                          ),
-                        )
-                      }
-                      disabled={
-                        (requestMode === "temporal" || requestMode === "diff") &&
-                        asOfInput.trim().length === 0
-                      }
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
-                    >
-                      Apply Request
-                    </button>
-                  </>
-                )}
-                {supportsDepth && (
-                  <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                    Depth
-                    <select
-                      value={String(depth)}
-                      onChange={(event) => setDepth(Number(event.target.value))}
-                      className="min-w-32 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                    >
-                      {[1, 2, 3].map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                  Label Filter
-                  <select
-                    value={filters.label ?? ""}
-                    onChange={(event) =>
-                      setFilters((current) => ({
-                        ...current,
-                        label: event.target.value || null,
-                      }))
-                    }
-                    className="min-w-40 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                  >
-                    <option value="">All labels</option>
-                    {viewModel?.labels.map((label) => (
-                      <option key={label} value={label}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-2 text-sm text-norse-silver">
-                  Relationship Filter
-                  <select
-                    value={filters.relationshipType ?? ""}
-                    onChange={(event) =>
-                      setFilters((current) => ({
-                        ...current,
-                        relationshipType: event.target.value || null,
-                      }))
-                    }
-                    className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
-                  >
-                    <option value="">All relationships</option>
-                    {viewModel?.relationshipTypes.map((relationshipType) => (
-                      <option key={relationshipType} value={relationshipType}>
-                        {relationshipType}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setFilters(getDefaultGraphExplorerFilters())}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog"
-                >
-                  <FilterX className="w-4 h-4" />
-                  Reset Filters
-                </button>
-                {supportsDepth && (
-                  <button
-                    type="button"
-                    onClick={() => setDepth(1)}
-                    disabled={depth === 1}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Reset Depth
-                  </button>
-                )}
-              </div>
+              <section aria-labelledby={controlsHeadingId} className="space-y-4">
+                <div>
+                  <h3 id={controlsHeadingId} className="text-sm font-medium text-white">
+                    Explorer controls
+                  </h3>
+                  <p className="mt-1 text-sm text-norse-silver">
+                    Adjust request inputs and display filters. Press Enter in a text field to apply the matching request.
+                  </p>
+                </div>
 
-              <div className="flex flex-wrap items-center gap-4 text-sm">
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {pathOptions.length > 0 && (
+                    <fieldset
+                      aria-describedby={pathHelpId}
+                      className="rounded-xl border border-norse-rune bg-norse-night/30 p-4"
+                    >
+                      <legend className="px-1 text-sm font-medium text-white">Path request</legend>
+                      <p id={pathHelpId} className="mt-1 text-xs text-norse-silver">
+                        Choose two different node ids to replace the current graph with a path request.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-end gap-4">
+                        <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                          Path source node id
+                          <input
+                            type="text"
+                            list="graph-path-node-options"
+                            value={pathSourceInput}
+                            onChange={(event) => setPathSourceInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                applyPathRequest();
+                              }
+                            }}
+                            placeholder="node id"
+                            aria-describedby={pathHelpId}
+                            className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                          Path target node id
+                          <input
+                            type="text"
+                            list="graph-path-node-options"
+                            value={pathTargetInput}
+                            onChange={(event) => setPathTargetInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                applyPathRequest();
+                              }
+                            }}
+                            placeholder="node id"
+                            aria-describedby={pathHelpId}
+                            className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={applyPathRequest}
+                          disabled={isPathSubmitDisabled}
+                          aria-disabled={isPathSubmitDisabled}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+                        >
+                          Find path
+                        </button>
+                        <datalist id="graph-path-node-options">
+                          {pathOptions.map((nodeId) => (
+                            <option key={nodeId} value={nodeId} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </fieldset>
+                  )}
+
+                  {supportsTemporalFlow && (
+                    <fieldset
+                      aria-describedby={temporalHelpId}
+                      className="rounded-xl border border-norse-rune bg-norse-night/30 p-4"
+                    >
+                      <legend className="px-1 text-sm font-medium text-white">Temporal request</legend>
+                      <p id={temporalHelpId} className="mt-1 text-xs text-norse-silver">
+                        Switch between live, as-of, and diff requests. As-of is required for snapshot and diff modes.
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-end gap-4">
+                        <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                          Request mode
+                          <select
+                            value={requestMode}
+                            onChange={(event) =>
+                              setRequestMode(event.target.value as GraphExplorerRequestMode)
+                            }
+                            aria-describedby={temporalHelpId}
+                            className="min-w-40 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                          >
+                            <option value="standard">Live neighborhood</option>
+                            <option value="temporal">As-of snapshot</option>
+                            <option value="diff">Diff</option>
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                          As-of timestamp
+                          <input
+                            type="text"
+                            value={asOfInput}
+                            onChange={(event) => setAsOfInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                applyTemporalRequest();
+                              }
+                            }}
+                            placeholder="2026-03-15T00:00:00Z"
+                            aria-describedby={temporalHelpId}
+                            className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                          />
+                        </label>
+                        {requestMode === "diff" && (
+                          <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                            Compare-to timestamp
+                            <input
+                              type="text"
+                              value={compareToInput}
+                              onChange={(event) => setCompareToInput(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  applyTemporalRequest();
+                                }
+                              }}
+                              placeholder="2026-03-20T00:00:00Z"
+                              aria-describedby={temporalHelpId}
+                              className="min-w-56 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                            />
+                          </label>
+                        )}
+                        <button
+                          type="button"
+                          onClick={applyTemporalRequest}
+                          disabled={isTemporalSubmitDisabled}
+                          aria-disabled={isTemporalSubmitDisabled}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+                        >
+                          Apply request
+                        </button>
+                      </div>
+                    </fieldset>
+                  )}
+
+                  <fieldset
+                    aria-describedby={displayHelpId}
+                    className="rounded-xl border border-norse-rune bg-norse-night/30 p-4"
+                  >
+                    <legend className="px-1 text-sm font-medium text-white">Display filters</legend>
+                    <p id={displayHelpId} className="mt-1 text-xs text-norse-silver">
+                      Narrow the returned graph and reset filters or depth without clearing the whole explorer.
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-end gap-4">
+                      {supportsDepth && (
+                        <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                          Neighborhood depth
+                          <select
+                            value={String(depth)}
+                            onChange={(event) => setDepth(Number(event.target.value))}
+                            aria-describedby={displayHelpId}
+                            className="min-w-32 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                          >
+                            {[1, 2, 3].map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                        Label filter
+                        <select
+                          value={filters.label ?? ""}
+                          onChange={(event) =>
+                            setFilters((current) => ({
+                              ...current,
+                              label: event.target.value || null,
+                            }))
+                          }
+                          aria-describedby={displayHelpId}
+                          className="min-w-40 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                        >
+                          <option value="">All labels</option>
+                          {viewModel?.labels.map((label) => (
+                            <option key={label} value={label}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-2 text-sm text-norse-silver">
+                        Relationship filter
+                        <select
+                          value={filters.relationshipType ?? ""}
+                          onChange={(event) =>
+                            setFilters((current) => ({
+                              ...current,
+                              relationshipType: event.target.value || null,
+                            }))
+                          }
+                          aria-describedby={displayHelpId}
+                          className="min-w-48 px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                        >
+                          <option value="">All relationships</option>
+                          {viewModel?.relationshipTypes.map((relationshipType) => (
+                            <option key={relationshipType} value={relationshipType}>
+                              {relationshipType}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setFilters(getDefaultGraphExplorerFilters())}
+                        className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog"
+                      >
+                        <FilterX className="w-4 h-4" />
+                        Reset filters
+                      </button>
+                      {supportsDepth && (
+                        <button
+                          type="button"
+                          onClick={() => setDepth(1)}
+                          disabled={depth === 1}
+                          aria-disabled={depth === 1}
+                          className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          Reset depth
+                        </button>
+                      )}
+                    </div>
+                  </fieldset>
+                </div>
+              </section>
+
+              <div id={summaryStatusId} aria-live="polite" className="flex flex-wrap items-center gap-4 text-sm">
                 <span className="text-white">{state.graph.meta.node_count} nodes returned</span>
                 <span className="text-white">{state.graph.meta.edge_count} edges returned</span>
                 <span className="text-norse-silver">
@@ -660,9 +757,15 @@ export function GraphExplorerPanel({
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)]">
-                <section className="rounded-2xl border border-norse-rune bg-norse-shadow/30 overflow-hidden">
-                  <div className="border-b border-norse-rune px-4 py-3 text-sm font-medium text-white">
-                    Nodes
+                <section
+                  aria-labelledby="graph-explorer-nodes-heading"
+                  className="rounded-2xl border border-norse-rune bg-norse-shadow/30 overflow-hidden"
+                >
+                  <div
+                    id="graph-explorer-nodes-heading"
+                    className="border-b border-norse-rune px-4 py-3 text-sm font-medium text-white"
+                  >
+                    Nodes ({viewModel?.renderedNodeCount ?? 0})
                   </div>
                   <div className="divide-y divide-norse-rune">
                     {viewModel?.renderedNodes.map((node) => (
@@ -670,6 +773,8 @@ export function GraphExplorerPanel({
                         key={node.id}
                         type="button"
                         onClick={() => onNodeSelect(toSearchResult(node))}
+                        aria-current={focusNodeIds.has(node.id) ? "true" : undefined}
+                        aria-label={`Open node ${node.id}${node.labels.length > 0 ? ` (${node.labels.join(", ")})` : ""}`}
                         className={`w-full text-left px-4 py-3 hover:bg-nornic-primary/10 transition-colors ${
                           focusNodeIds.has(node.id) ? "bg-nornic-primary/10" : ""
                         }`}
@@ -699,9 +804,15 @@ export function GraphExplorerPanel({
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-norse-rune bg-norse-shadow/30 overflow-hidden">
-                  <div className="border-b border-norse-rune px-4 py-3 text-sm font-medium text-white">
-                    Edges
+                <section
+                  aria-labelledby="graph-explorer-edges-heading"
+                  className="rounded-2xl border border-norse-rune bg-norse-shadow/30 overflow-hidden"
+                >
+                  <div
+                    id="graph-explorer-edges-heading"
+                    className="border-b border-norse-rune px-4 py-3 text-sm font-medium text-white"
+                  >
+                    Edges ({viewModel?.renderedEdgeCount ?? 0})
                   </div>
                   <div className="divide-y divide-norse-rune">
                     {!viewModel || viewModel.renderedEdges.length === 0 ? (
