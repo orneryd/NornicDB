@@ -4,7 +4,7 @@
  */
 
 import { useState } from "react";
-import { X, Sparkles, Edit, ChevronRight, Database, Loader2 } from "lucide-react";
+import { X, Sparkles, Edit, ChevronRight, Database, Loader2, Waypoints } from "lucide-react";
 import { EmbeddingStatus } from "../common/EmbeddingStatus";
 import { PropertyEditor } from "../common/PropertyEditor";
 import { JsonPreview } from "../common/JsonPreview";
@@ -22,6 +22,7 @@ interface NodeDetailsPanelProps {
   onFindSimilar: (nodeId: string) => void;
   onCollapseSimilar: () => void;
   onNodeSelect: (result: SearchResult) => void;
+  onExploreNode: (nodeId: string) => void;
   onUpdateProperties: (nodeId: string, props: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   onRefresh: () => void;
 }
@@ -33,6 +34,7 @@ export function NodeDetailsPanel({
   onFindSimilar,
   onCollapseSimilar,
   onNodeSelect,
+  onExploreNode,
   onUpdateProperties,
   onRefresh,
 }: NodeDetailsPanelProps) {
@@ -60,6 +62,14 @@ export function NodeDetailsPanel({
       <div className="flex items-center justify-between p-4 border-b border-norse-rune">
         <h2 className="font-medium text-white">Node Details</h2>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onExploreNode(selectedNode.node.id)}
+            className="flex items-center gap-1 px-3 py-1 text-sm rounded border border-norse-rune text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+          >
+            <Waypoints className="w-3 h-3" />
+            Explore neighborhood
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -266,33 +276,47 @@ export function NodeDetailsPanel({
             ) : (
               <div className="space-y-1">
                 {expandedSimilar.results.map((similar) => (
-                  <button
-                    type="button"
+                  <div
                     key={similar.node.id}
-                    onClick={() => onNodeSelect(similar)}
-                    className="w-full text-left p-2 rounded bg-norse-shadow/50 hover:bg-norse-shadow border border-transparent hover:border-frost-ice/20 transition-colors"
+                    className="rounded bg-norse-shadow/50 border border-transparent hover:border-frost-ice/20 transition-colors"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1 flex-wrap min-w-0">
-                        {similar.node.labels
-                          .slice(0, 2)
-                          .map((label) => (
-                            <span
-                              key={label}
-                              className="px-1.5 py-0.5 text-xs bg-frost-ice/10 text-frost-ice/80 rounded flex-shrink-0"
-                            >
-                              {label}
-                            </span>
-                          ))}
+                    <button
+                      type="button"
+                      onClick={() => onNodeSelect(similar)}
+                      className="w-full text-left p-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1 flex-wrap min-w-0">
+                          {similar.node.labels
+                            .slice(0, 2)
+                            .map((label) => (
+                              <span
+                                key={label}
+                                className="px-1.5 py-0.5 text-xs bg-frost-ice/10 text-frost-ice/80 rounded flex-shrink-0"
+                              >
+                                {label}
+                              </span>
+                            ))}
+                        </div>
+                        <span className="text-xs text-valhalla-gold/70 flex-shrink-0">
+                          {similar.score.toFixed(2)}
+                        </span>
                       </div>
-                      <span className="text-xs text-valhalla-gold/70 flex-shrink-0">
-                        {similar.score.toFixed(2)}
-                      </span>
+                      <p className="text-xs text-norse-silver/80 break-words overflow-wrap-anywhere mt-1 min-w-0">
+                        {getNodePreview(similar.node.properties)}
+                      </p>
+                    </button>
+                    <div className="px-2 pb-2">
+                      <button
+                        type="button"
+                        onClick={() => onExploreNode(similar.node.id)}
+                        className="inline-flex items-center gap-1 rounded border border-norse-rune px-2 py-1 text-[11px] text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+                      >
+                        <Waypoints className="h-3 w-3" />
+                        Neighborhood
+                      </button>
                     </div>
-                    <p className="text-xs text-norse-silver/80 break-words overflow-wrap-anywhere mt-1 min-w-0">
-                      {getNodePreview(similar.node.properties)}
-                    </p>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}

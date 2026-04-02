@@ -185,6 +185,18 @@ export function Browser() {
     });
   };
 
+  const handleExploreNeighborhood = (nodeIds: string[], focusedNodeId?: string | null) => {
+    const graph = buildNeighborhoodGraphHandoff(nodeIds, focusedNodeId);
+    if (!graph) {
+      return;
+    }
+
+    updateRouteState({
+      view: "graph",
+      graph,
+    });
+  };
+
   const handleDeleteNodes = async () => {
     setDeleting(true);
     setDeleteError(null);
@@ -326,6 +338,7 @@ export function Browser() {
                 setShowDeleteConfirm(true);
               }}
               onExploreSelection={handleGraphSelectionHandoff}
+              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
               deleting={deleting}
             />
           )}
@@ -352,6 +365,7 @@ export function Browser() {
                 setShowDeleteConfirm(true);
               }}
               onExploreSelection={handleGraphSelectionHandoff}
+              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
               onFindSimilar={findSimilar}
               onCollapseSimilar={collapseSimilar}
               deleting={deleting}
@@ -365,6 +379,7 @@ export function Browser() {
               selectedNodeId={selectedNode?.node.id}
               selectedNodeIds={Array.from(selectedNodeIds)}
               onNodeSelect={setSelectedNode}
+              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
               onClearGraph={() => updateRouteState({ graph: null })}
               onUpdateHandoff={(graph) => updateRouteState({ graph })}
             />
@@ -379,6 +394,7 @@ export function Browser() {
             onFindSimilar={findSimilar}
             onCollapseSimilar={collapseSimilar}
             onNodeSelect={setSelectedNode}
+            onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
             onUpdateProperties={handleUpdateProperties}
             onRefresh={handleRefresh}
           />

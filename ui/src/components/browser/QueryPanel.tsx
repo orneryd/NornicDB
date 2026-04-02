@@ -49,6 +49,7 @@ interface QueryPanelProps {
   onClearSelection: () => void;
   onDeleteClick: () => void;
   onExploreSelection: () => void;
+  onExploreNode: (nodeId: string) => void;
   deleting?: boolean;
 }
 
@@ -69,6 +70,7 @@ export function QueryPanel({
   onClearSelection,
   onDeleteClick,
   onExploreSelection,
+  onExploreNode,
   deleting = false,
 }: QueryPanelProps) {
   const [showHistory, setShowHistory] = useState(false);
@@ -279,6 +281,7 @@ export function QueryPanel({
                         onSelectAll(allIds);
                       }}
                       onClearSelection={onClearSelection}
+                      onExploreNode={onExploreNode}
                     />
                     );
                   })()}
@@ -296,6 +299,7 @@ export function QueryPanel({
                     onSelectAll(allIds);
                   }}
                   onClearSelection={onClearSelection}
+                  onExploreNode={onExploreNode}
                 />
               )
             )}

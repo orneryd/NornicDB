@@ -41,6 +41,7 @@ interface GraphExplorerPanelProps {
   selectedNodeId?: string | null;
   selectedNodeIds?: string[];
   onNodeSelect: (node: SearchResult) => void;
+  onExploreNode: (nodeId: string) => void;
   onClearGraph: () => void;
   onUpdateHandoff: (handoff: BrowserGraphHandoff) => void;
 }
@@ -143,6 +144,7 @@ export function GraphExplorerPanel({
   selectedNodeId,
   selectedNodeIds = [],
   onNodeSelect,
+  onExploreNode,
   onClearGraph,
   onUpdateHandoff,
 }: GraphExplorerPanelProps) {
@@ -162,6 +164,7 @@ export function GraphExplorerPanel({
   const [pathSourceInput, setPathSourceInput] = useState("");
   const [pathTargetInput, setPathTargetInput] = useState("");
   const [pathDraftWasInferred, setPathDraftWasInferred] = useState(false);
+  const [manualSeedInput, setManualSeedInput] = useState("");
   const [state, setState] = useState<GraphExplorerState>({
     loading: false,
     error: null,
@@ -325,15 +328,73 @@ export function GraphExplorerPanel({
     );
   };
 
+  const applyManualSeedRequest = () => {
+    const nodeIds = Array.from(
+      new Set(
+        manualSeedInput
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (nodeIds.length === 0) {
+      return;
+    }
+
+    onUpdateHandoff({
+      mode: "neighborhood",
+      nodeIds,
+    });
+  };
+
   if (!handoff) {
     return (
       <div className="flex-1 p-6">
         <div className="rounded-2xl border border-dashed border-norse-rune bg-norse-shadow/40 p-6">
           <div className="text-lg font-semibold text-white">Graph Explorer</div>
           <p className="mt-2 text-sm text-norse-silver">
-            Select nodes from query or search results, then use Open in Graph to inspect a
-            database-scoped neighborhood.
+            Happy path: pick any node in query results, search results, node details, or this graph list,
+            then choose <span className="text-white">Explore neighborhood</span>. The Browser will switch here,
+            seed the request, and run the neighborhood fetch automatically.
           </p>
+          <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-norse-silver">
+            <li>Run a Cypher query or semantic search.</li>
+            <li>Select a node and click <span className="text-white">Explore neighborhood</span>.</li>
+            <li>Adjust depth, filters, path, or temporal controls once the graph loads.</li>
+          </ol>
+          <div className="mt-6 rounded-xl border border-norse-rune bg-norse-night/30 p-4">
+            <div className="text-sm font-medium text-white">Manual seed</div>
+            <p className="mt-1 text-xs text-norse-silver">
+              Want to start directly in Graph Explorer? Enter one or more comma-separated node ids.
+            </p>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <label className="flex min-w-[18rem] flex-1 flex-col gap-2 text-sm text-norse-silver">
+                Seed node ids
+                <input
+                  type="text"
+                  value={manualSeedInput}
+                  onChange={(event) => setManualSeedInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      applyManualSeedRequest();
+                    }
+                  }}
+                  placeholder="node-1, node-2"
+                  className="px-3 py-2 text-sm bg-norse-stone border border-norse-rune rounded-lg text-white placeholder:text-norse-fog focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={applyManualSeedRequest}
+                disabled={manualSeedInput.trim().length === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm text-norse-silver border border-norse-rune rounded-lg hover:text-white hover:border-norse-fog disabled:opacity-50"
+              >
+                Explore neighborhood
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -788,37 +849,49 @@ export function GraphExplorerPanel({
                   </div>
                   <div className="divide-y divide-norse-rune">
                     {viewModel?.renderedNodes.map((node) => (
-                      <button
+                      <div
                         key={node.id}
-                        type="button"
-                        onClick={() => onNodeSelect(toSearchResult(node))}
-                        aria-current={focusNodeIds.has(node.id) ? "true" : undefined}
-                        aria-label={`Open node ${node.id}${node.labels.length > 0 ? ` (${node.labels.join(", ")})` : ""}`}
-                        className={`w-full text-left px-4 py-3 hover:bg-nornic-primary/10 transition-colors ${
+                        className={`px-4 py-3 hover:bg-nornic-primary/10 transition-colors ${
                           focusNodeIds.has(node.id) ? "bg-nornic-primary/10" : ""
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-medium text-white">{node.id}</div>
-                            <div className="text-xs text-norse-fog">
-                              {node.labels.join(", ") || "Unlabeled"}
+                        <button
+                          type="button"
+                          onClick={() => onNodeSelect(toSearchResult(node))}
+                          aria-current={focusNodeIds.has(node.id) ? "true" : undefined}
+                          aria-label={`Open node ${node.id}${node.labels.length > 0 ? ` (${node.labels.join(", ")})` : ""}`}
+                          className="w-full text-left"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-medium text-white">{node.id}</div>
+                              <div className="text-xs text-norse-fog">
+                                {node.labels.join(", ") || "Unlabeled"}
+                              </div>
                             </div>
+                            {node.status && (
+                              <span
+                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide ${getDiffStatusClasses(
+                                  node.status,
+                                )}`}
+                              >
+                                {node.status}
+                              </span>
+                            )}
                           </div>
-                          {node.status && (
-                            <span
-                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide ${getDiffStatusClasses(
-                                node.status,
-                              )}`}
-                            >
-                              {node.status}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-2 text-sm text-norse-silver line-clamp-2">
-                          {getNodePreview(node.properties)}
-                        </p>
-                      </button>
+                          <p className="mt-2 text-sm text-norse-silver line-clamp-2">
+                            {getNodePreview(node.properties)}
+                          </p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onExploreNode(node.id)}
+                          className="mt-3 inline-flex items-center gap-1 rounded-md border border-norse-rune px-2 py-1 text-xs text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+                        >
+                          <Waypoints className="h-3.5 w-3.5" />
+                          Explore neighborhood
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </section>

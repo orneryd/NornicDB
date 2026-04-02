@@ -6,6 +6,8 @@
 import { ExpandableCell } from "../common/ExpandableCell";
 import { extractNodeFromResult, getAllNodeIdsFromQueryResults } from "../../utils/nodeUtils";
 
+import { Waypoints } from "lucide-react";
+
 interface QueryResultsTableProps {
   cypherResult: {
     results: Array<{
@@ -21,6 +23,7 @@ interface QueryResultsTableProps {
   onToggleSelect: (nodeId: string) => void;
   onSelectAll: (nodeIds: string[]) => void;
   onClearSelection: () => void;
+  onExploreNode: (nodeId: string) => void;
 }
 
 export function QueryResultsTable({
@@ -30,6 +33,7 @@ export function QueryResultsTable({
   onToggleSelect,
   onSelectAll,
   onClearSelection,
+  onExploreNode,
 }: QueryResultsTableProps) {
   if (!cypherResult || !cypherResult.results[0]) {
     return null;
@@ -128,17 +132,31 @@ export function QueryResultsTable({
                         e.stopPropagation();
                       }
                     }}
+                    className="align-top"
                   >
                     {nodeId && (
-                      <input
-                        type="checkbox"
-                        checked={selectedNodeIds.has(nodeId)}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          onToggleSelect(nodeId);
-                        }}
-                        className="cursor-pointer"
-                      />
+                      <div className="flex flex-col items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedNodeIds.has(nodeId)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            onToggleSelect(nodeId);
+                          }}
+                          className="cursor-pointer"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onExploreNode(nodeId);
+                          }}
+                          className="inline-flex items-center gap-1 rounded border border-norse-rune px-2 py-1 text-[11px] text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+                        >
+                          <Waypoints className="h-3 w-3" />
+                          Neighborhood
+                        </button>
+                      </div>
                     )}
                   </td>
                   {row.row.map((cell, cellIndex) => {

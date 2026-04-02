@@ -31,6 +31,7 @@ interface SearchPanelProps {
   onClearSelection: () => void;
   onDeleteClick: () => void;
   onExploreSelection: () => void;
+  onExploreNode: (nodeId: string) => void;
   onFindSimilar: (nodeId: string) => void;
   onCollapseSimilar: () => void;
   deleting?: boolean;
@@ -54,6 +55,7 @@ export function SearchPanel({
   onClearSelection,
   onDeleteClick,
   onExploreSelection,
+  onExploreNode,
   onFindSimilar,
   onCollapseSimilar,
   deleting = false,
@@ -150,6 +152,7 @@ export function SearchPanel({
               }
               onSelect={() => onNodeSelect(result)}
               onToggleSelect={() => onToggleSelect(result.node.id)}
+              onExploreNeighborhood={() => onExploreNode(result.node.id)}
               onFindSimilar={() => onFindSimilar(result.node.id)}
               onCollapseSimilar={onCollapseSimilar}
             />

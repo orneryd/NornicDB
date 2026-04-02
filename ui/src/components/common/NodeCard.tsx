@@ -3,7 +3,7 @@
  * Extracted from Browser.tsx for reusability
  */
 
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Waypoints } from "lucide-react";
 import { getNodePreview } from "../../utils/nodeUtils";
 import type { SearchResult } from "../../utils/api";
 
@@ -18,6 +18,7 @@ interface NodeCardProps {
   } | null;
   onSelect: () => void;
   onToggleSelect: () => void;
+  onExploreNeighborhood?: () => void;
   onFindSimilar?: () => void; // Reserved for future use
   onCollapseSimilar?: () => void;
 }
@@ -29,6 +30,7 @@ export function NodeCard({
   expandedSimilar,
   onSelect,
   onToggleSelect,
+  onExploreNeighborhood,
   onFindSimilar: _onFindSimilar, // Reserved for future use - prefix with _ to mark as intentionally unused
   onCollapseSimilar,
 }: NodeCardProps) {
@@ -57,30 +59,42 @@ export function NodeCard({
             onClick={(e) => e.stopPropagation()}
             className="mt-1 cursor-pointer"
           />
-          <button
-            type="button"
-            onClick={onSelect}
-            className="flex-1 text-left min-w-0"
-          >
-            <div className="flex items-center justify-between mb-1 gap-2">
-              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                {result.node.labels.map((label) => (
-                  <span
-                    key={label}
-                    className="px-2 py-0.5 text-xs bg-frost-ice/20 text-frost-ice rounded flex-shrink-0"
-                  >
-                    {label}
-                  </span>
-                ))}
+          <div className="flex-1 min-w-0">
+            <button
+              type="button"
+              onClick={onSelect}
+              className="w-full text-left"
+            >
+              <div className="flex items-center justify-between mb-1 gap-2">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  {result.node.labels.map((label) => (
+                    <span
+                      key={label}
+                      className="px-2 py-0.5 text-xs bg-frost-ice/20 text-frost-ice rounded flex-shrink-0"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                <span className="text-xs text-valhalla-gold flex-shrink-0">
+                  Score: {result.score.toFixed(2)}
+                </span>
               </div>
-              <span className="text-xs text-valhalla-gold flex-shrink-0">
-                Score: {result.score.toFixed(2)}
-              </span>
-            </div>
-            <p className="text-sm text-norse-silver break-words overflow-wrap-anywhere min-w-0">
-              {getNodePreview(result.node.properties)}
-            </p>
-          </button>
+              <p className="text-sm text-norse-silver break-words overflow-wrap-anywhere min-w-0">
+                {getNodePreview(result.node.properties)}
+              </p>
+            </button>
+            {onExploreNeighborhood && (
+              <button
+                type="button"
+                onClick={onExploreNeighborhood}
+                className="mt-3 inline-flex items-center gap-1 rounded-md border border-norse-rune px-2 py-1 text-xs text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+              >
+                <Waypoints className="h-3.5 w-3.5" />
+                Explore neighborhood
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
