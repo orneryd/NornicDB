@@ -78,7 +78,7 @@ jobs:
     needs: build-macos-release-assets
     steps:
       - name: Download macOS release artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: macos-release-assets-${{ needs.build-macos-release-assets.outputs.release_tag }}
           path: dist
