@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Terminal, Sparkles, Database } from "lucide-react";
 import { useAppStore } from "../store/appStore";
@@ -8,7 +8,8 @@ import { Header } from "../components/browser/Header";
 import { QueryPanel } from "../components/browser/QueryPanel";
 import { SearchPanel } from "../components/browser/SearchPanel";
 import { NodeDetailsPanel } from "../components/browser/NodeDetailsPanel";
-import { GraphExplorerPanel } from "../components/browser/GraphExplorerPanel";
+import { GraphExplorerPanel, type GraphExplorerPanelControls } from "../components/browser/GraphExplorerPanel";
+import { GraphExplorerControls } from "../components/browser/GraphExplorerControls";
 import { DeleteConfirmModal } from "../components/modals/DeleteConfirmModal";
 import { RegenerateConfirmModal } from "../components/modals/RegenerateConfirmModal";
 import { BASE_PATH, joinBasePath } from "../utils/basePath";
@@ -34,7 +35,8 @@ interface EmbedData {
 
 export function Browser() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const routeState = readBrowserUrlState(searchParams);
+  const searchParamsString = searchParams.toString();
+  const routeState = useMemo(() => readBrowserUrlState(searchParams), [searchParamsString]); // eslint-disable-line react-hooks/exhaustive-deps
   const {
     stats,
     connected,
@@ -67,6 +69,8 @@ export function Browser() {
     expandedSimilar,
     collapseSimilar,
   } = useAppStore();
+
+  const [graphControls, setGraphControls] = useState<GraphExplorerPanelControls | null>(null);
 
   const [embedData, setEmbedData] = useState<EmbedData>({
     stats: null,
@@ -160,17 +164,21 @@ export function Browser() {
     setSearchParams(mergeBrowserUrlState(searchParams, nextState));
   };
 
-  const handleDatabaseChange = (dbName: string) => {
+  const selectedNodeIdsArray = useMemo(() => Array.from(selectedNodeIds), [selectedNodeIds]);
+
+  const handleDatabaseChange = useCallback((dbName: string) => {
     const value = dbName === "" ? null : dbName;
     setSelectedDatabase(value);
     updateRouteState({ database: value });
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setSelectedDatabase, searchParams]);
 
-  const handleViewChange = (view: BrowserViewMode) => {
+  const handleViewChange = useCallback((view: BrowserViewMode) => {
     updateRouteState({ view });
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
-  const handleGraphSelectionHandoff = () => {
+  const handleGraphSelectionHandoff = useCallback(() => {
     const graph = buildNeighborhoodGraphHandoff(
       Array.from(selectedNodeIds),
       selectedNode?.node.id,
@@ -183,9 +191,10 @@ export function Browser() {
       view: "graph",
       graph,
     });
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeIds, selectedNode, searchParams]);
 
-  const handleExploreNeighborhood = (nodeIds: string[], focusedNodeId?: string | null) => {
+  const handleExploreNeighborhood = useCallback((nodeIds: string[], focusedNodeId?: string | null) => {
     const graph = buildNeighborhoodGraphHandoff(nodeIds, focusedNodeId);
     if (!graph) {
       return;
@@ -195,7 +204,30 @@ export function Browser() {
       view: "graph",
       graph,
     });
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const handleExploreNode = useCallback((nodeId: string) => {
+    handleExploreNeighborhood([nodeId], nodeId);
+  }, [handleExploreNeighborhood]);
+
+  const handleClearGraph = useCallback(() => {
+    updateRouteState({ graph: null });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const handleUpdateHandoff = useCallback((graph: Parameters<typeof updateRouteState>[0]["graph"]) => {
+    updateRouteState({ graph });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const handleCloseDetails = useCallback(() => {
+    setSelectedNode(null);
+  }, [setSelectedNode]);
+
+  const handleExposeControls = useCallback((controls: GraphExplorerPanelControls) => {
+    setGraphControls(controls);
+  }, []);
 
   const handleDeleteNodes = async () => {
     setDeleting(true);
@@ -222,23 +254,87 @@ export function Browser() {
     }
   };
 
-  const handleUpdateProperties = async (
+  const handleUpdateProperties = useCallback(async (
     nodeId: string,
     props: Record<string, unknown>,
   ) => {
     return await api.updateNodeProperties(nodeId, props, selectedDatabase ?? undefined);
-  };
+  }, [selectedDatabase]);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     if (routeState.view === "query") {
       executeCypher();
     } else if (routeState.view === "search") {
       executeSearch();
     }
-  };
+  }, [routeState.view, executeCypher, executeSearch]);
+
+  const sidebarContent = (
+    <>
+      {routeState.view === "query" && (
+        <QueryPanel
+          cypherQuery={cypherQuery}
+          setCypherQuery={setCypherQuery}
+          queryHistory={queryHistory}
+          queryLoading={queryLoading}
+          queryError={queryError}
+          cypherResult={cypherResult}
+          cypherResults={cypherResults}
+          selectedNodeIds={selectedNodeIds}
+          deleteError={deleteError}
+          onExecute={(continueOnError) => executeCypher({ continueOnError })}
+          onNodeSelect={(nodeData) => {
+            setSelectedNode({
+              node: { ...nodeData, created_at: "" },
+              score: 0,
+            });
+          }}
+          onToggleSelect={toggleNodeSelection}
+          onSelectAll={(nodeIds) => selectAllNodes(nodeIds)}
+          onClearSelection={clearNodeSelection}
+          onDeleteClick={() => {
+            setDeleteError(null);
+            setShowDeleteConfirm(true);
+          }}
+          onExploreSelection={handleGraphSelectionHandoff}
+          onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
+          deleting={deleting}
+        />
+      )}
+
+      {routeState.view === "search" && (
+        <SearchPanel
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          searchLoading={searchLoading}
+          searchError={searchError}
+          searchResults={searchResults}
+          selectedDatabase={selectedDatabase ?? ""}
+          selectedNodeIds={selectedNodeIds}
+          selectedNode={selectedNode}
+          deleteError={deleteError}
+          expandedSimilar={expandedSimilar}
+          onExecute={executeSearch}
+          onNodeSelect={setSelectedNode}
+          onToggleSelect={toggleNodeSelection}
+          onSelectAll={(nodeIds) => selectAllNodes(nodeIds)}
+          onClearSelection={clearNodeSelection}
+          onDeleteClick={() => {
+            setDeleteError(null);
+            setShowDeleteConfirm(true);
+          }}
+          onExploreSelection={handleGraphSelectionHandoff}
+          onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
+          onFindSimilar={findSimilar}
+          onCollapseSimilar={collapseSimilar}
+          deleting={deleting}
+        />
+      )}
+    </>
+  );
 
   return (
-    <div className="min-h-screen bg-norse-night flex flex-col">
+    <div className="h-screen bg-norse-night flex flex-col overflow-hidden">
       <Header
         stats={stats}
         connected={connected}
@@ -250,9 +346,9 @@ export function Browser() {
         onSecurityClick={() => navigate("/security")}
       />
 
-      <div className="flex-1 flex">
-        <div className="w-1/2 border-r border-norse-rune flex flex-col">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-norse-rune bg-norse-shadow/30">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        <div className="w-full max-w-[30rem] border-r border-norse-rune flex flex-col min-h-0 bg-norse-night">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-norse-rune bg-norse-shadow/30 shrink-0">
             <Database className="w-4 h-4 text-norse-silver shrink-0" aria-hidden />
             <label htmlFor={databaseSelectId} className="text-sm text-norse-silver shrink-0">
               Database
@@ -273,7 +369,7 @@ export function Browser() {
             </select>
           </div>
 
-          <div className="flex border-b border-norse-rune">
+          <div className="flex border-b border-norse-rune shrink-0">
             <button
               type="button"
               onClick={() => handleViewChange("query")}
@@ -312,92 +408,67 @@ export function Browser() {
             </button>
           </div>
 
-          {routeState.view === "query" && (
-            <QueryPanel
-              cypherQuery={cypherQuery}
-              setCypherQuery={setCypherQuery}
-              queryHistory={queryHistory}
-              queryLoading={queryLoading}
-              queryError={queryError}
-              cypherResult={cypherResult}
-              cypherResults={cypherResults}
-              selectedNodeIds={selectedNodeIds}
-              deleteError={deleteError}
-              onExecute={(continueOnError) => executeCypher({ continueOnError })}
-              onNodeSelect={(nodeData) => {
-                setSelectedNode({
-                  node: { ...nodeData, created_at: "" },
-                  score: 0,
-                });
-              }}
-              onToggleSelect={toggleNodeSelection}
-              onSelectAll={(nodeIds) => selectAllNodes(nodeIds)}
-              onClearSelection={clearNodeSelection}
-              onDeleteClick={() => {
-                setDeleteError(null);
-                setShowDeleteConfirm(true);
-              }}
-              onExploreSelection={handleGraphSelectionHandoff}
-              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
-              deleting={deleting}
-            />
-          )}
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            {routeState.view === "graph" ? (
+              <GraphExplorerControls
+                handoff={routeState.graph}
+                selectedDatabase={selectedDatabase}
+                resolvedDatabase={graphControls?.resolvedDatabase ?? null}
+                graph={graphControls?.graph ?? null}
+                loading={graphControls?.loading ?? false}
+                selectedNodeId={selectedNode?.node.id}
+                selectedNodeIds={selectedNodeIdsArray}
+                filters={graphControls?.filters ?? { label: null, relationshipType: null }}
+                depth={graphControls?.depth ?? 1}
+                labels={graphControls?.labels ?? []}
+                relationshipTypes={graphControls?.relationshipTypes ?? []}
+                onRefresh={graphControls?.onRefresh ?? (() => {})}
+                onClearGraph={handleClearGraph}
+                onUpdateHandoff={handleUpdateHandoff}
+                onFiltersChange={graphControls?.onFiltersChange ?? (() => {})}
+                onDepthChange={graphControls?.onDepthChange ?? (() => {})}
+                onManualSeed={(nodeIds) => handleUpdateHandoff({ mode: "neighborhood", nodeIds })}
+              />
+            ) : (
+              sidebarContent
+            )}
+          </div>
+        </div>
 
-          {routeState.view === "search" && (
-            <SearchPanel
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              searchLoading={searchLoading}
-              searchError={searchError}
-              searchResults={searchResults}
-              selectedDatabase={selectedDatabase ?? ""}
-              selectedNodeIds={selectedNodeIds}
-              selectedNode={selectedNode}
-              deleteError={deleteError}
-              expandedSimilar={expandedSimilar}
-              onExecute={executeSearch}
-              onNodeSelect={setSelectedNode}
-              onToggleSelect={toggleNodeSelection}
-              onSelectAll={(nodeIds) => selectAllNodes(nodeIds)}
-              onClearSelection={clearNodeSelection}
-              onDeleteClick={() => {
-                setDeleteError(null);
-                setShowDeleteConfirm(true);
-              }}
-              onExploreSelection={handleGraphSelectionHandoff}
-              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
-              onFindSimilar={findSimilar}
-              onCollapseSimilar={collapseSimilar}
-              deleting={deleting}
-            />
-          )}
-
-          {routeState.view === "graph" && (
+        <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden bg-norse-shadow/30">
+          {routeState.view === "graph" ? (
             <GraphExplorerPanel
               handoff={routeState.graph}
               selectedDatabase={selectedDatabase}
               selectedNodeId={selectedNode?.node.id}
-              selectedNodeIds={Array.from(selectedNodeIds)}
+              selectedNodeIds={selectedNodeIdsArray}
+              selectedNode={selectedNode}
               onNodeSelect={setSelectedNode}
-              onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
-              onClearGraph={() => updateRouteState({ graph: null })}
-              onUpdateHandoff={(graph) => updateRouteState({ graph })}
+              onExploreNode={handleExploreNode}
+              onClearGraph={handleClearGraph}
+              onUpdateHandoff={handleUpdateHandoff}
+              onCloseDetails={handleCloseDetails}
+              onFindSimilar={findSimilar}
+              onCollapseSimilar={collapseSimilar}
+              expandedSimilar={expandedSimilar}
+              onUpdateProperties={handleUpdateProperties}
+              onExposeControls={handleExposeControls}
             />
+          ) : (
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+              <NodeDetailsPanel
+                selectedNode={selectedNode}
+                expandedSimilar={expandedSimilar}
+                onClose={() => setSelectedNode(null)}
+                onFindSimilar={findSimilar}
+                onCollapseSimilar={collapseSimilar}
+                onNodeSelect={setSelectedNode}
+                onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
+                onUpdateProperties={handleUpdateProperties}
+                onRefresh={handleRefresh}
+              />
+            </div>
           )}
-        </div>
-
-        <div className="w-1/2 flex flex-col bg-norse-shadow/30">
-          <NodeDetailsPanel
-            selectedNode={selectedNode}
-            expandedSimilar={expandedSimilar}
-            onClose={() => setSelectedNode(null)}
-            onFindSimilar={findSimilar}
-            onCollapseSimilar={collapseSimilar}
-            onNodeSelect={setSelectedNode}
-            onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
-            onUpdateProperties={handleUpdateProperties}
-            onRefresh={handleRefresh}
-          />
         </div>
       </div>
 

@@ -59,39 +59,41 @@ export function NodeDetailsPanel({
 
   return (
     <>
-      <div className="flex items-center justify-between p-4 border-b border-norse-rune">
+      <div className="flex items-center justify-between gap-3 p-4 border-b border-norse-rune">
         <h2 className="font-medium text-white">Node Details</h2>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onExploreNode(selectedNode.node.id)}
-            className="flex items-center gap-1 px-3 py-1 text-sm rounded border border-norse-rune text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
-          >
-            <Waypoints className="w-3 h-3" />
-            Explore neighborhood
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (isExpanded) {
-                onCollapseSimilar();
-              } else {
-                onFindSimilar(selectedNode.node.id);
-              }
-            }}
-            className={`flex items-center gap-1 px-3 py-1 text-sm rounded transition-colors ${
-              isExpanded
-                ? "bg-frost-ice text-norse-night hover:bg-frost-ice/90"
-                : "bg-frost-ice/20 text-frost-ice hover:bg-frost-ice/30"
-            }`}
-          >
-            <Sparkles className="w-3 h-3" />
-            {isExpanded ? "Hide Similar" : "Find Similar"}
-          </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (isExpanded) {
+                  onCollapseSimilar();
+                } else {
+                  onFindSimilar(selectedNode.node.id);
+                }
+              }}
+              className={`inline-flex items-center gap-1 px-3 py-1 text-sm rounded transition-colors ${
+                isExpanded
+                  ? "bg-frost-ice text-norse-night hover:bg-frost-ice/90"
+                  : "bg-frost-ice/20 text-frost-ice hover:bg-frost-ice/30"
+              }`}
+            >
+              <Sparkles className="w-3 h-3" />
+              {isExpanded ? "Hide Similar" : "Find Similar"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onExploreNode(selectedNode.node.id)}
+              className="inline-flex items-center gap-1 px-3 py-1 text-sm rounded border border-norse-rune text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
+            >
+              <Waypoints className="w-3 h-3" />
+              Neighborhood
+            </button>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 hover:bg-norse-rune rounded transition-colors"
+            className="shrink-0 p-1 hover:bg-norse-rune rounded transition-colors"
           >
             <X className="w-4 h-4 text-norse-silver" />
           </button>
