@@ -17,6 +17,7 @@ interface NodeDetailsPanelProps {
     nodeId: string;
     results: SearchResult[];
     loading: boolean;
+    error?: string;
   } | null;
   onClose: () => void;
   onFindSimilar: (nodeId: string) => void;
@@ -273,6 +274,8 @@ export function NodeDetailsPanel({
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Finding similar...
               </div>
+            ) : expandedSimilar.error ? (
+              <p className="text-xs text-red-400 py-2">{expandedSimilar.error}</p>
             ) : expandedSimilar.results.length === 0 ? (
               <p className="text-xs text-norse-fog py-2">No similar items found</p>
             ) : (

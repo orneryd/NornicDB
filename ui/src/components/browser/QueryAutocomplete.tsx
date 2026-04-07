@@ -29,6 +29,7 @@ export function QueryAutocomplete({
   const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [serviceAvailable, setServiceAvailable] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -37,6 +38,12 @@ export function QueryAutocomplete({
     async (currentQuery: string) => {
       // Don't suggest for empty or very short queries
       if (!currentQuery.trim() || currentQuery.trim().length < 3) {
+        setSuggestions([]);
+        setShowSuggestions(false);
+        return;
+      }
+
+      if (!serviceAvailable) {
         setSuggestions([]);
         setShowSuggestions(false);
         return;
@@ -65,8 +72,16 @@ export function QueryAutocomplete({
         });
 
         if (!response.ok) {
+          if (response.status === 404 || response.status === 501 || response.status === 503) {
+            setServiceAvailable(false);
+            setSuggestions([]);
+            setShowSuggestions(false);
+            return;
+          }
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+
+        setServiceAvailable(true);
 
         const data = await response.json();
         const suggestionText = data.suggestion?.trim() || "";
@@ -157,6 +172,12 @@ export function QueryAutocomplete({
     };
   }, [query, enabled, fetchSuggestions]);
 
+  useEffect(() => {
+    if (enabled) {
+      setServiceAvailable(true);
+    }
+  }, [enabled]);
+
   // Handle keyboard navigation on textarea
   useEffect(() => {
     const textarea = textareaRef?.current;
@@ -210,7 +231,7 @@ export function QueryAutocomplete({
     };
   }, []);
 
-  if (!enabled || (!isLoading && suggestions.length === 0 && !showSuggestions)) {
+  if (!enabled || !serviceAvailable || (!isLoading && suggestions.length === 0 && !showSuggestions)) {
     return null;
   }
 

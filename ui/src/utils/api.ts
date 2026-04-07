@@ -471,6 +471,10 @@ class NornicDBClient {
       credentials: "include",
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.detail ?? err?.message ?? `Request failed: ${res.status}`);
+    }
     return await res.json();
   }
 

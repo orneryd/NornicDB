@@ -26,7 +26,7 @@ npm run build
 
 ## Configuration
 
-The UI proxies requests to NornicDB server at `localhost:7475`. Configure in `vite.config.ts`:
+The UI proxies requests to NornicDB server at `localhost:7474`. Configure in `vite.config.ts`:
 
 ```typescript
 proxy: {

@@ -297,7 +297,6 @@ export function Browser() {
             setShowDeleteConfirm(true);
           }}
           onExploreSelection={handleGraphSelectionHandoff}
-          onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
           deleting={deleting}
         />
       )}
@@ -324,7 +323,6 @@ export function Browser() {
             setShowDeleteConfirm(true);
           }}
           onExploreSelection={handleGraphSelectionHandoff}
-          onExploreNode={(nodeId) => handleExploreNeighborhood([nodeId], nodeId)}
           onFindSimilar={findSimilar}
           onCollapseSimilar={collapseSimilar}
           deleting={deleting}
@@ -347,7 +345,7 @@ export function Browser() {
       />
 
       <div className="flex-1 min-h-0 flex overflow-hidden">
-        <div className="w-full max-w-[30rem] border-r border-norse-rune flex flex-col min-h-0 bg-norse-night">
+        <div className="w-full max-w-[60rem] border-r border-norse-rune flex flex-col min-h-0 bg-norse-night">
           <div className="flex items-center gap-2 px-4 py-2 border-b border-norse-rune bg-norse-shadow/30 shrink-0">
             <Database className="w-4 h-4 text-norse-silver shrink-0" aria-hidden />
             <label htmlFor={databaseSelectId} className="text-sm text-norse-silver shrink-0">

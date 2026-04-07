@@ -26,24 +26,32 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // Proxy API requests to NornicDB server
         '/api': {
-          target: 'http://localhost:7475',
+          target: 'http://localhost:7474',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ''),
         },
+        '/health': {
+          target: 'http://localhost:7474',
+          changeOrigin: true,
+        },
+        '/status': {
+          target: 'http://localhost:7474',
+          changeOrigin: true,
+        },
         '/db': {
-          target: 'http://localhost:7475',
+          target: 'http://localhost:7474',
           changeOrigin: true,
         },
         '/auth': {
-          target: 'http://localhost:7475',
+          target: 'http://localhost:7474',
           changeOrigin: true,
         },
         '/nornicdb': {
-          target: 'http://localhost:7475',
+          target: 'http://localhost:7474',
           changeOrigin: true,
         },
         '/admin': {
-          target: 'http://localhost:7475',
+          target: 'http://localhost:7474',
           changeOrigin: true,
         },
       },

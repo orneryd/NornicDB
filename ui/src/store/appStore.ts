@@ -8,6 +8,7 @@ interface SimilarExpansion {
   nodeId: string;
   results: SearchResult[];
   loading: boolean;
+  error?: string;
 }
 
 interface AppState {
@@ -288,8 +289,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         selectedDatabase ?? undefined
       );
       set({ expandedSimilar: { nodeId, results, loading: false } });
-    } catch {
-      set({ expandedSimilar: null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to find similar nodes";
+      set({ expandedSimilar: { nodeId, results: [], loading: false, error: message } });
     }
   },
 

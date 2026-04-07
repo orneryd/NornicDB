@@ -3,7 +3,7 @@
  * Extracted from Browser.tsx for reusability
  */
 
-import { Sparkles, Loader2, Waypoints } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { getNodePreview } from "../../utils/nodeUtils";
 import type { SearchResult } from "../../utils/api";
 
@@ -18,7 +18,6 @@ interface NodeCardProps {
   } | null;
   onSelect: () => void;
   onToggleSelect: () => void;
-  onExploreNeighborhood?: () => void;
   onFindSimilar?: () => void; // Reserved for future use
   onCollapseSimilar?: () => void;
 }
@@ -30,7 +29,6 @@ export function NodeCard({
   expandedSimilar,
   onSelect,
   onToggleSelect,
-  onExploreNeighborhood,
   onFindSimilar: _onFindSimilar, // Reserved for future use - prefix with _ to mark as intentionally unused
   onCollapseSimilar,
 }: NodeCardProps) {
@@ -84,16 +82,6 @@ export function NodeCard({
                 {getNodePreview(result.node.properties)}
               </p>
             </button>
-            {onExploreNeighborhood && (
-              <button
-                type="button"
-                onClick={onExploreNeighborhood}
-                className="mt-3 inline-flex items-center gap-1 rounded-md border border-norse-rune px-2 py-1 text-xs text-norse-silver transition-colors hover:border-norse-fog hover:text-white"
-              >
-                <Waypoints className="h-3.5 w-3.5" />
-                Explore neighborhood
-              </button>
-            )}
           </div>
         </div>
       </div>

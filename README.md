@@ -5,12 +5,12 @@
 <h1 align="center">NornicDB</h1>
 
 <p align="center">
-  <strong>The Graph Database That Learns <br/> Achieving Psygnosis for AI</strong><br/>
+  <strong>The Graph Database That Learns</strong><br/>
   Neo4j-compatible • GPU-accelerated • Memory that evolves
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.21.0-success" alt="Version 1.0.39">
+  <img src="https://img.shields.io/badge/version-1.0.39-success" alt="Version 1.0.39">
   <a href="https://coveralls.io/github/orneryd/NornicDB?branch=main"><img src="https://coveralls.io/repos/github/orneryd/NornicDB/badge.svg?branch=main" alt="Coveralls Report"></a>
   <a href="https://hub.docker.com/u/timothyswt"><img src="https://img.shields.io/badge/docker-ready-blue?logo=docker" alt="Docker"></a>
   <a href="https://neo4j.com/"><img src="https://img.shields.io/badge/neo4j-compatible-008CC1?logo=neo4j" alt="Neo4j Compatible"></a>
@@ -81,6 +81,19 @@ NornicDB implements Snapshot Isolation at the storage layer. Each transaction is
 
 See [transaction implementation details](docs/user-guides/transactions.md), [historical reads and MVCC retention](docs/user-guides/historical-reads-mvcc-retention.md), and the [canonical graph ledger guide](docs/user-guides/canonical-graph-ledger.md).
 
+### What Recent Deep-Dives Show
+
+- **Hybrid execution model (streaming fast paths + general engine)**: NornicDB uses shape-specialized streaming executors for common traversal/aggregation patterns while retaining a general Cypher path for coverage and correctness.
+- **Runtime parser mode switching**: the default `nornic` parser is optimized for low-overhead hot-path routing, while `antlr` mode prioritizes strict parsing and diagnostics when debugging and validation matter more than throughput.
+- **Measured parser-path deltas on benchmark suites**: internal Northwind comparisons show large overhead differences on certain query shapes when full parse-tree paths are used, which is why the production default remains the custom parser path.
+- **HNSW build acceleration from insertion-order optimization**: BM25-seeded insertion order reduced a 1M embedding build from ~27 minutes to ~10 minutes (~2.7x) in published tests by reducing traversal waste during construction, without changing core quality knobs.
+- **Shared seed strategy across indexing stages**: the same lexical seed extraction supports HNSW insertion ordering and improves k-means centroid initialization spread for vector pipeline efficiency.
+
+Read more:
+
+- [Cypher parser modes and execution trade-offs](docs/architecture/cypher-parser-modes.md)
+- [How we sped up HNSW construction 2.7x](https://dev.to/orneryd/how-i-sped-up-hnsw-construction-27x-2jhn)
+
 ## Performance Snapshot
 
 **LDBC Social Network Benchmark** (M3 Max, 64GB):
@@ -107,42 +120,17 @@ Hybrid retrieval is where NornicDB is materially different from vector-only stac
 | Vector + 1 hop | HTTP      | 11,523 req/s |  859 us |  699 us | 1.54 ms | 3.46 ms | 4.71 ms |
 | Vector + 1 hop | Bolt      |  7,977 req/s | 1.24 ms | 1.10 ms | 1.97 ms | 4.91 ms | 6.14 ms |
 
+Bolt is now ahead on both throughput and tail latency for this vector-only path.
+
 **Remote benchmark** (GCP, 8 vCPU, 32 GB RAM):
 
 - Vector only: ~110.7 ms P50
 - Vector + 1 hop: ~112.9 ms P50
 - The delta between local and remote matched network RTT closely enough that end-to-end latency was network-bound rather than compute-bound.
 
-This point is: once vector search plus one-hop traversal stays in low single-digit milliseconds locally, the bottleneck shifts from retrieval logic to deployment topology.
+This is the practical point: once vector search plus one-hop traversal stays in low single-digit milliseconds locally, the bottleneck shifts from retrieval logic to deployment topology.
 
 See the [hybrid retrieval benchmark write-up](docs/performance/hybrid-query-benchmarks.md) for methodology, caveats, and reproduction queries, and see [Graph-RAG: NornicDB vs Typical](docs/architecture/graph-rag-nornicdb-comparison.md) for the architectural implications.
-
-### 🔬 Academic Validation: UCLouvain Case Study
-
-NornicDB is currently being utilized by researchers at **UCLouvain** to map large-scale **Cyber-Physical Systems** (CPS).
-
-In benchmarks performing **Automata Learning (L\*)**—a high-iteration logic process where an LLM acts as a "Deterministic Teacher" or Oracle—NornicDB outperformed industry-standard graph databases by a significant margin:
-
-- **Efficiency:** **2.2x Faster** than Neo4j in total execution time for formal logic mapping.
-- **Throughput:** Successfully handled **1,443 state-transition queries** in ~32 seconds (Avg 22.69ms per full reasoning loop).
-
-| DATABASE     | CALLS    | AVG TIME (ms) | TOTAL (s) |
-| ------------ | -------- | ------------- | --------- |
-| **NornicDB** | **1443** | **22.69**     | **32.74** |
-| Neo4j        | 1443     | 50.20         | 72.43     |
-
-### What Recent Deep-Dives Show
-
-- **Hybrid execution model (streaming fast paths + general engine)**: NornicDB uses shape-specialized streaming executors for common traversal/aggregation patterns while retaining a general Cypher path for coverage and correctness.
-- **Runtime parser mode switching**: the default `nornic` parser is optimized for low-overhead hot-path routing, while `antlr` mode prioritizes strict parsing and diagnostics when debugging and validation matter more than throughput.
-- **Measured parser-path deltas on benchmark suites**: internal Northwind comparisons show large overhead differences on certain query shapes when full parse-tree paths are used, which is why the production default remains the custom parser path.
-- **HNSW build acceleration from insertion-order optimization**: BM25-seeded insertion order reduced a 1M embedding build from ~27 minutes to ~10 minutes (~2.7x) in published tests by reducing traversal waste during construction, without changing core quality knobs.
-- **Shared seed strategy across indexing stages**: the same lexical seed extraction supports HNSW insertion ordering and improves k-means centroid initialization spread for vector pipeline efficiency.
-
-Read more:
-
-- [Cypher parser modes and execution trade-offs](docs/architecture/cypher-parser-modes.md)
-- [How we sped up HNSW construction 2.7x](https://dev.to/orneryd/how-i-sped-up-hnsw-construction-27x-2jhn)
 
 ## Quick Start
 
@@ -558,7 +546,7 @@ Special thanks to everyone who helps make NornicDB better. See [CONTRIBUTORS.md]
 
 ## License
 
-MIT License — See [LICENSE.md](LICENSE.md) for details.
+MIT License — Originally part of the [Mimir](https://github.com/orneryd/mimir) project, now maintained as a standalone repository.
 
 Patent rights are handled via a defensive non-assertion grant in [PATENTS.md](PATENTS.md). This keeps the project open for broad use (including commercial use) while adding patent retaliation protection.
 
