@@ -1,11 +1,8 @@
-import { useEffect } from "react";
 import {
   BrowserRouter,
   Routes,
   Route,
   Navigate,
-  useLocation,
-  useNavigate,
 } from "react-router-dom";
 import { Login } from "./pages/Login";
 import { Browser } from "./pages/Browser";
@@ -21,25 +18,9 @@ import { BASE_PATH } from "./utils/basePath";
 // Env: VITE_BASE_PATH (same as NORNICDB_BASE_PATH on server)
 const basename = BASE_PATH;
 
-function TrailingSlashCanonicalizer() {
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const { pathname, search, hash } = location;
-    if (!pathname || pathname === "/" || pathname.endsWith("/")) {
-      return;
-    }
-    navigate(`${pathname}/${search}${hash}`, { replace: true });
-  }, [location, navigate]);
-
-  return null;
-}
-
 function App() {
   return (
     <BrowserRouter basename={basename}>
-      <TrailingSlashCanonicalizer />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
