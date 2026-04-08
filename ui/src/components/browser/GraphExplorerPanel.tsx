@@ -17,10 +17,12 @@ import {
 import { GraphCanvas } from "./GraphCanvas";
 import { getNodePreview } from "../../utils/nodeUtils";
 import { NodeDetailsPanel } from "./NodeDetailsPanel";
+import { type GraphLayoutMode } from "./graphExplorerLayout";
 
 export interface GraphExplorerPanelControls {
   filters: GraphExplorerFilters;
   depth: number;
+  layoutMode: GraphLayoutMode;
   resolvedDatabase: string | null;
   graph: GraphContractResponse | null;
   loading: boolean;
@@ -28,6 +30,7 @@ export interface GraphExplorerPanelControls {
   relationshipTypes: string[];
   onFiltersChange: (filters: GraphExplorerFilters) => void;
   onDepthChange: (depth: number) => void;
+  onLayoutChange: (mode: GraphLayoutMode) => void;
   onRefresh: () => void;
 }
 
@@ -153,6 +156,7 @@ export function GraphExplorerPanel({
 
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [depth, setDepth] = useState(1);
+  const [layoutMode, setLayoutMode] = useState<GraphLayoutMode>("radial");
   const [filters, setFilters] = useState<GraphExplorerFilters>(getDefaultGraphExplorerFilters);
   const [state, setState] = useState<GraphExplorerState>({
     loading: false,
@@ -235,6 +239,7 @@ export function GraphExplorerPanel({
     onExposeControls({
       filters,
       depth,
+      layoutMode,
       resolvedDatabase: state.resolvedDatabase,
       graph: state.graph,
       loading: state.loading,
@@ -242,11 +247,13 @@ export function GraphExplorerPanel({
       relationshipTypes: viewModel?.relationshipTypes ?? [],
       onFiltersChange: setFilters,
       onDepthChange: setDepth,
+      onLayoutChange: setLayoutMode,
       onRefresh: () => setRefreshNonce((n) => n + 1),
     });
   }, [
     filters,
     depth,
+    layoutMode,
     state.resolvedDatabase,
     state.graph,
     state.loading,
@@ -332,6 +339,7 @@ export function GraphExplorerPanel({
                       viewModel={viewModel}
                       focusNodeIds={handoff.nodeIds}
                       selectedNodeId={selectedNodeId}
+                      layoutMode={layoutMode}
                       onNodeSelect={(node) => onNodeSelect(toSearchResult(node))}
                     />
                   )}

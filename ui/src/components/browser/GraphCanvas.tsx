@@ -1,13 +1,23 @@
 import type { GraphExplorerViewModel } from "../../graph/viewModel";
 import type { GraphNodeModel } from "../../graph/types";
 import { getNodePreview } from "../../utils/nodeUtils";
-import { buildGraphExplorerLayout } from "./graphExplorerLayout";
+import { buildGraphExplorerLayout, type GraphLayoutMode } from "./graphExplorerLayout";
 
 interface GraphCanvasProps {
   viewModel: GraphExplorerViewModel;
   focusNodeIds: string[];
   selectedNodeId?: string | null;
+  layoutMode?: GraphLayoutMode;
   onNodeSelect: (node: GraphNodeModel) => void;
+}
+
+function getDiffStatusSymbol(status: GraphNodeModel["status"]): string {
+  switch (status) {
+    case "added": return "+";
+    case "removed": return "−";
+    case "changed": return "~";
+    default: return "";
+  }
 }
 
 function getNodeStatusColors(status?: GraphNodeModel["status"]) {
@@ -50,9 +60,10 @@ export function GraphCanvas({
   viewModel,
   focusNodeIds,
   selectedNodeId,
+  layoutMode = "radial",
   onNodeSelect,
 }: GraphCanvasProps) {
-  const layout = buildGraphExplorerLayout(viewModel, focusNodeIds);
+  const layout = buildGraphExplorerLayout(viewModel, focusNodeIds, layoutMode);
 
   return (
     <section
@@ -173,7 +184,7 @@ export function GraphCanvas({
                     onNodeSelect(node);
                   }
                 }}
-                aria-label={`Inspect node ${node.id}`}
+                aria-label={`Inspect node ${node.id}${node.status ? ` (${node.status})` : ""}`}
                 className="cursor-pointer outline-none"
               >
                 {isSelected && <circle r={radius + 13} fill="rgba(74, 158, 255, 0.14)" />}
@@ -192,8 +203,21 @@ export function GraphCanvas({
                   stroke={isSelected ? "#4a9eff" : colors.stroke}
                   strokeWidth={isSelected ? 3 : 2}
                 />
+                {node.status && (
+                  <text
+                    y={-radius + 12}
+                    textAnchor="middle"
+                    fill={colors.text}
+                    fontSize="11"
+                    fontWeight="800"
+                    pointerEvents="none"
+                    aria-hidden="true"
+                  >
+                    {getDiffStatusSymbol(node.status)}
+                  </text>
+                )}
                 <text
-                  y={3}
+                  y={node.status ? 6 : 3}
                   textAnchor="middle"
                   fill="#f3f4f6"
                   fontSize="12"

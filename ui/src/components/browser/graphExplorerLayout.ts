@@ -1,5 +1,7 @@
 import type { GraphExplorerViewModel } from "../../graph/viewModel";
 
+export type GraphLayoutMode = "radial" | "grid" | "hierarchy";
+
 export interface GraphPoint {
   x: number;
   y: number;
@@ -70,12 +72,12 @@ function placeRing(
   });
 }
 
-export function buildGraphExplorerLayout(
+function buildRadialLayout(
   viewModel: GraphExplorerViewModel,
-  focusNodeIds: string[] = [],
-): GraphLayoutResult {
-  const width = LAYOUT_WIDTH;
-  const height = LAYOUT_HEIGHT;
+  focusNodeIds: string[],
+  width: number,
+  height: number,
+): Record<string, GraphLayoutNode> {
   const center = { x: width / 2, y: height / 2 };
   const degrees = getNodeDegrees(viewModel);
   const focusSet = new Set(focusNodeIds);
@@ -103,7 +105,7 @@ export function buildGraphExplorerLayout(
 
   if (orderedIds.length === 1) {
     placeRing(orderedIds, 0, center, width, height, nodes);
-    return { width, height, nodes };
+    return nodes;
   }
 
   if (focusedIds.length > 0) {
@@ -117,9 +119,98 @@ export function buildGraphExplorerLayout(
     placeRing(remainingIds, outerRadius, center, width, height, nodes);
   }
 
-  return {
-    width,
-    height,
-    nodes,
-  };
+  return nodes;
+}
+
+function buildGridLayout(
+  viewModel: GraphExplorerViewModel,
+  width: number,
+  height: number,
+): Record<string, GraphLayoutNode> {
+  const nodes: Record<string, GraphLayoutNode> = {};
+  const degrees = getNodeDegrees(viewModel);
+
+  const orderedNodes = [...viewModel.renderedNodes].sort((left, right) => {
+    const degreeDiff = (degrees.get(right.id) ?? 0) - (degrees.get(left.id) ?? 0);
+    return degreeDiff !== 0 ? degreeDiff : left.id.localeCompare(right.id);
+  });
+
+  const count = orderedNodes.length;
+  if (count === 0) return nodes;
+
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+  const rows = Math.ceil(count / cols);
+  const colStep = cols > 1 ? (width - 2 * NODE_MARGIN) / (cols - 1) : 0;
+  const rowStep = rows > 1 ? (height - 2 * NODE_MARGIN) / (rows - 1) : 0;
+
+  orderedNodes.forEach((node, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = cols === 1 ? width / 2 : NODE_MARGIN + col * colStep;
+    const y = rows === 1 ? height / 2 : NODE_MARGIN + row * rowStep;
+    nodes[node.id] = { id: node.id, x, y };
+  });
+
+  return nodes;
+}
+
+function buildHierarchyLayout(
+  viewModel: GraphExplorerViewModel,
+  width: number,
+  height: number,
+): Record<string, GraphLayoutNode> {
+  const nodes: Record<string, GraphLayoutNode> = {};
+  const degrees = getNodeDegrees(viewModel);
+
+  // Group node ids by degree, sort each group alphabetically for determinism
+  const degreeGroups = new Map<number, string[]>();
+  viewModel.renderedNodes.forEach((node) => {
+    const degree = degrees.get(node.id) ?? 0;
+    const group = degreeGroups.get(degree) ?? [];
+    group.push(node.id);
+    degreeGroups.set(degree, group);
+  });
+
+  // Sort groups descending by degree (highest-degree nodes at top)
+  const sortedGroups = [...degreeGroups.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([, ids]) => ids.sort((a, b) => a.localeCompare(b)));
+
+  const rowCount = sortedGroups.length;
+  const rowStep = rowCount > 1 ? (height - 2 * NODE_MARGIN) / (rowCount - 1) : 0;
+
+  sortedGroups.forEach((group, rowIndex) => {
+    const y = rowCount === 1 ? height / 2 : NODE_MARGIN + rowIndex * rowStep;
+    const colStep = group.length > 1 ? (width - 2 * NODE_MARGIN) / (group.length - 1) : 0;
+    group.forEach((id, colIndex) => {
+      const x = group.length === 1 ? width / 2 : NODE_MARGIN + colIndex * colStep;
+      nodes[id] = { id, x, y };
+    });
+  });
+
+  return nodes;
+}
+
+export function buildGraphExplorerLayout(
+  viewModel: GraphExplorerViewModel,
+  focusNodeIds: string[] = [],
+  mode: GraphLayoutMode = "radial",
+): GraphLayoutResult {
+  const width = LAYOUT_WIDTH;
+  const height = LAYOUT_HEIGHT;
+
+  let nodePositions: Record<string, GraphLayoutNode>;
+
+  switch (mode) {
+    case "grid":
+      nodePositions = buildGridLayout(viewModel, width, height);
+      break;
+    case "hierarchy":
+      nodePositions = buildHierarchyLayout(viewModel, width, height);
+      break;
+    default:
+      nodePositions = buildRadialLayout(viewModel, focusNodeIds, width, height);
+  }
+
+  return { width, height, nodes: nodePositions };
 }

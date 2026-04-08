@@ -8,6 +8,7 @@ import {
   supportsGraphDepthControl,
   type GraphExplorerFilters,
 } from "../../graph/viewModel";
+import { type GraphLayoutMode } from "./graphExplorerLayout";
 import {
   buildGraphExplorerTemporalHandoff,
   getGraphExplorerRequestMode,
@@ -38,6 +39,7 @@ export interface GraphExplorerControlsProps {
   selectedNodeIds?: string[];
   filters: GraphExplorerFilters;
   depth: number;
+  layoutMode: GraphLayoutMode;
   labels: string[];
   relationshipTypes: string[];
   onRefresh: () => void;
@@ -45,6 +47,7 @@ export interface GraphExplorerControlsProps {
   onUpdateHandoff: (handoff: BrowserGraphHandoff) => void;
   onFiltersChange: (filters: GraphExplorerFilters) => void;
   onDepthChange: (depth: number) => void;
+  onLayoutChange: (mode: GraphLayoutMode) => void;
   onManualSeed: (nodeIds: string[]) => void;
 }
 
@@ -58,6 +61,7 @@ export function GraphExplorerControls({
   selectedNodeIds = [],
   filters,
   depth,
+  layoutMode,
   labels,
   relationshipTypes,
   onRefresh,
@@ -65,6 +69,7 @@ export function GraphExplorerControls({
   onUpdateHandoff,
   onFiltersChange,
   onDepthChange,
+  onLayoutChange,
   onManualSeed,
 }: GraphExplorerControlsProps) {
   const controlsHeadingId = useId();
@@ -407,6 +412,18 @@ export function GraphExplorerControls({
                   {relationshipTypes.map((rt) => (
                     <option key={rt} value={rt}>{rt}</option>
                   ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-norse-silver">
+                Layout
+                <select
+                  value={layoutMode}
+                  onChange={(e) => onLayoutChange(e.target.value as GraphLayoutMode)}
+                  className="px-3 py-2 text-xs bg-norse-stone border border-norse-rune rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-nornic-primary focus:border-transparent"
+                >
+                  <option value="radial">Radial</option>
+                  <option value="grid">Grid</option>
+                  <option value="hierarchy">Hierarchy</option>
                 </select>
               </label>
               <button

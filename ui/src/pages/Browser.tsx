@@ -418,6 +418,7 @@ export function Browser() {
                 selectedNodeIds={selectedNodeIdsArray}
                 filters={graphControls?.filters ?? { label: null, relationshipType: null }}
                 depth={graphControls?.depth ?? 1}
+                layoutMode={graphControls?.layoutMode ?? "radial"}
                 labels={graphControls?.labels ?? []}
                 relationshipTypes={graphControls?.relationshipTypes ?? []}
                 onRefresh={graphControls?.onRefresh ?? (() => {})}
@@ -425,6 +426,7 @@ export function Browser() {
                 onUpdateHandoff={handleUpdateHandoff}
                 onFiltersChange={graphControls?.onFiltersChange ?? (() => {})}
                 onDepthChange={graphControls?.onDepthChange ?? (() => {})}
+                onLayoutChange={graphControls?.onLayoutChange ?? (() => {})}
                 onManualSeed={(nodeIds) => handleUpdateHandoff({ mode: "neighborhood", nodeIds })}
               />
             ) : (
