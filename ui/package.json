@@ -22,7 +22,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "autoprefixer": "^10.4.27",
+    "autoprefixer": "^10.5.0",
     "baseline-browser-mapping": "^2.10.17",
     "postcss": "^8.5.9",
     "tailwindcss": "^4.2.2",
