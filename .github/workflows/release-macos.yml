@@ -84,7 +84,7 @@ jobs:
           path: dist
 
       - name: Create or update release with pkg/dmg assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.build-macos-release-assets.outputs.release_tag }}
           generate_release_notes: true
