@@ -26,6 +26,6 @@
     "baseline-browser-mapping": "^2.10.19",
     "postcss": "^8.5.9",
     "tailwindcss": "^4.2.2",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }
