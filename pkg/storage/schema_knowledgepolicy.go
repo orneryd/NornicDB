@@ -320,6 +320,13 @@ func (sm *SchemaManager) GetBindingTable() *knowledgepolicy.BindingTable {
 	return sm.bindingTable
 }
 
+// SetBindingTable replaces the compiled binding table.
+func (sm *SchemaManager) SetBindingTable(bt *knowledgepolicy.BindingTable) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.bindingTable = bt
+}
+
 // persistIfSet calls the persist hook if one is set.
 func (sm *SchemaManager) persistIfSet() error {
 	if sm.persist == nil {
