@@ -39,6 +39,9 @@ func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {
 	if b.revealAll.Load() {
 		return false
 	}
+	if node.VisibilitySuppressed {
+		return true
+	}
 
 	scorer := b.getScorerForNode(node.ID)
 	if scorer == nil {
@@ -73,6 +76,9 @@ func (b *BadgerEngine) filterEdgeByDecay(edge *Edge, nowNanos int64) bool {
 	}
 	if b.revealAll.Load() {
 		return false
+	}
+	if edge.VisibilitySuppressed {
+		return true
 	}
 
 	scorer := b.getScorerForEdge(edge.ID)
