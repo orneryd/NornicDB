@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 2 COMPLETE — Ready for Phase 3
+**Status:** Phase 3 COMPLETE — Ready for Phase 4
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -72,7 +72,28 @@ _Updated: 2026-04-24_
 
 **Design note:** WHEN clause predicate evaluation deferred to Phase 4 — scorer implements the full formula but always returns no-match for WHEN predicates in Phase 2.
 
-### Phase 3–8: Not started
+### Phase 3: AccessMeta Index — COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| Badger AccessMeta CRUD | `pkg/storage/badger_access_meta.go` | DONE | Get/Put/Delete/Scan with 0x11 prefix, msgpack encoding |
+| Badger AccessMeta tests | `pkg/storage/badger_access_meta_test.go` | DONE | 7 tests: CRUD, overwrite, scan, Kalman round-trip, variance tracker |
+| P-local sharded accumulator | `pkg/knowledgepolicy/access_accumulator.go` | DONE | sync.Pool P-affinity, cache-line padded shards, zero-alloc hot path |
+| Accumulator tests | `pkg/knowledgepolicy/access_accumulator_test.go` | DONE | 12 tests: disabled, single, concurrent (64×1000), custom, read-through, drain, clear, timestamps |
+| Super-node tests | `pkg/knowledgepolicy/access_accumulator_supernode_test.go` | DONE | 3 tests: 128-goroutine contention, drain-under-contention, mixed entities |
+| Accumulator benchmarks | `pkg/knowledgepolicy/access_accumulator_bench_test.go` | DONE | 5 benchmarks: 42ns/0alloc single, 87ns/0alloc parallel, 1ns disabled |
+| Access flusher | `pkg/knowledgepolicy/access_flusher.go` | DONE | AccessMetaStore interface, Start/Stop/Flush, drain+merge+persist |
+| Flusher tests | `pkg/knowledgepolicy/access_flusher_test.go` | DONE | 9 tests: basic, accumulate, merge, empty, disabled, start/stop, final flush, custom overflow, concurrent |
+| Kalman accumulator | `pkg/knowledgepolicy/kalman_accumulator.go` | DONE | Inlined filter, velocity projection, auto-R variance tracker, zero-alloc |
+| Kalman tests | `pkg/knowledgepolicy/kalman_accumulator_test.go` | DONE | 9 tests: init, convergence, spike dampening, auto-R, window wrap, observations |
+| Kalman benchmarks | `pkg/knowledgepolicy/kalman_accumulator_bench_test.go` | DONE | 3 benchmarks: ManualR=16ns/0alloc, AutoR=16ns/0alloc, vs plain comparison |
+| Anti-sycophancy tests | `pkg/knowledgepolicy/kalman_anti_sycophancy_test.go` | DONE | 4 tests: hallucinated spike, diagnostics, sustained sycophancy, genuine trend |
+
+**Acceptance gate:** 97 tests pass across `pkg/knowledgepolicy/...`. All storage tests pass. Benchmarks: accumulator 42ns/0alloc, Kalman 16ns/0alloc, disabled 1ns.
+
+**Deferred to Phase 4:** Query context variable projection (`X-Query-*` headers → `$_<key>`) and deletion cascade from node/edge deletion (requires runtime integration). AccessMeta retained on visibility suppression (requires suppression implementation in Phase 6).
+
+### Phase 4–8: Not started
 
 ---
 
