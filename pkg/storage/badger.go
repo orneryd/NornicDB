@@ -156,6 +156,11 @@ type BadgerEngine struct {
 	onEdgeUpdated EdgeEventCallback
 	onEdgeDeleted EdgeDeleteCallback
 	callbackMu    sync.RWMutex
+
+	// Knowledge-layer decay scoring (Phase 4).
+	decayEnabled bool
+	accumulator  accessIncrementor
+	revealAll    atomic.Bool
 }
 
 // IsInMemory returns true if the engine is running in memory-only mode.

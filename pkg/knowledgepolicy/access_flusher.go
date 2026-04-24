@@ -12,14 +12,28 @@ type AccessMetaStore interface {
 	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
 }
 
+// EntityMetaLookup provides node metadata needed by flusher property suppression.
+type EntityMetaLookup interface {
+	GetEntityMeta(entityID string) (labels []string, propertyKeys []string, createdAtNanos, versionAtNanos int64, err error)
+}
+
+// ScorerFunc returns a Scorer for the given namespace. Returns nil if none.
+type ScorerFunc func(namespace string) *Scorer
+
+// EmbedInvalidateFunc is called when property suppression state changes.
+type EmbedInvalidateFunc func(entityID string)
+
 // AccessFlusher periodically drains the accumulator and persists deltas.
 type AccessFlusher struct {
-	accumulator *AccessAccumulator
-	store       AccessMetaStore
-	interval    time.Duration
-	mu          sync.Mutex
-	cancel      context.CancelFunc
-	done        chan struct{}
+	accumulator     *AccessAccumulator
+	store           AccessMetaStore
+	interval        time.Duration
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	done            chan struct{}
+	scorerFunc      ScorerFunc
+	entityMeta      EntityMetaLookup
+	embedInvalidate EmbedInvalidateFunc
 }
 
 // NewAccessFlusher creates a flusher. Default interval is 2 seconds.
@@ -32,6 +46,13 @@ func NewAccessFlusher(accumulator *AccessAccumulator, store AccessMetaStore, int
 		store:       store,
 		interval:    interval,
 	}
+}
+
+// SetPropertySuppression configures the flusher for property-level decay evaluation.
+func (f *AccessFlusher) SetPropertySuppression(scorerFn ScorerFunc, meta EntityMetaLookup, embedInvalid EmbedInvalidateFunc) {
+	f.scorerFunc = scorerFn
+	f.entityMeta = meta
+	f.embedInvalidate = embedInvalid
 }
 
 // Start begins the flush loop. It exits immediately if the accumulator is disabled.
@@ -135,6 +156,66 @@ func (f *AccessFlusher) flush() {
 		entry.LastMutatedAt = now
 		entry.MutationCount++
 
+		if f.evaluatePropertySuppression(entityID, entry, now) {
+			// Suppression state changed — trigger re-embedding.
+			if f.embedInvalidate != nil {
+				f.embedInvalidate(entityID)
+			}
+		}
+
 		_ = f.store.PutAccessMeta(entityID, entry)
 	}
+}
+
+// evaluatePropertySuppression checks each property with a decay rule and writes
+// nil markers for suppressed properties (or removes them if restored).
+// Returns true if any suppression state changed.
+func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *AccessMetaEntry, nowNanos int64) bool {
+	if f.scorerFunc == nil || f.entityMeta == nil {
+		return false
+	}
+
+	ns := extractNamespace(entityID)
+	scorer := f.scorerFunc(ns)
+	if scorer == nil {
+		return false
+	}
+
+	labels, propKeys, createdAt, versionAt, err := f.entityMeta.GetEntityMeta(entityID)
+	if err != nil || len(propKeys) == 0 {
+		return false
+	}
+
+	changed := false
+	for _, key := range propKeys {
+		res := scorer.ScoreProperty(entityID, labels, key, entry, createdAt, versionAt, nowNanos)
+		overflowKey := "_suppress:" + key
+
+		if entry.Overflow == nil {
+			entry.Overflow = make(map[string]interface{})
+		}
+
+		_, wasSuppressed := entry.Overflow[overflowKey]
+		if res.SuppressionEligible {
+			if !wasSuppressed {
+				entry.Overflow[overflowKey] = nil
+				changed = true
+			}
+		} else {
+			if wasSuppressed {
+				delete(entry.Overflow, overflowKey)
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func extractNamespace(entityID string) string {
+	for i := 0; i < len(entityID); i++ {
+		if entityID[i] == ':' {
+			return entityID[:i]
+		}
+	}
+	return "nornic"
 }
