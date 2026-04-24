@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 4 COMPLETE — Ready for Phase 5
+**Status:** Phase 5 COMPLETE — Ready for Phase 6
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -120,7 +120,20 @@ _Updated: 2026-04-24_
 
 **Deferred to Phase 5:** `decayScore()`, `decay()`, `policy()` as native Cypher functions. Embed worker accessMeta projection (requires Phase 5 embed text builder changes). Indexed-property immunity check in property-level filter (trivial addition when schema awareness is wired to Cypher executor).
 
-### Phase 5–8: Not started
+### Phase 5: COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| Export ScorerForNamespace | `pkg/storage/badger_decay_filter.go` | DONE | + IsDecayEnabled, ExtractNamespaceFromID |
+| Dispatcher + functions | `pkg/cypher/knowledgepolicy_functions.go` | DONE | decayScore, decay, policy — inline dispatch |
+| Wire into evaluator | `pkg/cypher/functions_eval_functions.go` | DONE | 1 line before math fallthrough |
+| decayMismatchLogged field | `pkg/cypher/executor.go` | DONE | Reset in transaction.go |
+| Options validation | `pkg/cypher/knowledgepolicy_functions.go` | DONE | validateDecayOptions, property key only |
+| Unit tests | `pkg/cypher/knowledgepolicy_functions_test.go` | DONE | 10 tests |
+| Disabled-mode tests | `pkg/cypher/knowledgepolicy_functions_disabled_test.go` | DONE | 4 tests |
+| Reveal integration tests | `pkg/cypher/knowledgepolicy_reveal_integration_test.go` | DONE | 3 tests |
+
+### Phase 6–8: Not started
 
 ---
 
