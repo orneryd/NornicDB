@@ -26,8 +26,13 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
-			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), len(label))
+			indexKey := it.Item().KeyCopy(nil)
+			nodeID := extractNodeIDFromLabelIndex(indexKey, len(label))
 			if nodeID == "" {
+				continue
+			}
+
+			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -85,13 +90,18 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
+		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		labelLen := len(normalizeLabel(label))
 		for it.Rewind(); it.Valid(); it.Next() {
-			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), labelLen)
+			indexKey := it.Item().KeyCopy(nil)
+			nodeID := extractNodeIDFromLabelIndex(indexKey, labelLen)
 			if nodeID == "" {
 				continue
 			}
 			if cachedValid && nodeID == cachedID {
+				continue
+			}
+			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !cachedValid {
@@ -124,8 +134,13 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
-			nodeID := extractNodeIDFromLabelIndex(it.Item().Key(), len(label))
+			indexKey := it.Item().KeyCopy(nil)
+			nodeID := extractNodeIDFromLabelIndex(indexKey, len(label))
 			if nodeID == "" {
+				continue
+			}
+
+			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -279,9 +294,13 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		defer it.Close()
 
 		// Collect edge IDs from index
+		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		var edgeIDs []EdgeID
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().Key()
+			if checkTombstones && hasIndexTombstone(txn, key) {
+				continue
+			}
 			// Extract edgeID from key: prefix + type + 0x00 + edgeID
 			sepIdx := bytes.LastIndexByte(key, 0x00)
 			if sepIdx >= 0 && sepIdx < len(key)-1 {

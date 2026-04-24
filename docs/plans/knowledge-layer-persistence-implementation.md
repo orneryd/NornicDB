@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 5 COMPLETE — Ready for Phase 6
+**Status:** Phase 6 COMPLETE — Ready for Phase 7
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -133,7 +133,26 @@ _Updated: 2026-04-24_
 | Disabled-mode tests | `pkg/cypher/knowledgepolicy_functions_disabled_test.go` | DONE | 4 tests |
 | Reveal integration tests | `pkg/cypher/knowledgepolicy_reveal_integration_test.go` | DONE | 3 tests |
 
-### Phase 6–8: Not started
+### Phase 6: COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| VisibilitySuppressed field | `pkg/storage/types.go` | DONE | Added to Node and Edge structs |
+| Suppressed-bit fast path | `pkg/storage/badger_decay_filter.go` | DONE | Check before scorer in filterNodeByDecay/filterEdgeByDecay |
+| IndexEntryCatalog CRUD | `pkg/storage/badger_index_catalog.go` | DONE | prefix 0x12, in-txn helpers |
+| Catalog wiring on writes | `pkg/storage/badger_nodes.go`, `badger_edges.go` | DONE | CreateNode, UpdateNode, deleteNodeInTxn, CreateEdge, UpdateEdge, deleteEdgeInTxn |
+| DeindexWorkItem CRUD | `pkg/storage/badger_deindex_work.go` | DONE | prefix 0x13, ScanPendingDeindexWorkItems |
+| Tombstone helpers | `pkg/storage/badger_index_tombstone.go` | DONE | prefix 0x17, write/probe/delete |
+| Tombstone read-path wiring | `pkg/storage/badger_queries.go` | DONE | GetNodesByLabel, GetFirstNodeByLabel, ForEachNodeIDByLabel, GetEdgesByType |
+| DeindexCleanupJob | `pkg/storage/badger_deindex_cleanup.go` | DONE | AccessFlusher-pattern lifecycle |
+| EnqueueDeindexIfSuppressed | `pkg/storage/badger_deindex_enqueue.go` | DONE | Mark suppressed, enqueue work, clear on recovery |
+| Visibility suppressed tests | `pkg/storage/badger_visibility_suppressed_test.go` | DONE | 4 tests |
+| Index catalog tests | `pkg/storage/badger_index_catalog_test.go` | DONE | 8 tests |
+| Deindex work tests | `pkg/storage/badger_deindex_work_test.go` | DONE | 4 tests |
+| Tombstone tests | `pkg/storage/badger_index_tombstone_test.go` | DONE | 6 tests |
+| Cleanup tests | `pkg/storage/badger_deindex_cleanup_test.go` | DONE | 4 tests |
+
+### Phase 7–8: Not started
 
 ---
 

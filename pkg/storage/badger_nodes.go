@@ -72,6 +72,13 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 				return fmt.Errorf("failed to write label index: %w", err)
 			}
 		}
+		if err := putIndexEntryCatalogInTxn(txn, string(node.ID), &IndexEntryCatalog{
+			TargetID:    string(node.ID),
+			TargetScope: "NODE",
+			IndexKeys:   collectNodeIndexKeys(node.ID, node.Labels),
+		}); err != nil {
+			return fmt.Errorf("failed to write index catalog: %w", err)
+		}
 		if !isSystemNamespaceID(string(node.ID)) &&
 			(len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) &&
 			NodeNeedsEmbedding(node) {
@@ -295,6 +302,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			if err := txn.Set(labelIndexKey(label, node.ID), []byte{}); err != nil {
 				return err
 			}
+		}
+		if err := putIndexEntryCatalogInTxn(txn, string(node.ID), &IndexEntryCatalog{
+			TargetID:    string(node.ID),
+			TargetScope: "NODE",
+			IndexKeys:   collectNodeIndexKeys(node.ID, node.Labels),
+		}); err != nil {
+			return err
 		}
 
 		// Manage pending embeddings index atomically
