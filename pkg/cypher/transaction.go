@@ -353,6 +353,8 @@ func extractFirstUseGraph(cypher string) string {
 
 // executeQueryAgainstStorage executes query with current storage context.
 func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	e.decayMismatchLogged = false
+
 	if hasRevealCall(cypher) {
 		cleanup := setRevealOnEngine(e.storage)
 		defer cleanup()

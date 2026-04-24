@@ -2050,6 +2050,10 @@ skipArrayIndexing:
 		return nil
 	}
 
+	if v, ok := e.evaluateKnowledgePolicyFunction(expr, lowerExpr, nodes, rels); ok {
+		return v
+	}
+
 	// Fall through to remaining evaluation logic.
 	return e.evaluateExpressionWithContextFullMath(expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
