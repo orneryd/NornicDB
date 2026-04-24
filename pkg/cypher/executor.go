@@ -314,7 +314,8 @@ type StorageExecutor struct {
 	// It is set only on per-query cloned executors.
 	fabricRecordBindings map[string]interface{}
 
-	hotPathTraceState *hotPathTraceState
+	decayMismatchLogged bool
+	hotPathTraceState   *hotPathTraceState
 
 	// vectorQueryEmbedCache caches server-side embeddings for db.index.vector.queryNodes/
 	// queryRelationships string-input mode to avoid repeated embedding latency.

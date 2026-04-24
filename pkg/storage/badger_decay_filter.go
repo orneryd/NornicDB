@@ -158,6 +158,21 @@ func (b *BadgerEngine) FilterPropertyByDecay(nodeID NodeID, labels []string, pro
 	return res.SuppressionEligible
 }
 
+// ScorerForNamespace returns a Scorer for the given namespace, or nil.
+func (b *BadgerEngine) ScorerForNamespace(namespace string) *knowledgepolicy.Scorer {
+	return b.getScorerForNamespace(namespace)
+}
+
+// IsDecayEnabled reports whether knowledge-layer decay scoring is active.
+func (b *BadgerEngine) IsDecayEnabled() bool {
+	return b.decayEnabled
+}
+
+// ExtractNamespaceFromID returns the namespace prefix of an entity ID.
+func ExtractNamespaceFromID(id string) string {
+	return extractNamespaceFromID(id)
+}
+
 func extractNamespaceFromID(id string) string {
 	if idx := strings.IndexByte(id, ':'); idx >= 0 {
 		return id[:idx]
