@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
 // ConstraintType represents the type of constraint.
@@ -89,6 +90,13 @@ type SchemaManager struct {
 	// Persistence hook (optional).
 	// When set (by BadgerEngine), schema changes are persisted transactionally.
 	persist func(def *SchemaDefinition) error
+
+	// Knowledge-layer scoring subsystem
+	decayProfileBundles  map[string]*knowledgepolicy.DecayProfileBundle
+	decayProfileBindings map[string]*knowledgepolicy.DecayProfileBinding
+	promotionProfiles    map[string]*knowledgepolicy.PromotionProfileDef
+	promotionPolicies    map[string]*knowledgepolicy.PromotionPolicyDef
+	bindingTable         *knowledgepolicy.BindingTable
 }
 
 // NewSchemaManager creates a new schema manager with empty constraint and index collections.
