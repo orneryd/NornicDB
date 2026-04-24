@@ -309,8 +309,8 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 }
 
 func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
-	// Set a small MaxBytes limit (1KB)
-	maxBytes := int64(1024)
+	// Set a small MaxBytes limit (5KB — must accommodate nodes, edges, and index catalogs)
+	maxBytes := int64(5 * 1024)
 	manager, dbName := setupTestManagerWithLimits(t, &Limits{
 		Storage: StorageLimits{
 			MaxNodes: 0, // Unlimited
