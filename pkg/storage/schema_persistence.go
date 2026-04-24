@@ -493,5 +493,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		sm.promotionPolicies[pc.Name] = &pc
 	}
 
+	sm.rebuildBindingTableLocked()
+
 	return nil
 }
