@@ -2,19 +2,29 @@ package knowledgepolicy
 
 import "sync"
 
+// CompiledPropertyOverride is a pre-expanded property-level scoring override.
+type CompiledPropertyOverride struct {
+	NoDecay           bool
+	HalfLifeNanos     int64
+	ThresholdAgeNanos int64
+	DecayFloor        float64
+	Function          DecayFunction
+}
+
 // CompiledBinding is the pre-flattened lookup entry for a label/edge-type.
 type CompiledBinding struct {
-	DecayProfile        *DecayProfileBundle
-	DecayBinding        *DecayProfileBinding
-	PromotionPolicy     *PromotionPolicyDef
-	VisibilityThreshold float64
-	ScoreFrom           ScoreFromMode
-	ScoreFromProperty   string
-	Function            DecayFunction
-	HalfLifeNanos       int64
-	ThresholdAgeNanos   int64
-	DecayFloor          float64
-	NoDecay             bool
+	DecayProfile          *DecayProfileBundle
+	DecayBinding          *DecayProfileBinding
+	PromotionPolicy       *PromotionPolicyDef
+	VisibilityThreshold   float64
+	ScoreFrom             ScoreFromMode
+	ScoreFromProperty     string
+	Function              DecayFunction
+	HalfLifeNanos         int64
+	ThresholdAgeNanos     int64
+	DecayFloor            float64
+	NoDecay               bool
+	CompiledPropertyRules map[string]*CompiledPropertyOverride
 }
 
 // BindingTable is the compiled lookup for all labels and edge types.
@@ -43,6 +53,13 @@ func (bt *BindingTable) LookupNode(labelKey string) *CompiledBinding {
 		return cb
 	}
 	return bt.wildNode
+}
+
+// lookupNodeExact returns the binding for the exact label key without wildcard fallback.
+func (bt *BindingTable) lookupNodeExact(labelKey string) *CompiledBinding {
+	bt.mu.RLock()
+	defer bt.mu.RUnlock()
+	return bt.nodes[labelKey]
 }
 
 // LookupEdge returns the compiled binding for the given edge type.
