@@ -101,6 +101,13 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 			return err
 		}
+		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
+			TargetID:    string(edge.ID),
+			TargetScope: "EDGE",
+			IndexKeys:   collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
+		}); err != nil {
+			return err
+		}
 		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
 			return err
 		}
@@ -264,6 +271,13 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		if err := txn.Set(key, data); err != nil {
 			return err
 		}
+		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
+			TargetID:    string(edge.ID),
+			TargetScope: "EDGE",
+			IndexKeys:   collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
+		}); err != nil {
+			return err
+		}
 		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
 			return err
 		}
@@ -361,6 +375,8 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 		return err
 	}
 
+	deleteIndexEntryCatalogInTxn(txn, string(id))
+
 	// Delete edge
 	return txn.Delete(key)
 }
@@ -432,6 +448,9 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 
 	// Remove from pending embeddings index (if present)
 	txn.Delete(pendingEmbedKey(id))
+
+	// Remove index entry catalog
+	deleteIndexEntryCatalogInTxn(txn, string(id))
 
 	// Delete the node
 	return edgesDeleted, deletedEdgeIDs, deletedNode, txn.Delete(key)
