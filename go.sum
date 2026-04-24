@@ -137,8 +137,8 @@ github.com/hashicorp/go-cleanhttp v0.5.2/go.mod h1:kO/YDlP8L1346E6Sodw+PrpBSV4/S
 github.com/hashicorp/go-hclog v0.16.2/go.mod h1:whpDNt7SSdeAju8AWKIWsul05p54N/39EeqMAyrmvFQ=
 github.com/hashicorp/go-hclog v1.6.3 h1:Qr2kF+eVWjTiYmU7Y31tYlP1h0q/X3Nl3tPGdaB11/k=
 github.com/hashicorp/go-hclog v1.6.3/go.mod h1:W4Qnvbt70Wk/zYJryRzDRU/4r0kIg0PVHBcfoyhpF5M=
-github.com/hashicorp/go-kms-wrapping/v2 v2.0.20 h1:afreZ1WJd0WI7v4NsMZ1aL7V/T59sxPuKmQDgGUja20=
-github.com/hashicorp/go-kms-wrapping/v2 v2.0.20/go.mod h1:NeK2Ul15t1zutp/dZzt28XQrGZHosbxE/QLNNfaWObM=
+github.com/hashicorp/go-kms-wrapping/v2 v2.0.21 h1:7mL3k701Go+prNM7xf7JAz6HAFM2iaAUEiPnjAEu0dA=
+github.com/hashicorp/go-kms-wrapping/v2 v2.0.21/go.mod h1:NeK2Ul15t1zutp/dZzt28XQrGZHosbxE/QLNNfaWObM=
 github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11 h1:J9zGa9SlcOHT3SQTj0Vv3shHo0anWbs58weURGCgChI=
 github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11/go.mod h1:iAOCu7/lG5eugg8+k7NVvQt0IpWT8s2Q9wnMtC/guM4=
 github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.14 h1:oK4OQ5EPbx/66dAvitksV+OdrQ86SZEj3B6VSZrbdEY=
