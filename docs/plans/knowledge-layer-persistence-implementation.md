@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 1 COMPLETE — Ready for Phase 2
+**Status:** Phase 2 COMPLETE — Ready for Phase 3
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -52,7 +52,27 @@ _Updated: 2026-04-24_
 
 5. **BUG (FIXED): `parsePropertyRule` missing whitespace skip** — `knowledgepolicy_ddl.go`: after parsing a value like `PROFILE 'slow_decay'`, `i` pointed right after the closing quote with no space skip between keyword match iterations, so subsequent keywords like `HALFLIFE` failed to match. Fixed by adding `i = kpSkipSpaces(s, i)` at the start of each loop iteration.
 
-### Phase 2–8: Not started
+### Phase 2: Shared Resolver and Scorer — COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| ScoringResolution struct | `pkg/knowledgepolicy/resolution.go` | DONE | Pure data carrier + NeutralResolution var |
+| CompiledPropertyOverride | `pkg/knowledgepolicy/compiled_binding.go` | DONE | Extended with override struct + field |
+| Binding builder | `pkg/knowledgepolicy/binding_builder.go` | DONE | Pure function, ThresholdAgeNanos, conflict detection, property rule expansion |
+| Resolver | `pkg/knowledgepolicy/resolver.go` | DONE | Multi-label subset resolution, Order tie-breaking |
+| Scorer | `pkg/knowledgepolicy/scorer.go` | DONE | All 4 decay functions, scoring formula, ScoreFrom modes |
+| SetBindingTable | `pkg/storage/schema_knowledgepolicy.go` | DONE | One-liner under write lock |
+| Builder tests | `pkg/knowledgepolicy/binding_builder_test.go` | DONE | 19 tests |
+| Conflict tests | `pkg/knowledgepolicy/binding_builder_conflict_test.go` | DONE | 5 tests |
+| Resolver tests | `pkg/knowledgepolicy/resolver_test.go` | DONE | 14 tests |
+| Scorer tests | `pkg/knowledgepolicy/scorer_test.go` | DONE | 24 tests |
+| Scorer benchmarks | `pkg/knowledgepolicy/scorer_bench_test.go` | DONE | 4 benchmarks, zero-alloc disabled path |
+
+**Acceptance gate:** All tests pass. Benchmarks: disabled=13ns/0alloc, exponential=98ns/2alloc, multi-label=154ns/4alloc.
+
+**Design note:** WHEN clause predicate evaluation deferred to Phase 4 — scorer implements the full formula but always returns no-match for WHEN predicates in Phase 2.
+
+### Phase 3–8: Not started
 
 ---
 
