@@ -1,7 +1,8 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Draft
+**Status:** Phase 1 COMPLETE — Ready for Phase 2
 **Date:** April 21, 2026
+**Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
 **Target Version:** 1.1.0 (incompatible break with experimental memory model)
 
@@ -12,6 +13,46 @@
 This document is the concrete implementation plan for the knowledge-layer scoring and visibility system described in the parent design document. It maps the design's six workstreams to specific Go packages, files, types, functions, Badger key prefixes, schema persistence changes, Cypher parser additions, and test suites — sequenced into phases with explicit dependencies, acceptance gates, and migration notes.
 
 The plan is intentionally file-and-function-level. Each phase produces a shippable, testable increment. No phase depends on a later phase.
+
+---
+
+## Implementation Progress
+
+_Updated: 2026-04-24_
+
+### Phase 1: Schema Objects and Profile Model — COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| Core types | `pkg/knowledgepolicy/types.go` | DONE | All types with json+msgpack tags |
+| AccessMeta types | `pkg/knowledgepolicy/access_meta.go` | DONE | |
+| Compiled binding table | `pkg/knowledgepolicy/compiled_binding.go` | DONE | |
+| Types msgpack tests | `pkg/knowledgepolicy/types_test.go` | DONE | 14 msgpack round-trip tests |
+| Binding table tests | `pkg/knowledgepolicy/compiled_binding_test.go` | DONE | Includes concurrency tests |
+| Schema persistence ext | `pkg/storage/schema_persistence.go` | DONE | export + replaceFrom extended |
+| SchemaManager fields | `pkg/storage/schema.go` | DONE | 5 new fields |
+| DDL parser | `pkg/cypher/knowledgepolicy_ddl.go` | DONE | All 14 statement types, 5 bugs fixed (see deviations) |
+| SchemaManager CRUD | `pkg/storage/schema_knowledgepolicy.go` | DONE | Create/Drop/Alter/Show all types, 1 bug fixed (see deviations) |
+| SchemaManager tests | `pkg/storage/schema_knowledgepolicy_test.go` | DONE | 23 tests |
+| Badger key prefixes | `pkg/storage/badger.go` | DONE | 0x11–0x17 |
+| Feature flag gating | `pkg/config/config.go` | DONE | Default=false, env var updated |
+| DDL parser tests | `pkg/cypher/knowledgepolicy_ddl_test.go` | DONE | 93 tests covering all 14 DDL types + error cases |
+
+**Acceptance gate:** 141 tests pass across `pkg/knowledgepolicy/...`, `pkg/storage/...`, `pkg/cypher/...`.
+
+### Deviations and bugs found during Phase 1
+
+1. **BUG (FIXED): `CreatePromotionPolicy` nil-map guard** — `schema_knowledgepolicy.go`: when `promotionProfiles` map was nil (no profiles created yet), the `wc.ProfileRef` validation was skipped entirely due to `sm.promotionProfiles != nil` guard. A policy with a dangling profile ref was silently accepted. Fixed by always validating profile refs and returning an error when the map is nil.
+
+2. **BUG (FIXED): `kpScanBraceBlock` off-by-one** — `knowledgepolicy_ddl.go`: `return s[start:i-1], i` truncated the last character before the closing `}`. Input `{abc}` returned `"ab"` instead of `"abc"`. Fixed to `return s[start:i], i+1`.
+
+3. **BUG (FIXED): `parseForTarget` edge pattern detection** — `knowledgepolicy_ddl.go`: when parsing `()-[r:SUPERSEDES]-()`, the parser saw `()` and immediately returned as a wildcard node pattern, never reaching the edge pattern parser. Fixed by checking for `-` after `)` before declaring wildcard, routing to `parseEdgeTarget` when found.
+
+4. **BUG (FIXED): Unquoted name fallback in WHEN/APPLY blocks** — `knowledgepolicy_ddl.go`: `kpScanQuotedString` returns `("", i)` not `("", -1)` for non-quoted input, so the `if l < 0` fallback to `kpScanIdent` was unreachable for unquoted identifiers. Extracted `kpScanName` helper (quoted-then-ident) and applied it across 8+ call sites to DRY up the pattern.
+
+5. **BUG (FIXED): `parsePropertyRule` missing whitespace skip** — `knowledgepolicy_ddl.go`: after parsing a value like `PROFILE 'slow_decay'`, `i` pointed right after the closing quote with no space skip between keyword match iterations, so subsequent keywords like `HALFLIFE` failed to match. Fixed by adding `i = kpSkipSpaces(s, i)` at the start of each loop iteration.
+
+### Phase 2–8: Not started
 
 ---
 

@@ -1,6 +1,10 @@
 package storage
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+)
 
 // SchemaDefinition is the persisted representation of NornicDB schema rules.
 //
@@ -24,6 +28,11 @@ type SchemaDefinition struct {
 	FulltextIndexes  []FulltextIndex           `json:"fulltext_indexes,omitempty"`
 	VectorIndexes    []VectorIndex             `json:"vector_indexes,omitempty"`
 	RangeIndexes     []SchemaRangeIndexDef     `json:"range_indexes,omitempty"`
+
+	DecayProfileBundles  []knowledgepolicy.DecayProfileBundle  `json:"decay_profile_bundles,omitempty"`
+	DecayProfileBindings []knowledgepolicy.DecayProfileBinding `json:"decay_profile_bindings,omitempty"`
+	PromotionProfiles    []knowledgepolicy.PromotionProfileDef `json:"promotion_profiles,omitempty"`
+	PromotionPolicies    []knowledgepolicy.PromotionPolicyDef  `json:"promotion_policies,omitempty"`
 }
 
 type SchemaPropertyIndexDef struct {
@@ -221,6 +230,72 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 		})
 	}
 
+	// Decay profile bundles.
+	if len(sm.decayProfileBundles) > 0 {
+		def.DecayProfileBundles = make([]knowledgepolicy.DecayProfileBundle, 0, len(sm.decayProfileBundles))
+		for _, b := range sm.decayProfileBundles {
+			def.DecayProfileBundles = append(def.DecayProfileBundles, *b)
+		}
+		sort.Slice(def.DecayProfileBundles, func(i, j int) bool {
+			return def.DecayProfileBundles[i].Name < def.DecayProfileBundles[j].Name
+		})
+	}
+
+	// Decay profile bindings.
+	if len(sm.decayProfileBindings) > 0 {
+		def.DecayProfileBindings = make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
+		for _, b := range sm.decayProfileBindings {
+			bc := *b
+			if len(bc.TargetLabels) > 0 {
+				labels := make([]string, len(bc.TargetLabels))
+				copy(labels, bc.TargetLabels)
+				bc.TargetLabels = labels
+			}
+			if len(bc.PropertyRules) > 0 {
+				rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
+				copy(rules, bc.PropertyRules)
+				bc.PropertyRules = rules
+			}
+			def.DecayProfileBindings = append(def.DecayProfileBindings, bc)
+		}
+		sort.Slice(def.DecayProfileBindings, func(i, j int) bool {
+			return def.DecayProfileBindings[i].Name < def.DecayProfileBindings[j].Name
+		})
+	}
+
+	// Promotion profiles.
+	if len(sm.promotionProfiles) > 0 {
+		def.PromotionProfiles = make([]knowledgepolicy.PromotionProfileDef, 0, len(sm.promotionProfiles))
+		for _, p := range sm.promotionProfiles {
+			def.PromotionProfiles = append(def.PromotionProfiles, *p)
+		}
+		sort.Slice(def.PromotionProfiles, func(i, j int) bool {
+			return def.PromotionProfiles[i].Name < def.PromotionProfiles[j].Name
+		})
+	}
+
+	// Promotion policies.
+	if len(sm.promotionPolicies) > 0 {
+		def.PromotionPolicies = make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
+		for _, p := range sm.promotionPolicies {
+			pc := *p
+			if len(pc.TargetLabels) > 0 {
+				labels := make([]string, len(pc.TargetLabels))
+				copy(labels, pc.TargetLabels)
+				pc.TargetLabels = labels
+			}
+			if len(pc.WhenClauses) > 0 {
+				clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
+				copy(clauses, pc.WhenClauses)
+				pc.WhenClauses = clauses
+			}
+			def.PromotionPolicies = append(def.PromotionPolicies, pc)
+		}
+		sort.Slice(def.PromotionPolicies, func(i, j int) bool {
+			return def.PromotionPolicies[i].Name < def.PromotionPolicies[j].Name
+		})
+	}
+
 	return def
 }
 
@@ -373,6 +448,49 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			entries:          make([]rangeEntry, 0),
 			nodeValue:        make(map[NodeID]float64),
 		}
+	}
+
+	// Knowledge-layer scoring objects.
+	sm.decayProfileBundles = make(map[string]*knowledgepolicy.DecayProfileBundle)
+	sm.decayProfileBindings = make(map[string]*knowledgepolicy.DecayProfileBinding)
+	sm.promotionProfiles = make(map[string]*knowledgepolicy.PromotionProfileDef)
+	sm.promotionPolicies = make(map[string]*knowledgepolicy.PromotionPolicyDef)
+
+	for _, b := range def.DecayProfileBundles {
+		bc := b
+		sm.decayProfileBundles[bc.Name] = &bc
+	}
+	for _, b := range def.DecayProfileBindings {
+		bc := b
+		if len(bc.TargetLabels) > 0 {
+			labels := make([]string, len(bc.TargetLabels))
+			copy(labels, bc.TargetLabels)
+			bc.TargetLabels = labels
+		}
+		if len(bc.PropertyRules) > 0 {
+			rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
+			copy(rules, bc.PropertyRules)
+			bc.PropertyRules = rules
+		}
+		sm.decayProfileBindings[bc.Name] = &bc
+	}
+	for _, p := range def.PromotionProfiles {
+		pc := p
+		sm.promotionProfiles[pc.Name] = &pc
+	}
+	for _, p := range def.PromotionPolicies {
+		pc := p
+		if len(pc.TargetLabels) > 0 {
+			labels := make([]string, len(pc.TargetLabels))
+			copy(labels, pc.TargetLabels)
+			pc.TargetLabels = labels
+		}
+		if len(pc.WhenClauses) > 0 {
+			clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
+			copy(clauses, pc.WhenClauses)
+			pc.WhenClauses = clauses
+		}
+		sm.promotionPolicies[pc.Name] = &pc
 	}
 
 	return nil

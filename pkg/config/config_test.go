@@ -77,8 +77,8 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	}
 
 	// Memory defaults
-	if !cfg.Memory.DecayEnabled {
-		t.Error("expected DecayEnabled to be true by default")
+	if cfg.Memory.DecayEnabled {
+		t.Error("expected DecayEnabled to be false by default")
 	}
 	if cfg.Memory.DecayInterval != time.Hour {
 		t.Errorf("expected decay interval 1h, got %v", cfg.Memory.DecayInterval)

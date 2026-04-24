@@ -288,16 +288,14 @@ func TestDB_ExportUserData_JSON(t *testing.T) {
 }
 
 func TestDB_GetDecayInfo(t *testing.T) {
-	t.Run("returns enabled for default config", func(t *testing.T) {
+	t.Run("returns disabled for default config", func(t *testing.T) {
 		db, err := Open("", nil)
 		require.NoError(t, err)
 		defer db.Close()
 
 		info := db.GetDecayInfo()
 		require.NotNil(t, info)
-		// DefaultConfig has DecayEnabled=true
-		assert.True(t, info.Enabled)
-		assert.Greater(t, info.ArchiveThreshold, 0.0)
+		assert.False(t, info.Enabled)
 	})
 
 	t.Run("returns config when decay enabled", func(t *testing.T) {

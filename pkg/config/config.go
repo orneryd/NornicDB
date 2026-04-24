@@ -828,8 +828,8 @@ func (f *FeatureFlagsConfig) GetHeimdallMCPTools() []string     { return f.Heimd
 //	fmt.Printf("Bolt: %s:%d\n",
 //		config.Server.BoltAddress, config.Server.BoltPort) // 0.0.0.0:7687
 //
-//	// Memory decay enabled by default
-//	fmt.Printf("Decay enabled: %v\n", config.Memory.DecayEnabled) // true
+//	// Memory decay disabled by default (opt-in)
+//	fmt.Printf("Decay enabled: %v\n", config.Memory.DecayEnabled) // false
 //
 // Example 2 - Production with Authentication:
 //
@@ -1512,7 +1512,7 @@ func LoadDefaults() *Config {
 	config.Server.CORSOrigins = []string{"*"} // Allow all origins by default
 
 	// Memory defaults
-	config.Memory.DecayEnabled = true
+	config.Memory.DecayEnabled = false
 	config.Memory.DecayInterval = time.Hour
 	config.Memory.ArchiveThreshold = 0.05
 	config.Memory.EmbeddingEnabled = false    // Disabled by default - opt-in feature
@@ -1981,7 +1981,9 @@ func applyEnvVars(config *Config) error {
 	}
 
 	// Memory settings
-	if getEnv("NORNICDB_MEMORY_DECAY_ENABLED", "") == "false" {
+	if v := getEnv("NORNICDB_MEMORY_DECAY_ENABLED", ""); v == "true" || v == "1" {
+		config.Memory.DecayEnabled = true
+	} else if v == "false" || v == "0" {
 		config.Memory.DecayEnabled = false
 	}
 	if v := getEnvDuration("NORNICDB_MEMORY_DECAY_INTERVAL", 0); v > 0 {
