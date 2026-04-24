@@ -143,6 +143,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/retention"
@@ -364,13 +365,15 @@ type DB struct {
 	closed bool
 
 	// Internal components
-	storage        storage.Engine // Namespaced storage for default database (all DB operations use this)
-	baseStorage    storage.Engine // Underlying storage chain (must be closed to release Badger/WAL locks)
-	wal            *storage.WAL   // Write-ahead log for durability
-	decay          *decay.Manager
-	cypherExecutor *cypher.StorageExecutor
-	gpuManagerMu   sync.RWMutex
-	gpuManager     interface{} // *gpu.Manager - interface to avoid circular import
+	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
+	baseStorage       storage.Engine // Underlying storage chain (must be closed to release Badger/WAL locks)
+	wal               *storage.WAL   // Write-ahead log for durability
+	decay             *decay.Manager
+	accessAccumulator *knowledgepolicy.AccessAccumulator
+	accessFlusher     *knowledgepolicy.AccessFlusher
+	cypherExecutor    *cypher.StorageExecutor
+	gpuManagerMu      sync.RWMutex
+	gpuManager        interface{} // *gpu.Manager - interface to avoid circular import
 
 	// Search services (per database) using pre-computed embeddings.
 	embeddingDims       int     // Effective vector index dimensions in use
@@ -1158,6 +1161,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			SemanticToProceduralMinAge:    defaultDecayConfig.SemanticToProceduralMinAge,
 		}
 		db.decay = decay.New(decayConfig)
+
+		// Knowledge-layer decay: wire scorer into BadgerEngine read paths.
+		// The flusher is created here but started later (after buildCtx is initialized).
+		if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
+			be.SetDecayEnabled(true)
+			db.accessAccumulator = knowledgepolicy.NewAccessAccumulator(true)
+			be.SetAccessAccumulator(db.accessAccumulator)
+			db.accessFlusher = knowledgepolicy.NewAccessFlusher(
+				db.accessAccumulator, be, 2*time.Second,
+			)
+		}
 	}
 
 	// Initialize inference engine
@@ -1306,6 +1320,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Use a context cancelled on DB close so the build stops when the process is killed.
 	defaultDBName := db.defaultDatabaseName()
 	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+	if db.accessFlusher != nil {
+		db.accessFlusher.Start(db.buildCtx)
+	}
 	_ = db.startBackgroundTask(func() {
 		ctx, cancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
 		defer cancel()
@@ -1870,6 +1887,10 @@ func (db *DB) closeInternal() error {
 			}
 		}
 		db.searchServicesMu.RUnlock()
+	}
+
+	if db.accessFlusher != nil {
+		db.accessFlusher.Stop()
 	}
 
 	if db.decay != nil {
@@ -2684,4 +2705,20 @@ func (db *DB) Forget(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+// unwrapToBadgerEngine walks the engine wrapper chain to find the underlying BadgerEngine.
+func unwrapToBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
+	for {
+		switch e := eng.(type) {
+		case *storage.BadgerEngine:
+			return e
+		case interface{ GetInnerEngine() storage.Engine }:
+			eng = e.GetInnerEngine()
+		case interface{ UnwrapEngine() storage.Engine }:
+			eng = e.UnwrapEngine()
+		default:
+			return nil
+		}
+	}
 }

@@ -31,6 +31,7 @@ func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayPr
 	b := bundle
 	sm.decayProfileBundles[b.Name] = &b
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -64,6 +65,7 @@ func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.Decay
 	b := binding
 	sm.decayProfileBindings[b.Name] = &b
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -78,6 +80,7 @@ func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
 				return fmt.Errorf("cannot drop decay profile bundle %q: referenced by active binding", name)
 			}
 			delete(sm.decayProfileBundles, name)
+			sm.rebuildBindingTableLocked()
 			return sm.persistIfSet()
 		}
 	}
@@ -85,6 +88,7 @@ func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
 	if sm.decayProfileBindings != nil {
 		if _, exists := sm.decayProfileBindings[name]; exists {
 			delete(sm.decayProfileBindings, name)
+			sm.rebuildBindingTableLocked()
 			return sm.persistIfSet()
 		}
 	}
@@ -112,6 +116,7 @@ func (sm *SchemaManager) AlterDecayProfile(name string, updates map[string]inter
 		return err
 	}
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -158,6 +163,7 @@ func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.Promotio
 	p := profile
 	sm.promotionProfiles[p.Name] = &p
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -185,6 +191,7 @@ func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) err
 	}
 
 	delete(sm.promotionProfiles, name)
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -205,6 +212,7 @@ func (sm *SchemaManager) AlterPromotionProfile(name string, updates map[string]i
 		return err
 	}
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -252,6 +260,7 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 	p := policy
 	sm.promotionPolicies[p.Name] = &p
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -275,6 +284,7 @@ func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) erro
 	}
 
 	delete(sm.promotionPolicies, name)
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -297,6 +307,7 @@ func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]in
 		}
 	}
 
+	sm.rebuildBindingTableLocked()
 	return sm.persistIfSet()
 }
 
@@ -325,6 +336,21 @@ func (sm *SchemaManager) SetBindingTable(bt *knowledgepolicy.BindingTable) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.bindingTable = bt
+}
+
+// rebuildBindingTableLocked recompiles the BindingTable from current schema
+// state. Called under sm.mu.Lock() after every mutating DDL operation so the
+// scorer always sees a consistent, up-to-date table.
+func (sm *SchemaManager) rebuildBindingTableLocked() {
+	bt, err := knowledgepolicy.BuildBindingTable(
+		sm.decayProfileBundles,
+		sm.decayProfileBindings,
+		sm.promotionProfiles,
+		sm.promotionPolicies,
+	)
+	if err == nil {
+		sm.bindingTable = bt
+	}
 }
 
 // persistIfSet calls the persist hook if one is set.

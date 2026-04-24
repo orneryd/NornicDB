@@ -513,6 +513,8 @@ type Service struct {
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
 	resultCache *searchResultCache
 
+	nodeDecayFilter NodeDecayFilterFunc
+
 	strategyTransitionMu         sync.Mutex
 	strategyTransitionInProgress bool
 	strategyTransitionPending    strategyMode
@@ -3073,6 +3075,10 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		vectorResults = s.filterByType(ctx, vectorResults, opts.Types, seenOrphans)
 		bm25Results = s.filterByType(ctx, bm25Results, opts.Types, seenOrphans)
 	}
+
+	// Step 3b: Filter decayed candidates
+	vectorResults = s.filterDecayedCandidates(vectorResults)
+	bm25Results = s.filterDecayedCandidates(bm25Results)
 
 	// Step 4: Fuse with RRF
 	fusionStart := time.Now()
