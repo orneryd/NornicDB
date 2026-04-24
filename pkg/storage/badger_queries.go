@@ -117,6 +117,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	// This reduces transaction overhead compared to two-phase approach
 	var nodes []*Node
 	var loaded []*Node
+	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := labelIndexPrefix(label)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
@@ -132,7 +133,11 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 			b.nodeCacheMu.RLock()
 			if cached, ok := b.nodeCache[nodeID]; ok {
 				b.nodeCacheMu.RUnlock()
-				nodes = append(nodes, copyNode(cached))
+				cn := copyNode(cached)
+				if b.filterNodeByDecay(cn, nowNanos) {
+					continue
+				}
+				nodes = append(nodes, cn)
 				continue
 			}
 			b.nodeCacheMu.RUnlock()
@@ -149,6 +154,10 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
+				continue
+			}
+
+			if b.filterNodeByDecay(node, nowNanos) {
 				continue
 			}
 
@@ -181,6 +190,7 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	var nodes []*Node
+	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerIterOptsPrefetchValues(prefix, 0))
@@ -200,6 +210,10 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
+				continue
+			}
+
+			if b.filterNodeByDecay(node, nowNanos) {
 				continue
 			}
 

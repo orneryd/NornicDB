@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 3 COMPLETE — Ready for Phase 4
+**Status:** Phase 4 COMPLETE — Ready for Phase 5
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -93,7 +93,34 @@ _Updated: 2026-04-24_
 
 **Deferred to Phase 4:** Query context variable projection (`X-Query-*` headers → `$_<key>`) and deletion cascade from node/edge deletion (requires runtime integration). AccessMeta retained on visibility suppression (requires suppression implementation in Phase 6).
 
-### Phase 4–8: Not started
+### Phase 4: COMPLETE
+
+| Deliverable | Status |
+|---|---|
+| `pkg/knowledgepolicy/scoring_filter.go` — ShouldSuppressNode/Edge, SynthesizeLegacyAccessMeta | DONE |
+| `pkg/knowledgepolicy/scoring_filter_test.go` — 8 unit tests | DONE |
+| `pkg/knowledgepolicy/legacy_fallback_test.go` — 5 legacy fallback tests | DONE |
+| `pkg/knowledgepolicy/integration_test.go` — end-to-end DDL→score→visibility | DONE |
+| `pkg/knowledgepolicy/access_flusher_property_suppression_test.go` — 5 flusher suppression tests | DONE |
+| `pkg/storage/badger_decay_filter.go` — filterNodeByDecay, filterEdgeByDecay, FilterPropertyByDecay | DONE |
+| `pkg/storage/badger_queries.go` — decay filter in GetNodesByLabel, AllNodes | DONE |
+| `pkg/storage/badger_mvcc.go` — decay filter in MVCC read paths (6 methods) | DONE |
+| `pkg/storage/badger_mvcc_decay_test.go` — 8 visibility/reveal/binding tests | DONE |
+| `pkg/storage/schema_knowledgepolicy.go` — rebuildBindingTableLocked on all DDL | DONE |
+| `pkg/storage/schema_persistence.go` — rebuildBindingTableLocked on schema load | DONE |
+| `pkg/cypher/reveal.go` — hasRevealCall, setRevealOnEngine, unwrapBadgerEngine | DONE |
+| `pkg/cypher/reveal_test.go` — 5 reveal unit tests | DONE |
+| `pkg/cypher/fn/builtins_reveal.go` — reveal() identity function registration | DONE |
+| `pkg/cypher/transaction.go` — reveal detection in executeQueryAgainstStorage | DONE |
+| `pkg/cypher/node_helpers.go` — property-level decay filter in nodeToMap | DONE |
+| `pkg/search/decay_filter.go` — NodeDecayFilterFunc, SetNodeDecayFilter, filterDecayedCandidates | DONE |
+| `pkg/search/search.go` — decay filter in rrfHybridSearch before fusion | DONE |
+| `pkg/search/decay_filter_test.go` — 4 search decay filter tests | DONE |
+| `pkg/nornicdb/db.go` — accessAccumulator, accessFlusher, lifecycle wiring | DONE |
+
+**Deferred to Phase 5:** `decayScore()`, `decay()`, `policy()` as native Cypher functions. Embed worker accessMeta projection (requires Phase 5 embed text builder changes). Indexed-property immunity check in property-level filter (trivial addition when schema awareness is wired to Cypher executor).
+
+### Phase 5–8: Not started
 
 ---
 

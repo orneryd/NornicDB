@@ -75,10 +75,28 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	}
 
 	// Add properties both at top level (for Neo4j compatibility) and nested (for standard graph format)
-	for k, v := range node.Properties {
+	be := unwrapBadgerEngine(e.storage)
+	var nowNanos int64
+	if be != nil {
+		nowNanos = storage.DecayScoringTime()
+	}
+	props := node.Properties
+	if be != nil {
+		createdAt := node.CreatedAt.UnixNano()
+		versionAt := node.UpdatedAt.UnixNano()
+		filtered := make(map[string]interface{}, len(node.Properties))
+		for k, v := range node.Properties {
+			if be.FilterPropertyByDecay(node.ID, node.Labels, k, createdAt, versionAt, nowNanos) {
+				continue
+			}
+			filtered[k] = v
+		}
+		props = filtered
+	}
+	for k, v := range props {
 		result[k] = v
 	}
-	result["properties"] = node.Properties
+	result["properties"] = props
 
 	// If no user "id" property, use storage ID for backward compatibility
 	if _, hasUserID := result["id"]; !hasUserID {

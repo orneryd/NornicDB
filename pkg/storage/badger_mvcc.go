@@ -420,6 +420,10 @@ func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 			return ErrNotFound
 		}
 		node = copyNode(record.Node)
+		if b.filterNodeByDecay(node, DecayScoringTime()) {
+			node = nil
+			return ErrNotFound
+		}
 		return nil
 	})
 	return node, err
@@ -462,6 +466,10 @@ func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, 
 			return ErrNotFound
 		}
 		node = copyNode(record.Node)
+		if b.filterNodeByDecay(node, DecayScoringTime()) {
+			node = nil
+			return ErrNotFound
+		}
 		return nil
 	})
 	return node, err
@@ -496,6 +504,10 @@ func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 			return ErrNotFound
 		}
 		edge = copyEdge(record.Edge)
+		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+			edge = nil
+			return ErrNotFound
+		}
 		return nil
 	})
 	return edge, err
@@ -538,6 +550,10 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 			return ErrNotFound
 		}
 		edge = copyEdge(record.Edge)
+		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+			edge = nil
+			return ErrNotFound
+		}
 		return nil
 	})
 	return edge, err
@@ -561,6 +577,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
+	nowNanos := DecayScoringTime()
 	var currentID NodeID
 	var candidate *Node
 	var tombstoned bool
@@ -576,6 +593,9 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		candidate = nil
 		tombstoned = false
 		haveCurrent = false
+		if b.filterNodeByDecay(node, nowNanos) {
+			return nil
+		}
 		return yield(node)
 	}
 
@@ -617,6 +637,7 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
+	nowNanos := DecayScoringTime()
 	var currentID EdgeID
 	var candidate *Edge
 	var tombstoned bool
@@ -632,6 +653,9 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		candidate = nil
 		tombstoned = false
 		haveCurrent = false
+		if b.filterEdgeByDecay(edge, nowNanos) {
+			return nil
+		}
 		return yield(edge)
 	}
 
