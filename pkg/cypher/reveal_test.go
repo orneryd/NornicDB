@@ -14,8 +14,10 @@ func TestHasRevealCall(t *testing.T) {
 		{"MATCH (n:Foo) RETURN reveal(n)", true},
 		{"MATCH (n:Foo) RETURN REVEAL(n)", true},
 		{"MATCH (n:Foo) RETURN Reveal(n)", true},
+		{"MATCH (n:Foo) RETURN REVEAL (n)", true},
 		{"MATCH (n:Foo) RETURN n", false},
 		{"MATCH (n:Foo) RETURN n.revealed", false},
+		{"MATCH (n:Foo) WITH reveal AS alias RETURN alias, reveal(n)", true},
 		{"", false},
 	}
 	for _, tt := range tests {

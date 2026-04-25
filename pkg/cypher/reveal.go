@@ -1,15 +1,27 @@
 package cypher
 
 import (
-	"strings"
-
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // hasRevealCall detects the presence of reveal(...) in the query text.
 func hasRevealCall(query string) bool {
-	upper := strings.ToUpper(query)
-	return strings.Contains(upper, "REVEAL(")
+	for searchFrom := 0; searchFrom < len(query); {
+		rel := FindKeywordIndex(query[searchFrom:], "REVEAL")
+		if rel < 0 {
+			return false
+		}
+		idx := searchFrom + rel
+		pos := idx + len("REVEAL")
+		for pos < len(query) && isWhitespace(query[pos]) {
+			pos++
+		}
+		if pos < len(query) && query[pos] == '(' {
+			return true
+		}
+		searchFrom = idx + len("REVEAL")
+	}
+	return false
 }
 
 // setRevealOnEngine enables reveal mode on the underlying BadgerEngine.
