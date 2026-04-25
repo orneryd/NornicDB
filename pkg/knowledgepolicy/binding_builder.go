@@ -45,7 +45,7 @@ func computeThresholdAgeNanos(fn DecayFunction, halfLifeNanos int64, threshold f
 	}
 }
 
-func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle) *CompiledBinding {
+func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle, bundles map[string]*DecayProfileBundle) *CompiledBinding {
 	if binding.NoDecay {
 		return &CompiledBinding{
 			DecayBinding: binding,
@@ -85,6 +85,18 @@ func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle) *C
 				ruleFn := fn
 				ruleHalfLife := halfLifeNanos
 				ruleFloor := cb.DecayFloor
+
+				if rule.ProfileRef != "" && bundles != nil {
+					if refBundle, ok := bundles[rule.ProfileRef]; ok {
+						ruleHalfLife = refBundle.HalfLifeSeconds * 1e9
+						if refBundle.Function != "" {
+							ruleFn = refBundle.Function
+						}
+						if refBundle.ScoreFloor > 0 {
+							ruleFloor = refBundle.ScoreFloor
+						}
+					}
+				}
 				if rule.HalfLifeSeconds > 0 {
 					ruleHalfLife = rule.HalfLifeSeconds * 1e9
 				}
@@ -97,6 +109,12 @@ func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle) *C
 				override.DecayFloor = ruleFloor
 			}
 			cb.CompiledPropertyRules[rule.PropertyPath] = override
+		}
+		for _, override := range cb.CompiledPropertyRules {
+			if override.NoDecay {
+				cb.HasNoDecayProperty = true
+				break
+			}
 		}
 	}
 
@@ -163,7 +181,7 @@ func BuildBindingTable(
 
 		var cb *CompiledBinding
 		if binding.NoDecay || bundle != nil {
-			cb = compileBinding(binding, bundle)
+			cb = compileBinding(binding, bundle, bundles)
 		} else {
 			cb = &CompiledBinding{DecayBinding: binding, NoDecay: true}
 		}

@@ -159,6 +159,12 @@ export function Security() {
               </Button>
               <Button
                 variant="secondary"
+                onClick={() => navigate("/security/knowledge-policies")}
+              >
+                Knowledge Policies
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => navigate("/security/admin")}
               >
                 👥 Admin Panel

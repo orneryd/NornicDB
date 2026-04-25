@@ -249,6 +249,61 @@ export function NodeDetailsPanel({
           </div>
         )}
 
+        {/* Knowledge Policy Metadata */}
+        {(selectedNode.node.properties.decay_score != null ||
+          selectedNode.node.properties.suppressed != null ||
+          selectedNode.node.properties.access_count != null) && (
+          <div className="mb-4">
+            <h3 className="text-xs font-medium text-norse-silver mb-2">
+              KNOWLEDGE POLICY
+            </h3>
+            <div className="space-y-1 text-sm">
+              {selectedNode.node.properties.decay_score != null && (
+                <div className="flex justify-between">
+                  <span className="text-norse-silver">Decay Score</span>
+                  <span className={
+                    Number(selectedNode.node.properties.decay_score) > 0.5
+                      ? "text-green-400"
+                      : Number(selectedNode.node.properties.decay_score) > 0.1
+                      ? "text-valhalla-gold"
+                      : "text-red-400"
+                  }>
+                    {Number(selectedNode.node.properties.decay_score).toFixed(4)}
+                  </span>
+                </div>
+              )}
+              {selectedNode.node.properties.suppressed != null && (
+                <div className="flex justify-between">
+                  <span className="text-norse-silver">Suppressed</span>
+                  <span className={selectedNode.node.properties.suppressed ? "text-red-400" : "text-green-400"}>
+                    {selectedNode.node.properties.suppressed ? "Yes" : "No"}
+                  </span>
+                </div>
+              )}
+              {selectedNode.node.properties.access_count != null && (
+                <div className="flex justify-between">
+                  <span className="text-norse-silver">Access Count</span>
+                  <span className="text-frost-ice">{String(selectedNode.node.properties.access_count)}</span>
+                </div>
+              )}
+              {selectedNode.node.properties.last_accessed != null && (
+                <div className="flex justify-between">
+                  <span className="text-norse-silver">Last Accessed</span>
+                  <span className="text-frost-ice">
+                    {new Date(selectedNode.node.properties.last_accessed as string).toLocaleString()}
+                  </span>
+                </div>
+              )}
+              {selectedNode.node.properties.traversal_count != null && (
+                <div className="flex justify-between">
+                  <span className="text-norse-silver">Traversal Count</span>
+                  <span className="text-frost-ice">{String(selectedNode.node.properties.traversal_count)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Scores */}
         {(selectedNode.rrf_score != null ||
           (selectedNode.vector_rank != null && selectedNode.vector_rank > 0) ||

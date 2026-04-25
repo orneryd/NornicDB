@@ -131,7 +131,7 @@ func (s *Scorer) score(
 		EffectiveMultiplier:         multiplier,
 		BaseScore:                   baseScore,
 		FinalScore:                  finalScore,
-		SuppressionEligible:         finalScore < cb.VisibilityThreshold,
+		SuppressionEligible:         finalScore < cb.VisibilityThreshold && !cb.HasNoDecayProperty,
 	}
 }
 
