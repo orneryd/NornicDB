@@ -237,24 +237,30 @@ Designed to work with existing Neo4j drivers and Bolt/Cypher workflows, with min
 - **Schema Management** — Constraints, indexes, vector indexes
 - **Qdrant gRPC API Compatible** — Works with Qdrant-style gRPC vector workflows
 
-### 🧠 Intelligent Memory
+### 🧠 Knowledge-Layer Scoring
 
-Memory that behaves like human cognition. (Ebbinghaus Decay)
-
-| Memory Tier    | Half-Life | Use Case               |
-| -------------- | --------- | ---------------------- |
-| **Episodic**   | 7 days    | Chat context, sessions |
-| **Semantic**   | 69 days   | Facts, decisions       |
-| **Procedural** | 693 days  | Skills, patterns       |
+Profile-driven decay and promotion scoring with the [Ebbinghaus-Roynard four-layer decomposition](https://arxiv.org/pdf/2604.11364). Define decay profiles and promotion policies via Cypher DDL — no hardcoded tiers.
 
 ```cypher
-// Find memories that are still strong
-MATCH (m:Memory) WHERE m.decayScore > 0.5
-RETURN m.title ORDER BY m.decayScore DESC
+CREATE DECAY PROFILE working_memory OPTIONS {
+  halfLifeSeconds: 604800,
+  function: 'exponential',
+  visibilityThreshold: 0.10
+}
+
+CREATE DECAY PROFILE session_retention
+FOR (n:SessionRecord)
+APPLY {
+  DECAY PROFILE 'working_memory'
+  n.tenantId NO DECAY
+}
+
+MATCH (n:SessionRecord) WHERE decayScore(n) > 0.5
+RETURN n ORDER BY decayScore(n) DESC
 ```
 
-> NOTE: [This April 2026 research](https://arxiv.org/pdf/2604.11364) called out Ebbinghaus decay curve as insufficient. While there is a workaround in place using the retention policy configuration, a proposal is in place with issue [#100](https://github.com/orneryd/NornicDB/issues/100) to abstract the memory model to a policy based system that is configurable in cypher and removes the hardcoded cognitive tiers. Workaround is described [here](https://github.com/orneryd/NornicDB/blob/main/docs/user-guides/retention-policies.md#modified-ebbinghaus-as-is).
- 
+> 📖 Deep dive: [Knowledge-Layer Policies](docs/user-guides/knowledge-layer-policies.md) and [Ebbinghaus-Roynard Bootstrap](docs/user-guides/ebbinghaus-roynard-bootstrap.md).
+
 ### 🔗 Auto-Relationships
 
 NornicDB weaves connections automatically:

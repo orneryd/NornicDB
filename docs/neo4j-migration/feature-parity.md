@@ -235,7 +235,7 @@ Features NornicDB has that Neo4j doesn't:
 | **Automatic Vector Index**  | All node embeddings indexed automatically, no setup required (with managed embeddings enabled) |
 | **String Query Embedding**  | `db.index.vector.queryNodes` accepts strings, auto-embeds server-side                          |
 | **Hybrid Search REST API**  | `/nornicdb/search` with RRF fusion of vector + BM25                                            |
-| **Memory Decay System**     | 3-tier cognitive memory (Episodic/Semantic/Procedural)                                         |
+| **Knowledge-Layer Scoring** | Declarative decay profiles and retention bindings via Cypher DDL                               |
 | **Auto-Relationships**      | Automatic edge creation via embedding similarity                                               |
 | **GPU Acceleration**        | Metal/CUDA/OpenCL/Vulkan for vector ops                                                        |
 | **Embedded Mode**           | Use as library without server                                                                  |

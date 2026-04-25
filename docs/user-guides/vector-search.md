@@ -265,13 +265,11 @@ embedder, _ := embed.New(&embed.Config{
 
 embedding, _ := embedder.Embed(ctx, "Machine learning is awesome")
 
-// Store with embedding
-memory := &nornicdb.Memory{
-    Content:   "Machine learning enables computers to learn from data",
-    Title:     "ML Basics",
-    Embedding: embedding,
-}
-db.Store(ctx, memory)
+// Store node with embedding via Cypher
+db.ExecuteCypher(ctx, `CREATE (n:KnowledgeFact {
+    content: "Machine learning enables computers to learn from data",
+    title: "ML Basics"
+}) RETURN n`, nil)
 
 // Search
 results, _ := db.Search(ctx, "AI and learning algorithms", 10)

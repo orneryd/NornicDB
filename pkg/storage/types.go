@@ -107,11 +107,11 @@ type EdgeID string
 // NornicDB Extensions (not exported to Neo4j):
 //   - CreatedAt: When the node was first created
 //   - UpdatedAt: Last modification timestamp
-//   - DecayScore: Memory importance (1.0=fresh, 0.0=decayed)
-//   - LastAccessed: Last time node was queried/updated
-//   - AccessCount: Total access frequency
 //   - NamedEmbeddings: Named vector embeddings (e.g., "title", "content", "default")
 //   - ChunkEmbeddings: Chunked embeddings for long documents (legacy, migration support)
+//
+// Decay scoring is handled by the knowledge-layer scoring system (pkg/knowledgepolicy).
+// Scores are computed at query time from AccessMeta and retention bindings, not stored on the node.
 //
 // Example 1 - Basic User Node:
 //
@@ -124,9 +124,7 @@ type EdgeID string
 //			"email":    "alice@example.com",
 //			"verified": true,
 //		},
-//		CreatedAt:   time.Now(),
-//		DecayScore:  1.0, // Fresh memory
-//		AccessCount: 0,
+//		CreatedAt: time.Now(),
 //	}
 //	engine.CreateNode(node)
 //
@@ -157,9 +155,7 @@ type EdgeID string
 //			"category":    "Software",
 //			"importance":  "high",
 //		},
-//		DecayScore:   0.95, // Slightly aged but still relevant
-//		AccessCount:  42,   // Accessed 42 times
-//		LastAccessed: time.Now().Add(-24 * time.Hour),
+//		CreatedAt: time.Now(),
 //	}
 //
 // ELI12:
@@ -170,9 +166,8 @@ type EdgeID string
 //   - Properties: Stats on the card (name: "Alice", strength: 10, health: 100)
 //
 // NornicDB adds extra info:
-//   - DecayScore: How "fresh" the card is (new cards = 1.0, old forgotten cards = 0.2)
-//   - AccessCount: How many times you've played this card
 //   - Embedding: A secret code that helps find similar cards
+//   - Decay scoring: How "fresh" the card is — computed automatically by knowledge-layer policies
 //
 // Just like trading cards can be rare or common, frequently used or forgotten,
 // Nodes track their usage and importance in the graph!

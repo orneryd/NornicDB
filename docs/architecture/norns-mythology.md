@@ -25,14 +25,16 @@ Just as the Norns weave threads to connect all beings, NornicDB automatically di
 - Temporal proximity
 - Transitive inference
 
-### Three Tiers of Memory
-NornicDB's memory decay system reflects the Norns' domains:
+### Knowledge-Layer Scoring
+NornicDB's decay system reflects the Norns' domains through declarative **decay profiles** and **retention bindings**:
 
-| Memory Tier | Norn Parallel | Half-Life |
-|-------------|---------------|-----------|
-| **Episodic** | Skuld (Future-focused, fleeting) | 7 days |
-| **Semantic** | Verðandi (Present knowledge) | 69 days |
-| **Procedural** | Urðr (Accumulated wisdom) | 693 days |
+| Layer | Norn Parallel | Role |
+|-------|---------------|------|
+| **Knowledge** | Urðr (Accumulated wisdom) | Permanent facts — supersession, not decay |
+| **Memory** | Skuld (Future-focused, fleeting) | Ebbinghaus decay with configurable half-lives |
+| **Wisdom** | Verðandi (Present knowledge) | Evidence-gated revision — decays until confirmed |
+
+Half-lives, visibility thresholds, and property-level overrides are all configured via Cypher DDL rather than hardcoded tiers.
 
 ### Destiny Emerges from Connections
 The Norns don't create events directly — they weave the threads that connect them. Similarly, NornicDB doesn't define your data's meaning — it reveals the relationships that give it significance.
