@@ -43,7 +43,7 @@ func (m *mockStore) get(entityID string) *AccessMetaEntry {
 
 func TestFlusher_BasicFlush(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	acc.IncrementAccess("n1")
@@ -75,7 +75,7 @@ func TestFlusher_BasicFlush(t *testing.T) {
 
 func TestFlusher_AccumulatesAcrossFlushes(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	acc.IncrementAccess("n1")
@@ -100,7 +100,7 @@ func TestFlusher_MergesWithExisting(t *testing.T) {
 		TargetID: "n1",
 		Fixed:    AccessMetaFixedFields{AccessCount: 100},
 	}
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	acc.IncrementAccess("n1")
@@ -114,7 +114,7 @@ func TestFlusher_MergesWithExisting(t *testing.T) {
 
 func TestFlusher_EmptyDrain(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	f.Flush()
@@ -126,7 +126,7 @@ func TestFlusher_EmptyDrain(t *testing.T) {
 
 func TestFlusher_DisabledAccumulator(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(false)
+	acc := NewAccessAccumulator(false, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	f.Start(context.Background())
@@ -139,7 +139,7 @@ func TestFlusher_DisabledAccumulator(t *testing.T) {
 
 func TestFlusher_StartStop(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, 50*time.Millisecond)
 
 	acc.IncrementAccess("n1")
@@ -160,7 +160,7 @@ func TestFlusher_StartStop(t *testing.T) {
 
 func TestFlusher_StopFlushesRemaining(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	f.Start(context.Background())
@@ -178,7 +178,7 @@ func TestFlusher_StopFlushesRemaining(t *testing.T) {
 
 func TestFlusher_CustomOverflow(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	acc.IncrementCustom("n1", "views", 5)
@@ -200,7 +200,7 @@ func TestFlusher_CustomOverflow(t *testing.T) {
 
 func TestFlusher_ConcurrentFlush(t *testing.T) {
 	store := newMockStore()
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	f := NewAccessFlusher(acc, store, time.Hour)
 
 	var wg sync.WaitGroup

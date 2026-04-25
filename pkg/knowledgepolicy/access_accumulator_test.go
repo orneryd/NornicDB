@@ -7,7 +7,7 @@ import (
 )
 
 func TestAccumulator_Disabled(t *testing.T) {
-	a := NewAccessAccumulator(false)
+	a := NewAccessAccumulator(false, 0)
 	a.IncrementAccess("n1")
 	a.IncrementTraversal("n1")
 	a.IncrementCustom("n1", "hits", 5)
@@ -19,7 +19,7 @@ func TestAccumulator_Disabled(t *testing.T) {
 }
 
 func TestAccumulator_SingleGoroutine(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 
 	for i := 0; i < 100; i++ {
 		a.IncrementAccess("n1")
@@ -40,7 +40,7 @@ func TestAccumulator_SingleGoroutine(t *testing.T) {
 }
 
 func TestAccumulator_ConcurrentAccess(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	const goroutines = 64
 	const increments = 1000
 
@@ -64,7 +64,7 @@ func TestAccumulator_ConcurrentAccess(t *testing.T) {
 }
 
 func TestAccumulator_ConcurrentMultiEntity(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	const goroutines = 32
 	const entities = 16
 	const increments = 500
@@ -93,7 +93,7 @@ func TestAccumulator_ConcurrentMultiEntity(t *testing.T) {
 }
 
 func TestAccumulator_CustomCounters(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	a.IncrementCustom("n1", "views", 3)
 	a.IncrementCustom("n1", "views", 7)
 
@@ -104,7 +104,7 @@ func TestAccumulator_CustomCounters(t *testing.T) {
 }
 
 func TestAccumulator_ReadThroughWithPersisted(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	a.IncrementAccess("n1")
 	a.IncrementAccess("n1")
 	a.IncrementAccess("n1")
@@ -116,7 +116,7 @@ func TestAccumulator_ReadThroughWithPersisted(t *testing.T) {
 }
 
 func TestAccumulator_DrainAll(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 
 	for i := 0; i < 50; i++ {
 		a.IncrementAccess("n1")
@@ -141,7 +141,7 @@ func TestAccumulator_DrainAll(t *testing.T) {
 }
 
 func TestAccumulator_ClearEntity(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	a.IncrementAccess("n1")
 	a.IncrementAccess("n2")
 
@@ -158,7 +158,7 @@ func TestAccumulator_ClearEntity(t *testing.T) {
 }
 
 func TestAccumulator_Timestamps_MaxWins(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	a.SetTimestamp("n1", "lastAccessedAt", 100)
 	a.SetTimestamp("n1", "lastAccessedAt", 50)
 	a.SetTimestamp("n1", "lastAccessedAt", 200)

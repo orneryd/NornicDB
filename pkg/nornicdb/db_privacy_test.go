@@ -486,38 +486,8 @@ func TestGetUserConsents(t *testing.T) {
 }
 
 // =============================================================================
-// Additional Edge Cases - nodeToMemory with interface{} tags
+// Additional Edge Cases
 // =============================================================================
-
-func TestNodeToMemoryInterfaceTags(t *testing.T) {
-	node := &storage.Node{
-		ID:        "test-interface-tags",
-		Labels:    []string{"Memory"},
-		CreatedAt: time.Now(),
-		Properties: map[string]any{
-			"content": "test content",
-			"tags":    []interface{}{"tag1", "tag2"},
-		},
-	}
-
-	mem := nodeToMemory(node)
-	assert.Equal(t, []string{"tag1", "tag2"}, mem.Tags)
-}
-
-func TestNodeToMemoryIntAccessCount(t *testing.T) {
-	node := &storage.Node{
-		ID:        "test-int-access",
-		Labels:    []string{"Memory"},
-		CreatedAt: time.Now(),
-		Properties: map[string]any{
-			"content":      "test content",
-			"access_count": 5, // int instead of int64
-		},
-	}
-
-	mem := nodeToMemory(node)
-	assert.Equal(t, int64(5), mem.AccessCount)
-}
 
 // =============================================================================
 // Tests for 0% coverage functions
@@ -531,11 +501,11 @@ func TestHybridSearch(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Store some test memories
+		// Create some test nodes
 		for i := 0; i < 5; i++ {
-			_, err := db.Store(ctx, &Memory{
-				Content: "Test content about machine learning and AI",
-				Title:   "ML Test",
+			_, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+				"content": "Test content about machine learning and AI",
+				"title":   "ML Test",
 			})
 			require.NoError(t, err)
 		}
@@ -617,11 +587,11 @@ func TestBuildSearchIndexes(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Store some test memories
+		// Create some test nodes
 		for i := 0; i < 3; i++ {
-			_, err := db.Store(ctx, &Memory{
-				Content: "Searchable content for indexing test",
-				Title:   "Index Test",
+			_, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+				"content": "Searchable content for indexing test",
+				"title":   "Index Test",
 			})
 			require.NoError(t, err)
 		}
@@ -732,10 +702,10 @@ func TestCypherFunctionWithParams(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Store some data
-		_, err = db.Store(ctx, &Memory{
-			Content: "Test for Cypher",
-			Title:   "Cypher Test",
+		// Create some data
+		_, err = db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content": "Test for Cypher",
+			"title":   "Cypher Test",
 		})
 		require.NoError(t, err)
 
@@ -811,13 +781,13 @@ func TestClearAllEmbeddings_UnwrapsStorageLayers(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Store a node with embedding
-		ctx := context.Background()
-		mem := &Memory{
-			Content:         "Test content",
+		// Create a node with embedding via the namespaced storage engine
+		_, err = db.storage.CreateNode(&storage.Node{
+			ID:              storage.NodeID(generateID()),
+			Labels:          []string{"Memory"},
+			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0, 0.0}},
-		}
-		_, err = db.Store(ctx, mem)
+		})
 		require.NoError(t, err)
 
 		// ClearAllEmbeddings should unwrap WAL and work
@@ -876,15 +846,14 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 		defer db.Close()
 
 		// Create a node
-		mem := &Memory{
-			Content: "Test content to delete",
-			Title:   "Delete Me",
-		}
-		stored, err := db.Store(ctx, mem)
+		stored, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content": "Test content to delete",
+			"title":   "Delete Me",
+		})
 		require.NoError(t, err)
 
 		// Verify node exists
-		retrieved, err := db.Recall(ctx, stored.ID)
+		retrieved, err := db.GetNode(ctx, stored.ID)
 		require.NoError(t, err)
 		require.NotNil(t, retrieved)
 
@@ -893,8 +862,8 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify node is gone from storage
-		retrieved, err = db.Recall(ctx, stored.ID)
-		// Recall returns ErrNotFound for missing nodes
+		_, err = db.GetNode(ctx, stored.ID)
+		// GetNode returns ErrNotFound for missing nodes
 		assert.Error(t, err)
 	})
 
@@ -960,8 +929,7 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a node
-		mem := &Memory{Content: "Test"}
-		stored, err := db.Store(ctx, mem)
+		stored, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{"content": "Test"})
 		require.NoError(t, err)
 
 		// Close the database
@@ -1063,24 +1031,20 @@ func TestDeleteUserData_RemovesFromSearchIndex(t *testing.T) {
 		userID := "user-123"
 
 		// Create nodes for a user (owner_id is used for user association)
-		mem1 := &Memory{
-			Content:    "User data 1",
-			Properties: map[string]any{"owner_id": userID},
-		}
-		mem2 := &Memory{
-			Content:    "User data 2",
-			Properties: map[string]any{"owner_id": userID},
-		}
-		mem3 := &Memory{
-			Content:    "Other user data",
-			Properties: map[string]any{"owner_id": "user-456"},
-		}
-
-		stored1, err := db.Store(ctx, mem1)
+		stored1, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content":  "User data 1",
+			"owner_id": userID,
+		})
 		require.NoError(t, err)
-		stored2, err := db.Store(ctx, mem2)
+		stored2, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content":  "User data 2",
+			"owner_id": userID,
+		})
 		require.NoError(t, err)
-		stored3, err := db.Store(ctx, mem3)
+		stored3, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content":  "Other user data",
+			"owner_id": "user-456",
+		})
 		require.NoError(t, err)
 
 		// Delete user data
@@ -1088,14 +1052,14 @@ func TestDeleteUserData_RemovesFromSearchIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify user's data is deleted
-		_, err = db.Recall(ctx, stored1.ID)
+		_, err = db.GetNode(ctx, stored1.ID)
 		assert.Error(t, err, "User's first node should be deleted")
 
-		_, err = db.Recall(ctx, stored2.ID)
+		_, err = db.GetNode(ctx, stored2.ID)
 		assert.Error(t, err, "User's second node should be deleted")
 
 		// Other user's data should remain
-		retrieved, err := db.Recall(ctx, stored3.ID)
+		retrieved, err := db.GetNode(ctx, stored3.ID)
 		require.NoError(t, err)
 		assert.NotNil(t, retrieved, "Other user's data should remain")
 	})

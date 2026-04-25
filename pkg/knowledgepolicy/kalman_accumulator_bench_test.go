@@ -30,7 +30,7 @@ func BenchmarkKalmanMutation_AutoR(b *testing.B) {
 
 func BenchmarkKalmanMutation_VsPlainAccumulation(b *testing.B) {
 	b.Run("plain", func(b *testing.B) {
-		acc := NewAccessAccumulator(true)
+		acc := NewAccessAccumulator(true, 0)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

@@ -934,6 +934,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Note: GPU status is logged in main.go during GPU manager initialization
 	// This avoids duplicate logs and provides more detailed information
 
+	// Load environment-backed global config once (used for multi-db + feature defaults).
+	globalConfig := nornicConfig.LoadFromEnv()
+
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server
 	if config.MCPEnabled {
@@ -941,13 +944,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		mcpConfig.EmbeddingEnabled = config.EmbeddingEnabled
 		mcpConfig.EmbeddingModel = config.EmbeddingModel
 		mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions
+		mcpConfig.DefaultNodeLabel = globalConfig.Memory.DefaultNodeLabel
 		mcpServer = mcp.NewServer(db, mcpConfig)
 	} else {
 		log.Println("ℹ️  MCP server disabled via configuration")
 	}
-
-	// Load environment-backed global config once (used for multi-db + feature defaults).
-	globalConfig := nornicConfig.LoadFromEnv()
 
 	// Initialize DatabaseManager for multi-database support.
 	// IMPORTANT: This must happen before Heimdall/GraphQL so they can route per database.

@@ -462,11 +462,11 @@ func TestNodeFromNeo4j(t *testing.T) {
 		node, err := nodeFromNeo4j(neo4jNode)
 		require.NoError(t, err)
 
-		assert.Equal(t, 0.75, node.DecayScore)
-		assert.Equal(t, int64(10), node.AccessCount)
-		// Internal properties should be removed from Properties map
+		// Legacy internal properties should be removed from Properties map
 		_, hasDecay := node.Properties["_decayScore"]
 		assert.False(t, hasDecay)
+		_, hasAccess := node.Properties["_accessCount"]
+		assert.False(t, hasAccess)
 	})
 
 	t.Run("empty ID", func(t *testing.T) {
@@ -620,15 +620,13 @@ func TestRoundTrip(t *testing.T) {
 			ID:         "person-alice",
 			Labels:     []string{"Person", "Employee"},
 			Properties: map[string]any{"name": "Alice", "age": 30, "active": true},
-			DecayScore: 0.95,
 		})
 		require.NoError(t, err)
 
 		_, err = engine1.CreateNode(&Node{
-			ID:          "person-bob",
-			Labels:      []string{"Person"},
-			Properties:  map[string]any{"name": "Bob", "age": 25},
-			AccessCount: 5,
+			ID:         "person-bob",
+			Labels:     []string{"Person"},
+			Properties: map[string]any{"name": "Bob", "age": 25},
 		})
 		require.NoError(t, err)
 
@@ -690,11 +688,10 @@ func TestRoundTrip(t *testing.T) {
 		assert.Equal(t, "Alice", alice.Properties["name"])
 		assert.Contains(t, alice.Labels, "Person")
 		assert.Contains(t, alice.Labels, "Employee")
-		assert.InDelta(t, 0.95, alice.DecayScore, 0.001)
 
 		bob, err := engine2.GetNode("person-bob")
 		require.NoError(t, err)
-		assert.Equal(t, int64(5), bob.AccessCount)
+		assert.Equal(t, "Bob", bob.Properties["name"])
 
 		// Verify edge data preserved
 		similar, err := engine2.GetEdge("similar-1")

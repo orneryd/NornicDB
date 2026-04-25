@@ -25,14 +25,11 @@ func TestEdgeID_String(t *testing.T) {
 func TestNode_MergeInternalProperties(t *testing.T) {
 	now := time.Now()
 	node := &Node{
-		ID:           NodeID(prefixTestID("test-1")),
-		Labels:       []string{"Person"},
-		Properties:   map[string]any{"name": "Alice", "age": 30},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		DecayScore:   0.85,
-		LastAccessed: now,
-		AccessCount:  5,
+		ID:         NodeID(prefixTestID("test-1")),
+		Labels:     []string{"Person"},
+		Properties: map[string]any{"name": "Alice", "age": 30},
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 
 	merged := node.mergeInternalProperties()
@@ -44,9 +41,6 @@ func TestNode_MergeInternalProperties(t *testing.T) {
 	// Internal properties added
 	assert.Equal(t, now.Unix(), merged["_createdAt"])
 	assert.Equal(t, now.Unix(), merged["_updatedAt"])
-	assert.Equal(t, 0.85, merged["_decayScore"])
-	assert.Equal(t, now.Unix(), merged["_lastAccessed"])
-	assert.Equal(t, int64(5), merged["_accessCount"])
 }
 
 func TestNode_ExtractInternalProperties(t *testing.T) {
@@ -67,16 +61,19 @@ func TestNode_ExtractInternalProperties(t *testing.T) {
 
 	node.ExtractInternalProperties()
 
-	// Internal properties extracted
+	// Internal properties extracted into struct fields
 	assert.Equal(t, now.Unix(), node.CreatedAt.Unix())
 	assert.Equal(t, now.Unix(), node.UpdatedAt.Unix())
-	assert.Equal(t, 0.85, node.DecayScore)
-	assert.Equal(t, now.Unix(), node.LastAccessed.Unix())
-	assert.Equal(t, int64(5), node.AccessCount)
 
-	// Internal properties removed from map
+	// Internal properties removed from map (including legacy decay fields)
 	_, hasCreatedAt := node.Properties["_createdAt"]
 	assert.False(t, hasCreatedAt)
+	_, hasDecayScore := node.Properties["_decayScore"]
+	assert.False(t, hasDecayScore)
+	_, hasLastAccessed := node.Properties["_lastAccessed"]
+	assert.False(t, hasLastAccessed)
+	_, hasAccessCount := node.Properties["_accessCount"]
+	assert.False(t, hasAccessCount)
 
 	// User properties preserved
 	assert.Equal(t, "Alice", node.Properties["name"])
@@ -87,14 +84,11 @@ func TestNode_MarshalNeo4jJSON(t *testing.T) {
 	now := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
 	// Use unprefixed ID since MarshalNeo4jJSON should export unprefixed IDs for Neo4j compatibility
 	node := &Node{
-		ID:           NodeID("person-1"),
-		Labels:       []string{"Person", "Employee"},
-		Properties:   map[string]any{"name": "Bob", "department": "Engineering"},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		DecayScore:   1.0,
-		LastAccessed: now,
-		AccessCount:  0,
+		ID:         NodeID("person-1"),
+		Labels:     []string{"Person", "Employee"},
+		Properties: map[string]any{"name": "Bob", "department": "Engineering"},
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 
 	data, err := node.MarshalNeo4jJSON()
@@ -155,7 +149,6 @@ func TestFromNeo4jExport(t *testing.T) {
 	assert.Equal(t, NodeID("person-1"), nodes[0].ID)
 	assert.Equal(t, []string{"Person"}, nodes[0].Labels)
 	assert.Equal(t, "Alice", nodes[0].Properties["name"])
-	assert.Equal(t, 1.0, nodes[0].DecayScore) // Default decay score
 
 	assert.Equal(t, EdgeID("rel-1"), edges[0].ID)
 	assert.Equal(t, NodeID("person-1"), edges[0].StartNode)
@@ -214,13 +207,12 @@ func TestExtractInternalProperties_AllFields(t *testing.T) {
 
 	assert.False(t, node.CreatedAt.IsZero())
 	assert.False(t, node.UpdatedAt.IsZero())
-	assert.InDelta(t, 0.85, node.DecayScore, 0.01)
-	assert.False(t, node.LastAccessed.IsZero())
-	assert.Equal(t, int64(42), node.AccessCount)
 
-	// Internal properties should be removed
+	// Legacy internal properties should be removed
 	_, hasCreatedAt := node.Properties["_createdAt"]
 	assert.False(t, hasCreatedAt)
+	_, hasDecay := node.Properties["_decayScore"]
+	assert.False(t, hasDecay)
 	// Regular properties should remain
 	assert.Equal(t, "Alice", node.Properties["name"])
 }

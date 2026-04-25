@@ -301,7 +301,7 @@ func TestDB_GetDecayInfo(t *testing.T) {
 	t.Run("returns config when decay enabled", func(t *testing.T) {
 		config := DefaultConfig()
 		config.Memory.DecayEnabled = true
-		config.Memory.ArchiveThreshold = 0.1
+		config.Memory.VisibilityThreshold = 0.1
 
 		db, err := Open("", config)
 		require.NoError(t, err)
@@ -310,11 +310,8 @@ func TestDB_GetDecayInfo(t *testing.T) {
 		info := db.GetDecayInfo()
 		require.NotNil(t, info)
 		assert.True(t, info.Enabled)
-		assert.Equal(t, 0.1, info.ArchiveThreshold)
-		assert.Greater(t, info.RecalcInterval, time.Duration(0))
-		assert.Greater(t, info.RecencyWeight, 0.0)
-		assert.Greater(t, info.FrequencyWeight, 0.0)
-		assert.Greater(t, info.ImportanceWeight, 0.0)
+		assert.Equal(t, 0.1, info.VisibilityThreshold)
+		assert.Greater(t, info.FlushInterval, time.Duration(0))
 	})
 }
 

@@ -333,7 +333,7 @@ func (r *mutationResolver) mutationRunDecay(ctx context.Context) (*models.DecayR
 	return &models.DecayResult{
 		NodesProcessed:    0,
 		NodesDecayed:      0,
-		AverageDecayScore: float64(info.ArchiveThreshold),
+		AverageDecayScore: float64(info.VisibilityThreshold),
 	}, nil
 }
 

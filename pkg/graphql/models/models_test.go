@@ -142,28 +142,6 @@ func TestEnumsValidationUnmarshalAndMarshal(t *testing.T) {
 		marshal   func() string
 	}{
 		{
-			name:         "MemoryTier",
-			validValue:   "EPISODIC",
-			invalidValue: "NOPE",
-			newEnum: func() interface {
-				IsValid() bool
-				String() string
-				MarshalGQL(w interface{ Write([]byte) (int, error) })
-			} {
-				e := MemoryTier("EPISODIC")
-				return &enumAdapter{isValid: e.IsValid, str: e.String, marshal: func(w interface{ Write([]byte) (int, error) }) { e.MarshalGQL(w) }}
-			},
-			unmarshal: func(v interface{}) error {
-				var e MemoryTier
-				return (&e).UnmarshalGQL(v)
-			},
-			marshal: func() string {
-				var b bytes.Buffer
-				MemoryTierSemantic.MarshalGQL(&b)
-				return b.String()
-			},
-		},
-		{
 			name:         "RelationshipDirection",
 			validValue:   "BOTH",
 			invalidValue: "SIDEWAYS",

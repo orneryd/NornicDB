@@ -6,7 +6,7 @@ import (
 )
 
 func BenchmarkAccumulator_IncrementAccess_SingleEntity(b *testing.B) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -15,7 +15,7 @@ func BenchmarkAccumulator_IncrementAccess_SingleEntity(b *testing.B) {
 }
 
 func BenchmarkAccumulator_IncrementAccess_Parallel(b *testing.B) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -26,7 +26,7 @@ func BenchmarkAccumulator_IncrementAccess_Parallel(b *testing.B) {
 }
 
 func BenchmarkAccumulator_IncrementAccess_Distributed(b *testing.B) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -38,7 +38,7 @@ func BenchmarkAccumulator_IncrementAccess_Distributed(b *testing.B) {
 }
 
 func BenchmarkAccumulator_ReadThrough(b *testing.B) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	for i := 0; i < 1000; i++ {
 		a.IncrementAccess("n1")
 	}
@@ -50,7 +50,7 @@ func BenchmarkAccumulator_ReadThrough(b *testing.B) {
 }
 
 func BenchmarkAccumulator_Disabled(b *testing.B) {
-	a := NewAccessAccumulator(false)
+	a := NewAccessAccumulator(false, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

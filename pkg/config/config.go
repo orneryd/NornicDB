@@ -424,10 +424,17 @@ type EmbeddingWorkerConfig struct {
 type MemoryConfig struct {
 	// DecayEnabled controls memory decay
 	DecayEnabled bool
-	// DecayInterval for recalculation
+	// DecayInterval controls how often access metadata is flushed from
+	// in-memory accumulators to Badger. Shorter intervals mean access
+	// counts reach the scorer faster; longer intervals reduce write I/O.
 	DecayInterval time.Duration
-	// ArchiveThreshold below which memories are archived
-	ArchiveThreshold float64
+	// AccessFlushBufferSize is the maximum number of distinct entities buffered
+	// in the access accumulator before an automatic flush is triggered. 0 means
+	// unlimited (flush only on the DecayInterval timer).
+	AccessFlushBufferSize int
+	// VisibilityThreshold is the score below which nodes are suppressed from
+	// visibility in query results.
+	VisibilityThreshold float64
 	// EmbeddingEnabled controls whether embedding generation is active
 	// Env: NORNICDB_EMBEDDING_ENABLED
 	EmbeddingEnabled bool
@@ -460,6 +467,9 @@ type MemoryConfig struct {
 	// EmbeddingWarmupInterval for periodic model warmup
 	// Env: NORNICDB_EMBEDDING_WARMUP_INTERVAL
 	EmbeddingWarmupInterval time.Duration
+	// DefaultNodeLabel is the label applied to nodes when no label is specified.
+	// Env: NORNICDB_DEFAULT_NODE_LABEL (default: "Memory")
+	DefaultNodeLabel string
 	// AutoLinksEnabled for automatic relationship detection
 	AutoLinksEnabled bool
 	// AutoLinksSimilarityThreshold for similarity-based links
@@ -1242,7 +1252,8 @@ type YAMLConfig struct {
 	Memory struct {
 		DecayEnabled                 bool    `yaml:"decay_enabled"`
 		DecayInterval                string  `yaml:"decay_interval"`
-		ArchiveThreshold             float64 `yaml:"archive_threshold"`
+		AccessFlushBufferSize        int     `yaml:"access_flush_buffer_size"`
+		VisibilityThreshold          float64 `yaml:"visibility_threshold"`
 		AutoLinksEnabled             bool    `yaml:"auto_links_enabled"`
 		AutoLinksSimilarityThreshold float64 `yaml:"auto_links_similarity_threshold"`
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
@@ -1513,8 +1524,9 @@ func LoadDefaults() *Config {
 
 	// Memory defaults
 	config.Memory.DecayEnabled = false
-	config.Memory.DecayInterval = time.Hour
-	config.Memory.ArchiveThreshold = 0.05
+	config.Memory.DecayInterval = 2 * time.Second
+	config.Memory.AccessFlushBufferSize = 10000
+	config.Memory.VisibilityThreshold = 0.05
 	config.Memory.EmbeddingEnabled = false    // Disabled by default - opt-in feature
 	config.Memory.EmbeddingProvider = "local" // Use local GGUF models by default
 	config.Memory.EmbeddingModel = "bge-m3"
@@ -1524,6 +1536,7 @@ func LoadDefaults() *Config {
 	config.Memory.ModelsDir = "./models"
 	config.Memory.EmbeddingGPULayers = -1     // auto
 	config.Memory.EmbeddingWarmupInterval = 0 // disabled
+	config.Memory.DefaultNodeLabel = "Memory"
 	config.Memory.AutoLinksEnabled = true
 	config.Memory.AutoLinksSimilarityThreshold = 0.82
 	config.Memory.KmeansMinEmbeddings = 100
@@ -1989,8 +2002,11 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvDuration("NORNICDB_MEMORY_DECAY_INTERVAL", 0); v > 0 {
 		config.Memory.DecayInterval = v
 	}
-	if v := getEnvFloat("NORNICDB_MEMORY_ARCHIVE_THRESHOLD", 0); v > 0 {
-		config.Memory.ArchiveThreshold = v
+	if v := getEnvInt("NORNICDB_ACCESS_FLUSH_BUFFER_SIZE", 0); v > 0 {
+		config.Memory.AccessFlushBufferSize = v
+	}
+	if v := getEnvFloat("NORNICDB_VISIBILITY_THRESHOLD", 0); v > 0 {
+		config.Memory.VisibilityThreshold = v
 	}
 	// Embedding enabled - check for explicit true/false
 	if v := getEnv("NORNICDB_EMBEDDING_ENABLED", ""); v != "" {
@@ -2034,6 +2050,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvInt("NORNICDB_KMEANS_NUM_CLUSTERS", 0); v >= 0 {
 		config.Memory.KmeansNumClusters = v
+	}
+	if v := getEnv("NORNICDB_DEFAULT_NODE_LABEL", ""); v != "" {
+		config.Memory.DefaultNodeLabel = v
 	}
 	if getEnv("NORNICDB_AUTO_LINKS_ENABLED", "") == "false" {
 		config.Memory.AutoLinksEnabled = false
@@ -2731,8 +2750,11 @@ func LoadFromFile(configPath string) (*Config, error) {
 			config.Memory.DecayInterval = d
 		}
 	}
-	if yamlCfg.Memory.ArchiveThreshold > 0 {
-		config.Memory.ArchiveThreshold = yamlCfg.Memory.ArchiveThreshold
+	if yamlCfg.Memory.VisibilityThreshold > 0 {
+		config.Memory.VisibilityThreshold = yamlCfg.Memory.VisibilityThreshold
+	}
+	if yamlCfg.Memory.AccessFlushBufferSize > 0 {
+		config.Memory.AccessFlushBufferSize = yamlCfg.Memory.AccessFlushBufferSize
 	}
 	if yamlCfg.Memory.AutoLinksEnabled {
 		config.Memory.AutoLinksEnabled = true

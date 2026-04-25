@@ -629,6 +629,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
+	if err := engine.RunOnStartMigrations(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("on-start migration failed: %w", err)
+	}
+
 	return engine, nil
 }
 
@@ -697,6 +702,34 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, commitTime time.Time
 		CommitTimestamp: commitTime.UTC(),
 		CommitSequence:  seq,
 	}, nil
+}
+
+func (b *BadgerEngine) readSchemaVersion() int {
+	var version int
+	_ = b.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(mvccSchemaVersionKey())
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			if len(val) == 8 {
+				version = int(binary.BigEndian.Uint64(val))
+			}
+			return nil
+		})
+	})
+	return version
+}
+
+func (b *BadgerEngine) writeSchemaVersion(version int) error {
+	return b.db.Update(func(txn *badger.Txn) error {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(version))
+		return txn.Set(mvccSchemaVersionKey(), buf)
+	})
 }
 
 // ============================================================================
