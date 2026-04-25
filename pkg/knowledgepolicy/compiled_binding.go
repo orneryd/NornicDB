@@ -24,6 +24,7 @@ type CompiledBinding struct {
 	ThresholdAgeNanos     int64
 	DecayFloor            float64
 	NoDecay               bool
+	HasNoDecayProperty    bool
 	CompiledPropertyRules map[string]*CompiledPropertyOverride
 }
 

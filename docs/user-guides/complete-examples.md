@@ -88,9 +88,9 @@ CREATE (chat:Memory {
 // 1. Get all strong memories about preferences
 MATCH (m:Memory)
 WHERE "preference" IN m.tags
-  AND m.decayScore > 0.5
-RETURN m.content, m.decayScore, m.accessCount
-ORDER BY m.decayScore DESC
+  AND decayScore(m) > 0.5
+RETURN m.content, decayScore(m), m.accessCount
+ORDER BY decayScore(m) DESC
 
 // 2. Find architecture decisions
 MATCH (m:Memory)
@@ -101,7 +101,7 @@ ORDER BY m.importance DESC
 
 // 3. Get current context (episodic memories)
 MATCH (m:Memory {tier: "EPISODIC"})
-WHERE m.decayScore > 0.3
+WHERE decayScore(m) > 0.3
 RETURN m.content, m.created
 ORDER BY m.created DESC
 LIMIT 5
@@ -132,12 +132,12 @@ RETURN m.content, m.accessCount
 
 // Find forgotten episodic memories
 MATCH (m:Memory {tier: "EPISODIC"})
-WHERE m.decayScore < 0.05
-RETURN m.content, m.created, m.decayScore
+WHERE decayScore(m) < 0.05
+RETURN m.content, m.created, decayScore(m)
 
 // Archive them
 MATCH (m:Memory {tier: "EPISODIC"})
-WHERE m.decayScore < 0.05
+WHERE decayScore(m) < 0.05
 SET m:Archived, m.archivedAt = timestamp()
 REMOVE m:Memory
 RETURN count(m) AS archivedCount
@@ -148,14 +148,14 @@ RETURN count(m) AS archivedCount
 // Assume $queryEmbedding is the embedding of that question
 MATCH (m:Memory)
 WHERE m.embedding IS NOT NULL
-  AND m.decayScore > 0.4
+  AND decayScore(m) > 0.4
 WITH m, vector.similarity.cosine(m.embedding, $queryEmbedding) AS similarity
 WHERE similarity > 0.75
 RETURN m.content,
        m.tier,
        similarity,
-       m.decayScore,
-       similarity * m.decayScore AS combinedScore
+       decayScore(m),
+       similarity * decayScore(m) AS combinedScore
 ORDER BY combinedScore DESC
 LIMIT 5
 
@@ -164,9 +164,9 @@ LIMIT 5
 MATCH (m:Memory)
 RETURN m.tier,
        count(m) AS total,
-       round(avg(m.decayScore) * 100) / 100 AS avgScore,
+       round(avg(decayScore(m)) * 100) / 100 AS avgScore,
        round(avg(m.accessCount) * 100) / 100 AS avgAccess,
-       sum(CASE WHEN m.decayScore < 0.05 THEN 1 ELSE 0 END) AS needsArchive
+       sum(CASE WHEN decayScore(m) < 0.05 THEN 1 ELSE 0 END) AS needsArchive
 ORDER BY m.tier
 ```
 
@@ -315,22 +315,22 @@ CREATE (m)-[:ABOUT]->(t)
 // === Query: What do I know about ML? ===
 MATCH (topic:Topic {name: "Machine Learning"})-[:CONTAINS*0..2]->(subtopic)
 MATCH (m:Memory)-[:ABOUT]->(subtopic)
-WHERE m.decayScore > 0.5
+WHERE decayScore(m) > 0.5
 RETURN subtopic.name AS topic,
        collect(m.content) AS concepts,
-       avg(m.decayScore) AS avgRetention
+       avg(decayScore(m)) AS avgRetention
 ORDER BY avgRetention DESC
 
 // === Query: Spaced repetition - what should I review? ===
 MATCH (m:Memory)
 WHERE m.tier = "SEMANTIC"
-  AND m.decayScore BETWEEN 0.3 AND 0.6  // Fading but not forgotten
+  AND decayScore(m) BETWEEN 0.3 AND 0.6  // Fading but not forgotten
   AND "concept" IN m.tags
 RETURN m.content,
        m.source,
-       m.decayScore,
+       decayScore(m),
        (timestamp() - m.lastAccessed) / (24 * 60 * 60 * 1000) AS daysSinceReview
-ORDER BY m.decayScore ASC
+ORDER BY decayScore(m) ASC
 LIMIT 5
 
 // === Reinforce learning ===
@@ -339,7 +339,7 @@ WHERE m.content CONTAINS "Backpropagation"
 SET m.lastAccessed = timestamp(),
     m.accessCount = m.accessCount + 1,
     m.importance = m.importance + 0.05  // Boost importance when actively studying
-RETURN m.content, m.accessCount, m.decayScore
+RETURN m.content, m.accessCount, decayScore(m)
 ```
 
 ---
@@ -492,8 +492,8 @@ WHERE m.nextReview <= timestamp()
 RETURN m.content,
        m.difficulty,
        (timestamp() - m.lastAccessed) / (24 * 60 * 60 * 1000) AS daysSince,
-       m.decayScore
-ORDER BY m.decayScore ASC  // Review weakest memories first
+       decayScore(m)
+ORDER BY decayScore(m) ASC  // Review weakest memories first
 LIMIT 10
 
 // === Mark as reviewed (spaced repetition) ===
@@ -520,14 +520,14 @@ WHERE s.date > timestamp() - (30 * 24 * 60 * 60 * 1000)  // Last 30 days
 RETURN s.topic,
        s.date,
        count(m) AS memorizesLearned,
-       avg(m.decayScore) AS avgRetention,
-       sum(CASE WHEN m.decayScore > 0.7 THEN 1 ELSE 0 END) AS strongMemories
+       avg(decayScore(m)) AS avgRetention,
+       sum(CASE WHEN decayScore(m) > 0.7 THEN 1 ELSE 0 END) AS strongMemories
 ORDER BY s.date DESC
 
 // === Knowledge map ===
 MATCH (m:Memory)
 WHERE m.tier IN ["SEMANTIC", "PROCEDURAL"]
-WITH m.tags AS tags, count(m) AS count, avg(m.decayScore) AS avgScore
+WITH m.tags AS tags, count(m) AS count, avg(decayScore(m)) AS avgScore
 UNWIND tags AS tag
 RETURN tag,
        sum(count) AS totalConcepts,
@@ -540,16 +540,13 @@ LIMIT 20
 
 ## Common Patterns Library
 
-### Pattern: Batch Update with Math
+### Pattern: Query Decay Scores
 ```cypher
-// Recalculate all decay scores
+// Scores are computed automatically by decay profiles — query with decayScore()
 MATCH (m:Memory)
-WITH m,
-     exp(-0.00412 * ((timestamp() - m.lastAccessed) / 3600000.0)) AS recency,
-     log(1 + m.accessCount) / log(101) AS frequency,
-     coalesce(m.importance, 0.5) AS importance
-SET m.decayScore = 0.4 * recency + 0.3 * frequency + 0.3 * importance
-RETURN count(m) AS updated
+WHERE decayScore(m) > 0.3
+RETURN m.content, decayScore(m) AS score
+ORDER BY score DESC
 ```
 
 ### Pattern: Find Clusters

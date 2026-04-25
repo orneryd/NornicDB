@@ -376,8 +376,10 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 	_ = j
 
 	bundle := knowledgepolicy.DecayProfileBundle{
-		Name:    name,
-		Enabled: true,
+		Name:      name,
+		Enabled:   true,
+		ScoreFrom: knowledgepolicy.ScoreFromCreated,
+		Scope:     knowledgepolicy.ScopeNode,
 	}
 
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
@@ -597,6 +599,42 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				i = l
 				continue
 			}
+			if k := kpMatchKeywordAt(body, j, "VISIBILITY"); k > 0 {
+				k = kpSkipSpaces(body, k)
+				if l := kpMatchKeywordAt(body, k, "THRESHOLD"); l > 0 {
+					k = kpSkipSpaces(body, l)
+				}
+				f, l, ok := kpScanNumber(body, k)
+				if !ok {
+					return fmt.Errorf("expected number after DECAY VISIBILITY THRESHOLD")
+				}
+				binding.VisibilityThreshold = &f
+				i = l
+				continue
+			}
+			if k := kpMatchKeywordAt(body, j, "HALF"); k > 0 {
+				k = kpSkipSpaces(body, k)
+				if l := kpMatchKeywordAt(body, k, "LIFE"); l > 0 {
+					l = kpSkipSpaces(body, l)
+					n, m, ok := kpScanInt(body, l)
+					if !ok {
+						return fmt.Errorf("expected seconds after DECAY HALF LIFE")
+					}
+					binding.HalfLifeSeconds = n
+					i = m
+					continue
+				}
+			}
+			if k := kpMatchKeywordAt(body, j, "FLOOR"); k > 0 {
+				k = kpSkipSpaces(body, k)
+				f, l, ok := kpScanNumber(body, k)
+				if !ok {
+					return fmt.Errorf("expected number after DECAY FLOOR")
+				}
+				binding.ScoreFloor = f
+				i = l
+				continue
+			}
 		}
 
 		if j := kpMatchKeywordAt(body, i, "NO"); j > 0 {
@@ -608,26 +646,33 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 			}
 		}
 
-		if j := kpMatchKeywordAt(body, i, "VISIBILITY"); j > 0 {
-			j = kpSkipSpaces(body, j)
-			f, l, ok := kpScanNumber(body, j)
-			if !ok {
-				return fmt.Errorf("expected number after VISIBILITY")
+		// Plan syntax: <var>.<prop> directives (e.g., n.tenantId NO DECAY)
+		if kpIsIdentStart(body[i]) {
+			ident, j := kpScanIdent(body, i)
+			if ident != "" && j < len(body) && body[j] == '.' {
+				propName, k := kpScanIdent(body, j+1)
+				if propName != "" {
+					rule, l, err := parsePropertyRuleDirectives(body, k)
+					if err != nil {
+						return err
+					}
+					rule.PropertyPath = propName
+					merged := false
+					for idx := range binding.PropertyRules {
+						if binding.PropertyRules[idx].PropertyPath == propName {
+							mergePropertyRule(&binding.PropertyRules[idx], &rule)
+							merged = true
+							break
+						}
+					}
+					if !merged {
+						rule.Order = len(binding.PropertyRules)
+						binding.PropertyRules = append(binding.PropertyRules, rule)
+					}
+					i = l
+					continue
+				}
 			}
-			binding.VisibilityThreshold = &f
-			i = l
-			continue
-		}
-
-		if j := kpMatchKeywordAt(body, i, "PROPERTY"); j > 0 {
-			rule, l, err := parsePropertyRule(body, j)
-			if err != nil {
-				return err
-			}
-			rule.Order = len(binding.PropertyRules)
-			binding.PropertyRules = append(binding.PropertyRules, rule)
-			i = l
-			continue
 		}
 
 		i++
@@ -636,21 +681,24 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 	return nil
 }
 
-func parsePropertyRule(s string, i int) (knowledgepolicy.DecayProfilePropertyRule, int, error) {
+func mergePropertyRule(existing, incoming *knowledgepolicy.DecayProfilePropertyRule) {
+	if incoming.NoDecay {
+		existing.NoDecay = true
+	}
+	if incoming.ProfileRef != "" {
+		existing.ProfileRef = incoming.ProfileRef
+	}
+	if incoming.HalfLifeSeconds != 0 {
+		existing.HalfLifeSeconds = incoming.HalfLifeSeconds
+	}
+	if incoming.ScoreFloor != 0 {
+		existing.ScoreFloor = incoming.ScoreFloor
+	}
+}
+
+func parsePropertyRuleDirectives(s string, i int) (knowledgepolicy.DecayProfilePropertyRule, int, error) {
+	rule := knowledgepolicy.DecayProfilePropertyRule{}
 	i = kpSkipSpaces(s, i)
-	propPath, j := kpScanIdent(s, i)
-	if propPath == "" {
-		propPath, j = kpScanQuotedString(s, i)
-		if propPath == "" {
-			return knowledgepolicy.DecayProfilePropertyRule{}, i, fmt.Errorf("expected property path after PROPERTY")
-		}
-	}
-
-	rule := knowledgepolicy.DecayProfilePropertyRule{
-		PropertyPath: propPath,
-	}
-
-	i = kpSkipSpaces(s, j)
 
 	for i < len(s) {
 		i = kpSkipSpaces(s, i)
@@ -667,33 +715,37 @@ func parsePropertyRule(s string, i int) (knowledgepolicy.DecayProfilePropertyRul
 			}
 		}
 
-		if k := kpMatchKeywordAt(s, i, "PROFILE"); k > 0 {
+		if k := kpMatchKeywordAt(s, i, "DECAY"); k > 0 {
 			k = kpSkipSpaces(s, k)
-			ref, l := kpScanName(s, k)
-			if ref != "" {
-				rule.ProfileRef = ref
-				i = l
-				continue
+			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+				l = kpSkipSpaces(s, l)
+				ref, m := kpScanName(s, l)
+				if ref != "" {
+					rule.ProfileRef = ref
+					i = m
+					continue
+				}
 			}
-		}
-
-		if k := kpMatchKeywordAt(s, i, "HALFLIFE"); k > 0 {
-			k = kpSkipSpaces(s, k)
-			n, l, ok := kpScanInt(s, k)
-			if ok {
-				rule.HalfLifeSeconds = n
-				i = l
-				continue
+			if l := kpMatchKeywordAt(s, k, "HALF"); l > 0 {
+				l = kpSkipSpaces(s, l)
+				if m := kpMatchKeywordAt(s, l, "LIFE"); m > 0 {
+					m = kpSkipSpaces(s, m)
+					n, o, ok := kpScanInt(s, m)
+					if ok {
+						rule.HalfLifeSeconds = n
+						i = o
+						continue
+					}
+				}
 			}
-		}
-
-		if k := kpMatchKeywordAt(s, i, "FLOOR"); k > 0 {
-			k = kpSkipSpaces(s, k)
-			f, l, ok := kpScanNumber(s, k)
-			if ok {
-				rule.ScoreFloor = f
-				i = l
-				continue
+			if l := kpMatchKeywordAt(s, k, "FLOOR"); l > 0 {
+				l = kpSkipSpaces(s, l)
+				f, m, ok := kpScanNumber(s, l)
+				if ok {
+					rule.ScoreFloor = f
+					i = m
+					continue
+				}
 			}
 		}
 
@@ -776,6 +828,7 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 	profile := knowledgepolicy.PromotionProfileDef{
 		Name:    name,
 		Enabled: true,
+		Scope:   knowledgepolicy.ScopeNode,
 	}
 
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
