@@ -22,7 +22,7 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
 	}
 	if matchFuncStartAndSuffix(expr, "decay") {
 		inner := extractFuncArgs(expr, "decay")
-		if inner == "" || ContainsKeyword(inner, "score") {
+		if inner == "" {
 			return nil, false
 		}
 		return e.evalDecay(expr, nodes, rels), true

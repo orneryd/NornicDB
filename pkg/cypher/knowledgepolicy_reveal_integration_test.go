@@ -38,15 +38,19 @@ func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	}
 }
 
-func TestRevealDispatcher_DecayWithScoreArgNotHandled(t *testing.T) {
+func TestRevealDispatcher_DecayWithScoreNamedIdentifierHandled(t *testing.T) {
 	_, exec := setupDecayEngine(t)
 
-	nodes := map[string]*storage.Node{}
+	node := makeNode("nornic:score-node", []string{"MemoryEpisode"}, 2*time.Hour)
+	nodes := map[string]*storage.Node{"scoreNode": node}
 	rels := map[string]*storage.Edge{}
 
-	v, handled := exec.evaluateKnowledgePolicyFunction("decay(score)", "decay(score)", nodes, rels)
-	if handled {
-		t.Errorf("decay(score) should not be handled by knowledgepolicy dispatcher, got %v", v)
+	v, handled := exec.evaluateKnowledgePolicyFunction("decay(scoreNode)", "decay(scorenode)", nodes, rels)
+	if !handled {
+		t.Fatal("decay(scoreNode) should be handled by knowledgepolicy dispatcher")
+	}
+	if _, ok := v.(map[string]interface{}); !ok {
+		t.Errorf("expected map from decay(scoreNode), got %T", v)
 	}
 }
 
