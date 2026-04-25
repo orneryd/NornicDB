@@ -5,6 +5,7 @@ type ScoringResolution struct {
 	TargetID                    string
 	TargetScope                 ScopeType
 	ResolvedDecayProfileID      string
+	ResolvedDecayFunction       DecayFunction
 	ResolvedScoreFrom           ScoreFromMode
 	ResolutionSourceChain       []string
 	AppliedDecayProfileNames    []string
@@ -12,6 +13,7 @@ type ScoringResolution struct {
 	AppliedPromotionProfileName string
 	EffectiveRate               float64
 	EffectiveThreshold          float64
+	EffectiveFloor              float64
 	EffectiveMultiplier         float64
 	BaseScore                   float64
 	FinalScore                  float64

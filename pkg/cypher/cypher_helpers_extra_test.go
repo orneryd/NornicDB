@@ -138,6 +138,14 @@ func TestCypherHelpers_NodeMapAndProperties(t *testing.T) {
 	assert.Len(t, embVal, 4)
 }
 
+func TestCypherHelpers_NodeVersionAtNanosFallsBackToCreatedAt(t *testing.T) {
+	createdAt := int64(123456789)
+	node := &storage.Node{}
+
+	got := nodeVersionAtNanos(node, createdAt)
+	assert.Equal(t, createdAt, got)
+}
+
 func TestCypherHelpers_ProcedureRegistryAndPatternNames(t *testing.T) {
 	reg := NewProcedureRegistry()
 	err := reg.RegisterBuiltIn(ProcedureSpec{Name: "db.labels", MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {

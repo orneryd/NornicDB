@@ -58,12 +58,11 @@ func (s *Server) handleKPProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bundles, bindings := sm.ShowDecayProfiles()
-	decayInfo := s.db.GetDecayInfo()
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"bundles":       bundles,
 		"bindings":      bindings,
-		"decay_enabled": decayInfo != nil && decayInfo.Enabled,
+		"decay_enabled": s.kpDecayEnabled(r),
 	})
 }
 
@@ -106,8 +105,7 @@ func (s *Server) handleKPResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bt := sm.GetBindingTable()
-	decayInfo := s.db.GetDecayInfo()
-	decayEnabled := decayInfo != nil && decayInfo.Enabled
+	decayEnabled := s.kpDecayEnabled(r)
 
 	resolver := knowledgepolicy.NewResolver(bt, nil)
 	scorer := knowledgepolicy.NewScorer(resolver, decayEnabled)
@@ -151,6 +149,24 @@ func (s *Server) handleKPResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, resolution)
+}
+
+func (s *Server) kpDecayEnabled(r *http.Request) bool {
+	if s.dbManager == nil {
+		decayInfo := s.db.GetDecayInfo()
+		return decayInfo != nil && decayInfo.Enabled
+	}
+
+	eng, err := s.dbManager.GetStorage(s.kpDatabaseName(r))
+	if err != nil {
+		return false
+	}
+
+	be := unwrapToBadgerEngine(eng)
+	if be == nil {
+		return false
+	}
+	return be.IsDecayEnabled()
 }
 
 func (s *Server) handleKPDeindexStatus(w http.ResponseWriter, r *http.Request) {

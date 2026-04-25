@@ -355,10 +355,8 @@ func extractFirstUseGraph(cypher string) string {
 func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	e.decayMismatchLogged = false
 
-	if hasRevealCall(cypher) {
-		cleanup := setRevealOnEngine(e.storage)
-		defer cleanup()
-	}
+	ctx, cleanup := setRevealOnEngine(ctx, e.storage, hasRevealCall(cypher))
+	defer cleanup()
 
 	// Route query to appropriate handler
 	// upperQuery is passed in to avoid redundant conversion

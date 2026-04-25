@@ -2002,10 +2002,10 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvDuration("NORNICDB_MEMORY_DECAY_INTERVAL", 0); v > 0 {
 		config.Memory.DecayInterval = v
 	}
-	if v := getEnvInt("NORNICDB_ACCESS_FLUSH_BUFFER_SIZE", 0); v > 0 {
+	if v := getEnvInt("NORNICDB_MEMORY_ACCESS_FLUSH_BUFFER_SIZE", 0); v > 0 {
 		config.Memory.AccessFlushBufferSize = v
 	}
-	if v := getEnvFloat("NORNICDB_VISIBILITY_THRESHOLD", 0); v > 0 {
+	if v := getEnvFloat("NORNICDB_MEMORY_VISIBILITY_THRESHOLD", 0); v > 0 {
 		config.Memory.VisibilityThreshold = v
 	}
 	// Embedding enabled - check for explicit true/false

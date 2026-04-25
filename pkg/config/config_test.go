@@ -395,7 +395,8 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	t.Setenv("NORNICDB_ENCRYPTION_ENABLED", "true")
 	t.Setenv("NORNICDB_ENCRYPTION_PASSWORD", "env-password")
 	t.Setenv("NORNICDB_MEMORY_DECAY_ENABLED", "false")
-	t.Setenv("NORNICDB_VISIBILITY_THRESHOLD", "0.3")
+	t.Setenv("NORNICDB_MEMORY_ACCESS_FLUSH_BUFFER_SIZE", "4321")
+	t.Setenv("NORNICDB_MEMORY_VISIBILITY_THRESHOLD", "0.3")
 	t.Setenv("NORNICDB_EMBEDDING_ENABLED", "1")
 	t.Setenv("NORNICDB_EMBEDDING_MODEL", "env-embed-model")
 	t.Setenv("NORNICDB_EMBEDDING_API_URL", "http://embed-env")
@@ -538,6 +539,9 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	if cfg.Memory.SearchMinSimilarity != 0.75 || cfg.Memory.ModelsDir != "/models" || cfg.Memory.EmbeddingGPULayers != 4 {
 		t.Fatalf("unexpected search/model config: %+v", cfg.Memory)
 	}
+	if cfg.Memory.AccessFlushBufferSize != 4321 {
+		t.Fatalf("unexpected access flush buffer size: %+v", cfg.Memory)
+	}
 	if cfg.Memory.EmbeddingWarmupInterval != 11*time.Minute || cfg.Memory.KmeansMinEmbeddings != 222 || cfg.Memory.KmeansClusterInterval != 8*time.Minute || cfg.Memory.KmeansNumClusters != 6 {
 		t.Fatalf("unexpected kmeans config: %+v", cfg.Memory)
 	}
@@ -626,6 +630,16 @@ func TestLoadFromEnv_EmbeddingWorkerNumWorkers(t *testing.T) {
 	if cfg.EmbeddingWorker.NumWorkers != 2 {
 		t.Errorf("expected NumWorkers 2 from env, got %d", cfg.EmbeddingWorker.NumWorkers)
 	}
+}
+
+func TestLoadFromEnv_MemoryNamespacedEnvVars(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("NORNICDB_MEMORY_ACCESS_FLUSH_BUFFER_SIZE", "222")
+	t.Setenv("NORNICDB_MEMORY_VISIBILITY_THRESHOLD", "0.33")
+
+	cfg := LoadFromEnv()
+	require.Equal(t, 222, cfg.Memory.AccessFlushBufferSize)
+	require.Equal(t, 0.33, cfg.Memory.VisibilityThreshold)
 }
 
 func TestLoadDefaults_EmbeddingWorkerChunkSize(t *testing.T) {
@@ -1766,8 +1780,9 @@ func clearEnvVars(t *testing.T) {
 		"NORNICDB_AUTH_TOKEN_EXPIRY",
 		"NORNICDB_AUTH_JWT_SECRET",
 		"NORNICDB_MEMORY_DECAY_ENABLED",
+		"NORNICDB_MEMORY_ACCESS_FLUSH_BUFFER_SIZE",
+		"NORNICDB_MEMORY_VISIBILITY_THRESHOLD",
 		"NORNICDB_MEMORY_DECAY_INTERVAL",
-		"NORNICDB_MEMORY_ARCHIVE_THRESHOLD",
 		"NORNICDB_EMBEDDING_PROVIDER",
 		"NORNICDB_EMBEDDING_MODEL",
 		"NORNICDB_EMBEDDING_API_URL",
