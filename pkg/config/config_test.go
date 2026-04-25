@@ -926,7 +926,7 @@ embedding:
   min_similarity: 0.42
 memory:
   decay_enabled: true
-  decay_interval: "90m"
+  decay_interval: 5400
   visibility_threshold: 0.2
   auto_links_enabled: true
   auto_links_similarity_threshold: 0.91

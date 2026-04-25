@@ -428,7 +428,7 @@ embedding_worker:
 
 memory:
   decay_enabled: true
-  decay_interval: 1h
+  decay_interval: 3600
   auto_links_enabled: true
   auto_links_similarity_threshold: 0.82
 ```

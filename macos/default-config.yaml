@@ -147,8 +147,8 @@ memory:
   # Enable natural memory decay
   decay_enabled: true
   
-  # Access metadata flush interval
-  decay_interval: "2s"
+  # Access metadata flush interval (seconds)
+  decay_interval: 2
   
   # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
   visibility_threshold: 0.05
