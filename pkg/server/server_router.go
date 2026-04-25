@@ -27,6 +27,7 @@ func (s *Server) buildRouter() http.Handler {
 	s.registerNornicDBRoutes(mux)
 	s.registerAdminRoutes(mux)
 	s.registerRetentionRoutes(mux)
+	s.registerKnowledgePolicyRoutes(mux)
 	s.registerGDPRRoutes(mux)
 	s.registerMCPRoutes(mux)
 	s.registerHeimdallRoutes(mux)
@@ -71,6 +72,9 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) *uiHandler {
 		uiHandler.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/security", func(w http.ResponseWriter, r *http.Request) {
+		uiHandler.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/security/knowledge-policies", func(w http.ResponseWriter, r *http.Request) {
 		uiHandler.ServeHTTP(w, r)
 	})
 

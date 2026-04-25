@@ -122,13 +122,13 @@ nornicdb> exit
 **Flags:**
 - `--data-dir`: Database directory (required)
 
-### Memory Decay Commands
+### Knowledge-Layer Scoring Commands
 
-NornicDB implements a three-tier memory decay system (Episodic, Semantic, Procedural) that simulates how human memory works. These commands help manage decay scores and archived memories.
+NornicDB uses a profile-driven knowledge-layer scoring system. Decay profiles and promotion policies are defined via Cypher DDL, and nodes/edges are scored based on their bound profile. These commands help manage scoring and visibility.
 
 #### `nornicdb decay recalculate`
 
-Recalculate decay scores for all nodes in the database.
+Recalculate decay scores for all nodes in the database using their bound decay profiles.
 
 ```bash
 nornicdb decay recalculate --data-dir ./data
@@ -136,8 +136,8 @@ nornicdb decay recalculate --data-dir ./data
 
 **What it does:**
 - Loads all nodes from storage
-- Extracts memory tier from node properties (EPISODIC, SEMANTIC, PROCEDURAL)
-- Recalculates decay scores using the decay algorithm
+- Resolves each node's decay profile via its labels
+- Recalculates scores using the profile's decay function and half-life
 - Updates nodes with new scores in memory-efficient chunks
 
 **Example:**
@@ -150,50 +150,43 @@ $ nornicdb decay recalculate --data-dir ./data
 ✅ Recalculated decay scores: 3,245 nodes updated
 ```
 
-**When to use:**
-- After bulk data imports
-- When decay configuration changes
-- Periodic maintenance (e.g., weekly)
-
 **Flags:**
 - `--data-dir`: Database directory (required)
 
-#### `nornicdb decay archive`
+#### `nornicdb suppress`
 
-Archive nodes with low decay scores (below threshold).
+Suppress nodes with decay scores below the visibility threshold.
 
 ```bash
-nornicdb decay archive --data-dir ./data --threshold 0.05
+nornicdb suppress --data-dir ./data --threshold 0.10
 ```
 
 **What it does:**
 - Loads all nodes and calculates current decay scores
-- Identifies nodes with scores below the threshold
-- Marks archived nodes with properties:
-  - `archived: true`
-  - `archived_at`: Timestamp
-  - `archived_score`: Final decay score
+- Identifies nodes scoring below the threshold
+- Marks suppressed nodes with `suppressed: true` and `suppressed_at` properties
+- Suppressed nodes are hidden from normal queries but remain in storage
 
 **Example:**
 ```bash
-$ nornicdb decay archive --data-dir ./data --threshold 0.05
+$ nornicdb suppress --data-dir ./data --threshold 0.10
 📂 Opening database at ./data...
 📊 Loading nodes...
-📦 Archiving nodes with decay score < 0.05...
-✅ Archived 127 nodes (decay score < 0.05)
+📦 Suppressing nodes with decay score < 0.10...
+✅ Suppressed 127 nodes (decay score < 0.10)
 ```
 
 **Flags:**
 - `--data-dir`: Database directory (required)
-- `--threshold`: Archive threshold (default: `0.05`)
+- `--threshold`: Visibility threshold (default: `0.10`)
 
-**Querying archived nodes:**
+**Querying suppressed nodes:**
 ```cypher
-// Find archived nodes
 MATCH (n)
-WHERE n.archived = true
-RETURN n.id, n.archived_at, n.archived_score
-ORDER BY n.archived_score
+CALL reveal(n)
+WHERE n.suppressed = true
+RETURN n.id, n.suppressed_at, decayScore(n)
+ORDER BY decayScore(n)
 ```
 
 #### `nornicdb decay stats`
@@ -205,10 +198,10 @@ nornicdb decay stats --data-dir ./data
 ```
 
 **What it shows:**
-- Total memory count
-- Count and average decay score per tier (Episodic, Semantic, Procedural)
-- Number of archived nodes
-- Overall average decay score
+- Total node count
+- Score distribution (high/medium/low/suppressed)
+- Nodes with no decay profile bound
+- Average decay score
 
 **Example:**
 ```bash
@@ -216,21 +209,17 @@ $ nornicdb decay stats --data-dir ./data
 📂 Opening database at ./data...
 📊 Loading nodes...
 📊 Decay Statistics:
-  Total memories: 10,000
-  Episodic: 2,500 (avg decay: 0.45)
-  Semantic: 6,000 (avg decay: 0.72)
-  Procedural: 1,500 (avg decay: 0.89)
-  Archived: 127 (score < 0.05)
-  Average decay score: 0.68
+  Total nodes: 10,000
+  High (>0.5): 6,500 (avg: 0.78)
+  Medium (0.1-0.5): 2,800 (avg: 0.28)
+  Low (<0.1): 573 (avg: 0.04)
+  Suppressed: 127
+  No profile: 1,200 (score: 1.0)
+  Average decay score: 0.65
 ```
 
 **Flags:**
 - `--data-dir`: Database directory (required)
-
-**Use cases:**
-- Monitor memory health
-- Understand decay patterns
-- Plan archival operations
 
 ### Utility Commands
 
@@ -247,49 +236,14 @@ nornicdb version
 NornicDB v1.0.0 (abc1234) built 2024-12-20T10:30:00Z
 ```
 
-## Memory Decay System
+## Knowledge-Layer Scoring
 
-NornicDB implements a cognitive science-based memory decay system with three tiers:
+NornicDB implements a profile-driven decay and promotion scoring system for knowledge graphs. Decay behavior, visibility thresholds, and promotion tiers are authored through Cypher DDL. See the user guides for full details:
 
-### Tier Types
-
-1. **Episodic** (7-day half-life)
-   - Short-term memories: chat context, temporary notes, session data
-   - Fast decay, requires frequent access to maintain
-
-2. **Semantic** (69-day half-life)
-   - Medium-term memories: facts, concepts, user preferences
-   - Moderate decay, more stable than episodic
-
-3. **Procedural** (693-day half-life)
-   - Long-term memories: skills, patterns, procedures
-   - Very slow decay, almost permanent
-
-### Decay Score Calculation
-
-Decay scores (0.0-1.0) are calculated from:
-- **Recency**: Time since last access (exponential decay)
-- **Frequency**: Number of accesses (logarithmic growth)
-- **Importance**: Manual weight or tier default
-
-### Node Properties
-
-Nodes with decay support should have:
-- `tier`: Memory tier (`"EPISODIC"`, `"SEMANTIC"`, or `"PROCEDURAL"`)
-- `decay_score`: Current decay score (0.0-1.0)
-- `last_accessed`: Last access timestamp
-- `access_count`: Total access count
-
-**Example node:**
-```cypher
-CREATE (n:Memory {
-  tier: "SEMANTIC",
-  decay_score: 0.75,
-  last_accessed: datetime(),
-  access_count: 10,
-  content: "PostgreSQL is our primary database"
-})
-```
+- **[Decay Profiles](../user-guides/decay-profiles.md)** — Defining decay behavior
+- **[Promotion Policies](../user-guides/promotion-policies.md)** — Boosting scores
+- **[Visibility Suppression](../user-guides/visibility-suppression-deindex.md)** — Suppression and deindex behavior
+- **[Knowledge-Layer Policies](../user-guides/knowledge-layer-policies.md)** — System overview
 
 ## Environment Variables
 

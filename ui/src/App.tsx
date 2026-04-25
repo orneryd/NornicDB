@@ -14,6 +14,7 @@ import { AdminUsers } from "./pages/AdminUsers";
 import { DatabaseAccess } from "./pages/DatabaseAccess";
 import { Databases } from "./pages/Databases";
 import { LifecycleAdmin } from "./pages/LifecycleAdmin";
+import { KnowledgePoliciesAdmin } from "./pages/KnowledgePoliciesAdmin";
 import { RetentionAdmin } from "./pages/RetentionAdmin";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BASE_PATH } from "./utils/basePath";
@@ -88,6 +89,14 @@ function App() {
           element={
             <ProtectedRoute>
               <RetentionAdmin />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/security/knowledge-policies"
+          element={
+            <ProtectedRoute>
+              <KnowledgePoliciesAdmin />
             </ProtectedRoute>
           }
         />

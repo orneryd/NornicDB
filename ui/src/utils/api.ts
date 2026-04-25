@@ -279,6 +279,94 @@ export interface RetentionStatus {
   timestamp?: string;
 }
 
+export interface DecayProfileBundle {
+  Name: string;
+  HalfLifeSeconds: number;
+  VisibilityThreshold: number;
+  ScoreFloor: number;
+  Function: string;
+  Scope: string;
+  DecayEnabled: boolean;
+  ScoreFrom: string;
+  ScoreFromProperty?: string;
+  Enabled: boolean;
+}
+
+export interface DecayProfileBinding {
+  Name: string;
+  TargetLabels?: string[];
+  TargetEdgeType?: string;
+  IsWildcard: boolean;
+  IsEdge: boolean;
+  ProfileRef?: string;
+  NoDecay?: boolean;
+  VisibilityThreshold?: number;
+  Order: number;
+}
+
+export interface PromotionProfileDef {
+  Name: string;
+  Scope: string;
+  Multiplier: number;
+  ScoreFloor: number;
+  ScoreCap: number;
+  Enabled: boolean;
+}
+
+export interface PromotionPolicyDef {
+  Name: string;
+  TargetLabels?: string[];
+  TargetEdgeType?: string;
+  IsWildcard: boolean;
+  IsEdge: boolean;
+  Enabled: boolean;
+}
+
+export interface ScoringResolution {
+  TargetID: string;
+  TargetScope: string;
+  ResolvedDecayProfileID: string;
+  ResolvedScoreFrom: string;
+  ResolutionSourceChain: string[];
+  AppliedDecayProfileNames: string[];
+  AppliedPromotionPolicyName: string;
+  AppliedPromotionProfileName: string;
+  EffectiveRate: number;
+  EffectiveThreshold: number;
+  EffectiveMultiplier: number;
+  BaseScore: number;
+  FinalScore: number;
+  NoDecay: boolean;
+  SuppressionEligible: boolean;
+  Explanation: string;
+}
+
+export interface KPProfilesResponse {
+  bundles: DecayProfileBundle[];
+  bindings: DecayProfileBinding[];
+  decay_enabled: boolean;
+}
+
+export interface KPPoliciesResponse {
+  promotion_profiles: PromotionProfileDef[];
+  promotion_policies: PromotionPolicyDef[];
+}
+
+export interface DeindexWorkItem {
+  workItemId: string;
+  targetId: string;
+  targetScope: string;
+  enqueuedAt: number;
+  status: string;
+}
+
+export interface KPDeindexStatusResponse {
+  pending_count: number;
+  items: DeindexWorkItem[];
+  supported: boolean;
+  message?: string;
+}
+
 interface DiscoveryResponse {
   bolt_direct: string;
   bolt_routing: string;
@@ -1300,6 +1388,63 @@ class NornicDBClient {
         res,
         `Failed to trigger retention sweep: ${res.status}`,
       );
+      throw new Error(message);
+    }
+    return res.json();
+  }
+
+  async getKnowledgePolicyProfiles(database?: string): Promise<KPProfilesResponse> {
+    const params = database ? `?database=${encodeURIComponent(database)}` : "";
+    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/profiles${params}`), {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(res, `Failed to load profiles: ${res.status}`);
+      throw new Error(message);
+    }
+    return res.json();
+  }
+
+  async getKnowledgePolicyPolicies(database?: string): Promise<KPPoliciesResponse> {
+    const params = database ? `?database=${encodeURIComponent(database)}` : "";
+    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/policies${params}`), {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(res, `Failed to load policies: ${res.status}`);
+      throw new Error(message);
+    }
+    return res.json();
+  }
+
+  async resolveKnowledgePolicy(params: {
+    entityId?: string;
+    labels?: string[];
+    edgeType?: string;
+    database?: string;
+  }): Promise<ScoringResolution> {
+    const searchParams = new URLSearchParams();
+    if (params.entityId) searchParams.set("entityId", params.entityId);
+    if (params.labels?.length) searchParams.set("labels", params.labels.join(","));
+    if (params.edgeType) searchParams.set("edgeType", params.edgeType);
+    if (params.database) searchParams.set("database", params.database);
+    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/resolve?${searchParams}`), {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(res, `Failed to resolve: ${res.status}`);
+      throw new Error(message);
+    }
+    return res.json();
+  }
+
+  async getDeindexStatus(database?: string): Promise<KPDeindexStatusResponse> {
+    const params = database ? `?database=${encodeURIComponent(database)}` : "";
+    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/deindex/status${params}`), {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const message = await this.parseErrorMessage(res, `Failed to load deindex status: ${res.status}`);
       throw new Error(message);
     }
     return res.json();

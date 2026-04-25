@@ -61,6 +61,8 @@ type DecayProfileBinding struct {
 	IsEdge              bool                       `json:"isEdge" msgpack:"isEdge"`
 	ProfileRef          string                     `json:"profileRef,omitempty" msgpack:"profileRef,omitempty"`
 	NoDecay             bool                       `json:"noDecay,omitempty" msgpack:"noDecay,omitempty"`
+	HalfLifeSeconds     int64                      `json:"halfLifeSeconds,omitempty" msgpack:"halfLifeSeconds,omitempty"`
+	ScoreFloor          float64                    `json:"scoreFloor,omitempty" msgpack:"scoreFloor,omitempty"`
 	VisibilityThreshold *float64                   `json:"visibilityThreshold,omitempty" msgpack:"visibilityThreshold,omitempty"`
 	PropertyRules       []DecayProfilePropertyRule `json:"propertyRules,omitempty" msgpack:"propertyRules,omitempty"`
 	Order               int                        `json:"order" msgpack:"order"`
