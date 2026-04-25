@@ -102,15 +102,14 @@ node, err := db.CreateNode(ctx, []string{"Document"}, map[string]any{
 // Embedding is generated asynchronously
 ```
 
-### On Memory Storage
+### On Node Creation
 
 ```go
-memory := &Memory{
-    Content: "User prefers dark mode for coding",
-    Title:   "Preference",
-}
-stored, err := db.Store(ctx, memory)
-// Embedding is generated from content + title
+result, err := db.ExecuteCypher(ctx, `CREATE (n:KnowledgeFact {
+    content: "User prefers dark mode for coding",
+    title: "Preference"
+}) RETURN n`, nil)
+// Embedding is generated automatically from content + title
 ```
 
 ## Embedding Queue
@@ -167,12 +166,13 @@ results, err := db.HybridSearch(ctx, "", embedding, nil, 10)
 ### Pre-computed Embeddings
 
 ```go
-// Store with pre-computed embedding
-memory := &Memory{
-    Content:   "Important information",
-    Embedding: precomputedVector, // []float32
-}
-db.Store(ctx, memory)
+// Store node with pre-computed embedding
+db.ExecuteCypher(ctx, `CREATE (n:KnowledgeFact {
+    content: $content
+}) RETURN n`, map[string]any{
+    "content": "Important information",
+})
+// Pre-computed embeddings can be set via the vector index API
 ```
 
 ## Embedding Dimensions

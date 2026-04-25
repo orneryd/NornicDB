@@ -235,18 +235,17 @@ LIMIT 5
 
 ### Example 6: Statistical Analysis
 ```cypher
-// Analyze memory access patterns
-MATCH (m:Memory)
-WHERE m.tier = "SEMANTIC"
-WITH m.tier AS tier,
+// Analyze decay score distribution by label
+MATCH (m:KnowledgeFact)
+WITH labels(m)[0] AS label,
      count(m) AS total,
-     avg(m.accessCount) AS avgAccess,
      avg(decayScore(m)) AS avgScore,
-     sqrt(avg(pow(m.accessCount - avg(m.accessCount), 2))) AS stdDev
-RETURN tier, total, 
-       round(avgAccess * 100) / 100,
+     min(decayScore(m)) AS minScore,
+     max(decayScore(m)) AS maxScore
+RETURN label, total,
        round(avgScore * 100) / 100,
-       round(stdDev * 100) / 100
+       round(minScore * 100) / 100,
+       round(maxScore * 100) / 100
 ```
 
 ### Example 7: Conditional Logic with Coalesce

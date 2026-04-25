@@ -51,7 +51,7 @@ NornicDB already has:
 - ✅ GPU acceleration (Metal/CUDA)
 - ✅ Embedding generation in-process
 - ✅ Inference engine for link prediction (`pkg/inference`)
-- ✅ Decay/memory management (`pkg/decay`)
+- ✅ Knowledge-layer scoring and decay (`pkg/knowledgepolicy`)
 
 **We're 80% of the way there.** The missing piece is a reasoning model alongside the embedding model.
 
@@ -425,18 +425,16 @@ func (d *Diagnostician) Diagnose(ctx context.Context, snapshot RuntimeSnapshot) 
 
 type MemoryCurator struct {
     scheduler *ModelScheduler
-    decay     *decay.Engine
+    scorer    *knowledgepolicy.Scorer
 }
 
 type MemoryNode struct {
     ID           string    `json:"id"`
     Content      string    `json:"content"`
     Labels       []string  `json:"labels"`
-    AccessCount  int64     `json:"access_count"`
-    LastAccess   time.Time `json:"last_access"`
     CreatedAt    time.Time `json:"created_at"`
     EdgeCount    int       `json:"edge_count"`
-    Importance   float64   `json:"current_importance"`
+    DecayScore   float64   `json:"decay_score"`
 }
 
 const curationPrompt = `<|im_start|>system
@@ -606,7 +604,7 @@ if err != nil {
 ### Phase 3: Memory Curation (Week 5-6)
 
 - [ ] Implement `pkg/heimdall/curator/memory_curator.go`
-- [ ] Integrate with `pkg/decay` engine
+- [ ] Integrate with `pkg/knowledgepolicy` scoring engine
 - [ ] Add semantic deduplication
 - [ ] Build summarization pipeline
 - [ ] Test with real agent workloads

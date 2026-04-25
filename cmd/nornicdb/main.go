@@ -48,7 +48,7 @@ designed for AI agent memory with Neo4j Bolt/Cypher compatibility.
 Features:
   • Neo4j Bolt protocol compatibility
   • Cypher query language support
-  • Natural memory decay (Episodic/Semantic/Procedural)
+  • Knowledge-layer scoring with declarative decay profiles
   • Automatic relationship inference
   • Built-in vector search with RRF hybrid ranking
   • Server-side embedding generation`,
