@@ -2433,14 +2433,11 @@ func (ae *AsyncEngine) IterateNodes(fn func(*Node) bool) error {
 		cachedIDs[id] = true
 		// Make a deep copy of the node to avoid concurrent access issues
 		nodeCopy := &Node{
-			ID:           node.ID,
-			Labels:       append([]string(nil), node.Labels...),
-			Properties:   make(map[string]any, len(node.Properties)),
-			CreatedAt:    node.CreatedAt,
-			UpdatedAt:    node.UpdatedAt,
-			DecayScore:   node.DecayScore,
-			LastAccessed: node.LastAccessed,
-			AccessCount:  node.AccessCount,
+			ID:         node.ID,
+			Labels:     append([]string(nil), node.Labels...),
+			Properties: make(map[string]any, len(node.Properties)),
+			CreatedAt:  node.CreatedAt,
+			UpdatedAt:  node.UpdatedAt,
 			ChunkEmbeddings: func() [][]float32 {
 				chunks := make([][]float32, len(node.ChunkEmbeddings))
 				for i, emb := range node.ChunkEmbeddings {

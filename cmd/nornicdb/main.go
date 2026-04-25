@@ -25,8 +25,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cache"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/pool"
 	"github.com/orneryd/nornicdb/pkg/server"
@@ -153,22 +153,14 @@ Features:
 		Use:   "decay",
 		Short: "Memory decay operations",
 	}
-	decayRecalculateCmd := &cobra.Command{
-		Use:   "recalculate",
-		Short: "Recalculate all decay scores",
-		RunE:  runDecayRecalculate,
+	decaySuppressCmd := &cobra.Command{
+		Use:   "suppress",
+		Short: "Suppress nodes below visibility threshold",
+		RunE:  runDecaySuppress,
 	}
-	decayRecalculateCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
-	decayCmd.AddCommand(decayRecalculateCmd)
-
-	decayArchiveCmd := &cobra.Command{
-		Use:   "archive",
-		Short: "Archive low-score memories",
-		RunE:  runDecayArchive,
-	}
-	decayArchiveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
-	decayArchiveCmd.Flags().Float64("threshold", 0.05, "Archive threshold (default: 0.05)")
-	decayCmd.AddCommand(decayArchiveCmd)
+	decaySuppressCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	decaySuppressCmd.Flags().Float64("threshold", 0.05, "Visibility suppression threshold (default: 0.05)")
+	decayCmd.AddCommand(decaySuppressCmd)
 
 	decayStatsCmd := &cobra.Command{
 		Use:   "stats",
@@ -1116,262 +1108,191 @@ func runShell(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDecayRecalculate(cmd *cobra.Command, args []string) error {
-	dataDir, _ := cmd.Flags().GetString("data-dir")
-
-	// Open database
-	fmt.Printf("📂 Opening database at %s...\n", dataDir)
-	config := nornicdb.DefaultConfig()
-	config.Database.DataDir = dataDir
-
-	db, err := nornicdb.Open(dataDir, config)
-	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
-	}
-	defer db.Close()
-
-	// Get storage engine
-	storageEngine := db.GetStorage()
-	if storageEngine == nil {
-		return fmt.Errorf("storage engine not available")
-	}
-
-	// Create decay manager
-	decayManager := decay.New(decay.DefaultConfig())
-
-	// Get all nodes
-	fmt.Println("📊 Loading nodes...")
-	nodes, err := storageEngine.AllNodes()
-	if err != nil {
-		return fmt.Errorf("loading nodes: %w", err)
-	}
-
-	fmt.Printf("🔄 Recalculating decay scores for %d nodes...\n", len(nodes))
-
-	updated := 0
-
-	// Process nodes in chunks to avoid memory issues
-	chunkSize := 1000
-	for i := 0; i < len(nodes); i += chunkSize {
-		end := i + chunkSize
-		if end > len(nodes) {
-			end = len(nodes)
-		}
-
-		for _, node := range nodes[i:end] {
-			// Extract tier from properties (default to SEMANTIC if not found)
-			tierStr := "SEMANTIC"
-			if v, ok := node.Properties["tier"].(string); ok {
-				tierStr = strings.ToUpper(v)
-			}
-
-			// Map to decay.Tier
-			var decayTier decay.Tier
-			switch tierStr {
-			case "EPISODIC":
-				decayTier = decay.TierEpisodic
-			case "SEMANTIC":
-				decayTier = decay.TierSemantic
-			case "PROCEDURAL":
-				decayTier = decay.TierProcedural
-			default:
-				decayTier = decay.TierSemantic // Default
-			}
-
-			// Create MemoryInfo
-			info := &decay.MemoryInfo{
-				ID:           string(node.ID),
-				Tier:         decayTier,
-				CreatedAt:    node.CreatedAt,
-				LastAccessed: node.LastAccessed,
-				AccessCount:  node.AccessCount,
-			}
-
-			// Calculate new score
-			newScore := decayManager.CalculateScore(info)
-
-			// Update node if score changed
-			if node.DecayScore != newScore {
-				node.DecayScore = newScore
-				if err := storageEngine.UpdateNode(node); err != nil {
-					fmt.Printf("⚠️  Warning: failed to update node %s: %v\n", node.ID, err)
-					continue
-				}
-				updated++
-			}
-		}
-
-		if i%10000 == 0 && i > 0 {
-			fmt.Printf("   Processed %d/%d nodes...\n", i, len(nodes))
-		}
-	}
-
-	fmt.Printf("✅ Recalculated decay scores: %d nodes updated\n", updated)
-	return nil
-}
-
-func runDecayArchive(cmd *cobra.Command, args []string) error {
+func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
 
-	// Open database
-	fmt.Printf("📂 Opening database at %s...\n", dataDir)
-	config := nornicdb.DefaultConfig()
-	config.Database.DataDir = dataDir
+	fmt.Printf("Opening database at %s...\n", dataDir)
+	cfg := nornicdb.DefaultConfig()
+	cfg.Database.DataDir = dataDir
+	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, config)
+	db, err := nornicdb.Open(dataDir, cfg)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
 
-	// Get storage engine
-	storageEngine := db.GetStorage()
-	if storageEngine == nil {
-		return fmt.Errorf("storage engine not available")
+	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
+	if !ok {
+		return fmt.Errorf("decay suppress requires BadgerEngine storage")
 	}
 
-	// Create decay manager with custom threshold
-	decayConfig := decay.DefaultConfig()
-	decayConfig.ArchiveThreshold = threshold
-	decayManager := decay.New(decayConfig)
-
-	// Get all nodes
-	fmt.Println("📊 Loading nodes...")
-	nodes, err := storageEngine.AllNodes()
+	nodes, err := db.GetStorage().AllNodes()
 	if err != nil {
 		return fmt.Errorf("loading nodes: %w", err)
 	}
 
-	fmt.Printf("📦 Archiving nodes with decay score < %.2f...\n", threshold)
+	nowNanos := storage.DecayScoringTime()
+	fmt.Printf("Suppressing nodes with score below %.4f (%d nodes to evaluate)...\n", threshold, len(nodes))
 
-	archived := 0
-
-	// Process nodes
+	var newlySuppressed, alreadySuppressed, aboveThreshold int
 	for _, node := range nodes {
-		// Extract tier from properties
-		tierStr := "SEMANTIC"
-		if v, ok := node.Properties["tier"].(string); ok {
-			tierStr = strings.ToUpper(v)
+		if node.VisibilitySuppressed {
+			alreadySuppressed++
+			continue
 		}
 
-		var decayTier decay.Tier
-		switch tierStr {
-		case "EPISODIC":
-			decayTier = decay.TierEpisodic
-		case "SEMANTIC":
-			decayTier = decay.TierSemantic
-		case "PROCEDURAL":
-			decayTier = decay.TierProcedural
-		default:
-			decayTier = decay.TierSemantic
+		ns := storage.ExtractNamespaceFromID(string(node.ID))
+		scorer := be.ScorerForNamespace(ns)
+		if scorer == nil {
+			aboveThreshold++
+			continue
 		}
 
-		// Create MemoryInfo
-		info := &decay.MemoryInfo{
-			ID:           string(node.ID),
-			Tier:         decayTier,
-			CreatedAt:    node.CreatedAt,
-			LastAccessed: node.LastAccessed,
-			AccessCount:  node.AccessCount,
+		var accessMeta *knowledgepolicy.AccessMetaEntry
+		if meta, metaErr := be.GetAccessMeta(string(node.ID)); metaErr == nil {
+			accessMeta = meta
 		}
 
-		// Calculate current score
-		score := decayManager.CalculateScore(info)
+		res := scorer.ScoreNode(
+			string(node.ID), node.Labels, accessMeta,
+			node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano(), nowNanos,
+		)
 
-		// Check if should archive
-		if decayManager.ShouldArchive(score) {
-			// Mark as archived by adding "archived" property
-			if node.Properties == nil {
-				node.Properties = make(map[string]any)
-			}
-			node.Properties["archived"] = true
-			node.Properties["archived_at"] = time.Now().Format(time.RFC3339)
-			node.Properties["archived_score"] = score
-
-			if err := storageEngine.UpdateNode(node); err != nil {
-				fmt.Printf("⚠️  Warning: failed to archive node %s: %v\n", node.ID, err)
+		if res.FinalScore < threshold {
+			if err := be.EnqueueDeindexIfSuppressed(string(node.ID), false); err != nil {
+				fmt.Printf("  warning: failed to suppress %s: %v\n", node.ID, err)
 				continue
 			}
-			archived++
+			newlySuppressed++
+		} else {
+			aboveThreshold++
 		}
 	}
 
-	fmt.Printf("✅ Archived %d nodes (decay score < %.2f)\n", archived, threshold)
+	fmt.Println("\nSuppression complete:")
+	fmt.Printf("  Newly suppressed:     %d\n", newlySuppressed)
+	fmt.Printf("  Already suppressed:   %d\n", alreadySuppressed)
+	fmt.Printf("  Above threshold:      %d\n", aboveThreshold)
+	fmt.Printf("  Total evaluated:      %d\n", len(nodes))
 	return nil
 }
 
 func runDecayStats(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
-	// Open database
-	fmt.Printf("📂 Opening database at %s...\n", dataDir)
-	config := nornicdb.DefaultConfig()
-	config.Database.DataDir = dataDir
+	fmt.Printf("Opening database at %s...\n", dataDir)
+	cfg := nornicdb.DefaultConfig()
+	cfg.Database.DataDir = dataDir
+	cfg.Memory.DecayEnabled = true
 
-	db, err := nornicdb.Open(dataDir, config)
+	db, err := nornicdb.Open(dataDir, cfg)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
 
-	// Get storage engine
-	storageEngine := db.GetStorage()
-	if storageEngine == nil {
-		return fmt.Errorf("storage engine not available")
+	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
+	if !ok {
+		return fmt.Errorf("decay stats requires BadgerEngine storage")
 	}
 
-	// Create decay manager
-	decayManager := decay.New(decay.DefaultConfig())
-
-	// Get all nodes
-	fmt.Println("📊 Loading nodes...")
-	nodes, err := storageEngine.AllNodes()
+	nodes, err := db.GetStorage().AllNodes()
 	if err != nil {
 		return fmt.Errorf("loading nodes: %w", err)
 	}
 
-	// Convert nodes to MemoryInfo and calculate stats
-	memories := make([]decay.MemoryInfo, 0, len(nodes))
+	nowNanos := storage.DecayScoringTime()
+
+	var totalScored, suppressed, noDecay int
+	var scoreSum float64
+	scoreBuckets := map[string]int{
+		"0.00-0.10": 0,
+		"0.10-0.25": 0,
+		"0.25-0.50": 0,
+		"0.50-0.75": 0,
+		"0.75-1.00": 0,
+		"1.00":      0,
+	}
+	labelStats := make(map[string]struct{ count, suppressed int })
+
 	for _, node := range nodes {
-		// Extract tier from properties
-		tierStr := "SEMANTIC"
-		if v, ok := node.Properties["tier"].(string); ok {
-			tierStr = strings.ToUpper(v)
+		if node.VisibilitySuppressed {
+			suppressed++
 		}
 
-		var decayTier decay.Tier
-		switch tierStr {
-		case "EPISODIC":
-			decayTier = decay.TierEpisodic
-		case "SEMANTIC":
-			decayTier = decay.TierSemantic
-		case "PROCEDURAL":
-			decayTier = decay.TierProcedural
-		default:
-			decayTier = decay.TierSemantic
+		ns := storage.ExtractNamespaceFromID(string(node.ID))
+		scorer := be.ScorerForNamespace(ns)
+		if scorer == nil {
+			noDecay++
+			scoreBuckets["1.00"]++
+			continue
 		}
 
-		memories = append(memories, decay.MemoryInfo{
-			ID:           string(node.ID),
-			Tier:         decayTier,
-			CreatedAt:    node.CreatedAt,
-			LastAccessed: node.LastAccessed,
-			AccessCount:  node.AccessCount,
-		})
+		var accessMeta *knowledgepolicy.AccessMetaEntry
+		if meta, metaErr := be.GetAccessMeta(string(node.ID)); metaErr == nil {
+			accessMeta = meta
+		}
+
+		res := scorer.ScoreNode(
+			string(node.ID), node.Labels, accessMeta,
+			node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano(), nowNanos,
+		)
+
+		if res.NoDecay {
+			noDecay++
+			scoreBuckets["1.00"]++
+		} else {
+			totalScored++
+			scoreSum += res.FinalScore
+
+			switch {
+			case res.FinalScore >= 1.0:
+				scoreBuckets["1.00"]++
+			case res.FinalScore >= 0.75:
+				scoreBuckets["0.75-1.00"]++
+			case res.FinalScore >= 0.50:
+				scoreBuckets["0.50-0.75"]++
+			case res.FinalScore >= 0.25:
+				scoreBuckets["0.25-0.50"]++
+			case res.FinalScore >= 0.10:
+				scoreBuckets["0.10-0.25"]++
+			default:
+				scoreBuckets["0.00-0.10"]++
+			}
+		}
+
+		for _, label := range node.Labels {
+			s := labelStats[label]
+			s.count++
+			if res.SuppressionEligible {
+				s.suppressed++
+			}
+			labelStats[label] = s
+		}
 	}
 
-	// Get statistics
-	stats := decayManager.GetStats(memories)
+	fmt.Println("\nDecay Statistics (knowledge-layer):")
+	fmt.Printf("  Total nodes:           %d\n", len(nodes))
+	fmt.Printf("  Visibility suppressed: %d\n", suppressed)
+	fmt.Printf("  Scored by decay:       %d\n", totalScored)
+	fmt.Printf("  No decay profile:      %d\n", noDecay)
+	if totalScored > 0 {
+		fmt.Printf("  Average score:         %.4f\n", scoreSum/float64(totalScored))
+	}
 
-	// Display statistics
-	fmt.Println("📊 Decay Statistics:")
-	fmt.Printf("  Total memories: %d\n", stats.TotalMemories)
-	fmt.Printf("  Episodic: %d (avg decay: %.2f)\n", stats.EpisodicCount, stats.AvgByTier[decay.TierEpisodic])
-	fmt.Printf("  Semantic: %d (avg decay: %.2f)\n", stats.SemanticCount, stats.AvgByTier[decay.TierSemantic])
-	fmt.Printf("  Procedural: %d (avg decay: %.2f)\n", stats.ProceduralCount, stats.AvgByTier[decay.TierProcedural])
-	fmt.Printf("  Archived: %d (score < %.2f)\n", stats.ArchivedCount, decayManager.GetConfig().ArchiveThreshold)
-	fmt.Printf("  Average decay score: %.2f\n", stats.AvgDecayScore)
+	fmt.Println("\nScore distribution:")
+	for _, bucket := range []string{"1.00", "0.75-1.00", "0.50-0.75", "0.25-0.50", "0.10-0.25", "0.00-0.10"} {
+		fmt.Printf("  [%-9s]: %d\n", bucket, scoreBuckets[bucket])
+	}
+
+	if len(labelStats) > 0 {
+		fmt.Println("\nPer-label breakdown:")
+		for label, s := range labelStats {
+			fmt.Printf("  %-20s: %d nodes, %d suppression-eligible\n", label, s.count, s.suppressed)
+		}
+	}
 
 	return nil
 }

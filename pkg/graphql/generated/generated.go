@@ -1544,23 +1544,7 @@ scalar FloatArray
 # ENUMS
 # =============================================================================
 
-"""
-Memory tier classification based on cognitive science decay patterns
-"""
-enum MemoryTier {
-  """
-  Short-term memories with 7-day half-life
-  """
-  EPISODIC
-  """
-  Facts and concepts with 69-day half-life
-  """
-  SEMANTIC
-  """
-  Skills and patterns with 693-day half-life
-  """
-  PROCEDURAL
-}
+
 
 """
 Direction for relationship traversal
@@ -2160,11 +2144,6 @@ input CreateNodeInput {
   Key-value properties
   """
   properties: JSON!
-
-  """
-  Memory tier for decay calculation
-  """
-  tier: MemoryTier = SEMANTIC
 
   """
   Pre-computed embedding vector (optional)
@@ -10672,7 +10651,7 @@ func (ec *executionContext) unmarshalInputCreateNodeInput(ctx context.Context, o
 		asMap["tier"] = "SEMANTIC"
 	}
 
-	fieldsInOrder := [...]string{"id", "labels", "properties", "tier", "embedding"}
+	fieldsInOrder := [...]string{"id", "labels", "properties", "embedding"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -10700,13 +10679,6 @@ func (ec *executionContext) unmarshalInputCreateNodeInput(ctx context.Context, o
 				return it, err
 			}
 			it.Properties = data
-		case "tier":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tier"))
-			data, err := ec.unmarshalOMemoryTier2ᚖgithubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐMemoryTier(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.Tier = data
 		case "embedding":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("embedding"))
 			data, err := ec.unmarshalOFloatArray2githubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐFloatArray(ctx, v)
@@ -14641,22 +14613,6 @@ func (ec *executionContext) unmarshalOJSON2githubᚗcomᚋornerydᚋnornicdbᚋp
 }
 
 func (ec *executionContext) marshalOJSON2githubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐJSON(ctx context.Context, sel ast.SelectionSet, v models.JSON) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return v
-}
-
-func (ec *executionContext) unmarshalOMemoryTier2ᚖgithubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐMemoryTier(ctx context.Context, v any) (*models.MemoryTier, error) {
-	if v == nil {
-		return nil, nil
-	}
-	var res = new(models.MemoryTier)
-	err := res.UnmarshalGQL(v)
-	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) marshalOMemoryTier2ᚖgithubᚗcomᚋornerydᚋnornicdbᚋpkgᚋgraphqlᚋmodelsᚐMemoryTier(ctx context.Context, sel ast.SelectionSet, v *models.MemoryTier) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}

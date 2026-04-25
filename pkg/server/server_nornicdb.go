@@ -30,14 +30,9 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 	info := s.db.GetDecayInfo()
 
 	response := map[string]interface{}{
-		"enabled":          info.Enabled,
-		"archiveThreshold": info.ArchiveThreshold,
-		"interval":         info.RecalcInterval.String(),
-		"weights": map[string]interface{}{
-			"recency":    info.RecencyWeight,
-			"frequency":  info.FrequencyWeight,
-			"importance": info.ImportanceWeight,
-		},
+		"enabled":             info.Enabled,
+		"visibilityThreshold": info.VisibilityThreshold,
+		"flushInterval":       info.FlushInterval.String(),
 	}
 	s.writeJSON(w, http.StatusOK, response)
 }

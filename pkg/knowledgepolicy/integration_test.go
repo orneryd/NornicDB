@@ -110,32 +110,4 @@ func TestIntegration_DDL_Score_Visibility(t *testing.T) {
 		}
 	})
 
-	t.Run("LegacyFallbackScoresIdentically", func(t *testing.T) {
-		accessMeta := &AccessMetaEntry{
-			TargetID:    "ns:legacy",
-			TargetScope: ScopeNode,
-			Fixed: AccessMetaFixedFields{
-				AccessCount:    50,
-				LastAccessedAt: time.Now().Add(-1 * time.Hour).UnixNano(),
-			},
-		}
-
-		legacyMeta := SynthesizeLegacyAccessMeta(
-			"ns:legacy", 50, time.Now().Add(-1*time.Hour).UnixNano(),
-		)
-
-		input := NodeScoringInput{
-			EntityID:       "ns:legacy",
-			Labels:         []string{"MemoryEpisode"},
-			CreatedAtNanos: time.Now().Add(-48 * time.Hour).UnixNano(),
-		}
-
-		_, resExplicit := ShouldSuppressNode(scorer, input, accessMeta, now)
-		_, resLegacy := ShouldSuppressNode(scorer, input, legacyMeta, now)
-
-		if resExplicit.FinalScore != resLegacy.FinalScore {
-			t.Errorf("legacy fallback score %.6f != explicit score %.6f",
-				resLegacy.FinalScore, resExplicit.FinalScore)
-		}
-	})
 }

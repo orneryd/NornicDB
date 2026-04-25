@@ -33,18 +33,13 @@ func storageNodeToModel(node *storage.Node) *models.Node {
 	if node == nil {
 		return nil
 	}
-	var createdAt, updatedAt, lastAccessed *time.Time
+	var createdAt, updatedAt *time.Time
 	if !node.CreatedAt.IsZero() {
 		createdAt = &node.CreatedAt
 	}
 	if !node.UpdatedAt.IsZero() {
 		updatedAt = &node.UpdatedAt
 	}
-	if !node.LastAccessed.IsZero() {
-		lastAccessed = &node.LastAccessed
-	}
-	accessCount := int(node.AccessCount)
-	decayScore := node.DecayScore
 
 	return &models.Node{
 		ID:           string(node.ID),
@@ -53,9 +48,6 @@ func storageNodeToModel(node *storage.Node) *models.Node {
 		Properties:   models.JSON(node.Properties),
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
-		DecayScore:   &decayScore,
-		LastAccessed: lastAccessed,
-		AccessCount:  &accessCount,
 		HasEmbedding: len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0,
 		EmbeddingDimensions: func() int {
 			if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {

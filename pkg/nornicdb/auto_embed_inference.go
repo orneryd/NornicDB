@@ -72,7 +72,7 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 	now := time.Now()
 	for _, suggestion := range suggestions {
 		edge := &storage.Edge{
-			ID:            storage.EdgeID(generateID("edge")),
+			ID:            storage.EdgeID(generateID()),
 			StartNode:     storage.NodeID(suggestion.SourceID),
 			EndNode:       storage.NodeID(suggestion.TargetID),
 			Type:          suggestion.Type,

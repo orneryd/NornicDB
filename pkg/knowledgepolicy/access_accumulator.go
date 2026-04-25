@@ -25,18 +25,24 @@ type pLocalShard struct {
 // metadata accumulation. Goroutines write to the shard of their current P
 // via sync.Pool affinity, eliminating cross-core contention.
 type AccessAccumulator struct {
-	shards  []pLocalShard
-	pool    sync.Pool
-	counter atomic.Int64
-	enabled bool
+	shards        []pLocalShard
+	pool          sync.Pool
+	counter       atomic.Int64
+	entityCount   atomic.Int64
+	enabled       bool
+	maxBufferSize int64
+	onBufferFull  func()
 }
 
 // NewAccessAccumulator creates an accumulator with one shard per GOMAXPROCS.
-func NewAccessAccumulator(enabled bool) *AccessAccumulator {
+// maxBufferSize limits distinct entity count before triggering an auto-flush.
+// Pass 0 for unlimited (flush only on timer).
+func NewAccessAccumulator(enabled bool, maxBufferSize int) *AccessAccumulator {
 	n := runtime.GOMAXPROCS(0)
 	a := &AccessAccumulator{
-		shards:  make([]pLocalShard, n),
-		enabled: enabled,
+		shards:        make([]pLocalShard, n),
+		enabled:       enabled,
+		maxBufferSize: int64(maxBufferSize),
 	}
 	for i := range a.shards {
 		a.shards[i].deltas = make(map[string]*entityDelta)
@@ -46,6 +52,12 @@ func NewAccessAccumulator(enabled bool) *AccessAccumulator {
 		return idx
 	}
 	return a
+}
+
+// SetOnBufferFull sets the callback invoked (in a goroutine) when the buffer
+// reaches maxBufferSize. The flusher wires this to trigger an immediate flush.
+func (a *AccessAccumulator) SetOnBufferFull(fn func()) {
+	a.onBufferFull = fn
 }
 
 func (a *AccessAccumulator) currentShard() *pLocalShard {
@@ -60,17 +72,22 @@ func (a *AccessAccumulator) IncrementAccess(entityID string) {
 	}
 	now := time.Now().UnixNano()
 	shard := a.currentShard()
+	isNew := false
 	shard.mu.Lock()
 	d := shard.deltas[entityID]
 	if d == nil {
 		d = &entityDelta{}
 		shard.deltas[entityID] = d
+		isNew = true
 	}
 	d.accessCount++
 	if now > d.lastAccessedAt {
 		d.lastAccessedAt = now
 	}
 	shard.mu.Unlock()
+	if isNew {
+		a.checkBufferFull()
+	}
 }
 
 func (a *AccessAccumulator) IncrementTraversal(entityID string) {
@@ -79,17 +96,22 @@ func (a *AccessAccumulator) IncrementTraversal(entityID string) {
 	}
 	now := time.Now().UnixNano()
 	shard := a.currentShard()
+	isNew := false
 	shard.mu.Lock()
 	d := shard.deltas[entityID]
 	if d == nil {
 		d = &entityDelta{}
 		shard.deltas[entityID] = d
+		isNew = true
 	}
 	d.traversalCount++
 	if now > d.lastTraversedAt {
 		d.lastTraversedAt = now
 	}
 	shard.mu.Unlock()
+	if isNew {
+		a.checkBufferFull()
+	}
 }
 
 func (a *AccessAccumulator) IncrementCustom(entityID string, key string, delta int64) {
@@ -165,9 +187,20 @@ func (a *AccessAccumulator) ReadThrough(entityID string, key string, persisted i
 	return total
 }
 
+func (a *AccessAccumulator) checkBufferFull() {
+	if a.maxBufferSize <= 0 || a.onBufferFull == nil {
+		return
+	}
+	count := a.entityCount.Add(1)
+	if count >= a.maxBufferSize {
+		go a.onBufferFull()
+	}
+}
+
 // DrainAll atomically swaps out all shard deltas and returns a merged map.
 // Used by the flush goroutine.
 func (a *AccessAccumulator) DrainAll() map[string]*entityDelta {
+	a.entityCount.Store(0)
 	merged := make(map[string]*entityDelta)
 	for i := range a.shards {
 		a.shards[i].mu.Lock()

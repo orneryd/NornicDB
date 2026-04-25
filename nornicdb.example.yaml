@@ -354,11 +354,12 @@ memory:
 
   # Decay check interval
   # Env: NORNICDB_MEMORY_DECAY_INTERVAL
-  decay_interval: "1h"
+  # How often access metadata is flushed to storage
+  decay_interval: "2s"
 
-  # Archive threshold (0.0-1.0) - nodes below this are archived
-  # Env: NORNICDB_MEMORY_ARCHIVE_THRESHOLD
-  archive_threshold: 0.05
+  # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
+  # Env: NORNICDB_VISIBILITY_THRESHOLD
+  visibility_threshold: 0.05
 
   # Enable automatic relationship inference
   # Env: NORNICDB_AUTO_LINKS_ENABLED

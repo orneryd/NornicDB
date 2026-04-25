@@ -80,11 +80,11 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Memory.DecayEnabled {
 		t.Error("expected DecayEnabled to be false by default")
 	}
-	if cfg.Memory.DecayInterval != time.Hour {
-		t.Errorf("expected decay interval 1h, got %v", cfg.Memory.DecayInterval)
+	if cfg.Memory.DecayInterval != 2*time.Second {
+		t.Errorf("expected decay interval 2s, got %v", cfg.Memory.DecayInterval)
 	}
-	if cfg.Memory.ArchiveThreshold != 0.05 {
-		t.Errorf("expected archive threshold 0.05, got %f", cfg.Memory.ArchiveThreshold)
+	if cfg.Memory.VisibilityThreshold != 0.05 {
+		t.Errorf("expected visibility threshold 0.05, got %f", cfg.Memory.VisibilityThreshold)
 	}
 	if cfg.Memory.EmbeddingProvider != "local" {
 		t.Errorf("expected embedding provider 'local', got %q", cfg.Memory.EmbeddingProvider)
@@ -395,7 +395,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	t.Setenv("NORNICDB_ENCRYPTION_ENABLED", "true")
 	t.Setenv("NORNICDB_ENCRYPTION_PASSWORD", "env-password")
 	t.Setenv("NORNICDB_MEMORY_DECAY_ENABLED", "false")
-	t.Setenv("NORNICDB_MEMORY_ARCHIVE_THRESHOLD", "0.3")
+	t.Setenv("NORNICDB_VISIBILITY_THRESHOLD", "0.3")
 	t.Setenv("NORNICDB_EMBEDDING_ENABLED", "1")
 	t.Setenv("NORNICDB_EMBEDDING_MODEL", "env-embed-model")
 	t.Setenv("NORNICDB_EMBEDDING_API_URL", "http://embed-env")
@@ -541,8 +541,8 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	if cfg.Memory.EmbeddingWarmupInterval != 11*time.Minute || cfg.Memory.KmeansMinEmbeddings != 222 || cfg.Memory.KmeansClusterInterval != 8*time.Minute || cfg.Memory.KmeansNumClusters != 6 {
 		t.Fatalf("unexpected kmeans config: %+v", cfg.Memory)
 	}
-	if cfg.Memory.AutoLinksEnabled || cfg.Memory.AutoLinksSimilarityThreshold != 0.67 || cfg.Memory.ArchiveThreshold != 0.3 {
-		t.Fatalf("unexpected autolink/archive config: %+v", cfg.Memory)
+	if cfg.Memory.AutoLinksEnabled || cfg.Memory.AutoLinksSimilarityThreshold != 0.67 || cfg.Memory.VisibilityThreshold != 0.3 {
+		t.Fatalf("unexpected autolink/visibility config: %+v", cfg.Memory)
 	}
 	if cfg.EmbeddingWorker.ScanInterval != 5*time.Minute || cfg.EmbeddingWorker.BatchDelay != 3*time.Second || cfg.EmbeddingWorker.TriggerDebounceDelay != 4*time.Second || cfg.EmbeddingWorker.MaxRetries != 7 {
 		t.Fatalf("unexpected embedding worker timings: %+v", cfg.EmbeddingWorker)
@@ -927,7 +927,7 @@ embedding:
 memory:
   decay_enabled: true
   decay_interval: "90m"
-  archive_threshold: 0.2
+  visibility_threshold: 0.2
   auto_links_enabled: true
   auto_links_similarity_threshold: 0.91
   runtime_limit: "512"
@@ -1080,7 +1080,7 @@ plugins:
 	require.Equal(t, 77, cfg.Memory.EmbeddingCacheSize)
 	require.Equal(t, 0.42, cfg.Memory.SearchMinSimilarity)
 	require.Equal(t, 90*time.Minute, cfg.Memory.DecayInterval)
-	require.Equal(t, 0.2, cfg.Memory.ArchiveThreshold)
+	require.Equal(t, 0.2, cfg.Memory.VisibilityThreshold)
 	require.True(t, cfg.Memory.AutoLinksEnabled)
 	require.Equal(t, 0.91, cfg.Memory.AutoLinksSimilarityThreshold)
 	require.Equal(t, int64(512*1024*1024), cfg.Memory.RuntimeLimit)
