@@ -348,14 +348,14 @@ embedding:
 # Docs: https://github.com/orneryd/nornicdb/docs/features/memory-decay.md
 # =============================================================================
 memory:
-  # Enable natural memory decay (episodic/semantic/procedural)
+  # Enable knowledge-layer scoring and visibility
   # Env: NORNICDB_MEMORY_DECAY_ENABLED
   decay_enabled: true
 
-  # Decay check interval
+  # Decay check interval (seconds)
   # Env: NORNICDB_MEMORY_DECAY_INTERVAL
   # How often access metadata is flushed to storage
-  decay_interval: "2s"
+  decay_interval: 2
 
   # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
   # Env: NORNICDB_VISIBILITY_THRESHOLD
