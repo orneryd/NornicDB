@@ -1,8 +1,17 @@
 package cypher
 
 import (
+	"context"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+type revealScopeKey struct{}
+
+type revealScopeState struct {
+	engine *storage.BadgerEngine
+	reveal bool
+}
 
 // hasRevealCall detects the presence of reveal(...) in the query text.
 func hasRevealCall(query string) bool {
@@ -26,13 +35,17 @@ func hasRevealCall(query string) bool {
 
 // setRevealOnEngine enables reveal mode on the underlying BadgerEngine.
 // Returns a cleanup function that must be deferred.
-func setRevealOnEngine(eng storage.Engine) func() {
+func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (context.Context, func()) {
 	be := unwrapBadgerEngine(eng)
 	if be == nil {
-		return func() {}
+		return ctx, func() {}
 	}
-	be.SetRevealAll(true)
-	return func() { be.SetRevealAll(false) }
+	if scope, ok := ctx.Value(revealScopeKey{}).(*revealScopeState); ok && scope.engine == be {
+		return ctx, func() {}
+	}
+	cleanup := be.BeginQueryRevealScope(reveal)
+	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be, reveal: reveal})
+	return ctx, cleanup
 }
 
 // unwrapBadgerEngine walks the engine wrapper chain to find the underlying

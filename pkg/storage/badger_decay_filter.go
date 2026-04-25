@@ -30,6 +30,25 @@ func (b *BadgerEngine) SetRevealAll(reveal bool) {
 	b.revealAll.Store(reveal)
 }
 
+// BeginQueryRevealScope guards a query's reveal mode against concurrent queries
+// on the same engine. Reveal queries take an exclusive scope while normal
+// queries take a shared scope so they cannot observe revealAll=true.
+func (b *BadgerEngine) BeginQueryRevealScope(reveal bool) func() {
+	if reveal {
+		b.revealQueryMu.Lock()
+		b.revealAll.Store(true)
+		return func() {
+			b.revealAll.Store(false)
+			b.revealQueryMu.Unlock()
+		}
+	}
+
+	b.revealQueryMu.RLock()
+	return func() {
+		b.revealQueryMu.RUnlock()
+	}
+}
+
 // filterNodeByDecay returns true if the node should be suppressed from results.
 // When a node survives filtering and an accumulator is set, it records the access.
 func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {

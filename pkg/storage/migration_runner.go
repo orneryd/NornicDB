@@ -6,7 +6,10 @@ import "fmt"
 // Called once during engine initialization. Idempotent — checks the schema
 // version marker before each migration and skips if already applied.
 func (b *BadgerEngine) RunOnStartMigrations() error {
-	currentVersion := b.readSchemaVersion()
+	currentVersion, err := b.readSchemaVersion()
+	if err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
 
 	if currentVersion < 1 {
 		if err := b.migrateV0ToV1(); err != nil {

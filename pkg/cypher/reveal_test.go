@@ -1,7 +1,9 @@
 package cypher
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -54,13 +56,47 @@ func TestSetRevealOnEngine_BadgerEngine(t *testing.T) {
 	}
 	defer eng.Close()
 
-	cleanup := setRevealOnEngine(eng)
+	_, cleanup := setRevealOnEngine(context.Background(), eng, true)
 
 	// Verify cleanup is callable and doesn't panic.
 	cleanup()
 }
 
 func TestSetRevealOnEngine_NilEngine(t *testing.T) {
-	cleanup := setRevealOnEngine(nil)
+	_, cleanup := setRevealOnEngine(context.Background(), nil, false)
 	cleanup() // should not panic
+}
+
+func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
+	eng, err := storage.NewBadgerEngineInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	ctx, cleanup := setRevealOnEngine(context.Background(), eng, true)
+
+	done := make(chan struct{})
+	go func() {
+		_, nestedCleanup := setRevealOnEngine(context.Background(), eng, false)
+		nestedCleanup()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("non-reveal scope should wait while reveal scope is active")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	cleanup()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("non-reveal scope did not resume after reveal scope cleanup")
+	}
+
+	_, nestedCleanup := setRevealOnEngine(ctx, eng, false)
+	nestedCleanup()
 }
