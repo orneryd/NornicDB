@@ -173,10 +173,10 @@ package cypher
 //
 //   - CreatedAt: When the node was first created
 //   - UpdatedAt: Last modification timestamp
-//   - DecayScore: Memory importance (1.0=fresh, 0.0=decayed)
-//   - LastAccessed: Last time node was queried/updated
-//   - AccessCount: Total access frequency
 //   - Embedding: 1024-dim vector for semantic similarity
+//
+// Decay scoring is handled by the knowledge-layer scoring system (pkg/knowledgepolicy).
+// Scores are computed at query time from AccessMeta and retention bindings.
 //
 // # Example 1 - Basic User Node
 //
@@ -189,9 +189,7 @@ package cypher
 //			"email":    "alice@example.com",
 //			"verified": true,
 //		},
-//		CreatedAt:   time.Now(),
-//		DecayScore:  1.0, // Fresh memory
-//		AccessCount: 0,
+//		CreatedAt: time.Now(),
 //	}
 //	engine.CreateNode(node)
 //
@@ -208,20 +206,7 @@ package cypher
 //			"language": "markdown",
 //		},
 //		CreatedAt: time.Now(),
-//		Embedding: generateEmbedding("# Welcome to..."), // For semantic search
-//	}
-//
-// # Example 3 - Concept Node for Knowledge Graph
-//
-//	concept := &storage.Node{
-//		ID:     storage.NodeID("concept-database"),
-//		Labels: []string{"Concept", "Technology"},
-//		Properties: map[string]any{
-//			"name":        "Database Systems",
-//			"description": "Software for storing and retrieving data",
-//			"category":    "Computer Science",
-//		},
-//		CreatedAt: time.Now(),
+//		Embedding: generateEmbedding("# Welcome to..."),
 //	}
 //
 // # ELI12
@@ -232,9 +217,8 @@ package cypher
 //   - Properties: Info about them (name, age, favorite color, etc.)
 //
 // NornicDB adds cool features:
-//   - DecayScore: "How important is this?" (like memory fading over time)
 //   - Embedding: "What is this similar to?" (like finding related topics)
-//   - AccessCount: "How often do we look at this?" (popularity tracking)
+//   - Decay scoring: "How fresh is this?" — computed automatically by knowledge-layer policies
 //
 // Just like you might have a profile on social media with your info and tags,
 // nodes store information about things in your graph database!
@@ -255,12 +239,9 @@ type Node struct {
 	Properties map[string]any `json:"properties"`
 	
 	// NornicDB extensions
-	CreatedAt    time.Time `json:"createdAt,omitempty"`
-	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
-	DecayScore   float64   `json:"decayScore,omitempty"`
-	LastAccessed time.Time `json:"lastAccessed,omitempty"`
-	AccessCount  int64     `json:"accessCount,omitempty"`
-	Embedding    []float32 `json:"embedding,omitempty"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+	Embedding []float32 `json:"embedding,omitempty"`
 }
 ```
 

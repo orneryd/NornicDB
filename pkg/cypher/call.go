@@ -3031,9 +3031,9 @@ func (e *StorageExecutor) countRelTypes() int {
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"enabled", "halfLifeEpisodic", "halfLifeSemantic", "halfLifeProcedural", "archiveThreshold"},
+		Columns: []string{"enabled", "system", "configuredVia"},
 		Rows: [][]interface{}{
-			{true, "7 days", "69 days", "693 days", 0.05},
+			{true, "knowledge-layer scoring (decay profiles + retention bindings)", "CREATE DECAY PROFILE / CREATE RETENTION BINDING DDL"},
 		},
 	}, nil
 }

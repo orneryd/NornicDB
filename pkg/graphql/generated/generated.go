@@ -10647,10 +10647,6 @@ func (ec *executionContext) unmarshalInputCreateNodeInput(ctx context.Context, o
 		asMap[k] = v
 	}
 
-	if _, present := asMap["tier"]; !present {
-		asMap["tier"] = "SEMANTIC"
-	}
-
 	fieldsInOrder := [...]string{"id", "labels", "properties", "embedding"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]

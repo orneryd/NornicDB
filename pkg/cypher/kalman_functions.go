@@ -96,7 +96,7 @@
 //
 //   - IoT sensor smoothing (temperature, pressure, GPS)
 //   - User behavior prediction (session length, click rates)
-//   - Memory decay tracking (see NornicDB's memory tier system)
+//   - Memory decay tracking (see NornicDB's knowledge-layer scoring system)
 //   - Query latency monitoring
 //   - Any noisy time series data!
 package cypher
