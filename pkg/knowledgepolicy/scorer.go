@@ -56,10 +56,11 @@ func (s *Scorer) ScoreProperty(
 
 func neutralFor(targetID string, scope ScopeType) ScoringResolution {
 	return ScoringResolution{
-		TargetID:    targetID,
-		TargetScope: scope,
-		FinalScore:  1.0,
-		NoDecay:     true,
+		TargetID:      targetID,
+		TargetScope:   scope,
+		EffectiveRate: 0,
+		FinalScore:    1.0,
+		NoDecay:       true,
 	}
 }
 
@@ -75,8 +76,16 @@ func (s *Scorer) score(
 	}
 	if cb.NoDecay {
 		res := neutralFor(targetID, scope)
+		res.ResolvedDecayFunction = cb.Function
+		res.ResolvedScoreFrom = cb.ScoreFrom
+		res.EffectiveThreshold = cb.VisibilityThreshold
+		res.EffectiveFloor = cb.DecayFloor
 		if cb.DecayBinding != nil {
 			res.ResolutionSourceChain = []string{cb.DecayBinding.Name}
+		}
+		if cb.DecayProfile != nil {
+			res.ResolvedDecayProfileID = cb.DecayProfile.Name
+			res.AppliedDecayProfileNames = []string{cb.DecayProfile.Name}
 		}
 		return res
 	}
@@ -121,18 +130,27 @@ func (s *Scorer) score(
 		TargetID:                    targetID,
 		TargetScope:                 scope,
 		ResolvedDecayProfileID:      profileID,
+		ResolvedDecayFunction:       cb.Function,
 		ResolvedScoreFrom:           cb.ScoreFrom,
 		ResolutionSourceChain:       sourceChain,
 		AppliedDecayProfileNames:    profileNames,
 		AppliedPromotionPolicyName:  promoPolicyName,
 		AppliedPromotionProfileName: promoProfileName,
-		EffectiveRate:               ln2 / float64(cb.HalfLifeNanos),
+		EffectiveRate:               effectiveRate(cb.HalfLifeNanos),
 		EffectiveThreshold:          cb.VisibilityThreshold,
+		EffectiveFloor:              cb.DecayFloor,
 		EffectiveMultiplier:         multiplier,
 		BaseScore:                   baseScore,
 		FinalScore:                  finalScore,
 		SuppressionEligible:         finalScore < cb.VisibilityThreshold && !cb.HasNoDecayProperty,
 	}
+}
+
+func effectiveRate(halfLifeNanos int64) float64 {
+	if halfLifeNanos <= 0 {
+		return 0
+	}
+	return ln2 / float64(halfLifeNanos)
 }
 
 func resolveAnchor(cb *CompiledBinding, createdAt, versionAt int64, accessMeta *AccessMetaEntry) int64 {

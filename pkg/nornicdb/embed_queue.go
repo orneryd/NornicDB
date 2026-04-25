@@ -25,11 +25,9 @@ type EmbedWorker struct {
 	storage  storage.Engine
 	config   *EmbedWorkerConfig
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	// lifecycleMu serializes worker stop/wait/restart sequences so Reset, Close,
-	// and deferred StartWorkers cannot reuse the WaitGroup concurrently.
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 	lifecycleMu sync.Mutex
 
 	// Trigger channel to wake up worker immediately
@@ -197,6 +195,11 @@ func (ew *EmbedWorker) StartWorkers() {
 	if ew.closed.Load() || ew.workersStarted {
 		return
 	}
+	ew.lifecycleMu.Lock()
+	defer ew.lifecycleMu.Unlock()
+	if ew.closed.Load() {
+		return
+	}
 	ew.workersStarted = true
 	numWorkers := ew.config.NumWorkers
 	if numWorkers < 1 {
@@ -327,6 +330,8 @@ func (ew *EmbedWorker) Reset() {
 	ew.mu.Unlock()
 
 	fmt.Println("🔄 Resetting embed worker for regeneration...")
+	ew.lifecycleMu.Lock()
+	defer ew.lifecycleMu.Unlock()
 
 	// Cancel context to stop current processing
 	ew.cancel()
@@ -343,6 +348,9 @@ func (ew *EmbedWorker) Reset() {
 	// This avoids "WaitGroup is reused before previous Wait has returned" panics
 	// when Reset and Close overlap under load.
 	ew.wg.Wait()
+	if ew.closed.Load() {
+		return
+	}
 
 	// Reset state under lock
 	ew.mu.Lock()
@@ -377,6 +385,8 @@ func (ew *EmbedWorker) Close() {
 	defer ew.lifecycleMu.Unlock()
 
 	ew.closed.Store(true)
+	ew.lifecycleMu.Lock()
+	defer ew.lifecycleMu.Unlock()
 
 	// Stop pending debounced trigger timer.
 	ew.triggerMu.Lock()

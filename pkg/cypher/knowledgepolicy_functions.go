@@ -22,7 +22,7 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
 	}
 	if matchFuncStartAndSuffix(expr, "decay") {
 		inner := extractFuncArgs(expr, "decay")
-		if inner == "" || strings.Contains(strings.ToLower(inner), "score") {
+		if inner == "" || ContainsKeyword(inner, "score") {
 			return nil, false
 		}
 		return e.evalDecay(expr, nodes, rels), true
@@ -268,9 +268,9 @@ func resolutionToMap(res knowledgepolicy.ScoringResolution) map[string]interface
 		"score":               res.FinalScore,
 		"policy":              res.ResolvedDecayProfileID,
 		"scope":               string(res.TargetScope),
-		"function":            res.ResolvedDecayProfileID,
+		"function":            string(res.ResolvedDecayFunction),
 		"visibilityThreshold": res.EffectiveThreshold,
-		"floor":               res.BaseScore,
+		"floor":               res.EffectiveFloor,
 		"applies":             applies,
 		"reason":              reason,
 		"scoreFrom":           string(res.ResolvedScoreFrom),

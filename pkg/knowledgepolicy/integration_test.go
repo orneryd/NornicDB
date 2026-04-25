@@ -16,7 +16,7 @@ func TestIntegration_DDL_Score_Visibility(t *testing.T) {
 			ScoreFrom:           ScoreFromCreated,
 			Enabled:             true,
 		},
-		"fact_nodeacay": {
+		"fact_nodecay": {
 			Name:      "fact_nodecay",
 			Scope:     ScopeNode,
 			Function:  DecayFunctionNone,
