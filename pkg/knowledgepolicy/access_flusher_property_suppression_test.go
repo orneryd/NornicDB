@@ -30,7 +30,7 @@ func (m *mockAccessMetaStore) PutAccessMeta(entityID string, entry *AccessMetaEn
 }
 
 func TestFlusherPropertySuppression_WriteNilOnDecay(t *testing.T) {
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
 	flusher := NewAccessFlusher(acc, store, time.Hour)
 
@@ -96,7 +96,7 @@ func TestFlusherPropertySuppression_WriteNilOnDecay(t *testing.T) {
 }
 
 func TestFlusherPropertySuppression_NoSuppressionWhenRecent(t *testing.T) {
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
 	flusher := NewAccessFlusher(acc, store, time.Hour)
 
@@ -158,7 +158,7 @@ func TestFlusherPropertySuppression_NoSuppressionWhenRecent(t *testing.T) {
 }
 
 func TestFlusherPropertySuppression_EmbedInvalidateOnChange(t *testing.T) {
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
 	flusher := NewAccessFlusher(acc, store, time.Hour)
 
@@ -214,7 +214,7 @@ func TestFlusherPropertySuppression_EmbedInvalidateOnChange(t *testing.T) {
 }
 
 func TestFlusherPropertySuppression_NoCallbackWhenNoScorerFunc(t *testing.T) {
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
 	flusher := NewAccessFlusher(acc, store, time.Hour)
 
@@ -234,7 +234,7 @@ func TestFlusherPropertySuppression_NoCallbackWhenNoScorerFunc(t *testing.T) {
 }
 
 func TestFlusherPropertySuppression_RestorationRemovesMarker(t *testing.T) {
-	acc := NewAccessAccumulator(true)
+	acc := NewAccessAccumulator(true, 0)
 	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
 	flusher := NewAccessFlusher(acc, store, time.Hour)
 

@@ -147,6 +147,11 @@ type ServerConfig struct {
 	// When set, tools that need direct storage access (e.g. discover/search) can operate
 	// on the request's database without relying on a single default DB instance.
 	DatabaseScopedStorage func(dbName string) (storage.Engine, error)
+
+	// DefaultNodeLabel is the label used when the store tool is called without
+	// explicit labels or type. Defaults to "Memory" for backward compatibility.
+	// Configured via NORNICDB_DEFAULT_NODE_LABEL env var or config.Memory.DefaultNodeLabel.
+	DefaultNodeLabel string
 }
 
 // DefaultServerConfig returns sensible defaults for the MCP server.
@@ -627,9 +632,17 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		return nil, fmt.Errorf("content is required")
 	}
 
-	nodeType := getString(args, "type")
-	if nodeType == "" {
-		nodeType = "Memory"
+	// Resolve labels: prefer explicit "labels" array, fall back to single "type" string.
+	labels := getStringSlice(args, "labels")
+	if len(labels) == 0 {
+		nodeType := getString(args, "type")
+		if nodeType == "" {
+			nodeType = s.config.DefaultNodeLabel
+			if nodeType == "" {
+				nodeType = "Memory"
+			}
+		}
+		labels = []string{nodeType}
 	}
 
 	title := getString(args, "title")
@@ -668,12 +681,17 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		return nil, execErr
 	}
 	if exec != nil {
-		safeLabel := strings.ReplaceAll(nodeType, "`", "")
-		if !IsValidNodeType(safeLabel) {
-			return nil, fmt.Errorf("invalid node type: %q (must be a valid identifier)", nodeType)
+		// Validate and sanitize all labels
+		var safeLabels []string
+		for _, l := range labels {
+			safe := strings.ReplaceAll(l, "`", "")
+			if !IsValidNodeType(safe) {
+				return nil, fmt.Errorf("invalid label: %q (must be a valid identifier)", l)
+			}
+			safeLabels = append(safeLabels, safe)
 		}
-		// Use SET to apply props; avoid backticks since labels are already validated identifiers.
-		query := fmt.Sprintf("CREATE (n:%s) SET n += $props RETURN elementId(n) AS id", safeLabel)
+		labelExpr := strings.Join(safeLabels, ":")
+		query := fmt.Sprintf("CREATE (n:%s) SET n += $props RETURN elementId(n) AS id", labelExpr)
 		result, err := exec.Execute(ctx, query, map[string]interface{}{"props": props})
 		if err != nil {
 			return nil, fmt.Errorf("failed to store node: %w", err)
@@ -686,15 +704,13 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 			return nil, fmt.Errorf("store returned invalid node id")
 		}
 		nodeID = id
-		embedded = true // Embeddings are generated asynchronously by the database
+		embedded = true
 		if result.Metadata != nil {
 			if rec, ok := result.Metadata["receipt"]; ok && rec != nil {
 				receipt = rec
 			}
 		}
 	} else {
-		// No executor: database unavailable (e.g. MCP not wired to server's DatabaseScopedExecutor).
-		// Return an error so the LLM/user sees failure instead of a fake ID that was never persisted.
 		return nil, fmt.Errorf("store failed: no database executor available (data would not persist); ensure MCP is wired to the server's default database")
 	}
 
@@ -1042,6 +1058,10 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 	edgeProps := map[string]interface{}{
 		"strength":   strength,
 		"created_at": time.Now().Format(time.RFC3339),
+	}
+	// Merge caller-provided metadata into edge properties
+	for k, v := range getMap(args, "metadata") {
+		edgeProps[k] = v
 	}
 
 	// Create edge in database

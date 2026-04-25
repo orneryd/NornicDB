@@ -57,10 +57,10 @@ func TestAutoTLP_ServerSideEmbeddingsTriggerInferenceOnEmbedded(t *testing.T) {
 	db.embedWorkerConfig.BatchDelay = 0
 	db.embedWorkerConfig.ScanInterval = time.Hour
 
-	// Store two nodes WITHOUT embeddings. Auto-linking cannot run at Store() time.
-	a, err := db.Store(ctx, &Memory{Content: "alpha"})
+	// Store two nodes WITHOUT embeddings. Auto-linking cannot run at create time.
+	a, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{"content": "alpha"})
 	require.NoError(t, err)
-	b, err := db.Store(ctx, &Memory{Content: "beta"})
+	b, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{"content": "beta"})
 	require.NoError(t, err)
 
 	edges, err := db.storage.AllEdges()

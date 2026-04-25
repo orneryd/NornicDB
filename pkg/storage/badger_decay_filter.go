@@ -54,12 +54,10 @@ func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {
 	}
 
 	input := knowledgepolicy.NodeScoringInput{
-		EntityID:           string(node.ID),
-		Labels:             node.Labels,
-		CreatedAtNanos:     node.CreatedAt.UnixNano(),
-		VersionAtNanos:     node.UpdatedAt.UnixNano(),
-		LegacyAccessCount:  node.AccessCount,
-		LegacyLastAccessed: node.LastAccessed.UnixNano(),
+		EntityID:       string(node.ID),
+		Labels:         node.Labels,
+		CreatedAtNanos: node.CreatedAt.UnixNano(),
+		VersionAtNanos: node.UpdatedAt.UnixNano(),
 	}
 
 	suppress, _ := knowledgepolicy.ShouldSuppressNode(scorer, input, accessMeta, nowNanos)

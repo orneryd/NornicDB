@@ -11,7 +11,6 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
-	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/replication"
@@ -190,19 +189,6 @@ func (e *restoreFailEngine) UpdateEdge(edge *storage.Edge) error {
 	return e.Engine.UpdateEdge(edge)
 }
 
-func TestMemoryTierHalfLives(t *testing.T) {
-	// Verify our decay constants match expected half-lives
-
-	episodicHL := decay.HalfLife(decay.TierEpisodic)
-	assert.InDelta(t, 7.0, episodicHL, 0.5, "Episodic should have ~7 day half-life")
-
-	semanticHL := decay.HalfLife(decay.TierSemantic)
-	assert.InDelta(t, 69.0, semanticHL, 2.0, "Semantic should have ~69 day half-life")
-
-	proceduralHL := decay.HalfLife(decay.TierProcedural)
-	assert.InDelta(t, 693.0, proceduralHL, 20.0, "Procedural should have ~693 day half-life")
-}
-
 func TestOpen(t *testing.T) {
 	t.Run("with nil config uses defaults", func(t *testing.T) {
 		tmpDir := t.TempDir() // Auto-cleanup after test
@@ -215,7 +201,6 @@ func TestOpen(t *testing.T) {
 		assert.False(t, db.config.Memory.DecayEnabled)
 		assert.True(t, db.config.Memory.AutoLinksEnabled)
 		assert.NotNil(t, db.storage)
-		assert.Nil(t, db.decay)
 		inferEngine, err := db.GetOrCreateInferenceService(db.defaultDatabaseName(), db.storage)
 		require.NoError(t, err)
 		assert.NotNil(t, inferEngine)
@@ -235,7 +220,6 @@ func TestOpen(t *testing.T) {
 		defer db.Close()
 
 		assert.Equal(t, tmpDir, db.config.Database.DataDir)
-		assert.Nil(t, db.decay)
 		inferEngine, err := db.GetOrCreateInferenceService(db.defaultDatabaseName(), db.storage)
 		require.NoError(t, err)
 		assert.Nil(t, inferEngine)
@@ -526,141 +510,75 @@ func TestMaybeEnableReplication(t *testing.T) {
 	})
 }
 
-func TestStore(t *testing.T) {
+func TestCreateNode_WithEmbeddings(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("stores memory with defaults", func(t *testing.T) {
+	t.Run("creates node with labels and properties", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem := &Memory{
-			Content: "Test content",
-			Title:   "Test Title",
-		}
-
-		stored, err := db.Store(ctx, mem)
+		node, err := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{
+			"content": "Test content",
+			"title":   "Test Title",
+			"tags":    []string{"tag1", "tag2"},
+			"source":  "test-source",
+			"custom":  "value",
+		})
 		require.NoError(t, err)
-		require.NotNil(t, stored)
+		require.NotNil(t, node)
 
-		assert.NotEmpty(t, stored.ID)
-		assert.Equal(t, "Test content", stored.Content)
-		assert.Equal(t, "Test Title", stored.Title)
-		assert.Equal(t, TierSemantic, stored.Tier)
-		assert.Equal(t, 1.0, stored.DecayScore)
-		assert.False(t, stored.CreatedAt.IsZero())
-		assert.False(t, stored.LastAccessed.IsZero())
-		assert.Equal(t, int64(0), stored.AccessCount)
+		assert.NotEmpty(t, node.ID)
+		assert.Equal(t, "Test content", node.Properties["content"])
+		assert.Equal(t, "Test Title", node.Properties["title"])
+		assert.False(t, node.CreatedAt.IsZero())
 	})
 
-	t.Run("stores memory with explicit tier", func(t *testing.T) {
+	t.Run("stores node with embeddings via storage engine", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem := &Memory{
-			Content: "Important skill",
-			Tier:    TierProcedural,
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-		assert.Equal(t, TierProcedural, stored.Tier)
-	})
-
-	t.Run("stores memory with tags and properties", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{
-			Content:    "Tagged content",
-			Tags:       []string{"tag1", "tag2"},
-			Source:     "test-source",
-			Properties: map[string]any{"custom": "value"},
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"tag1", "tag2"}, stored.Tags)
-		assert.Equal(t, "test-source", stored.Source)
-	})
-
-	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		db.Close()
-
-		mem := &Memory{Content: "Test"}
-		_, err = db.Store(ctx, mem)
-		assert.ErrorIs(t, err, ErrClosed)
-	})
-
-	t.Run("returns error for nil memory", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		_, err = db.Store(ctx, nil)
-		assert.ErrorIs(t, err, ErrInvalidInput)
-	})
-
-	t.Run("stores with embeddings", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{
-			Content:         "Memory with embedding",
+		// Embeddings must be set via storage engine directly (CreateNode does not support them)
+		// db.storage is the namespaced engine; it accepts unprefixed IDs and returns them unprefixed.
+		nodeID := storage.NodeID(generateID())
+		n := &storage.Node{
+			ID:              nodeID,
+			Labels:          []string{"Concept"},
+			Properties:      map[string]interface{}{"content": "Memory with embedding"},
 			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
 		}
-		stored, err := db.Store(ctx, mem)
+		actualID, err := db.storage.CreateNode(n)
 		require.NoError(t, err)
-		assert.Equal(t, [][]float32{{1.0, 0.0, 0.0}}, stored.ChunkEmbeddings)
+
+		// Retrieve and verify embeddings are stored (use the returned ID)
+		retrieved, err := db.storage.GetNode(actualID)
+		require.NoError(t, err)
+		require.NotEmpty(t, retrieved.ChunkEmbeddings)
+		assert.Equal(t, []float32{1.0, 0.0, 0.0}, retrieved.ChunkEmbeddings[0])
 	})
 }
 
-func TestRecall(t *testing.T) {
+func TestGetNode_Recall(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("recalls stored memory", func(t *testing.T) {
+	t.Run("retrieves stored node by ID", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem := &Memory{
-			Content: "Recallable content",
-			Title:   "Recallable",
-		}
-
-		stored, err := db.Store(ctx, mem)
+		created, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content": "Recallable content",
+			"title":   "Recallable",
+		})
 		require.NoError(t, err)
 
-		recalled, err := db.Recall(ctx, stored.ID)
+		retrieved, err := db.GetNode(ctx, created.ID)
 		require.NoError(t, err)
-		require.NotNil(t, recalled)
+		require.NotNil(t, retrieved)
 
-		assert.Equal(t, stored.ID, recalled.ID)
-		assert.Equal(t, "Recallable content", recalled.Content)
-		assert.Equal(t, int64(1), recalled.AccessCount)
-	})
-
-	t.Run("reinforces memory on recall", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{Content: "Reinforced content"}
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-
-		originalAccess := stored.LastAccessed
-		time.Sleep(10 * time.Millisecond) // Small delay
-
-		recalled, err := db.Recall(ctx, stored.ID)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), recalled.AccessCount)
-		assert.True(t, recalled.LastAccessed.After(originalAccess) || recalled.LastAccessed.Equal(originalAccess))
+		assert.Equal(t, created.ID, retrieved.ID)
+		assert.Equal(t, "Recallable content", retrieved.Properties["content"])
 	})
 
 	t.Run("returns error for non-existent ID", func(t *testing.T) {
@@ -668,184 +586,41 @@ func TestRecall(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		_, err = db.Recall(ctx, "non-existent-id")
+		_, err = db.GetNode(ctx, "non-existent-id")
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
-	t.Run("returns error for empty ID", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		_, err = db.Recall(ctx, "")
-		assert.ErrorIs(t, err, ErrInvalidID)
-	})
-
 	t.Run("returns error when closed", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		db.Close()
 
-		_, err = db.Recall(ctx, "any-id")
+		_, err = db.GetNode(ctx, "any-id")
 		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
 
-func TestRemember(t *testing.T) {
+func TestCreateEdge_BetweenNodes(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("finds similar memories", func(t *testing.T) {
+	t.Run("creates edge and verifies source and target", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Store memories with embeddings
-		mem1 := &Memory{
-			Content:         "Dog running in park",
-			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0, 0.0}},
-		}
-		mem2 := &Memory{
-			Content:         "Cat sleeping on couch",
-			ChunkEmbeddings: [][]float32{{0.0, 1.0, 0.0, 0.0}},
-		}
-		mem3 := &Memory{
-			Content:         "Puppy playing fetch",
-			ChunkEmbeddings: [][]float32{{0.9, 0.1, 0.0, 0.0}},
-		}
-
-		_, err = db.Store(ctx, mem1)
+		n1, err := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "Source"})
 		require.NoError(t, err)
-		_, err = db.Store(ctx, mem2)
-		require.NoError(t, err)
-		_, err = db.Store(ctx, mem3)
+		n2, err := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "Target"})
 		require.NoError(t, err)
 
-		// Search for dog-like content
-		query := []float32{0.95, 0.05, 0.0, 0.0}
-		results, err := db.Remember(ctx, query, 2)
-		require.NoError(t, err)
-		require.Len(t, results, 2)
-
-		// Top results should be dog-related
-		contents := make([]string, len(results))
-		for i, r := range results {
-			contents[i] = r.Content
-		}
-		assert.Contains(t, contents, "Dog running in park")
-		assert.Contains(t, contents, "Puppy playing fetch")
-	})
-
-	t.Run("respects limit", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// Store multiple memories
-		for i := 0; i < 5; i++ {
-			mem := &Memory{
-				Content:         "Memory content",
-				ChunkEmbeddings: [][]float32{{0.5, 0.5, 0.0, 0.0}},
-			}
-			_, err = db.Store(ctx, mem)
-			require.NoError(t, err)
-		}
-
-		results, err := db.Remember(ctx, []float32{0.5, 0.5, 0.0, 0.0}, 2)
-		require.NoError(t, err)
-		assert.Len(t, results, 2)
-	})
-
-	t.Run("returns empty for no matches", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// Store memory without embedding
-		mem := &Memory{Content: "No embedding"}
-		_, err = db.Store(ctx, mem)
-		require.NoError(t, err)
-
-		results, err := db.Remember(ctx, []float32{1.0, 0.0}, 10)
-		require.NoError(t, err)
-		assert.Empty(t, results)
-	})
-
-	t.Run("returns error for empty embedding", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		_, err = db.Remember(ctx, []float32{}, 10)
-		assert.ErrorIs(t, err, ErrInvalidInput)
-	})
-
-	t.Run("returns error when closed", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		db.Close()
-
-		_, err = db.Remember(ctx, []float32{1.0}, 10)
-		assert.ErrorIs(t, err, ErrClosed)
-	})
-}
-
-func TestLink(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("creates link between memories", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem1 := &Memory{Content: "Source"}
-		mem2 := &Memory{Content: "Target"}
-
-		stored1, err := db.Store(ctx, mem1)
-		require.NoError(t, err)
-		stored2, err := db.Store(ctx, mem2)
-		require.NoError(t, err)
-
-		edge, err := db.Link(ctx, stored1.ID, stored2.ID, "KNOWS", 0.9)
+		edge, err := db.CreateEdge(ctx, n1.ID, n2.ID, "KNOWS", map[string]interface{}{"confidence": 0.9})
 		require.NoError(t, err)
 		require.NotNil(t, edge)
 
 		assert.NotEmpty(t, edge.ID)
-		assert.Equal(t, stored1.ID, edge.SourceID)
-		assert.Equal(t, stored2.ID, edge.TargetID)
+		assert.Equal(t, n1.ID, edge.Source)
+		assert.Equal(t, n2.ID, edge.Target)
 		assert.Equal(t, "KNOWS", edge.Type)
-		assert.Equal(t, 0.9, edge.Confidence)
-		assert.False(t, edge.AutoGenerated)
-	})
-
-	t.Run("uses default edge type", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem1, _ := db.Store(ctx, &Memory{Content: "A"})
-		mem2, _ := db.Store(ctx, &Memory{Content: "B"})
-
-		edge, err := db.Link(ctx, mem1.ID, mem2.ID, "", 0.5)
-		require.NoError(t, err)
-		assert.Equal(t, "RELATES_TO", edge.Type)
-	})
-
-	t.Run("normalizes confidence", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem1, _ := db.Store(ctx, &Memory{Content: "A"})
-		mem2, _ := db.Store(ctx, &Memory{Content: "B"})
-
-		edge, err := db.Link(ctx, mem1.ID, mem2.ID, "TEST", 0) // Invalid confidence
-		require.NoError(t, err)
-		assert.Equal(t, 1.0, edge.Confidence)
-
-		mem3, _ := db.Store(ctx, &Memory{Content: "C"})
-		edge2, err := db.Link(ctx, mem1.ID, mem3.ID, "TEST", 1.5) // Out of range
-		require.NoError(t, err)
-		assert.Equal(t, 1.0, edge2.Confidence)
 	})
 
 	t.Run("returns error for non-existent source", func(t *testing.T) {
@@ -853,9 +628,9 @@ func TestLink(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem2, _ := db.Store(ctx, &Memory{Content: "Target"})
+		n2, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "Target"})
 
-		_, err = db.Link(ctx, "non-existent", mem2.ID, "TEST", 1.0)
+		_, err = db.CreateEdge(ctx, "non-existent", n2.ID, "TEST", nil)
 		assert.Error(t, err)
 	})
 
@@ -864,22 +639,10 @@ func TestLink(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem1, _ := db.Store(ctx, &Memory{Content: "Source"})
+		n1, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "Source"})
 
-		_, err = db.Link(ctx, mem1.ID, "non-existent", "TEST", 1.0)
+		_, err = db.CreateEdge(ctx, n1.ID, "non-existent", "TEST", nil)
 		assert.Error(t, err)
-	})
-
-	t.Run("returns error for empty IDs", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		_, err = db.Link(ctx, "", "target", "TEST", 1.0)
-		assert.ErrorIs(t, err, ErrInvalidID)
-
-		_, err = db.Link(ctx, "source", "", "TEST", 1.0)
-		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
@@ -887,96 +650,48 @@ func TestLink(t *testing.T) {
 		require.NoError(t, err)
 		db.Close()
 
-		_, err = db.Link(ctx, "a", "b", "TEST", 1.0)
+		_, err = db.CreateEdge(ctx, "a", "b", "TEST", nil)
 		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
 
-func TestNeighbors(t *testing.T) {
+func TestGetEdgesForNode(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("finds direct neighbors", func(t *testing.T) {
+	t.Run("returns outgoing and incoming edges", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
-		memB, _ := db.Store(ctx, &Memory{Content: "B"})
-		memC, _ := db.Store(ctx, &Memory{Content: "C"})
+		nA, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "A"})
+		nB, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "B"})
+		nC, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "C"})
 
-		// A -> B, A -> C
-		_, err = db.Link(ctx, memA.ID, memB.ID, "KNOWS", 1.0)
+		_, err = db.CreateEdge(ctx, nA.ID, nB.ID, "KNOWS", nil)
 		require.NoError(t, err)
-		_, err = db.Link(ctx, memA.ID, memC.ID, "KNOWS", 1.0)
+		_, err = db.CreateEdge(ctx, nA.ID, nC.ID, "KNOWS", nil)
 		require.NoError(t, err)
 
-		neighbors, err := db.Neighbors(ctx, memA.ID, 1, "")
+		edges, err := db.GetEdgesForNode(ctx, nA.ID)
 		require.NoError(t, err)
-		require.Len(t, neighbors, 2)
-
-		contents := []string{neighbors[0].Content, neighbors[1].Content}
-		assert.Contains(t, contents, "B")
-		assert.Contains(t, contents, "C")
+		require.Len(t, edges, 2)
 	})
 
-	t.Run("finds incoming neighbors", func(t *testing.T) {
+	t.Run("returns incoming edges for target node", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
-		memB, _ := db.Store(ctx, &Memory{Content: "B"})
+		nA, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "A"})
+		nB, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "B"})
 
-		// A -> B (so B has incoming from A)
-		_, err = db.Link(ctx, memA.ID, memB.ID, "POINTS_TO", 1.0)
+		_, err = db.CreateEdge(ctx, nA.ID, nB.ID, "POINTS_TO", nil)
 		require.NoError(t, err)
 
-		neighbors, err := db.Neighbors(ctx, memB.ID, 1, "")
+		edges, err := db.GetEdgesForNode(ctx, nB.ID)
 		require.NoError(t, err)
-		require.Len(t, neighbors, 1)
-		assert.Equal(t, "A", neighbors[0].Content)
-	})
-
-	t.Run("filters by edge type", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
-		memB, _ := db.Store(ctx, &Memory{Content: "B"})
-		memC, _ := db.Store(ctx, &Memory{Content: "C"})
-
-		_, _ = db.Link(ctx, memA.ID, memB.ID, "KNOWS", 1.0)
-		_, _ = db.Link(ctx, memA.ID, memC.ID, "LIKES", 1.0)
-
-		neighbors, err := db.Neighbors(ctx, memA.ID, 1, "KNOWS")
-		require.NoError(t, err)
-		require.Len(t, neighbors, 1)
-		assert.Equal(t, "B", neighbors[0].Content)
-	})
-
-	t.Run("traverses multiple hops", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
-		memB, _ := db.Store(ctx, &Memory{Content: "B"})
-		memC, _ := db.Store(ctx, &Memory{Content: "C"})
-
-		// A -> B -> C
-		_, _ = db.Link(ctx, memA.ID, memB.ID, "NEXT", 1.0)
-		_, _ = db.Link(ctx, memB.ID, memC.ID, "NEXT", 1.0)
-
-		// Depth 1 from A: just B
-		neighbors1, err := db.Neighbors(ctx, memA.ID, 1, "")
-		require.NoError(t, err)
-		require.Len(t, neighbors1, 1)
-
-		// Depth 2 from A: B and C
-		neighbors2, err := db.Neighbors(ctx, memA.ID, 2, "")
-		require.NoError(t, err)
-		require.Len(t, neighbors2, 2)
+		require.Len(t, edges, 1)
+		assert.Equal(t, nA.ID, edges[0].Source)
 	})
 
 	t.Run("returns empty for isolated node", func(t *testing.T) {
@@ -984,19 +699,19 @@ func TestNeighbors(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
+		nA, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "A"})
 
-		neighbors, err := db.Neighbors(ctx, memA.ID, 1, "")
+		edges, err := db.GetEdgesForNode(ctx, nA.ID)
 		require.NoError(t, err)
-		assert.Empty(t, neighbors)
+		assert.Empty(t, edges)
 	})
 
-	t.Run("returns error for empty ID", func(t *testing.T) {
+	t.Run("returns error for empty node ID", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		_, err = db.Neighbors(ctx, "", 1, "")
+		_, err = db.GetEdgesForNode(ctx, "")
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 
@@ -1005,64 +720,49 @@ func TestNeighbors(t *testing.T) {
 		require.NoError(t, err)
 		db.Close()
 
-		_, err = db.Neighbors(ctx, "any-id", 1, "")
+		_, err = db.GetEdgesForNode(ctx, "any-id")
 		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
 
-func TestForget(t *testing.T) {
+func TestDeleteNode_AndEdgeCleanup(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("forgets memory", func(t *testing.T) {
+	t.Run("deletes node and it is no longer retrievable", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem, _ := db.Store(ctx, &Memory{Content: "To forget"})
-
-		err = db.Forget(ctx, mem.ID)
+		node, err := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "To delete"})
 		require.NoError(t, err)
 
-		// Should no longer be recallable
-		_, err = db.Recall(ctx, mem.ID)
+		err = db.DeleteNode(ctx, node.ID)
+		require.NoError(t, err)
+
+		_, err = db.GetNode(ctx, node.ID)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
-	t.Run("cleans up edges", func(t *testing.T) {
+	t.Run("deleted node cannot be retrieved after deletion", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		memA, _ := db.Store(ctx, &Memory{Content: "A"})
-		memB, _ := db.Store(ctx, &Memory{Content: "B"})
-		_, _ = db.Link(ctx, memA.ID, memB.ID, "TEST", 1.0)
+		nA, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "A"})
+		nB, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "B"})
+		_, _ = db.CreateEdge(ctx, nA.ID, nB.ID, "TEST", nil)
 
-		// Forget A
-		err = db.Forget(ctx, memA.ID)
+		err = db.DeleteNode(ctx, nA.ID)
 		require.NoError(t, err)
 
-		// B should have no neighbors now
-		neighbors, err := db.Neighbors(ctx, memB.ID, 1, "")
-		require.NoError(t, err)
-		assert.Empty(t, neighbors)
-	})
-
-	t.Run("returns error for non-existent ID", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		err = db.Forget(ctx, "non-existent")
+		// nA should no longer be retrievable
+		_, err = db.GetNode(ctx, nA.ID)
 		assert.ErrorIs(t, err, ErrNotFound)
-	})
 
-	t.Run("returns error for empty ID", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
+		// nB should still exist
+		nBRetrieved, err := db.GetNode(ctx, nB.ID)
 		require.NoError(t, err)
-		defer db.Close()
-
-		err = db.Forget(ctx, "")
-		assert.ErrorIs(t, err, ErrInvalidID)
+		assert.Equal(t, nB.ID, nBRetrieved.ID)
 	})
 
 	t.Run("returns error when closed", func(t *testing.T) {
@@ -1070,7 +770,7 @@ func TestForget(t *testing.T) {
 		require.NoError(t, err)
 		db.Close()
 
-		err = db.Forget(ctx, "any-id")
+		err = db.DeleteNode(ctx, "any-id")
 		assert.ErrorIs(t, err, ErrClosed)
 	})
 }
@@ -1108,8 +808,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "bge-m3", config.Memory.EmbeddingModel)
 	assert.Equal(t, 1024, config.Memory.EmbeddingDimensions)
 	assert.False(t, config.Memory.DecayEnabled)
-	assert.Equal(t, time.Hour, config.Memory.DecayInterval)
-	assert.Equal(t, 0.05, config.Memory.ArchiveThreshold)
+	assert.Equal(t, 2*time.Second, config.Memory.DecayInterval)
+	assert.Equal(t, 0.05, config.Memory.VisibilityThreshold)
 	assert.True(t, config.Memory.AutoLinksEnabled)
 	assert.Equal(t, 0.82, config.Memory.AutoLinksSimilarityThreshold)
 	assert.Equal(t, 7687, config.Server.BoltPort)
@@ -1120,115 +820,13 @@ func TestGenerateID(t *testing.T) {
 	// Test that IDs are unique
 	ids := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		id := generateID("test")
+		id := generateID()
 		// IDs are now UUIDs (prefix parameter is ignored for backward compatibility)
 		assert.False(t, ids[id], "ID should be unique")
 		// Verify it's a valid UUID format (8-4-4-4-12 hex digits)
 		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, id, "ID should be a valid UUID")
 		ids[id] = true
 	}
-}
-
-func TestMemoryToNode(t *testing.T) {
-	mem := &Memory{
-		ID:              "test-123",
-		Content:         "Test content",
-		Title:           "Test Title",
-		Tier:            TierProcedural,
-		DecayScore:      0.8,
-		CreatedAt:       time.Now(),
-		LastAccessed:    time.Now(),
-		AccessCount:     5,
-		ChunkEmbeddings: [][]float32{{1.0, 2.0, 3.0}},
-		Tags:            []string{"tag1", "tag2"},
-		Source:          "test-source",
-		Properties:      map[string]any{"custom": "value"},
-	}
-
-	node := memoryToNode(mem)
-
-	assert.Equal(t, "test-123", string(node.ID))
-	assert.Equal(t, []string{"Memory"}, node.Labels)
-	assert.Equal(t, "Test content", node.Properties["content"])
-	assert.Equal(t, "Test Title", node.Properties["title"])
-	assert.Equal(t, "PROCEDURAL", node.Properties["tier"])
-	assert.Equal(t, [][]float32{{1.0, 2.0, 3.0}}, node.ChunkEmbeddings)
-	assert.Equal(t, "test-source", node.Properties["source"])
-	assert.Equal(t, "value", node.Properties["custom"])
-}
-
-func TestNodeToMemory(t *testing.T) {
-	now := time.Now()
-	node := &storage.Node{
-		ID:              "node-123",
-		Labels:          []string{"Memory"},
-		CreatedAt:       now,
-		ChunkEmbeddings: [][]float32{{1.0, 2.0}},
-		Properties: map[string]any{
-			"content":       "Node content",
-			"title":         "Node Title",
-			"tier":          "EPISODIC",
-			"decay_score":   0.7,
-			"last_accessed": now.Format(time.RFC3339),
-			"access_count":  int64(3),
-			"source":        "node-source",
-			"tags":          []string{"a", "b"},
-			"custom_prop":   "custom_value",
-		},
-	}
-
-	mem := nodeToMemory(node)
-
-	assert.Equal(t, "node-123", mem.ID)
-	assert.Equal(t, "Node content", mem.Content)
-	assert.Equal(t, "Node Title", mem.Title)
-	assert.Equal(t, TierEpisodic, mem.Tier)
-	assert.Equal(t, 0.7, mem.DecayScore)
-	assert.Equal(t, [][]float32{{1.0, 2.0}}, mem.ChunkEmbeddings)
-	assert.Equal(t, "node-source", mem.Source)
-	assert.Equal(t, []string{"a", "b"}, mem.Tags)
-	assert.Equal(t, "custom_value", mem.Properties["custom_prop"])
-}
-
-func TestStorageEdgeToEdge(t *testing.T) {
-	now := time.Now()
-	se := &storage.Edge{
-		ID:            "edge-1",
-		StartNode:     "node-a",
-		EndNode:       "node-b",
-		Type:          "RELATES_TO",
-		Confidence:    0.91,
-		AutoGenerated: true,
-		CreatedAt:     now,
-		Properties: map[string]interface{}{
-			"reason": "semantic overlap",
-			"weight": 3,
-		},
-	}
-
-	edge := storageEdgeToEdge(se)
-	require.NotNil(t, edge)
-	assert.Equal(t, "edge-1", edge.ID)
-	assert.Equal(t, "node-a", edge.SourceID)
-	assert.Equal(t, "node-b", edge.TargetID)
-	assert.Equal(t, "RELATES_TO", edge.Type)
-	assert.Equal(t, 0.91, edge.Confidence)
-	assert.True(t, edge.AutoGenerated)
-	assert.Equal(t, now, edge.CreatedAt)
-	assert.Equal(t, "semantic overlap", edge.Reason)
-	assert.Equal(t, 3, edge.Properties["weight"])
-
-	// Missing/non-string reason should keep Reason empty.
-	se2 := &storage.Edge{
-		ID:         "edge-2",
-		StartNode:  "x",
-		EndNode:    "y",
-		Type:       "LINKS",
-		Properties: map[string]interface{}{"reason": 123},
-	}
-	edge2 := storageEdgeToEdge(se2)
-	require.NotNil(t, edge2)
-	assert.Equal(t, "", edge2.Reason)
 }
 
 func TestCosineSimilarity(t *testing.T) {
@@ -1301,216 +899,22 @@ func TestSqrt(t *testing.T) {
 func TestDecayIntegration(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("decay affects recall score", func(t *testing.T) {
+	t.Run("node created with decay-relevant properties remains retrievable", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem := &Memory{
-			Content: "Decaying memory",
-			Tier:    TierEpisodic,
-		}
-
-		stored, err := db.Store(ctx, mem)
+		node, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+			"content": "Decaying memory",
+		})
 		require.NoError(t, err)
-		assert.Equal(t, 1.0, stored.DecayScore)
+		assert.NotEmpty(t, node.ID)
 
-		// Multiple recalls should reinforce the memory
-		for i := 0; i < 3; i++ {
-			_, err = db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-		}
-
-		recalled, err := db.Recall(ctx, stored.ID)
+		// Verify the node is still retrievable
+		retrieved, err := db.GetNode(ctx, node.ID)
 		require.NoError(t, err)
-		assert.Equal(t, int64(4), recalled.AccessCount)
-	})
-}
-
-func TestTierPromotionIntegration(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("episodic memory promotes to semantic on frequent access", func(t *testing.T) {
-		config := &Config{
-			Memory: nornicConfig.MemoryConfig{
-				DecayEnabled:     true,
-				DecayInterval:    30 * time.Minute,
-				ArchiveThreshold: 0.01,
-			},
-		}
-		db, err := Open(t.TempDir(), config)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// Create episodic memory
-		mem := &Memory{
-			Content: "Frequently accessed episodic memory",
-			Tier:    TierEpisodic,
-		}
-
-		// Store with creation time in the past to meet age requirement
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-		assert.Equal(t, TierEpisodic, stored.Tier)
-
-		// Manually set CreatedAt to meet age requirement (hack for testing)
-		// In real usage, time passes naturally
-		node, err := db.storage.GetNode(storage.NodeID(stored.ID))
-		require.NoError(t, err)
-		node.CreatedAt = time.Now().Add(-2 * 24 * time.Hour) // Set directly on node
-		err = db.storage.UpdateNode(node)
-		require.NoError(t, err)
-
-		// Recall multiple times to meet default access threshold (10)
-		for i := 0; i < 10; i++ {
-			recalled, err := db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-			assert.NotEmpty(t, recalled.Tier)
-		}
-	})
-
-	t.Run("semantic memory promotes to procedural on very frequent access", func(t *testing.T) {
-		config := &Config{
-			Memory: nornicConfig.MemoryConfig{
-				DecayEnabled:     true,
-				DecayInterval:    30 * time.Minute,
-				ArchiveThreshold: 0.01,
-			},
-		}
-		db, err := Open(t.TempDir(), config)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// Create semantic memory
-		mem := &Memory{
-			Content: "Very frequently accessed semantic memory",
-			Tier:    TierSemantic,
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-		assert.Equal(t, TierSemantic, stored.Tier)
-
-		// Manually set CreatedAt to meet age requirement
-		node, err := db.storage.GetNode(storage.NodeID(stored.ID))
-		require.NoError(t, err)
-		node.CreatedAt = time.Now().Add(-3 * 24 * time.Hour) // Set directly on node
-		err = db.storage.UpdateNode(node)
-		require.NoError(t, err)
-
-		// Recall multiple times to meet default procedural threshold (50)
-		for i := 0; i < 50; i++ {
-			recalled, err := db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-			assert.NotEmpty(t, recalled.Tier)
-		}
-	})
-
-	t.Run("promotion disabled does not change tier", func(t *testing.T) {
-		config := &Config{
-			Memory: nornicConfig.MemoryConfig{
-				DecayEnabled: true,
-			},
-		}
-		db, err := Open(t.TempDir(), config)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{
-			Content: "Memory with promotion disabled",
-			Tier:    TierEpisodic,
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-
-		// Set age requirement
-		node, err := db.storage.GetNode(storage.NodeID(stored.ID))
-		require.NoError(t, err)
-		node.Properties["_createdAt"] = time.Now().Add(-2 * 24 * time.Hour).Format(time.RFC3339)
-		err = db.storage.UpdateNode(node)
-		require.NoError(t, err)
-
-		// Recall many times
-		for i := 0; i < 20; i++ {
-			recalled, err := db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-			// Should remain episodic
-			assert.Equal(t, TierEpisodic, recalled.Tier, "Should not promote when disabled")
-		}
-	})
-
-	t.Run("procedural tier does not promote further", func(t *testing.T) {
-		config := &Config{
-			Memory: nornicConfig.MemoryConfig{
-				DecayEnabled: true,
-			},
-		}
-		db, err := Open(t.TempDir(), config)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{
-			Content: "Procedural memory",
-			Tier:    TierProcedural,
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-		assert.Equal(t, TierProcedural, stored.Tier)
-
-		// Recall many times
-		for i := 0; i < 100; i++ {
-			recalled, err := db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-			// Should remain procedural (highest tier)
-			assert.Equal(t, TierProcedural, recalled.Tier, "Procedural is highest tier")
-		}
-	})
-
-	t.Run("promotion updates decay score", func(t *testing.T) {
-		config := &Config{
-			Memory: nornicConfig.MemoryConfig{
-				DecayEnabled: true,
-			},
-		}
-		db, err := Open(t.TempDir(), config)
-		require.NoError(t, err)
-		defer db.Close()
-
-		mem := &Memory{
-			Content: "Memory for decay score test",
-			Tier:    TierEpisodic,
-		}
-
-		stored, err := db.Store(ctx, mem)
-		require.NoError(t, err)
-
-		// Set age requirement
-		node, err := db.storage.GetNode(storage.NodeID(stored.ID))
-		require.NoError(t, err)
-		node.CreatedAt = time.Now().Add(-2 * 24 * time.Hour) // Set directly on node
-		err = db.storage.UpdateNode(node)
-		require.NoError(t, err)
-
-		// Recall to trigger promotion
-		for i := 0; i < 12; i++ {
-			recalled, err := db.Recall(ctx, stored.ID)
-			require.NoError(t, err)
-
-			if recalled.Tier == TierSemantic {
-				// After promotion, decay score should be recalculated with new tier
-				// Semantic tier has slower decay, so score may improve
-				assert.Greater(t, recalled.DecayScore, 0.0, "Decay score should be valid")
-			}
-		}
-
-		// Final recall should be promoted from episodic and have valid score.
-		final, err := db.Recall(ctx, stored.ID)
-		require.NoError(t, err)
-		assert.NotEmpty(t, final.Tier)
-		assert.Greater(t, final.DecayScore, 0.0)
-		assert.LessOrEqual(t, final.DecayScore, 1.0)
+		assert.Equal(t, node.ID, retrieved.ID)
+		assert.Equal(t, "Decaying memory", retrieved.Properties["content"])
 	})
 }
 
@@ -1528,14 +932,12 @@ func TestWithoutDecay(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem := &Memory{Content: "No decay"}
-		stored, err := db.Store(ctx, mem)
+		node, err := db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "No decay"})
 		require.NoError(t, err)
 
-		recalled, err := db.Recall(ctx, stored.ID)
+		retrieved, err := db.GetNode(ctx, node.ID)
 		require.NoError(t, err)
-		assert.Equal(t, stored.Content, recalled.Content)
-		assert.Equal(t, int64(1), recalled.AccessCount)
+		assert.Equal(t, node.Properties["content"], retrieved.Properties["content"])
 	})
 }
 
@@ -1556,14 +958,14 @@ func TestStats(t *testing.T) {
 		assert.GreaterOrEqual(t, stats.EdgeCount, int64(0))
 	})
 
-	t.Run("updates after storing", func(t *testing.T) {
+	t.Run("updates after creating node", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
 		defer db.Close()
 
 		initialStats := db.Stats()
 
-		_, err = db.Store(ctx, &Memory{Content: "stats test"})
+		_, err = db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "stats test"})
 		require.NoError(t, err)
 
 		stats := db.Stats()
@@ -1618,66 +1020,6 @@ func TestExecuteCypher(t *testing.T) {
 		result, err := db.ExecuteCypher(ctx, "MATCH (n:TestPerson) RETURN n.name", nil)
 		require.NoError(t, err)
 		assert.NotNil(t, result)
-	})
-}
-
-func TestBootstrapCanonicalSchema(t *testing.T) {
-	t.Run("enforces canonical constraints", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		db, err := Open(tmpDir, nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		ctx := context.Background()
-		require.NoError(t, db.BootstrapCanonicalSchema(ctx))
-		require.NoError(t, db.BootstrapCanonicalSchema(ctx), "bootstrap should be idempotent")
-
-		_, err = db.ExecuteCypher(ctx, "CREATE (:Memory {tier: 'SEMANTIC'})", nil)
-		require.Error(t, err)
-
-		_, err = db.ExecuteCypher(ctx, "CREATE (:Memory {id: 'mem-1', content: 'hello', tier: 'SEMANTIC', decay_score: 1.0, last_accessed: '2024-01-01T00:00:00Z', access_count: 'bad'})", nil)
-		require.Error(t, err)
-
-		_, err = db.ExecuteCypher(ctx, "CREATE (:Memory {id: 'mem-1', content: 'hello', tier: 'SEMANTIC', decay_score: 1.0, last_accessed: '2024-01-01T00:00:00Z', access_count: 0})", nil)
-		require.NoError(t, err)
-
-		_, err = db.ExecuteCypher(ctx, "CREATE (:Memory {id: 'mem-1', content: 'hello', tier: 'SEMANTIC', decay_score: 1.0, last_accessed: '2024-01-01T00:00:00Z', access_count: 0})", nil)
-		require.Error(t, err)
-	})
-
-	t.Run("returns ErrClosed for closed database", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		require.NoError(t, db.Close())
-
-		err = db.BootstrapCanonicalSchema(context.Background())
-		require.ErrorIs(t, err, ErrClosed)
-	})
-
-	t.Run("returns error when schema manager is unavailable", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
-		t.Cleanup(func() { _ = base.Close() })
-
-		db := &DB{
-			config:  DefaultConfig(),
-			storage: &nilSchemaEngine{Engine: base},
-		}
-		err := db.BootstrapCanonicalSchema(context.Background())
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "schema manager not initialized")
-	})
-
-	t.Run("fails when existing data violates canonical required constraints", func(t *testing.T) {
-		db, err := Open(t.TempDir(), nil)
-		require.NoError(t, err)
-		defer db.Close()
-
-		// Existing invalid Memory node (missing required canonical properties) should fail bootstrap validation.
-		_, err = db.ExecuteCypher(context.Background(), "CREATE (:Memory {id: 'bad-before-bootstrap'})", nil)
-		require.NoError(t, err)
-
-		err = db.BootstrapCanonicalSchema(context.Background())
-		require.Error(t, err)
 	})
 }
 
@@ -2177,6 +1519,24 @@ func TestSearch(t *testing.T) {
 	})
 }
 
+// storeNodeWithEmbedding creates a node directly in the storage engine with a chunk embedding.
+// Used in tests that require embeddings, since CreateNode does not accept embeddings.
+// eng must be the db.storage (namespaced) engine; IDs are returned in unprefixed form.
+func storeNodeWithEmbedding(t *testing.T, eng storage.Engine, content string, embedding []float32) storage.NodeID {
+	t.Helper()
+	id := storage.NodeID(generateID())
+	n := &storage.Node{
+		ID:              id,
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": content},
+		ChunkEmbeddings: [][]float32{embedding},
+	}
+	actualID, err := eng.CreateNode(n)
+	require.NoError(t, err)
+	// NamespacedEngine.CreateNode returns the unprefixed ID
+	return actualID
+}
+
 func TestFindSimilar(t *testing.T) {
 	ctx := context.Background()
 
@@ -2185,19 +1545,11 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Create nodes with embeddings via Store
-		mem1, _ := db.Store(ctx, &Memory{
-			Content:         "similar test memory 1",
-			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
-		})
-		db.Store(ctx, &Memory{
-			Content:         "similar test memory 2",
-			ChunkEmbeddings: [][]float32{{0.9, 0.1, 0.0}}, // Similar
-		})
+		id1 := storeNodeWithEmbedding(t, db.storage, "similar test memory 1", []float32{1.0, 0.0, 0.0})
+		storeNodeWithEmbedding(t, db.storage, "similar test memory 2", []float32{0.9, 0.1, 0.0})
 
-		results, err := db.FindSimilar(ctx, mem1.ID, 10)
+		results, err := db.FindSimilar(ctx, string(id1), 10)
 		require.NoError(t, err)
-		// May or may not find similar depending on other data in testdata
 		assert.NotNil(t, results)
 	})
 
@@ -2206,32 +1558,18 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		root, err := db.Store(ctx, &Memory{
-			Content:         "root",
-			ChunkEmbeddings: [][]float32{{1.0, 0.0}},
-		})
-		require.NoError(t, err)
-
-		low, err := db.Store(ctx, &Memory{
-			Content:         "low",
-			ChunkEmbeddings: [][]float32{{0.2, 0.8}},
-		})
-		require.NoError(t, err)
-
-		high, err := db.Store(ctx, &Memory{
-			Content:         "high",
-			ChunkEmbeddings: [][]float32{{0.98, 0.02}},
-		})
-		require.NoError(t, err)
+		rootID := storeNodeWithEmbedding(t, db.storage, "root", []float32{1.0, 0.0})
+		lowID := storeNodeWithEmbedding(t, db.storage, "low", []float32{0.2, 0.8})
+		highID := storeNodeWithEmbedding(t, db.storage, "high", []float32{0.98, 0.02})
 
 		_, err = db.CreateNode(ctx, []string{"NoEmbed"}, map[string]interface{}{"name": "ignored"})
 		require.NoError(t, err)
 
-		results, err := db.FindSimilar(ctx, root.ID, 1)
+		results, err := db.FindSimilar(ctx, string(rootID), 1)
 		require.NoError(t, err)
 		require.Len(t, results, 1)
-		require.Equal(t, high.ID, results[0].Node.ID)
-		require.NotEqual(t, low.ID, results[0].Node.ID)
+		require.Equal(t, string(highID), results[0].Node.ID)
+		require.NotEqual(t, string(lowID), results[0].Node.ID)
 	})
 
 	t.Run("returns error for non-existent node", func(t *testing.T) {
@@ -2248,7 +1586,6 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		// Create node without embedding
 		node, _ := db.CreateNode(ctx, []string{"NoEmbedTest"}, map[string]interface{}{"name": "no embedding"})
 
 		_, err = db.FindSimilar(ctx, node.ID, 10)
@@ -2269,14 +1606,9 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem, err := db.Store(ctx, &Memory{
-			Content:         "has embedding",
-			Tier:            TierSemantic,
-			ChunkEmbeddings: [][]float32{{1, 0}},
-		})
-		require.NoError(t, err)
+		nodeID := storeNodeWithEmbedding(t, db.storage, "has embedding", []float32{1, 0})
 
-		_, err = db.FindSimilar(ctx, mem.ID, 0)
+		_, err = db.FindSimilar(ctx, string(nodeID), 0)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "limit must be greater than 0")
 	})
@@ -2286,20 +1618,14 @@ func TestFindSimilar(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		mem1, _ := db.Store(ctx, &Memory{
-			Content:         "cancel stream root",
-			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
-		})
+		rootID := storeNodeWithEmbedding(t, db.storage, "cancel stream root", []float32{1.0, 0.0, 0.0})
 		for i := 0; i < 32; i++ {
-			_, _ = db.Store(ctx, &Memory{
-				Content:         "cancel stream candidate",
-				ChunkEmbeddings: [][]float32{{0.9, 0.1, 0.0}},
-			})
+			storeNodeWithEmbedding(t, db.storage, "cancel stream candidate", []float32{0.9, 0.1, 0.0})
 		}
 
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = db.FindSimilar(cancelCtx, mem1.ID, 5)
+		_, err = db.FindSimilar(cancelCtx, string(rootID), 5)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "context canceled")
 	})

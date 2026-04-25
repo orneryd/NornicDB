@@ -410,26 +410,20 @@ func TestEncryptionWithMemory(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Store a memory with sensitive properties
-	mem := &Memory{
-		Content: "Patient record with sensitive data",
-		Title:   "Medical Record",
-		Tier:    TierSemantic,
-		Properties: map[string]interface{}{
-			"ssn":       "555-55-5555",
-			"diagnosis": "Confidential diagnosis",
-		},
-	}
-
-	stored, err := db.Store(ctx, mem)
+	// Create a node with sensitive properties
+	stored, err := db.CreateNode(ctx, []string{"Memory"}, map[string]interface{}{
+		"content":   "Patient record with sensitive data",
+		"title":     "Medical Record",
+		"ssn":       "555-55-5555",
+		"diagnosis": "Confidential diagnosis",
+	})
 	require.NoError(t, err)
 
 	// Retrieve and verify
-	retrieved, err := db.Recall(ctx, stored.ID)
+	retrieved, err := db.GetNode(ctx, stored.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, "Patient record with sensitive data", retrieved.Content)
-	// Note: Memory.Properties encryption depends on Store implementation
+	assert.Equal(t, "Patient record with sensitive data", retrieved.Properties["content"])
 }
 
 func TestEncryptionPerformance(t *testing.T) {

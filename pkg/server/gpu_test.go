@@ -3,15 +3,15 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/gpu"
-	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestHandleGPUStatus(t *testing.T) {
@@ -142,21 +142,23 @@ func TestHandleGPUTest(t *testing.T) {
 	server.db.SetGPUManager(gpuManager)
 
 	// Create a test node with embedding
-	mem := &nornicdb.Memory{
-		Content:         "Test memory for vector search",
-		ChunkEmbeddings: [][]float32{make([]float32, 1024)},
+	emb := make([]float32, 1024)
+	for i := range emb {
+		emb[i] = float32(i) / 1024.0
 	}
-	for i := range mem.ChunkEmbeddings[0] {
-		mem.ChunkEmbeddings[0][i] = float32(i) / 1024.0
+	testNode := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "Test memory for vector search"},
+		ChunkEmbeddings: [][]float32{emb},
 	}
-	ctx := context.Background()
-	stored, err := server.db.Store(ctx, mem)
+	storedID, err := server.db.GetStorage().CreateNode(testNode)
 	if err != nil {
 		t.Fatalf("failed to store test memory: %v", err)
 	}
 
 	reqBody := map[string]interface{}{
-		"node_id": stored.ID,
+		"node_id": string(storedID),
 		"limit":   5,
 		"mode":    "cpu", // Force CPU mode for testing
 	}

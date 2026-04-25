@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -1223,24 +1224,33 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
-	mem1, err := db.Store(ctx, &nornicdb.Memory{
-		Content:         "dog",
+	mem1Node := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "dog"},
 		ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
-	})
+	}
+	mem1ID, err := db.GetStorage().CreateNode(mem1Node)
 	require.NoError(t, err)
-	_, err = db.Store(ctx, &nornicdb.Memory{
-		Content:         "puppy",
+	puppyNode := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "puppy"},
 		ChunkEmbeddings: [][]float32{{0.95, 0.05, 0.0}},
-	})
+	}
+	_, err = db.GetStorage().CreateNode(puppyNode)
 	require.NoError(t, err)
-	_, err = db.Store(ctx, &nornicdb.Memory{
-		Content:         "cat",
+	catNode := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "cat"},
 		ChunkEmbeddings: [][]float32{{0.0, 1.0, 0.0}},
-	})
+	}
+	_, err = db.GetStorage().CreateNode(catNode)
 	require.NoError(t, err)
 
 	limit := 2
-	results, err := qr.querySimilar(ctx, mem1.ID, &limit, nil)
+	results, err := qr.querySimilar(ctx, string(mem1ID), &limit, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, results)
 	for _, result := range results {
@@ -1251,7 +1261,7 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 	}
 
 	nr := &nodeResolver{resolver}
-	nodeResults, err := nr.nodeSimilar(ctx, &models.Node{ID: mem1.ID}, &limit, nil)
+	nodeResults, err := nr.nodeSimilar(ctx, &models.Node{ID: string(mem1ID)}, &limit, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, nodeResults)
 }
@@ -1451,19 +1461,23 @@ func TestQuerySearchAndStatsAdditionalCoverage(t *testing.T) {
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 
-	stored, err := db.Store(ctx, &nornicdb.Memory{
-		Content:         "Alice builds graph search systems",
-		Title:           "Alice Memory",
+	aliceNode := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "Alice builds graph search systems", "title": "Alice Memory"},
 		ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
-	})
+	}
+	storedID, err := db.GetStorage().CreateNode(aliceNode)
 	require.NoError(t, err)
-	require.NotNil(t, stored)
+	require.NotEmpty(t, storedID)
 
-	_, err = db.Store(ctx, &nornicdb.Memory{
-		Content:         "Bob maintains retrieval pipelines",
-		Title:           "Bob Memory",
+	bobNode := &storage.Node{
+		ID:              storage.NodeID(uuid.New().String()),
+		Labels:          []string{"Memory"},
+		Properties:      map[string]interface{}{"content": "Bob maintains retrieval pipelines", "title": "Bob Memory"},
 		ChunkEmbeddings: [][]float32{{0.9, 0.1, 0.0}},
-	})
+	}
+	_, err = db.GetStorage().CreateNode(bobNode)
 	require.NoError(t, err)
 
 	require.NoError(t, db.BuildSearchIndexes(ctx))
@@ -1844,9 +1858,6 @@ func TestStorageNodeToModel_WithTimestamps(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Alice"},
 		CreatedAt:       now,
 		UpdatedAt:       now,
-		LastAccessed:    now,
-		AccessCount:     5,
-		DecayScore:      0.95,
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	}
 	m := storageNodeToModel(node)
@@ -1854,9 +1865,6 @@ func TestStorageNodeToModel_WithTimestamps(t *testing.T) {
 	assert.Equal(t, "n1", m.ID)
 	assert.NotNil(t, m.CreatedAt)
 	assert.NotNil(t, m.UpdatedAt)
-	assert.NotNil(t, m.LastAccessed)
-	assert.Equal(t, 5, *m.AccessCount)
-	assert.InDelta(t, 0.95, *m.DecayScore, 0.01)
 	assert.True(t, m.HasEmbedding)
 	assert.Equal(t, 3, m.EmbeddingDimensions)
 }

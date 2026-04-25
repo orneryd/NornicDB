@@ -31,24 +31,6 @@ scalar FloatArray
 # =============================================================================
 
 """
-Memory tier classification based on cognitive science decay patterns
-"""
-enum MemoryTier {
-  """
-  Short-term memories with 7-day half-life
-  """
-  EPISODIC
-  """
-  Facts and concepts with 69-day half-life
-  """
-  SEMANTIC
-  """
-  Skills and patterns with 693-day half-life
-  """
-  PROCEDURAL
-}
-
-"""
 Direction for relationship traversal
 """
 enum RelationshipDirection {
@@ -646,11 +628,6 @@ input CreateNodeInput {
   Key-value properties
   """
   properties: JSON!
-
-  """
-  Memory tier for decay calculation
-  """
-  tier: MemoryTier = SEMANTIC
 
   """
   Pre-computed embedding vector (optional)

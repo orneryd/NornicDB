@@ -998,13 +998,10 @@ func copyNodeForEmbedding(src *storage.Node) *storage.Node {
 
 	// Create a new node with copied scalar fields
 	dst := &storage.Node{
-		ID:           src.ID,
-		Labels:       make([]string, len(src.Labels)),
-		CreatedAt:    src.CreatedAt,
-		UpdatedAt:    src.UpdatedAt,
-		LastAccessed: src.LastAccessed,
-		AccessCount:  src.AccessCount,
-		DecayScore:   src.DecayScore,
+		ID:        src.ID,
+		Labels:    make([]string, len(src.Labels)),
+		CreatedAt: src.CreatedAt,
+		UpdatedAt: src.UpdatedAt,
 	}
 
 	// Copy labels

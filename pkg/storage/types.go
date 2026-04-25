@@ -194,9 +194,6 @@ type Node struct {
 	// NornicDB extensions
 	CreatedAt       time.Time            `json:"-"`
 	UpdatedAt       time.Time            `json:"-"`
-	DecayScore      float64              `json:"-"`
-	LastAccessed    time.Time            `json:"-"`
-	AccessCount     int64                `json:"-"`
 	NamedEmbeddings map[string][]float32 `json:"-"` // Named vector embeddings (e.g., "title", "content", "default")
 	ChunkEmbeddings [][]float32          `json:"-"` // Chunked embeddings for long documents (legacy, migration support)
 
@@ -958,7 +955,6 @@ func FromNeo4jExport(export *Neo4jExport) ([]*Node, []*Edge) {
 			ID:         NodeID(n.ID),
 			Labels:     n.Labels,
 			Properties: props,
-			DecayScore: 1.0, // Default
 		}
 		// Extract internal properties from the properties map
 		node.ExtractInternalProperties()
@@ -1020,9 +1016,6 @@ func (n *Node) mergeInternalProperties() map[string]any {
 	// Add internal properties with _ prefix (Neo4j convention for system props)
 	props["_createdAt"] = n.CreatedAt.Unix()
 	props["_updatedAt"] = n.UpdatedAt.Unix()
-	props["_decayScore"] = n.DecayScore
-	props["_lastAccessed"] = n.LastAccessed.Unix()
-	props["_accessCount"] = n.AccessCount
 
 	return props
 }
@@ -1041,18 +1034,10 @@ func (n *Node) ExtractInternalProperties() {
 		n.UpdatedAt = time.Unix(int64(v), 0)
 		delete(n.Properties, "_updatedAt")
 	}
-	if v, ok := n.Properties["_decayScore"].(float64); ok {
-		n.DecayScore = v
-		delete(n.Properties, "_decayScore")
-	}
-	if v, ok := n.Properties["_lastAccessed"].(float64); ok {
-		n.LastAccessed = time.Unix(int64(v), 0)
-		delete(n.Properties, "_lastAccessed")
-	}
-	if v, ok := n.Properties["_accessCount"].(float64); ok {
-		n.AccessCount = int64(v)
-		delete(n.Properties, "_accessCount")
-	}
+	// Clean up legacy keys if present (from pre-1.1.0 exports).
+	delete(n.Properties, "_decayScore")
+	delete(n.Properties, "_lastAccessed")
+	delete(n.Properties, "_accessCount")
 }
 
 // GetDefaultEmbedding returns the default embedding for a node, implementing

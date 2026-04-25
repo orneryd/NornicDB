@@ -147,11 +147,11 @@ memory:
   # Enable natural memory decay
   decay_enabled: true
   
-  # Decay recalculation interval
-  decay_interval: "1h"
+  # Access metadata flush interval
+  decay_interval: "2s"
   
-  # Archive threshold (0.0-1.0)
-  archive_threshold: 0.05
+  # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
+  visibility_threshold: 0.05
 
 # -----------------------------------------------------------------------------
 # AUTO-START

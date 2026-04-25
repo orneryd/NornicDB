@@ -31,6 +31,7 @@ type AccessFlusher struct {
 	mu              sync.Mutex
 	cancel          context.CancelFunc
 	done            chan struct{}
+	flushNow        chan struct{}
 	scorerFunc      ScorerFunc
 	entityMeta      EntityMetaLookup
 	embedInvalidate EmbedInvalidateFunc
@@ -41,11 +42,19 @@ func NewAccessFlusher(accumulator *AccessAccumulator, store AccessMetaStore, int
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
-	return &AccessFlusher{
+	f := &AccessFlusher{
 		accumulator: accumulator,
 		store:       store,
 		interval:    interval,
+		flushNow:    make(chan struct{}, 1),
 	}
+	accumulator.SetOnBufferFull(func() {
+		select {
+		case f.flushNow <- struct{}{}:
+		default:
+		}
+	})
+	return f
 }
 
 // SetPropertySuppression configures the flusher for property-level decay evaluation.
@@ -98,6 +107,8 @@ func (f *AccessFlusher) run(ctx context.Context) {
 			f.flush()
 			return
 		case <-ticker.C:
+			f.flush()
+		case <-f.flushNow:
 			f.flush()
 		}
 	}

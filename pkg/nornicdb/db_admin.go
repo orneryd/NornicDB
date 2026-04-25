@@ -533,7 +533,7 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
-	id := generateID("node")
+	id := generateID()
 	now := time.Now()
 
 	// Encrypt sensitive fields before storage (PHI/PII protection)
@@ -814,7 +814,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 		return nil, fmt.Errorf("target node not found")
 	}
 
-	id := generateID("edge")
+	id := generateID()
 	now := time.Now()
 
 	edge := &storage.Edge{
@@ -1187,78 +1187,6 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 	default:
 		return fmt.Errorf("unsupported index type: %s (use: property, fulltext, vector, range)", indexType)
 	}
-}
-
-// BootstrapCanonicalSchema creates standard constraints for the canonical Memory model.
-// This is idempotent and can be safely called on startup.
-func (db *DB) BootstrapCanonicalSchema(ctx context.Context) error {
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
-		return ErrClosed
-	}
-	storageEngine := db.storage
-	db.mu.RUnlock()
-
-	schema := storageEngine.GetSchema()
-	if schema == nil {
-		return fmt.Errorf("schema manager not initialized")
-	}
-
-	required := []string{"id", "content", "tier", "decay_score", "last_accessed", "access_count"}
-	for _, prop := range required {
-		constraint := storage.Constraint{
-			Name:       fmt.Sprintf("canonical_memory_%s_required", prop),
-			Type:       storage.ConstraintExists,
-			Label:      "Memory",
-			Properties: []string{prop},
-		}
-		if err := storage.ValidateConstraintOnCreationForEngine(storageEngine, constraint); err != nil {
-			return err
-		}
-		if err := schema.AddConstraint(constraint, true); err != nil {
-			return err
-		}
-	}
-
-	nodeKey := storage.Constraint{
-		Name:       "canonical_memory_id_key",
-		Type:       storage.ConstraintNodeKey,
-		Label:      "Memory",
-		Properties: []string{"id"},
-	}
-	if err := storage.ValidateConstraintOnCreationForEngine(storageEngine, nodeKey); err != nil {
-		return err
-	}
-	if err := schema.AddConstraint(nodeKey, true); err != nil {
-		return err
-	}
-
-	typeConstraints := map[string]storage.PropertyType{
-		"id":            storage.PropertyTypeString,
-		"content":       storage.PropertyTypeString,
-		"tier":          storage.PropertyTypeString,
-		"decay_score":   storage.PropertyTypeFloat,
-		"last_accessed": storage.PropertyTypeString,
-		"access_count":  storage.PropertyTypeInteger,
-	}
-	for prop, expectedType := range typeConstraints {
-		name := fmt.Sprintf("canonical_memory_%s_type", prop)
-		ptc := storage.PropertyTypeConstraint{
-			Name:         name,
-			Label:        "Memory",
-			Property:     prop,
-			ExpectedType: expectedType,
-		}
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(storageEngine, ptc); err != nil {
-			return err
-		}
-		if err := schema.AddPropertyTypeConstraintWithOptions(name, "Memory", prop, expectedType, storage.PropertyTypeConstraintOptions{IfNotExists: true}); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // BackupableEngine is an interface for engines that support backup.
@@ -1687,7 +1615,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	storageEngine := db.storage
 	db.mu.RUnlock()
 
-	anonymousID := generateID("")
+	anonymousID := generateID()
 
 	// Collect nodes to update (can't update while streaming in some engines)
 	// We must make copies since other goroutines might be iterating over these nodes
@@ -1747,14 +1675,11 @@ func (db *DB) nodeMatchesSubject(node *storage.Node, subjectID string) bool {
 
 func (db *DB) anonymizedNodeCopy(node *storage.Node, anonymousID string) *storage.Node {
 	nodeCopy := &storage.Node{
-		ID:           node.ID,
-		Labels:       append([]string(nil), node.Labels...),
-		Properties:   make(map[string]any, len(node.Properties)),
-		CreatedAt:    node.CreatedAt,
-		UpdatedAt:    node.UpdatedAt,
-		DecayScore:   node.DecayScore,
-		LastAccessed: node.LastAccessed,
-		AccessCount:  node.AccessCount,
+		ID:         node.ID,
+		Labels:     append([]string(nil), node.Labels...),
+		Properties: make(map[string]any, len(node.Properties)),
+		CreatedAt:  node.CreatedAt,
+		UpdatedAt:  node.UpdatedAt,
 		ChunkEmbeddings: func() [][]float32 {
 			chunks := make([][]float32, len(node.ChunkEmbeddings))
 			for i, emb := range node.ChunkEmbeddings {

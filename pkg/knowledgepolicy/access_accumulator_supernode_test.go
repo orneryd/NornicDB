@@ -7,7 +7,7 @@ import (
 )
 
 func TestAccumulator_SuperNode_128Goroutines(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	const goroutines = 128
 	const increments = 10000
 
@@ -31,7 +31,7 @@ func TestAccumulator_SuperNode_128Goroutines(t *testing.T) {
 }
 
 func TestAccumulator_SuperNode_DrainUnderContention(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	const goroutines = 64
 	const increments = 5000
 	const drains = 10
@@ -74,7 +74,7 @@ func TestAccumulator_SuperNode_DrainUnderContention(t *testing.T) {
 }
 
 func TestAccumulator_SuperNode_MixedEntities(t *testing.T) {
-	a := NewAccessAccumulator(true)
+	a := NewAccessAccumulator(true, 0)
 	const goroutines = 128
 	const increments = 1000
 
