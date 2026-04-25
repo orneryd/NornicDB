@@ -206,6 +206,9 @@ func linearDecay(ageNanos, halfLifeNanos int64) float64 {
 }
 
 func stepDecay(ageNanos, halfLifeNanos int64) float64 {
+	if halfLifeNanos <= 0 {
+		return 1.0
+	}
 	if ageNanos < halfLifeNanos {
 		return 1.0
 	}

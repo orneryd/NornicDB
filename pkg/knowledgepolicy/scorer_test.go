@@ -185,6 +185,21 @@ func TestScorer_Step_AtHalfLife(t *testing.T) {
 	}
 }
 
+func TestScorer_Step_UnsetHalfLifeMeansNoDecay(t *testing.T) {
+	bundles := map[string]*DecayProfileBundle{
+		"p": {Name: "p", HalfLifeSeconds: 0, Function: DecayFunctionStep, VisibilityThreshold: 0.01},
+	}
+	bindings := map[string]*DecayProfileBinding{
+		"b": {Name: "b", TargetLabels: []string{"X"}, ProfileRef: "p"},
+	}
+	s := buildTestScorer(t, true, bundles, bindings, nil, nil)
+
+	res := s.ScoreNode("n1", []string{"X"}, nil, testNow-100*hour, 0, testNow)
+	if res.FinalScore != 1.0 {
+		t.Errorf("expected 1.0 for step decay with unset halfLife, got %f", res.FinalScore)
+	}
+}
+
 func TestScorer_None(t *testing.T) {
 	bundles := map[string]*DecayProfileBundle{
 		"p": {Name: "p", HalfLifeSeconds: 3600, Function: DecayFunctionNone, VisibilityThreshold: 0.01},

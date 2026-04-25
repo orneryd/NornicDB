@@ -358,7 +358,7 @@ memory:
   decay_interval: 2
 
   # Visibility threshold (0.0-1.0) - nodes below this score are suppressed
-  # Env: NORNICDB_VISIBILITY_THRESHOLD
+  # Env: NORNICDB_MEMORY_VISIBILITY_THRESHOLD
   visibility_threshold: 0.05
 
   # Enable automatic relationship inference
