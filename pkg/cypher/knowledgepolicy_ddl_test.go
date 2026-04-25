@@ -196,8 +196,8 @@ func TestParseDDL_CreateDecayProfileBundle_CaseInsensitiveKeywords(t *testing.T)
 func TestParseDDL_CreateDecayProfileBinding_NodeLabel(t *testing.T) {
 	stmt := `CREATE DECAY PROFILE fact_binding FOR (n:KnowledgeFact) APPLY {
 		DECAY PROFILE 'slow_decay'
-		VISIBILITY 0.10
-		PROPERTY content NO DECAY
+		DECAY VISIBILITY THRESHOLD 0.10
+		n.content NO DECAY
 	}`
 
 	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
@@ -264,7 +264,9 @@ func TestParseDDL_CreateDecayProfileBinding_EdgePattern(t *testing.T) {
 func TestParseDDL_CreateDecayProfileBinding_PropertyRuleWithProfileRef(t *testing.T) {
 	stmt := `CREATE DECAY PROFILE prop_rule_bind FOR (n:User) APPLY {
 		DECAY PROFILE 'base_decay'
-		PROPERTY score PROFILE 'slow_decay' HALFLIFE 3600 FLOOR 0.01
+		n.score DECAY PROFILE 'slow_decay'
+		n.score DECAY HALF LIFE 3600
+		n.score DECAY FLOOR 0.01
 	}`
 
 	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
@@ -284,8 +286,8 @@ func TestParseDDL_CreateDecayProfileBinding_PropertyRuleWithProfileRef(t *testin
 func TestParseDDL_CreateDecayProfileBinding_MultiplePropertyRules(t *testing.T) {
 	stmt := `CREATE DECAY PROFILE multi_prop FOR (n:Doc) APPLY {
 		DECAY PROFILE 'base'
-		PROPERTY metadata NO DECAY
-		PROPERTY confidence HALFLIFE 7200
+		n.metadata NO DECAY
+		n.confidence DECAY HALF LIFE 7200
 	}`
 
 	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
@@ -1147,4 +1149,394 @@ func TestKpScanIdent_Empty(t *testing.T) {
 	name, j := kpScanIdent("", 0)
 	assert.Equal(t, "", name)
 	assert.Equal(t, 0, j)
+}
+
+// ── Plan-syntax DDL examples ──────────────────────────────────────────────────
+// Each test below corresponds to a DDL example from the plan / user guide docs.
+
+func TestPlanDDL_WorkingMemoryBundle(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE working_memory OPTIONS {
+		halfLifeSeconds: 604800,
+		function: 'exponential',
+		visibilityThreshold: 0.10,
+		scoreFloor: 0.01
+	}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBundleCmd)
+	assert.Equal(t, "working_memory", c.Bundle.Name)
+	assert.Equal(t, int64(604800), c.Bundle.HalfLifeSeconds)
+	assert.Equal(t, knowledgepolicy.DecayFunctionExponential, c.Bundle.Function)
+	assert.Equal(t, 0.10, c.Bundle.VisibilityThreshold)
+	assert.Equal(t, 0.01, c.Bundle.ScoreFloor)
+}
+
+func TestPlanDDL_SessionRecordRetention(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE session_record_retention
+FOR (n:SessionRecord)
+APPLY {
+  DECAY PROFILE 'working_memory'
+  DECAY VISIBILITY THRESHOLD 0.10
+  n.summary DECAY PROFILE 'session_summary'
+  n.lastConversationSummary DECAY HALF LIFE 2592000
+  n.tenantId NO DECAY
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, "session_record_retention", c.Binding.Name)
+	assert.Equal(t, []string{"SessionRecord"}, c.Binding.TargetLabels)
+	assert.False(t, c.Binding.IsEdge)
+	assert.Equal(t, "working_memory", c.Binding.ProfileRef)
+	require.NotNil(t, c.Binding.VisibilityThreshold)
+	assert.Equal(t, 0.10, *c.Binding.VisibilityThreshold)
+
+	require.Len(t, c.Binding.PropertyRules, 3)
+	assert.Equal(t, "summary", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, "session_summary", c.Binding.PropertyRules[0].ProfileRef)
+
+	assert.Equal(t, "lastConversationSummary", c.Binding.PropertyRules[1].PropertyPath)
+	assert.Equal(t, int64(2592000), c.Binding.PropertyRules[1].HalfLifeSeconds)
+
+	assert.Equal(t, "tenantId", c.Binding.PropertyRules[2].PropertyPath)
+	assert.True(t, c.Binding.PropertyRules[2].NoDecay)
+}
+
+func TestPlanDDL_CoaccessRetention(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE coaccess_retention
+FOR ()-[r:CO_ACCESSED]-()
+APPLY {
+  DECAY HALF LIFE 1209600
+  r.signalScore DECAY HALF LIFE 1209600
+  r.signalScore DECAY FLOOR 0.15
+  r.externalId NO DECAY
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, "coaccess_retention", c.Binding.Name)
+	assert.True(t, c.Binding.IsEdge)
+	assert.Equal(t, "CO_ACCESSED", c.Binding.TargetEdgeType)
+	assert.Equal(t, int64(1209600), c.Binding.HalfLifeSeconds)
+
+	require.Len(t, c.Binding.PropertyRules, 2)
+	assert.Equal(t, "signalScore", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, int64(1209600), c.Binding.PropertyRules[0].HalfLifeSeconds)
+	assert.Equal(t, 0.15, c.Binding.PropertyRules[0].ScoreFloor)
+
+	assert.Equal(t, "externalId", c.Binding.PropertyRules[1].PropertyPath)
+	assert.True(t, c.Binding.PropertyRules[1].NoDecay)
+}
+
+func TestPlanDDL_CanonicalLinkRetention(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE canonical_link_retention
+FOR ()-[r:CANONICAL_LINK]-()
+APPLY {
+  NO DECAY
+  r.externalId NO DECAY
+  r.sourceSystem NO DECAY
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, "canonical_link_retention", c.Binding.Name)
+	assert.True(t, c.Binding.IsEdge)
+	assert.Equal(t, "CANONICAL_LINK", c.Binding.TargetEdgeType)
+	assert.True(t, c.Binding.NoDecay)
+
+	require.Len(t, c.Binding.PropertyRules, 2)
+	assert.Equal(t, "externalId", c.Binding.PropertyRules[0].PropertyPath)
+	assert.True(t, c.Binding.PropertyRules[0].NoDecay)
+	assert.Equal(t, "sourceSystem", c.Binding.PropertyRules[1].PropertyPath)
+	assert.True(t, c.Binding.PropertyRules[1].NoDecay)
+}
+
+func TestPlanDDL_ReviewLinkRetention(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE review_link_retention
+FOR ()-[r:REVIEWED_WITH]-()
+APPLY {
+  DECAY HALF LIFE 604800
+  r.confidence DECAY HALF LIFE 86400
+  r.confidence DECAY FLOOR 0.25
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, "review_link_retention", c.Binding.Name)
+	assert.True(t, c.Binding.IsEdge)
+	assert.Equal(t, "REVIEWED_WITH", c.Binding.TargetEdgeType)
+	assert.Equal(t, int64(604800), c.Binding.HalfLifeSeconds)
+
+	require.Len(t, c.Binding.PropertyRules, 1)
+	assert.Equal(t, "confidence", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, int64(86400), c.Binding.PropertyRules[0].HalfLifeSeconds)
+	assert.Equal(t, 0.25, c.Binding.PropertyRules[0].ScoreFloor)
+}
+
+func TestPlanDDL_ReinforcedTierPromotionProfile(t *testing.T) {
+	stmt := `CREATE PROMOTION PROFILE reinforced_tier OPTIONS {
+		multiplier: 1.5,
+		scoreFloor: 0.3,
+		scoreCap: 1.0
+	}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreatePromotionProfileCmd)
+	assert.Equal(t, "reinforced_tier", c.Profile.Name)
+	assert.Equal(t, 1.5, c.Profile.Multiplier)
+	assert.Equal(t, 0.3, c.Profile.ScoreFloor)
+	assert.Equal(t, 1.0, c.Profile.ScoreCap)
+}
+
+func TestPlanDDL_SessionRecordTiering(t *testing.T) {
+	stmt := `CREATE PROMOTION POLICY session_record_tiering
+FOR (n:SessionRecord)
+APPLY {
+  ON ACCESS {
+    SET n.accessCount = coalesce(n.accessCount, 0) + 1
+    SET n.lastAccessedAt = timestamp()
+  }
+
+  WHEN n.accessCount >= 3
+    APPLY PROFILE 'reinforced_tier'
+
+  WHEN n.accessCount >= 5 AND n.sourceAgreement >= 0.95
+    APPLY PROFILE 'canonical_tier'
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreatePromotionPolicyCmd)
+	assert.Equal(t, "session_record_tiering", c.Policy.Name)
+	assert.Equal(t, []string{"SessionRecord"}, c.Policy.TargetLabels)
+	assert.False(t, c.Policy.IsEdge)
+
+	require.NotNil(t, c.Policy.OnAccess)
+	require.Len(t, c.Policy.OnAccess.Mutations, 2)
+	assert.Equal(t, "n.accessCount = coalesce(n.accessCount, 0) + 1", c.Policy.OnAccess.Mutations[0].Expression)
+	assert.Equal(t, "n.lastAccessedAt = timestamp()", c.Policy.OnAccess.Mutations[1].Expression)
+
+	require.Len(t, c.Policy.WhenClauses, 2)
+	assert.Equal(t, "n.accessCount >= 3", c.Policy.WhenClauses[0].Predicate)
+	assert.Equal(t, "reinforced_tier", c.Policy.WhenClauses[0].ProfileRef)
+	assert.Contains(t, c.Policy.WhenClauses[1].Predicate, "n.accessCount >= 5")
+	assert.Equal(t, "canonical_tier", c.Policy.WhenClauses[1].ProfileRef)
+}
+
+func TestPlanDDL_EpisodicRecallQuality(t *testing.T) {
+	stmt := `CREATE PROMOTION POLICY episodic_recall_quality
+FOR (n:MemoryEpisode)
+APPLY {
+  ON ACCESS {
+    SET n.accessCount = coalesce(n.accessCount, 0) + 1
+    SET n.lastAccessedAt = timestamp()
+    WITH KALMAN{q: 0.05, r: 50.0} SET n.confidenceScore = $evaluatedConfidence
+    WITH KALMAN SET n.crossSessionAccessRate =
+      CASE WHEN n._lastSessionId <> $_session
+        THEN coalesce(n.crossSessionAccessRate, 0) + 1
+        ELSE n.crossSessionAccessRate
+      END
+    SET n._lastSessionId = $_session
+    SET n._lastAgentId = $_agent
+  }
+
+  WHEN n.accessCount >= 5 AND n.confidenceScore >= 0.8
+    APPLY PROFILE 'high_confidence_tier'
+
+  WHEN n.accessCount >= 3
+    APPLY PROFILE 'reinforced_tier'
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreatePromotionPolicyCmd)
+	assert.Equal(t, "episodic_recall_quality", c.Policy.Name)
+	assert.Equal(t, []string{"MemoryEpisode"}, c.Policy.TargetLabels)
+
+	require.NotNil(t, c.Policy.OnAccess)
+	require.Len(t, c.Policy.OnAccess.Mutations, 6)
+
+	assert.Nil(t, c.Policy.OnAccess.Mutations[0].Kalman)
+	assert.Nil(t, c.Policy.OnAccess.Mutations[1].Kalman)
+
+	require.NotNil(t, c.Policy.OnAccess.Mutations[2].Kalman)
+	assert.Equal(t, knowledgepolicy.KalmanModeManual, c.Policy.OnAccess.Mutations[2].Kalman.Mode)
+	assert.Equal(t, 0.05, c.Policy.OnAccess.Mutations[2].Kalman.Q)
+	assert.Equal(t, 50.0, c.Policy.OnAccess.Mutations[2].Kalman.R)
+	assert.Contains(t, c.Policy.OnAccess.Mutations[2].Expression, "$evaluatedConfidence")
+
+	require.NotNil(t, c.Policy.OnAccess.Mutations[3].Kalman)
+	assert.Equal(t, knowledgepolicy.KalmanModeAuto, c.Policy.OnAccess.Mutations[3].Kalman.Mode)
+
+	assert.Contains(t, c.Policy.OnAccess.Mutations[4].Expression, "$_session")
+	assert.Nil(t, c.Policy.OnAccess.Mutations[4].Kalman)
+
+	assert.Contains(t, c.Policy.OnAccess.Mutations[5].Expression, "$_agent")
+	assert.Nil(t, c.Policy.OnAccess.Mutations[5].Kalman)
+
+	require.Len(t, c.Policy.WhenClauses, 2)
+	assert.Equal(t, "high_confidence_tier", c.Policy.WhenClauses[0].ProfileRef)
+	assert.Equal(t, "reinforced_tier", c.Policy.WhenClauses[1].ProfileRef)
+}
+
+func TestPlanDDL_ShowDecayProfiles(t *testing.T) {
+	cmd, ok, err := ParseKnowledgePolicyDDL(`SHOW DECAY PROFILES;`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, ok = cmd.(*ShowDecayProfilesCmd)
+	assert.True(t, ok)
+}
+
+func TestPlanDDL_ShowPromotionPolicies(t *testing.T) {
+	cmd, ok, err := ParseKnowledgePolicyDDL(`SHOW PROMOTION POLICIES;`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, ok = cmd.(*ShowPromotionPoliciesCmd)
+	assert.True(t, ok)
+}
+
+func TestPlanDDL_DropDecayProfileByName(t *testing.T) {
+	cmd, ok, err := ParseKnowledgePolicyDDL(`DROP DECAY PROFILE session_record_retention;`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	c := cmd.(*DropDecayProfileCmd)
+	assert.Equal(t, "session_record_retention", c.Name)
+}
+
+func TestPlanDDL_DropPromotionPolicy(t *testing.T) {
+	cmd, ok, err := ParseKnowledgePolicyDDL(`DROP PROMOTION POLICY session_record_tiering;`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	c := cmd.(*DropPromotionPolicyCmd)
+	assert.Equal(t, "session_record_tiering", c.Name)
+}
+
+func TestPlanDDL_DropPromotionProfile(t *testing.T) {
+	cmd, ok, err := ParseKnowledgePolicyDDL(`DROP PROMOTION PROFILE reinforced_tier;`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	c := cmd.(*DropPromotionProfileCmd)
+	assert.Equal(t, "reinforced_tier", c.Name)
+}
+
+func TestPlanDDL_MultiLabelTarget(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE multi_label
+FOR (n:SessionRecord:MemoryEpisode)
+APPLY {
+  DECAY PROFILE 'working_memory'
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, []string{"SessionRecord", "MemoryEpisode"}, c.Binding.TargetLabels)
+}
+
+func TestPlanDDL_EntityLevelDecayHalfLife(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE short_lived
+FOR (n:Temp)
+APPLY {
+  DECAY HALF LIFE 86400
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, int64(86400), c.Binding.HalfLifeSeconds)
+}
+
+func TestPlanDDL_EntityLevelDecayFloor(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE floored
+FOR (n:Archive)
+APPLY {
+  DECAY HALF LIFE 604800
+  DECAY FLOOR 0.05
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	assert.Equal(t, int64(604800), c.Binding.HalfLifeSeconds)
+	assert.Equal(t, 0.05, c.Binding.ScoreFloor)
+}
+
+func TestPlanDDL_PropertyDecayProfile(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE prop_ref
+FOR (n:Doc)
+APPLY {
+  n.summary DECAY PROFILE 'session_summary'
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	require.Len(t, c.Binding.PropertyRules, 1)
+	assert.Equal(t, "summary", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, "session_summary", c.Binding.PropertyRules[0].ProfileRef)
+}
+
+func TestPlanDDL_PropertyDecayHalfLife(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE prop_hl
+FOR (n:Doc)
+APPLY {
+  n.content DECAY HALF LIFE 1209600
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	require.Len(t, c.Binding.PropertyRules, 1)
+	assert.Equal(t, "content", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, int64(1209600), c.Binding.PropertyRules[0].HalfLifeSeconds)
+}
+
+func TestPlanDDL_PropertyDecayFloor(t *testing.T) {
+	stmt := `CREATE DECAY PROFILE prop_floor
+FOR (n:Doc)
+APPLY {
+  n.summary DECAY HALF LIFE 1209600
+  n.summary DECAY FLOOR 0.10
+}`
+
+	cmd, ok, err := ParseKnowledgePolicyDDL(stmt)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	c := cmd.(*CreateDecayProfileBindingCmd)
+	require.Len(t, c.Binding.PropertyRules, 1)
+	assert.Equal(t, "summary", c.Binding.PropertyRules[0].PropertyPath)
+	assert.Equal(t, int64(1209600), c.Binding.PropertyRules[0].HalfLifeSeconds)
+	assert.Equal(t, 0.10, c.Binding.PropertyRules[0].ScoreFloor)
 }

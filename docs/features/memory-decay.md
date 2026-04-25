@@ -1,327 +1,208 @@
-# Memory Decay
+# Knowledge-Layer Scoring and Visibility
 
-**Time-based importance scoring inspired by human memory.**
+**Profile-driven decay and promotion scoring for knowledge graphs.**
 
 ## Overview
 
-NornicDB implements a memory decay system that naturally reduces the importance of older, unused information while preserving frequently accessed and important data.
+NornicDB implements a knowledge-layer scoring system that manages the lifecycle and visibility of nodes and edges through declarative decay profiles and promotion policies. Administrators define profiles via Cypher DDL and bind them to specific labels or edge types using `FOR` and `APPLY` blocks.
 
-## Memory Tiers
+## Key Concepts
 
-Inspired by cognitive science, memories are classified into three tiers:
+### Decay Profiles
 
-| Tier | Half-Life | Use Case |
-|------|-----------|----------|
-| Episodic | ~7 days | Recent events, conversations |
-| Semantic | ~69 days | Facts, knowledge, concepts |
-| Procedural | ~693 days | Skills, habits, core knowledge |
+A decay profile is a targeted binding that defines how a node or edge's visibility score decreases over time. Every decay profile must include `FOR` and `APPLY` clauses:
 
-## How It Works
-
-### Decay Formula
-
-Memory strength decays exponentially over time:
-
-```
-strength(t) = initial_strength × e^(-λt)
+```cypher
+CREATE DECAY PROFILE session_record_retention
+FOR (n:SessionRecord)
+APPLY {
+  DECAY PROFILE 'working_memory'
+  DECAY VISIBILITY THRESHOLD 0.10
+  n.summary DECAY PROFILE 'session_summary'
+  n.lastConversationSummary DECAY HALF LIFE 2592000
+  n.tenantId NO DECAY
+}
 ```
 
-Where:
-- `λ` = decay constant (varies by tier)
-- `t` = time since last access
+| Directive | Description |
+|-----------|-------------|
+| `DECAY HALF LIFE <seconds>` | Time in seconds until score reaches 50% |
+| `DECAY PROFILE '<name>'` | Reference a named parameter bundle |
+| `DECAY VISIBILITY THRESHOLD <float>` | Score below which the entity is suppressed |
+| `DECAY FLOOR <float>` | Minimum score (entity never falls below this) |
+| `NO DECAY` | Entity never decays (score stays at 1.0) |
 
-### Access Reinforcement
+### Parameter Bundles
 
-Each access reinforces the memory:
+Reusable configuration objects with no `FOR` clause:
 
-```go
-// Memory is reinforced on access
-memory := db.Recall(ctx, "mem-123")
-// memory.DecayScore is increased
-// memory.LastAccessed is updated
-// memory.AccessCount is incremented
+```cypher
+CREATE DECAY PROFILE working_memory OPTIONS {
+  halfLifeSeconds: 604800,
+  function: 'exponential',
+  visibilityThreshold: 0.10,
+  scoreFloor: 0.01
+}
 ```
 
-### Tier Promotion
+### Promotion Policies
 
-Frequently accessed memories are promoted to more stable tiers:
+Promotion policies boost a node's score when conditions are met. They contain `ON ACCESS` mutations and `WHEN` predicates:
+
+```cypher
+CREATE PROMOTION POLICY session_record_tiering
+FOR (n:SessionRecord)
+APPLY {
+  ON ACCESS {
+    SET n.accessCount = coalesce(n.accessCount, 0) + 1
+    SET n.lastAccessedAt = timestamp()
+  }
+
+  WHEN n.accessCount >= 3
+    APPLY PROFILE 'reinforced_tier'
+
+  WHEN n.accessCount >= 5 AND n.sourceAgreement >= 0.95
+    APPLY PROFILE 'canonical_tier'
+}
+```
+
+### Scoring Formula
+
+The decay score at time `t`:
 
 ```
-Episodic → Semantic → Procedural
+score(t) = max(scoreFloor, f(t) * promotionMultiplier)
 ```
+
+Where `f(t)` is the decay function applied since the score anchor (creation time or version time).
 
 ## Configuration
 
-### Enable Memory Decay
+### Enable Scoring
 
 ```yaml
 # nornicdb.yaml
-decay:
-  enabled: true
-  recalculate_interval: 1h
-  archive_threshold: 0.1  # Archive below 10% strength
+memory:
+  decay_enabled: true
+  visibility_threshold: 0.05
 ```
 
-### Code Configuration
+### Environment Variables
 
-```go
-config := nornicdb.DefaultConfig()
-config.DecayEnabled = true
-config.DecayRecalculateInterval = time.Hour
-config.DecayArchiveThreshold = 0.1
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NORNICDB_MEMORY_DECAY_ENABLED` | `false` | Enable the scoring system |
+| `NORNICDB_VISIBILITY_THRESHOLD` | `0.05` | Default visibility threshold |
+| `NORNICDB_DEFAULT_NODE_LABEL` | `Memory` | Default label for MCP store operations |
 
-db, err := nornicdb.Open("/data", config)
-```
+## Cypher DDL Examples
 
-## API Usage
-
-### Store with Tier
-
-```go
-// Create episodic memory (fast decay)
-memory := &Memory{
-    Content: "User said hello today",
-    Tier:    TierEpisodic,
-}
-db.Store(ctx, memory)
-
-// Create semantic memory (slow decay)
-// Note: TierSemantic is the DEFAULT if no tier is specified
-memory := &Memory{
-    Content: "User's favorite color is blue",
-    Tier:    TierSemantic,  // Optional - this is the default
-}
-db.Store(ctx, memory)
-
-// Create procedural memory (very slow decay)
-memory := &Memory{
-    Content: "User prefers dark mode",
-    Tier:    TierProcedural,
-}
-db.Store(ctx, memory)
-```
-
-### Check Decay Score
-
-```go
-memory, err := db.Recall(ctx, "mem-123")
-fmt.Printf("Decay score: %.2f%%\n", memory.DecayScore * 100)
-// Decay score: 85.00%
-```
-
-### Query by Decay
+### Node-Level Decay with Property Rules
 
 ```cypher
-// Find strong memories
-MATCH (m:Memory)
-WHERE m.decay_score > 0.5
-RETURN m ORDER BY m.decay_score DESC
-
-// Find fading memories
-MATCH (m:Memory)
-WHERE m.decay_score < 0.2
-RETURN m
-```
-
-## CLI Commands
-
-NornicDB provides CLI commands for managing memory decay. See **[CLI Commands Guide](../operations/cli-commands.md)** for complete documentation.
-
-### Decay Statistics
-
-View aggregate statistics across all memories:
-
-```bash
-nornicdb decay stats --data-dir ./data
-```
-
-**Output:**
-```
-📂 Opening database at ./data...
-📊 Loading nodes...
-📊 Decay Statistics:
-  Total memories: 15,234
-  Episodic: 5,123 (avg decay: 0.45)
-  Semantic: 8,456 (avg decay: 0.72)
-  Procedural: 1,655 (avg decay: 0.89)
-  Archived: 1,234 (score < 0.05)
-  Average decay score: 0.68
-```
-
-### Recalculate Decay Scores
-
-Recalculate decay scores for all nodes (useful after bulk imports or configuration changes):
-
-```bash
-nornicdb decay recalculate --data-dir ./data
-```
-
-**When to use:**
-- After bulk data imports
-- When decay configuration changes
-- Periodic maintenance (e.g., weekly)
-
-**Example:**
-```bash
-$ nornicdb decay recalculate --data-dir ./data
-📂 Opening database at ./data...
-📊 Loading nodes...
-🔄 Recalculating decay scores for 15,234 nodes...
-   Processed 10000/15234 nodes...
-✅ Recalculated decay scores: 3,245 nodes updated
-```
-
-### Archive Low-Score Memories
-
-Archive nodes with decay scores below a threshold:
-
-```bash
-nornicdb decay archive --data-dir ./data --threshold 0.05
-```
-
-**What it does:**
-- Marks archived nodes with `archived: true`, `archived_at`, and `archived_score` properties
-- Nodes remain in the database but are marked for archival
-- Safe to run anytime (read-only operation)
-
-**Example:**
-```bash
-$ nornicdb decay archive --data-dir ./data --threshold 0.05
-📂 Opening database at ./data...
-📊 Loading nodes...
-📦 Archiving nodes with decay score < 0.05...
-✅ Archived 1,234 nodes (decay score < 0.05)
-```
-
-**Query archived nodes:**
-```cypher
-// Find archived nodes
-MATCH (n)
-WHERE n.archived = true
-RETURN n.id, n.archived_at, n.archived_score
-ORDER BY n.archived_score
-```
-
-### Interactive Shell
-
-Execute Cypher queries interactively:
-
-```bash
-nornicdb shell --data-dir ./data
-```
-
-**Example session:**
-```bash
-$ nornicdb shell --data-dir ./data
-nornicdb> MATCH (m:Memory) WHERE m.decay_score < 0.1 RETURN count(m) AS weak
-weak
----
-1234
-
-(1 row(s))
-```
-
-See **[CLI Commands Guide](../operations/cli-commands.md)** for complete CLI documentation.
-
-## Archiving
-
-### Automatic Archiving
-
-Memories below the threshold can be archived using the CLI:
-
-```bash
-# Archive memories with score < 10%
-nornicdb decay archive --data-dir ./data --threshold 0.1
-```
-
-Archived nodes are marked with properties but remain in the database for querying and potential restoration.
-
-## Use Cases
-
-### Conversational AI
-
-```go
-// Store conversation as episodic memory
-memory := &Memory{
-    Content: fmt.Sprintf("User: %s\nAssistant: %s", userMsg, response),
-    Tier:    TierEpisodic,
-    Tags:    []string{"conversation", sessionID},
+CREATE DECAY PROFILE session_record_retention
+FOR (n:SessionRecord)
+APPLY {
+  DECAY PROFILE 'working_memory'
+  DECAY VISIBILITY THRESHOLD 0.10
+  n.summary DECAY PROFILE 'session_summary'
+  n.lastConversationSummary DECAY HALF LIFE 2592000
+  n.tenantId NO DECAY
 }
-db.Store(ctx, memory)
-
-// Old conversations naturally fade
-// Important topics get reinforced through re-access
 ```
 
-### Knowledge Base
-
-```go
-// Store facts as semantic memory
-memory := &Memory{
-    Content: "The capital of France is Paris",
-    Tier:    TierSemantic,
-    Tags:    []string{"geography", "facts"},
-}
-db.Store(ctx, memory)
-```
-
-### User Preferences
-
-```go
-// Store preferences as procedural memory
-memory := &Memory{
-    Content: "User prefers formal communication style",
-    Tier:    TierProcedural,
-    Tags:    []string{"preferences", "communication"},
-}
-db.Store(ctx, memory)
-```
-
-## Integration with Search
-
-Decay scores are used in search ranking:
-
-```go
-// Search considers decay in relevance
-results, err := db.Remember(ctx, queryEmbedding, 10)
-// Results are ranked by: similarity × decay_score
-```
-
-### Custom Weighting
+### Edge-Level Decay
 
 ```cypher
-// Custom decay-aware query
-MATCH (m:Memory)
-WHERE m.content CONTAINS 'project'
-RETURN m, m.decay_score * cosineSimilarity(m.embedding, $query) as score
-ORDER BY score DESC
-LIMIT 10
+CREATE DECAY PROFILE coaccess_retention
+FOR ()-[r:CO_ACCESSED]-()
+APPLY {
+  DECAY HALF LIFE 1209600
+  r.signalScore DECAY HALF LIFE 1209600
+  r.signalScore DECAY FLOOR 0.15
+  r.externalId NO DECAY
+}
 ```
 
-## Disable Decay
+### No-Decay Profile
 
-For use cases where decay isn't appropriate:
+```cypher
+CREATE DECAY PROFILE canonical_link_retention
+FOR ()-[r:CANONICAL_LINK]-()
+APPLY {
+  NO DECAY
+  r.externalId NO DECAY
+  r.sourceSystem NO DECAY
+}
+```
+
+### List and Drop
+
+```cypher
+SHOW DECAY PROFILES;
+SHOW PROMOTION POLICIES;
+DROP DECAY PROFILE session_record_retention;
+```
+
+## Querying with Decay
+
+### Decay-Aware Queries
+
+```cypher
+-- Find strong nodes
+MATCH (n:Document)
+WHERE decayScore(n) > 0.5
+RETURN n ORDER BY decayScore(n) DESC
+
+-- Include suppressed nodes (bypass visibility)
+MATCH (n:Document)
+CALL reveal(n)
+RETURN n, decayScore(n)
+```
+
+### Cypher Functions
+
+| Function | Description |
+|----------|-------------|
+| `decayScore(entity)` | Current decay score (0.0-1.0) |
+| `decay(entity)` | Full scoring resolution with metadata |
+| `reveal(entity)` | Bypass visibility suppression |
+| `policy(entity)` | Show which profile/policy applies |
+
+## Visibility Suppression
+
+Nodes and edges whose decay score drops below the visibility threshold are automatically suppressed. Suppressed entities:
+
+- Are excluded from search results
+- Are excluded from MATCH queries (unless `reveal()` is used)
+- Retain their data and can be restored
+
+### Deindex Cleanup
+
+A background job periodically removes suppressed entities from secondary indexes (BM25, vector) to reclaim space. Primary data remains intact.
+
+## Admin Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /admin/knowledge-policies/profiles` | List decay profiles and bindings |
+| `GET /admin/knowledge-policies/policies` | List promotion policies |
+| `GET /admin/knowledge-policies/resolve?entityId=X` | Explain scoring for an entity |
+| `GET /admin/knowledge-policies/deindex/status` | Deindex cleanup job status |
+
+## Disable Scoring
 
 ```yaml
-decay:
-  enabled: false
+memory:
+  decay_enabled: false
 ```
 
-Or per-memory:
-
-```go
-memory := &Memory{
-    Content: "Critical system information",
-    Properties: map[string]any{
-        "no_decay": true,
-    },
-}
-```
+When disabled, all entities score 1.0 and nothing is suppressed.
 
 ## See Also
 
-- **[CLI Commands](../operations/cli-commands.md)** - Complete CLI documentation for decay management
-- **[Vector Search](../user-guides/vector-search.md)** - Search with decay
-- **[GPU Acceleration](gpu-acceleration.md)** - Performance
-- **[Architecture](../architecture/system-design.md)** - System design
-
+- **[Decay Profiles Guide](../user-guides/decay-profiles.md)** — Authoring decay profiles
+- **[Promotion Policies Guide](../user-guides/promotion-policies.md)** — Authoring promotion policies
+- **[Visibility Suppression Guide](../user-guides/visibility-suppression-deindex.md)** — Suppression and deindex behavior
+- **[Ebbinghaus-Roynard Bootstrap](../user-guides/ebbinghaus-roynard-bootstrap.md)** — Complete ready-to-use scoring configuration
+- **[CLI Commands](../operations/cli-commands.md)** — CLI decay management

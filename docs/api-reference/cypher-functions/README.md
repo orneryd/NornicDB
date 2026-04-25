@@ -177,12 +177,12 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 // Find strong memories about a topic
 MATCH (m:Memory)
 WHERE m.content CONTAINS "database"
-  AND m.decayScore > 0.6
+  AND decayScore(m) > 0.6
 RETURN m.title,
-       m.decayScore,
+       decayScore(m),
        m.accessCount,
        m.tier
-ORDER BY m.decayScore DESC
+ORDER BY decayScore(m) DESC
 LIMIT 10
 ```
 
@@ -227,8 +227,8 @@ WITH m, vector.similarity.cosine(m.embedding, $queryEmbedding) AS similarity
 WHERE similarity > 0.8
 RETURN m.content,
        similarity,
-       m.decayScore,
-       similarity * m.decayScore AS combinedScore
+       decayScore(m),
+       similarity * decayScore(m) AS combinedScore
 ORDER BY combinedScore DESC
 LIMIT 5
 ```
@@ -241,7 +241,7 @@ WHERE m.tier = "SEMANTIC"
 WITH m.tier AS tier,
      count(m) AS total,
      avg(m.accessCount) AS avgAccess,
-     avg(m.decayScore) AS avgScore,
+     avg(decayScore(m)) AS avgScore,
      sqrt(avg(pow(m.accessCount - avg(m.accessCount), 2))) AS stdDev
 RETURN tier, total, 
        round(avgAccess * 100) / 100,

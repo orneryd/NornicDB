@@ -79,6 +79,7 @@ func (r *Resolver) ResolveProperty(labels []string, propertyPath string) *Compil
 		}
 	}
 	out.CompiledPropertyRules = nil
+	out.HasNoDecayProperty = false
 	return &out
 }
 
