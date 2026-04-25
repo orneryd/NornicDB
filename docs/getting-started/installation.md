@@ -257,29 +257,41 @@ User guide: `docs/user-guides/qdrant-grpc.md`
 
 ## Knowledge-Layer Scoring
 
-NornicDB uses a declarative, profile-driven decay and promotion system instead of hardcoded memory tiers. You define **decay profiles** and **retention bindings** using Cypher DDL:
+NornicDB uses a declarative, profile-driven decay and promotion system instead of hardcoded memory tiers. You define **decay profile bundles** with `OPTIONS { ... }` and then attach them to node or edge patterns using `CREATE DECAY PROFILE ... FOR ... APPLY { ... }`:
 
 ```cypher
--- Define how fast a category of knowledge decays
-CREATE DECAY PROFILE memory_episode_retention
-  HALF LIFE 604800       -- 7 days in seconds
-  DECAY FLOOR 0.0
-  VISIBILITY THRESHOLD 0.10;
+-- Define reusable decay behavior
+CREATE DECAY PROFILE memory_episode_retention OPTIONS {
+  halfLifeSeconds: 604800,
+  function: 'exponential',
+  floor: 0.0,
+  visibilityThreshold: 0.10
+};
 
--- Bind the profile to a node label
-CREATE RETENTION BINDING episode_retention
-  FOR (n:MemoryEpisode)
-  USING PROFILE memory_episode_retention;
+-- Bind that profile to a node label
+CREATE DECAY PROFILE episode_retention_binding
+FOR (n:MemoryEpisode)
+APPLY {
+  DECAY PROFILE 'memory_episode_retention'
+};
 ```
 
-Properties can have independent decay rates or be pinned with `NO DECAY`:
+Properties can have independent overrides or be pinned with `NO DECAY`:
 
 ```cypher
-CREATE RETENTION BINDING fact_retention
-  FOR (n:KnowledgeFact)
-  USING PROFILE knowledge_fact_retention
+CREATE DECAY PROFILE knowledge_fact_retention OPTIONS {
+  halfLifeSeconds: 31536000,
+  function: 'exponential',
+  visibilityThreshold: 0.02
+};
+
+CREATE DECAY PROFILE fact_retention_binding
+FOR (n:KnowledgeFact)
+APPLY {
+  DECAY PROFILE 'knowledge_fact_retention'
   PROPERTY n.tenantId NO DECAY
-  PROPERTY n.summary HALF LIFE 2592000;
+  PROPERTY n.summary HALFLIFE 2592000
+};
 ```
 
 See [Knowledge-Layer Policies](../user-guides/knowledge-layer-policies.md) and the [Ebbinghaus-Roynard Bootstrap](../user-guides/ebbinghaus-roynard-bootstrap.md) for full reference.
