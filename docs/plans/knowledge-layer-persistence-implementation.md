@@ -1,6 +1,6 @@
 # Knowledge-Layer Scoring and Visibility — Implementation Plan
 
-**Status:** Phase 6 COMPLETE — Ready for Phase 7
+**Status:** Phase 8 COMPLETE
 **Date:** April 21, 2026
 **Last Audit:** April 24, 2026
 **Parent Design:** [knowledge-layer-persistence-plan.md](./knowledge-layer-persistence-plan.md)
@@ -152,7 +152,32 @@ _Updated: 2026-04-24_
 | Tombstone tests | `pkg/storage/badger_index_tombstone_test.go` | DONE | 6 tests |
 | Cleanup tests | `pkg/storage/badger_deindex_cleanup_test.go` | DONE | 4 tests |
 
-### Phase 7–8: Not started
+### Phase 7: COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| Schema version marker + startup hook | `pkg/storage/badger.go`, `pkg/storage/migration_runner.go` | DONE | `NewBadgerEngineWithOptions()` runs `RunOnStartMigrations()` before the engine is returned |
+| Access-state extraction migration | `pkg/storage/migration_v0_to_v1.go` | DONE | Extracts legacy node access state into `AccessMetaEntry` and writes schema version last |
+| Migration runner tests | `pkg/storage/migration_runner_test.go` | DONE | Covers schema version read/write, skip-if-applied, apply-when-needed, malformed schema-version handling |
+| Migration extraction tests | `pkg/storage/migration_v0_to_v1_test.go` | DONE | Covers extraction correctness, zero-state skip, idempotency, multi-node migration, schema version write |
+| Legacy decode compatibility tests | `pkg/storage/migration_legacy_decode_test.go` | DONE | Confirms old msgpack/gob node bytes decode into the new structs with legacy fields ignored |
+| Legacy node field removal | `pkg/storage/types.go` | DONE | `Node` no longer carries `DecayScore`, `LastAccessed`, or `AccessCount`; access state lives in `AccessMetaEntry` |
+| Legacy tier package removal | `pkg/decay/` | DONE | Legacy tier-based package removed from the repository |
+
+### Phase 8: COMPLETE
+
+| Deliverable | File | Status | Notes |
+|---|---|---|---|
+| Knowledge-policy admin endpoints | `pkg/server/server_knowledgepolicy.go` | DONE | Profiles, policies, resolve, and deindex-status endpoints ship under `/admin/knowledge-policies/` |
+| Admin endpoint tests | `pkg/server/server_knowledgepolicy_test.go` | DONE | Covers auth, methods, profiles, policies, resolve, and deindex status responses |
+| Browser admin UI | `ui/src/pages/KnowledgePoliciesAdmin.tsx` | DONE | Overview, decay profiles, promotion policies, resolve, and deindex-status tabs |
+| UI API wiring | `ui/src/utils/api.ts` | DONE | Typed client support for knowledge-policy admin responses |
+| Knowledge-layer overview guide | `docs/user-guides/knowledge-layer-policies.md` | DONE | Rewritten for the new knowledge-policy system |
+| Decay-profile guide | `docs/user-guides/decay-profiles.md` | DONE | Documents authoring and operating decay profiles |
+| Promotion-policy guide | `docs/user-guides/promotion-policies.md` | DONE | Documents promotion profiles and policies |
+| Visibility/deindex guide | `docs/user-guides/visibility-suppression-deindex.md` | DONE | Documents suppression behavior and deindex cleanup |
+| Feature doc refresh | `docs/features/memory-decay.md` | DONE | Updated to describe the new scoring/visibility model |
+| Operations doc refresh | `docs/operations/cli-commands.md` | DONE | CLI documentation updated for the knowledge-layer era |
 
 ---
 

@@ -1251,7 +1251,7 @@ type YAMLConfig struct {
 	// Memory/Decay configuration
 	Memory struct {
 		DecayEnabled                 bool    `yaml:"decay_enabled"`
-		DecayInterval                int     `yaml:"decay_interval"`
+		DecayIntervalSeconds         int     `yaml:"decay_interval"`
 		AccessFlushBufferSize        int     `yaml:"access_flush_buffer_size"`
 		VisibilityThreshold          float64 `yaml:"visibility_threshold"`
 		AutoLinksEnabled             bool    `yaml:"auto_links_enabled"`
@@ -2745,8 +2745,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Memory.DecayEnabled {
 		config.Memory.DecayEnabled = true
 	}
-	if yamlCfg.Memory.DecayInterval > 0 {
-		config.Memory.DecayInterval = time.Duration(yamlCfg.Memory.DecayInterval) * time.Second
+	if yamlCfg.Memory.DecayIntervalSeconds > 0 {
+		config.Memory.DecayInterval = time.Duration(yamlCfg.Memory.DecayIntervalSeconds) * time.Second
 	}
 	if yamlCfg.Memory.VisibilityThreshold > 0 {
 		config.Memory.VisibilityThreshold = yamlCfg.Memory.VisibilityThreshold
