@@ -130,9 +130,6 @@ models:
       - github.com/orneryd/nornicdb/pkg/graphql/models.Subgraph
   
   # Enums - use Go types
-  MemoryTier:
-    model:
-      - github.com/orneryd/nornicdb/pkg/graphql/models.MemoryTier
   RelationshipDirection:
     model:
       - github.com/orneryd/nornicdb/pkg/graphql/models.RelationshipDirection

@@ -254,9 +254,6 @@ func (m *DatabaseManager) performMigration(engine storage.Engine) error {
 			Properties:      properties,
 			CreatedAt:       node.CreatedAt,
 			UpdatedAt:       node.UpdatedAt,
-			DecayScore:      node.DecayScore,
-			LastAccessed:    node.LastAccessed,
-			AccessCount:     node.AccessCount,
 			ChunkEmbeddings: node.ChunkEmbeddings,
 		}
 

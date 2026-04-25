@@ -1057,11 +1057,8 @@ func TestMemoryEngine_copyNode(t *testing.T) {
 		Labels:          []string{"A", "B"},
 		Properties:      map[string]any{"key": "value"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		DecayScore:      0.5,
-		AccessCount:     10,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		LastAccessed:    time.Now(),
 	}
 
 	copied := CopyNode(original)

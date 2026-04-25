@@ -146,43 +146,6 @@ func UnmarshalDateTime(v interface{}) (time.Time, error) {
 // ENUMS
 // =============================================================================
 
-// MemoryTier represents memory classification for decay calculation.
-type MemoryTier string
-
-const (
-	MemoryTierEpisodic   MemoryTier = "EPISODIC"
-	MemoryTierSemantic   MemoryTier = "SEMANTIC"
-	MemoryTierProcedural MemoryTier = "PROCEDURAL"
-)
-
-func (e MemoryTier) IsValid() bool {
-	switch e {
-	case MemoryTierEpisodic, MemoryTierSemantic, MemoryTierProcedural:
-		return true
-	}
-	return false
-}
-
-func (e MemoryTier) String() string {
-	return string(e)
-}
-
-func (e *MemoryTier) UnmarshalGQL(v interface{}) error {
-	str, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("enums must be strings")
-	}
-	*e = MemoryTier(str)
-	if !e.IsValid() {
-		return fmt.Errorf("%s is not a valid MemoryTier", str)
-	}
-	return nil
-}
-
-func (e MemoryTier) MarshalGQL(w io.Writer) {
-	fmt.Fprint(w, strconv.Quote(e.String()))
-}
-
 // RelationshipDirection represents traversal direction.
 type RelationshipDirection string
 
@@ -503,11 +466,10 @@ type SchemaConstraint struct {
 
 // CreateNodeInput represents input for creating a node.
 type CreateNodeInput struct {
-	ID         *string     `json:"id,omitempty"`
-	Labels     []string    `json:"labels"`
-	Properties JSON        `json:"properties"`
-	Tier       *MemoryTier `json:"tier,omitempty"`
-	Embedding  FloatArray  `json:"embedding,omitempty"`
+	ID         *string    `json:"id,omitempty"`
+	Labels     []string   `json:"labels"`
+	Properties JSON       `json:"properties"`
+	Embedding  FloatArray `json:"embedding,omitempty"`
 }
 
 // UpdateNodeInput represents input for updating a node.

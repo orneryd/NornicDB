@@ -106,9 +106,6 @@ func copyNode(node *Node) *Node {
 		Labels:                     make([]string, 0, len(node.Labels)),
 		CreatedAt:                  node.CreatedAt,
 		UpdatedAt:                  node.UpdatedAt,
-		DecayScore:                 node.DecayScore,
-		LastAccessed:               node.LastAccessed,
-		AccessCount:                node.AccessCount,
 		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
 	}
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)

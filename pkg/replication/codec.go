@@ -12,16 +12,13 @@ import (
 
 // NodePayload is the replication-safe representation of storage.Node, including embeddings.
 type NodePayload struct {
-	ID               string
-	Labels           []string
-	Properties       map[string]any
-	NamedEmbeddings  map[string][]float32
-	ChunkEmbeddings  [][]float32
-	CreatedAtUnixNs  int64
-	UpdatedAtUnixNs  int64
-	DecayScore       float64
-	LastAccessedUnix int64
-	AccessCount      int64
+	ID              string
+	Labels          []string
+	Properties      map[string]any
+	NamedEmbeddings map[string][]float32
+	ChunkEmbeddings [][]float32
+	CreatedAtUnixNs int64
+	UpdatedAtUnixNs int64
 }
 
 // EdgePayload is the replication-safe representation of storage.Edge.
@@ -68,16 +65,13 @@ func encodeNodePayload(node *storage.Node) ([]byte, error) {
 		return nil, fmt.Errorf("nil node")
 	}
 	payload := NodePayload{
-		ID:               string(node.ID),
-		Labels:           node.Labels,
-		Properties:       node.Properties,
-		NamedEmbeddings:  node.NamedEmbeddings,
-		ChunkEmbeddings:  node.ChunkEmbeddings,
-		CreatedAtUnixNs:  node.CreatedAt.UnixNano(),
-		UpdatedAtUnixNs:  node.UpdatedAt.UnixNano(),
-		DecayScore:       node.DecayScore,
-		LastAccessedUnix: node.LastAccessed.UnixNano(),
-		AccessCount:      node.AccessCount,
+		ID:              string(node.ID),
+		Labels:          node.Labels,
+		Properties:      node.Properties,
+		NamedEmbeddings: node.NamedEmbeddings,
+		ChunkEmbeddings: node.ChunkEmbeddings,
+		CreatedAtUnixNs: node.CreatedAt.UnixNano(),
+		UpdatedAtUnixNs: node.UpdatedAt.UnixNano(),
 	}
 	return encodeGob(&payload)
 }
@@ -91,17 +85,12 @@ func decodeNodePayload(data []byte) (*storage.Node, error) {
 			Properties:      payload.Properties,
 			NamedEmbeddings: payload.NamedEmbeddings,
 			ChunkEmbeddings: payload.ChunkEmbeddings,
-			DecayScore:      payload.DecayScore,
-			AccessCount:     payload.AccessCount,
 		}
 		if payload.CreatedAtUnixNs != 0 {
 			node.CreatedAt = time.Unix(0, payload.CreatedAtUnixNs)
 		}
 		if payload.UpdatedAtUnixNs != 0 {
 			node.UpdatedAt = time.Unix(0, payload.UpdatedAtUnixNs)
-		}
-		if payload.LastAccessedUnix != 0 {
-			node.LastAccessed = time.Unix(0, payload.LastAccessedUnix)
 		}
 		return node, nil
 	}

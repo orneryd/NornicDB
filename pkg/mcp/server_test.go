@@ -698,7 +698,7 @@ func TestHandleStore_WithDB(t *testing.T) {
 		"content": "bad",
 		"type":    "123bad",
 	})
-	require.ErrorContains(t, err, "invalid node type")
+	require.ErrorContains(t, err, "invalid label")
 }
 
 func TestHandleRecall_NoDB(t *testing.T) {

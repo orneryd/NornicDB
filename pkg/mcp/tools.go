@@ -56,12 +56,16 @@ func getStoreTool(defaultDatabase string) Tool {
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "The main content to store. This is what will be remembered.",
+				"description": "The main content to store.",
+			},
+			"labels": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Node labels for categorization (e.g. [\"Concept\", \"AI\"]). Takes precedence over 'type'. Each must be a valid identifier.",
 			},
 			"type": map[string]interface{}{
 				"type":        "string",
-				"description": "Node label/type: any valid identifier for categorization (e.g. memory, concept, task). Used as graph label.",
-				"default":     "memory",
+				"description": "Single node label (shorthand for labels with one entry). Ignored when 'labels' is provided. Defaults to NORNICDB_DEFAULT_NODE_LABEL (default: Memory).",
 			},
 			"title": map[string]interface{}{
 				"type":        "string",
@@ -70,11 +74,11 @@ func getStoreTool(defaultDatabase string) Tool {
 			"tags": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Tags for organization and filtering.",
+				"description": "Tags for organization and filtering (stored as a property).",
 			},
 			"metadata": map[string]interface{}{
 				"type":                 "object",
-				"description":          "Additional key-value metadata.",
+				"description":          "Additional key-value properties on the node.",
 				"additionalProperties": true,
 			},
 			"database": databaseParamSchema(defaultDatabase),
@@ -85,13 +89,12 @@ func getStoreTool(defaultDatabase string) Tool {
 	schemaJSON, _ := json.Marshal(schema)
 	return Tool{
 		Name: "store",
-		Description: `Store a piece of knowledge, memory, decision, or any information as a node in the graph.
+		Description: `Store a piece of knowledge, decision, or any information as a labeled node in the graph.
 Returns node ID for future reference. Automatically generates embeddings for semantic search.
-Use this whenever you want to remember something.
 
 Examples:
-- store(content="PostgreSQL is our primary database", type="decision")
-- store(content="Optional title or summary", type="concept", tags=["tag1"])`,
+- store(content="PostgreSQL is our primary database", labels=["Decision", "Infrastructure"])
+- store(content="ML is a subset of AI", type="Concept", tags=["AI"])`,
 		InputSchema: schemaJSON,
 	}
 }
@@ -227,7 +230,7 @@ func getLinkTool(defaultDatabase string) Tool {
 			},
 			"metadata": map[string]interface{}{
 				"type":                 "object",
-				"description":          "Additional edge properties.",
+				"description":          "Additional edge properties stored alongside the relationship (e.g. reason, source, weight).",
 				"additionalProperties": true,
 			},
 			"database": databaseParamSchema(defaultDatabase),
@@ -247,7 +250,7 @@ titles, or content—only the exact id string. Query nodes first to get their id
 
 Examples:
 - link(from="<node-id-1>", to="<node-id-2>", relation="relates_to")
-- link(from="<id-a>", to="<id-b>", relation="depends_on", strength=0.8)`,
+- link(from="<id-a>", to="<id-b>", relation="depends_on", strength=0.8, metadata={"reason": "API dependency"})`,
 		InputSchema: schemaJSON,
 	}
 }

@@ -1,125 +1,31 @@
 // Package nornicdb provides the main API for embedded NornicDB usage.
 //
-// This package implements the core NornicDB database API, providing a high-level
-// interface for storing, retrieving, and searching memories (nodes) with automatic
-// relationship inference, memory decay, and hybrid search capabilities.
+// This package implements the core NornicDB graph database API, providing a
+// high-level interface for nodes, edges, search, automatic relationship
+// inference, knowledge-layer decay policies, and Cypher query execution.
 //
-// Key Features:
-//   - Memory storage with automatic decay simulation
-//   - Vector similarity search using pre-computed embeddings
-//   - Full-text search with BM25 scoring
-//   - Automatic relationship inference
-//   - Cypher query execution
-//   - Neo4j compatibility
-//
-// Architecture:
-//   - Storage: In-memory graph storage (Badger planned)
-//   - Decay: Simulates human memory decay patterns
-//   - Inference: Automatic relationship detection
-//   - Search: Hybrid vector + full-text search
-//   - Cypher: Neo4j-compatible query language
+// All data is represented as generic labeled property graph elements:
+//   - Nodes have labels ([]string) and properties (map[string]any)
+//   - Edges connect nodes with a type and optional properties
+//   - Knowledge-layer policies control visibility and decay per label/type
 //
 // Example Usage:
 //
-//	// Open database
-//	config := nornicdb.DefaultConfig()
-//	config.DecayEnabled = true
-//	config.AutoLinksEnabled = true
-//
-//	db, err := nornicdb.Open("./data", config)
+//	db, err := nornicdb.Open("./data", nornicdb.DefaultConfig())
 //	if err != nil {
 //		log.Fatal(err)
 //	}
 //	defer db.Close()
 //
-//	// Store a memory
-//	memory := &nornicdb.Memory{
-//		Content:   "Machine learning is a subset of artificial intelligence",
-//		Title:     "ML Definition",
-//		Tier:      nornicdb.TierSemantic,
-//		Tags:      []string{"AI", "ML", "definition"},
-//		Embedding: embedding, // Pre-computed by the application
-//	}
-//
-//	stored, err := db.Store(ctx, memory)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Search memories
-//	results, err := db.Search(ctx, "artificial intelligence", 10)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	for _, result := range results {
-//		fmt.Printf("Found: %s (score: %.3f)\n", result.Title, result.Score)
-//	}
+//	// Create a node
+//	node, err := db.CreateNode(ctx, []string{"Concept"}, map[string]any{
+//		"content": "Machine learning is a subset of artificial intelligence",
+//		"title":   "ML Definition",
+//		"tags":    []string{"AI", "ML"},
+//	})
 //
 //	// Execute Cypher queries
-//	cypherResult, err := db.ExecuteCypher(ctx, "MATCH (n) RETURN count(n)", nil)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	fmt.Printf("Total nodes: %v\n", cypherResult.Rows[0][0])
-//
-// Memory Tiers:
-//
-// NornicDB simulates human memory with three tiers based on cognitive science:
-//
-// 1. **Episodic** (7-day half-life):
-//   - Personal experiences and events
-//   - "I went to the store yesterday"
-//   - Decays quickly unless reinforced
-//
-// 2. **Semantic** (69-day half-life):
-//   - Facts, concepts, and general knowledge
-//   - "Paris is the capital of France"
-//   - More stable, slower decay
-//
-// 3. **Procedural** (693-day half-life):
-//   - Skills, procedures, and patterns
-//   - "How to ride a bicycle"
-//   - Very stable, minimal decay
-//
-// Integration with Application Layer:
-//
-// NornicDB is designed as the storage and search backend:
-//   - Application layer: File discovery, reading, embedding generation
-//   - NornicDB: Storage, search, relationships, decay
-//   - Clean separation of concerns
-//   - Embeddings are pre-computed by the application and passed to NornicDB
-//
-// Data Flow:
-//  1. Application discovers and reads files
-//  2. Application generates embeddings via Ollama/OpenAI
-//  3. Application sends nodes with embeddings to NornicDB
-//  4. NornicDB stores, indexes, and infers relationships
-//  5. Applications query NornicDB for search and retrieval
-//
-// ELI12 (Explain Like I'm 12):
-//
-// Think of NornicDB like your brain's memory system:
-//
-//  1. **Different types of memories**: Just like you remember your birthday party
-//     differently than how to tie your shoes, NornicDB has different "tiers"
-//     for different kinds of information.
-//
-//  2. **Memories fade over time**: Just like you might forget what you had for
-//     lunch last Tuesday, old memories in NornicDB get "weaker" over time
-//     unless you access them again.
-//
-//  3. **Finding related memories**: When you think of "summer", you might
-//     remember "beach", "swimming", and "ice cream". NornicDB automatically
-//     finds these connections between related information.
-//
-//  4. **Smart search**: You can ask NornicDB "find me something about dogs"
-//     and it will find information about "puppies", "canines", and "pets"
-//     even if those exact words aren't in your search.
-//
-// It's like having a super-smart assistant that remembers everything you tell
-// it and can find connections you might not have noticed!
+//	result, err := db.Cypher(ctx, "MATCH (n:Concept) RETURN n.title", nil)
 package nornicdb
 
 import (
@@ -131,15 +37,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -154,8 +59,8 @@ import (
 
 // Errors returned by DB operations.
 var (
-	ErrNotFound     = errors.New("memory not found")
-	ErrInvalidID    = errors.New("invalid memory ID")
+	ErrNotFound     = errors.New("not found")
+	ErrInvalidID    = errors.New("invalid ID")
 	ErrClosed       = errors.New("database is closed")
 	ErrInvalidInput = errors.New("invalid input")
 
@@ -167,122 +72,15 @@ var (
 	ErrQueryEmbeddingDimensionMismatch = errors.New("query embedding dimension mismatch")
 )
 
-// MemoryTier represents the decay tier of a memory.
-type MemoryTier string
-
-const (
-	// TierEpisodic is for short-term memories (7-day half-life)
-	TierEpisodic MemoryTier = "EPISODIC"
-	// TierSemantic is for facts and concepts (69-day half-life)
-	TierSemantic MemoryTier = "SEMANTIC"
-	// TierProcedural is for skills and patterns (693-day half-life)
-	TierProcedural MemoryTier = "PROCEDURAL"
-)
-
-// Memory represents a node in the NornicDB knowledge graph.
-//
-// Memories are the fundamental unit of storage in NornicDB, representing
-// pieces of information with associated metadata, embeddings, and decay scores.
-//
-// Key fields:
-//   - Content: The main textual content
-//   - Tier: Memory type (Episodic, Semantic, Procedural)
-//   - DecayScore: Current strength (1.0 = new, 0.0 = fully decayed)
-//   - Embedding: Vector representation for similarity search
-//   - Tags: Categorical labels for organization
-//
-// Example:
-//
-//	// Create a semantic memory
-//	memory := &nornicdb.Memory{
-//		Content:   "The mitochondria is the powerhouse of the cell",
-//		Title:     "Cell Biology Fact",
-//		Tier:      nornicdb.TierSemantic,
-//		Tags:      []string{"biology", "cells", "education"},
-//		Source:    "textbook-chapter-3",
-//		Embedding: embedding, // From application
-//		Properties: map[string]any{
-//			"subject":    "biology",
-//			"difficulty": "beginner",
-//		},
-//	}
-//
-//	stored, err := db.Store(ctx, memory)
-//
-// Memory Lifecycle:
-//  1. Created with DecayScore = 1.0
-//  2. DecayScore decreases over time based on tier
-//  3. AccessCount increases when retrieved
-//  4. LastAccessed updated on each access
-//  5. Archived when DecayScore < threshold
-type Memory struct {
-	ID              string         `json:"id"`
-	Content         string         `json:"content"`
-	Title           string         `json:"title,omitempty"`
-	Tier            MemoryTier     `json:"tier"`
-	DecayScore      float64        `json:"decay_score"`
-	CreatedAt       time.Time      `json:"created_at"`
-	LastAccessed    time.Time      `json:"last_accessed"`
-	AccessCount     int64          `json:"access_count"`
-	ChunkEmbeddings [][]float32    `json:"chunk_embeddings,omitempty"` // Always stored as array of arrays (even single chunk = array of 1)
-	Tags            []string       `json:"tags,omitempty"`
-	Source          string         `json:"source,omitempty"`
-	Properties      map[string]any `json:"properties,omitempty"`
-}
-
-// Edge represents a relationship between two memories in the knowledge graph.
-//
-// Edges can be manually created or automatically inferred by the relationship
-// inference engine. They include confidence scores and reasoning information.
-//
-// Types of relationships:
-//   - Manual: Explicitly created by users
-//   - Similarity: Based on vector embedding similarity
-//   - CoAccess: Based on memories accessed together
-//   - Temporal: Based on creation/access time proximity
-//   - Transitive: Inferred through other relationships
-//
-// Example:
-//
-//	// Manual relationship
-//	edge := &nornicdb.Edge{
-//		SourceID:      "memory-1",
-//		TargetID:      "memory-2",
-//		Type:          "RELATES_TO",
-//		Confidence:    1.0,
-//		AutoGenerated: false,
-//		Reason:        "User-defined relationship",
-//		Properties: map[string]any{
-//			"strength": "strong",
-//			"category": "conceptual",
-//		},
-//	}
-//
-//	// Auto-generated relationship (from inference engine)
-//	edge = &nornicdb.Edge{
-//		SourceID:      "memory-3",
-//		TargetID:      "memory-4",
-//		Type:          "SIMILAR_TO",
-//		Confidence:    0.87,
-//		AutoGenerated: true,
-//		Reason:        "Vector similarity: 0.87",
-//	}
-type Edge struct {
-	ID            string         `json:"id"`
-	SourceID      string         `json:"source_id"`
-	TargetID      string         `json:"target_id"`
-	Type          string         `json:"type"`
-	Confidence    float64        `json:"confidence"`
-	AutoGenerated bool           `json:"auto_generated"`
-	Reason        string         `json:"reason,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	Properties    map[string]any `json:"properties,omitempty"`
+// generateID creates a unique UUID.
+func generateID() string {
+	return uuid.New().String()
 }
 
 // Config holds NornicDB database configuration options.
 //
 // The configuration controls all aspects of the database including storage,
-// embeddings, memory decay, automatic relationship inference, and server ports.
+// embeddings, knowledge-layer decay policies, automatic relationship inference, and server ports.
 //
 // Example:
 //
@@ -294,8 +92,8 @@ type Edge struct {
 //		EmbeddingModel:               "text-embedding-3-large",
 //		EmbeddingDimensions:          3072,
 //		DecayEnabled:                 true,
-//		DecayRecalculateInterval:     30 * time.Minute,
-//		DecayArchiveThreshold:        0.01, // Archive at 1%
+//		DecayInterval:     30 * time.Minute,
+//		VisibilityThreshold:        0.01, // Archive at 1%
 //		AutoLinksEnabled:             true,
 //		AutoLinksSimilarityThreshold: 0.85, // Higher precision
 //		AutoLinksCoAccessWindow:      60 * time.Second,
@@ -312,7 +110,7 @@ type Config = nornicConfig.Config
 //
 // The defaults are optimized for development and small-scale deployments:
 //   - Local Ollama for embeddings (bge-m3 model)
-//   - Memory decay enabled with 1-hour recalculation
+//   - Knowledge-layer decay policies enabled
 //   - Auto-linking enabled with 0.82 similarity threshold
 //   - Standard Neo4j ports (7687 Bolt, 7474 HTTP)
 //
@@ -321,7 +119,7 @@ type Config = nornicConfig.Config
 //	config := nornicdb.DefaultConfig()
 //	// Customize as needed
 //	config.EmbeddingModel = "nomic-embed-text"
-//	config.DecayArchiveThreshold = 0.1 // Archive at 10%
+//	config.VisibilityThreshold = 0.1 // Archive at 10%
 //
 //	db, err := nornicdb.Open("./data", config)
 func DefaultConfig() *Config {
@@ -330,16 +128,9 @@ func DefaultConfig() *Config {
 
 // DB represents a NornicDB database instance with all core functionality.
 //
-// The DB provides a high-level API for storing memories, executing queries,
-// and performing hybrid search. It coordinates between storage, decay management,
-// relationship inference, and search services.
-//
-// Key components:
-//   - Storage: Graph storage engine (currently in-memory)
-//   - Decay: Memory decay simulation
-//   - Inference: Automatic relationship detection
-//   - Search: Hybrid vector + full-text search
-//   - Cypher: Query execution engine
+// The DB provides a high-level API for creating nodes and edges, executing
+// Cypher queries, and performing hybrid search. It coordinates between storage,
+// knowledge-layer decay policies, relationship inference, and search services.
 //
 // Example:
 //
@@ -349,12 +140,7 @@ func DefaultConfig() *Config {
 //	}
 //	defer db.Close()
 //
-//	// Database is ready for operations
-//	memory := &nornicdb.Memory{
-//		Content: "Important information",
-//		Tier:    nornicdb.TierSemantic,
-//	}
-//	stored, _ := db.Store(ctx, memory)
+//	node, _ := db.CreateNode(ctx, []string{"Concept"}, map[string]any{"content": "Important information"})
 //
 // Thread Safety:
 //
@@ -368,7 +154,6 @@ type DB struct {
 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
 	baseStorage       storage.Engine // Underlying storage chain (must be closed to release Badger/WAL locks)
 	wal               *storage.WAL   // Write-ahead log for durability
-	decay             *decay.Manager
 	accessAccumulator *knowledgepolicy.AccessAccumulator
 	accessFlusher     *knowledgepolicy.AccessFlusher
 	cypherExecutor    *cypher.StorageExecutor
@@ -485,7 +270,7 @@ type DatabaseAndStorage struct {
 //  1. Applies DefaultConfig() if config is nil
 //  2. Opens or creates persistent storage (BadgerDB) if dataDir provided
 //  3. Initializes Cypher query executor
-//  4. Sets up memory decay manager (if enabled in config)
+//  4. Sets up knowledge-layer decay policies (if enabled in config)
 //  5. Configures relationship inference engine (if enabled)
 //  6. Prepares hybrid search services
 //
@@ -558,13 +343,9 @@ type DatabaseAndStorage struct {
 //	// Database is ready
 //	fmt.Println("Database opened successfully")
 //
-//	// Store a memory
-//	memory := &nornicdb.Memory{
-//		Content: "Important fact",
-//		Tier:    nornicdb.TierSemantic,
-//	}
-//	stored, _ := db.Store(context.Background(), memory)
-//	fmt.Printf("Stored memory: %s\n", stored.ID)
+//	// Create a node
+//	node, _ := db.CreateNode(context.Background(), []string{"Concept"}, map[string]any{"content": "Important fact"})
+//	fmt.Printf("Created node: %s\n", node.ID)
 //
 // Example (Production Setup):
 //
@@ -572,8 +353,8 @@ type DatabaseAndStorage struct {
 //	config := nornicdb.DefaultConfig()
 //	config.DataDir = "/var/lib/nornicdb"
 //	config.DecayEnabled = true
-//	config.DecayRecalculateInterval = 30 * time.Minute
-//	config.DecayArchiveThreshold = 0.01 // Archive at 1%
+//	config.DecayInterval = 30 * time.Minute
+//	config.VisibilityThreshold = 0.01 // Archive at 1%
 //	config.AutoLinksEnabled = true
 //	config.AutoLinksSimilarityThreshold = 0.85
 //
@@ -734,10 +515,10 @@ type DatabaseAndStorage struct {
 //   - **Pop-up library** (no dataDir): Books on temporary tables, packed away at night
 //
 // After opening, the library is ready:
-//   - You can add books (Store memories)
+//   - You can add books (Create nodes)
 //   - Search for books (Search queries)
 //   - Find related books (Relationship inference)
-//   - Old books get moved to archive (Decay simulation)
+//   - Old books fade from view (Knowledge-layer decay policies)
 //
 // Important:
 //   - Only one person can have the keys (file lock)
@@ -1145,31 +926,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// If MaxWorkers is 0, the parallel package will use runtime.NumCPU()
 	cypher.SetParallelConfig(parallelCfg)
 
-	// Initialize decay manager
+	// Initialize knowledge-layer decay: wire scorer into BadgerEngine read paths.
+	// The flusher is created here but started later (after buildCtx is initialized).
 	if config.Memory.DecayEnabled {
-		defaultDecayConfig := decay.DefaultConfig()
-		decayConfig := &decay.Config{
-			RecalculateInterval:           config.Memory.DecayInterval,
-			ArchiveThreshold:              config.Memory.ArchiveThreshold,
-			RecencyWeight:                 defaultDecayConfig.RecencyWeight,
-			FrequencyWeight:               defaultDecayConfig.FrequencyWeight,
-			ImportanceWeight:              defaultDecayConfig.ImportanceWeight,
-			PromotionEnabled:              defaultDecayConfig.PromotionEnabled,
-			EpisodicToSemanticThreshold:   defaultDecayConfig.EpisodicToSemanticThreshold,
-			EpisodicToSemanticMinAge:      defaultDecayConfig.EpisodicToSemanticMinAge,
-			SemanticToProceduralThreshold: defaultDecayConfig.SemanticToProceduralThreshold,
-			SemanticToProceduralMinAge:    defaultDecayConfig.SemanticToProceduralMinAge,
-		}
-		db.decay = decay.New(decayConfig)
-
-		// Knowledge-layer decay: wire scorer into BadgerEngine read paths.
-		// The flusher is created here but started later (after buildCtx is initialized).
 		if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
 			be.SetDecayEnabled(true)
-			db.accessAccumulator = knowledgepolicy.NewAccessAccumulator(true)
+			db.accessAccumulator = knowledgepolicy.NewAccessAccumulator(true, config.Memory.AccessFlushBufferSize)
 			be.SetAccessAccumulator(db.accessAccumulator)
 			db.accessFlusher = knowledgepolicy.NewAccessFlusher(
-				db.accessAccumulator, be, 2*time.Second,
+				db.accessAccumulator, be, config.Memory.DecayInterval,
 			)
 		}
 	}
@@ -1893,10 +1658,6 @@ func (db *DB) closeInternal() error {
 		db.accessFlusher.Stop()
 	}
 
-	if db.decay != nil {
-		db.decay.Stop()
-	}
-
 	// Stop replication before closing storage.
 	if db.replicator != nil {
 		if err := db.replicator.Shutdown(); err != nil {
@@ -2245,240 +2006,11 @@ func (db *DB) ChunkQueryForDB(ctx context.Context, dbName string, query string) 
 	return db.ChunkQuery(ctx, query)
 }
 
-// Store creates a new memory with automatic relationship inference.
-func (db *DB) Store(ctx context.Context, mem *Memory) (*Memory, error) {
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
-		return nil, ErrClosed
-	}
-	storageEngine := db.storage
-	defaultDB := db.defaultDatabaseName()
-	db.mu.RUnlock()
-
-	if mem == nil {
-		return nil, ErrInvalidInput
-	}
-
-	// Set defaults
-	if mem.ID == "" {
-		mem.ID = generateID("mem")
-	}
-	if mem.Tier == "" {
-		mem.Tier = TierSemantic
-	}
-	mem.DecayScore = 1.0
-	now := time.Now()
-	mem.CreatedAt = now
-	mem.LastAccessed = now
-	mem.AccessCount = 0
-
-	// Convert to storage node
-	node := memoryToNode(mem)
-
-	// Encrypt sensitive fields in properties before storage
-	node.Properties = db.encryptProperties(node.Properties)
-
-	// Store in storage engine
-	_, err := storageEngine.CreateNode(node)
-	if err != nil {
-		return nil, fmt.Errorf("storing memory: %w", err)
-	}
-
-	// Run auto-relationship inference if enabled (per-database, default DB here).
-	hasEmbedding := false
-	for _, emb := range mem.ChunkEmbeddings {
-		if len(emb) > 0 {
-			hasEmbedding = true
-			break
-		}
-	}
-	if hasEmbedding {
-		inferEngine, _ := db.getOrCreateInferenceService(defaultDB, storageEngine)
-		if inferEngine != nil {
-			suggestions, err := inferEngine.OnStoreBestOfChunks(ctx, mem.ID, mem.ChunkEmbeddings)
-			if err == nil {
-				for _, suggestion := range suggestions {
-					edge := &storage.Edge{
-						ID:            storage.EdgeID(generateID("edge")),
-						StartNode:     storage.NodeID(suggestion.SourceID),
-						EndNode:       storage.NodeID(suggestion.TargetID),
-						Type:          suggestion.Type,
-						Confidence:    suggestion.Confidence,
-						AutoGenerated: true,
-						CreatedAt:     now,
-						Properties: map[string]any{
-							"reason": suggestion.Reason,
-							"method": suggestion.Method,
-						},
-					}
-					_ = storageEngine.CreateEdge(edge) // Best effort
-				}
-			}
-		}
-	}
-
-	return mem, nil
-}
-
-// Remember performs semantic search for memories using embedding.
-// Uses streaming iteration to avoid loading all nodes into memory.
-func (db *DB) Remember(ctx context.Context, embedding []float32, limit int) ([]*Memory, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
-	}
-
-	if len(embedding) == 0 {
-		return nil, ErrInvalidInput
-	}
-
-	if limit <= 0 {
-		limit = 10
-	}
-
-	type scored struct {
-		mem   *Memory
-		score float64
-	}
-
-	// Use streaming iteration to avoid loading all nodes at once
-	// We maintain a sorted slice of top-k results
-	var results []scored
-
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
-		// Skip nodes without embeddings (always stored in ChunkEmbeddings, even single chunk = array of 1)
-		if len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0 {
-			return nil
-		}
-
-		// Decrypt properties before converting to memory
-		node.Properties = db.decryptProperties(node.Properties)
-
-		mem := nodeToMemory(node)
-		// Use first chunk embedding for similarity (always stored in ChunkEmbeddings, even single chunk = array of 1)
-		var memEmb []float32
-		if len(mem.ChunkEmbeddings) > 0 && len(mem.ChunkEmbeddings[0]) > 0 {
-			memEmb = mem.ChunkEmbeddings[0]
-		}
-		sim := vector.CosineSimilarity(embedding, memEmb)
-
-		// If we don't have enough results yet, just add
-		if len(results) < limit {
-			results = append(results, scored{mem: mem, score: sim})
-			// Sort when we reach limit
-			if len(results) == limit {
-				sort.Slice(results, func(i, j int) bool {
-					return results[i].score > results[j].score
-				})
-			}
-		} else if sim > results[limit-1].score {
-			// Only add if better than worst in results
-			results[limit-1] = scored{mem: mem, score: sim}
-			// Re-sort (could optimize with heap)
-			sort.Slice(results, func(i, j int) bool {
-				return results[i].score > results[j].score
-			})
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("streaming nodes: %w", err)
-	}
-
-	// Final sort (in case we have fewer than limit results)
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].score > results[j].score
-	})
-
-	memories := make([]*Memory, len(results))
-	for i, r := range results {
-		memories[i] = r.mem
-	}
-
-	return memories, nil
-}
-
-// Recall retrieves a specific memory by ID and reinforces it.
-func (db *DB) Recall(ctx context.Context, id string) (*Memory, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if db.closed {
-		return nil, ErrClosed
-	}
-
-	if id == "" {
-		return nil, ErrInvalidID
-	}
-
-	// Get from storage
-	node, err := db.storage.GetNode(storage.NodeID(id))
-	if err != nil {
-		return nil, ErrNotFound
-	}
-
-	// Decrypt properties before converting to memory
-	node.Properties = db.decryptProperties(node.Properties)
-
-	mem := nodeToMemory(node)
-
-	// Reinforce memory and update access patterns
-	now := time.Now()
-
-	if db.decay != nil {
-		// Use decay manager to reinforce the memory
-		info := &decay.MemoryInfo{
-			ID:           mem.ID,
-			Tier:         decay.Tier(mem.Tier),
-			CreatedAt:    mem.CreatedAt,
-			LastAccessed: mem.LastAccessed,
-			AccessCount:  mem.AccessCount,
-		}
-		info = db.decay.Reinforce(info)
-		mem.LastAccessed = info.LastAccessed
-		mem.AccessCount = info.AccessCount
-		mem.DecayScore = db.decay.CalculateScore(info)
-
-		// Check for tier promotion (frequently accessed memories move to more stable tiers)
-		newTier := db.decay.PromoteTier(info)
-		if newTier != info.Tier {
-			mem.Tier = MemoryTier(newTier)
-			info.Tier = newTier
-			// Recalculate decay score with new tier (may improve due to slower decay)
-			mem.DecayScore = db.decay.CalculateScore(info)
-		}
-	} else {
-		mem.LastAccessed = now
-		mem.AccessCount++
-	}
-
-	// Update storage
-	node = memoryToNode(mem)
-	if err := db.storage.UpdateNode(node); err != nil {
-		return nil, fmt.Errorf("updating memory: %w", err)
-	}
-
-	// Track access for co-access inference
-	if inferEngine, _ := db.getOrCreateInferenceService(db.defaultDatabaseName(), db.storage); inferEngine != nil {
-		inferEngine.OnAccess(ctx, mem.ID)
-	}
-
-	return mem, nil
-}
-
 // DecayInfo contains decay system information for monitoring.
 type DecayInfo struct {
-	Enabled          bool          `json:"enabled"`
-	ArchiveThreshold float64       `json:"archiveThreshold"`
-	RecalcInterval   time.Duration `json:"recalculateInterval"`
-	RecencyWeight    float64       `json:"recencyWeight"`
-	FrequencyWeight  float64       `json:"frequencyWeight"`
-	ImportanceWeight float64       `json:"importanceWeight"`
+	Enabled             bool          `json:"enabled"`
+	VisibilityThreshold float64       `json:"visibilityThreshold"`
+	FlushInterval       time.Duration `json:"flushInterval"`
 }
 
 // GetDecayInfo returns information about the decay system configuration.
@@ -2486,18 +2018,13 @@ func (db *DB) GetDecayInfo() *DecayInfo {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.decay == nil {
+	if !db.config.Memory.DecayEnabled {
 		return &DecayInfo{Enabled: false}
 	}
-
-	cfg := db.decay.GetConfig()
 	return &DecayInfo{
-		Enabled:          true,
-		ArchiveThreshold: cfg.ArchiveThreshold,
-		RecalcInterval:   cfg.RecalculateInterval,
-		RecencyWeight:    cfg.RecencyWeight,
-		FrequencyWeight:  cfg.FrequencyWeight,
-		ImportanceWeight: cfg.ImportanceWeight,
+		Enabled:             true,
+		VisibilityThreshold: db.config.Memory.VisibilityThreshold,
+		FlushInterval:       db.config.Memory.DecayInterval,
 	}
 }
 
@@ -2545,166 +2072,6 @@ func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) (
 	}
 
 	return results, nil
-}
-
-// Link creates a relationship between two memories.
-func (db *DB) Link(ctx context.Context, sourceID, targetID, edgeType string, confidence float64) (*Edge, error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if db.closed {
-		return nil, ErrClosed
-	}
-
-	if sourceID == "" || targetID == "" {
-		return nil, ErrInvalidID
-	}
-
-	if edgeType == "" {
-		edgeType = "RELATES_TO"
-	}
-
-	if confidence <= 0 || confidence > 1 {
-		confidence = 1.0
-	}
-
-	// Verify both nodes exist
-	if _, err := db.storage.GetNode(storage.NodeID(sourceID)); err != nil {
-		return nil, fmt.Errorf("source not found: %w", ErrNotFound)
-	}
-	if _, err := db.storage.GetNode(storage.NodeID(targetID)); err != nil {
-		return nil, fmt.Errorf("target not found: %w", ErrNotFound)
-	}
-
-	now := time.Now()
-	storageEdge := &storage.Edge{
-		ID:            storage.EdgeID(generateID("edge")),
-		StartNode:     storage.NodeID(sourceID),
-		EndNode:       storage.NodeID(targetID),
-		Type:          edgeType,
-		Confidence:    confidence,
-		AutoGenerated: false,
-		CreatedAt:     now,
-		Properties:    map[string]any{},
-	}
-
-	if err := db.storage.CreateEdge(storageEdge); err != nil {
-		return nil, fmt.Errorf("creating edge: %w", err)
-	}
-
-	return storageEdgeToEdge(storageEdge), nil
-}
-
-// Neighbors returns memories connected to the given memory.
-func (db *DB) Neighbors(ctx context.Context, id string, depth int, edgeType string) ([]*Memory, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
-	}
-
-	if id == "" {
-		return nil, ErrInvalidID
-	}
-
-	if depth <= 0 {
-		depth = 1
-	}
-	if depth > 5 {
-		depth = 5 // Cap depth to prevent excessive traversal
-	}
-
-	// Helper to get all edges for a node
-	getAllEdges := func(nodeID storage.NodeID) []*storage.Edge {
-		var allEdges []*storage.Edge
-		if out, err := db.storage.GetOutgoingEdges(nodeID); err == nil {
-			allEdges = append(allEdges, out...)
-		}
-		if in, err := db.storage.GetIncomingEdges(nodeID); err == nil {
-			allEdges = append(allEdges, in...)
-		}
-		return allEdges
-	}
-
-	// Collect neighbor IDs (BFS for depth > 1)
-	visited := map[string]bool{id: true}
-	currentLevel := []string{id}
-	var neighborIDs []string
-
-	for d := 0; d < depth; d++ {
-		var nextLevel []string
-		for _, nodeID := range currentLevel {
-			nodeEdges := getAllEdges(storage.NodeID(nodeID))
-			for _, edge := range nodeEdges {
-				// Filter by edge type if specified
-				if edgeType != "" && edge.Type != edgeType {
-					continue
-				}
-
-				// Determine the "other" node
-				var targetID string
-				if string(edge.StartNode) == nodeID {
-					targetID = string(edge.EndNode)
-				} else {
-					targetID = string(edge.StartNode)
-				}
-
-				if !visited[targetID] {
-					visited[targetID] = true
-					neighborIDs = append(neighborIDs, targetID)
-					nextLevel = append(nextLevel, targetID)
-				}
-			}
-		}
-		currentLevel = nextLevel
-	}
-
-	// Fetch memory nodes
-	var memories []*Memory
-	for _, nid := range neighborIDs {
-		node, err := db.storage.GetNode(storage.NodeID(nid))
-		if err == nil {
-			// Decrypt properties before converting to memory
-			node.Properties = db.decryptProperties(node.Properties)
-			memories = append(memories, nodeToMemory(node))
-		}
-	}
-
-	return memories, nil
-}
-
-// Forget removes a memory and its edges.
-func (db *DB) Forget(ctx context.Context, id string) error {
-	db.mu.RLock()
-	closed := db.closed
-	db.mu.RUnlock()
-
-	if closed {
-		return ErrClosed
-	}
-
-	if id == "" {
-		return ErrInvalidID
-	}
-
-	// Check if memory exists
-	if _, err := db.storage.GetNode(storage.NodeID(id)); err != nil {
-		return ErrNotFound
-	}
-
-	// Remove from search indexes first (before storage deletion), but wait for any
-	// in-flight build to finish so a stale scan cannot re-add the deleted memory.
-	if err := db.removeNodeFromSearchIndexes(ctx, db.defaultDatabaseName(), db.storage, storage.NodeID(id)); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
-		return err
-	}
-
-	// Delete the node (storage should handle edge cleanup)
-	if err := db.storage.DeleteNode(storage.NodeID(id)); err != nil {
-		return fmt.Errorf("deleting memory: %w", err)
-	}
-
-	return nil
 }
 
 // unwrapToBadgerEngine walks the engine wrapper chain to find the underlying BadgerEngine.

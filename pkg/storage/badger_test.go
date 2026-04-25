@@ -55,7 +55,6 @@ func testNode(id string) *Node {
 		Labels:     []string{"TestNode"},
 		Properties: map[string]any{"name": id},
 		CreatedAt:  time.Now(),
-		DecayScore: 1.0,
 	}
 }
 
@@ -137,12 +136,10 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 
 	t.Run("gets existing node", func(t *testing.T) {
 		original := &Node{
-			ID:          NodeID(prefixTestID("n1")),
-			Labels:      []string{"Person", "User"},
-			Properties:  map[string]any{"name": "Alice", "age": 30},
-			CreatedAt:   time.Now().Truncate(time.Second),
-			DecayScore:  0.8,
-			AccessCount: 5,
+			ID:         NodeID(prefixTestID("n1")),
+			Labels:     []string{"Person", "User"},
+			Properties: map[string]any{"name": "Alice", "age": 30},
+			CreatedAt:  time.Now().Truncate(time.Second),
 		}
 		_, err := engine.CreateNode(original)
 		require.NoError(t, err)
@@ -153,7 +150,6 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 		assert.Equal(t, original.ID, retrieved.ID)
 		assert.Equal(t, original.Labels, retrieved.Labels)
 		assert.Equal(t, original.Properties["name"], retrieved.Properties["name"])
-		assert.InDelta(t, original.DecayScore, retrieved.DecayScore, 0.001)
 	})
 
 	t.Run("returns ErrNotFound for missing node", func(t *testing.T) {
@@ -1178,7 +1174,6 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 			Labels:     []string{"Test"},
 			Properties: map[string]any{"value": "persisted"},
 			CreatedAt:  time.Now(),
-			DecayScore: 0.5,
 		}
 		_, err = engine1.CreateNode(node)
 		require.NoError(t, err)
@@ -1195,7 +1190,6 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		retrieved, err := engine2.GetNode(NodeID(prefixTestID("persistent")))
 		require.NoError(t, err)
 		assert.Equal(t, "persisted", retrieved.Properties["value"])
-		assert.InDelta(t, 0.5, retrieved.DecayScore, 0.001)
 	})
 
 	t.Run("indexes persist", func(t *testing.T) {
@@ -1563,9 +1557,6 @@ func TestSerialization(t *testing.T) {
 			Properties:      map[string]any{"string": "value", "number": float64(42), "bool": true},
 			CreatedAt:       time.Now().Truncate(time.Second),
 			UpdatedAt:       time.Now().Add(time.Hour).Truncate(time.Second),
-			DecayScore:      0.75,
-			LastAccessed:    time.Now().Add(-time.Hour).Truncate(time.Second),
-			AccessCount:     100,
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 		}
 
@@ -1578,8 +1569,6 @@ func TestSerialization(t *testing.T) {
 		assert.Equal(t, original.ID, decoded.ID)
 		assert.Equal(t, original.Labels, decoded.Labels)
 		assert.Equal(t, original.Properties["string"], decoded.Properties["string"])
-		assert.InDelta(t, original.DecayScore, decoded.DecayScore, 0.001)
-		assert.Equal(t, original.AccessCount, decoded.AccessCount)
 		assert.Equal(t, original.ChunkEmbeddings, decoded.ChunkEmbeddings)
 	})
 

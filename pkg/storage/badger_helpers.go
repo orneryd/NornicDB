@@ -28,6 +28,10 @@ func mvccSequenceKey() []byte {
 	return []byte{prefixMVCCMeta, 0x01}
 }
 
+func mvccSchemaVersionKey() []byte {
+	return []byte{prefixMVCCMeta, 0x02}
+}
+
 func encodeMVCCSortVersion(version MVCCVersion) []byte {
 	key := make([]byte, 16)
 	timestamp := uint64(version.CommitTimestamp.UTC().UnixNano()) ^ (1 << 63)
