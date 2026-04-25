@@ -432,6 +432,18 @@ func TestCallNornicDbDecayInfo(t *testing.T) {
 	if len(result.Rows) != 1 {
 		t.Errorf("Expected 1 row, got %d", len(result.Rows))
 	}
+	if len(result.Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(result.Columns))
+	}
+	if result.Columns[0] != "enabled" || result.Columns[1] != "system" || result.Columns[2] != "configuredVia" {
+		t.Fatalf("unexpected columns: %v", result.Columns)
+	}
+	if enabled, ok := result.Rows[0][0].(bool); !ok || enabled {
+		t.Fatalf("expected enabled=false for memory-backed test engine, got %v", result.Rows[0][0])
+	}
+	if configuredVia, ok := result.Rows[0][2].(string); !ok || !strings.Contains(configuredVia, "CREATE DECAY PROFILE") || strings.Contains(configuredVia, "CREATE RETENTION BINDING") {
+		t.Fatalf("unexpected configuredVia value: %v", result.Rows[0][2])
+	}
 }
 
 func TestCallDbSchemaVisualization(t *testing.T) {
