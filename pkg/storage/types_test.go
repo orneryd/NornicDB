@@ -160,7 +160,7 @@ func TestNeo4jExport_RoundTrip(t *testing.T) {
 	// Create original nodes and edges
 	original := &Neo4jExport{
 		Nodes: []Neo4jNode{
-			{ID: "n1", Labels: []string{"Memory"}, Properties: map[string]any{"content": "Test memory", "tier": "SEMANTIC"}},
+			{ID: "n1", Labels: []string{"KnowledgeFact"}, Properties: map[string]any{"content": "Test fact", "category": "general"}},
 		},
 		Relationships: []Neo4jRelationship{
 			{ID: "r1", StartNode: "n1", EndNode: "n1", Type: "RELATES_TO", Properties: map[string]any{"confidence": 0.9}},

@@ -197,7 +197,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbStats()
 			})
-		registerBuiltInProcedure("nornicdb.decay.info", "nornicdb.decay.info() :: (enabled :: BOOLEAN, halfLifeEpisodic :: STRING, halfLifeSemantic :: STRING, halfLifeProcedural :: STRING, archiveThreshold :: FLOAT)", "Returns memory decay configuration", ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("nornicdb.decay.info", "nornicdb.decay.info() :: (enabled :: BOOLEAN, system :: STRING, configuredVia :: STRING)", "Returns knowledge-layer scoring configuration", ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbDecayInfo()
 			})

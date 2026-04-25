@@ -78,7 +78,7 @@ defer db.Close()
 
 ## Quick Start
 
-### 1. Create a Database
+### 1. Create a Database and Store Data
 
 ```go
 package main
@@ -91,7 +91,6 @@ import (
 )
 
 func main() {
-    // Open database
     db, err := nornicdb.Open("./mydb", nil)
     if err != nil {
         log.Fatal(err)
@@ -100,34 +99,31 @@ func main() {
 
     ctx := context.Background()
 
-    // Store a memory
-    memory := &nornicdb.Memory{
-        Content: "Machine learning is a subset of AI",
-        Title:   "ML Definition",
-        Tier:    nornicdb.TierSemantic,
-        Tags:    []string{"AI", "ML"},
-    }
-
-    stored, err := db.Store(ctx, memory)
+    // Create a node via Cypher
+    _, err = db.ExecuteCypher(ctx,
+        `CREATE (n:KnowledgeFact {
+            content: "Machine learning is a subset of AI",
+            title: "ML Definition",
+            tags: ["AI", "ML"]
+        }) RETURN n`, nil)
     if err != nil {
         log.Fatal(err)
     }
 
-    log.Printf("Stored memory: %s\n", stored.ID)
+    log.Println("Stored knowledge fact")
 }
 ```
 
 ### 2. Query Data
 
 ```go
-// Execute Cypher queries
 result, err := db.ExecuteCypher(ctx,
-    "MATCH (n) RETURN count(n)", nil)
+    "MATCH (n:KnowledgeFact) RETURN count(n)", nil)
 if err != nil {
     log.Fatal(err)
 }
 
-log.Printf("Total nodes: %v\n", result.Rows[0][0])
+log.Printf("Total facts: %v\n", result.Rows[0][0])
 ```
 
 ### 3. Vector Search
@@ -259,35 +255,34 @@ export NORNICDB_EMBEDDING_ENABLED=false
 
 User guide: `docs/user-guides/qdrant-grpc.md`
 
-## Memory Tiers
+## Knowledge-Layer Scoring
 
-NornicDB simulates human memory with three tiers:
+NornicDB uses a declarative, profile-driven decay and promotion system instead of hardcoded memory tiers. You define **decay profiles** and **retention bindings** using Cypher DDL:
 
-| Tier           | Half-Life | Use Case              | Example                            |
-| -------------- | --------- | --------------------- | ---------------------------------- |
-| **Episodic**   | 7 days    | Short-term events     | "I ran a test yesterday"           |
-| **Semantic**   | 69 days   | Facts and concepts    | "Python is a programming language" |
-| **Procedural** | 693 days  | Skills and procedures | "How to deploy to production"      |
+```cypher
+-- Define how fast a category of knowledge decays
+CREATE DECAY PROFILE memory_episode_retention
+  HALF LIFE 604800       -- 7 days in seconds
+  DECAY FLOOR 0.0
+  VISIBILITY THRESHOLD 0.10;
 
-```go
-// Create episodic memory (short-term)
-memory := &nornicdb.Memory{
-    Content: "Fixed bug in authentication module",
-    Tier:    nornicdb.TierEpisodic,
-}
-
-// Create semantic memory (long-term facts)
-memory := &nornicdb.Memory{
-    Content: "NornicDB supports Neo4j Cypher queries",
-    Tier:    nornicdb.TierSemantic,
-}
-
-// Create procedural memory (skills)
-memory := &nornicdb.Memory{
-    Content: "Deploy using: docker-compose up -d",
-    Tier:    nornicdb.TierProcedural,
-}
+-- Bind the profile to a node label
+CREATE RETENTION BINDING episode_retention
+  FOR (n:MemoryEpisode)
+  USING PROFILE memory_episode_retention;
 ```
+
+Properties can have independent decay rates or be pinned with `NO DECAY`:
+
+```cypher
+CREATE RETENTION BINDING fact_retention
+  FOR (n:KnowledgeFact)
+  USING PROFILE knowledge_fact_retention
+  PROPERTY n.tenantId NO DECAY
+  PROPERTY n.summary HALF LIFE 2592000;
+```
+
+See [Knowledge-Layer Policies](../user-guides/knowledge-layer-policies.md) and the [Ebbinghaus-Roynard Bootstrap](../user-guides/ebbinghaus-roynard-bootstrap.md) for full reference.
 
 ## MCP Integration (For AI Agents)
 

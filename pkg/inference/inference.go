@@ -198,9 +198,8 @@ func DefaultConfig() *Config {
 //	engine.SetSimilaritySearch(vectorIndex.Search)
 //
 //	// Use in your storage layer
-//	func StoreMemory(mem *Memory) error {
-//		// Store the memory
-//		if err := db.Store(mem); err != nil {
+//	func StoreNode(node *storage.Node) error {
+//		if err := db.CreateNode(node); err != nil {
 //			return err
 //		}
 //
