@@ -3030,10 +3030,15 @@ func (e *StorageExecutor) countRelTypes() int {
 }
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
+	enabled := false
+	if be := unwrapBadgerEngine(e.storage); be != nil {
+		enabled = be.IsDecayEnabled()
+	}
+
 	return &ExecuteResult{
 		Columns: []string{"enabled", "system", "configuredVia"},
 		Rows: [][]interface{}{
-			{true, "knowledge-layer scoring (decay profiles + retention bindings)", "CREATE DECAY PROFILE / CREATE RETENTION BINDING DDL"},
+			{enabled, "knowledge-layer scoring (decay profile bundles + bindings)", "CREATE DECAY PROFILE ... OPTIONS / CREATE DECAY PROFILE ... FOR ... APPLY DDL"},
 		},
 	}, nil
 }
