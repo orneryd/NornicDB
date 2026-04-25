@@ -38,6 +38,18 @@ func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	}
 }
 
+func TestRevealDispatcher_DecayWithScoreArgNotHandled(t *testing.T) {
+	_, exec := setupDecayEngine(t)
+
+	nodes := map[string]*storage.Node{}
+	rels := map[string]*storage.Edge{}
+
+	v, handled := exec.evaluateKnowledgePolicyFunction("decay(score)", "decay(score)", nodes, rels)
+	if handled {
+		t.Errorf("decay(score) should not be handled by knowledgepolicy dispatcher, got %v", v)
+	}
+}
+
 func TestRevealDispatcher_PolicyHandled(t *testing.T) {
 	_, exec := setupDecayEngine(t)
 

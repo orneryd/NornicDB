@@ -139,7 +139,10 @@ func TestMigrateV0ToV1_WritesSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := eng.readSchemaVersion()
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 1 {
 		t.Errorf("expected version 1, got %d", v)
 	}

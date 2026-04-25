@@ -10,7 +10,10 @@ import (
 
 func TestSchemaVersion_FreshDatabase(t *testing.T) {
 	eng := newTestEngine(t)
-	v := eng.readSchemaVersion()
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 1 {
 		t.Errorf("expected schema version 1 after init, got %d", v)
 	}
@@ -21,7 +24,10 @@ func TestSchemaVersion_WriteAndRead(t *testing.T) {
 	if err := eng.writeSchemaVersion(42); err != nil {
 		t.Fatal(err)
 	}
-	v := eng.readSchemaVersion()
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 42 {
 		t.Errorf("expected 42, got %d", v)
 	}
@@ -32,7 +38,10 @@ func TestRunOnStartMigrations_SkipsAlreadyApplied(t *testing.T) {
 	if err := eng.RunOnStartMigrations(); err != nil {
 		t.Fatal(err)
 	}
-	v := eng.readSchemaVersion()
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 1 {
 		t.Errorf("expected version 1, got %d", v)
 	}
@@ -76,7 +85,10 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v := eng.readSchemaVersion()
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 1 {
 		t.Errorf("expected version 1 after migration, got %d", v)
 	}
@@ -90,5 +102,20 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 	}
 	if meta.Fixed.AccessCount != 100 {
 		t.Errorf("expected AccessCount 100, got %d", meta.Fixed.AccessCount)
+	}
+}
+
+func TestSchemaVersion_InvalidLengthReturnsError(t *testing.T) {
+	eng := newTestEngine(t)
+	err := eng.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(mvccSchemaVersionKey(), []byte{1, 2, 3})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = eng.readSchemaVersion()
+	if err == nil {
+		t.Fatal("expected invalid schema version length error")
 	}
 }

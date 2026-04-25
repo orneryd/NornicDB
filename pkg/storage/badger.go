@@ -158,9 +158,10 @@ type BadgerEngine struct {
 	callbackMu    sync.RWMutex
 
 	// Knowledge-layer decay scoring (Phase 4).
-	decayEnabled bool
-	accumulator  accessIncrementor
-	revealAll    atomic.Bool
+	decayEnabled  bool
+	accumulator   accessIncrementor
+	revealAll     atomic.Bool
+	revealQueryMu sync.RWMutex
 }
 
 // IsInMemory returns true if the engine is running in memory-only mode.
@@ -704,9 +705,9 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, commitTime time.Time
 	}, nil
 }
 
-func (b *BadgerEngine) readSchemaVersion() int {
+func (b *BadgerEngine) readSchemaVersion() (int, error) {
 	var version int
-	_ = b.db.View(func(txn *badger.Txn) error {
+	err := b.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(mvccSchemaVersionKey())
 		if err == badger.ErrKeyNotFound {
 			return nil
@@ -715,13 +716,17 @@ func (b *BadgerEngine) readSchemaVersion() int {
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			if len(val) == 8 {
-				version = int(binary.BigEndian.Uint64(val))
+			if len(val) != 8 {
+				return fmt.Errorf("invalid schema version length: %d", len(val))
 			}
+			version = int(binary.BigEndian.Uint64(val))
 			return nil
 		})
 	})
-	return version
+	if err != nil {
+		return 0, err
+	}
+	return version, nil
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {

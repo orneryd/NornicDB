@@ -171,6 +171,33 @@ func TestShouldSuppressNode_NoMatchingBinding(t *testing.T) {
 	}
 }
 
+func TestScoreNode_EffectiveRateZeroWhenHalfLifeUnset(t *testing.T) {
+	bundles := map[string]*DecayProfileBundle{
+		"episode_decay": {
+			Name:                "episode_decay",
+			Scope:               ScopeNode,
+			Function:            DecayFunctionExponential,
+			HalfLifeSeconds:     0,
+			VisibilityThreshold: 0.10,
+			ScoreFrom:           ScoreFromCreated,
+			Enabled:             true,
+		},
+	}
+	bindings := map[string]*DecayProfileBinding{
+		"bind_episode": {
+			Name:         "bind_episode",
+			ProfileRef:   "episode_decay",
+			TargetLabels: []string{"MemoryEpisode"},
+		},
+	}
+	scorer := buildScorerForTest(true, bindings, bundles)
+
+	res := scorer.ScoreNode("n1", []string{"MemoryEpisode"}, nil, 0, 0, 1e18)
+	if res.EffectiveRate != 0 {
+		t.Errorf("expected effective rate 0, got %f", res.EffectiveRate)
+	}
+}
+
 func TestShouldSuppressEdge_DecayDisabled(t *testing.T) {
 	scorer := buildScorerForTest(false, nil, nil)
 	suppress, _ := ShouldSuppressEdge(scorer, "KNOWS", "e1", nil, 0, 1e18)

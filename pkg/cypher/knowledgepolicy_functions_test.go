@@ -192,6 +192,30 @@ func TestDecay_NoDecayReason(t *testing.T) {
 	}
 }
 
+func TestDecay_UsesResolvedFunctionAndFloor(t *testing.T) {
+	_, exec := setupDecayEngine(t)
+
+	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
+	nodes := map[string]*storage.Node{"n": node}
+	rels := map[string]*storage.Edge{}
+
+	result := exec.evalDecay("decay(n)", nodes, rels)
+	m, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", result)
+	}
+
+	fn, _ := m["function"].(string)
+	if fn != string(knowledgepolicy.DecayFunctionExponential) {
+		t.Errorf("expected function=%q, got %q", knowledgepolicy.DecayFunctionExponential, fn)
+	}
+
+	floor, _ := m["floor"].(float64)
+	if floor != 0 {
+		t.Errorf("expected floor=0, got %v", floor)
+	}
+}
+
 func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 	_, exec := setupDecayEngine(t)
 

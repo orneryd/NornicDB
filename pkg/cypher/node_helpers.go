@@ -83,7 +83,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	props := node.Properties
 	if be != nil {
 		createdAt := node.CreatedAt.UnixNano()
-		versionAt := node.UpdatedAt.UnixNano()
+		versionAt := nodeVersionAtNanos(node, createdAt)
 		filtered := make(map[string]interface{}, len(node.Properties))
 		for k, v := range node.Properties {
 			if be.FilterPropertyByDecay(node.ID, node.Labels, k, createdAt, versionAt, nowNanos) {
@@ -104,6 +104,13 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	}
 
 	return result
+}
+
+func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
+	if node == nil || node.UpdatedAt.IsZero() {
+		return createdAt
+	}
+	return node.UpdatedAt.UnixNano()
 }
 
 // edgeToMap converts a storage.Edge to a map for result output.
