@@ -61,6 +61,17 @@ func (r *Resolver) ResolveEdge(edgeType string) *CompiledBinding {
 // If the binding has a property-level override, a copy with the override applied is returned.
 func (r *Resolver) ResolveProperty(labels []string, propertyPath string) *CompiledBinding {
 	cb := r.ResolveNode(labels)
+	return resolvePropertyOverride(cb, propertyPath)
+}
+
+// ResolveEdgeProperty returns a CompiledBinding for a specific property on an edge.
+// If the binding has a property-level override, a copy with the override applied is returned.
+func (r *Resolver) ResolveEdgeProperty(edgeType string, propertyPath string) *CompiledBinding {
+	cb := r.ResolveEdge(edgeType)
+	return resolvePropertyOverride(cb, propertyPath)
+}
+
+func resolvePropertyOverride(cb *CompiledBinding, propertyPath string) *CompiledBinding {
 	if cb == nil || cb.NoDecay || len(cb.CompiledPropertyRules) == 0 {
 		return cb
 	}

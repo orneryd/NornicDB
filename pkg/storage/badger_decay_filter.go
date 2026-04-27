@@ -181,6 +181,30 @@ func (b *BadgerEngine) FilterPropertyByDecay(nodeID NodeID, labels []string, pro
 	return res.SuppressionEligible
 }
 
+// FilterEdgePropertyByDecay returns true if the edge property should be hidden from results.
+func (b *BadgerEngine) FilterEdgePropertyByDecay(edgeID EdgeID, edgeType, propKey string, createdAtNanos, versionAtNanos, nowNanos int64) bool {
+	if !b.decayEnabled {
+		return false
+	}
+	if b.revealAll.Load() {
+		return false
+	}
+
+	ns := extractNamespaceFromID(string(edgeID))
+	scorer := b.getScorerForNamespace(ns)
+	if scorer == nil {
+		return false
+	}
+
+	var accessMeta *knowledgepolicy.AccessMetaEntry
+	if meta, err := b.GetAccessMeta(string(edgeID)); err == nil {
+		accessMeta = meta
+	}
+
+	res := scorer.ScoreEdgeProperty(string(edgeID), edgeType, propKey, accessMeta, createdAtNanos, versionAtNanos, nowNanos)
+	return res.SuppressionEligible
+}
+
 // ScorerForNamespace returns a Scorer for the given namespace, or nil.
 func (b *BadgerEngine) ScorerForNamespace(namespace string) *knowledgepolicy.Scorer {
 	return b.getScorerForNamespace(namespace)
