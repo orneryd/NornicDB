@@ -134,12 +134,30 @@ func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
 //	result := exec.edgeToMap(edge)
 //	// result = {"_edgeId": "e1", "type": "KNOWS", "startNode": "n1", ...}
 func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
+	props := edge.Properties
+	be := unwrapBadgerEngine(e.storage)
+	if be != nil {
+		nowNanos := storage.DecayScoringTime()
+		createdAt := edge.CreatedAt.UnixNano()
+		versionAt := createdAt
+		if !edge.UpdatedAt.IsZero() {
+			versionAt = edge.UpdatedAt.UnixNano()
+		}
+		filtered := make(map[string]interface{}, len(edge.Properties))
+		for k, v := range edge.Properties {
+			if be.FilterEdgePropertyByDecay(edge.ID, edge.Type, k, createdAt, versionAt, nowNanos) {
+				continue
+			}
+			filtered[k] = v
+		}
+		props = filtered
+	}
 	return map[string]interface{}{
 		"_edgeId":    string(edge.ID),
 		"type":       edge.Type,
 		"startNode":  string(edge.StartNode),
 		"endNode":    string(edge.EndNode),
-		"properties": edge.Properties,
+		"properties": props,
 	}
 }
 

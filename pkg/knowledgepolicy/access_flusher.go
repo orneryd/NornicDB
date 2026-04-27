@@ -12,9 +12,21 @@ type AccessMetaStore interface {
 	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
 }
 
-// EntityMetaLookup provides node metadata needed by flusher property suppression.
+// EntityMeta describes the storage metadata the flusher needs to resolve
+// access-time policy bindings and property visibility.
+type EntityMeta struct {
+	Scope          ScopeType
+	Labels         []string
+	EdgeType       string
+	PropertyKeys   []string
+	CreatedAtNanos int64
+	VersionAtNanos int64
+}
+
+// EntityMetaLookup provides entity metadata needed by flusher policy and
+// property suppression evaluation.
 type EntityMetaLookup interface {
-	GetEntityMeta(entityID string) (labels []string, propertyKeys []string, createdAtNanos, versionAtNanos int64, err error)
+	GetEntityMeta(entityID string) (EntityMeta, error)
 }
 
 // ScorerFunc returns a Scorer for the given namespace. Returns nil if none.
@@ -23,18 +35,22 @@ type ScorerFunc func(namespace string) *Scorer
 // EmbedInvalidateFunc is called when property suppression state changes.
 type EmbedInvalidateFunc func(entityID string)
 
+// SuppressionRecheckFunc re-evaluates entity visibility after access metadata changes.
+type SuppressionRecheckFunc func(entityID string, meta EntityMeta)
+
 // AccessFlusher periodically drains the accumulator and persists deltas.
 type AccessFlusher struct {
-	accumulator     *AccessAccumulator
-	store           AccessMetaStore
-	interval        time.Duration
-	mu              sync.Mutex
-	cancel          context.CancelFunc
-	done            chan struct{}
-	flushNow        chan struct{}
-	scorerFunc      ScorerFunc
-	entityMeta      EntityMetaLookup
-	embedInvalidate EmbedInvalidateFunc
+	accumulator        *AccessAccumulator
+	store              AccessMetaStore
+	interval           time.Duration
+	mu                 sync.Mutex
+	cancel             context.CancelFunc
+	done               chan struct{}
+	flushNow           chan struct{}
+	scorerFunc         ScorerFunc
+	entityMeta         EntityMetaLookup
+	embedInvalidate    EmbedInvalidateFunc
+	suppressionRecheck SuppressionRecheckFunc
 }
 
 // NewAccessFlusher creates a flusher. Default interval is 2 seconds.
@@ -62,6 +78,12 @@ func (f *AccessFlusher) SetPropertySuppression(scorerFn ScorerFunc, meta EntityM
 	f.scorerFunc = scorerFn
 	f.entityMeta = meta
 	f.embedInvalidate = embedInvalid
+}
+
+// SetSuppressionRecheck configures a callback that re-evaluates entity visibility
+// after access metadata mutations have been persisted.
+func (f *AccessFlusher) SetSuppressionRecheck(fn SuppressionRecheckFunc) {
+	f.suppressionRecheck = fn
 }
 
 // Start begins the flush loop. It exits immediately if the accumulator is disabled.
@@ -138,12 +160,28 @@ func (f *AccessFlusher) flush() {
 			}
 		}
 
-		entry.Fixed.AccessCount += delta.accessCount
-		entry.Fixed.TraversalCount += delta.traversalCount
-		if delta.lastAccessedAt > entry.Fixed.LastAccessedAt {
+		meta := EntityMeta{Scope: entry.TargetScope}
+		if f.entityMeta != nil {
+			if resolved, err := f.entityMeta.GetEntityMeta(entityID); err == nil {
+				meta = resolved
+				if meta.Scope != "" {
+					entry.TargetScope = meta.Scope
+				}
+			}
+		}
+
+		appliedFixed := f.applyOnAccessMutations(entityID, entry, meta, now)
+
+		if !appliedFixed["accessCount"] {
+			entry.Fixed.AccessCount += delta.accessCount
+		}
+		if !appliedFixed["traversalCount"] {
+			entry.Fixed.TraversalCount += delta.traversalCount
+		}
+		if !appliedFixed["lastAccessedAt"] && delta.lastAccessedAt > entry.Fixed.LastAccessedAt {
 			entry.Fixed.LastAccessedAt = delta.lastAccessedAt
 		}
-		if delta.lastTraversedAt > entry.Fixed.LastTraversedAt {
+		if !appliedFixed["lastTraversedAt"] && delta.lastTraversedAt > entry.Fixed.LastTraversedAt {
 			entry.Fixed.LastTraversedAt = delta.lastTraversedAt
 		}
 
@@ -167,21 +205,24 @@ func (f *AccessFlusher) flush() {
 		entry.LastMutatedAt = now
 		entry.MutationCount++
 
-		if f.evaluatePropertySuppression(entityID, entry, now) {
+		if f.evaluatePropertySuppression(entityID, entry, meta, now) {
 			// Suppression state changed — trigger re-embedding.
-			if f.embedInvalidate != nil {
+			if f.embedInvalidate != nil && entry.TargetScope != ScopeEdge {
 				f.embedInvalidate(entityID)
 			}
 		}
 
 		_ = f.store.PutAccessMeta(entityID, entry)
+		if f.suppressionRecheck != nil {
+			f.suppressionRecheck(entityID, meta)
+		}
 	}
 }
 
 // evaluatePropertySuppression checks each property with a decay rule and writes
 // nil markers for suppressed properties (or removes them if restored).
 // Returns true if any suppression state changed.
-func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *AccessMetaEntry, nowNanos int64) bool {
+func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *AccessMetaEntry, meta EntityMeta, nowNanos int64) bool {
 	if f.scorerFunc == nil || f.entityMeta == nil {
 		return false
 	}
@@ -192,14 +233,13 @@ func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *Acce
 		return false
 	}
 
-	labels, propKeys, createdAt, versionAt, err := f.entityMeta.GetEntityMeta(entityID)
-	if err != nil || len(propKeys) == 0 {
+	if len(meta.PropertyKeys) == 0 {
 		return false
 	}
 
 	changed := false
-	for _, key := range propKeys {
-		res := scorer.ScoreProperty(entityID, labels, key, entry, createdAt, versionAt, nowNanos)
+	for _, key := range meta.PropertyKeys {
+		res := scoreEntityProperty(scorer, entityID, meta, key, entry, nowNanos)
 		overflowKey := "_suppress:" + key
 
 		if entry.Overflow == nil {
