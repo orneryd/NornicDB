@@ -28,6 +28,7 @@ func setupDecayEngine(t *testing.T) (*storage.BadgerEngine, *StorageExecutor) {
 			VisibilityThreshold: 0.10,
 			ScoreFrom:           knowledgepolicy.ScoreFromCreated,
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 		"fact_nodecay": {
 			Name:      "fact_nodecay",

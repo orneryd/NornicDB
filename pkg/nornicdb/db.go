@@ -865,6 +865,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			defaultDBName = "nornic" // Fallback to "nornic" if not configured
 		}
 		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		if config.Memory.DecayEnabled {
+			if err := maybeBootstrapDefaultKnowledgePolicy(baseStorage, defaultDBName); err != nil {
+				_ = db.baseStorage.Close()
+				return nil, err
+			}
+		}
 		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
 	} else {
 		var baseStorage storage.Engine = storage.NewMemoryEngine()
@@ -889,6 +895,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			defaultDBName = "nornic" // Fallback to "nornic" if not configured
 		}
 		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		if config.Memory.DecayEnabled {
+			if err := maybeBootstrapDefaultKnowledgePolicy(baseStorage, defaultDBName); err != nil {
+				_ = db.baseStorage.Close()
+				return nil, err
+			}
+		}
 		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
 	}
 
@@ -931,6 +943,16 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if config.Memory.DecayEnabled {
 		if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
 			be.SetDecayEnabled(true)
+			defaultDBName := db.defaultDatabaseName()
+			be.GetSchemaForNamespace(defaultDBName).SetKnowledgePolicyChangedHook(func() {
+				changes, err := be.ReconcileDecaySuppressionWithChanges(defaultDBName)
+				if err != nil || db.cypherExecutor == nil {
+					return
+				}
+				for _, change := range changes {
+					db.cypherExecutor.InvalidateEntityCaches(change.EntityID, change.Tokens)
+				}
+			})
 			db.accessAccumulator = knowledgepolicy.NewAccessAccumulator(true, config.Memory.AccessFlushBufferSize)
 			be.SetAccessAccumulator(db.accessAccumulator)
 			db.accessFlusher = knowledgepolicy.NewAccessFlusher(

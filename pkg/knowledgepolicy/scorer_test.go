@@ -7,6 +7,11 @@ import (
 
 func buildTestScorer(t *testing.T, decayEnabled bool, bundles map[string]*DecayProfileBundle, bindings map[string]*DecayProfileBinding, profiles map[string]*PromotionProfileDef, policies map[string]*PromotionPolicyDef) *Scorer {
 	t.Helper()
+	for _, bundle := range bundles {
+		if bundle != nil && bundle.Function != DecayFunctionNone && bundle.HalfLifeSeconds > 0 && !bundle.DecayEnabled {
+			bundle.DecayEnabled = true
+		}
+	}
 	bt, err := BuildBindingTable(bundles, bindings, profiles, policies)
 	if err != nil {
 		t.Fatalf("BuildBindingTable: %v", err)

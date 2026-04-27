@@ -172,3 +172,18 @@ func TestEvalOnAccessExpression_CaseWhen(t *testing.T) {
 		t.Fatalf("expected CASE result 3, got %#v", value)
 	}
 }
+
+func TestEvalOnAccessExpression_MissingNumericComparisonIsFalse(t *testing.T) {
+	ctx := onAccessEvalContext{
+		entry:    &AccessMetaEntry{Overflow: map[string]interface{}{}},
+		nowNanos: 1234,
+		params:   map[string]interface{}{},
+	}
+	value, err := evalOnAccessExpression("n.crossSessionSupport >= 3 AND n.sourceAgreement >= 0.90", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if truthy(value) {
+		t.Fatalf("expected missing numeric comparisons to be false, got %#v", value)
+	}
+}
