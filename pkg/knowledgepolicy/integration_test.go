@@ -15,6 +15,7 @@ func TestIntegration_DDL_Score_Visibility(t *testing.T) {
 			VisibilityThreshold: 0.10,
 			ScoreFrom:           ScoreFromCreated,
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 		"fact_nodecay": {
 			Name:      "fact_nodecay",
@@ -123,6 +124,7 @@ func TestIntegration_SuppressionLayer_NoisyCorroborationSignals(t *testing.T) {
 			ScoreFrom:           ScoreFromCustom,
 			ScoreFromProperty:   "lastCorroboratedAt",
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 	}
 	bindings := map[string]*DecayProfileBinding{

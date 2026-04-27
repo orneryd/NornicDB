@@ -63,6 +63,9 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			sm.SetPersister(func(def *SchemaDefinition) error {
 				return b.persistSchemaDefinition(namespace, def)
 			})
+			sm.SetKnowledgePolicyChangedHook(func() {
+				_ = b.ReconcileDecaySuppression(namespace)
+			})
 
 			loadedSchemas = append(loadedSchemas, loaded{namespace: namespace, schema: sm})
 		}
@@ -275,6 +278,9 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	sm := NewSchemaManager()
 	sm.SetPersister(func(def *SchemaDefinition) error {
 		return b.persistSchemaDefinition(namespace, def)
+	})
+	sm.SetKnowledgePolicyChangedHook(func() {
+		_ = b.ReconcileDecaySuppression(namespace)
 	})
 
 	b.schemasMu.Lock()

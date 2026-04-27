@@ -479,6 +479,79 @@ func TestE2E_DropDecayProfile(t *testing.T) {
 	assert.Len(t, bundles, 0)
 }
 
+func TestE2E_AlterDecayProfile(t *testing.T) {
+	sm := storage.NewSchemaManager()
+
+	parseDDLAndApply(t, sm, `CREATE DECAY PROFILE doc_decay OPTIONS {
+		halfLifeSeconds: 3600,
+		function: 'exponential',
+		visibilityThreshold: 0.10,
+		decayEnabled: true
+	}`)
+
+	parseDDLAndApply(t, sm, `ALTER DECAY PROFILE doc_decay SET OPTIONS {
+		decayEnabled: false,
+		visibilityThreshold: 0.0
+	}`)
+
+	bundles, _ := sm.ShowDecayProfiles()
+	require.Len(t, bundles, 1)
+	assert.Equal(t, "doc_decay", bundles[0].Name)
+	assert.False(t, bundles[0].DecayEnabled)
+	assert.Equal(t, 0.0, bundles[0].VisibilityThreshold)
+}
+
+func TestE2E_AlterPromotionProfile(t *testing.T) {
+	sm := storage.NewSchemaManager()
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION PROFILE lifeline OPTIONS {
+		multiplier: 2.0,
+		scoreFloor: 0.2,
+		scoreCap: 1.0,
+		enabled: false
+	}`)
+
+	parseDDLAndApply(t, sm, `ALTER PROMOTION PROFILE lifeline SET OPTIONS {
+		multiplier: 3.5,
+		enabled: true
+	}`)
+
+	profiles := sm.ShowPromotionProfiles()
+	require.Len(t, profiles, 1)
+	assert.Equal(t, "lifeline", profiles[0].Name)
+	assert.Equal(t, 3.5, profiles[0].Multiplier)
+	assert.True(t, profiles[0].Enabled)
+}
+
+func TestE2E_AlterPromotionPolicy(t *testing.T) {
+	sm := storage.NewSchemaManager()
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION PROFILE lifeline OPTIONS {
+		multiplier: 2.0,
+		scoreFloor: 0.2,
+		scoreCap: 1.0
+	}`)
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION POLICY fact_policy
+FOR (n:Fact)
+APPLY {
+  WHEN n.promote = true
+    APPLY PROFILE 'lifeline'
+}`)
+
+	parseDDLAndApply(t, sm, `ALTER PROMOTION POLICY fact_policy DISABLE`)
+
+	policies := sm.ShowPromotionPolicies()
+	require.Len(t, policies, 1)
+	assert.Equal(t, "fact_policy", policies[0].Name)
+	assert.False(t, policies[0].Enabled)
+
+	parseDDLAndApply(t, sm, `ALTER PROMOTION POLICY fact_policy ENABLE`)
+	policies = sm.ShowPromotionPolicies()
+	require.Len(t, policies, 1)
+	assert.True(t, policies[0].Enabled)
+}
+
 // TestE2E_DropPromotionPolicy exercises the DROP PROMOTION POLICY DDL from docs.
 func TestE2E_DropPromotionPolicy(t *testing.T) {
 	sm := storage.NewSchemaManager()

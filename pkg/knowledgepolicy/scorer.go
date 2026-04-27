@@ -20,11 +20,21 @@ func (s *Scorer) ScoreNode(
 	accessMeta *AccessMetaEntry,
 	createdAt, versionAt, nowNanos int64,
 ) ScoringResolution {
+	return s.ScoreNodeWithProperties(targetID, labels, nil, accessMeta, createdAt, versionAt, nowNanos)
+}
+
+func (s *Scorer) ScoreNodeWithProperties(
+	targetID string,
+	labels []string,
+	entityProps map[string]interface{},
+	accessMeta *AccessMetaEntry,
+	createdAt, versionAt, nowNanos int64,
+) ScoringResolution {
 	if !s.decayEnabled {
 		return neutralFor(targetID, ScopeNode)
 	}
 	cb := s.resolver.ResolveNode(labels)
-	return s.score(cb, targetID, ScopeNode, createdAt, versionAt, nowNanos, accessMeta)
+	return s.score(cb, targetID, ScopeNode, createdAt, versionAt, nowNanos, accessMeta, entityProps)
 }
 
 func (s *Scorer) ScoreEdge(
@@ -33,11 +43,21 @@ func (s *Scorer) ScoreEdge(
 	accessMeta *AccessMetaEntry,
 	createdAt, versionAt, nowNanos int64,
 ) ScoringResolution {
+	return s.ScoreEdgeWithProperties(targetID, edgeType, nil, accessMeta, createdAt, versionAt, nowNanos)
+}
+
+func (s *Scorer) ScoreEdgeWithProperties(
+	targetID string,
+	edgeType string,
+	entityProps map[string]interface{},
+	accessMeta *AccessMetaEntry,
+	createdAt, versionAt, nowNanos int64,
+) ScoringResolution {
 	if !s.decayEnabled {
 		return neutralFor(targetID, ScopeEdge)
 	}
 	cb := s.resolver.ResolveEdge(edgeType)
-	return s.score(cb, targetID, ScopeEdge, createdAt, versionAt, nowNanos, accessMeta)
+	return s.score(cb, targetID, ScopeEdge, createdAt, versionAt, nowNanos, accessMeta, entityProps)
 }
 
 func (s *Scorer) ScoreProperty(
@@ -51,7 +71,7 @@ func (s *Scorer) ScoreProperty(
 		return neutralFor(targetID, ScopeProperty)
 	}
 	cb := s.resolver.ResolveProperty(labels, propertyPath)
-	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta)
+	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta, nil)
 }
 
 func (s *Scorer) ScoreEdgeProperty(
@@ -65,7 +85,7 @@ func (s *Scorer) ScoreEdgeProperty(
 		return neutralFor(targetID, ScopeProperty)
 	}
 	cb := s.resolver.ResolveEdgeProperty(edgeType, propertyPath)
-	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta)
+	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta, nil)
 }
 
 func neutralFor(targetID string, scope ScopeType) ScoringResolution {
@@ -84,6 +104,7 @@ func (s *Scorer) score(
 	scope ScopeType,
 	createdAt, versionAt, nowNanos int64,
 	accessMeta *AccessMetaEntry,
+	entityProps map[string]interface{},
 ) ScoringResolution {
 	if cb == nil {
 		return neutralFor(targetID, scope)
@@ -120,11 +141,13 @@ func (s *Scorer) score(
 
 	if cb.PromotionPolicy != nil && cb.PromotionPolicy.Enabled {
 		promoPolicyName = cb.PromotionPolicy.Name
-		if len(cb.PromotionPolicy.WhenClauses) == 0 {
-			// Unconditional: no WHEN clauses means policy always applies.
-			// If there is no profile ref to look up, promotion is a no-op.
+		selected := selectPromotionProfile(cb.CompiledPromotionRules, accessMeta, entityProps, nowNanos)
+		if selected != nil {
+			multiplier = selected.Multiplier
+			promoFloor = selected.ScoreFloor
+			promoCap = selected.ScoreCap
+			promoProfileName = selected.Name
 		}
-		// WHEN clause predicate evaluation deferred to Phase 4.
 	}
 
 	finalScore := computeFinalScore(baseScore, multiplier, promoFloor, promoCap, cb.DecayFloor)
@@ -158,6 +181,25 @@ func (s *Scorer) score(
 		FinalScore:                  finalScore,
 		SuppressionEligible:         finalScore < cb.VisibilityThreshold && !cb.HasNoDecayProperty,
 	}
+}
+
+func selectPromotionProfile(rules []CompiledPromotionRule, accessMeta *AccessMetaEntry, entityProps map[string]interface{}, nowNanos int64) *PromotionProfileDef {
+	if len(rules) == 0 {
+		return nil
+	}
+	ctx := onAccessEvalContext{entry: accessMeta, entityProps: entityProps, nowNanos: nowNanos, params: map[string]interface{}{}}
+	var selected *PromotionProfileDef
+	for _, rule := range rules {
+		value, err := evalOnAccessExpression(rule.Predicate, ctx)
+		if err != nil || !truthy(value) || rule.Profile == nil {
+			continue
+		}
+		if selected == nil || rule.Profile.Multiplier > selected.Multiplier ||
+			(rule.Profile.Multiplier == selected.Multiplier && rule.Profile.ScoreFloor > selected.ScoreFloor) {
+			selected = rule.Profile
+		}
+	}
+	return selected
 }
 
 func effectiveRate(halfLifeNanos int64) float64 {

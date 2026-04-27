@@ -8,6 +8,11 @@ func buildScorerForTest(decayEnabled bool, bindings map[string]*DecayProfileBind
 	if bundles == nil {
 		bundles = make(map[string]*DecayProfileBundle)
 	}
+	for _, bundle := range bundles {
+		if bundle != nil && bundle.Function != DecayFunctionNone && bundle.HalfLifeSeconds > 0 && !bundle.DecayEnabled {
+			bundle.DecayEnabled = true
+		}
+	}
 	if bindings == nil {
 		bindings = make(map[string]*DecayProfileBinding)
 	}

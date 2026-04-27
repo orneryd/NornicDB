@@ -2,6 +2,8 @@
 
 **A complete, ready-to-use knowledge-layer scoring configuration implementing the Ebbinghaus-Roynard four-layer decomposition.**
 
+On database open, if `config.Memory.DecayEnabled` is true and the target namespace has no existing knowledge-policy schema entries at all, NornicDB seeds that namespace with this built-in bootstrap. It does not overwrite or merge with an existing knowledge-policy schema: if any decay bundles, decay bindings, promotion profiles, or promotion policies already exist, bootstrap is skipped. The built-in bootstrap covers the Ebbinghaus-Roynard defaults excluding the canonical-graph-ledger layer; that layer should be installed separately with a dedicated CGL bootstrap tailored to Roynard's model.
+
 ## Overview
 
 This bootstrap implements the Ebbinghaus-Roynard model described in "The Missing Knowledge Layer in Cognitive Architectures for AI Agents" (Roynard, 2026; [arXiv:2604.11364](https://arxiv.org/pdf/2604.11364)). The paper identifies a category error in applying uniform cognitive decay to all content types and proposes a four-layer decomposition with distinct persistence semantics:
@@ -19,7 +21,7 @@ This bootstrap provides the complete DDL to configure all three persistence laye
 
 ## Quick Start
 
-Run all DDL statements below in order via the NornicDB shell or Bolt client.
+For a brand new decay-enabled database, these defaults are already installed automatically. Run the DDL below only when you want to inspect, customize, or reproduce the built-in bootstrap manually via the NornicDB shell or Bolt client.
 
 ```bash
 nornicdb shell --data-dir ./data

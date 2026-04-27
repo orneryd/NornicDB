@@ -31,6 +31,7 @@ func setupDecayBindings(t *testing.T, engine *BadgerEngine, namespace string) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           knowledgepolicy.ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,11 +126,12 @@ func TestDecayFilter_NoDecayBindingAlwaysReturns(t *testing.T) {
 
 	sm := engine.GetSchemaForNamespace(ns)
 	err := sm.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
-		Name:      "fact_nodecay",
-		Scope:     knowledgepolicy.ScopeNode,
-		Function:  knowledgepolicy.DecayFunctionNone,
-		ScoreFrom: knowledgepolicy.ScoreFromCreated,
-		Enabled:   true,
+		Name:         "fact_nodecay",
+		Scope:        knowledgepolicy.ScopeNode,
+		Function:     knowledgepolicy.DecayFunctionNone,
+		ScoreFrom:    knowledgepolicy.ScoreFromCreated,
+		Enabled:      true,
+		DecayEnabled: false,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -235,6 +237,7 @@ func TestDecayFilter_BindingTableRebuiltOnDDL(t *testing.T) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           knowledgepolicy.ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	})
 	if err != nil {
 		t.Fatal(err)
