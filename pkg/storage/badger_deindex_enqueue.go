@@ -12,23 +12,35 @@ import (
 // If below the visibility threshold, it marks the entity as suppressed and
 // creates a pending deindex work item. If above threshold and currently
 // suppressed, it clears the suppression and deletes any tombstones.
-func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) error {
+// The returned bool is true only when the entity transitioned into the
+// suppressed state during this call.
+func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
 	if !b.decayEnabled {
-		return nil
+		return false, nil
 	}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
+	becameSuppressed := false
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		if isEdge {
-			return b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
+			changed, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
+			if changed {
+				becameSuppressed = true
+			}
+			return err
 		}
-		return b.evaluateNodeSuppressionInTxn(txn, NodeID(entityID))
+		changed, err := b.evaluateNodeSuppressionInTxn(txn, NodeID(entityID))
+		if changed {
+			becameSuppressed = true
+		}
+		return err
 	})
+	return becameSuppressed, err
 }
 
-func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID NodeID) error {
+func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID NodeID) (bool, error) {
 	item, err := txn.Get(nodeKey(nodeID))
 	if err != nil {
-		return nil
+		return false, nil
 	}
 
 	var node *Node
@@ -37,7 +49,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
-		return nil
+		return false, nil
 	}
 
 	nowNanos := DecayScoringTime()
@@ -49,32 +61,35 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		node.VisibilitySuppressed = true
 		data, _, err := encodeNode(node)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return err
+			return false, err
 		}
-		return enqueueWorkItemInTxn(txn, string(nodeID), "NODE")
+		if err := enqueueWorkItemInTxn(txn, string(nodeID), "NODE"); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	if !suppress && wasSuppressed {
 		data, _, err := encodeNode(node)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return err
+			return false, err
 		}
-		return clearTombstonesForEntityInTxn(txn, string(nodeID))
+		return false, clearTombstonesForEntityInTxn(txn, string(nodeID))
 	}
 
-	return nil
+	return false, nil
 }
 
-func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) error {
+func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, error) {
 	item, err := txn.Get(edgeKey(edgeID))
 	if err != nil {
-		return nil
+		return false, nil
 	}
 
 	var edge *Edge
@@ -83,7 +98,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 		edge, decodeErr = decodeEdge(val)
 		return decodeErr
 	}); err != nil {
-		return nil
+		return false, nil
 	}
 
 	nowNanos := DecayScoringTime()
@@ -95,26 +110,29 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 		edge.VisibilitySuppressed = true
 		data, err := encodeEdge(edge)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return err
+			return false, err
 		}
-		return enqueueWorkItemInTxn(txn, string(edgeID), "EDGE")
+		if err := enqueueWorkItemInTxn(txn, string(edgeID), "EDGE"); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	if !suppress && wasSuppressed {
 		data, err := encodeEdge(edge)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return err
+			return false, err
 		}
-		return clearTombstonesForEntityInTxn(txn, string(edgeID))
+		return false, clearTombstonesForEntityInTxn(txn, string(edgeID))
 	}
 
-	return nil
+	return false, nil
 }
 
 func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {

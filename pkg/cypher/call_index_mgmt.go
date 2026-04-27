@@ -1,9 +1,5 @@
 package cypher
 
-import (
-	"github.com/orneryd/nornicdb/pkg/storage"
-)
-
 // ========================================
 // Index Management Procedures
 // ========================================
@@ -151,26 +147,7 @@ func (e *StorageExecutor) callDbStatsStop() (*ExecuteResult, error) {
 //   - When schema changes affect query plans
 //   - Debugging cache-related issues
 func (e *StorageExecutor) callDbClearQueryCaches() (*ExecuteResult, error) {
-	// Clear query result cache
-	if e.cache != nil {
-		e.cache.Invalidate()
-	}
-
-	// Clear query plan cache
-	if e.planCache != nil {
-		e.planCache.Clear()
-	}
-
-	// Clear query analyzer cache (AST cache)
-	if e.analyzer != nil {
-		e.analyzer.ClearCache()
-	}
-
-	// Clear node lookup cache
-	cacheMu := e.nodeLookupCacheLock()
-	cacheMu.Lock()
-	e.nodeLookupCache = make(map[string]*storage.Node, 1000)
-	cacheMu.Unlock()
+	e.ClearQueryCaches()
 
 	return &ExecuteResult{
 		Columns: []string{"status"},

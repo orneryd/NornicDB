@@ -31,6 +31,12 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	if err := b.ensureOpen(); err != nil {
 		return "", err
 	}
+	if node.CreatedAt.IsZero() {
+		node.CreatedAt = time.Now()
+	}
+	if node.UpdatedAt.IsZero() {
+		node.UpdatedAt = node.CreatedAt
+	}
 
 	dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 	if !ok {
@@ -134,7 +140,11 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		// Return copy to prevent external mutation of cache
-		return copyNode(cached), nil
+		nodeCopy := copyNode(cached)
+		if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
+			return nil, ErrNotFound
+		}
+		return nodeCopy, nil
 	}
 	b.nodeCacheMu.RUnlock()
 	atomic.AddInt64(&b.cacheMisses, 1)
@@ -158,6 +168,9 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 
 	// Cache the result on successful fetch
 	if err == nil && node != nil {
+		if b.filterNodeByDecay(node, DecayScoringTime()) {
+			return nil, ErrNotFound
+		}
 		b.cacheStoreNode(node)
 	}
 
@@ -251,6 +264,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			return decodeErr
 		}); err != nil {
 			return err
+		}
+
+		if node.CreatedAt.IsZero() {
+			node.CreatedAt = existingNode.CreatedAt
+		}
+		if node.UpdatedAt.IsZero() {
+			node.UpdatedAt = time.Now()
 		}
 
 		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {

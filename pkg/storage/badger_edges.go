@@ -23,6 +23,12 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	if edge.CreatedAt.IsZero() {
+		edge.CreatedAt = time.Now()
+	}
+	if edge.UpdatedAt.IsZero() {
+		edge.UpdatedAt = edge.CreatedAt
+	}
 
 	// PERFORMANCE OPTIMIZATION: Use WriteBatch to batch all writes (edge + indexes)
 	// This reduces write amplification from 4 separate writes to 1 batch operation.
@@ -151,6 +157,11 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 			return decodeErr
 		})
 	})
+	if err == nil && edge != nil {
+		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+			return nil, ErrNotFound
+		}
+	}
 
 	return edge, err
 }

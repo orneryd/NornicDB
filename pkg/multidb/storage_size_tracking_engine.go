@@ -284,13 +284,22 @@ func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
 		return t.Engine.UpdateNode(node)
 	}
 	oldSize, oldErr := calculateNodeSize(existing)
-	newSize, newErr := calculateNodeSize(node)
-	if oldErr != nil || newErr != nil {
+	if oldErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return t.Engine.UpdateNode(node)
 	}
 	if err := t.Engine.UpdateNode(node); err != nil {
 		return err
+	}
+	updated, updatedErr := t.Engine.GetNode(node.ID)
+	if updatedErr != nil {
+		t.manager.markStorageSizeDirty(t.dbName)
+		return nil
+	}
+	newSize, newErr := calculateNodeSize(updated)
+	if newErr != nil {
+		t.manager.markStorageSizeDirty(t.dbName)
+		return nil
 	}
 	t.manager.applyStorageSizeDelta(t.dbName, newSize-oldSize, 0)
 	return nil
@@ -328,7 +337,12 @@ func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 	if err := t.Engine.CreateEdge(edge); err != nil {
 		return err
 	}
-	size, sizeErr := calculateEdgeSize(edge)
+	created, getErr := t.Engine.GetEdge(edge.ID)
+	if getErr != nil {
+		t.manager.markStorageSizeDirty(t.dbName)
+		return nil
+	}
+	size, sizeErr := calculateEdgeSize(created)
 	if sizeErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return nil
@@ -347,13 +361,22 @@ func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
 		return t.Engine.UpdateEdge(edge)
 	}
 	oldSize, oldErr := calculateEdgeSize(existing)
-	newSize, newErr := calculateEdgeSize(edge)
-	if oldErr != nil || newErr != nil {
+	if oldErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return t.Engine.UpdateEdge(edge)
 	}
 	if err := t.Engine.UpdateEdge(edge); err != nil {
 		return err
+	}
+	updated, updatedErr := t.Engine.GetEdge(edge.ID)
+	if updatedErr != nil {
+		t.manager.markStorageSizeDirty(t.dbName)
+		return nil
+	}
+	newSize, newErr := calculateEdgeSize(updated)
+	if newErr != nil {
+		t.manager.markStorageSizeDirty(t.dbName)
+		return nil
 	}
 	t.manager.applyStorageSizeDelta(t.dbName, 0, newSize-oldSize)
 	return nil
