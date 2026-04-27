@@ -491,6 +491,45 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	return exec
 }
 
+// ClearQueryCaches clears executor-local caches that can retain stale read results.
+func (e *StorageExecutor) ClearQueryCaches() {
+	if e.cache != nil {
+		e.cache.Invalidate()
+	}
+	if e.planCache != nil {
+		e.planCache.Clear()
+	}
+	if e.analyzer != nil {
+		e.analyzer.ClearCache()
+	}
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.Lock()
+	e.nodeLookupCache = make(map[string]*storage.Node, 1000)
+	cacheMu.Unlock()
+}
+
+// InvalidateEntityCaches evicts targeted cache entries affected by a specific entity state change.
+func (e *StorageExecutor) InvalidateEntityCaches(entityID string, tokens []string) {
+	if e.cache != nil && len(tokens) > 0 {
+		e.cache.InvalidateLabels(tokens)
+	}
+	e.invalidateNodeLookupCacheForEntityID(storage.NodeID(entityID))
+}
+
+func (e *StorageExecutor) invalidateNodeLookupCacheForEntityID(entityID storage.NodeID) {
+	if entityID == "" {
+		return
+	}
+	cacheMu := e.nodeLookupCacheLock()
+	cacheMu.Lock()
+	for key, node := range e.nodeLookupCache {
+		if node != nil && node.ID == entityID {
+			delete(e.nodeLookupCache, key)
+		}
+	}
+	cacheMu.Unlock()
+}
+
 // SetDatabaseManager sets the database manager for system commands.
 // When set, enables CREATE DATABASE, DROP DATABASE, and SHOW DATABASES commands.
 //

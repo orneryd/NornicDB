@@ -391,6 +391,75 @@ APPLY {
 	assert.Equal(t, "reinforced_tier", pol.WhenClauses[1].ProfileRef)
 }
 
+// TestE2E_NoisyCorroborationPromotionLayers verifies a realistic ON ACCESS
+// policy where noisy corroboration signals are smoothed before promotion tiers
+// advance from reinforced evidence to canonical evidence.
+func TestE2E_NoisyCorroborationPromotionLayers(t *testing.T) {
+	sm := storage.NewSchemaManager()
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION PROFILE reinforced_evidence OPTIONS {
+		multiplier: 1.25,
+		scoreFloor: 0.25,
+		scoreCap: 1.0
+	}`)
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION PROFILE canonical_evidence OPTIONS {
+		multiplier: 1.60,
+		scoreFloor: 0.45,
+		scoreCap: 1.0
+	}`)
+
+	parseDDLAndApply(t, sm, `CREATE PROMOTION POLICY corroboration_escalation
+FOR (n:KnowledgeFact)
+APPLY {
+  ON ACCESS {
+    SET n.evidenceCount = coalesce(n.evidenceCount, 0) + 1
+    WITH KALMAN{q: 0.05, r: 50.0} SET n.sourceAgreement = $corroborationScore
+    WITH KALMAN SET n.crossSessionSupport =
+      CASE WHEN n._lastSessionId <> $_session
+        THEN coalesce(n.crossSessionSupport, 0) + 1
+        ELSE n.crossSessionSupport
+      END
+    SET n._lastSessionId = $_session
+  }
+
+  WHEN n.evidenceCount >= 3 AND n.sourceAgreement >= 0.75
+    APPLY PROFILE 'reinforced_evidence'
+
+  WHEN n.evidenceCount >= 8 AND n.sourceAgreement >= 0.90 AND n.crossSessionSupport >= 3
+    APPLY PROFILE 'canonical_evidence'
+}`)
+
+	policies := sm.ShowPromotionPolicies()
+	require.Len(t, policies, 1)
+
+	pol := policies[0]
+	assert.Equal(t, "corroboration_escalation", pol.Name)
+	assert.Equal(t, []string{"KnowledgeFact"}, pol.TargetLabels)
+	assert.True(t, pol.Enabled)
+
+	require.NotNil(t, pol.OnAccess)
+	require.Len(t, pol.OnAccess.Mutations, 4)
+	assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "evidenceCount")
+	assert.Nil(t, pol.OnAccess.Mutations[0].Kalman)
+	assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "$corroborationScore")
+	require.NotNil(t, pol.OnAccess.Mutations[1].Kalman)
+	assert.Equal(t, knowledgepolicy.KalmanModeManual, pol.OnAccess.Mutations[1].Kalman.Mode)
+	assert.Contains(t, pol.OnAccess.Mutations[2].Expression, "crossSessionSupport")
+	require.NotNil(t, pol.OnAccess.Mutations[2].Kalman)
+	assert.Equal(t, knowledgepolicy.KalmanModeAuto, pol.OnAccess.Mutations[2].Kalman.Mode)
+	assert.Contains(t, pol.OnAccess.Mutations[3].Expression, "$_session")
+	assert.Nil(t, pol.OnAccess.Mutations[3].Kalman)
+
+	require.Len(t, pol.WhenClauses, 2)
+	assert.Contains(t, pol.WhenClauses[0].Predicate, "n.evidenceCount >= 3")
+	assert.Contains(t, pol.WhenClauses[0].Predicate, "n.sourceAgreement >= 0.75")
+	assert.Equal(t, "reinforced_evidence", pol.WhenClauses[0].ProfileRef)
+	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.evidenceCount >= 8")
+	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.crossSessionSupport >= 3")
+	assert.Equal(t, "canonical_evidence", pol.WhenClauses[1].ProfileRef)
+}
+
 // TestE2E_DropDecayProfile exercises the DROP DECAY PROFILE DDL from docs.
 func TestE2E_DropDecayProfile(t *testing.T) {
 	sm := storage.NewSchemaManager()

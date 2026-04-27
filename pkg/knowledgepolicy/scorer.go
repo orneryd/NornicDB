@@ -54,6 +54,20 @@ func (s *Scorer) ScoreProperty(
 	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta)
 }
 
+func (s *Scorer) ScoreEdgeProperty(
+	targetID string,
+	edgeType string,
+	propertyPath string,
+	accessMeta *AccessMetaEntry,
+	createdAt, versionAt, nowNanos int64,
+) ScoringResolution {
+	if !s.decayEnabled {
+		return neutralFor(targetID, ScopeProperty)
+	}
+	cb := s.resolver.ResolveEdgeProperty(edgeType, propertyPath)
+	return s.score(cb, targetID, ScopeProperty, createdAt, versionAt, nowNanos, accessMeta)
+}
+
 func neutralFor(targetID string, scope ScopeType) ScoringResolution {
 	return ScoringResolution{
 		TargetID:      targetID,

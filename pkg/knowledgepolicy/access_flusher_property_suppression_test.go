@@ -6,14 +6,27 @@ import (
 )
 
 type mockEntityMeta struct {
+	scope     ScopeType
 	labels    []string
+	edgeType  string
 	propKeys  []string
 	createdAt int64
 	versionAt int64
 }
 
-func (m *mockEntityMeta) GetEntityMeta(entityID string) ([]string, []string, int64, int64, error) {
-	return m.labels, m.propKeys, m.createdAt, m.versionAt, nil
+func (m *mockEntityMeta) GetEntityMeta(entityID string) (EntityMeta, error) {
+	scope := m.scope
+	if scope == "" {
+		scope = ScopeNode
+	}
+	return EntityMeta{
+		Scope:          scope,
+		Labels:         m.labels,
+		EdgeType:       m.edgeType,
+		PropertyKeys:   m.propKeys,
+		CreatedAtNanos: m.createdAt,
+		VersionAtNanos: m.versionAt,
+	}, nil
 }
 
 type mockAccessMetaStore struct {

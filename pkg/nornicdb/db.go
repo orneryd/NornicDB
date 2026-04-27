@@ -936,6 +936,21 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			db.accessFlusher = knowledgepolicy.NewAccessFlusher(
 				db.accessAccumulator, be, config.Memory.DecayInterval,
 			)
+			db.accessFlusher.SetPropertySuppression(
+				func(namespace string) *knowledgepolicy.Scorer { return be.ScorerForNamespace(namespace) },
+				be,
+				func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
+			)
+			db.accessFlusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
+				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
+				if err == nil && becameSuppressed && db.cypherExecutor != nil {
+					tokens := append([]string(nil), meta.Labels...)
+					if meta.EdgeType != "" {
+						tokens = append(tokens, meta.EdgeType)
+					}
+					db.cypherExecutor.InvalidateEntityCaches(entityID, tokens)
+				}
+			})
 		}
 	}
 
