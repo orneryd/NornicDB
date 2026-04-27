@@ -376,10 +376,11 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 	_ = j
 
 	bundle := knowledgepolicy.DecayProfileBundle{
-		Name:      name,
-		Enabled:   true,
-		ScoreFrom: knowledgepolicy.ScoreFromCreated,
-		Scope:     knowledgepolicy.ScopeNode,
+		Name:         name,
+		Enabled:      true,
+		DecayEnabled: true,
+		ScoreFrom:    knowledgepolicy.ScoreFromCreated,
+		Scope:        knowledgepolicy.ScopeNode,
 	}
 
 	if err := parseOptionsMap(body, func(key, rawVal string) error {

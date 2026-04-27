@@ -54,6 +54,7 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 			ScoreFrom:           knowledgepolicy.ScoreFromCustom,
 			ScoreFromProperty:   "degradeAt",
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 		"edge_decay": {
 			Name:                "edge_decay",
@@ -64,6 +65,7 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 			ScoreFrom:           knowledgepolicy.ScoreFromCustom,
 			ScoreFromProperty:   "edgePenaltyAt",
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 	}
 	bindings := map[string]*knowledgepolicy.DecayProfileBinding{
@@ -147,6 +149,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 			ScoreFrom:           knowledgepolicy.ScoreFromCustom,
 			ScoreFromProperty:   "degradeAt",
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 		"edge_decay": {
 			Name:                "edge_decay",
@@ -157,6 +160,7 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 			ScoreFrom:           knowledgepolicy.ScoreFromCustom,
 			ScoreFromProperty:   "edgePenaltyAt",
 			Enabled:             true,
+			DecayEnabled:        true,
 		},
 	}
 	bindings := map[string]*knowledgepolicy.DecayProfileBinding{

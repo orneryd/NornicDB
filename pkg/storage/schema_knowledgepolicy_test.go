@@ -121,6 +121,19 @@ func TestDecayProfileBundle_Validation(t *testing.T) {
 	})
 }
 
+func TestKnowledgePolicyMutationErrorsDoNotLeakSchemaLock(t *testing.T) {
+	sm := NewSchemaManager()
+
+	err := sm.CreateDecayProfileBundle(validBundle(""))
+	require.Error(t, err)
+	require.NoError(t, sm.CreateDecayProfileBundle(validBundle("after_error_bundle")))
+
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("dup_profile")))
+	err = sm.CreatePromotionProfile(validPromoProfile("dup_profile"))
+	require.Error(t, err)
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("after_error_profile")))
+}
+
 // TestDecayProfileBinding_Create tests creating a binding that references an existing bundle.
 func TestDecayProfileBinding_Create(t *testing.T) {
 	sm := NewSchemaManager()

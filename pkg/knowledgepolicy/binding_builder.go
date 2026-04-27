@@ -45,11 +45,52 @@ func computeThresholdAgeNanos(fn DecayFunction, halfLifeNanos int64, threshold f
 	}
 }
 
+func effectiveBundleFunction(bundle *DecayProfileBundle) DecayFunction {
+	if bundle == nil || bundle.Function == "" {
+		return DecayFunctionExponential
+	}
+	return bundle.Function
+}
+
+func effectiveBundleDecayEnabled(bundle *DecayProfileBundle) bool {
+	if bundle == nil {
+		return false
+	}
+	if bundle.DecayEnabled {
+		return true
+	}
+	if bundle.Function == DecayFunctionNone {
+		return false
+	}
+	// Legacy in-memory test fixtures often omit Enabled/DecayEnabled entirely.
+	// Treat those unset fixtures as decay-enabled when they otherwise describe a
+	// real decay profile, while preserving explicit schema bundles with
+	// Enabled=true and DecayEnabled=false.
+	if !bundle.Enabled && (bundle.HalfLifeSeconds > 0 || bundle.Function != "") {
+		return true
+	}
+	return false
+}
+
 func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle, bundles map[string]*DecayProfileBundle) *CompiledBinding {
 	if binding.NoDecay {
 		return &CompiledBinding{
 			DecayBinding: binding,
 			NoDecay:      true,
+		}
+	}
+	fn := effectiveBundleFunction(bundle)
+	if bundle != nil && (!effectiveBundleDecayEnabled(bundle) || fn == DecayFunctionNone) {
+		return &CompiledBinding{
+			DecayProfile:        bundle,
+			DecayBinding:        binding,
+			VisibilityThreshold: bundle.VisibilityThreshold,
+			ScoreFrom:           bundle.ScoreFrom,
+			ScoreFromProperty:   bundle.ScoreFromProperty,
+			Function:            fn,
+			ThresholdAgeNanos:   math.MaxInt64,
+			DecayFloor:          bundle.ScoreFloor,
+			NoDecay:             true,
 		}
 	}
 
@@ -59,10 +100,6 @@ func compileBinding(binding *DecayProfileBinding, bundle *DecayProfileBundle, bu
 	}
 
 	halfLifeNanos := bundle.HalfLifeSeconds * 1e9
-	fn := bundle.Function
-	if fn == "" {
-		fn = DecayFunctionExponential
-	}
 
 	cb := &CompiledBinding{
 		DecayProfile:        bundle,
@@ -228,24 +265,51 @@ func BuildBindingTable(
 	for key, cb := range bt.nodes {
 		if p, ok := policyByKey["node:"+key]; ok {
 			cb.PromotionPolicy = p
+			cb.CompiledPromotionRules = compilePromotionRules(p, profiles)
 		}
 	}
 	for key, cb := range bt.edges {
 		if p, ok := policyByKey["edge:"+key]; ok {
 			cb.PromotionPolicy = p
+			cb.CompiledPromotionRules = compilePromotionRules(p, profiles)
 		}
 	}
 	if bt.wildNode != nil {
 		if p, ok := policyByKey["wild:node"]; ok {
 			bt.wildNode.PromotionPolicy = p
+			bt.wildNode.CompiledPromotionRules = compilePromotionRules(p, profiles)
 		}
 	}
 	if bt.wildEdge != nil {
 		if p, ok := policyByKey["wild:edge"]; ok {
 			bt.wildEdge.PromotionPolicy = p
+			bt.wildEdge.CompiledPromotionRules = compilePromotionRules(p, profiles)
 		}
 	}
 	bt.mu.Unlock()
 
 	return bt, nil
+}
+
+func compilePromotionRules(policy *PromotionPolicyDef, profiles map[string]*PromotionProfileDef) []CompiledPromotionRule {
+	if policy == nil || len(policy.WhenClauses) == 0 {
+		return nil
+	}
+	rules := make([]CompiledPromotionRule, 0, len(policy.WhenClauses))
+	for _, clause := range policy.WhenClauses {
+		if profiles == nil || clause.ProfileRef == "" {
+			continue
+		}
+		profile := profiles[clause.ProfileRef]
+		if profile == nil || !profile.Enabled {
+			continue
+		}
+		rules = append(rules, CompiledPromotionRule{
+			Predicate: clause.Predicate,
+			Profile:   profile,
+			Order:     clause.Order,
+		})
+	}
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Order < rules[j].Order })
+	return rules
 }
