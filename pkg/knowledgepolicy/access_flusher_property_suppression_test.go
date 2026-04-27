@@ -55,6 +55,7 @@ func TestFlusherPropertySuppression_WriteNilOnDecay(t *testing.T) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	}
 	binding := &DecayProfileBinding{
 		Name:         "bind_bio",
@@ -121,6 +122,7 @@ func TestFlusherPropertySuppression_NoSuppressionWhenRecent(t *testing.T) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	}
 	binding := &DecayProfileBinding{
 		Name:         "bind_recent",
@@ -183,6 +185,7 @@ func TestFlusherPropertySuppression_EmbedInvalidateOnChange(t *testing.T) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	}
 	binding := &DecayProfileBinding{
 		Name:         "bind_embed",
@@ -259,6 +262,7 @@ func TestFlusherPropertySuppression_RestorationRemovesMarker(t *testing.T) {
 		VisibilityThreshold: 0.10,
 		ScoreFrom:           ScoreFromCreated,
 		Enabled:             true,
+		DecayEnabled:        true,
 	}
 	binding := &DecayProfileBinding{
 		Name:         "bind_restore",

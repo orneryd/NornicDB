@@ -11,21 +11,28 @@ type CompiledPropertyOverride struct {
 	Function          DecayFunction
 }
 
+type CompiledPromotionRule struct {
+	Predicate string
+	Profile   *PromotionProfileDef
+	Order     int
+}
+
 // CompiledBinding is the pre-flattened lookup entry for a label/edge-type.
 type CompiledBinding struct {
-	DecayProfile          *DecayProfileBundle
-	DecayBinding          *DecayProfileBinding
-	PromotionPolicy       *PromotionPolicyDef
-	VisibilityThreshold   float64
-	ScoreFrom             ScoreFromMode
-	ScoreFromProperty     string
-	Function              DecayFunction
-	HalfLifeNanos         int64
-	ThresholdAgeNanos     int64
-	DecayFloor            float64
-	NoDecay               bool
-	HasNoDecayProperty    bool
-	CompiledPropertyRules map[string]*CompiledPropertyOverride
+	DecayProfile           *DecayProfileBundle
+	DecayBinding           *DecayProfileBinding
+	PromotionPolicy        *PromotionPolicyDef
+	VisibilityThreshold    float64
+	ScoreFrom              ScoreFromMode
+	ScoreFromProperty      string
+	Function               DecayFunction
+	HalfLifeNanos          int64
+	ThresholdAgeNanos      int64
+	DecayFloor             float64
+	NoDecay                bool
+	HasNoDecayProperty     bool
+	CompiledPropertyRules  map[string]*CompiledPropertyOverride
+	CompiledPromotionRules []CompiledPromotionRule
 }
 
 // BindingTable is the compiled lookup for all labels and edge types.

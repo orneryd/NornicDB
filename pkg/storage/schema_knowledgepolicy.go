@@ -11,7 +11,6 @@ import (
 // CreateDecayProfileBundle adds a decay profile bundle to the schema.
 func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayProfileBundle, ifNotExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.decayProfileBundles == nil {
 		sm.decayProfileBundles = make(map[string]*knowledgepolicy.DecayProfileBundle)
@@ -19,26 +18,26 @@ func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayPr
 
 	if _, exists := sm.decayProfileBundles[bundle.Name]; exists {
 		if len(ifNotExists) > 0 && ifNotExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("decay profile bundle %q already exists", bundle.Name)
 	}
 
 	if err := validateDecayProfileBundle(&bundle); err != nil {
+		sm.mu.Unlock()
 		return err
 	}
 
 	b := bundle
 	sm.decayProfileBundles[b.Name] = &b
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // CreateDecayProfileBinding adds a decay profile binding to the schema.
 func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.DecayProfileBinding, ifNotExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.decayProfileBindings == nil {
 		sm.decayProfileBindings = make(map[string]*knowledgepolicy.DecayProfileBinding)
@@ -46,78 +45,80 @@ func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.Decay
 
 	if _, exists := sm.decayProfileBindings[binding.Name]; exists {
 		if len(ifNotExists) > 0 && ifNotExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("decay profile binding %q already exists", binding.Name)
 	}
 
 	if binding.ProfileRef != "" && sm.decayProfileBundles != nil {
 		if _, ok := sm.decayProfileBundles[binding.ProfileRef]; !ok {
+			sm.mu.Unlock()
 			return fmt.Errorf("decay profile bundle %q not found", binding.ProfileRef)
 		}
 	}
 
 	if err := sm.validateBindingTarget(&binding); err != nil {
+		sm.mu.Unlock()
 		return err
 	}
 
 	sort.Strings(binding.TargetLabels)
 	b := binding
 	sm.decayProfileBindings[b.Name] = &b
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // DropDecayProfile removes a decay profile bundle or binding by name.
 func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.decayProfileBundles != nil {
 		if _, exists := sm.decayProfileBundles[name]; exists {
 			if sm.isBundleReferenced(name) {
+				sm.mu.Unlock()
 				return fmt.Errorf("cannot drop decay profile bundle %q: referenced by active binding", name)
 			}
 			delete(sm.decayProfileBundles, name)
-			sm.rebuildBindingTableLocked()
-			return sm.persistIfSet()
+			return sm.finishKnowledgePolicyMutationLocked()
 		}
 	}
 
 	if sm.decayProfileBindings != nil {
 		if _, exists := sm.decayProfileBindings[name]; exists {
 			delete(sm.decayProfileBindings, name)
-			sm.rebuildBindingTableLocked()
-			return sm.persistIfSet()
+			return sm.finishKnowledgePolicyMutationLocked()
 		}
 	}
 
 	if len(ifExists) > 0 && ifExists[0] {
+		sm.mu.Unlock()
 		return nil
 	}
+	sm.mu.Unlock()
 	return fmt.Errorf("decay profile %q not found", name)
 }
 
 // AlterDecayProfile updates options on an existing decay profile bundle.
 func (sm *SchemaManager) AlterDecayProfile(name string, updates map[string]interface{}) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.decayProfileBundles == nil {
+		sm.mu.Unlock()
 		return fmt.Errorf("decay profile bundle %q not found", name)
 	}
 	bundle, ok := sm.decayProfileBundles[name]
 	if !ok {
+		sm.mu.Unlock()
 		return fmt.Errorf("decay profile bundle %q not found", name)
 	}
 
 	if err := applyBundleUpdates(bundle, updates); err != nil {
+		sm.mu.Unlock()
 		return err
 	}
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // ShowDecayProfiles returns all stored decay profile bundles and bindings.
@@ -143,7 +144,6 @@ func (sm *SchemaManager) ShowDecayProfiles() ([]knowledgepolicy.DecayProfileBund
 // CreatePromotionProfile adds a promotion profile to the schema.
 func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.PromotionProfileDef, ifNotExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionProfiles == nil {
 		sm.promotionProfiles = make(map[string]*knowledgepolicy.PromotionProfileDef)
@@ -151,69 +151,73 @@ func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.Promotio
 
 	if _, exists := sm.promotionProfiles[profile.Name]; exists {
 		if len(ifNotExists) > 0 && ifNotExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion profile %q already exists", profile.Name)
 	}
 
 	if err := validatePromotionProfile(&profile); err != nil {
+		sm.mu.Unlock()
 		return err
 	}
 
 	p := profile
 	sm.promotionProfiles[p.Name] = &p
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // DropPromotionProfile removes a promotion profile by name.
 func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionProfiles == nil {
 		if len(ifExists) > 0 && ifExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion profile %q not found", name)
 	}
 
 	if _, exists := sm.promotionProfiles[name]; !exists {
 		if len(ifExists) > 0 && ifExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion profile %q not found", name)
 	}
 
 	if sm.isPromotionProfileReferenced(name) {
+		sm.mu.Unlock()
 		return fmt.Errorf("cannot drop promotion profile %q: referenced by active promotion policy", name)
 	}
 
 	delete(sm.promotionProfiles, name)
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // AlterPromotionProfile updates options on an existing promotion profile.
 func (sm *SchemaManager) AlterPromotionProfile(name string, updates map[string]interface{}) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionProfiles == nil {
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion profile %q not found", name)
 	}
 	profile, ok := sm.promotionProfiles[name]
 	if !ok {
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion profile %q not found", name)
 	}
 
 	if err := applyPromotionProfileUpdates(profile, updates); err != nil {
+		sm.mu.Unlock()
 		return err
 	}
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // ShowPromotionProfiles returns all stored promotion profiles.
@@ -232,7 +236,6 @@ func (sm *SchemaManager) ShowPromotionProfiles() []knowledgepolicy.PromotionProf
 // CreatePromotionPolicy adds a promotion policy to the schema.
 func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionPolicyDef, ifNotExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionPolicies == nil {
 		sm.promotionPolicies = make(map[string]*knowledgepolicy.PromotionPolicyDef)
@@ -248,9 +251,11 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 	for _, wc := range policy.WhenClauses {
 		if wc.ProfileRef != "" {
 			if sm.promotionProfiles == nil {
+				sm.mu.Unlock()
 				return fmt.Errorf("promotion profile %q not found (referenced in WHEN clause)", wc.ProfileRef)
 			}
 			if _, ok := sm.promotionProfiles[wc.ProfileRef]; !ok {
+				sm.mu.Unlock()
 				return fmt.Errorf("promotion profile %q not found (referenced in WHEN clause)", wc.ProfileRef)
 			}
 		}
@@ -259,44 +264,45 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 	sort.Strings(policy.TargetLabels)
 	p := policy
 	sm.promotionPolicies[p.Name] = &p
-
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // DropPromotionPolicy removes a promotion policy by name.
 func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionPolicies == nil {
 		if len(ifExists) > 0 && ifExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion policy %q not found", name)
 	}
 
 	if _, exists := sm.promotionPolicies[name]; !exists {
 		if len(ifExists) > 0 && ifExists[0] {
+			sm.mu.Unlock()
 			return nil
 		}
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion policy %q not found", name)
 	}
 
 	delete(sm.promotionPolicies, name)
-	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	return sm.finishKnowledgePolicyMutationLocked()
 }
 
 // AlterPromotionPolicy updates an existing promotion policy.
 func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]interface{}) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if sm.promotionPolicies == nil {
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion policy %q not found", name)
 	}
 	if _, ok := sm.promotionPolicies[name]; !ok {
+		sm.mu.Unlock()
 		return fmt.Errorf("promotion policy %q not found", name)
 	}
 
@@ -306,9 +312,27 @@ func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]in
 			policy.Enabled = b
 		}
 	}
+	return sm.finishKnowledgePolicyMutationLocked()
+}
 
+func (sm *SchemaManager) finishKnowledgePolicyMutationLocked() error {
 	sm.rebuildBindingTableLocked()
-	return sm.persistIfSet()
+	persist := sm.persist
+	var def *SchemaDefinition
+	if persist != nil {
+		def = sm.exportDefinitionLocked()
+	}
+	onChanged := sm.knowledgePolicyChanged
+	sm.mu.Unlock()
+	if persist != nil {
+		if err := persist(def); err != nil {
+			return err
+		}
+	}
+	if onChanged != nil {
+		onChanged()
+	}
+	return nil
 }
 
 // ShowPromotionPolicies returns all stored promotion policies.

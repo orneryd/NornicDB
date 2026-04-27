@@ -72,14 +72,16 @@ func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {
 		accessMeta = meta
 	}
 
-	input := knowledgepolicy.NodeScoringInput{
-		EntityID:       string(node.ID),
-		Labels:         node.Labels,
-		CreatedAtNanos: node.CreatedAt.UnixNano(),
-		VersionAtNanos: node.UpdatedAt.UnixNano(),
-	}
-
-	suppress, _ := knowledgepolicy.ShouldSuppressNode(scorer, input, accessMeta, nowNanos)
+	res := scorer.ScoreNodeWithProperties(
+		string(node.ID),
+		node.Labels,
+		node.Properties,
+		accessMeta,
+		node.CreatedAt.UnixNano(),
+		node.UpdatedAt.UnixNano(),
+		nowNanos,
+	)
+	suppress := res.SuppressionEligible
 	if !suppress && b.accumulator != nil {
 		b.accumulator.IncrementAccess(string(node.ID))
 	}
@@ -108,10 +110,16 @@ func (b *BadgerEngine) filterEdgeByDecay(edge *Edge, nowNanos int64) bool {
 		accessMeta = meta
 	}
 
-	suppress, _ := knowledgepolicy.ShouldSuppressEdge(
-		scorer, edge.Type, string(edge.ID), accessMeta,
-		edge.CreatedAt.UnixNano(), nowNanos,
+	res := scorer.ScoreEdgeWithProperties(
+		string(edge.ID),
+		edge.Type,
+		edge.Properties,
+		accessMeta,
+		edge.CreatedAt.UnixNano(),
+		edge.CreatedAt.UnixNano(),
+		nowNanos,
 	)
+	suppress := res.SuppressionEligible
 	if !suppress && b.accumulator != nil {
 		b.accumulator.IncrementAccess(string(edge.ID))
 	}

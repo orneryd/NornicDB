@@ -90,6 +90,9 @@ type SchemaManager struct {
 	// Persistence hook (optional).
 	// When set (by BadgerEngine), schema changes are persisted transactionally.
 	persist func(def *SchemaDefinition) error
+	// Optional callback invoked after knowledge-policy mutations have been
+	// persisted and the schema lock has been released.
+	knowledgePolicyChanged func()
 
 	// Knowledge-layer scoring subsystem
 	decayProfileBundles  map[string]*knowledgepolicy.DecayProfileBundle
@@ -299,6 +302,14 @@ func (sm *SchemaManager) SetPersister(persist func(def *SchemaDefinition) error)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.persist = persist
+}
+
+// SetKnowledgePolicyChangedHook registers a callback that runs after a
+// knowledge-policy mutation has been persisted and the schema lock released.
+func (sm *SchemaManager) SetKnowledgePolicyChangedHook(hook func()) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.knowledgePolicyChanged = hook
 }
 
 // UniqueConstraint represents a unique constraint on a label and property.

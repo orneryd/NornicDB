@@ -99,9 +99,10 @@ func splitOnAccessAssignment(expression string) (string, string, bool) {
 }
 
 type onAccessEvalContext struct {
-	entry    *AccessMetaEntry
-	nowNanos int64
-	params   map[string]interface{}
+	entry       *AccessMetaEntry
+	entityProps map[string]interface{}
+	nowNanos    int64
+	params      map[string]interface{}
 }
 
 type onAccessTokenType int
@@ -352,6 +353,17 @@ func (p *onAccessParser) parseCompare() (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
+		if left == nil || right == nil {
+			switch op {
+			case tokenEq:
+				left = left == nil && right == nil
+			case tokenNeq:
+				left = !(left == nil && right == nil)
+			default:
+				left = false
+			}
+			continue
+		}
 		cmp := compareValues(left, right)
 		switch op {
 		case tokenEq:
@@ -460,7 +472,7 @@ func (p *onAccessParser) parsePrimary() (interface{}, error) {
 			}
 			prop := p.cur.text
 			p.next()
-			return getOnAccessProperty(p.ctx.entry, prop), nil
+			return getOnAccessProperty(p.ctx, prop), nil
 		}
 		switch strings.ToUpper(ident) {
 		case "TRUE":
@@ -470,7 +482,7 @@ func (p *onAccessParser) parsePrimary() (interface{}, error) {
 		case "NULL":
 			return nil, nil
 		default:
-			return getOnAccessProperty(p.ctx.entry, ident), nil
+			return getOnAccessProperty(p.ctx, ident), nil
 		}
 	case tokenLParen:
 		p.next()
@@ -672,25 +684,30 @@ func toFloat64(value interface{}) (float64, bool) {
 	}
 }
 
-func getOnAccessProperty(entry *AccessMetaEntry, prop string) interface{} {
-	if entry == nil {
-		return nil
-	}
-	switch prop {
-	case "accessCount":
-		return entry.Fixed.AccessCount
-	case "lastAccessedAt":
-		return entry.Fixed.LastAccessedAt
-	case "traversalCount":
-		return entry.Fixed.TraversalCount
-	case "lastTraversedAt":
-		return entry.Fixed.LastTraversedAt
-	default:
-		if entry.Overflow == nil {
-			return nil
+func getOnAccessProperty(ctx onAccessEvalContext, prop string) interface{} {
+	entry := ctx.entry
+	if entry != nil {
+		switch prop {
+		case "accessCount":
+			return entry.Fixed.AccessCount
+		case "lastAccessedAt":
+			return entry.Fixed.LastAccessedAt
+		case "traversalCount":
+			return entry.Fixed.TraversalCount
+		case "lastTraversedAt":
+			return entry.Fixed.LastTraversedAt
+		default:
+			if entry.Overflow != nil {
+				if value, ok := entry.Overflow[prop]; ok {
+					return value
+				}
+			}
 		}
-		return entry.Overflow[prop]
 	}
+	if ctx.entityProps != nil {
+		return ctx.entityProps[prop]
+	}
+	return nil
 }
 
 func setOnAccessProperty(entry *AccessMetaEntry, prop string, value interface{}) bool {
