@@ -1161,11 +1161,12 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		)
 
 		if res.FinalScore < threshold {
-			if err := be.EnqueueDeindexIfSuppressed(string(node.ID), false); err != nil {
+			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(string(node.ID), false)
+			if err != nil {
 				fmt.Printf("  warning: failed to suppress %s: %v\n", node.ID, err)
 				continue
 			}
-			newlySuppressed++
+			applySuppressionCounters(becameSuppressed, &newlySuppressed, &alreadySuppressed)
 		} else {
 			aboveThreshold++
 		}
@@ -1177,6 +1178,14 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Above threshold:      %d\n", aboveThreshold)
 	fmt.Printf("  Total evaluated:      %d\n", len(nodes))
 	return nil
+}
+
+func applySuppressionCounters(becameSuppressed bool, newlySuppressed, alreadySuppressed *int) {
+	if becameSuppressed {
+		*newlySuppressed++
+		return
+	}
+	*alreadySuppressed++
 }
 
 func runDecayStats(cmd *cobra.Command, args []string) error {
