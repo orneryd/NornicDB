@@ -49,7 +49,8 @@ const (
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
 const (
-	prefixMVCCMetaEdgeBetweenIndexReady = byte(0x02)
+	prefixMVCCMetaSchemaVersion         = byte(0x02)
+	prefixMVCCMetaEdgeBetweenIndexReady = byte(0x03)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -716,6 +717,14 @@ func (b *BadgerEngine) readSchemaVersion() (int, error) {
 			return err
 		}
 		return item.Value(func(val []byte) error {
+			if len(val) == 1 && val[0] == 1 {
+				// Compatibility: a broken startup build wrote the edge-between
+				// ready marker to the schema-version key. Treat that one-byte
+				// value as "version unset" so migrations can restore the proper
+				// 8-byte schema version on open.
+				version = 0
+				return nil
+			}
 			if len(val) != 8 {
 				return fmt.Errorf("invalid schema version length: %d", len(val))
 			}
