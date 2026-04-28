@@ -119,3 +119,36 @@ func TestSchemaVersion_InvalidLengthReturnsError(t *testing.T) {
 		t.Fatal("expected invalid schema version length error")
 	}
 }
+
+func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
+	eng := newTestEngine(t)
+	err := eng.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(mvccSchemaVersionKey(), []byte{1})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 0 {
+		t.Fatalf("expected legacy one-byte marker to be treated as version 0, got %d", v)
+	}
+
+	if err := eng.RunOnStartMigrations(); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err = eng.readSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 1 {
+		t.Fatalf("expected recovered schema version 1 after migrations, got %d", v)
+	}
+	if edgeBetweenIndexReadyKey[1] == mvccSchemaVersionKey()[1] {
+		t.Fatal("edge-between ready key must not share schema-version subkey")
+	}
+}
