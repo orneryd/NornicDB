@@ -650,7 +650,12 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string) (*Edge, error) {
 	var result *Edge
 	err := b.withView(func(txn *badger.Txn) error {
-		item, err := txn.Get(edgeBetweenHeadKey(source, target, edgeType))
+		headKey := edgeBetweenHeadKey(source, target, edgeType)
+		checkTombstones := b.decayEnabled && !b.revealAll.Load()
+		if checkTombstones && hasIndexTombstone(txn, headKey) {
+			return nil
+		}
+		item, err := txn.Get(headKey)
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil
 		}
@@ -664,9 +669,15 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 		}); err != nil {
 			return err
 		}
+		if checkTombstones && hasIndexTombstone(txn, edgeBetweenIndexKey(source, target, edgeType, edgeID)) {
+			return nil
+		}
 		edge, err := edgeFromTxn(txn, edgeID)
 		if err != nil {
 			return fmt.Errorf("load edge-between head edge %q: %w", edgeID, err)
+		}
+		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+			return nil
 		}
 		if edgeMatchesBetween(edge, source, target, edgeType) {
 			result = edge
@@ -684,16 +695,22 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 		if edgeType != "" {
 			prefix = typedEdgeBetweenIndexPrefix(startID, endID, edgeType)
 		}
+		checkTombstones := b.decayEnabled && !b.revealAll.Load()
+		nowNanos := DecayScoringTime()
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			edgeID := extractEdgeIDFromEdgeBetweenIndexKey(it.Item().Key())
+			indexKey := it.Item().Key()
+			if checkTombstones && hasIndexTombstone(txn, indexKey) {
+				continue
+			}
+			edgeID := extractEdgeIDFromEdgeBetweenIndexKey(indexKey)
 			if edgeID == "" {
 				continue
 			}
 			edge, err := edgeFromTxn(txn, edgeID)
-			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) {
+			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)
@@ -709,16 +726,22 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID
 	var result []*Edge
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := outgoingIndexPrefix(startID)
+		checkTombstones := b.decayEnabled && !b.revealAll.Load()
+		nowNanos := DecayScoringTime()
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			edgeID := extractEdgeIDFromIndexKey(it.Item().Key())
+			indexKey := it.Item().Key()
+			if checkTombstones && hasIndexTombstone(txn, indexKey) {
+				continue
+			}
+			edgeID := extractEdgeIDFromIndexKey(indexKey)
 			if edgeID == "" {
 				continue
 			}
 			edge, err := edgeFromTxn(txn, edgeID)
-			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) {
+			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)
