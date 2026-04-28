@@ -29,7 +29,7 @@ func mvccSequenceKey() []byte {
 }
 
 func mvccSchemaVersionKey() []byte {
-	return []byte{prefixMVCCMeta, 0x02}
+	return []byte{prefixMVCCMeta, prefixMVCCMetaSchemaVersion}
 }
 
 func encodeMVCCSortVersion(version MVCCVersion) []byte {

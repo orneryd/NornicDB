@@ -106,13 +106,14 @@ func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
 
 func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
 	keys := collectEdgeIndexKeys("nornic:e1", "nornic:a", "nornic:b", "KNOWS")
-	if len(keys) != 3 {
-		t.Fatalf("expected 3 keys, got %d", len(keys))
+	if len(keys) != 4 {
+		t.Fatalf("expected 4 keys, got %d", len(keys))
 	}
 	prefixes := map[byte]bool{
-		prefixOutgoingIndex: false,
-		prefixIncomingIndex: false,
-		prefixEdgeTypeIndex: false,
+		prefixOutgoingIndex:    false,
+		prefixIncomingIndex:    false,
+		prefixEdgeTypeIndex:    false,
+		prefixEdgeBetweenIndex: false,
 	}
 	for _, k := range keys {
 		prefixes[k[0]] = true
@@ -120,6 +121,11 @@ func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
 	for p, found := range prefixes {
 		if !found {
 			t.Errorf("missing prefix 0x%02x in edge index keys", p)
+		}
+	}
+	for _, k := range keys {
+		if k[0] == prefixEdgeBetweenHead {
+			t.Fatal("edge head key must not be cataloged per-edge because it is shared across same-type siblings")
 		}
 	}
 }

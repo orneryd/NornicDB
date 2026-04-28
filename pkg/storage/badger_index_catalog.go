@@ -84,6 +84,5 @@ func collectEdgeIndexKeys(edgeID EdgeID, startNode NodeID, endNode NodeID, edgeT
 		incomingIndexKey(endNode, edgeID),
 		edgeTypeIndexKey(edgeType, edgeID),
 		edgeBetweenIndexKey(startNode, endNode, edgeType, edgeID),
-		edgeBetweenHeadKey(startNode, endNode, edgeType),
 	}
 }
