@@ -154,7 +154,7 @@ canonical API, *not* the OTel meter API. Reasoning:
 
 **Two-path egress.** `prometheus/client_golang` is canonical for the `:9090/metrics` text exposition; an OTel meter reader runs in parallel against the same numbers via the `otelprom` bridge for OTLP push customers. The bridge is configured with `WithoutUnits()` to suppress its auto-suffix translation (`_milliseconds_total`, `_bytes`), and bridge-emitted metrics live under the `nornicdb_otel_*` namespace to prevent silent collision with hand-instrumented `nornicdb_*` series. Resource attributes do not become labels through the bridge — they appear only as the `target_info` metric, which the bundled `ServiceMonitor` drops via `metricRelabelings`.
 
-**Tenant label kill switch.** A `metrics.tenant_labels_enabled` config flag (default `true` on K8s detect via `KUBERNETES_SERVICE_HOST` env + ServiceAccount token; `false` otherwise) controls whether the `database` label appears on `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series. Operators can override with `metrics.tenant_labels_enabled=false` even on K8s. The resolved value is logged at startup.
+**Tenant label kill switch.** A `metrics.tenant_labels_enabled` config flag (default `true` on K8s detect via `KUBERNETES_SERVICE_HOST` env + ServiceAccount token; `false` otherwise) controls whether the `database` label appears on **all tenant-scoped subsystems** — `nornicdb_http_*`, `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, and `nornicdb_mvcc_*` series. Operators can override with `metrics.tenant_labels_enabled=false` even on K8s. The resolved value is logged at startup.
 
 #### 2.2.1 Reconciled amendments
 
@@ -258,7 +258,7 @@ nornicdb_search_index_size_bytes{database,kind=hnsw|bm25}                     ga
 #### Replication
 
 ```
-nornicdb_replication_role{node_id,role}                                       gauge       (1 for current role, 0 otherwise)
+nornicdb_replication_role{role}                                               gauge       (1 for current role, 0 otherwise; per-replica disambiguation via Prometheus scrape-target `instance` label)
 nornicdb_replication_term                                                     gauge
 nornicdb_replication_commit_index                                             gauge
 nornicdb_replication_apply_index                                              gauge
@@ -312,7 +312,7 @@ Three research-surfaced gap closures were folded into the §2.3 catalog above:
   `OTEL_EXPORTER_OTLP_*` environment variables — *do not* invent
   `NORNICDB_OTLP_*` aliases; defer to OTel conventions so customers can use
   any collector they already run.
-* OTLP endpoint URL must be HTTPS in production mode; plaintext `http://` is rejected unless `NORNICDB_OTLP_INSECURE=true` is set explicitly. YAML symmetry: `tracing.endpoint` field complements the standard `OTEL_EXPORTER_OTLP_*` env vars.
+* OTLP endpoint URL must be HTTPS in production mode; plaintext `http://` is rejected unless the standard `OTEL_EXPORTER_OTLP_INSECURE=true` is set explicitly (per-signal variants `OTEL_EXPORTER_OTLP_TRACES_INSECURE` / `OTEL_EXPORTER_OTLP_METRICS_INSECURE` are also honored). YAML symmetry: `tracing.endpoint` field complements the standard `OTEL_EXPORTER_OTLP_*` env vars.
 * Sampler (v1 default): `TraceIDRatioBased(NORNICDB_TRACE_SAMPLE_RATIO)` standalone, default `0.01` (1%). The default does **not** honor parent context — storage-layer trace-volume control is preserved against upstream 100% samplers. Two opt-in modes are available: `NORNICDB_TRACE_PARENT_MODE=capped` (`parent_capped` — honors upstream `sampled=true` up to `NORNICDB_TRACE_PARENT_MAX_QPS`, default 100/s, then falls back to ratio-based) and `NORNICDB_TRACE_PARENT_MODE=strict` (`parent_strict` — full upstream honor; emits a `WARN` startup log about unbounded volume risk). Tail sampling remains the OTel collector's job, not ours.
 * Resource attributes: `service.name=nornicdb`, `service.version=<buildinfo>`, `service.instance.id` (resolution chain: `cfg.NodeID` → `POD_NAME` env → `os.Hostname()` → `"standalone"`; resolved value logged at startup), `nornicdb.cluster.mode`, `nornicdb.replication.role`.
 * Propagators: W3C `traceparent`/`tracestate` + W3C `baggage` (defaults).
@@ -380,13 +380,13 @@ Four research-surfaced amendments to the tracing pillar:
 
 ### 2.6 Kubernetes service monitor — dedicated unauthenticated port
 
-A new listener `:9090` (configurable via `NORNICDB_TELEMETRY_PORT`) serves:
+A new listener `:9090` (configurable via `NORNICDB_TELEMETRY_LISTEN`) serves:
 
 | Path           | Auth      | Purpose                                                              |
 |----------------|-----------|----------------------------------------------------------------------|
 | `/metrics`     | **None**  | Prometheus pull endpoint. Returns `client_golang` registry.          |
 | `/livez`       | None      | Process liveness — returns 200 once the OS process is past `main.go` startup. |
-| `/readyz`      | None      | Readiness — 200 only when storage is open *and* search warming is complete (mirrors current `startup.phase` in `/status`). |
+| `/readyz`      | None      | Readiness — returns 200 throughout the lifecycle: during warm-up the body is a progress JSON object (`{"phase": "warming", "storage_open": true, "search_warming": "...%"}`), and after warm-up completes the body is a steady-state `{"phase": "ready"}`. The contract is "200-with-body, parse the body for phase". The `startupProbe` (high `failureThreshold`, default 60 ≈ 10 min) enforces the time bound; `readinessProbe` polls `/readyz` and the kubelet treats 200 as routable. Operators who prefer 503-during-warm-up semantics can configure that via `metrics.readyz_503_until_ready=true` (default `false`). |
 | `/version`     | None      | Plain-text `buildinfo.DisplayVersion()` (already public in `/health` parent). |
 
 The data-plane `:7474` keeps the **legacy** `/metrics`, `/health`, `/status`
@@ -409,8 +409,10 @@ The opt-in `:9091` pprof listener binds **`127.0.0.1` by default** (not `:9091` 
   long-lived static tokens (a security regression) or a sidecar
   (operational regression). A dedicated port closes both problems.
 
-A reference Helm `ServiceMonitor` ships in
-`docs/operations/kubernetes-servicemonitor.md`:
+A reference Helm `ServiceMonitor` will ship at
+`docs/operations/kubernetes-servicemonitor.md` as a Phase 9 deliverable
+(K8S-01); the inlined snippet below is the contract that doc will
+encode and ship in the bundled Helm chart:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -424,7 +426,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: nornicdb
   endpoints:
-    - port: telemetry          # 9090, name'd in the Service
+    - port: telemetry          # 9090, named in the Service
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s
@@ -434,7 +436,7 @@ spec:
           targetLabel: cluster
 ```
 
-A NetworkPolicy template in the same doc is **default-on** in the bundled Helm chart, restricting `:9090` ingress to the monitoring namespace; operators opt out via `--set networkPolicy.enabled=false`. A `PodMonitor` template ships alongside `ServiceMonitor`, toggled via `--set podMonitor.enabled=true`. The chart's `startupProbe` (high `failureThreshold`, default 60 ≈ 10 min) is distinct from `readinessProbe`; `/readyz` returns 200 with progress JSON during warm-up rather than 503. Versioned alert rule files (`nornicdb-alerts-v1.yaml`) ship with an upgrade-diff doc; the cache hit-ratio recording rule is part of the same alerts bundle.
+A NetworkPolicy template in the same doc is **default-on** in the bundled Helm chart, restricting `:9090` ingress to the monitoring namespace; operators opt out via `--set networkPolicy.enabled=false`. A `PodMonitor` template ships alongside `ServiceMonitor`, toggled via `--set podMonitor.enabled=true`. The chart's `startupProbe` (high `failureThreshold`, default 60 ≈ 10 min) is distinct from `readinessProbe`; `/readyz`'s 200-with-progress-JSON contract (defined in the table above) lets the kubelet treat the pod as routable as soon as core surfaces are up while still surfacing warm-up state to operators. Versioned alert rule files (`nornicdb-alerts-v1.yaml`) ship with an upgrade-diff doc; the cache hit-ratio recording rule is part of the same alerts bundle.
 
 #### 2.6.1 Reconciled amendments
 
@@ -464,7 +466,7 @@ observability:
     redact_extra: []                    # NORNICDB_LOG_REDACT_EXTRA (csv)
   pprof:
     enabled: false                      # NORNICDB_PPROF_ENABLED
-    listen: ":9091"
+    listen: "127.0.0.1:9091"            # loopback by default; override only with explicit NetworkPolicy
 ```
 
 ### 2.8 Implementation map
