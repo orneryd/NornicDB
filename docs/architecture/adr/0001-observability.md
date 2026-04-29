@@ -152,6 +152,10 @@ canonical API, *not* the OTel meter API. Reasoning:
   `[0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` seconds.
   Storage/byte histograms use the standard `prometheus.ExponentialBuckets(1024, 4, 10)`.
 
+**Two-path egress.** `prometheus/client_golang` is canonical for the `:9090/metrics` text exposition; an OTel meter reader runs in parallel against the same numbers via the `otelprom` bridge for OTLP push customers. The bridge is configured with `WithoutUnits()` to suppress its auto-suffix translation (`_milliseconds_total`, `_bytes`), and bridge-emitted metrics live under the `nornicdb_otel_*` namespace to prevent silent collision with hand-instrumented `nornicdb_*` series. Resource attributes do not become labels through the bridge — they appear only as the `target_info` metric, which the bundled `ServiceMonitor` drops via `metricRelabelings`.
+
+**Tenant label kill switch.** A `metrics.tenant_labels_enabled` config flag (default `true` on K8s detect via `KUBERNETES_SERVICE_HOST` env + ServiceAccount token; `false` otherwise) controls whether the `database` label appears on `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series. Operators can override with `metrics.tenant_labels_enabled=false` even on K8s. The resolved value is logged at startup.
+
 #### 2.2.1 Reconciled amendments
 
 The following research-surfaced amendments were folded into the §2.2 prose above:
@@ -263,6 +267,7 @@ nornicdb_replication_lag_entries{peer}                                        ga
 nornicdb_replication_apply_duration_seconds                                   histogram
 nornicdb_replication_rtt_seconds{peer}                                        histogram
 nornicdb_replication_leader_changes_total                                     counter
+nornicdb_replication_last_contact_seconds{peer}                              gauge
 ```
 
 #### Cache and runtime
@@ -276,6 +281,16 @@ nornicdb_cache_evictions_total{cache,reason}                                  co
 nornicdb_process_uptime_seconds                                               gauge
 nornicdb_build_info{version,commit,go_version,backend}                        gauge       (always 1)
 ```
+
+*Cache hit ratio is exposed as a Prometheus recording rule (`nornicdb_cache_hit_ratio{cache}`) shipped in Phase 10, computed from `cache_hits_total` and `cache_misses_total`. It is not a raw metric.*
+
+#### Auth
+
+```
+nornicdb_auth_attempts_total{result,protocol}                                 counter
+```
+
+`result` is bounded (`success|failure|error`); `protocol` is bounded (`http|bolt`).
 
 The Go runtime collector (`collectors.NewGoCollector`) and process collector
 (`collectors.NewProcessCollector`) are registered alongside the above and
@@ -291,17 +306,15 @@ Three research-surfaced gap closures were folded into the §2.3 catalog above:
 
 ### 2.4 Tracing — OpenTelemetry SDK with OTLP
 
-* Tracer provider: `go.opentelemetry.io/otel/sdk/trace` with a
-  `BatchSpanProcessor`.
+* Tracer provider: `go.opentelemetry.io/otel/sdk/trace` with a `BatchSpanProcessor` configured `MaxQueueSize=8192`, `MaxExportBatchSize=1024`, `BatchTimeout=2s` (production-correct for bursty DB workloads). The BSP exposes self-instrumentation: `nornicdb_otel_bsp_queue_depth` (gauge) and `nornicdb_otel_bsp_dropped_spans_total` (counter).
 * Exporter: OTLP/gRPC (`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc`)
   with HTTP fallback. Endpoint, headers, and TLS controlled by the standard
   `OTEL_EXPORTER_OTLP_*` environment variables — *do not* invent
   `NORNICDB_OTLP_*` aliases; defer to OTel conventions so customers can use
   any collector they already run.
-* Sampler: `ParentBased(TraceIDRatioBased(NORNICDB_TRACE_SAMPLE_RATIO))` with
-  default `0.01` (1%). Tail sampling is the OTel collector's job, not ours.
-* Resource attributes: `service.name=nornicdb`, `service.version=<buildinfo>`,
-  `service.instance.id=<node_id>`, `nornicdb.cluster.mode`, `nornicdb.replication.role`.
+* OTLP endpoint URL must be HTTPS in production mode; plaintext `http://` is rejected unless `NORNICDB_OTLP_INSECURE=true` is set explicitly. YAML symmetry: `tracing.endpoint` field complements the standard `OTEL_EXPORTER_OTLP_*` env vars.
+* Sampler (v1 default): `TraceIDRatioBased(NORNICDB_TRACE_SAMPLE_RATIO)` standalone, default `0.01` (1%). The default does **not** honor parent context — storage-layer trace-volume control is preserved against upstream 100% samplers. Two opt-in modes are available: `NORNICDB_TRACE_PARENT_MODE=capped` (`parent_capped` — honors upstream `sampled=true` up to `NORNICDB_TRACE_PARENT_MAX_QPS`, default 100/s, then falls back to ratio-based) and `NORNICDB_TRACE_PARENT_MODE=strict` (`parent_strict` — full upstream honor; emits a `WARN` startup log about unbounded volume risk). Tail sampling remains the OTel collector's job, not ours.
+* Resource attributes: `service.name=nornicdb`, `service.version=<buildinfo>`, `service.instance.id` (resolution chain: `cfg.NodeID` → `POD_NAME` env → `os.Hostname()` → `"standalone"`; resolved value logged at startup), `nornicdb.cluster.mode`, `nornicdb.replication.role`.
 * Propagators: W3C `traceparent`/`tracestate` + W3C `baggage` (defaults).
 
 **Spans NornicDB will produce by default:**
@@ -320,16 +333,11 @@ Three research-surfaced gap closures were folded into the §2.3 catalog above:
 | `nornicdb.replication.append`      | leader replication path             | `nornicdb.replication.peer`, `nornicdb.replication.entries`, `nornicdb.replication.bytes`     |
 | `nornicdb.replication.apply`       | follower apply loop                 | `nornicdb.replication.term`, `nornicdb.replication.index`                                     |
 
-**Bolt + replication context propagation.** The existing replication codec
-(`pkg/replication/codec.go`) gains an optional `traceparent` field; a new
-Bolt extra `nornicdb.traceparent` is accepted on `BEGIN`/`RUN` so that
-client-generated spans connect to server spans. Both are
-backwards-compatible: missing context simply starts a new trace.
+**Bolt + replication context propagation.** The existing replication codec (`pkg/replication/codec.go`) gains a `codec_version` field FIRST (a separate PR ahead of any tracing work) so that follower frame parsing is safe in both rolling-upgrade directions; the optional `traceparent` field is a SECOND, separate PR that depends on the codec-version PR having merged. A new Bolt extra `nornicdb.traceparent` is accepted on `BEGIN`/`RUN` so that client-generated spans connect to server spans. Both are backwards-compatible: missing context simply starts a new trace, never an error. Per-driver Bolt conformance (KD-08) is documented in Phase 8 (DOC-07); v1 minimum is `neo4j-go-driver/v5`.
 
-**Exemplars.** Histograms attach the active span's trace ID as a Prometheus
-exemplar via `client_golang`'s `ExemplarObserver` API. This is the single
-biggest ergonomics win in modern observability — a slow latency bucket in
-Grafana becomes a one-click jump to the trace in Tempo/Jaeger/Honeycomb.
+**Exemplars.** Histograms attach the active span's trace ID as a Prometheus exemplar via `client_golang`'s `ExemplarObserver` API; emission is unconditional (an `IsValid()` guard is applied before observe). End-to-end correlation requires customer-side configuration: Prometheus `--enable-feature=exemplar-storage`, OpenMetrics negotiation (`Accept: application/openmetrics-text`), and a Tempo (or equivalent) datasource. The CI integration test against `kube-prometheus-stack` + Tempo (Phase 10) is the proof that the full chain works; the ADR's "one-click trace correlation" claim is gated on that test, not on the emission itself.
+
+**Sample-rate mismatch detector.** When peer replicas report different sample ratios (e.g., during a rolling config rollout), `nornicdb_otel_sample_rate_mismatch_total` increments so operators can detect the mismatch without reading SDK source. AsyncEngine flush goroutine spans use `WithLinks` (carrying `trace.SpanContext` from the originating request) rather than parent-child, so embedding-queue handoffs do not appear as orphaned roots.
 
 #### 2.4.1 Reconciled amendments
 
@@ -387,6 +395,8 @@ for one full release cycle and emits a deprecation header
 migrate. After the deprecation window the data-plane `/metrics` is removed
 and `/health` becomes a thin alias for `/livez`.
 
+The opt-in `:9091` pprof listener binds **`127.0.0.1` by default** (not `:9091` interpreted as `0.0.0.0:9091`); binding all interfaces would make pprof a credential-exfiltration surface. Operators who need remote pprof access must explicitly configure a non-loopback listen address and a corresponding NetworkPolicy.
+
 **Why a separate port and not just "remove auth from `/metrics`":**
 
 * Metric labels include `database` (tenant name). Exposing
@@ -424,8 +434,7 @@ spec:
           targetLabel: cluster
 ```
 
-Network policy template in the same doc restricts `:9090` ingress to the
-monitoring namespace.
+A NetworkPolicy template in the same doc is **default-on** in the bundled Helm chart, restricting `:9090` ingress to the monitoring namespace; operators opt out via `--set networkPolicy.enabled=false`. A `PodMonitor` template ships alongside `ServiceMonitor`, toggled via `--set podMonitor.enabled=true`. The chart's `startupProbe` (high `failureThreshold`, default 60 ≈ 10 min) is distinct from `readinessProbe`; `/readyz` returns 200 with progress JSON during warm-up rather than 503. Versioned alert rule files (`nornicdb-alerts-v1.yaml`) ship with an upgrade-diff doc; the cache hit-ratio recording rule is part of the same alerts bundle.
 
 #### 2.6.1 Reconciled amendments
 
