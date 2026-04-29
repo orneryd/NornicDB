@@ -622,16 +622,45 @@ pillar where the resolution now lives.
 * Prometheus instrumentation best practices
   (https://prometheus.io/docs/practices/instrumentation/)
 
+### 4.1 Phase exit references
+
+Each row below is filled in by the verifier of the corresponding phase as
+that phase merges. The Phase 0 row is filled in at sign-off below (§5),
+establishing the format that future phases append to. This table is the
+GOV-03 audit trail.
+
+| Phase    | Title                                              | PR | Merged | Verifier |
+|----------|----------------------------------------------------|----|--------|----------|
+| Phase 0  | ADR Governance & Sign-off                          |    |        |          |
+| Phase 1  | Observability Foundation Skeleton                  |    |        |          |
+| Phase 2  | Structured Logging Migration                       |    |        |          |
+| Phase 3  | Metrics Infrastructure & Discipline                |    |        |          |
+| Phase 4  | Subsystem Metric Catalog                           |    |        |          |
+| Phase 5  | Legacy Translation Layer & Tenant Flag             |    |        |          |
+| Phase 6  | Tracing SDK & Core Spans                           |    |        |          |
+| Phase 7  | Replication Codec Versioning                       |    |        |          |
+| Phase 8  | Bolt, Replication & Async Tracing + PII Defense    |    |        |          |
+| Phase 9  | Kubernetes Helm Chart Integration                  |    |        |          |
+| Phase 10 | Dashboards, Alerts & CI Integration Test           |    |        |          |
+| Phase 11 | Metrics Reference Doc Generator                    |    |        |          |
+| Phase 12 | Performance Gates & Hardening                      |    |        |          |
+
 ---
 
 ## 5. Decision sign-off
 
-| Role             | Reviewer      | Status   |
-|------------------|---------------|----------|
-| Architecture     |               | pending  |
-| SRE / Ops        |               | pending  |
-| Security         |               | pending  |
-| Public API owner |               | pending  |
+Sign-off coordination: a single PR (the Phase 0 ADR-revision PR itself)
+requires approving review from each of the four roles below. Reviewer
+name, approval date, and the merged PR URL are filled in here as approvals
+land. Once all four cells are populated, the metadata `Status` field at
+the top of this file is flipped from `**Proposed**` to `**Accepted**`,
+and §4.1 row "Phase 0" is filled in with the same PR URL — making this
+sign-off table the first reference of the format §4.1 future phases
+follow.
 
-When approved, set `Status: Accepted` at the top of this file and link the
-implementation PRs in section 4.
+| Role             | Reviewer               | Date | PR |
+|------------------|------------------------|------|----|
+| Architecture     | <TBD reviewer name>    |      |    |
+| SRE / Ops        | <TBD reviewer name>    |      |    |
+| Security         | <TBD reviewer name>    |      |    |
+| Public API owner | <TBD reviewer name>    |      |    |
