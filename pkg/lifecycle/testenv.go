@@ -62,11 +62,16 @@ func (f *FakeComponent) Name() string { return f.name }
 
 // Start records the invocation timestamp + count, then either calls the
 // caller-supplied OnStart override or blocks on ctx.
+//
+// Order matters: startedAt + startSeq are stamped BEFORE startCount is
+// incremented, so any reader polling Eventually(StartCount()==1) and then
+// reading StartedAtNanos()/startSeq is guaranteed to observe the stamped
+// values. Inverting the order causes a 40%-repro race under -count=10.
 func (f *FakeComponent) Start(ctx context.Context) error {
-	f.startCount.Add(1)
 	if f.startedAt.CompareAndSwap(0, time.Now().UnixNano()) {
 		f.startSeq.Store(nextSeq())
 	}
+	f.startCount.Add(1)
 	if f.OnStart != nil {
 		return f.OnStart(ctx)
 	}
@@ -76,11 +81,14 @@ func (f *FakeComponent) Start(ctx context.Context) error {
 
 // Shutdown records the invocation timestamp + count, then either calls
 // the caller-supplied OnShutdown override or returns nil.
+//
+// Order matters: shutdownAt + shutdownSeq are stamped BEFORE shutdownCount
+// is incremented (same reasoning as Start above).
 func (f *FakeComponent) Shutdown(ctx context.Context) error {
-	f.shutdownCount.Add(1)
 	if f.shutdownAt.CompareAndSwap(0, time.Now().UnixNano()) {
 		f.shutdownSeq.Store(nextSeq())
 	}
+	f.shutdownCount.Add(1)
 	if f.OnShutdown != nil {
 		return f.OnShutdown(ctx)
 	}
