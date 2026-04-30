@@ -4,17 +4,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,7 +26,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/decay"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -625,12 +626,83 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Wire per-DB read/write for mutation checks (Phase 4)
 	boltServer.SetResolvedAccessResolver(httpServer.GetResolvedAccessForRoles)
 
-	// Start Bolt server in goroutine
-	go func() {
-		if err := boltServer.ListenAndServe(); err != nil {
-			fmt.Printf("Bolt server error: %v\n", err)
+	// Phase 1 OBS-07/OBS-08: lifecycle.Run is the canonical supervisor.
+	// The previous channel-based pattern (signal.Notify + sequential
+	// shutdown with workers stopped FIRST) is replaced because it
+	// violated OBS-08's mandated drain order. lifecycle.Run encodes the
+	// reverse-order drain as a function of the registration order below.
+	//
+	// 1. Build the observability provider (OTel SDK + Prometheus
+	//    registry; OBS-11 noop fallback if OTLP exporter init fails —
+	//    NEVER fatal).
+	obs, obsErr := observability.New(cmd.Context(), cfg.Observability, observability.ServiceInfo{
+		Name:    "nornicdb",
+		Version: buildinfo.Version(),
+		NodeID:  clusterNodeID, // empty falls through to OBS-10: POD_NAME → hostname → "standalone".
+	})
+	if obsErr != nil {
+		return fmt.Errorf("observability init: %w", obsErr)
+	}
+	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
+
+	// 2. Build the health registry.
+	health := observability.NewHealth()
+
+	// 3. Build the telemetry listener (Component) — opens :9090 in
+	//    constructor so EADDRINUSE surfaces synchronously.
+	telemetry, telemetryErr := observability.NewTelemetryListener(obs, health)
+	if telemetryErr != nil {
+		return fmt.Errorf("telemetry listener: %w", telemetryErr)
+	}
+
+	// 4. Build the optional pprof listener (Component, may be nil when
+	//    cfg.Observability.Pprof.Enabled is false — OBS-06 / Phase-success-2).
+	pprof, pprofErr := observability.NewPprofListener(cfg.Observability.Pprof)
+	if pprofErr != nil {
+		return fmt.Errorf("pprof listener: %w", pprofErr)
+	}
+
+	// 5. Register health checks AFTER storage/search are open (D-03c).
+	//    db.HealthCheck is the W-4 fix Pitfall 11 mitigation: it probes
+	//    db.storage.NodeCount() so a closed engine returns
+	//    storage.ErrStorageClosed and /readyz flips to 503.
+	health.Register("storage", db.HealthCheck)
+
+	// search_warm is informational (Required: false) — operators see it
+	// in /readyz JSON during index rebuild but it does NOT gate readiness.
+	// We probe lazily on every check (rather than capturing a service at
+	// registration time) because GetOrCreateSearchService may not yet
+	// have an instance for the default database when /readyz is first
+	// scraped during cold start.
+	defaultDBName := defaultBoltDatabaseName(db)
+	health.Register("search_warm", func(ctx context.Context) error {
+		searchSvc, sErr := db.GetOrCreateSearchService(defaultDBName, db.GetStorage())
+		if sErr != nil || searchSvc == nil {
+			return errors.New("search service not yet available")
 		}
-	}()
+		if !searchSvc.IsReady() {
+			return errors.New("search indexes not yet warm")
+		}
+		return nil
+	}, observability.CheckOpts{Required: false})
+
+	// 6. Build adapter components for HTTP, Bolt, and embed-workers.
+	httpC := &httpAdapter{srv: httpServer}
+	boltC := &boltAdapter{srv: boltServer}
+	workersC := &workersAdapter{db: db}
+
+	// 7. D-04a registration order:
+	//    Forward = startup; reverse = drain (OBS-08 encoded directly).
+	//    telemetry FIRST (drains LAST so kubelet keeps scraping during drain)
+	//    → optional pprof
+	//    → workers
+	//    → bolt
+	//    → http LAST (drains FIRST — stop accepting new requests immediately).
+	components := []lifecycle.Component{telemetry}
+	if pprof != nil {
+		components = append(components, pprof)
+	}
+	components = append(components, workersC, boltC, httpC)
 
 	fmt.Println()
 	fmt.Println("✅ NornicDB is ready!")
@@ -648,6 +720,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  • Cypher:       POST http://%s:%d/db/nornicdb/tx/commit\n", displayAddr, httpPort)
 	if mcpEnabled {
 		fmt.Printf("  • MCP:          http://%s:%d/mcp\n", displayAddr, httpPort)
+	}
+	fmt.Printf("  • Telemetry:    http://%s%s/metrics\n", displayAddr, cfg.Observability.Metrics.Listen)
+	if pprof != nil {
+		fmt.Printf("  • pprof:        http://%s/debug/pprof/\n", cfg.Observability.Pprof.Listen)
 	}
 	fmt.Println()
 	if authEnabled {
@@ -670,25 +746,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
 
-	// Block until shutdown signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	fmt.Println("\n🛑 Shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Stop embed workers first so they don't keep running during server shutdown.
-	db.StopEmbedQueue()
-
-	// Stop Bolt server
-	if err := boltServer.Close(); err != nil {
-		fmt.Printf("Warning: error stopping Bolt server: %v\n", err)
-	}
-
-	if err := httpServer.Stop(ctx); err != nil {
-		return fmt.Errorf("stopping HTTP server: %w", err)
+	// 8. Run the supervisor. lifecycle.Run installs a SIGINT/SIGTERM
+	//    NotifyContext, runs every Component.Start in an errgroup, and
+	//    on cancellation drains in REVERSE order on a fresh
+	//    context.WithTimeout(context.Background(), 30s) (OBS-09).
+	if runErr := lifecycle.Run(cmd.Context(), components...); runErr != nil {
+		return fmt.Errorf("supervised run: %w", runErr)
 	}
 
 	fmt.Println("✅ Server stopped gracefully")
