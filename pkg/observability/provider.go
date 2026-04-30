@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,6 +31,15 @@ type Provider struct {
 	instanceIDSrc  string
 	metricsEnabled bool
 	cfg            ObservabilityConfig
+
+	// shutdownOnce makes Shutdown idempotent: Plan-03's telemetryListener
+	// calls Provider.Shutdown as part of its OQ4 ordering, AND test fixtures
+	// (TestEnv) call it from t.Cleanup. The OTel SDK returns "reader is
+	// shutdown" on a second Shutdown call to MeterProvider, which is
+	// surprising for a Provider whose docstring promises idempotency. The
+	// sync.Once collapses the second-call path to a no-op success.
+	shutdownOnce sync.Once
+	shutdownErr  error
 }
 
 // New constructs a *Provider following the OBS-03 init order:
@@ -172,21 +182,24 @@ func (p *Provider) Config() ObservabilityConfig { return p.cfg }
 // Called by the telemetry listener's Shutdown in Plan 03 (per Open Question 4
 // resolution — the lifecycle.Component owns the Provider's flush budget).
 func (p *Provider) Shutdown(ctx context.Context) error {
-	var errs error
-	// noop.NewTracerProvider() returns a trace.TracerProvider interface that
-	// has no Shutdown method; only the SDK provider does. Type-assert to
-	// handle both paths cleanly.
-	if tp, ok := p.tracerProvider.(interface {
-		Shutdown(context.Context) error
-	}); ok {
-		if err := tp.Shutdown(ctx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("tracer provider shutdown: %w", err))
+	p.shutdownOnce.Do(func() {
+		var errs error
+		// noop.NewTracerProvider() returns a trace.TracerProvider interface that
+		// has no Shutdown method; only the SDK provider does. Type-assert to
+		// handle both paths cleanly.
+		if tp, ok := p.tracerProvider.(interface {
+			Shutdown(context.Context) error
+		}); ok {
+			if err := tp.Shutdown(ctx); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("tracer provider shutdown: %w", err))
+			}
 		}
-	}
-	if p.meterProvider != nil {
-		if err := p.meterProvider.Shutdown(ctx); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("meter provider shutdown: %w", err))
+		if p.meterProvider != nil {
+			if err := p.meterProvider.Shutdown(ctx); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("meter provider shutdown: %w", err))
+			}
 		}
-	}
-	return errs
+		p.shutdownErr = errs
+	})
+	return p.shutdownErr
 }

@@ -158,6 +158,20 @@ func TestTelemetryListener_Endpoints(t *testing.T) {
 	})
 }
 
+// TestTelemetryListener_NameAndConstructorErrors covers the small edges:
+// Name() string contract and the two nil-input rejections.
+func TestTelemetryListener_NameAndConstructorErrors(t *testing.T) {
+	env := NewTestEnv(t)
+	l, _ := newTestListener(t, env)
+	t.Cleanup(func() { _ = l.Shutdown(context.Background()) })
+	require.Equal(t, "telemetry", l.Name())
+
+	_, err := NewTelemetryListener(nil, env.Health)
+	require.Error(t, err)
+	_, err = NewTelemetryListener(env.Provider, nil)
+	require.Error(t, err)
+}
+
 // TestTelemetryListener_MetricsDisabled — when Metrics.Enabled is false, the
 // /metrics handler is not registered and returns 404. /livez/readyz/version
 // continue to function.
