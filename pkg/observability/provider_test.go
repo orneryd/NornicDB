@@ -1,0 +1,107 @@
+package observability
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestProvider_InitOrder covers OBS-03: init order logger → resource →
+// providers → registries. Verified by side-effect on the resulting Provider.
+func TestProvider_InitOrder(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: true},
+		Tracing: TracingConfig{Enabled: false},
+	}
+	info := ServiceInfo{Name: "nornicdb", Version: "test", NodeID: "node-init-order"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	prov, err := New(ctx, cfg, info)
+	require.NoError(t, err)
+	require.NotNil(t, prov)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	// Resource resolved BEFORE providers built → InstanceID non-empty.
+	assert.NotEmpty(t, prov.InstanceID(), "instanceID must be resolved before providers built")
+	// Registry built (metrics enabled) → non-nil.
+	assert.NotNil(t, prov.Registry(), "registry must be built when metrics enabled")
+	// TracerProvider built last → non-nil.
+	assert.NotNil(t, prov.TracerProvider(), "tracer provider must be non-nil")
+}
+
+// TestProvider_MetricsDisabled covers OBS-04: metrics.enabled=false → no
+// metrics surface (Plan 03 listener will skip /metrics handler registration).
+func TestProvider_MetricsDisabled(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: false},
+		Tracing: TracingConfig{Enabled: false},
+	}
+	info := ServiceInfo{Name: "nornicdb", Version: "test"}
+
+	prov, err := New(context.Background(), cfg, info)
+	require.NoError(t, err)
+	require.NotNil(t, prov)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	assert.False(t, prov.MetricsEnabled())
+	assert.Nil(t, prov.Registry(), "registry must be nil when metrics disabled (OBS-04)")
+}
+
+// TestProvider_OTLPFailureUsesNoop is the OBS-11 keystone test:
+// bad endpoint never crashes startup AND never hangs waiting for collector.
+func TestProvider_OTLPFailureUsesNoop(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Tracing: TracingConfig{
+			Enabled:  true,
+			Endpoint: "127.0.0.1:1", // port 1: nothing listens here
+			Protocol: "grpc",
+			Insecure: true,
+			Timeout:  200 * time.Millisecond,
+		},
+		Metrics: MetricsConfig{Enabled: true},
+	}
+	info := ServiceInfo{Name: "nornicdb", Version: "test", NodeID: "test-node"}
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	prov, err := New(ctx, cfg, info)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "OBS-11: New must not propagate OTLP init failure")
+	require.NotNil(t, prov)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	require.Less(t, elapsed, time.Second, "New must not block on OTLP dial")
+
+	tp := prov.TracerProvider()
+	require.NotNil(t, tp)
+	_, span := tp.Tracer("test").Start(context.Background(), "x")
+	require.False(t, span.IsRecording(), "OBS-11: noop provider must produce non-recording spans")
+	span.End()
+}
+
+// TestProvider_TracingDisabled — when cfg.Tracing.Enabled=false, the provider
+// should still install a noop tracer (no SDK provider, no exporter init).
+func TestProvider_TracingDisabled(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: true},
+		Tracing: TracingConfig{Enabled: false},
+	}
+	info := ServiceInfo{Name: "nornicdb", Version: "test"}
+
+	prov, err := New(context.Background(), cfg, info)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	tp := prov.TracerProvider()
+	_, span := tp.Tracer("x").Start(context.Background(), "y")
+	assert.False(t, span.IsRecording())
+	span.End()
+}
