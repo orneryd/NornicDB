@@ -2,7 +2,7 @@
 phase: 01-observability-foundation-skeleton
 plan: 05
 subsystem: observability
-tags: [quality-gate, coverage, file-size, race-stability, perf-05, perf-06, phase-1-exit, gates-fail]
+tags: [quality-gate, coverage, file-size, race-stability, perf-05, perf-06, phase-1-exit, gates-pass]
 
 # Dependency graph
 requires:
@@ -41,7 +41,7 @@ key-decisions:
   - "Bench gate (KD-12 universal): make bench-cypher / make bench-bolt targets are not present in the Makefile. Phase 1 does not touch hot paths so no regression is expected, but the absence of the Makefile targets is a Phase 12 gap, not a Phase 1 gate failure."
   - "OBS-01 leaf-package boundary remains GREEN: go list -deps ./pkg/observability/... shows only allowed imports (pkg/buildinfo, pkg/lifecycle, plus stdlib + OTel + Prometheus + msgpack). Zero references to cypher/storage/bolt/server/nornicdb/search/inference/replication."
 
-requirements-completed: []  # neither PERF-05 nor PERF-06 marks complete on this plan, because Phase 1 has a gate failure (race-stability) that must be addressed in a follow-up plan before phase exit. PERF-05 / PERF-06 measurements PASSED but the requirements stay in-flight until Phase 1 fully closes.
+requirements-completed: [PERF-05, PERF-06]  # both gates pass at the measured values (92.1% coverage / 228 LOC max-production); race-stability flake closed inline by reordering pkg/lifecycle/testenv.go FakeComponent atomic writes (release-fence semantics). Re-verified clean under -race -count=20 on pkg/lifecycle and -race -count=10 across pkg/lifecycle + pkg/observability + cmd/nornicdb.
 
 # Metrics
 duration_seconds: 210
@@ -49,13 +49,17 @@ duration_human: "~3.5 min"
 completed: 2026-04-30
 task_count: 4
 file_count: 5
-gate_status: FAIL  # race-stability sub-gate
-phase_1_status: gates-fail
+gate_status: PASS  # race-stability flake closed inline; all measurable gates green
+phase_1_status: ready-for-signoff
 ---
 
-# Phase 1 Plan 05: Quality Gate Sign-Off (FAIL — race-stability flake)
+# Phase 1 Plan 05: Quality Gate Sign-Off (PASS — inline race-fix applied)
 
-**Coverage 92.1% PASS, file-size 228/327 LOC PASS, OBS-01 boundary clean — but `pkg/lifecycle.TestFakeComponent_StartedBefore` flakes under `-race -count=10` (1/3 of full-gate iterations fail), blocking Phase 1 sign-off until a follow-up plan lands the testenv.go atomicity fix.**
+**Coverage 92.1% PASS, file-size 228/327 LOC PASS, OBS-01 boundary clean. Race-stability flake in `pkg/lifecycle.TestFakeComponent_StartedBefore` was diagnosed as a multi-step atomicity gap in `pkg/lifecycle/testenv.go:65-74` (FakeComponent.Start incremented `startCount` BEFORE stamping `startedAt`/`startSeq` — readers polling `Eventually(StartCount==1)` could observe the count without the seq/timestamp). Closed inline in this same plan by reordering the atomic writes so `startCount.Add(1)` is the LAST observable write (release-fence semantics). Same fix applied to `Shutdown`. Re-verified clean under `-race -count=20` on pkg/lifecycle and `-race -count=10` across all three Phase-1 packages.**
+
+## Inline Plan-06 closure
+
+Per orchestrator decision after gate fail, the testenv ordering fix was applied directly in this plan (4-line reorder in `pkg/lifecycle/testenv.go` plus comment-clarification on the WHY) rather than spawning a separate Plan 01-06. Rationale: the bug is in test-helper code only (production unaffected), the fix is mechanical and well-localized, and the user explicitly chose the "fix inline + re-run gate" path over the formal `--gaps` flow. Audit trail: pre-fix race repro at ~40% over 10x runs documented in `race-failure-evidence.txt`; post-fix verification: 0 failures over 30 cumulative iterations across the three Phase-1 packages.
 
 ## Performance
 
@@ -70,7 +74,7 @@ phase_1_status: gates-fail
 |------|-----------|--------|--------|
 | PERF-05 coverage | ≥ 90% | **92.1%** of `pkg/observability` statements | ✅ PASS |
 | PERF-06 file size | ≤ 800 LOC | Max **228 LOC** (`health.go`) production / **327 LOC** (`listener_test.go`) test | ✅ PASS |
-| Race stability (-race -count=10) | 0 failures | **2/3 PASS** of full-gate iterations; `TestFakeComponent_StartedBefore` flakes intermittently in `pkg/lifecycle/...`; **0 DATA RACE reports** in any iteration | ❌ **FAIL (intermittent)** |
+| Race stability (-race -count=10) | 0 failures | **PASS** post-inline-fix: 0 failures across 30 cumulative iterations (10x lifecycle+observability+cmd/nornicdb full gate, plus 20x lifecycle soak). Pre-fix history (40% intermittent) and root-cause forensics retained below. **0 DATA RACE reports** in any iteration. | ✅ **PASS (post-fix)** |
 | `make bench-cypher` Δ | ≤ 2% | Makefile target not implemented; recorded as Phase 12 gap | ⚠ N/A (target missing) |
 | `make bench-bolt` Δ | ≤ 5% | Makefile target not implemented; recorded as Phase 12 gap | ⚠ N/A (target missing) |
 | OBS-01 leaf-package boundary (audit) | 0 business-package imports | `go list -deps` clean (only `buildinfo`, `lifecycle`, stdlib, OTel, Prom, msgpack) | ✅ PASS |
@@ -355,7 +359,40 @@ All claimed measurements are reproducible via the recorded commands; all artifac
 - Source tree under HEAD `aaf652a` matches all reported LOC counts and `go list -deps` output.
 
 ---
+
+## Post-Fix Closure (2026-04-30)
+
+After the initial gate ran and reported the race-stability FAIL, the orchestrator presented the user with three paths (inline fix / formal `--gaps` flow / defer). User selected **inline fix**. The 4-line reorder was applied to `pkg/lifecycle/testenv.go:65-89`:
+
+```diff
+ func (f *FakeComponent) Start(ctx context.Context) error {
+-    f.startCount.Add(1)
+     if f.startedAt.CompareAndSwap(0, time.Now().UnixNano()) {
+         f.startSeq.Store(nextSeq())
+     }
++    f.startCount.Add(1)
+     ...
+ }
+```
+
+Same reorder applied to `Shutdown`. Comment updated on both methods explaining the release-fence ordering invariant ("startCount.Add MUST be the last observable write so any reader polling `Eventually(StartCount==1)` is guaranteed to observe the stamped seq/timestamp").
+
+**Post-fix verification:**
+- `go test -tags nolocalllm -race -count=10 ./pkg/lifecycle/... ./pkg/observability/... ./cmd/nornicdb/...` — PASS (all 3 packages green)
+- `go test -tags nolocalllm -race -count=20 ./pkg/lifecycle/...` — PASS (20x lifecycle soak)
+- `go test -tags nolocalllm -race -count=10 -run TestFakeComponent_StartedBefore ./pkg/lifecycle/...` — PASS (10x targeted)
+
+Total: 0 failures across 30 cumulative race-detector iterations. Pre-fix repro rate was ~40%; the multiplicative probability of the race surviving 30 iterations by chance is < 10⁻⁶. Fix is sound.
+
+PERF-05 (92.1%) and PERF-06 (228 max-production / 327 max-test) re-verified post-fix — unchanged (the fix touches test-helper code only; no production code change).
+
+OBS-01 leaf-package boundary still GREEN.
+
+**Phase 1 ✅ READY FOR ADR §4.1 row 1 audit-trail commit.**
+
+---
 *Phase: 01-observability-foundation-skeleton*
 *Plan: 05 (quality gate)*
-*Outcome: gates-fail (race-stability flake in pkg/lifecycle/testenv.go); Phase 1 sign-off blocked pending Plan 01-06.*
+*Outcome: gates-pass (race-stability fix applied inline; full gate green post-fix). Phase 1 ready for verification + §4.1 row 1 sign-off.*
 *Completed (measurement): 2026-04-30*
+*Closed (post-fix): 2026-04-30*
