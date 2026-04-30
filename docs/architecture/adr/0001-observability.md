@@ -353,8 +353,16 @@ Four research-surfaced amendments to the tracing pillar:
 * Migrate the codebase from `log.Printf`/`fmt.Println` to `log/slog`. The
   global logger is constructed in `cmd/nornicdb/main.go` from
   `LoggingConfig` and stored in `pkg/observability.Logger()`.
-* Default handler: `slog.NewJSONHandler` when `Logging.Format=json` (which
-  is now the default for containers); `slog.NewTextHandler` otherwise.
+* Public interface: stdlib `log/slog` (`slog.Logger`, `slog.Handler`). All
+  call sites code against the slog interface so the underlying handler is
+  swappable.
+* Handler implementation: `slog.NewJSONHandler` when `Logging.Format=json`
+  (the default for containers); `slog.NewTextHandler` otherwise. Phase 2
+  benchmarks the stdlib handler against NornicDB's hot paths; if it doesn't
+  meet the per-record allocation budget, a custom slog-compatible
+  `Handler` is fair game (we're not married to the stdlib implementation,
+  only to the interface contract). The decision is recorded in the Phase 2
+  SUMMARY.md with benchmark numbers.
 * **Mandatory fields on every record**:
   - `time` (RFC3339Nano, automatic)
   - `level` (`DEBUG|INFO|WARN|ERROR`)
@@ -380,7 +388,7 @@ Four research-surfaced amendments to the tracing pillar:
 
 ### 2.6 Kubernetes service monitor — dedicated unauthenticated port
 
-A new listener `:9090` (configurable via `NORNICDB_TELEMETRY_LISTEN`) serves:
+A new listener on port `9090` (configurable via `NORNICDB_TELEMETRY_PORT`, value is the port number with no colon prefix; bind address is `:` so the listener accepts on all interfaces and the NetworkPolicy below restricts ingress) serves:
 
 | Path           | Auth      | Purpose                                                              |
 |----------------|-----------|----------------------------------------------------------------------|
@@ -390,10 +398,13 @@ A new listener `:9090` (configurable via `NORNICDB_TELEMETRY_LISTEN`) serves:
 | `/version`     | None      | Plain-text `buildinfo.DisplayVersion()` (already public in `/health` parent). |
 
 The data-plane `:7474` keeps the **legacy** `/metrics`, `/health`, `/status`
-for one full release cycle and emits a deprecation header
+endpoints intact in M1 and emits deprecation headers
 (`Deprecation: true`, `Sunset: <date>`) to give existing scrapers time to
-migrate. After the deprecation window the data-plane `/metrics` is removed
-and `/health` becomes a thin alias for `/livez`.
+migrate. **M1 ships only the deprecation markers — no removal logic.** The
+actual removal (data-plane `/metrics` going away, `/health` becoming a thin
+alias for `/livez`) is scheduled for v1.1.0 in a separate follow-up PR
+coordinated with [issue #117](https://github.com/orneryd/NornicDB/issues/117);
+that work is explicitly out of scope for ADR-0001.
 
 The opt-in `:9091` pprof listener binds **`127.0.0.1` by default** (not `:9091` interpreted as `0.0.0.0:9091`); binding all interfaces would make pprof a credential-exfiltration surface. Operators who need remote pprof access must explicitly configure a non-loopback listen address and a corresponding NetworkPolicy.
 
@@ -453,8 +464,10 @@ environment so containers stay declarative:
 observability:
   metrics:
     enabled: true                       # NORNICDB_METRICS_ENABLED
-    listen: ":9090"                     # NORNICDB_TELEMETRY_LISTEN
-    legacy_data_plane_endpoint: true    # NORNICDB_LEGACY_METRICS  (deprecated)
+    port: 9090                          # NORNICDB_TELEMETRY_PORT (number, no colon)
+    # The legacy `:7474/metrics` data-plane endpoint stays enabled in M1 — no
+    # config flag. It carries Deprecation/Sunset headers and is removed
+    # post-M1 in a follow-up PR (target v1.1.0, see §3.3 risk row + #117).
   tracing:
     enabled: false                      # NORNICDB_TRACING_ENABLED
     sample_ratio: 0.01                  # NORNICDB_TRACE_SAMPLE_RATIO
@@ -484,6 +497,10 @@ pkg/observability/
   logging.go             // slog handler, redactor, ctx-aware logger
   middleware_http.go     // wraps mux: otelhttp + per-route histogram
   middleware_bolt.go     // hooks into pkg/bolt server lifecycle
+  middleware_grpc.go     // wraps grpc.Server with otelgrpc Unary + Stream interceptors;
+                         //   produces standard gRPC server/client metrics
+                         //   (rpc.server.duration, rpc.server.requests, etc.) and spans
+                         //   for replication peer-to-peer traffic and any future gRPC surfaces
   exemplar.go            // histogram exemplar wiring (trace_id from ctx)
   testing.go             // in-memory exporters for unit tests
 ```
@@ -577,7 +594,7 @@ Each phase is its own PR with its own benchmark proof, per the AGENTS.md
 |------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
 | Hot-path overhead from span creation in Cypher executor.                           | Sample at the trace level, not the span level; pre-bind counters; benchmark gate ≤2%.                        |
 | OTLP endpoint misconfiguration crashes the server on startup.                      | Init returns a `noop` provider on exporter error and logs `WARN`; never fatal.                              |
-| Customer scrapers depending on the legacy `:7474/metrics` break on removal.        | Two-phase deprecation with `Sunset` header, release notes, and metric-name parity on `:9090`.                |
+| Customer scrapers depending on the legacy `:7474/metrics` break on removal.        | M1 only ships deprecation headers (`Deprecation: true`, `Sunset: <date>`) + metric-name parity on `:9090`. Removal is scheduled for v1.1.0 in a separate follow-up PR alongside [#117](https://github.com/orneryd/NornicDB/issues/117), giving customers at least one minor-release overlap window to migrate. |
 | Trace context across Bolt accidentally breaks driver compatibility.                | Use a *new* extra (`nornicdb.traceparent`); ignore if absent. Conformance test added against neo4j-go-driver.|
 | Label cardinality regression sneaks in via a future PR.                            | Build a custom `golangci-lint` analyzer that flags free-form strings reaching `prometheus.With*` outside an allow-list. |
 
