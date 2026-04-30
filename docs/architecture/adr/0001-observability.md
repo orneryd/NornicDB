@@ -643,39 +643,52 @@ pillar where the resolution now lives.
 
 ### 4.1 Phase exit references
 
-Each row below is filled in by the verifier of the corresponding phase as
-that phase merges. The Phase 0 row is filled in at sign-off below (§5),
-establishing the format that future phases append to. This table is the
-GOV-03 audit trail.
+**M1 ships as a single PR.** All 13 phases of Milestone 1 land on the
+`otel` branch and merge together via PR [#126](https://github.com/orneryd/NornicDB/pull/126);
+there is no per-phase PR. This means the GOV-03 audit trail uses
+**commit ranges on `otel`** rather than PR links. Each row below is
+filled in by the verifier of the corresponding phase when the phase's
+commits land on `otel` and the verifier passes — not at PR merge.
 
-| Phase    | Title                                              | PR | Merged | Verifier |
-|----------|----------------------------------------------------|----|--------|----------|
-| Phase 0  | ADR Governance & Sign-off                          |    |        |          |
-| Phase 1  | Observability Foundation Skeleton                  |    |        |          |
-| Phase 2  | Structured Logging Migration                       |    |        |          |
-| Phase 3  | Metrics Infrastructure & Discipline                |    |        |          |
-| Phase 4  | Subsystem Metric Catalog                           |    |        |          |
-| Phase 5  | Legacy Translation Layer & Tenant Flag             |    |        |          |
-| Phase 6  | Tracing SDK & Core Spans                           |    |        |          |
-| Phase 7  | Replication Codec Versioning                       |    |        |          |
-| Phase 8  | Bolt, Replication & Async Tracing + PII Defense    |    |        |          |
-| Phase 9  | Kubernetes Helm Chart Integration                  |    |        |          |
-| Phase 10 | Dashboards, Alerts & CI Integration Test           |    |        |          |
-| Phase 11 | Metrics Reference Doc Generator                    |    |        |          |
-| Phase 12 | Performance Gates & Hardening                      |    |        |          |
+The `Commit range` column is the inclusive SHA range that delivered the
+phase (e.g., `<first-sha>..<last-sha>`); the `Verified` column is the
+date the verifier signed off; the `Verifier` column is the reviewer
+handle who verified (per the §5 reviewer roster). Phase 0's row is
+filled in below (§5 sign-off → §4.1 row 0) to establish the format.
+
+| Phase    | Title                                              | Commit range | Verified | Verifier |
+|----------|----------------------------------------------------|--------------|----------|----------|
+| Phase 0  | ADR Governance & Sign-off                          |              |          |          |
+| Phase 1  | Observability Foundation Skeleton                  |              |          |          |
+| Phase 2  | Structured Logging Migration                       |              |          |          |
+| Phase 3  | Metrics Infrastructure & Discipline                |              |          |          |
+| Phase 4  | Subsystem Metric Catalog                           |              |          |          |
+| Phase 5  | Legacy Translation Layer & Tenant Flag             |              |          |          |
+| Phase 6  | Tracing SDK & Core Spans                           |              |          |          |
+| Phase 7  | Replication Codec Versioning                       |              |          |          |
+| Phase 8  | Bolt, Replication & Async Tracing + PII Defense    |              |          |          |
+| Phase 9  | Kubernetes Helm Chart Integration                  |              |          |          |
+| Phase 10 | Dashboards, Alerts & CI Integration Test           |              |          |          |
+| Phase 11 | Metrics Reference Doc Generator                    |              |          |          |
+| Phase 12 | Performance Gates & Hardening                      |              |          |          |
 
 ---
 
 ## 5. Decision sign-off
 
-Sign-off coordination: a single PR (the Phase 0 ADR-revision PR itself)
-requires approving review from each of the four roles below. Reviewer
-name, approval date, and the merged PR URL are filled in here as approvals
+Sign-off coordination: PR [#126](https://github.com/orneryd/NornicDB/pull/126)
+is the M1 PR — it carries all 13 phases of work and stays open until
+M1 is complete. The four-role sign-off below is for **ADR-0001 itself**
+(the design contract), not for the M1 release as a whole. Reviewer
+name, approval date, and PR #126's URL are filled in here as approvals
 land. Once all four cells are populated, the metadata `Status` field at
 the top of this file is flipped from `**Proposed**` to `**Accepted**`,
-and §4.1 row "Phase 0" is filled in with the same PR URL — making this
-sign-off table the first reference of the format §4.1 future phases
-follow.
+and §4.1 row "Phase 0" is filled in with the **commit range on `otel`**
+that delivered the ADR work — making §4.1's first row the format
+template that subsequent phases append to. The §5 sign-off recorded
+here is durable text in the ADR; it survives any GitHub-side review
+state changes (e.g., `dismiss_stale_reviews_on_push` after subsequent
+phase commits land).
 
 | Role             | Reviewer               | Date | PR |
 |------------------|------------------------|------|----|
