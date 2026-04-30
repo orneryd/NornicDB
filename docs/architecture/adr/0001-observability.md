@@ -2,8 +2,9 @@
 
 | Field         | Value                                                                 |
 |---------------|-----------------------------------------------------------------------|
-| Status        | **Proposed**                                                          |
+| Status        | **Accepted**                                                          |
 | Date          | 2026-04-29                                                            |
+| Sign-off date | 2026-04-30                                                            |
 | Authors       | Allen Sanabria                                                        |
 | Supersedes    | (none — establishes the ADR convention for this repo)                 |
 | Related       | `docs/operations/monitoring.md`, `docs/architecture/replication.md`, `pkg/audit/audit.go` |
@@ -692,7 +693,7 @@ phase commits land).
 
 | Role             | Reviewer               | Date | PR |
 |------------------|------------------------|------|----|
-| Architecture     | <TBD reviewer name>    |      |    |
-| SRE / Ops        | <TBD reviewer name>    |      |    |
-| Security         | <TBD reviewer name>    |      |    |
-| Public API owner | <TBD reviewer name>    |      |    |
+| Architecture     | orneryd       | 2026-04-30   | https://github.com/orneryd/NornicDB/pull/126 |
+| SRE / Ops        | linuxdynasty  | 2026-04-30   | https://github.com/orneryd/NornicDB/pull/126 |
+| Security         | linuxdynasty  | 2026-04-30   | https://github.com/orneryd/NornicDB/pull/126 |
+| Public API owner | orneryd       | 2026-04-30   | https://github.com/orneryd/NornicDB/pull/126 |
