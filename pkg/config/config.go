@@ -53,6 +53,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"gopkg.in/yaml.v3"
 )
 
@@ -99,6 +100,10 @@ type Config struct {
 
 	// Logging
 	Logging LoggingConfig
+
+	// Observability holds telemetry config (metrics, tracing, pprof).
+	// Phase 1 introduces this; Phase 2 wires slog from Logging.
+	Observability observability.ObservabilityConfig
 
 	// Feature flags for experimental/optional features
 	Features FeatureFlagsConfig
@@ -1400,6 +1405,26 @@ type YAMLConfig struct {
 		SlowQueryThreshold string `yaml:"slow_query_threshold"`
 	} `yaml:"logging"`
 
+	// Observability configuration (Phase 1 — OBS-02)
+	Observability struct {
+		Metrics struct {
+			Enabled             *bool  `yaml:"enabled"`
+			Listen              string `yaml:"listen"`
+			TenantLabelsEnabled *bool  `yaml:"tenant_labels_enabled"`
+		} `yaml:"metrics"`
+		Tracing struct {
+			Enabled  *bool  `yaml:"enabled"`
+			Endpoint string `yaml:"endpoint"`
+			Protocol string `yaml:"protocol"`
+			Insecure *bool  `yaml:"insecure"`
+			Timeout  string `yaml:"timeout"`
+		} `yaml:"tracing"`
+		Pprof struct {
+			Enabled *bool  `yaml:"enabled"`
+			Listen  string `yaml:"listen"`
+		} `yaml:"pprof"`
+	} `yaml:"observability"`
+
 	// Plugins configuration
 	Plugins struct {
 		Dir         string `yaml:"dir"`          // APOC plugins directory
@@ -1585,6 +1610,9 @@ func LoadDefaults() *Config {
 	config.Logging.Output = "stdout"
 	config.Logging.QueryLogEnabled = false
 	config.Logging.SlowQueryThreshold = 5 * time.Second
+
+	// Observability defaults (Phase 1 — OBS-02)
+	config.Observability = observability.DefaultConfig()
 
 	// Feature flags defaults
 	config.Features.KalmanEnabled = false
@@ -2214,6 +2242,26 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvDuration("NORNICDB_SLOW_QUERY_THRESHOLD", 0); v > 0 {
 		config.Logging.SlowQueryThreshold = v
+	}
+
+	// Observability settings (Phase 1 — OBS-02).
+	// OTEL_EXPORTER_OTLP_* env vars are intentionally NOT consumed here —
+	// they are read on demand by observability.TracingConfig.OTLPEndpoint()
+	// at exporter-init time so OBS-12 precedence (env > YAML) is honored.
+	if v := getEnv("NORNICDB_TELEMETRY_LISTEN", ""); v != "" {
+		config.Observability.Metrics.Listen = v
+	}
+	if v := getEnv("NORNICDB_TELEMETRY_PORT", ""); v != "" && config.Observability.Metrics.Listen == "" {
+		config.Observability.Metrics.Listen = ":" + v
+	}
+	if getEnv("NORNICDB_TRACING_ENABLED", "") == "true" {
+		config.Observability.Tracing.Enabled = true
+	}
+	if getEnv("NORNICDB_PPROF_ENABLED", "") == "true" {
+		config.Observability.Pprof.Enabled = true
+	}
+	if v := getEnv("NORNICDB_PPROF_LISTEN", ""); v != "" {
+		config.Observability.Pprof.Listen = v
 	}
 
 	// Feature flags
@@ -3069,6 +3117,40 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
 			config.Logging.SlowQueryThreshold = d
 		}
+	}
+
+	// === Observability Settings (Phase 1 — OBS-02) ===
+	if yamlCfg.Observability.Metrics.Enabled != nil {
+		config.Observability.Metrics.Enabled = *yamlCfg.Observability.Metrics.Enabled
+	}
+	if yamlCfg.Observability.Metrics.Listen != "" {
+		config.Observability.Metrics.Listen = yamlCfg.Observability.Metrics.Listen
+	}
+	if yamlCfg.Observability.Metrics.TenantLabelsEnabled != nil {
+		config.Observability.Metrics.TenantLabelsEnabled = *yamlCfg.Observability.Metrics.TenantLabelsEnabled
+	}
+	if yamlCfg.Observability.Tracing.Enabled != nil {
+		config.Observability.Tracing.Enabled = *yamlCfg.Observability.Tracing.Enabled
+	}
+	if yamlCfg.Observability.Tracing.Endpoint != "" {
+		config.Observability.Tracing.Endpoint = yamlCfg.Observability.Tracing.Endpoint
+	}
+	if yamlCfg.Observability.Tracing.Protocol != "" {
+		config.Observability.Tracing.Protocol = yamlCfg.Observability.Tracing.Protocol
+	}
+	if yamlCfg.Observability.Tracing.Insecure != nil {
+		config.Observability.Tracing.Insecure = *yamlCfg.Observability.Tracing.Insecure
+	}
+	if yamlCfg.Observability.Tracing.Timeout != "" {
+		if d, err := time.ParseDuration(yamlCfg.Observability.Tracing.Timeout); err == nil {
+			config.Observability.Tracing.Timeout = d
+		}
+	}
+	if yamlCfg.Observability.Pprof.Enabled != nil {
+		config.Observability.Pprof.Enabled = *yamlCfg.Observability.Pprof.Enabled
+	}
+	if yamlCfg.Observability.Pprof.Listen != "" {
+		config.Observability.Pprof.Listen = yamlCfg.Observability.Pprof.Listen
 	}
 
 	// === Plugins Settings ===
