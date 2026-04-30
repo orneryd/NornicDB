@@ -661,7 +661,7 @@ filled in below (§5 sign-off → §4.1 row 0) to establish the format.
 | Phase    | Title                                              | Commit range | Verified | Verifier |
 |----------|----------------------------------------------------|--------------|----------|----------|
 | Phase 0  | ADR Governance & Sign-off                          | e97ed2b..8e384cf | 2026-04-30 | orneryd |
-| Phase 1  | Observability Foundation Skeleton                  |              |          |          |
+| Phase 1  | Observability Foundation Skeleton                  | fa272fc..3ad44d9 | 2026-04-30 | asanabria |
 | Phase 2  | Structured Logging Migration                       |              |          |          |
 | Phase 3  | Metrics Infrastructure & Discipline                |              |          |          |
 | Phase 4  | Subsystem Metric Catalog                           |              |          |          |
