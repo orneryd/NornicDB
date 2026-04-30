@@ -105,3 +105,22 @@ func TestProvider_TracingDisabled(t *testing.T) {
 	assert.False(t, span.IsRecording())
 	span.End()
 }
+
+// TestProvider_Accessors covers the small read-only accessors (MeterProvider,
+// InstanceIDSource, Config) so the package coverage hits ≥90%.
+func TestProvider_Accessors(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: true, Listen: ":9090"},
+		Tracing: TracingConfig{Enabled: false},
+		Pprof:   PprofConfig{Listen: "127.0.0.1:9091"},
+	}
+	info := ServiceInfo{Name: "nornicdb", Version: "v0", NodeID: "n1"}
+
+	prov, err := New(context.Background(), cfg, info)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	assert.NotNil(t, prov.MeterProvider())
+	assert.Equal(t, "config", prov.InstanceIDSource())
+	assert.Equal(t, ":9090", prov.Config().Metrics.Listen)
+}
