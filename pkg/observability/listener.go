@@ -87,16 +87,47 @@ func NewTelemetryListener(prov *Provider, health *Health) (*telemetryListener, e
 // Name returns "telemetry" for supervisor logging.
 func (l *telemetryListener) Name() string { return "telemetry" }
 
-// Start blocks on srv.Serve(ln) until Shutdown is called or a fatal error
-// occurs. http.ErrServerClosed is filtered to nil so the supervisor's
-// errgroup does not interpret a clean shutdown as a runtime failure (an
-// errgroup error would prematurely cancel sibling components per Pitfall 5).
+// Start serves :9090 until ctx is cancelled or Serve returns a fatal
+// error. On ctx cancellation, Start initiates the OQ4 drain itself
+// (Provider.Shutdown then srv.Shutdown) so srv.Serve returns and the
+// supervisor's errgroup unblocks.
+//
+// Why initiate the drain here instead of relying on the supervisor's
+// reverse-iteration drain phase: lifecycle.Run only calls Shutdown
+// AFTER g.Wait() returns. g.Wait() blocks until every Component's
+// Start returns. Therefore Start MUST observe ctx and trigger its own
+// graceful shutdown — otherwise the supervisor would deadlock on
+// SIGTERM (Plan 04 integration regression caught this latent issue).
+//
+// Idempotency of Shutdown lets lifecycle.Run's drain phase call
+// Shutdown(ctx) a second time without harm: Provider.Shutdown is
+// sync.Once-wrapped, and net/http.Server.Shutdown is itself idempotent.
+//
+// http.ErrServerClosed is filtered to nil so the supervisor's errgroup
+// does not interpret a clean shutdown as a runtime failure (Pitfall 5).
 func (l *telemetryListener) Start(ctx context.Context) error {
-	err := l.srv.Serve(l.ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- l.srv.Serve(l.ln)
+	}()
+	select {
+	case <-ctx.Done():
+		// OQ4 drain: Provider.Shutdown FIRST (BSP flushes while listener
+		// is still serving), then srv.Shutdown.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
+		defer cancel()
+		_ = l.Shutdown(shutdownCtx)
+		err := <-serveErr
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
-	return err
 }
 
 // Shutdown drains the telemetry surface in this strict order (OQ4

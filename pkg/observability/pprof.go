@@ -82,15 +82,35 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 // Name returns "pprof" for supervisor logging.
 func (l *pprofListener) Name() string { return "pprof" }
 
-// Start blocks on srv.Serve(ln) until Shutdown closes the listener. As
-// with the telemetry listener, http.ErrServerClosed is filtered to nil
-// because errgroup would otherwise interpret a clean shutdown as a fault.
+// Start serves :9091 until ctx is cancelled or Serve returns a fatal
+// error. On ctx cancellation, Start triggers srv.Shutdown internally
+// so Serve returns and the supervisor's errgroup unblocks. Same shape
+// as telemetryListener.Start — see the longer rationale in
+// listener.go for why Start MUST observe ctx (Plan 04 integration).
+//
+// http.ErrServerClosed is filtered to nil so errgroup does not
+// interpret a clean shutdown as a fault.
 func (l *pprofListener) Start(ctx context.Context) error {
-	err := l.srv.Serve(l.ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- l.srv.Serve(l.ln)
+	}()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
+		defer cancel()
+		_ = l.Shutdown(shutdownCtx)
+		err := <-serveErr
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
-	return err
 }
 
 // Shutdown drains in-flight requests with the supervisor-provided budget.
