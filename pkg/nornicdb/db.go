@@ -1805,6 +1805,50 @@ func (db *DB) Close() error {
 	return db.closeInternal()
 }
 
+// HealthCheck reports whether the underlying storage engine is responsive.
+//
+// Phase 1 (M1) implementation: probes the namespaced storage engine via
+// NodeCount(), which is the cheapest synchronous Engine accessor that
+// returns storage.ErrStorageClosed when the engine has been Closed
+// (contract verified in pkg/storage/badger_test.go — "NodeCount returns
+// ErrStorageClosed").
+//
+// Why NodeCount and not a Begin/Discard round-trip:
+//   - NodeCount is a stat read; no Badger txn allocation.
+//   - The Engine interface guarantees it; both BadgerEngine and
+//     MemoryEngine implement it. AsyncEngine forwards to the underlying
+//     engine.
+//   - The closed-engine sentinel path is already covered by an existing
+//     test, so we inherit that contract for free.
+//
+// Future phases may extend with deeper liveness probes (replication peer
+// reachability, MVCC scheduler health, etc.) — the contract stays
+// "nil iff process can serve queries right now."
+//
+// Used by pkg/observability.Health via cmd/nornicdb/main.go:
+//
+//	obs.Health().Register("storage", db.HealthCheck)
+//
+// The signature matches observability.CheckFunc exactly so registration
+// is a direct method-value pass.
+func (db *DB) HealthCheck(ctx context.Context) error {
+	if db == nil {
+		return errors.New("nornicdb: nil DB")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if db.storage == nil {
+		return errors.New("nornicdb: storage engine not initialized")
+	}
+	// Real probe: NodeCount returns storage.ErrStorageClosed on a closed
+	// engine; treat any error as "not responsive right now."
+	if _, err := db.storage.NodeCount(); err != nil {
+		return fmt.Errorf("nornicdb: storage probe: %w", err)
+	}
+	return nil
+}
+
 // GetRetentionManager returns the retention manager or nil when retention is disabled.
 func (db *DB) GetRetentionManager() *retention.Manager {
 	return db.retentionManager
