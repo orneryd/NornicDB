@@ -773,6 +773,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					TTL:               config.Database.MVCCRetentionTTL,
 				},
 			},
+			// Phase 2 D-01: thread the structured *slog.Logger from
+			// nornicConfig.Config (set by cmd/nornicdb/main.go before Open)
+			// into BadgerEngine so all storage emissions flow through the
+			// production handler stack. Discard fallback in NewBadgerEngine-
+			// WithOptions handles nil per D-01a.
+			Logger: config.Logger,
 		}
 		if config.Database.StorageSerializer != "" {
 			serializer, err := storage.ParseStorageSerializer(config.Database.StorageSerializer)
@@ -1016,6 +1022,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		if config.Database.WALSnapshotRetentionMaxAge > 0 {
 			walConfig.SnapshotRetentionMaxAge = config.Database.WALSnapshotRetentionMaxAge
 		}
+		// D-07: thread the structured *slog.Logger into the WAL config so
+		// the wal/wal_compaction/wal_recovery subsystems emit through the
+		// production handler stack. Discard fallback inside NewWAL.
+		walConfig.SlogLogger = config.Logger
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
 			badgerEngine.Close()
@@ -1046,6 +1056,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				FlushInterval:    config.Database.AsyncFlushInterval,
 				MaxNodeCacheSize: config.Database.AsyncMaxNodeCacheSize,
 				MaxEdgeCacheSize: config.Database.AsyncMaxEdgeCacheSize,
+				// Phase 2 D-01 + D-06: thread the structured *slog.Logger
+				// so the AsyncEngine flush goroutine derives the
+				// single-allocation flushLog (subsystem=async_flush) from
+				// the same handler stack used everywhere else.
+				Logger: config.Logger,
 			}
 			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
 			if config.Database.AsyncMaxNodeCacheSize > 0 || config.Database.AsyncMaxEdgeCacheSize > 0 {

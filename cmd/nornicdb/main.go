@@ -455,6 +455,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
 	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
 
+	// Phase 2 D-08 reordering: build the production *slog.Logger BEFORE
+	// nornicdb.Open so storage (BadgerEngine, WAL, AsyncEngine) emits
+	// through the structured handler stack from the very first line. The
+	// logger flows into Open via dbConfig.Logger; storage ctors install
+	// discard fallbacks if it is nil per D-01a.
+	earlyLoggerInfo := observability.ServiceInfo{
+		Name:    "nornicdb",
+		Version: buildinfo.Version(),
+		NodeID:  clusterNodeID,
+	}
+	earlyLogger, earlyWriterRef, earlyLogErr := observability.NewLogger(observability.LoggerConfig{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
+	}, earlyLoggerInfo)
+	if earlyLogErr != nil {
+		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
+	}
+	// Phase 2 D-01 storage threading: assign the slog logger into nornicdb.Config
+	// so storage ctors (BadgerEngine, AsyncEngine, WAL) inherit it through
+	// the field-literal threading inside nornicdb.Open (BadgerOptions{Logger: ...},
+	// AsyncEngineConfig{Logger: ...}, WALConfig.SlogLogger).
+	dbConfig.Logger = earlyLogger
+	// earlyWriterRef is reused below by observability.New so the same
+	// underlying io.Writer flushes during Provider.Shutdown (D-09a).
+
 	// Open database
 	fmt.Println("📂 Opening database...")
 	db, err := nornicdb.Open(dataDir, dbConfig)
@@ -562,31 +588,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	// Note: Auth status logged at server startup
 
-	// Phase 2 D-08: build the production *slog.Logger BEFORE constructing
-	// any business-package server so the logger can be threaded into
-	// server.New via Config.Logger (D-01). The 4-layer handler stack
-	// (recovering → mandatory → redactor → JSONHandler) reads
-	// cfg.Logging.Level/Output and ServiceInfo for mandatory fields. On
-	// open failure (e.g., bogus path) the logger falls back to os.Stderr
-	// and surfaces the misconfig as a single WARN line — process startup
-	// remains robust (OBS-11 fail-closed analog).
-	loggerInfo := observability.ServiceInfo{
-		Name:    "nornicdb",
-		Version: buildinfo.Version(),
-		NodeID:  clusterNodeID, // empty falls through to OBS-10: POD_NAME → hostname → "standalone".
-	}
-	logger, writerRef, logErr := observability.NewLogger(observability.LoggerConfig{
-		Level:  cfg.Logging.Level,
-		Format: cfg.Logging.Format,
-		Output: cfg.Logging.Output,
-	}, loggerInfo)
-	if logErr != nil {
-		// Bootstrap window — the logger fell back to stderr; emit a single
-		// WARN line via stdlib log (slog stack is now usable but the open
-		// failure deserves visibility on the original path the operator
-		// configured).
-		fmt.Fprintln(os.Stderr, "WARN logger init: ", logErr)
-	}
+	// Phase 2 D-08: the production *slog.Logger was built BEFORE nornicdb.Open
+	// above so storage, WAL, and AsyncEngine emit through the structured
+	// handler stack from the very first line. The same logger + writerRef +
+	// loggerInfo are reused for observability.New below — single source of
+	// truth for the entire process lifetime.
+	loggerInfo := earlyLoggerInfo
+	logger := earlyLogger
+	writerRef := earlyWriterRef
 
 	// Phase 2 D-01 + D-04c: thread the structured logger and the slow-query
 	// threshold from cfg.Logging into the primary cypher executor so the

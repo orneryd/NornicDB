@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -232,26 +232,36 @@ func TestNamespaceAndLoggerHelpers(t *testing.T) {
 		require.False(t, isSystemNamespaceID("invalid"))
 	})
 
-	t.Run("default wal logger writes structured and fallback output", func(t *testing.T) {
+	t.Run("default wal logger writes through slog adapter", func(t *testing.T) {
+		// Phase 2 LOG-01: defaultWALLogger no longer routes through the
+		// stdlib log printer; it now wraps a *slog.Logger via newSlogWALLogger.
+		// This test asserts the slog adapter contract by giving the WAL
+		// logger an in-memory JSON slog handler and verifying the level/
+		// msg/attrs land in the JSON record.
 		var buf bytes.Buffer
-		prevWriter := log.Writer()
-		prevFlags := log.Flags()
-		log.SetOutput(&buf)
-		log.SetFlags(0)
-		t.Cleanup(func() {
-			log.SetOutput(prevWriter)
-			log.SetFlags(prevFlags)
-		})
+		jsonHandler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+		walLogger := newSlogWALLogger(slog.New(jsonHandler))
 
-		logger := defaultWALLogger{}
-		logger.Log("info", "structured", map[string]any{"seq": 7})
-		require.Contains(t, buf.String(), `"level":"info"`)
-		require.Contains(t, buf.String(), `"msg":"structured"`)
+		walLogger.Log("info", "structured", map[string]any{"seq": 7})
+		out := buf.String()
+		require.Contains(t, out, `"level":"INFO"`)
+		require.Contains(t, out, `"msg":"structured"`)
+		require.Contains(t, out, `"seq":7`)
+		require.Contains(t, out, `"subsystem":"wal"`)
 
 		buf.Reset()
-		logger.Log("error", "fallback", map[string]any{"bad": func() {}})
-		require.Contains(t, buf.String(), "level=error")
-		require.Contains(t, buf.String(), "msg=fallback")
+		walLogger.Log("error", "structured-error", map[string]any{"reason": "checksum"})
+		out = buf.String()
+		require.Contains(t, out, `"level":"ERROR"`)
+		require.Contains(t, out, `"msg":"structured-error"`)
+		require.Contains(t, out, `"reason":"checksum"`)
+
+		// The defaultWALLogger{} value type still satisfies the WALLogger
+		// interface (kept as a safety net for older callers); it routes
+		// records to a discard slog handler so existing call sites that
+		// build defaultWALLogger{} literals stay compileable.
+		var legacy WALLogger = defaultWALLogger{}
+		legacy.Log("info", "no-panic-on-discard", map[string]any{"k": "v"})
 	})
 }
 

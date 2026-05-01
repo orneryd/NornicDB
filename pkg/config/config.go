@@ -44,6 +44,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -107,6 +108,13 @@ type Config struct {
 
 	// Feature flags for experimental/optional features
 	Features FeatureFlagsConfig
+
+	// Logger is the structured *slog.Logger threaded into storage and other
+	// runtime subsystems by Phase 2 D-01 logger DI. Optional; nil falls
+	// back to discard handlers at storage ctor entry per D-01a. Marked
+	// yaml:"-" / json:"-" because it is a runtime-only handle that must
+	// not appear in YAML/JSON config payloads.
+	Logger *slog.Logger `yaml:"-" json:"-"`
 }
 
 // AuthConfig holds authentication settings.
