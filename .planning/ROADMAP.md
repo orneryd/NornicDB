@@ -81,7 +81,13 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
   2. A grep across `pkg/server`, `pkg/cypher`, `pkg/storage`, `pkg/bolt` finds zero remaining `log.Printf`/`fmt.Println` call sites; `pkg/audit/audit.go` is intentionally untouched and continues writing its signed stream
   3. Operator submits a query with `password=hunter2` in the literals; the slow-query log entry shows `<REDACTED>` for that literal and the truncated query is at most 500 chars; `password` keys nested inside structured attributes are stripped
   4. Lint/pre-commit hook rejects any new `slog.Default()` use outside `pkg/observability`
-**Plans**: TBD
+**Plans**: 6 plans
+  - [x] 02-01-PLAN.md — pkg/observability custom slog handler stack (logger.go, logging.go, redaction.go, recovering.go, mandatory_fields.go) + bench harness + TestEnv record capture
+  - [ ] 02-02-PLAN.md — migrate pkg/server log call sites to slog (87 sites; D-08 two-phase init in cmd/nornicdb/main.go)
+  - [ ] 02-03-PLAN.md — migrate pkg/cypher (22 sites) + slow-query log + cypher.RedactLiterals + cypher.PlanHash + D-04d SlowQueryThreshold collapse
+  - [ ] 02-04-PLAN.md — migrate pkg/storage (48 sites) + D-06 AsyncEngine flushLog + D-07 walLog + structured [COUNT BUG]
+  - [ ] 02-05-PLAN.md — migrate pkg/bolt (18 sites) + [BOLT] bracket-to-component + HELLO credentials auto-redacted via D-03a
+  - [ ] 02-06-PLAN.md — make lint-slog (LOG-09 falsifiability) + phase-exit SUMMARY + ADR-0001 §4.1 row 2 audit-trail entry
 
 ### Phase 3: Metrics Infrastructure & Discipline
 **Goal**: A registration helper layer in `pkg/observability` enforces naming discipline, bucket types, and the forbidden-label allow-list — and the OTel→Prom bridge is wired with `WithoutUnits()` and the `nornicdb_otel_*` namespace — before any subsystem starts emitting metrics.

@@ -2,17 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01
+current_phase: 02
 status: executing
-last_updated: "2026-04-30T21:27:11Z"
+last_updated: "2026-05-01T21:40:49.050Z"
 progress:
   total_phases: 13
-  completed_phases: 1
-  total_plans: 7
-  completed_plans: 6
-  percent: 86
-phase_01_status: gates-fail
-phase_01_blocker: "race-stability sub-gate flakes — TestFakeComponent_StartedBefore in pkg/lifecycle/testenv.go has an atomicity gap; ~40% flake rate under -race -count=10. Plan 01-06 (proposed) fixes the ordering in FakeComponent.Start; ~10 min wall-clock to land + re-verify. See .planning/phases/01-observability-foundation-skeleton/01-05-SUMMARY.md for details."
+  completed_phases: 2
+  total_plans: 13
+  completed_plans: 8
+  percent: 62
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
@@ -32,15 +30,15 @@ phase_01_blocker: "race-stability sub-gate flakes — TestFakeComponent_StartedB
 
 ## Current Position
 
-Phase: 01 (observability-foundation-skeleton) — EXECUTING
-Plan: 5 of 5 (Plan 01-01 + 01-02 closed 2026-04-30)
+Phase: 02 (structured-logging-migration) — EXECUTING
+Plan: 2 of 6
 
 - **Milestone:** M1 — Best-in-Class Observability
-- **Current phase:** 01
+- **Current phase:** 02
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
 - **Status:** Ready to execute
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
-- **Progress:** [█████████░] 86%
+- **Progress:** [██████░░░░] 62%
 
 ## Performance Metrics (Universal, KD-12)
 
@@ -55,6 +53,7 @@ These hard gates are enforced at every phase exit:
 | Neo4j wire compatibility | preserved | driver round-trip test |
 | Memory floor vs pre-OTel baseline | ≤ 25 MB | `TestObservability_MemoryFloor` |
 | Phase 01 P04 | 952 | 4 tasks | 7 files |
+| Phase 02 P01 | 0h22m | 2 tasks | 13 files |
 
 ### Plan execution metrics
 
@@ -133,11 +132,34 @@ These hard gates are enforced at every phase exit:
 
 ### Last work
 
-Plan 01-05 (Phase 1 quality gate) ran 2026-04-30 — single SUMMARY commit (this plan does not modify pkg/* code). HEAD: `aaf652a` (unchanged). Outcome: **gates-fail** (race-stability sub-gate). PERF-05 PASS at 92.1%, PERF-06 PASS at 228 LOC max-production / 327 LOC max-test, OBS-01 boundary clean. Race-stability FAIL: `TestFakeComponent_StartedBefore` flakes ~40% under full `-race -count=10` against the three Phase-1 packages (zero `DATA RACE` reports — ordering bug, not memory race). Bench gate N/A (Makefile targets `bench-cypher` / `bench-bolt` not yet implemented; ROADMAP Phase 12 owns).
+Phase 2 (Structured Logging Migration) discuss-phase ran 2026-05-01 — 12 implementation gray areas decided + 4 Claude's-discretion items captured. CONTEXT.md and DISCUSSION-LOG.md persisted at `.planning/phases/02-structured-logging-migration/` (commit_docs=false; .planning/ stays out of git per single-PR M1 strategy).
 
-**Phase 1 sign-off blocked.** Follow-up Plan 01-06 (proposed) reorders the increments in `pkg/lifecycle/testenv.go` `FakeComponent.Start` so `startSeq.Store` lands BEFORE `startCount.Add` (~4-8 LOC diff). Re-verifies via `go test -tags nolocalllm -race -count=10` 5x in a row green. After that, Plan 01-05 SUMMARY's race row flips to ✅, PERF-05 / PERF-06 mark GREEN in REQUIREMENTS.md, ROADMAP Phase 1 row marks Complete, and the orchestrator issues the §4.1 row 1 audit-trail commit per the two-commit pattern.
+**Recommendation-driven discussion** at user's explicit request: every option carried a researched recommendation grounded in AGENTS.md (§1 Prove Value, §3 file size, §4 functional DI, §6 testing, §7 DRY, §8 separation of concerns), ADR-0001 §2.5, and existing-code evidence. User accepted all 12 recommendations.
 
-SUMMARY: `.planning/phases/01-observability-foundation-skeleton/01-05-SUMMARY.md` (24 KB; gate table + per-file LOC + race-failure forensics + follow-up checklist).
+**Key decisions captured (full text in 02-CONTEXT.md):**
+
+- D-01: Constructor injection of `*slog.Logger` into top-level ctors (mirrors AGENTS.md §4 + Phase 1 D-03/D-04). Each top-level type holds `log *slog.Logger` field tagged `.With("component","<pkg>")`.
+- D-02: Bench stdlib `slog.NewJSONHandler` first; swap inner handler only if AllocsPerRun budget (≤4) fails. Final 4-layer stack: recoveringHandler → mandatoryFieldsHandler → redactingHandler → slog.NewJSONHandler.
+- D-03: `DefaultRedactKeys = ["password","token","authorization","secret","api_key","credentials"]` lives in `pkg/observability/redaction.go` locally; pkg/audit untouched (LOG-10/SEC-05); future leaf `pkg/redaction/` deferred post-M1.
+- D-04: `cypher.RedactLiterals(query)` ANTLR4 visitor + `cypher.PlanHash(plan)` FNV-1a (both ship Phase 2; Phase 6 reuses PlanHash for nornicdb.cypher.plan span).
+- D-05: trace_id/span_id resolution ships now via `trace.SpanContextFromContext(ctx)`; zero overhead when sampling off (Phase 1 noop default); Phase 6 sampling flip auto-lights up correlation in 175 sites.
+- D-06: AsyncEngine carries `log *slog.Logger`; flush goroutine constructs `flushLog := ae.log.With(...)` once at start; cross-flush correlation deferred to Phase 8 WithLinks per ADR §2.4.
+- D-08: Two-phase init in cmd/nornicdb/main.go: `observability.NewLogger(cfg.Logging)` first, then `observability.New(cfg, logger, ...)`.
+- D-09: recoveringHandler outermost catches panics in handler stack; Provider.Shutdown opportunistic Sync() via interface assert.
+- D-10: 8-commit migration cadence on `otel` (wave-0 RED + handler stack + 4 per-package waves server→cypher→storage→bolt + lint + SUMMARY).
+- D-10a: Strip emoji from msg; bracket prefixes ([BOLT]/[Debug]) become `component` slog attribute.
+- D-11: `make lint-slog` Makefile grep target wired into `make test` for LOG-09 enforcement.
+- D-12: Extend Phase 1 TestEnv with optional `Buffer` for record capture (D-01 flat-file rule preserved).
+
+**Confirmed call-site counts (grep on 2026-05-01):** pkg/server 87, pkg/cypher 22, pkg/storage 48, pkg/bolt 18 — total **175** (ROADMAP said "~165"; actual 175).
+
+**Phase 1 race-stability fix landed:** commits `3b3f5ef` (FakeComponent.Start atomic-write reorder) + `3ad44d9` (Plan 01-05 outcome flip to gates-pass) + `0cc947a` (ADR-0001 §4.1 row 1 audit-trail entry). Phase 1 ✅ closed.
+
+**Next up:** `/gsd-plan-phase 2` to decompose Phase 2 into plans against the locked CONTEXT. ROADMAP Phase 2 success criteria are the planner's must-haves: zero `log.Printf`/`fmt.Println` grep across the four packages, JSON output by default with mandatory fields + trace correlation, `password=hunter2` literal redacted to `<REDACTED>` in slow-query log, `slog.Default()` lint check rejects new uses outside pkg/observability, pkg/audit untouched.
+
+### Earlier — Phase 1 race-stability fix
+
+Plan 01-05 (Phase 1 quality gate) ran 2026-04-30 — initial outcome **gates-fail** (race-stability sub-gate). 2026-05-01 follow-up: `pkg/lifecycle/testenv.go` `FakeComponent.Start` increments reordered (commit `3b3f5ef`) — `startSeq.Store` lands BEFORE `startCount.Add`. `go test -tags nolocalllm -race -count=10` 5x in a row GREEN. Plan 01-05 SUMMARY race row flipped to ✅ (commit `3ad44d9`); PERF-05 / PERF-06 GREEN; ADR-0001 §4.1 row 1 audit-trail entry recorded (commit `0cc947a`). Phase 1 closed.
 
 ### Earlier — Plan 01-04
 
