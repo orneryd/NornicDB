@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 status: executing
-last_updated: "2026-05-01T21:40:49.050Z"
+last_updated: "2026-05-01T22:35:20.139Z"
 progress:
   total_phases: 13
   completed_phases: 2
   total_plans: 13
-  completed_plans: 8
-  percent: 62
+  completed_plans: 9
+  percent: 69
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
@@ -31,14 +31,14 @@ progress:
 ## Current Position
 
 Phase: 02 (structured-logging-migration) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 
 - **Milestone:** M1 — Best-in-Class Observability
 - **Current phase:** 02
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
 - **Status:** Ready to execute
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
-- **Progress:** [██████░░░░] 62%
+- **Progress:** [███████░░░] 69%
 
 ## Performance Metrics (Universal, KD-12)
 
@@ -54,6 +54,7 @@ These hard gates are enforced at every phase exit:
 | Memory floor vs pre-OTel baseline | ≤ 25 MB | `TestObservability_MemoryFloor` |
 | Phase 01 P04 | 952 | 4 tasks | 7 files |
 | Phase 02 P01 | 0h22m | 2 tasks | 13 files |
+| Phase 02 P02 | 2464 | 2 tasks | 11 files |
 
 ### Plan execution metrics
 
@@ -103,6 +104,9 @@ These hard gates are enforced at every phase exit:
 - [ ] Repeat for Phases 2–12. At M1 completion, do final orneryd review + squash-merge of PR #126 to `main`.
 - [ ] Re-add `.planning/` to `.gitignore` at any convenient point (the gitignore rule was on a dropped commit during the rebase; `.planning/` is currently untracked-but-not-ignored locally).
 - [ ] Plan 02 Task 3 (`gh pr merge`) — formally pending until M1 completes. Marked `DEFERRED-TO-M1-COMPLETION` in Plan 02.
+- [x] Execute Plan 02-01 — pkg/observability slog stack + cmd/nornicdb runServe bootstrap (2026-05-01, commits 4201a24..a42054a + meta 2bf12c3)
+- [x] Execute Plan 02-02 — pkg/server log call sites migrated to slog (2026-05-01, commits 17dcda3..c8028a8). 85 of 87 sites migrated; lines 1650 + 1654 deferred to Plan 02-03.
+- [ ] Pre-existing race in pkg/nornicdb/search_services.go (background clustering goroutine vs test teardown) — surfaces under `-race` + multi-test pkg/server runs. NOT introduced by Plan 02-02. Should be filed against the storage/search team for a focused fix (ctx-cancel observance OR per-DB sync.Mutex around `getOrCreateSearchService`). See `.planning/phases/02-structured-logging-migration/deferred-items.md`.
 
 ### Active Blockers
 
@@ -115,6 +119,8 @@ These hard gates are enforced at every phase exit:
 **Phase 1 sign-off:** ❌ NOT READY for §4.1 row 1 commit. Orchestrator must run Plan 01-06 + re-verify before issuing the audit-trail row.
 
 ### Recent Decisions
+
+- **2026-05-01 (Plan 02-02 completed)**: First migration wave landed on `otel`. Two atomic commits: `17dcda3` feat (Task 1: Config.Logger field + discard fallback + Server.log field + cmd/nornicdb relocation of observability.NewLogger BEFORE server.New) and `c8028a8` feat (Task 2: 85 of 87 pkg/server log.Printf/fmt.Print* call sites migrated to s.log structured emission per D-10a; emoji-strip + bracket-prefix-to-subsystem-attribute; lines 1650 + 1654 deferred to Plan 02-03 D-04d collapse). server.New ctor arity unchanged (B2). pkg/audit/audit.go untouched (Pitfall 9). Falsifiable contract `TestRedactor_NoEmojiInJSONOutput` PASSES against new pkg/server records. Build green; `go test ./pkg/server/` PASS (76s). One deviation (Rule 3 auto-fix): relocated `observability.NewLogger` block in `cmd/nornicdb/main.go` to BEFORE `server.New` so the `*slog.Logger` could thread into `Config.Logger`. One deferred item: pre-existing race in `pkg/nornicdb/search_services.go` (background clustering goroutine vs test teardown) surfaces under `-race` + multi-test pkg/server runs; documented in `.planning/phases/02-structured-logging-migration/deferred-items.md`; out of M1 Phase 2 scope. Phase 2 progress: 2 of 6 plans complete (33%).
 
 - **2026-04-30 (Plan 01-05 quality gate)**: Phase 1 quality gate ran end-to-end — coverage gate **PERF-05 PASS at 92.1%** (no regression vs Plan 01-04's 92.1% snapshot); file-size gate **PERF-06 PASS** at 228 LOC max production / 327 LOC max test (well under 800 cap; provider.go growth risk from RESEARCH Pitfall 10 has NOT materialized at 205 LOC); OBS-01 leaf-package boundary audit clean (`go list -deps ./pkg/observability/...` shows only buildinfo, lifecycle, stdlib, OTel, Prometheus, msgpack — zero business-package leaks). **Race-stability sub-gate FAILS:** `TestFakeComponent_StartedBefore` in `pkg/lifecycle/testenv_test.go` is intermittently flaky (2 PASS / 1 FAIL out of 3 controlled iterations of full-gate `go test -race -count=10` across `./pkg/lifecycle/... ./pkg/observability/... ./cmd/nornicdb/...`; combined with the initial gate-run FAIL and one re-run PASS, observed rate is 2/5 = 40%). Zero `DATA RACE` reports — it's an ordering bug, not a memory race. Root cause: `FakeComponent.Start` increments `startCount.Add(1)` on line 66 BEFORE the `startedAt` CAS on line 67 and `startSeq.Store(nextSeq())` on line 68. The test's `require.Eventually(b.StartCount() == 1)` predicate fires at line 66; `StartedBefore` immediately reads `startSeq.Load()` which may not have been set yet (observed values: `b_seq=0` and a < 0 returns false, OR out-of-order non-zero seq numbers). The fix is a 4-line reorder in `testenv.go`: store the seq BEFORE the count increment. Per the orchestrator's "DO NOT modify pkg/* code" constraint on Plan 01-05, the fix is deferred to Plan 01-06 (proposed). Bench gate (KD-12 `make bench-cypher` / `make bench-bolt`) is **N/A** — the Makefile does NOT implement those targets; ROADMAP Phase 12 owns landing them. Phase 1 does not touch hot paths so no regression is expected. **Phase 1 sign-off blocked** until Plan 01-06 lands and the race gate goes 5/5 green; only then does the orchestrator issue the §4.1 row 1 audit-trail commit.
 - **2026-04-30**: Plan 01-04 executed cleanly (4 atomic commits: b513977 test RED, 962e90f feat HealthCheck, e21a281 feat adapters+main lifecycle.Run, ce17375 feat integration tests + ctx-observe Start fix). cmd/nornicdb/main.go runServe replaced 96 LOC of channel-based signal handling with ~70 LOC of lifecycle.Run wiring; three `lifecycle.Component` adapters land in `cmd/nornicdb/` (NOT pkg/observability/, preserving OBS-01 boundary). `(*DB).HealthCheck` calls `Engine.NodeCount` for a real probe (W-4 stub-warning resolved). Latent listener-supervisor deadlock fixed in pkg/observability/listener.go and pkg/observability/pprof.go (Rule 1 auto-fix): each Start now observes ctx.Done() and triggers internal Shutdown, preserving OQ4 ordering. Two requirements moved [ ]→[x]: OBS-07, OBS-08. coverage 92.1%, all four Phase-success integration tests GREEN.
@@ -131,6 +137,23 @@ These hard gates are enforced at every phase exit:
 ## Session Continuity
 
 ### Last work
+
+Phase 2 Plan 02 (pkg/server log-call-site migration) ran 2026-05-01 — 2 atomic commits on `otel`:
+
+- `17dcda3` feat (Task 1: Config.Logger field + discard fallback + Server.log field; cmd/nornicdb relocates `observability.NewLogger` to BEFORE `server.New` so the *slog.Logger threads into Config.Logger at construction)
+- `c8028a8` feat (Task 2: 85 of 87 pkg/server log call sites migrated to s.log structured emission; D-10a emoji-strip + bracket-prefix-to-subsystem-attribute applied per-site; lines 1650 + 1654 in server.go EXCLUDED with markers — owned by Plan 02-03 D-04d collapse)
+
+Acceptance: grep-zero LOG-01 surface gate PASSES (modulo D-04d-owned excludes); `go build -tags nolocalllm ./...` PASS; `go test -tags nolocalllm ./pkg/server/` PASS (76s); `TestRedactor_NoEmojiInJSONOutput` PASS (no-emoji contract holds against new pkg/server records); `pkg/audit/` untouched (Pitfall 9 boundary clean); `s.audit.*` calls preserved verbatim. SUMMARY at `.planning/phases/02-structured-logging-migration/02-02-SUMMARY.md`.
+
+One deferred item: pre-existing race in `pkg/nornicdb/search_services.go` (background clustering goroutine vs test teardown) surfaces under `-race` + multi-test pkg/server runs. NOT introduced by Plan 02-02 — verified by `git stash` repro against HEAD~1. Documented in `.planning/phases/02-structured-logging-migration/deferred-items.md`. Out of M1 Phase 2 scope (LOG-01 surface only); requires fix from storage/search team.
+
+**Phase 2 progress: 2 of 6 plans complete (33%).** Next up: Plan 02-03 (cypher migration + D-04d slow-query collapse + AST literal redactor + plan_hash).
+
+### Earlier — Phase 2 Plan 01
+
+Phase 2 Plan 01 ran (2026-05-01) — 2 commits + meta on `otel`: `4201a24` test (RED scaffolding) + `a42054a` feat (full slog handler stack + redaction.go + recovering.go + mandatory_fields.go + Provider.Logger() accessor + cmd/nornicdb runServe two-phase bootstrap) + `2bf12c3` docs SUMMARY. `BenchmarkSlogHandler_Hot` = 2 allocs/op; `pkg/observability` coverage 91.2% (PERF-05 ≥90%); race-clean under `-race -count=10`.
+
+### Earlier — Phase 2 discuss-phase
 
 Phase 2 (Structured Logging Migration) discuss-phase ran 2026-05-01 — 12 implementation gray areas decided + 4 Claude's-discretion items captured. CONTEXT.md and DISCUSSION-LOG.md persisted at `.planning/phases/02-structured-logging-migration/` (commit_docs=false; .planning/ stays out of git per single-PR M1 strategy).
 
