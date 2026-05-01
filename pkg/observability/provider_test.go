@@ -21,7 +21,7 @@ func TestProvider_InitOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	prov, err := New(ctx, cfg, info)
+	prov, err := New(ctx, cfg, info, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, prov)
 	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
@@ -43,7 +43,7 @@ func TestProvider_MetricsDisabled(t *testing.T) {
 	}
 	info := ServiceInfo{Name: "nornicdb", Version: "test"}
 
-	prov, err := New(context.Background(), cfg, info)
+	prov, err := New(context.Background(), cfg, info, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, prov)
 	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
@@ -71,7 +71,7 @@ func TestProvider_OTLPFailureUsesNoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	prov, err := New(ctx, cfg, info)
+	prov, err := New(ctx, cfg, info, nil, nil)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err, "OBS-11: New must not propagate OTLP init failure")
@@ -96,7 +96,7 @@ func TestProvider_TracingDisabled(t *testing.T) {
 	}
 	info := ServiceInfo{Name: "nornicdb", Version: "test"}
 
-	prov, err := New(context.Background(), cfg, info)
+	prov, err := New(context.Background(), cfg, info, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
 
@@ -116,11 +116,43 @@ func TestProvider_Accessors(t *testing.T) {
 	}
 	info := ServiceInfo{Name: "nornicdb", Version: "v0", NodeID: "n1"}
 
-	prov, err := New(context.Background(), cfg, info)
+	prov, err := New(context.Background(), cfg, info, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
 
 	assert.NotNil(t, prov.MeterProvider())
 	assert.Equal(t, "config", prov.InstanceIDSource())
 	assert.Equal(t, ":9090", prov.Config().Metrics.Listen)
+}
+
+// TestProvider_Logger — when New is called with a logger + writerRef,
+// Provider.Logger() returns the same instance.
+func TestProvider_Logger(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: false},
+		Tracing: TracingConfig{Enabled: false},
+	}
+	logger, writer, err := NewLogger(LoggerConfig{Level: "info", Output: "stderr"}, ServiceInfo{Name: "x", Version: "y"})
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	prov, err := New(context.Background(), cfg, ServiceInfo{Name: "x", Version: "y"}, logger, writer)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+
+	require.Same(t, logger, prov.Logger(), "Provider.Logger() must return the injected *slog.Logger")
+}
+
+// TestProvider_Logger_NilCallerOK — a legacy nil-logger caller still gets
+// a usable Provider; Provider.Logger() returns nil and callers MUST
+// nil-guard (documented contract).
+func TestProvider_Logger_NilCallerOK(t *testing.T) {
+	cfg := ObservabilityConfig{
+		Metrics: MetricsConfig{Enabled: false},
+		Tracing: TracingConfig{Enabled: false},
+	}
+	prov, err := New(context.Background(), cfg, ServiceInfo{Name: "x", Version: "y"}, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = prov.Shutdown(context.Background()) })
+	require.Nil(t, prov.Logger())
 }

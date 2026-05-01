@@ -2,6 +2,7 @@ package observability
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"testing"
@@ -136,4 +137,36 @@ func TestRedactSetFromEnv_DefaultsAreLowercase(t *testing.T) {
 		_, ok := set[k] // DefaultRedactKeys are already lowercase
 		require.True(t, ok, "default key %q must be present in lowercased set", k)
 	}
+}
+
+// TestRedactingHandler_WithAttrsRedactsAtConstruction — `.With("password","x")`
+// scrubs the value so derived loggers never leak.
+func TestRedactingHandler_WithAttrsRedactsAtConstruction(t *testing.T) {
+	logger, buf := newCapturingLogger(t, func(h slog.Handler) slog.Handler {
+		return newRedactingHandler(h, defaultRedactSet())
+	})
+	derived := logger.With("password", "leak-me", "ok", "visible")
+	derived.Info("hi")
+	require.NotContains(t, buf.String(), "leak-me")
+	require.Contains(t, buf.String(), "<REDACTED>")
+}
+
+// TestRedactingHandler_WithGroup — group derivation preserves redaction.
+func TestRedactingHandler_WithGroup(t *testing.T) {
+	logger, buf := newCapturingLogger(t, func(h slog.Handler) slog.Handler {
+		return newRedactingHandler(h, defaultRedactSet())
+	})
+	g := logger.WithGroup("x")
+	g.Info("hi", "password", "leak-me")
+	require.NotContains(t, buf.String(), "leak-me")
+}
+
+// TestRedactingHandler_EnabledDelegates — gate flows through.
+func TestRedactingHandler_EnabledDelegates(t *testing.T) {
+	lv := &slog.LevelVar{}
+	lv.Set(slog.LevelError)
+	var buf bytes.Buffer
+	inner := newNornicdbJSONHandler(&buf, lv)
+	rh := newRedactingHandler(inner, defaultRedactSet())
+	require.False(t, rh.Enabled(context.Background(), slog.LevelInfo))
 }

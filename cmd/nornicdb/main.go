@@ -632,14 +632,37 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// violated OBS-08's mandated drain order. lifecycle.Run encodes the
 	// reverse-order drain as a function of the registration order below.
 	//
-	// 1. Build the observability provider (OTel SDK + Prometheus
-	//    registry; OBS-11 noop fallback if OTLP exporter init fails —
-	//    NEVER fatal).
-	obs, obsErr := observability.New(cmd.Context(), cfg.Observability, observability.ServiceInfo{
+	// 1. Build the production *slog.Logger BEFORE observability.New per
+	//    D-08's two-phase bootstrap. The 4-layer handler stack
+	//    (recovering → mandatory → redactor → JSONHandler) reads
+	//    cfg.Logging.Level/Output and ServiceInfo for mandatory fields.
+	//    On open failure (e.g., bogus path) the logger falls back to
+	//    os.Stderr and surfaces the misconfig as a single WARN line —
+	//    process startup remains robust (OBS-11 fail-closed analog).
+	loggerInfo := observability.ServiceInfo{
 		Name:    "nornicdb",
 		Version: buildinfo.Version(),
 		NodeID:  clusterNodeID, // empty falls through to OBS-10: POD_NAME → hostname → "standalone".
-	})
+	}
+	logger, writerRef, logErr := observability.NewLogger(observability.LoggerConfig{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
+	}, loggerInfo)
+	if logErr != nil {
+		// Bootstrap window — the logger fell back to stderr; emit a single
+		// WARN line via stdlib log (slog stack is now usable but the open
+		// failure deserves visibility on the original path the operator
+		// configured).
+		fmt.Fprintln(os.Stderr, "WARN logger init: ", logErr)
+	}
+
+	// 2. Build the observability provider (OTel SDK + Prometheus
+	//    registry; OBS-11 noop fallback if OTLP exporter init fails —
+	//    NEVER fatal). The logger + writerRef thread through so
+	//    Provider.Logger() exposes the assembled *slog.Logger to
+	//    downstream business-package constructors per D-01.
+	obs, obsErr := observability.New(cmd.Context(), cfg.Observability, loggerInfo, logger, writerRef)
 	if obsErr != nil {
 		return fmt.Errorf("observability init: %w", obsErr)
 	}

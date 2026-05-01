@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 	"testing/slogtest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -183,4 +186,43 @@ func TestNornicdbJSONHandler_WithAttrs(t *testing.T) {
 		require.NoError(t, json.Unmarshal(line, &rec))
 		require.Equal(t, "test", rec["component"])
 	}
+}
+
+// TestAppendValue_ExtraTypes — covers Uint64, Float NaN/Inf, Time, []byte,
+// error, []string, fmt.Stringer fallback.
+func TestAppendValue_ExtraTypes(t *testing.T) {
+	cases := map[string]struct {
+		args        []any
+		wantContain string
+	}{
+		"uint64":   {[]any{slog.Uint64("u", 42)}, `"u":42`},
+		"NaN":      {[]any{slog.Float64("f", math.NaN())}, `"NaN"`},
+		"+Inf":     {[]any{slog.Float64("f", math.Inf(1))}, `"+Inf"`},
+		"-Inf":     {[]any{slog.Float64("f", math.Inf(-1))}, `"-Inf"`},
+		"time":     {[]any{slog.Time("t", time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))}, `"t":"2020-01-02T03:04:05Z"`},
+		"bytes":    {[]any{slog.Any("b", []byte{0x01, 0xab})}, `"b":"01ab"`},
+		"error":    {[]any{slog.Any("e", errors.New("boom"))}, `"e":"boom"`},
+		"strings":  {[]any{slog.Any("ss", []string{"a", "b"})}, `"ss":["a","b"]`},
+		"nilany":   {[]any{slog.Any("n", nil)}, `"n":null`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			lv := &slog.LevelVar{}
+			logger := slog.New(newNornicdbJSONHandler(&buf, lv))
+			logger.Info("v", tc.args...)
+			require.Contains(t, buf.String(), tc.wantContain, "out=%s", buf.String())
+		})
+	}
+}
+
+// TestAppendEscapedJSON_LineSep — U+2028 / U+2029 are escaped to   /  .
+func TestAppendEscapedJSON_LineSep(t *testing.T) {
+	var buf bytes.Buffer
+	lv := &slog.LevelVar{}
+	logger := slog.New(newNornicdbJSONHandler(&buf, lv))
+	logger.Info("ls", "k", "a b c")
+	out := buf.String()
+	require.Contains(t, out, `\u2028`, "U+2028 must be escaped to \\u2028")
+	require.Contains(t, out, `\u2029`, "U+2029 must be escaped to \\u2029")
 }

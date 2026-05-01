@@ -1,9 +1,12 @@
 package observability
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,6 +40,19 @@ type TestEnv struct {
 	Logger   *slog.Logger
 	Provider *Provider
 	Health   *Health
+
+	// Buffer is the lazily-allocated record-capture sink. Populated by the
+	// first call to CaptureRecords(); nil otherwise. Per D-12 the discard
+	// handler stays the default; tests opt-in to capture via CaptureRecords.
+	Buffer *bytes.Buffer
+
+	// captureMu serializes Buffer mutation across concurrent loggers (race
+	// safety under -race -count=10). The bytes.Buffer itself is not
+	// safe for concurrent writes; the slog.JSONHandler uses an internal
+	// mutex for its own writes, but having all per-record bytes land
+	// atomically requires the JSONHandler's serialization plus our own
+	// guard around buffer ownership swaps.
+	captureMu sync.Mutex
 }
 
 // NewTestEnv constructs an isolated observability environment for one
@@ -115,4 +131,68 @@ func NewTestEnv(t *testing.T) *TestEnv {
 		Provider: prov,
 		Health:   h,
 	}
+}
+
+// CaptureRecords rewires te.Logger to write JSON records into te.Buffer
+// (D-12). Idempotent: subsequent calls are no-ops, preserving any records
+// already written. The default discard handler is replaced only on the
+// first call so tests can opt-in to capture without resetting state.
+//
+// Concurrency: the underlying slog.JSONHandler serializes its writes via
+// its own internal mutex; te.Buffer is therefore safe for concurrent
+// loggers spawned after CaptureRecords returns. Use a sync.Mutex-guarded
+// buffer wrapper if you need ordering guarantees across multiple goroutines.
+func (te *TestEnv) CaptureRecords() {
+	te.captureMu.Lock()
+	defer te.captureMu.Unlock()
+	if te.Buffer != nil {
+		return
+	}
+	te.Buffer = &bytes.Buffer{}
+	te.Logger = slog.New(slog.NewJSONHandler(&lockedWriter{w: te.Buffer}, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+}
+
+// LoggedRecords parses the captured buffer line-by-line into a slice of
+// JSON-decoded maps. Tolerates an empty buffer (returns nil) and skips
+// blank trailing lines. Each call re-parses the buffer so tests CAN call
+// it multiple times if they wish to observe streaming.
+func (te *TestEnv) LoggedRecords() []map[string]any {
+	te.captureMu.Lock()
+	defer te.captureMu.Unlock()
+	if te.Buffer == nil {
+		return nil
+	}
+	raw := te.Buffer.Bytes()
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []map[string]any
+	for _, line := range bytes.Split(bytes.TrimRight(raw, "\n"), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue // skip malformed lines (e.g. partial concurrent writes)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// lockedWriter serializes Write calls so concurrent loggers cannot
+// interleave bytes mid-record. slog.JSONHandler already serializes within
+// a single Logger but multi-goroutine fan-in into the same handler is the
+// stress case under -race -count=10.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }

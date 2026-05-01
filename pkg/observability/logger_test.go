@@ -85,3 +85,35 @@ func TestNewLogger_FileOutputRoundtrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(data), 0)
 }
+
+// TestParseLevel — exercises every supported level and the default.
+func TestParseLevel(t *testing.T) {
+	cases := map[string]slog.Level{
+		"debug":   slog.LevelDebug,
+		"DEBUG":   slog.LevelDebug,
+		"info":    slog.LevelInfo,
+		"":        slog.LevelInfo,
+		"unknown": slog.LevelInfo,
+		"warn":    slog.LevelWarn,
+		"WARNING": slog.LevelWarn,
+		"error":   slog.LevelError,
+	}
+	for in, want := range cases {
+		require.Equal(t, want, parseLevel(in), "parseLevel(%q)", in)
+	}
+}
+
+// TestOpenLogWriter — happy paths for stdout/stderr/explicit-stdout.
+func TestOpenLogWriter(t *testing.T) {
+	w, err := openLogWriter("")
+	require.NoError(t, err)
+	require.Equal(t, os.Stdout, w)
+
+	w, err = openLogWriter("stdout")
+	require.NoError(t, err)
+	require.Equal(t, os.Stdout, w)
+
+	w, err = openLogWriter("stderr")
+	require.NoError(t, err)
+	require.Equal(t, os.Stderr, w)
+}

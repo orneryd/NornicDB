@@ -183,7 +183,7 @@ func TestTelemetryListener_MetricsDisabled(t *testing.T) {
 	cfg.Metrics.Listen = "127.0.0.1:0"
 	cfg.Tracing.Enabled = false
 
-	prov, err := New(context.Background(), cfg, ServiceInfo{Name: "nornicdb-test", Version: "0.0.0"})
+	prov, err := New(context.Background(), cfg, ServiceInfo{Name: "nornicdb-test", Version: "0.0.0"}, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, prov.Registry(), "metrics disabled must yield nil Registry")
 

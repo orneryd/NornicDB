@@ -104,3 +104,31 @@ func BenchmarkMandatoryFields_NoActiveSpan(b *testing.B) {
 		buf.Reset()
 	}
 }
+
+// TestMandatoryFields_WithAttrsPreservesWrapper — derived handlers retain
+// captured service/version/node_id.
+func TestMandatoryFields_WithAttrsPreservesWrapper(t *testing.T) {
+	info := ServiceInfo{Name: "nornicdb", Version: "v1", NodeID: "n1"}
+	logger, buf := newMandatoryCapturing(t, info)
+
+	derived := logger.With("component", "test")
+	derivedG := logger.WithGroup("g")
+	require.NotNil(t, derived)
+	require.NotNil(t, derivedG)
+
+	derived.Info("hello")
+	out := buf.String()
+	require.Contains(t, out, `"service":"nornicdb"`)
+	require.Contains(t, out, `"component":"test"`)
+}
+
+// TestMandatoryFields_EnabledDelegates — Enabled gates from inner.
+func TestMandatoryFields_EnabledDelegates(t *testing.T) {
+	lv := &slog.LevelVar{}
+	lv.Set(slog.LevelError)
+	var buf bytes.Buffer
+	inner := newNornicdbJSONHandler(&buf, lv)
+	mh := newMandatoryFieldsHandler(inner, ServiceInfo{Name: "x", Version: "y"})
+	require.False(t, mh.Enabled(context.Background(), slog.LevelInfo))
+	require.True(t, mh.Enabled(context.Background(), slog.LevelError))
+}

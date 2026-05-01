@@ -94,3 +94,13 @@ func TestRecoveringHandler_PreservesWith(t *testing.T) {
 	_, ok = derivedG.(*recoveringHandler)
 	require.True(t, ok, "WithGroup must return *recoveringHandler")
 }
+
+// TestRecoveringHandler_EnabledDelegates — Enabled simply delegates.
+func TestRecoveringHandler_EnabledDelegates(t *testing.T) {
+	lv := &slog.LevelVar{}
+	lv.Set(slog.LevelWarn)
+	inner := newNornicdbJSONHandler(os.Stdout, lv)
+	rec := newRecoveringHandler(inner)
+	require.False(t, rec.Enabled(context.Background(), slog.LevelInfo))
+	require.True(t, rec.Enabled(context.Background(), slog.LevelWarn))
+}

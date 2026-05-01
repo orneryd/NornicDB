@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -32,6 +34,16 @@ type Provider struct {
 	metricsEnabled bool
 	cfg            ObservabilityConfig
 
+	// logger is the production *slog.Logger constructed via NewLogger and
+	// passed into observability.New per D-08's two-phase bootstrap. May be
+	// nil only in legacy test paths that bypass the new constructor.
+	logger *slog.Logger
+
+	// writerRef is the underlying writer the logger emits to (file/stderr/
+	// stdout). Held so Provider.Shutdown can opportunistically attempt
+	// Sync() per D-09a (captures drain-time finalize logs to disk).
+	writerRef io.Writer
+
 	// shutdownOnce makes Shutdown idempotent: Plan-03's telemetryListener
 	// calls Provider.Shutdown as part of its OQ4 ordering, AND test fixtures
 	// (TestEnv) call it from t.Cleanup. The OTel SDK returns "reader is
@@ -58,7 +70,12 @@ type Provider struct {
 // The provided ctx bounds OTLP exporter dial. A context-with-timeout derived
 // from cfg.Tracing.Timeout (default 5s) further bounds the dial so a
 // misconfigured collector cannot hang startup (Pitfall 2).
-func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo) (*Provider, error) {
+//
+// Per D-08 two-phase bootstrap: the caller MUST call observability.NewLogger
+// BEFORE this function so logger / writerRef can be threaded through. logger
+// MAY be nil for legacy callers (provider falls back to a discard logger);
+// writerRef MAY be nil (no Sync attempt during Shutdown).
+func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger *slog.Logger, writerRef io.Writer) (*Provider, error) {
 	// Step 1: Resource — also resolves and logs service.instance.id (OBS-10).
 	res := buildResource(info)
 	instanceID, instanceIDSrc := resolveInstanceID(info.NodeID)
@@ -89,6 +106,8 @@ func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo) (*Provi
 		instanceIDSrc:  instanceIDSrc,
 		metricsEnabled: metricsEnabled,
 		cfg:            cfg,
+		logger:         logger,
+		writerRef:      writerRef,
 	}, nil
 }
 
@@ -172,6 +191,14 @@ func (p *Provider) InstanceIDSource() string { return p.instanceIDSrc }
 // MetricsEnabled mirrors cfg.Metrics.Enabled (OBS-04).
 func (p *Provider) MetricsEnabled() bool { return p.metricsEnabled }
 
+// Logger returns the production *slog.Logger that downstream business
+// packages (pkg/server, pkg/cypher, pkg/storage, pkg/bolt) consume per the
+// D-01 constructor-injection pattern. Returns nil if the Provider was
+// constructed via a legacy code path that did not pass a logger; callers
+// SHOULD nil-guard with `slog.New(slog.NewTextHandler(io.Discard, nil))` as
+// a fallback.
+func (p *Provider) Logger() *slog.Logger { return p.logger }
+
 // Config returns a copy of the construction-time config.
 func (p *Provider) Config() ObservabilityConfig { return p.cfg }
 
@@ -198,6 +225,14 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 			if err := p.meterProvider.Shutdown(ctx); err != nil {
 				errs = errors.Join(errs, fmt.Errorf("meter provider shutdown: %w", err))
 			}
+		}
+		// D-09a: opportunistic Sync() against the logger writer. *os.File
+		// flushes to disk; *bytes.Buffer (tests) and the standard streams
+		// no-op. Cost ~1-3ms; well under the 5s flush budget. Errors are
+		// intentionally swallowed — Sync failure during shutdown is not
+		// actionable, and we do not want it to mask earlier exporter errors.
+		if syncer, ok := p.writerRef.(interface{ Sync() error }); ok {
+			_ = syncer.Sync()
 		}
 		p.shutdownErr = errs
 	})

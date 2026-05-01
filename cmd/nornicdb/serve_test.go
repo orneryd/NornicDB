@@ -140,7 +140,7 @@ func TestServe_TelemetryEndpointsLive(t *testing.T) {
 		Name:    "nornicdb-test",
 		Version: "0.0.0-test",
 		NodeID:  "test-instance-live",
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("observability.New: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestServe_OTLPCollectorDownStaysUp(t *testing.T) {
 		Name:    "nornicdb-test",
 		Version: "0.0.0-test",
 		NodeID:  "test-instance-otlp-down",
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("observability.New must not fail when OTLP collector is down (OBS-11); got %v", err)
 	}
