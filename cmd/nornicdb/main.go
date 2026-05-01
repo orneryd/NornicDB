@@ -562,6 +562,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	// Note: Auth status logged at server startup
 
+	// Phase 2 D-08: build the production *slog.Logger BEFORE constructing
+	// any business-package server so the logger can be threaded into
+	// server.New via Config.Logger (D-01). The 4-layer handler stack
+	// (recovering → mandatory → redactor → JSONHandler) reads
+	// cfg.Logging.Level/Output and ServiceInfo for mandatory fields. On
+	// open failure (e.g., bogus path) the logger falls back to os.Stderr
+	// and surfaces the misconfig as a single WARN line — process startup
+	// remains robust (OBS-11 fail-closed analog).
+	loggerInfo := observability.ServiceInfo{
+		Name:    "nornicdb",
+		Version: buildinfo.Version(),
+		NodeID:  clusterNodeID, // empty falls through to OBS-10: POD_NAME → hostname → "standalone".
+	}
+	logger, writerRef, logErr := observability.NewLogger(observability.LoggerConfig{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
+	}, loggerInfo)
+	if logErr != nil {
+		// Bootstrap window — the logger fell back to stderr; emit a single
+		// WARN line via stdlib log (slog stack is now usable but the open
+		// failure deserves visibility on the original path the operator
+		// configured).
+		fmt.Fprintln(os.Stderr, "WARN logger init: ", logErr)
+	}
+
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
@@ -587,6 +613,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// CORS configuration from loaded config
 	serverConfig.EnableCORS = cfg.Server.EnableCORS
 	serverConfig.CORSOrigins = cfg.Server.CORSOrigins
+	// Phase 2 D-01: thread the observability *slog.Logger into the server
+	// Config so all pkg/server log emission flows through the production
+	// 4-layer handler stack (recovering → mandatory → redactor → JSON).
+	// Uses the `logger` built above (same value Provider.Logger() returns
+	// later, since obs.New stores this reference). nil-safe: pkg/server.New
+	// installs a discard fallback if Logger is nil.
+	serverConfig.Logger = logger
 
 	// Enable embedded UI from the ui package (unless headless mode)
 	if !headless {
@@ -632,30 +665,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// violated OBS-08's mandated drain order. lifecycle.Run encodes the
 	// reverse-order drain as a function of the registration order below.
 	//
-	// 1. Build the production *slog.Logger BEFORE observability.New per
-	//    D-08's two-phase bootstrap. The 4-layer handler stack
-	//    (recovering → mandatory → redactor → JSONHandler) reads
-	//    cfg.Logging.Level/Output and ServiceInfo for mandatory fields.
-	//    On open failure (e.g., bogus path) the logger falls back to
-	//    os.Stderr and surfaces the misconfig as a single WARN line —
-	//    process startup remains robust (OBS-11 fail-closed analog).
-	loggerInfo := observability.ServiceInfo{
-		Name:    "nornicdb",
-		Version: buildinfo.Version(),
-		NodeID:  clusterNodeID, // empty falls through to OBS-10: POD_NAME → hostname → "standalone".
-	}
-	logger, writerRef, logErr := observability.NewLogger(observability.LoggerConfig{
-		Level:  cfg.Logging.Level,
-		Format: cfg.Logging.Format,
-		Output: cfg.Logging.Output,
-	}, loggerInfo)
-	if logErr != nil {
-		// Bootstrap window — the logger fell back to stderr; emit a single
-		// WARN line via stdlib log (slog stack is now usable but the open
-		// failure deserves visibility on the original path the operator
-		// configured).
-		fmt.Fprintln(os.Stderr, "WARN logger init: ", logErr)
-	}
+	// 1. Logger, loggerInfo, and writerRef were built earlier (BEFORE
+	//    server.New) per Phase 2 D-08's two-phase bootstrap so the same
+	//    *slog.Logger flows into pkg/server's Config.Logger and into
+	//    observability.New below. The 4-layer handler stack
+	//    (recovering → mandatory → redactor → JSONHandler) was assembled
+	//    against cfg.Logging.Level/Output + ServiceInfo at construction.
 
 	// 2. Build the observability provider (OTel SDK + Prometheus
 	//    registry; OBS-11 noop fallback if OTLP exporter init fails —

@@ -164,7 +164,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -442,6 +444,13 @@ type Config struct {
 	// WARNING: Only enable in development/testing environments
 	// Env: NORNICDB_ENABLE_PPROF=true|false
 	EnablePprof bool
+
+	// Logger is the structured-logging entrypoint per Phase 2 D-01.
+	// If nil, a discard-handler fallback is installed at New() — graceful
+	// degrade for the transitional period; ctors will be tightened post-M1
+	// once all consumers are updated to pass an explicit logger via
+	// observability.Provider.Logger().
+	Logger *slog.Logger
 }
 
 // DefaultConfig returns Neo4j-compatible default server configuration.
@@ -592,6 +601,12 @@ type Server struct {
 	dbManager *multidb.DatabaseManager // Manages multiple databases
 	auth      *auth.Authenticator
 	audit     *audit.Logger
+
+	// log is the structured logger for operational events (Phase 2 D-01).
+	// Tagged .With("component", "server") at construction so every record
+	// carries component attribution. NEVER nil after New() returns
+	// (discard-fallback handler installed when cfg.Logger == nil).
+	log *slog.Logger
 
 	// MCP server for LLM tool interface
 	mcpServer *mcp.Server
@@ -930,6 +945,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if db == nil {
 		return nil, fmt.Errorf("database required")
 	}
+	// Phase 2 D-01a: graceful-degrade discard fallback when caller did not
+	// thread observability.Provider.Logger() through Config.Logger. Keeps
+	// existing tests/callers compileable; tightens post-M1 once all
+	// consumers wire the logger explicitly.
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 
 	// Note: GPU status is logged in main.go during GPU manager initialization
 	// This avoids duplicate logs and provides more detailed information
@@ -996,6 +1018,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		db:             db,
 		dbManager:      dbManager,
 		auth:           authenticator,
+		log:            config.Logger.With("component", "server"),
 		mcpServer:      mcpServer,
 		graphqlHandler: graphql.NewHandler(db, dbManager),
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
