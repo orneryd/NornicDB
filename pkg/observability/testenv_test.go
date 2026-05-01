@@ -2,6 +2,7 @@ package observability
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -87,4 +88,52 @@ func TestNewTestEnv_ProvidesAllFields(t *testing.T) {
 	// double-construction).
 	require.Same(t, env.Registry, env.Provider.Registry(),
 		"TestEnv.Registry and Provider.Registry() must be the same instance")
+}
+
+// TestTestEnv_RecordCapture — CaptureRecords() rewires the logger to a
+// JSON handler; LoggedRecords() returns parsed map records (D-12).
+func TestTestEnv_RecordCapture(t *testing.T) {
+	te := NewTestEnv(t)
+	te.CaptureRecords()
+	te.Logger.Info("hello", "k", "v")
+
+	recs := te.LoggedRecords()
+	require.Len(t, recs, 1)
+	require.Equal(t, "hello", recs[0]["msg"])
+	require.Equal(t, "v", recs[0]["k"])
+}
+
+// TestTestEnv_RecordCapture_Race — concurrent loggers must be race-clean
+// under -race -count=10.
+func TestTestEnv_RecordCapture_Race(t *testing.T) {
+	te := NewTestEnv(t)
+	te.CaptureRecords()
+
+	var wg sync.WaitGroup
+	wg.Add(50)
+	for i := 0; i < 50; i++ {
+		go func(i int) {
+			defer wg.Done()
+			te.Logger.Info("concurrent", "i", i)
+		}(i)
+	}
+	wg.Wait()
+
+	recs := te.LoggedRecords()
+	require.GreaterOrEqual(t, len(recs), 50)
+}
+
+// TestTestEnv_RecordCapture_Idempotent — calling CaptureRecords twice within
+// the same test is a no-op (does not reset the buffer).
+func TestTestEnv_RecordCapture_Idempotent(t *testing.T) {
+	te := NewTestEnv(t)
+	te.CaptureRecords()
+	te.Logger.Info("first")
+	te.CaptureRecords() // idempotent
+	te.Logger.Info("second")
+
+	recs := te.LoggedRecords()
+	require.Len(t, recs, 2)
+	require.Equal(t, "first", recs[0]["msg"])
+	require.Equal(t, "second", recs[1]["msg"])
 }
