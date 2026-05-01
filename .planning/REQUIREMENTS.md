@@ -95,14 +95,14 @@
 
 ### Structured Logging (LOG)
 
-- [ ] **LOG-01**: All `log.Printf`/`fmt.Println` sites in `pkg/server`, `pkg/cypher`, `pkg/storage`, `pkg/bolt` are migrated to `log/slog` (target: ~165 sites identified in the codebase audit)
+- [x] **LOG-01**: All `log.Printf`/`fmt.Println` sites in `pkg/server`, `pkg/cypher`, `pkg/storage`, `pkg/bolt` are migrated to `log/slog` (target: ~165 sites identified in the codebase audit)
 - [ ] **LOG-02**: Default handler is `slog.NewJSONHandler` when `Logging.Format=json` (production-required default for containers)
 - [ ] **LOG-03**: Text handler is dev-only and explicitly insecure for untrusted input; CRLF stripping applied to attribute values
 - [ ] **LOG-04**: Every log record contains mandatory fields: `time` (RFC3339Nano), `level`, `msg`, `service=nornicdb`, `version`, `node_id`, plus `trace_id`/`span_id` when ctx has an active span
 - [ ] **LOG-05**: Conventional groups (`http`, `cypher`, `storage`, `replication`) are used via `slog.Group` for protocol-specific attributes
 - [ ] **LOG-06**: PII redactor (sharing the `pkg/audit` allow-list: `password`, `token`, `authorization`, `secret`, `api_key`) strips matching keys regardless of nesting; allow-list is configurable via `NORNICDB_LOG_REDACT_EXTRA`
-- [ ] **LOG-07**: Slow-query log emits `WARN` with truncated 500-char query, `plan_hash`, and `cypher.duration_ms`; full query text never appears as metric label or span attribute
-- [ ] **LOG-08**: Slow-query log applies Cypher AST literal redaction (`<REDACTED>` for string/number literals) before truncation
+- [x] **LOG-07**: Slow-query log emits `WARN` with truncated 500-char query, `plan_hash`, and `cypher.duration_ms`; full query text never appears as metric label or span attribute
+- [x] **LOG-08**: Slow-query log applies Cypher AST literal redaction (`<REDACTED>` for string/number literals) before truncation
 - [ ] **LOG-09**: `slog.Default()` is forbidden outside `pkg/observability`; pre-commit hook or lint check rejects new uses
 - [ ] **LOG-10**: `pkg/audit/audit.go` is NOT migrated to `slog` and retains its existing immutable, signed, append-only stream and retention policy
 
@@ -214,14 +214,14 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | OBS-10 | Phase 1 | ✅ Complete (Plan 01-02, 2026-04-30) |
 | OBS-11 | Phase 1 | ✅ Complete (Plan 01-02, 2026-04-30) |
 | OBS-12 | Phase 1 | ✅ Complete (Plan 01-02, 2026-04-30) |
-| LOG-01 | Phase 2 | Pending |
+| LOG-01 | Phase 2 | Complete |
 | LOG-02 | Phase 2 | Pending |
 | LOG-03 | Phase 2 | Pending |
 | LOG-04 | Phase 2 | Pending |
 | LOG-05 | Phase 2 | Pending |
 | LOG-06 | Phase 2 | Pending |
-| LOG-07 | Phase 2 | Pending |
-| LOG-08 | Phase 2 | Pending |
+| LOG-07 | Phase 2 | Complete |
+| LOG-08 | Phase 2 | Complete |
 | LOG-09 | Phase 2 | Pending |
 | LOG-10 | Phase 2 | Pending |
 | MET-01 | Phase 3 | Pending |

@@ -84,7 +84,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 **Plans**: 6 plans
   - [x] 02-01-PLAN.md — pkg/observability custom slog handler stack (logger.go, logging.go, redaction.go, recovering.go, mandatory_fields.go) + bench harness + TestEnv record capture
   - [x] 02-02-PLAN.md — migrate pkg/server log call sites to slog (87 sites; D-08 two-phase init in cmd/nornicdb/main.go)
-  - [ ] 02-03-PLAN.md — migrate pkg/cypher (22 sites) + slow-query log + cypher.RedactLiterals + cypher.PlanHash + D-04d SlowQueryThreshold collapse
+  - [x] 02-03-PLAN.md — migrate pkg/cypher (22 sites) + slow-query log + cypher.RedactLiterals + cypher.PlanHash + D-04d SlowQueryThreshold collapse
   - [ ] 02-04-PLAN.md — migrate pkg/storage (48 sites) + D-06 AsyncEngine flushLog + D-07 walLog + structured [COUNT BUG]
   - [ ] 02-05-PLAN.md — migrate pkg/bolt (18 sites) + [BOLT] bracket-to-component + HELLO credentials auto-redacted via D-03a
   - [ ] 02-06-PLAN.md — make lint-slog (LOG-09 falsifiability) + phase-exit SUMMARY + ADR-0001 §4.1 row 2 audit-trail entry
