@@ -85,7 +85,7 @@ import (
 //	    Years: 1, Months: 6, Days: 15,
 //	    Hours: 2, Minutes: 30, Seconds: 45,
 //	}
-//	fmt.Println(dur.String()) // P1Y6M15DT2H30M45S
+//	_ = dur.String() // serializes as P1Y6M15DT2H30M45S
 //
 // # ELI12
 //
@@ -119,10 +119,10 @@ type CypherDuration struct {
 // # Example
 //
 //	dur := &CypherDuration{Days: 5, Hours: 2}
-//	fmt.Println(dur.String()) // "P5DT2H"
+//	_ = dur.String() // serializes as "P5DT2H"
 //
 //	zeroDur := &CypherDuration{}
-//	fmt.Println(zeroDur.String()) // "PT0S"
+//	_ = zeroDur.String() // serializes as "PT0S"
 func (d *CypherDuration) String() string {
 	var sb strings.Builder
 	sb.WriteString("P")
@@ -169,7 +169,7 @@ func (d *CypherDuration) String() string {
 // # Example
 //
 //	dur := &CypherDuration{Years: 1}
-//	fmt.Println(dur.TotalDays()) // ~365.25
+//	_ = dur.TotalDays() // returns ~365.25
 func (d *CypherDuration) TotalDays() float64 {
 	// Approximate: 1 year = 365.25 days, 1 month = 30.4375 days
 	return float64(d.Years)*365.25 + float64(d.Months)*30.4375 + float64(d.Days) +
@@ -184,7 +184,7 @@ func (d *CypherDuration) TotalDays() float64 {
 // # Example
 //
 //	dur := &CypherDuration{Hours: 2, Minutes: 30}
-//	fmt.Println(dur.TotalSeconds()) // 9000
+//	_ = dur.TotalSeconds() // returns 9000
 func (d *CypherDuration) TotalSeconds() float64 {
 	// Calculate directly to avoid double-counting from TotalDays
 	return float64(d.Years)*365.25*86400 + float64(d.Months)*30.4375*86400 +
@@ -204,7 +204,7 @@ func (d *CypherDuration) TotalSeconds() float64 {
 //
 //	dur := &CypherDuration{Hours: 2, Minutes: 30}
 //	goDur := dur.ToTimeDuration()
-//	fmt.Println(goDur) // 2h30m0s
+//	_ = goDur // formats as 2h30m0s
 func (d *CypherDuration) ToTimeDuration() time.Duration {
 	// Convert to time.Duration (approximate for calendar components)
 	total := time.Duration(d.Days) * 24 * time.Hour

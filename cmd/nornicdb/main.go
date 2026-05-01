@@ -588,6 +588,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, "WARN logger init: ", logErr)
 	}
 
+	// Phase 2 D-01 + D-04c: thread the structured logger and the slow-query
+	// threshold from cfg.Logging into the primary cypher executor so the
+	// LOG-07 slow-query record schema fires on the production code path.
+	if exec := db.GetCypherExecutor(); exec != nil {
+		exec.SetLogger(logger)
+		exec.SetSlowQueryThreshold(cfg.Logging.SlowQueryThreshold)
+	}
+
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
@@ -620,6 +628,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// later, since obs.New stores this reference). nil-safe: pkg/server.New
 	// installs a discard fallback if Logger is nil.
 	serverConfig.Logger = logger
+
+	// Phase 2 D-04d: thread the canonical pkg/config.LoggingConfig snapshot
+	// into the server. SlowQueryThreshold + SlowQueryLogFile readers in
+	// pkg/server now go through s.config.Logging.* exclusively.
+	serverConfig.Logging = cfg.Logging
 
 	// Enable embedded UI from the ui package (unless headless mode)
 	if !headless {
@@ -941,6 +954,11 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}
+		// Phase 2 D-01 + D-04c: inherit logger and slow-query threshold from
+		// the base executor so per-transaction scoped executors emit the
+		// LOG-07 slow-query record on the same logger pipeline.
+		executor.SetLogger(baseExec.Logger())
+		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
 	if searchSvc, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
 		executor.SetSearchService(searchSvc)

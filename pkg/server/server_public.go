@@ -254,7 +254,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	sb.WriteString("# HELP nornicdb_slow_query_threshold_ms Slow query threshold in milliseconds\n")
 	sb.WriteString("# TYPE nornicdb_slow_query_threshold_ms gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_slow_query_threshold_ms %d\n", s.config.SlowQueryThreshold.Milliseconds())
+	fmt.Fprintf(&sb, "nornicdb_slow_query_threshold_ms %d\n", s.config.Logging.SlowQueryThreshold.Milliseconds())
 
 	// Info metric with version
 	sb.WriteString("# HELP nornicdb_info Database information\n")

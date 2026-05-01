@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -364,7 +363,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 //		log.Fatal(err)
 //	}
 //	for _, row := range result.Rows {
-//		fmt.Printf("Database: %s (type: %s, status: %s)\n", row[0], row[1], row[7])
+//		// emit "Database: %s (type: %s, status: %s)" for row[0], row[1], row[7]
 //	}
 //
 // Returns Neo4j-compatible format with columns:
@@ -440,7 +439,9 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 //   - Error: If database already exists (unless IF NOT EXISTS is used)
 //   - Error: If DatabaseManager is not configured
 func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	log.Printf("[nornicdb:CREATE_DATABASE] executeCreateDatabase called, cypher=%q", cypher)
+	e.logger().Debug("executeCreateDatabase invoked",
+		"subsystem", "create_database",
+		"cypher", cypher)
 	if e.dbManager == nil {
 		return nil, fmt.Errorf("database manager not available - CREATE DATABASE requires multi-database support")
 	}
@@ -532,10 +533,15 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	// Create database
 	err = e.dbManager.CreateDatabase(dbName)
 	if err != nil {
-		log.Printf("[nornicdb:CREATE_DATABASE] CreateDatabase(%q) failed: %v", dbName, err)
+		e.logger().Error("CreateDatabase failed",
+			"subsystem", "create_database",
+			"database", dbName,
+			"error", err)
 		return nil, fmt.Errorf("failed to create database '%s': %w", dbName, err)
 	}
-	log.Printf("[nornicdb:CREATE_DATABASE] CreateDatabase(%q) succeeded", dbName)
+	e.logger().Info("CreateDatabase succeeded",
+		"subsystem", "create_database",
+		"database", dbName)
 
 	return &ExecuteResult{
 		Columns: []string{"name"},

@@ -49,7 +49,7 @@
 //
 //	// Process results
 //	for _, row := range result.Rows {
-//		fmt.Printf("Row: %v\n", row)
+//		// process row (e.g. emit "Row: %v" via the configured logger)
 //	}
 //
 // Neo4j Compatibility:
@@ -112,6 +112,8 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -327,6 +329,18 @@ type StorageExecutor struct {
 	// unwindMergeChainPlanCache memoizes parsed plans for the generalized
 	// UNWIND ... MERGE batch hot path keyed by mutation query text.
 	unwindMergeChainPlanCache *unwindMergeChainPlanCache
+
+	// log is the structured logger used for slow-query and operational log
+	// emission. Threaded via SetLogger after construction (D-01 non-breaking
+	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
+	// internal logger() helper which lazily installs a discard fallback.
+	log *slog.Logger
+
+	// slowQueryThreshold gates the D-04c slow-query emission path. Zero or
+	// negative values disable slow-query logging entirely. Set via
+	// SetSlowQueryThreshold so the configured cfg.Logging.SlowQueryThreshold
+	// flows in from the bootstrap site without breaking the ctor.
+	slowQueryThreshold time.Duration
 }
 
 type unwindMergeChainPlanCache struct {
@@ -488,6 +502,81 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	ensureBuiltInProceduresRegistered()
 	_ = exec.loadPersistedProcedures()
 	return exec
+}
+
+// SetLogger installs the structured slog.Logger used for slow-query and
+// operational records. D-01 non-breaking: NewStorageExecutor's signature is
+// unchanged; callers (cmd/nornicdb/main.go) call SetLogger after construction
+// so the *slog.Logger from observability.NewLogger flows through.
+//
+// Discard-fallback: passing nil installs a slog.Logger backed by io.Discard
+// so subsequent log emissions cannot panic. The "component" attribute is
+// pre-bound here (not per-call) to honor the RESEARCH "Per-call .With()
+// allocation" anti-pattern.
+func (e *StorageExecutor) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	e.log = logger.With("component", "cypher")
+}
+
+// SetSlowQueryThreshold configures the D-04c slow-query emission gate.
+// Zero or negative durations disable slow-query logging entirely. Threaded
+// from cfg.Logging.SlowQueryThreshold at the bootstrap site.
+func (e *StorageExecutor) SetSlowQueryThreshold(d time.Duration) {
+	e.slowQueryThreshold = d
+}
+
+// Logger returns the bound *slog.Logger. Exposed so transient executors
+// (e.g., per-transaction sessions cloned from a base) can inherit the
+// configured logger without re-threading from main.
+func (e *StorageExecutor) Logger() *slog.Logger { return e.logger() }
+
+// SlowQueryThreshold returns the configured slow-query emission gate.
+// Exposed so cloned executors inherit the threshold from their base.
+func (e *StorageExecutor) SlowQueryThreshold() time.Duration { return e.slowQueryThreshold }
+
+// logger returns the bound logger, lazily installing a discard fallback if
+// SetLogger was never called. Internal — every emission site must read the
+// logger via this helper, never via the stdlib package-level default
+// (LOG-09 forbids that path).
+func (e *StorageExecutor) logger() *slog.Logger {
+	if e.log == nil {
+		e.log = slog.New(slog.NewTextHandler(io.Discard, nil)).With("component", "cypher")
+	}
+	return e.log
+}
+
+// emitSlowQueryLog writes a single WARN record matching the LOG-07 schema
+// when duration meets the configured threshold. RedactLiterals runs BEFORE
+// truncation per D-04c so partial literals never leak via the truncation seam.
+//
+// Schema (D-04c):
+//
+//	level=WARN
+//	msg="slow query"
+//	event="slow_query"
+//	plan_hash=<16-char hex from PlanHash; "0000000000000000" when plan is nil>
+//	cypher.duration_ms=<int64 millisecond delta>
+//	query=<RedactLiterals(query) truncated to 500 chars>
+//
+// Performance: PlanHash + RedactLiterals only fire when this method is called,
+// i.e., only when the executor's measured duration exceeded the configured
+// threshold. The hot path (Execute fast return) never enters this method.
+func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, duration time.Duration) {
+	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+		return
+	}
+	redacted := RedactLiterals(query)
+	if len(redacted) > 500 {
+		redacted = redacted[:500]
+	}
+	e.logger().Warn("slow query",
+		"event", "slow_query",
+		"plan_hash", PlanHash(plan),
+		"cypher.duration_ms", duration.Milliseconds(),
+		"query", redacted,
+	)
 }
 
 // SetDatabaseManager sets the database manager for system commands.
@@ -670,9 +759,9 @@ func queryDeletesNodes(query string) bool {
 //	`, params)
 //
 //	// Process results
-//	fmt.Printf("Columns: %v\n", result.Columns)
+//	// emit "Columns: %v" via the configured logger
 //	for _, row := range result.Rows {
-//		fmt.Printf("Row: %v\n", row)
+//		// process row (e.g. emit "Row: %v" via the configured logger)
 //	}
 //
 // Supported Query Types:
@@ -719,6 +808,18 @@ func queryDeletesNodes(query string) bool {
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
 	e.resetHotPathTrace()
+	// D-04c slow-query log timing. Captured at the top so the threshold check
+	// covers every Execute return path (early-out, fabric, normal). Pre-bind
+	// the original query text — by the time the deferred emission fires,
+	// `cypher` has been normalized; we want to log what the client submitted.
+	slowStart := time.Now()
+	originalCypher := cypher
+	defer func() {
+		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
+		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
+		// thread the planned tree here once cypher EXPLAIN refactoring is in.
+		e.emitSlowQueryLog(originalCypher, nil, time.Since(slowStart))
+	}()
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusables(cypher)

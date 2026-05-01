@@ -596,8 +596,13 @@ type LoggingConfig struct {
 	Output string
 	// QueryLogEnabled for query logging
 	QueryLogEnabled bool
-	// SlowQueryThreshold for logging slow queries
+	// SlowQueryThreshold for logging slow queries (single source of truth
+	// per D-04d; replaces the prior pkg/server.Config.SlowQueryThreshold).
 	SlowQueryThreshold time.Duration
+	// SlowQueryLogFile is the optional file path for the slow-query log
+	// stream. Empty => log to the configured server logger. Single source of
+	// truth per D-04d.
+	SlowQueryLogFile string
 }
 
 // FeatureFlagsConfig holds all feature flags for experimental/optional features.

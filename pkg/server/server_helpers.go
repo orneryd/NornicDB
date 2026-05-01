@@ -450,7 +450,7 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 		return
 	}
 
-	if duration < s.config.SlowQueryThreshold {
+	if duration < s.config.Logging.SlowQueryThreshold {
 		return
 	}
 

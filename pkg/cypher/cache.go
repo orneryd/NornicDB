@@ -160,10 +160,10 @@ func NewQueryCache(maxSize int) *QueryCache {
 //
 //	result, found := cache.Get("MATCH (n) RETURN n.name", nil)
 //	if found {
-//		fmt.Println("Cache hit! Using cached result")
+//		// cache hit — return the cached result
 //		return result
 //	}
-//	fmt.Println("Cache miss, executing query...")
+//	// cache miss — execute the query and Put() the result into the cache
 //
 // Example 2 - With Parameters:
 //
@@ -371,8 +371,7 @@ func (qc *QueryCache) Invalidate() {
 //
 //	hits, misses, size := cache.Stats()
 //	hitRate := float64(hits) / float64(hits+misses) * 100
-//	fmt.Printf("Cache hit rate: %.2f%% (%d/%d entries)\n", hitRate, size, cache.maxSize)
-//	// Output: Cache hit rate: 87.50% (450/1000 entries)
+//	// emit hit-rate metric e.g. "Cache hit rate: 87.50% (450/1000 entries)"
 //
 // Example 2 - Prometheus Metrics:
 //
@@ -389,8 +388,8 @@ func (qc *QueryCache) Invalidate() {
 //	hitRate := float64(hits) / float64(hits+misses)
 //
 //	if hitRate < 0.5 && size == maxSize {
-//		// Low hit rate and cache is full - might need bigger cache
-//		log.Printf("Consider increasing cache size (hit rate: %.2f%%)", hitRate*100)
+//		// Low hit rate and cache is full — emit a structured warning so
+//		// operators can react (e.g. via the package logger).
 //	}
 //
 // ELI12:

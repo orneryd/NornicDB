@@ -408,12 +408,14 @@ type Config struct {
 	// Slow Query Logging Configuration
 	// SlowQueryEnabled turns on slow query logging (default: true)
 	SlowQueryEnabled bool
-	// SlowQueryThreshold is minimum duration to log (default: 100ms)
-	// Queries taking longer than this will be logged
-	SlowQueryThreshold time.Duration
-	// SlowQueryLogFile is optional file path for slow query log
-	// If empty, logs to stderr with other server logs
-	SlowQueryLogFile string
+	// D-04d: SlowQueryThreshold and SlowQueryLogFile collapsed into
+	// pkg/config.LoggingConfig (the single source of truth). Threaded into
+	// the server via the Logging field below; readers go through
+	// s.config.Logging.SlowQueryThreshold / .SlowQueryLogFile.
+	//
+	// Logging carries the runtime LoggingConfig snapshot. Populated by
+	// cmd/nornicdb/main.go from cfg.Logging at server construction.
+	Logging nornicConfig.LoggingConfig
 
 	// Headless Mode Configuration
 	// Headless disables the web UI and browser-related endpoints
@@ -534,9 +536,11 @@ func DefaultConfig() *Config {
 		//   NORNICDB_SLOW_QUERY_ENABLED=false
 		//   NORNICDB_SLOW_QUERY_THRESHOLD=200ms
 		//   NORNICDB_SLOW_QUERY_LOG=/var/log/nornicdb/slow.log
-		SlowQueryEnabled:   false,
-		SlowQueryThreshold: 100 * time.Millisecond,
-		SlowQueryLogFile:   "", // Empty = log to stderr
+		// D-04d: Threshold + LogFile defaults now live in
+		// pkg/config.DefaultConfig().Logging (the single source of truth);
+		// callers populate Logging from cfg.Logging.
+		SlowQueryEnabled: false,
+		Logging:          nornicConfig.LoggingConfig{SlowQueryThreshold: 100 * time.Millisecond},
 
 		// Headless mode disabled by default (UI enabled)
 		// Override via:
@@ -1634,24 +1638,27 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		}
 	}
 
-	// Initialize slow query logger if file specified
-	if config.SlowQueryEnabled && config.SlowQueryLogFile != "" {
-		file, err := os.OpenFile(config.SlowQueryLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Initialize slow query logger if file specified.
+	// D-04d collapse: threshold + log file path read from the canonical
+	// pkg/config.LoggingConfig snapshot threaded via Config.Logging.
+	if config.SlowQueryEnabled && config.Logging.SlowQueryLogFile != "" {
+		file, err := os.OpenFile(config.Logging.SlowQueryLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			s.log.Warn("failed to open slow query log file",
 				"subsystem", "slow_query",
-				"file", config.SlowQueryLogFile,
+				"file", config.Logging.SlowQueryLogFile,
 				"error", err)
 		} else {
 			s.slowQueryLogger = log.New(file, "", log.LstdFlags)
-			// EXCLUDED-FROM-02-02: this slow-query-toggle log line is owned by Plan 02-03
-			// D-04d collapse, which migrates AND switches to cfg.Logging.SlowQueryThreshold
-			// in the same commit. Do NOT migrate here.
-			log.Printf("✓ Slow query logging to: %s (threshold: %v)", config.SlowQueryLogFile, config.SlowQueryThreshold)
+			s.log.Info("slow query logging configured",
+				"subsystem", "slow_query",
+				"file", config.Logging.SlowQueryLogFile,
+				"threshold", config.Logging.SlowQueryThreshold)
 		}
 	} else if config.SlowQueryEnabled {
-		// EXCLUDED-FROM-02-02: see note above; owned by Plan 02-03 D-04d.
-		log.Printf("✓ Slow query logging enabled (threshold: %v)", config.SlowQueryThreshold)
+		s.log.Info("slow query logging enabled",
+			"subsystem", "slow_query",
+			"threshold", config.Logging.SlowQueryThreshold)
 	}
 
 	return s, nil

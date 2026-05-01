@@ -46,7 +46,7 @@ func fixedPlanHashFixture() *ExecutionPlan {
 // If the canonical form ever changes (intentional schema evolution), update this
 // constant in lockstep — that change is visible to operators consuming plan_hash.
 func TestPlanHash_Stability(t *testing.T) {
-	const expected = "37ed25c4f7d7e1ff" // sentinel — overwritten on first GREEN run
+	const expected = "f2828f5867757221" // GOLDEN — locked 2026-05-01 on first GREEN run
 	got := PlanHash(fixedPlanHashFixture())
 	if got != expected {
 		t.Fatalf("PlanHash drift: expected golden=%q, got %q. If this change is "+
