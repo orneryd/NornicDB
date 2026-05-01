@@ -4,7 +4,6 @@ package server
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -223,7 +222,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	}
 	// Reload so in-memory cache is current
 	if err := s.dbConfigStore.Load(r.Context()); err != nil {
-		log.Printf("⚠️  Failed to reload db config store after PUT: %v", err)
+		s.log.Warn("failed to reload db config store after PUT", "error", err)
 	}
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
@@ -231,9 +230,9 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if !s.dbManager.IsCompositeDatabase(dbName) {
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
-			log.Printf("⚠️ Failed to resolve storage for db config rebuild (%s): %v", dbName, err)
+			s.log.Warn("failed to resolve storage for db config rebuild", "db", dbName, "error", err)
 		} else if _, err := s.db.EnsureSearchIndexesBuildStarted(dbName, storageEngine); err != nil {
-			log.Printf("⚠️ Failed to start search service rebuild after db config update (%s): %v", dbName, err)
+			s.log.Warn("failed to start search service rebuild after db config update", "db", dbName, "error", err)
 		} else {
 			rebuildTriggered = true
 		}

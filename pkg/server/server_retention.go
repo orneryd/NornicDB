@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -118,7 +117,7 @@ func (s *Server) handleRetentionPolicyDefaults(w http.ResponseWriter, r *http.Re
 			skipped++
 		} else {
 			loadErrs = append(loadErrs, policy.ID+": "+err.Error())
-			log.Printf("⚠️  Retention defaults: failed to add %s: %v", policy.ID, err)
+			s.log.Warn("retention defaults: failed to add policy", "policy_id", policy.ID, "error", err)
 		}
 	}
 	status := http.StatusOK

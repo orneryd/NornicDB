@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -125,7 +124,7 @@ func (s *Server) startQdrantGRPC() error {
 	s.qdrantGRPCServer = grpcServer
 	s.qdrantCollectionStore = grpcServer.CollectionStore()
 
-	log.Printf("✓ Qdrant gRPC enabled (db=%s, addr=%s)", dbName, grpcServer.Addr())
+	s.log.Info("qdrant grpc enabled", "db", dbName, "addr", grpcServer.Addr())
 	return nil
 }
 
