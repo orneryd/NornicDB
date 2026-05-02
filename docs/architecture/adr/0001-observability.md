@@ -663,7 +663,7 @@ filled in below (§5 sign-off → §4.1 row 0) to establish the format.
 | Phase 0  | ADR Governance & Sign-off                          | e97ed2b..8e384cf | 2026-04-30 | orneryd |
 | Phase 1  | Observability Foundation Skeleton                  | fa272fc..3ad44d9 | 2026-04-30 | asanabria |
 | Phase 2  | Structured Logging Migration                       | 4201a24..021a983 | 2026-05-02 | asanabria |
-| Phase 3  | Metrics Infrastructure & Discipline                |              |          |          |
+| Phase 3  | Metrics Infrastructure & Discipline                | 1ba8f01..a62d30a | 2026-05-02 | asanabria |
 | Phase 4  | Subsystem Metric Catalog                           |              |          |          |
 | Phase 5  | Legacy Translation Layer & Tenant Flag             |              |          |          |
 | Phase 6  | Tracing SDK & Core Spans                           |              |          |          |
