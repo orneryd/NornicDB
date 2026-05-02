@@ -95,16 +95,16 @@
 
 ### Structured Logging (LOG)
 
-- [x] **LOG-01**: All `log.Printf`/`fmt.Println` sites in `pkg/server`, `pkg/cypher`, `pkg/storage`, `pkg/bolt` are migrated to `log/slog` (target: ~165 sites identified in the codebase audit)
-- [ ] **LOG-02**: Default handler is `slog.NewJSONHandler` when `Logging.Format=json` (production-required default for containers)
-- [ ] **LOG-03**: Text handler is dev-only and explicitly insecure for untrusted input; CRLF stripping applied to attribute values
-- [ ] **LOG-04**: Every log record contains mandatory fields: `time` (RFC3339Nano), `level`, `msg`, `service=nornicdb`, `version`, `node_id`, plus `trace_id`/`span_id` when ctx has an active span
-- [ ] **LOG-05**: Conventional groups (`http`, `cypher`, `storage`, `replication`) are used via `slog.Group` for protocol-specific attributes
-- [ ] **LOG-06**: PII redactor (sharing the `pkg/audit` allow-list: `password`, `token`, `authorization`, `secret`, `api_key`) strips matching keys regardless of nesting; allow-list is configurable via `NORNICDB_LOG_REDACT_EXTRA`
+- [x] **LOG-01**: All `log.Printf`/`fmt.Println` sites in `pkg/server`, `pkg/cypher`, `pkg/storage`, `pkg/bolt` are migrated to `log/slog` (target: ~165 sites identified in the codebase audit; actual: 192 raw matches → 0 post-phase)
+- [x] **LOG-02**: Default handler is `slog.NewJSONHandler` when `Logging.Format=json` (production-required default for containers)
+- [x] **LOG-03**: Text handler is dev-only and explicitly insecure for untrusted input; CRLF stripping applied to attribute values
+- [x] **LOG-04**: Every log record contains mandatory fields: `time` (RFC3339Nano), `level`, `msg`, `service=nornicdb`, `version`, `node_id`, plus `trace_id`/`span_id` when ctx has an active span
+- [x] **LOG-05**: Conventional groups (`http`, `cypher`, `storage`, `replication`) are used via `slog.Group` for protocol-specific attributes
+- [x] **LOG-06**: PII redactor (sharing the `pkg/audit` allow-list: `password`, `token`, `authorization`, `secret`, `api_key`) strips matching keys regardless of nesting; allow-list is configurable via `NORNICDB_LOG_REDACT_EXTRA`
 - [x] **LOG-07**: Slow-query log emits `WARN` with truncated 500-char query, `plan_hash`, and `cypher.duration_ms`; full query text never appears as metric label or span attribute
 - [x] **LOG-08**: Slow-query log applies Cypher AST literal redaction (`<REDACTED>` for string/number literals) before truncation
-- [ ] **LOG-09**: `slog.Default()` is forbidden outside `pkg/observability`; pre-commit hook or lint check rejects new uses
-- [ ] **LOG-10**: `pkg/audit/audit.go` is NOT migrated to `slog` and retains its existing immutable, signed, append-only stream and retention policy
+- [x] **LOG-09**: `slog.Default()` is forbidden outside `pkg/observability`; `make lint-slog` Makefile target rejects new uses (CI-falsifiable; POSIX-portable grep; wired into `make test`)
+- [x] **LOG-10**: `pkg/audit/audit.go` is NOT migrated to `slog` and retains its existing immutable, signed, append-only stream and retention policy
 
 ### Kubernetes Integration (K8S)
 
@@ -145,8 +145,8 @@
 - [ ] **PERF-02**: `make bench-bolt` shows ≤5% throughput regression vs the pre-M1 baseline
 - [ ] **PERF-03**: Resident memory floor increases ≤25 MB above the pre-OTel baseline (verified by `TestObservability_MemoryFloor` in CI)
 - [ ] **PERF-04**: Hot-path observation calls allocate ≤2 heap objects per invocation (verified via `testing.AllocsPerRun`)
-- [ ] **PERF-05**: `pkg/observability` line coverage ≥90% via `go test -cover`
-- [ ] **PERF-06**: No file in `pkg/observability` exceeds 800 lines (vs the global 2,500 from AGENTS.md)
+- [x] **PERF-05**: `pkg/observability` line coverage ≥90% via `go test -cover` (Phase 1: 92.1%; Phase 2: 91.2%)
+- [x] **PERF-06**: No file in `pkg/observability` exceeds 800 lines (Phase 1 max: 228 LOC `health.go`; Phase 2 max: 512 LOC `logging.go` — headroom 288)
 
 ### Test Discipline (TEST)
 
@@ -215,15 +215,15 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | OBS-11 | Phase 1 | ✅ Complete (Plan 01-02, 2026-04-30) |
 | OBS-12 | Phase 1 | ✅ Complete (Plan 01-02, 2026-04-30) |
 | LOG-01 | Phase 2 | Complete |
-| LOG-02 | Phase 2 | Pending |
-| LOG-03 | Phase 2 | Pending |
-| LOG-04 | Phase 2 | Pending |
-| LOG-05 | Phase 2 | Pending |
-| LOG-06 | Phase 2 | Pending |
+| LOG-02 | Phase 2 | Complete |
+| LOG-03 | Phase 2 | Complete |
+| LOG-04 | Phase 2 | Complete |
+| LOG-05 | Phase 2 | Complete |
+| LOG-06 | Phase 2 | Complete |
 | LOG-07 | Phase 2 | Complete |
 | LOG-08 | Phase 2 | Complete |
-| LOG-09 | Phase 2 | Pending |
-| LOG-10 | Phase 2 | Pending |
+| LOG-09 | Phase 2 | Complete |
+| LOG-10 | Phase 2 | Complete |
 | MET-01 | Phase 3 | Pending |
 | MET-02 | Phase 3 | Pending |
 | MET-03 | Phase 3 | Pending |
@@ -303,8 +303,8 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | PERF-02 | Phase 12 | Pending |
 | PERF-03 | Phase 12 | Pending |
 | PERF-04 | Phase 12 | Pending |
-| PERF-05 | Phase 1 | Pending |
-| PERF-06 | Phase 1 | Pending |
+| PERF-05 | Phase 1 | Complete |
+| PERF-06 | Phase 1 | Complete |
 | TEST-01 | Phase 3 | Pending |
 | TEST-02 | Phase 3 | Pending |
 | TEST-03 | Phase 5 | Pending |

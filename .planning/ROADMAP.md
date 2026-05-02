@@ -24,7 +24,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 
 - [ ] **Phase 0: ADR Governance & Sign-off** — Revise ADR-0001 to fold all amendments and obtain four-role sign-off before any implementation
 - [ ] **Phase 1: Observability Foundation Skeleton** — `pkg/observability` package, listeners, lifecycle supervision, shutdown, config block
-- [ ] **Phase 2: Structured Logging Migration** — slog handler init, ~165 call-site migration, PII redaction, slow-query log
+- [x] **Phase 2: Structured Logging Migration** — slog handler init, 192-call-site migration, PII redaction, slow-query log (✅ 2026-05-02, commits 4201a24..021a983; ADR §4.1 row 2: `4201a24..021a983 | 2026-05-02 | asanabria`)
 - [ ] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation
 - [ ] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime
 - [ ] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test
@@ -87,7 +87,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
   - [x] 02-03-PLAN.md — migrate pkg/cypher (22 sites) + slow-query log + cypher.RedactLiterals + cypher.PlanHash + D-04d SlowQueryThreshold collapse
   - [x] 02-04-PLAN.md — migrate pkg/storage (48 sites) + D-06 AsyncEngine flushLog + D-07 walLog + structured [COUNT BUG]
   - [x] 02-05-PLAN.md — migrate pkg/bolt (18 sites) + [BOLT] bracket-to-component + HELLO credentials auto-redacted via D-03a
-  - [ ] 02-06-PLAN.md — make lint-slog (LOG-09 falsifiability) + phase-exit SUMMARY + ADR-0001 §4.1 row 2 audit-trail entry
+  - [x] 02-06-PLAN.md — make lint-slog (LOG-09 falsifiability) + phase-exit SUMMARY + ADR-0001 §4.1 row 2 audit-trail entry **(✅ 2026-05-02, commits ea66e2b / 021a983 / be5ab8a)**
 
 ### Phase 3: Metrics Infrastructure & Discipline
 **Goal**: A registration helper layer in `pkg/observability` enforces naming discipline, bucket types, and the forbidden-label allow-list — and the OTel→Prom bridge is wired with `WithoutUnits()` and the `nornicdb_otel_*` namespace — before any subsystem starts emitting metrics.
