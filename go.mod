@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	cloud.google.com/go/kms v1.29.0
-	github.com/99designs/gqlgen v0.17.89
+	github.com/99designs/gqlgen v0.17.90
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/ebitengine/purego v0.10.0
@@ -17,7 +17,7 @@ require (
 	github.com/qdrant/go-client v1.17.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	github.com/vektah/gqlparser/v2 v2.5.32
+	github.com/vektah/gqlparser/v2 v2.5.33
 	github.com/viterin/vek v0.4.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto v0.50.0
@@ -83,7 +83,7 @@ require (
 	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
