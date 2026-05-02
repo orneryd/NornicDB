@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/require"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"golang.org/x/sync/errgroup"
 )
 
 // TestEnv carries per-test isolated observability primitives. It is the
@@ -195,4 +200,93 @@ func (lw *lockedWriter) Write(p []byte) (int, error) {
 	lw.mu.Lock()
 	defer lw.mu.Unlock()
 	return lw.w.Write(p)
+}
+
+// CardinalityT is the minimal *testing.T-shaped surface that
+// AssertCardinalityCeiling consumes. *testing.T satisfies it transparently;
+// negative-falsifiability sub-tests can plug in an in-package fake that
+// captures Errorf/FailNow without propagating failure into the parent
+// *testing.T (Go's c.Fail() unconditionally walks c.parent.Fail() — there
+// is no way to scope a *testing.T failure to a sub-test alone).
+//
+// Mirrors github.com/stretchr/testify/require.TestingT plus Helper(); kept
+// local so we don't take a public dependency on require's internal type.
+type CardinalityT interface {
+	Helper()
+	Errorf(format string, args ...interface{})
+	FailNow()
+}
+
+// AssertCardinalityCeiling exercises the named *Vec across 1000 deterministic
+// synthetic tenant UUIDs concurrently across 8 goroutines, then asserts the
+// test's isolated registry observes <= ceiling distinct series for `name`.
+// Implements TEST-02 (CONTEXT D-04 / D-04a / D-04c).
+//
+// Called once per *Vec from Phase 4 subsystem tests; the "1000 UUIDs +
+// 8-goroutine drive" knowledge lives ONCE here per AGENTS.md §7 (DRY).
+//
+// API choice: caller-supplied `drive` callback (Pattern A in RESEARCH §4).
+// Keeps testenv.go agnostic of subsystem label shapes — a *Vec with
+// labels []string{"database","op_type","result"} is driven via
+//
+//	te.AssertCardinalityCeiling(t, name, ceiling, func(tenant string) {
+//	    cv.WithLabelValues(tenant, "read", "success").Inc()
+//	})
+//
+// — and a *Vec with labels []string{"database"} is driven via
+//
+//	te.AssertCardinalityCeiling(t, name, ceiling, func(tenant string) {
+//	    cv.WithLabelValues(tenant).Inc()
+//	})
+//
+// Race-safety:
+//   - errgroup.SetLimit(8) caps fan-out so -race -count=N -parallel=M
+//     doesn't explode goroutine counts (D-04c).
+//   - client_golang.HistogramVec.WithLabelValues / CounterVec.WithLabelValues
+//     are documented race-safe (RESEARCH §1/§4 — internal sharded sync.Mutex
+//     per label-set hash).
+//   - The helper holds no state across calls; each invocation builds a
+//     fresh errgroup.
+//
+// API note (RESEARCH §4 CRITICAL CORRECTION):
+//
+//	testutil.GatherAndCount takes a Gatherer (*prometheus.Registry implements).
+//	DO NOT use testutil.CollectAndCount — that takes a Collector (it builds
+//	its own pedantic registry internally) and will not compile against
+//	*prometheus.Registry. CONTEXT.md draft shorthand `CollectAndCount(reg, …)`
+//	was misleading; this helper uses the correct API.
+//
+// Signature note (Rule 1 deviation from literal D-04 form):
+//
+//	The parameter is typed as the small CardinalityT interface rather than
+//	the concrete *testing.T. Production callers pass *testing.T transparently
+//	(it satisfies the interface). Negative-falsifiability sub-tests pass an
+//	in-package fake to capture the helper's t.FailNow() call without Go's
+//	t.Run-propagates-failure-to-parent semantics tripping the parent test.
+//	(Go testing.go:962 c.Fail() unconditionally propagates via c.parent.Fail();
+//	there is no way to assert "this helper called Fatalf" from within a
+//	*testing.T-typed sub-test without parent contamination.)
+//	Plan 03-04 acceptance criterion grep for the literal `*testing.T` form is
+//	relaxed to the equivalent `CardinalityT` interface.
+func (te *TestEnv) AssertCardinalityCeiling(t CardinalityT, name string, ceiling int, drive func(tenant string)) {
+	t.Helper()
+
+	var g errgroup.Group
+	g.SetLimit(8)
+
+	for i := 0; i < 1000; i++ {
+		i := i
+		g.Go(func() error {
+			tenant := uuid.NewMD5(uuid.NameSpaceDNS, []byte(strconv.Itoa(i))).String()
+			drive(tenant)
+			return nil
+		})
+	}
+	require.NoError(t, g.Wait())
+
+	got, err := testutil.GatherAndCount(te.Registry, name)
+	require.NoError(t, err)
+	require.LessOrEqualf(t, got, ceiling,
+		"metric %q has %d distinct series, exceeds cardinality ceiling %d",
+		name, got, ceiling)
 }

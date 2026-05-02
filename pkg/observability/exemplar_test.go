@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,4 +102,118 @@ func labelValue(ex *dto.Exemplar, name string) string {
 		}
 	}
 	return ""
+}
+
+// TestHistogramWrappers_AllFamilies exercises all four wrapper families
+// (Latency / Size / RowCount / EmbeddingLatency) through their full surface:
+// New*Histogram constructor, Vec() accessor, cold-path Observe(ctx, lvs, val),
+// and Bind(...).Observe(ctx, val) hot path. Asserts each wrapper's *Vec
+// registers under nornicdb_<subsystem>_<name> and that Observe/Bind both
+// produce a sample on the wrapped *prometheus.HistogramVec.
+//
+// Coverage rationale (Plan 03-04 Rule 2): Plan 03-03 shipped four wrapper
+// families but `TestExemplarEmission_OnlyWhenSpanValid` only drives
+// LatencyHistogram. Without this test the Size/RowCount/EmbeddingLatency
+// constructor + Vec + Observe + Bind paths were 0% covered, dragging the
+// pkg/observability total below the PERF-05 ≥90% gate.
+func TestHistogramWrappers_AllFamilies(t *testing.T) {
+	type family struct {
+		name        string
+		fullName    string
+		observe     func(reg *prometheus.Registry, ctx context.Context)
+		bindObserve func(reg *prometheus.Registry, ctx context.Context)
+	}
+
+	cases := []family{
+		{
+			name:     "LatencyHistogram",
+			fullName: "nornicdb_cypher_latency_seconds",
+			observe: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewLatencyHistogram(reg,
+					MetricOpts{Subsystem: "cypher", Name: "latency_seconds", Help: "h"},
+					[]string{"database", "op_type"})
+				require.NotNil(t, h.Vec(), "Vec() accessor must expose raw *HistogramVec for cardinality assertions")
+				h.Observe(ctx, []string{"db1", "read"}, 0.001)
+			},
+			bindObserve: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewLatencyHistogram(reg,
+					MetricOpts{Subsystem: "cypher", Name: "latency_seconds", Help: "h"},
+					[]string{"database", "op_type"})
+				bound := h.Bind("db1", "read")
+				bound.Observe(ctx, 0.002)
+			},
+		},
+		{
+			name:     "SizeHistogram",
+			fullName: "nornicdb_storage_payload_bytes",
+			observe: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewSizeHistogram(reg,
+					MetricOpts{Subsystem: "storage", Name: "payload_bytes", Help: "h"},
+					[]string{"database", "op"})
+				require.NotNil(t, h.Vec())
+				h.Observe(ctx, []string{"db1", "put"}, 1024)
+			},
+			bindObserve: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewSizeHistogram(reg,
+					MetricOpts{Subsystem: "storage", Name: "payload_bytes", Help: "h"},
+					[]string{"database", "op"})
+				bound := h.Bind("db1", "put")
+				bound.Observe(ctx, 4096)
+			},
+		},
+		{
+			name:     "RowCountHistogram",
+			fullName: "nornicdb_cypher_result_rows",
+			observe: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewRowCountHistogram(reg,
+					MetricOpts{Subsystem: "cypher", Name: "result_rows", Help: "h"},
+					[]string{"database"})
+				require.NotNil(t, h.Vec())
+				h.Observe(ctx, []string{"db1"}, 42)
+			},
+			bindObserve: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewRowCountHistogram(reg,
+					MetricOpts{Subsystem: "cypher", Name: "result_rows", Help: "h"},
+					[]string{"database"})
+				bound := h.Bind("db1")
+				bound.Observe(ctx, 100)
+			},
+		},
+		{
+			name:     "EmbeddingLatencyHistogram",
+			fullName: "nornicdb_embed_inference_seconds",
+			observe: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewEmbeddingLatencyHistogram(reg,
+					MetricOpts{Subsystem: "embed", Name: "inference_seconds", Help: "h"},
+					[]string{"backend", "model"})
+				require.NotNil(t, h.Vec())
+				h.Observe(ctx, []string{"cpu", "bge-small"}, 0.150)
+			},
+			bindObserve: func(reg *prometheus.Registry, ctx context.Context) {
+				h := NewEmbeddingLatencyHistogram(reg,
+					MetricOpts{Subsystem: "embed", Name: "inference_seconds", Help: "h"},
+					[]string{"backend", "model"})
+				bound := h.Bind("cpu", "bge-small")
+				bound.Observe(ctx, 0.300)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name+"/Observe", func(t *testing.T) {
+			te := NewTestEnv(t)
+			tc.observe(te.Registry, context.Background())
+			got, err := testutil.GatherAndCount(te.Registry, tc.fullName)
+			require.NoError(t, err)
+			assert.Equalf(t, 1, got, "Observe must produce exactly one series for %s", tc.fullName)
+		})
+		t.Run(tc.name+"/Bind", func(t *testing.T) {
+			te := NewTestEnv(t)
+			tc.bindObserve(te.Registry, context.Background())
+			got, err := testutil.GatherAndCount(te.Registry, tc.fullName)
+			require.NoError(t, err)
+			assert.Equalf(t, 1, got, "Bind().Observe must produce exactly one series for %s", tc.fullName)
+		})
+	}
 }

@@ -3,13 +3,62 @@ package observability
 import (
 	"fmt"
 	"math/rand"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// captureT is an in-package CardinalityT that records Errorf calls and
+// terminates the calling goroutine on FailNow (matching *testing.T.FailNow
+// semantics so testify/require's "stop now" contract holds). Because the
+// helper drives across an errgroup, captureT is the only object the
+// helper's failure path touches — Go's t.Run-propagates-failure-to-parent
+// rule never fires (testenv.go's CardinalityT signature note).
+type captureT struct {
+	failed int32
+	mu     sync.Mutex
+	msgs   []string
+}
+
+func (c *captureT) Helper() {}
+func (c *captureT) Errorf(format string, args ...interface{}) {
+	atomic.StoreInt32(&c.failed, 1)
+	c.mu.Lock()
+	c.msgs = append(c.msgs, fmt.Sprintf(format, args...))
+	c.mu.Unlock()
+}
+func (c *captureT) FailNow() {
+	atomic.StoreInt32(&c.failed, 1)
+	runtime.Goexit()
+}
+func (c *captureT) Failed() bool { return atomic.LoadInt32(&c.failed) == 1 }
+func (c *captureT) Messages() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.msgs))
+	copy(out, c.msgs)
+	return out
+}
+
+// runHelperCapturing invokes fn in a fresh goroutine so that the helper's
+// FailNow → runtime.Goexit terminates only the helper's goroutine, leaving
+// the test goroutine free to inspect captureT after the helper returns.
+// Mirrors testify/require's standard isolation idiom.
+func runHelperCapturing(fn func(ct *captureT)) *captureT {
+	ct := &captureT{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn(ct)
+	}()
+	<-done
+	return ct
+}
 
 // TestAssertCardinalityCeiling_Helper exercises the TEST-02 helper across
 // three modes:
@@ -44,16 +93,23 @@ func TestAssertCardinalityCeiling_Helper(t *testing.T) {
 
 		// Pre-drive ~2k op variations under each helper-supplied tenant so the
 		// unbounded *Vec produces thousands of series; ceiling=100 ⇒ helper
-		// must call subT.Fatalf. RESEARCH §4: GatherAndCount takes a Gatherer
-		// (Registry implements); the Collector-typed counterpart would not
-		// compile here.
-		helperPassed := t.Run("helper-failure-capture", func(subT *testing.T) {
-			te.AssertCardinalityCeiling(subT, "nornicdb_cypher_unbounded_total", 100, func(tenant string) {
+		// must call FailNow on the supplied CardinalityT. RESEARCH §4:
+		// GatherAndCount takes a Gatherer (Registry implements); the
+		// Collector-typed counterpart would not compile here.
+		//
+		// Capture pattern (testenv.go CardinalityT signature note): the
+		// helper runs against a captureT in a separate goroutine so its
+		// FailNow → runtime.Goexit terminates only that goroutine. The
+		// parent *testing.T never sees a propagated failure.
+		ct := runHelperCapturing(func(ct *captureT) {
+			te.AssertCardinalityCeiling(ct, "nornicdb_cypher_unbounded_total", 100, func(tenant string) {
 				cv.WithLabelValues(tenant, fmt.Sprintf("op_%d", rand.Intn(2000))).Inc()
 			})
 		})
-		require.False(t, helperPassed,
-			"TEST-02 falsifiability: AssertCardinalityCeiling must mark t.Failed when GatherAndCount > ceiling — t.Run returns false on subtest failure")
+		require.True(t, ct.Failed(),
+			"TEST-02 falsifiability: AssertCardinalityCeiling must mark t.Failed when GatherAndCount > ceiling")
+		require.NotEmpty(t, ct.Messages(),
+			"helper must emit a diagnostic via Errorf before FailNow (so operators know which family + count tripped)")
 
 		// Sanity: confirm the underlying *Vec did exceed the ceiling
 		// (precondition diagnostic).
