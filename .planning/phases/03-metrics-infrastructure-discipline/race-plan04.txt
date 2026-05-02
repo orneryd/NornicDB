@@ -1,0 +1,10 @@
+=== plan-04 race iteration 1 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	6.024s
+=== plan-04 race iteration 2 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.957s
+=== plan-04 race iteration 3 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.975s
+=== plan-04 race iteration 4 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.994s
+=== plan-04 race iteration 5 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.949s

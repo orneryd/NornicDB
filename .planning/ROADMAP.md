@@ -25,7 +25,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 - [ ] **Phase 0: ADR Governance & Sign-off** — Revise ADR-0001 to fold all amendments and obtain four-role sign-off before any implementation
 - [ ] **Phase 1: Observability Foundation Skeleton** — `pkg/observability` package, listeners, lifecycle supervision, shutdown, config block
 - [x] **Phase 2: Structured Logging Migration** — slog handler init, 192-call-site migration, PII redaction, slow-query log (✅ 2026-05-02, commits 4201a24..021a983; ADR §4.1 row 2: `4201a24..021a983 | 2026-05-02 | asanabria`)
-- [ ] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation
+- [x] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation (✅ 2026-05-02, commits 1ba8f01..<commit-6a-SHA>; ADR §4.1 row 3: `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria`)
 - [ ] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime
 - [ ] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test
 - [ ] **Phase 6: Tracing SDK & Core Spans** — OTel SDK init, samplers (incl. `parent_capped`), HTTP/Cypher/Storage spans, BSP self-instrumentation
@@ -100,7 +100,13 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
   3. Every test in `pkg/observability` constructs an isolated `*prometheus.Registry`, `InMemoryExporter`, and `*slog.Logger`; running `go test -race ./pkg/observability/... -count=10` is stable (no global-state leakage)
   4. Each `*Vec` has a `TestMetricCardinality_<name>` test asserting `CollectAndCount(reg, name) <= ceiling` under 1k tenant UUIDs and adversarial label values
   5. Operator scraping `:9090/metrics` with `Accept: application/openmetrics-text` sees histogram exemplars with `trace_id` attached for at least one bucket, and the OTel-bridge metrics appear under `nornicdb_otel_*` (no auto-suffix collision with hand-instrumented `nornicdb_*`)
-**Plans**: TBD
+**Plans**: 6 plans
+  - [x] 03-01-PLAN.md — Wave 0 RED scaffolding (6 _test.go files, compile-fail by design) (✅ 2026-05-02, commit 1ba8f01)
+  - [x] 03-02-PLAN.md — bucket constants + typed constructors + label allow-list (MET-01..05) (✅ 2026-05-02, commits 9c548fe..e8beba7)
+  - [x] 03-03-PLAN.md — exemplar wrapper types + Bind() pre-bound observers + bench (MET-24, MET-25) (✅ 2026-05-02, commit 5ad7ad0)
+  - [x] 03-04-PLAN.md — /metrics OpenMetrics negotiation verify + AssertCardinalityCeiling helper (MET-24, TEST-01, TEST-02) (✅ 2026-05-02, commit e0a1298)
+  - [x] 03-05-PLAN.md — Makefile lint-cardinality + falsifiability proof (MET-04 belt-and-suspenders) (✅ 2026-05-02, commit 5d6a243)
+  - [x] 03-06-PLAN.md — Phase 3 SUMMARY + ADR §4.1 row 3 audit-trail entry (✅ 2026-05-02)
 
 ### Phase 4: Subsystem Metric Catalog
 **Goal**: All ~60 metric families across nine subsystems (HTTP, Bolt, Cypher, Storage/Badger, MVCC, Embeddings, Search, Replication, Auth, Cache+Runtime) plus Go runtime/process collectors emit at `:9090/metrics` with hot-path handles pre-bound — including the GAP-1 (`replication_last_contact_seconds`) and GAP-6 (`auth_attempts_total`) additions.
@@ -229,7 +235,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 | 0. ADR Governance & Sign-off | 0/0 | Not started | - |
 | 1. Observability Foundation Skeleton | 0/0 | Not started | - |
 | 2. Structured Logging Migration | 0/0 | Not started | - |
-| 3. Metrics Infrastructure & Discipline | 0/0 | Not started | - |
+| 3. Metrics Infrastructure & Discipline | 6/6 | Done | 2026-05-02 |
 | 4. Subsystem Metric Catalog | 0/0 | Not started | - |
 | 5. Legacy Translation Layer & Tenant Flag | 0/0 | Not started | - |
 | 6. Tracing SDK & Core Spans | 0/0 | Not started | - |

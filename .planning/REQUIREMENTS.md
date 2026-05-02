@@ -33,11 +33,11 @@
 
 **Naming and discipline**
 
-- [ ] **MET-01**: All NornicDB-emitted metrics use the `nornicdb_` namespace prefix; subsystem prefixes match the package (`http_`, `bolt_`, `cypher_`, `storage_`, `mvcc_`, `embed_`, `search_`, `replication_`, `auth_`, `cache_`, `process_`)
-- [ ] **MET-02**: Counters end in `_total`; histograms end in the unit they measure (`_seconds`, `_bytes`, `_rows`)
-- [ ] **MET-03**: Three named bucket constants (`LatencyBucketsSeconds`, `SizeBucketsBytes`, `RowCountBuckets`) are the single source of truth; registration helpers enforce bucket type at definition site
-- [ ] **MET-04**: Forbidden labels (full HTTP path, raw Cypher, user/IP/UUID, embedding text, span/trace IDs) are blocked at registration via a runtime allow-list check
-- [ ] **MET-05**: A long-tail latency bucket constant (`EmbeddingLatencyBucketsSeconds`) is used for embedding/LLM histograms
+- [x] **MET-01** ✅ (2026-05-02, Phase 3): All NornicDB-emitted metrics use the `nornicdb_` namespace prefix; subsystem prefixes match the package (`http_`, `bolt_`, `cypher_`, `storage_`, `mvcc_`, `embed_`, `search_`, `replication_`, `auth_`, `cache_`, `process_`)
+- [x] **MET-02** ✅ (2026-05-02, Phase 3): Counters end in `_total`; histograms end in the unit they measure (`_seconds`, `_bytes`, `_rows`)
+- [x] **MET-03** ✅ (2026-05-02, Phase 3): Three named bucket constants (`LatencyBucketsSeconds`, `SizeBucketsBytes`, `RowCountBuckets`) are the single source of truth; registration helpers enforce bucket type at definition site
+- [x] **MET-04** ✅ (2026-05-02, Phase 3): Forbidden labels (full HTTP path, raw Cypher, user/IP/UUID, embedding text, span/trace IDs) are blocked at registration via a runtime allow-list check (Layer 1 panic + Layer 2 `make lint-cardinality`)
+- [x] **MET-05** ✅ (2026-05-02, Phase 3): A long-tail latency bucket constant (`EmbeddingLatencyBucketsSeconds`) is used for embedding/LLM histograms
 
 **Subsystem catalogs** (each REQ delivers the full set of metric families for that subsystem)
 
@@ -61,9 +61,9 @@
 - [ ] **MET-20**: Legacy `:7474/metrics` responses include `Deprecation: true` and `Sunset: <date>` headers
 - [ ] **MET-21**: When `metrics.tenant_labels_enabled=false`, the registry strips the `database` label from `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series
 - [ ] **MET-22**: `metrics.tenant_labels_enabled` defaults to `true` on K8s detection (multi-signal: `KUBERNETES_SERVICE_HOST` env + ServiceAccount token presence), `false` otherwise; resolved value logged at startup
-- [ ] **MET-23**: OTel meter API instrumentation is bridged to the same numbers via the `otelprom` exporter as additional egress, configured with `WithoutUnits()` and a `nornicdb_otel_*` namespace to prevent collision
-- [ ] **MET-24**: Histogram exemplars are emitted unconditionally via `client_golang` `ExemplarObserver`; `/metrics` negotiates `Accept: application/openmetrics-text`; `IsValid()` guard applied before observe
-- [ ] **MET-25**: Hot-path metric handles are pre-bound at construction (`WithLabelValues(...)`); no `WithLabelValues` calls inside request loops
+- [x] **MET-23** ✅ (2026-05-02, Phase 3): OTel meter API instrumentation is bridged to the same numbers via the `otelprom` exporter as additional egress, configured with `WithoutUnits()` and a `nornicdb_otel_*` namespace to prevent collision
+- [x] **MET-24** ✅ (2026-05-02, Phase 3): Histogram exemplars are emitted unconditionally via `client_golang` `ExemplarObserver`; `/metrics` negotiates `Accept: application/openmetrics-text`; `IsValid()` && `IsSampled()` guard applied before observe (single chokepoint in `pkg/observability/exemplar.go`)
+- [x] **MET-25** ✅ (2026-05-02, Phase 3): Hot-path metric handles are pre-bound at construction (`Bind(lvs...)` returns `BoundObserver`); no `WithLabelValues` calls inside request loops; `BenchmarkObserve_Hot/hot_no_span` = 0 allocs/op
 - [ ] **MET-26**: Slow-query threshold metric is exposed in seconds (`nornicdb_cypher_slow_query_threshold_seconds`), not milliseconds (legacy unit removed at deprecation cutover)
 
 ### Tracing (TRC)
@@ -150,8 +150,8 @@
 
 ### Test Discipline (TEST)
 
-- [ ] **TEST-01**: Every test in `pkg/observability` uses an isolated `*prometheus.Registry`, `InMemoryExporter`, and `*slog.Logger` — no global state (no `prometheus.DefaultRegisterer`, no `slog.SetDefault`)
-- [ ] **TEST-02**: Each `*Vec` has a cardinality ceiling test: `CollectAndCount(reg, name) <= ceiling` under 1k tenant UUIDs and adversarial label values
+- [x] **TEST-01** ✅ (2026-05-02, Phase 3 confirms Phase 1 foundation): Every test in `pkg/observability` uses an isolated `*prometheus.Registry`, `InMemoryExporter`, and `*slog.Logger` — no global state (no `prometheus.DefaultRegisterer`, no `slog.SetDefault`)
+- [x] **TEST-02** ✅ (2026-05-02, Phase 3): Each `*Vec` has a cardinality ceiling test: `(*TestEnv).AssertCardinalityCeiling(t, name, ceiling, drive)` shipped in `pkg/observability/testenv.go`; drives 1k tenant UUIDs across 8 goroutines + adversarial label values via `errgroup.SetLimit(8)`
 - [ ] **TEST-03**: A golden-file test in `pkg/observability/legacy_translation_test.go` fails CI on any diff between new-registry-emitted-via-translation-layer and the locked legacy `:7474/metrics` snapshot
 - [ ] **TEST-04**: A `kube-prometheus-stack` integration test in CI verifies exemplar emission, NetworkPolicy enforcement, ServiceMonitor scrape, `/readyz` warm-up behavior, and OTel→Prom bridge parity
 - [ ] **TEST-05**: Bolt driver round-trip conformance test runs against the matrix defined for KD-08 (minimum: `neo4j-go-driver/v5`)
@@ -224,14 +224,14 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | LOG-08 | Phase 2 | Complete |
 | LOG-09 | Phase 2 | Complete |
 | LOG-10 | Phase 2 | Complete |
-| MET-01 | Phase 3 | Pending |
-| MET-02 | Phase 3 | Pending |
-| MET-03 | Phase 3 | Pending |
-| MET-04 | Phase 3 | Pending |
-| MET-05 | Phase 3 | Pending |
-| MET-23 | Phase 3 | Pending |
-| MET-24 | Phase 3 | Pending |
-| MET-25 | Phase 3 | Pending |
+| MET-01 | Phase 3 | Complete |
+| MET-02 | Phase 3 | Complete |
+| MET-03 | Phase 3 | Complete |
+| MET-04 | Phase 3 | Complete |
+| MET-05 | Phase 3 | Complete |
+| MET-23 | Phase 3 | Complete |
+| MET-24 | Phase 3 | Complete |
+| MET-25 | Phase 3 | Complete |
 | MET-06 | Phase 4 | Pending |
 | MET-07 | Phase 4 | Pending |
 | MET-08 | Phase 4 | Pending |
@@ -305,8 +305,8 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | PERF-04 | Phase 12 | Pending |
 | PERF-05 | Phase 1 | Complete |
 | PERF-06 | Phase 1 | Complete |
-| TEST-01 | Phase 3 | Pending |
-| TEST-02 | Phase 3 | Pending |
+| TEST-01 | Phase 3 | Complete |
+| TEST-02 | Phase 3 | Complete |
 | TEST-03 | Phase 5 | Pending |
 | TEST-05 | Phase 8 | Pending |
 | TEST-06 | Phase 7 | Pending |

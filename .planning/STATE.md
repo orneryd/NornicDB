@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 03
-status: ready
-last_updated: "2026-05-02T01:05:00.000Z"
+current_phase: 04
+status: planned
+last_updated: "2026-05-02T20:30:00.000Z"
 progress:
   total_phases: 13
-  completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
+  completed_phases: 4
+  total_plans: 25
+  completed_plans: 19
+  percent: 76
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
 
-**Last updated:** 2026-04-30 (post-Phase-1 discuss-phase)
+**Last updated:** 2026-05-02 (post-Phase-3 plan verification)
 
 ## Project Reference
 
@@ -30,13 +30,13 @@ progress:
 
 ## Current Position
 
-Phase: 03 (metrics-infrastructure-discipline) — READY (Phase 2 closed 2026-05-02)
-Plan: 0 of TBD (Phase 3 not yet planned)
+Phase: 04 (subsystem-metric-catalog) — Ready to plan
+Plan: 0 of TBD
 
 - **Milestone:** M1 — Best-in-Class Observability
-- **Current phase:** 02
+- **Current phase:** 03
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
-- **Status:** Ready to execute
+- **Status:** Executing Phase 03
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
 - **Progress:** [█████████░] 92%
 
@@ -116,6 +116,15 @@ These hard gates are enforced at every phase exit:
 - [x] **Phase 2 ✅ CLOSED** — All 192 production LOG-01 sites migrated to slog; cumulative grep gate empty; pkg/audit untouched across phase commit range; LOG-09 lint gate falsifiability proven; PERF-05 91.2% PASS; PERF-06 max LOC 512 PASS; ADR §4.1 row 2 records `4201a24..021a983 | 2026-05-02 | asanabria` (2026-05-02).
 - [ ] Pre-existing race in pkg/nornicdb/search_services.go (background clustering goroutine vs test teardown) — surfaces under `-race` + multi-test pkg/server runs. NOT introduced by Plan 02-02. Should be filed against the storage/search team for a focused fix (ctx-cancel observance OR per-DB sync.Mutex around `getOrCreateSearchService`). See `.planning/phases/02-structured-logging-migration/deferred-items.md`.
 - [ ] Pre-existing race in pkg/bolt/server.go listener publication (TestServerCloseWithListener s.listener concurrent read/write) and pkg/bolt/auth_adapter.go AuthenticatorAdapter.allowAnonymous (TestConcurrentAuthentication concurrent_SetAllowAnonymous_toggle without holding mu). NOT introduced by Plan 02-05. Documented in deferred-items.md with `git stash` repro confirmation.
+- [x] Plan Phase 3 (`/gsd-plan-phase 3`) — Metrics Infrastructure & Discipline. Existing artifacts from 2026-05-01 verified by gsd-plan-checker (2026-05-02): 0 blockers, 5 warnings (W1/W2 Wave 0 scaffolding compile correctness, W3 TEST-02 falsifiability strength, 03-02-W1 MET-01 closed-allow-list test gap, 03-06-W1 SUMMARY commit gitignore prose) — all 5 addressed inline (no agent revision-loop spawn). 6 plans ready to execute.
+- [x] Execute Plan 03-01 — Wave 0 RED scaffolding (6 _test.go files compile-fail by design) (2026-05-02, commit 1ba8f01)
+- [x] Execute Plan 03-02 — naming + bucket constants + ForbiddenLabels + validateSubsystem (MET-01..05, MET-23 Layer 1) (2026-05-02, commits 9c548fe..e8beba7)
+- [x] Execute Plan 03-03 — exemplars (MET-24) + hot-path Bind/Observe pre-bound handles (MET-25) (2026-05-02, commit 5ad7ad0)
+- [x] Execute Plan 03-04 — OpenMetrics listener verification + AssertCardinalityCeiling (TEST-02) (2026-05-02, commit e0a1298)
+- [x] Execute Plan 03-05 — `make lint-cardinality` POSIX-portable Makefile gate (MET-04 Layer 2) (2026-05-02, commit 5d6a243)
+- [x] Execute Plan 03-06 — Phase 3 SUMMARY (commit 6a) + ADR-0001 §4.1 row 3 audit-trail entry (commit 6b) using two-commit sign-off pattern (2026-05-02)
+- [x] **Phase 3 ✅ CLOSED** — All 10 phase requirements GREEN (MET-01..05, MET-23, MET-24, MET-25, TEST-01, TEST-02); ROADMAP SC #1-5 GREEN; PERF-05 92.2% PASS; PERF-06 max LOC 512 PASS; race 5×10 PASS; pkg/audit untouched across 935389c..HEAD; ADR §4.1 row 3 records `1ba8f01..<commit-6a> | 2026-05-02 | asanabria` (2026-05-02).
+- [ ] Plan Phase 4 (`/gsd-plan-phase 4`) — Subsystem Metric Catalog. ~60 metric families across HTTP/Bolt/Cypher/Storage/MVCC/Embed/Search/Replication/Auth/Cache+Runtime via Phase 3's helpers and exemplar wrappers; lint-cardinality gate enforces helper-only registration.
 
 ### Active Blockers
 
@@ -128,6 +137,10 @@ These hard gates are enforced at every phase exit:
 **Phase 1 sign-off:** ❌ NOT READY for §4.1 row 1 commit. Orchestrator must run Plan 01-06 + re-verify before issuing the audit-trail row.
 
 ### Recent Decisions
+
+- **2026-05-02 (Plan 03-06 completed; Phase 3 closed)**: Final wave landed on `otel`. Two-commit phase-exit pattern preserved (mirrors Phase 2 `021a983` SUMMARY + `be5ab8a` audit-row split). Commit 6a (`docs(03-06): complete Phase 3 — STATE / ROADMAP / REQUIREMENTS post-exit updates`) records SUMMARY + STATE/ROADMAP/REQUIREMENTS post-exit updates; commit 6b (`docs(adr-0001): record Phase 3 audit-trail entry in §4.1 row 3`) inscribes `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria` into ADR §4.1 row 3 — same column structure as Phase 1 row 1 (`fa272fc..3ad44d9`) and Phase 2 row 2 (`4201a24..021a983`). Phase 3 ✅ CLOSED. Phase 3 progress: 6 of 6 plans complete (100%). Milestone progress: 4 of 13 phases (Phase 0, Phase 1, Phase 2, Phase 3) complete. **Universal performance/coverage gates final measurements:** PERF-05 92.2% PASS (≥ 90% with 2.2% margin); PERF-06 max LOC 512 (`logging.go`, Phase 2 — Phase 3 max is `testenv.go` at 292 LOC); race 5×10 = 50 runs PASS, 0 DATA RACE, 0 FAIL (race-phase3-final.txt); KD-12 `make bench-cypher` / `make bench-bolt` deferred to Phase 12 (Phase 3 doesn't touch Cypher/Bolt hot paths). **MET-04 belt-and-suspenders complete:** Layer 1 (`validateLabels` registration-time panic, Plan 03-02) + Layer 2 (`make lint-cardinality` POSIX-grep gate, Plan 03-05); falsifiability proven D-03d (inject `prometheus.NewCounterVec(...)` into pkg/cypher/helpers.go under `//go:build never_compile_this_falsifiability_proof` → `make lint-cardinality` exits 2 with `MET-04 violation` message → revert → exits 0). **MET-25 hot-path zero-alloc:** `BenchmarkObserve_Hot/hot_no_span` = 0 allocs/op, ≤ 2 budget cleared with margin; D-02b1 sync.Pool escalation NOT triggered. **D-02a stricter chokepoint:** exemplars guard `IsValid() && IsSampled()` (Plan 03-03 Rule-1 deviation — stricter than Phase 2 D-05's `IsValid()` alone, because exemplars without traces in backend would be operator-confusing; logs use `IsValid()` alone because grep-fallback exists). **Phase 4 entry-point ready:** subsystems consume typed constructors + exemplar wrappers + `AssertCardinalityCeiling` helper; lint-cardinality gate enforces helper-only registration in CI as `make test` prereq. Next up: `/gsd-plan-phase 4` (Subsystem Metric Catalog — ~60 metric families).
+
+- **2026-05-02 (Phase 3 plans verified)**: `/gsd-plan-phase 3` invoked against existing artifacts (CONTEXT/RESEARCH/PATTERNS/VALIDATION + 6 PLAN.md files, ~5,400 lines, all dated 2026-05-01 from a prior planning pass that pre-dated Phase 2 closure). Verification-only path chosen over re-plan to avoid losing work. gsd-plan-checker returned `## ISSUES FOUND`: 0 blockers, 5 warnings, 1 info. **Goal-backward coverage PASS**: all 10 phase requirements (MET-01..05, MET-23..25, TEST-01/02) traceable; all 5 ROADMAP success criteria have owning plans (SC#1 typed-bucket constructors → 03-02; SC#2 forbidden-label rejection Layer 1+2 → 03-02 + 03-05; SC#3 race-stability → 03-03 + 03-04 evidence; SC#4 AssertCardinalityCeiling → 03-04; SC#5 OpenMetrics + exemplars + bridge namespace → 03-03 + 03-04). **Cross-phase pattern alignment PASS**: POSIX-grep `lint-cardinality` boundary mirrors Phase 2 `lint-slog` verbatim (no Perl `-P`, `(^\|[^a-zA-Z_])` boundary); two-commit phase-exit pattern preserved (Plan 03-06 6a SUMMARY + 6b ADR §4.1 row 3); pkg/audit/ untouched gate enforced; pkg/embed (not pkg/embeddings) confirmed. **All 5 warnings addressed inline** (no agent revision-loop spawn): (1) `03-01-W1` `upper := upper` redeclaration removed from `TestForbiddenLabels_CaseInsensitive` (Go 1.22+ per-iter loop scoping makes the shadow unnecessary); (2) `03-01-W2` added missing `"github.com/prometheus/client_golang/prometheus"` import to `metrics_test.go` action snippet so Wave 0 compile-fails on Plan 03-02 symbols only, not on missing imports; (3) `03-01-W3` rewrote `unbounded vec exceeds ceiling` sub-test to use `t.Run("helper-failure-capture", ...)` returning `false` on subtest failure — formally proves AssertCardinalityCeiling calls `t.Fatalf` when CollectAndCount > ceiling, not just that the underlying *Vec is unbounded; (4) `03-02-W1` added `TestSubsystemValidation_RejectsUnknownSubsystem` (5-case table) to `registration_test.go` Wave 0 + acceptance grep gate to close MET-01 / D-01d closed-allow-list falsifiability gap; (5) `03-06-W1` replaced contradictory gitignore prose in commit-6a action with single pre-flight `if grep -qE '^\.planning/?' .gitignore; then ADD_FLAG="-f"; else ADD_FLAG=""; fi`. VALIDATION.md status flipped: `draft` → `verified`, `nyquist_compliant: false` → `true`, verifier line added. STATE.md current_phase 02 → 03, status `executing` → `planned`. Phase 3 progress: 0 of 6 plans complete (0%; planning verified). Next up: `/gsd-execute-phase 3` to start Wave 0 RED scaffolding.
 
 - **2026-05-02 (Plan 02-06 completed; Phase 2 closed)**: Final wave landed on `otel`. Three commits: `ea66e2b` feat (Task 1: `make lint-slog` Makefile target wired into `make test`; POSIX-portable `grep -RnE` only — no `-P` Perl regex per W2/Pitfall 5; bans both `slog.Default()` (LOG-09) and `log.Printf|log.Println|fmt.Print|fmt.Println|fmt.Printf` (LOG-01) in pkg/server / pkg/cypher / pkg/storage / pkg/bolt + cmd/; falsifiability proven inline by injecting `slog.Default()` into pkg/server/server.go AND `log.Printf(...)` into pkg/bolt/server.go — both caused `make lint-slog` to exit non-zero with the corresponding violation message; both reverted, no commit), `021a983` docs Phase 2 SUMMARY (bench numbers — `BenchmarkSlogHandler_Hot`=886.4ns/2 allocs/op, ~18.8% faster than stdlib; call-site delta 192→0 across all four LOG-01 packages; PERF-05 coverage 91.2% PASS; PERF-06 max LOC 512 in `logging.go` PASS, headroom 288; race-stability `-race -count=10` 5+ iterations PASS across pkg/observability + new cypher tests + new bolt tests; pkg/audit untouched across `4201a24^..HEAD` — Pitfall 9 boundary intact; D-04d collapse confirmed; D-10 8-commit cadence final SHA list captured), `be5ab8a` docs ADR-0001 §4.1 row 2 audit-trail entry (`4201a24..021a983 | 2026-05-02 | asanabria` — same column structure as Phase 1's row 1 commit `0cc947a`; two-commit sign-off pattern preserved). Phase 2 ✅ CLOSED. Phase 2 progress: 6 of 6 plans complete (100%). Milestone progress: 3 of 13 phases (Phase 0, Phase 1, Phase 2) complete. Next up: `/gsd-plan-phase 3` (Metrics Infrastructure & Discipline). Note on `redaction.go` coverage: file measures 83.3% statement-coverage; the shortfall is in the `SyntaxError` ANTLR error-listener (a 1-method interface impl unreachable in unit tests by design — fail-closed redaction kicks in BEFORE the listener fires when the parser rejects a query). LOG-08 acceptance contract proven by `TestRedactLiterals_PasswordHunter2`. Documented inline in 02-SUMMARY.md as informational deviation; no action required for Phase 2 exit. The `192` raw-grep count vs CONTEXT's `175` eyeball count reconciled in 02-SUMMARY.md: the 192 includes doc-comment occurrences caught by the same regex `make lint-slog` enforces; per-plan SUMMARYs document each side. Note: this session correctly used `git stash --include-untracked` BEFORE a `git checkout 4201a24^ -- pkg/...` step to gather pre-phase grep counts, then `git stash pop` at session end restored `ui/dist/` (untracked). No data loss.
 
@@ -154,6 +167,10 @@ These hard gates are enforced at every phase exit:
 ## Session Continuity
 
 ### Last work
+
+Phase 3 plans verified 2026-05-02 via `/gsd-plan-phase 3` (verification-only path). gsd-plan-checker returned 0 blockers, 5 warnings, 1 info; all 5 warnings addressed inline (W1/W2/W3 in 03-01-PLAN.md, 03-02-W1 added TestSubsystemValidation to 03-01 Wave 0, 03-06-W1 in 03-06-PLAN.md). VALIDATION.md flipped `draft` → `verified` with `nyquist_compliant: true`. STATE.md `current_phase` 02 → 03, `status` `executing` → `planned`. No new commits — `.planning/` is currently untracked-but-not-ignored locally per the M1 single-PR strategy; planning-doc edits do not commit. Phase 3 ready to execute via `/gsd-execute-phase 3` (Wave 0 RED scaffolding starts).
+
+### Earlier — Phase 2 Plan 05
 
 Phase 2 Plan 05 (pkg/bolt log-call-site migration) ran 2026-05-02 — 1 atomic commit on `otel`:
 
@@ -271,28 +288,24 @@ The two-commit pattern (substantive work → audit-row commit referencing predec
 
 ### Next work
 
-Plan Phase 1:
+Execute Phase 3 (plans verified 2026-05-02):
 
 ```
-/gsd-plan-phase 1
+/gsd-execute-phase 3
 ```
 
-Phase 1 = Observability Foundation Skeleton (per ROADMAP):
+Phase 3 = Metrics Infrastructure & Discipline (per ROADMAP). Decomposed into 6 plans:
 
-- New `pkg/observability` package as a leaf in the import graph (never imports `pkg/cypher`, `pkg/storage`, `pkg/bolt`, `pkg/server`)
-- Config block `Observability.{metrics,tracing,logging,pprof}` in `nornicdb.yaml`
-- Init order: logger → resource attributes → meter/tracer providers → registries → middleware → listeners
-- Listener supervision via single `errgroup` + `signal.NotifyContext(SIGINT, SIGTERM)` covering `:7474`, `:7687`, `:9090`, `:9091`
-- Shutdown drains in order: HTTP → Bolt → workers → observability flush; observability shutdown uses independent `context.WithTimeout(context.Background(), 30s)`
-- `:9090/metrics`, `/livez`, `/readyz` (200-with-progress-JSON contract per §2.6 of ADR), `/version`
-- Optional `:9091/debug/pprof/` gated by `NORNICDB_PPROF_ENABLED=true`, binds `127.0.0.1` by default
-- OTLP exporter init failure → noop provider + WARN log (never fatal)
-- ≥ 90% line coverage; no file in `pkg/observability` > 800 lines
-- Phase entry input pending (per ROADMAP): `tenant_label_mode=hash` for non-K8s — default `enabled=false` is sufficient unless explicit decision
+- **Plan 03-01** — Wave 0 RED scaffolding: 6 `_test.go` files compile-fail by design (`metrics_test.go`, `registration_test.go`, `exemplar_test.go`, `exemplar_bench_test.go`, `listener_openmetrics_test.go`, `testenv_cardinality_test.go`). Closes MET-01..05 / MET-23..25 / TEST-02 falsifiability gates including `TestSubsystemValidation_RejectsUnknownSubsystem` (closed allow-list) and the `t.Run("helper-failure-capture",...)` pattern proving `AssertCardinalityCeiling` fails t when ceiling exceeded.
+- **Plan 03-02** — `pkg/observability/metrics.go` + `pkg/observability/registration.go`: `MetricOpts` struct, 6 typed constructors (counter/gauge + 4 histogram bucket families), `validateSubsystem`/`validateNamingSuffix`/`validateForbiddenLabels`/`validateHelp` registration-time panics, `ForbiddenLabels` ≥ 10 entries (path, query, user, user_id, ip, uuid, embedding_text, trace_id, span_id, email), `Namespace="nornicdb"` injected by helper.
+- **Plan 03-03** — `pkg/observability/exemplar.go`: typed `LatencyHistogram`/`SizeHistogram`/`RowCountHistogram`/`EmbeddingLatencyHistogram` wrappers around `*prometheus.HistogramVec` with `Bind(lvs...)` returning a `BoundLatencyObserver` (MET-25 hot-path); `Observe(ctx, val)` extracts SpanContext via `trace.SpanContextFromContext(ctx)` + `IsValid()` guard + routes through `prometheus.ExemplarObserver` type-assert (MET-24).
+- **Plan 03-04** — `pkg/observability/listener.go` verification (`EnableOpenMetrics: true` already shipped at line 63); `pkg/observability/testenv.go` extension: `AssertCardinalityCeiling(t, name, ceiling, drive)` helper that drives 1k synthetic UUIDs + adversarial label values against the test's isolated `*prometheus.Registry` and asserts `testutil.GatherAndCount(reg, name) <= ceiling` (TEST-02). Note: TEST-01 isolation foundation was already shipped in Phase 1.
+- **Plan 03-05** — `Makefile` `lint-cardinality` POSIX-portable grep target wired into `make test`. Bans raw `prometheus.New*Vec` constructor calls outside `pkg/observability/`. Mirrors Phase 2 `lint-slog` precedent verbatim: no Perl `-P`, `(^\|[^a-zA-Z_])` boundary, scans `pkg/cypher pkg/storage pkg/bolt pkg/server pkg/replication pkg/auth pkg/embed pkg/search pkg/cache cmd/`. Falsifiability proven inline by injecting `prometheus.NewCounterVec(...)` into a business package (`pkg/cypher/_lint_test.go`), running `make lint-cardinality`, asserting non-zero exit + clear error message, then reverting.
+- **Plan 03-06** — Phase 3 SUMMARY (commit 6a) + ADR-0001 §4.1 row 3 audit-trail entry (commit 6b). Two-commit sign-off pattern preserved (mirrors Phase 2's `021a983` SUMMARY + `be5ab8a` audit-row split). Bench targets: `BenchmarkObserve_Hot/cold_no_span`, `hot_no_span` (≤ 2 allocs/op gate per MET-25 / D-02b), `hot_with_span` (informational; D-02b1 sync.Pool escalation triggers if exceeded). pkg/audit/ untouched gate via `git diff --name-only $PHASE3_BASE..HEAD pkg/audit/`. ADR §4.1 row 3 format: `<phase3-first-sha>..<phase3-last-sha> | 2026-MM-DD | asanabria`.
 
-Phase 1 will use the two-commit sign-off pattern at exit: substantive Phase 1 commits land on `otel`, then a final commit fills §4.1 row 1 with `<phase1-first-sha>..<phase1-last-sha> | <verified-date> | <verifier>`.
+Phase 3 will use the same two-commit sign-off pattern at exit (precedent: Phase 1 row 1 = `0cc947a`, Phase 2 row 2 = `4201a24..021a983`).
 
-The scheduled remote agent (`trig_013cMqECrn92Ug81nZrwE1Sc`) is **disabled** — its decision tree assumed per-phase merging and would post a misleading nudge. Re-arm it with a Phase-1-aware prompt if helpful, or leave disabled.
+The scheduled remote agent (`trig_013cMqECrn92Ug81nZrwE1Sc`) remains **disabled** for the same reason it was disabled at Phase 1 entry.
 
 ### Files written or modified across Phase 0 (cumulative)
 
