@@ -124,6 +124,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -182,12 +183,16 @@ const (
 //
 //	go func() {
 //		if err := server.ListenAndServe(); err != nil {
-//			log.Printf("Bolt server error: %v", err)
+//			// Operators should route this through the structured logger
+//			// returned by observability.NewLogger; the server itself
+//			// announces its listening address via slog at INFO once
+//			// ListenAndServe binds successfully.
+//			_ = err
 //		}
 //	}()
 //
-//	// Server is now accepting connections
-//	fmt.Printf("Bolt server listening on bolt://localhost:%d\n", config.Port)
+//	// Server is now accepting connections (announce log emitted by the
+//	// server's own structured logger).
 //
 // Thread Safety:
 //
@@ -220,6 +225,15 @@ type Server struct {
 	// Tracks the highest committed transaction sequence number across all sessions
 	txSequence   int64        // Monotonically increasing transaction sequence number
 	txSequenceMu sync.RWMutex // Protects txSequence
+
+	// log is the structured-logging entrypoint for the Bolt server. It is
+	// derived from config.Logger at NewWithDatabaseManager() with
+	// .With("component","bolt") so every record automatically carries the
+	// component attribute (D-10a: replaces the legacy "[BOLT]" bracket
+	// prefix). If config.Logger was nil at ctor entry, a discard-handler
+	// fallback is installed (D-01a) so existing callers that never set the
+	// field compile and run unchanged.
+	log *slog.Logger
 }
 
 // DatabaseManagerInterface provides database management without importing multidb.
@@ -487,6 +501,15 @@ type Config struct {
 	Authenticator  BoltAuthenticator // Authentication handler (nil = no auth)
 	RequireAuth    bool              // Require authentication for all connections
 	AllowAnonymous bool              // Allow "none" auth scheme (grants viewer role)
+
+	// Logger is the structured-logging entrypoint per D-01. If nil, a
+	// discard-handler fallback (D-01a) is installed at
+	// NewWithDatabaseManager() so existing callers compile unchanged. The
+	// Bolt HELLO message's "credentials" field is auto-redacted by the
+	// Plan 02-01 redactingHandler chain (D-03a) — DefaultRedactKeys
+	// already includes "credentials", so per-call scrubbing is not
+	// required in pkg/bolt.
+	Logger *slog.Logger
 }
 
 // DefaultConfig returns Neo4j-compatible default Bolt server configuration.
@@ -575,12 +598,13 @@ func (c *Config) serverAnnouncement() string {
 //	executor := cypher.NewStorageExecutor(storage)
 //	server := bolt.New(config, executor)
 //
-//	// Graceful shutdown
+//	// Graceful shutdown — operators wire this through lifecycle.Run so
+//	// the slog-bound logger emits the shutdown notice with structured
+//	// component=bolt attribution.
 //	go func() {
 //		sigChan := make(chan os.Signal, 1)
 //		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 //		<-sigChan
-//		log.Println("Shutting down Bolt server...")
 //		server.Close()
 //	}()
 //
@@ -722,6 +746,15 @@ func NewWithDatabaseManager(config *Config, executor QueryExecutor, dbManager Da
 	if config == nil {
 		config = DefaultConfig()
 	}
+	// D-01a discard-fallback: callers that don't set Config.Logger get a
+	// no-op logger so production code paths that emit structured records
+	// don't have to nil-check. Production callers (cmd/nornicdb/main.go)
+	// pass obs.Logger() so records flow through the 4-layer
+	// recovering→mandatory→redact→json handler stack — including the
+	// D-03a credentials redaction.
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 
 	return &Server{
 		config:    config,
@@ -729,7 +762,28 @@ func NewWithDatabaseManager(config *Config, executor QueryExecutor, dbManager Da
 		executors: make(map[string]QueryExecutor),
 		executor:  executor,
 		dbManager: dbManager,
+		// D-10a: component attribute replaces the legacy "[BOLT]" bracket
+		// prefix; every record emitted via s.log automatically carries it.
+		log: config.Logger.With("component", "bolt"),
 	}
+}
+
+// discardBoltLogger is the package-level fallback logger used when a Server
+// is constructed via a struct literal (test fixtures) instead of through
+// NewWithDatabaseManager. It is allocated once at package init so the
+// logger() accessor is allocation-free and race-free on the read path.
+var discardBoltLogger = slog.New(slog.NewTextHandler(io.Discard, nil)).With("component", "bolt")
+
+// logger returns the server's structured logger, falling back to a shared
+// discard handler when callers construct a Server literal directly (test
+// fixtures outside of NewWithDatabaseManager). The production ctor always
+// populates s.log, so this is purely defensive — and read-only on the
+// fallback path so concurrent callers do not race on the shared field.
+func (s *Server) logger() *slog.Logger {
+	if s == nil || s.log == nil {
+		return discardBoltLogger
+	}
+	return s.log
 }
 
 // SetDatabaseAccessMode sets the per-database access mode (e.g. from HTTP server).
@@ -794,7 +848,7 @@ func (s *Server) ListenAndServe() error {
 	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok && tcpAddr.Port > 0 {
 		actualPort = tcpAddr.Port
 	}
-	fmt.Printf("Bolt server listening on bolt://%s:%d\n", announceHost, actualPort)
+	s.logger().Info("bolt server listening", "host", announceHost, "port", actualPort)
 
 	return s.serve()
 }
@@ -845,7 +899,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// Recover from panics to prevent crashing the server
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("Recovered from panic in connection handler: %v\n", r)
+			s.logger().Error("connection handler panic", slog.Any("recover", r))
 		}
 	}()
 
@@ -882,7 +936,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Perform handshake
 	if err := session.handshake(); err != nil {
-		fmt.Printf("Handshake failed: %v\n", err)
+		s.logger().Warn("handshake failed", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
 		return
 	}
 
@@ -901,7 +955,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				strings.Contains(errStr, "use of closed network connection") {
 				return
 			}
-			fmt.Printf("Message handling error: %v\n", err)
+			s.logger().Warn("message handling error", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
 			return
 		}
 	}
@@ -1210,7 +1264,7 @@ func (s *Session) handleHello(data []byte) error {
 				if s.conn != nil {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
-				fmt.Printf("[BOLT] Auth failed for %q from %s: %v\n", principal, remoteAddr, err)
+				s.server.logger().Warn("auth failed", "scheme", "basic", "principal", principal, "remote", remoteAddr, slog.Any("error", err))
 				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Invalid credentials")
 			}
 			s.authenticated = true
@@ -1224,7 +1278,7 @@ func (s *Session) handleHello(data []byte) error {
 				if s.conn != nil {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
-				fmt.Printf("[BOLT] Bearer auth failed from %s: %v\n", remoteAddr, err)
+				s.server.logger().Warn("auth failed", "scheme", "bearer", "remote", remoteAddr, slog.Any("error", err))
 				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Invalid or expired token")
 			}
 			s.authenticated = true
@@ -1273,12 +1327,18 @@ func (s *Session) handleHello(data []byte) error {
 		if s.conn != nil {
 			remoteAddr = s.conn.RemoteAddr().String()
 		}
-		dbInfo := ""
-		if dbName != "" {
-			dbInfo = fmt.Sprintf(" db=%s", dbName)
-		}
-		fmt.Printf("[BOLT] HELLO %s user=%s roles=%v%s\n",
-			remoteAddr, s.authResult.Username, s.authResult.Roles, dbInfo)
+		// D-10a: drop the "[BOLT]" bracket — component=bolt is already
+		// baked in via .With at ctor time. D-03a: any "credentials" attr
+		// would be auto-redacted by the redactingHandler chain (it is in
+		// DefaultRedactKeys); we deliberately do NOT log credentials
+		// here, but the redaction guard remains in force as a defense
+		// in depth.
+		s.server.logger().Info("hello",
+			"remote", remoteAddr,
+			"user", s.authResult.Username,
+			"roles", s.authResult.Roles,
+			"database", dbName,
+		)
 	}
 
 	return s.sendSuccess(map[string]any{
@@ -1416,10 +1476,21 @@ func (s *Session) handleRun(data []byte) error {
 		if s.authResult != nil {
 			user = s.authResult.Username
 		}
+		// D-10a: "[BOLT]" bracket dropped (component attribute carries
+		// it). D-03a: any "credentials"/"password"/"token" key in the
+		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
+		// chain via DefaultRedactKeys.
 		if len(params) > 0 {
-			fmt.Printf("[BOLT] %s@%s: %s (params: %v)\n", user, remoteAddr, truncateQuery(query, 200), params)
+			s.server.logger().Debug("query",
+				"user", user, "remote", remoteAddr,
+				"query", truncateQuery(query, 200),
+				"params", params,
+			)
 		} else {
-			fmt.Printf("[BOLT] %s@%s: %s\n", user, remoteAddr, truncateQuery(query, 200))
+			s.server.logger().Debug("query",
+				"user", user, "remote", remoteAddr,
+				"query", truncateQuery(query, 200),
+			)
 		}
 	}
 
@@ -1505,7 +1576,7 @@ func (s *Session) handleRun(data []byte) error {
 	if err != nil {
 		s.logRunTiming("ERROR", dbName, query, time.Since(runStart), 0, err)
 		if s.server != nil && s.server.config.LogQueries {
-			fmt.Printf("[BOLT] ERROR: %v\n", err)
+			s.server.logger().Warn("query error", slog.Any("error", err))
 		}
 		code, msg := mapBoltQueryError(err)
 		return s.sendFailure(code, msg)
@@ -1568,6 +1639,9 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 	if runErr == nil && !includeQuery {
 		return
 	}
+	if s.server == nil {
+		return
+	}
 
 	remoteAddr := "unknown"
 	if s.conn != nil {
@@ -1578,24 +1652,33 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 		user = s.authResult.Username
 	}
 
+	// D-10a: "[BOLT]" bracket dropped (component attribute carries it).
+	// Errors emit at WARN; successful query timing (only fires when
+	// LogQueries=true) emits at DEBUG so it doesn't pollute production
+	// stdout at INFO level.
 	if runErr != nil {
-		if includeQuery {
-			fmt.Printf("[BOLT] RUN user=%s remote=%s db=%s status=%s rows=%d %v query=%s err=%v\n",
-				user, remoteAddr, dbName, status, rows, duration, truncateQuery(query, 200), runErr)
-		} else {
-			fmt.Printf("[BOLT] RUN user=%s remote=%s db=%s status=%s rows=%d %v err=%v\n",
-				user, remoteAddr, dbName, status, rows, duration, runErr)
+		attrs := []any{
+			"user", user, "remote", remoteAddr,
+			"database", dbName, "status", status,
+			"rows", rows, "duration", duration,
+			slog.Any("error", runErr),
 		}
+		if includeQuery {
+			attrs = append(attrs, "query", truncateQuery(query, 200))
+		}
+		s.server.logger().Warn("run", attrs...)
 		return
 	}
 
-	if includeQuery {
-		fmt.Printf("[BOLT] RUN user=%s remote=%s db=%s status=%s rows=%d %v query=%s\n",
-			user, remoteAddr, dbName, status, rows, duration, truncateQuery(query, 200))
-		return
+	attrs := []any{
+		"user", user, "remote", remoteAddr,
+		"database", dbName, "status", status,
+		"rows", rows, "duration", duration,
 	}
-	fmt.Printf("[BOLT] RUN user=%s remote=%s db=%s status=%s rows=%d %v\n",
-		user, remoteAddr, dbName, status, rows, duration)
+	if includeQuery {
+		attrs = append(attrs, "query", truncateQuery(query, 200))
+	}
+	s.server.logger().Debug("run", attrs...)
 }
 
 func mapBoltQueryError(err error) (code, message string) {

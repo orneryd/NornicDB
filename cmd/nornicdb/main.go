@@ -658,12 +658,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting server: %w", err)
 	}
 
-	// Create and start Bolt server for Neo4j driver compatibility
+	// Create and start Bolt server for Neo4j driver compatibility.
+	// Plan 02-05 D-01: Logger flows in via Config.Logger so Bolt records
+	// share the assembled handler stack (recovering -> mandatory -> redact
+	// -> json) and Bolt HELLO "credentials" are auto-redacted (D-03a).
 	boltConfig := bolt.DefaultConfig()
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
 	boltConfig.LogQueries = logQueries
 	boltConfig.ServerAnnouncement = cfg.Server.BoltServerAnnouncement
+	// `logger` is the same *slog.Logger reference Provider.Logger() returns
+	// (built BEFORE observability.New per D-08's two-phase bootstrap), so
+	// records emitted by the Bolt server flow through the production
+	// 4-layer recovering -> mandatory -> redact -> json handler stack.
+	boltConfig.Logger = logger
 	if !noAuth && authenticator != nil {
 		boltAuth := bolt.NewAuthenticatorAdapter(authenticator)
 		boltAuth.SetGetEffectivePermissions(httpServer.GetEffectivePermissions)
