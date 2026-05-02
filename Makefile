@@ -857,7 +857,26 @@ lint-slog:
 		|| (echo "LOG-01 violation: log.Printf|log.Println|fmt.Print|fmt.Println|fmt.Printf forbidden — use injected *slog.Logger"; exit 1)
 	@echo "lint-slog: PASS (LOG-09 + LOG-01 gates clean)"
 
-test: lint-slog
+# pattern `(^|[^a-zA-Z_])` is the portable analog of `\b` (BSD grep treats
+# `\b` inconsistently across versions; mirrors lint-slog precedent above).
+#
+# Path list excludes pkg/observability/ — that package legitimately
+# constructs raw prometheus.* types (registry.go, etc.); the helper layer
+# discipline applies to business-package CALLERS of pkg/observability,
+# not pkg/observability itself.
+#
+# *_test.go is included — test fixtures that register raw *Vec to test
+# the helper layer's behavior should also go through the helpers, OR live
+# in pkg/observability/ where the lint does not scan.
+lint-cardinality:
+	@! grep -RnE '(^|[^a-zA-Z_])prometheus\.New(Counter|Gauge|Histogram|Summary)(Vec)?\(' \
+		--include='*.go' \
+		pkg/cypher pkg/storage pkg/bolt pkg/server pkg/replication pkg/auth pkg/embed pkg/search pkg/cache cmd/ \
+		2>/dev/null \
+		|| (echo "MET-04 violation: subsystems must register metrics via pkg/observability helpers (D-01 / Plan 03-02); see ADR §3.2 'Cardinality discipline' and pkg/observability/metrics.go"; exit 1)
+	@echo "lint-cardinality: PASS (MET-04 helper-only registration enforced)"
+
+test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
 	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
 else
