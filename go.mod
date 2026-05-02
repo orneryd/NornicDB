@@ -9,7 +9,7 @@ require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/ebitengine/purego v0.10.0
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/go-kms-wrapping/v2 v2.0.21
+	github.com/hashicorp/go-kms-wrapping/v2 v2.0.22
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.14
 	github.com/hybridgroup/yzma v1.13.0
