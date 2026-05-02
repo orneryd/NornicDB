@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 status: executing
-last_updated: "2026-05-01T23:40:35.291Z"
+last_updated: "2026-05-02T00:50:17.149Z"
 progress:
   total_phases: 13
   completed_phases: 2
   total_plans: 13
-  completed_plans: 11
-  percent: 85
+  completed_plans: 12
+  percent: 92
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
@@ -31,14 +31,14 @@ progress:
 ## Current Position
 
 Phase: 02 (structured-logging-migration) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 
 - **Milestone:** M1 — Best-in-Class Observability
 - **Current phase:** 02
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
 - **Status:** Ready to execute
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
-- **Progress:** [█████████░] 85%
+- **Progress:** [█████████░] 92%
 
 ## Performance Metrics (Universal, KD-12)
 
@@ -57,6 +57,7 @@ These hard gates are enforced at every phase exit:
 | Phase 02 P02 | 2464 | 2 tasks | 11 files |
 | Phase 02 P03 | 1136 | 2 tasks | 14 files |
 | Phase 02 P04 | 0h14m | 1 tasks | 17 files |
+| Phase 02 P05 | 0h45m | 1 tasks | 4 files |
 
 ### Plan execution metrics
 
@@ -108,7 +109,11 @@ These hard gates are enforced at every phase exit:
 - [ ] Plan 02 Task 3 (`gh pr merge`) — formally pending until M1 completes. Marked `DEFERRED-TO-M1-COMPLETION` in Plan 02.
 - [x] Execute Plan 02-01 — pkg/observability slog stack + cmd/nornicdb runServe bootstrap (2026-05-01, commits 4201a24..a42054a + meta 2bf12c3)
 - [x] Execute Plan 02-02 — pkg/server log call sites migrated to slog (2026-05-01, commits 17dcda3..c8028a8). 85 of 87 sites migrated; lines 1650 + 1654 deferred to Plan 02-03.
+- [x] Execute Plan 02-03 — pkg/cypher log call sites + D-04d slow-query collapse + AST literal redactor + plan_hash (2026-05-01, commits 2c96f08..6a227bc).
+- [x] Execute Plan 02-04 — pkg/storage migration + 4 [COUNT BUG] structured WARN records + pkg/config.Config.Logger threading (2026-05-01, commit ecdc5eb).
+- [x] Execute Plan 02-05 — pkg/bolt log call sites migrated to slog; cumulative LOG-01 surface across all four LOG-01 packages now empty (2026-05-02, commit 1f4e187).
 - [ ] Pre-existing race in pkg/nornicdb/search_services.go (background clustering goroutine vs test teardown) — surfaces under `-race` + multi-test pkg/server runs. NOT introduced by Plan 02-02. Should be filed against the storage/search team for a focused fix (ctx-cancel observance OR per-DB sync.Mutex around `getOrCreateSearchService`). See `.planning/phases/02-structured-logging-migration/deferred-items.md`.
+- [ ] Pre-existing race in pkg/bolt/server.go listener publication (TestServerCloseWithListener s.listener concurrent read/write) and pkg/bolt/auth_adapter.go AuthenticatorAdapter.allowAnonymous (TestConcurrentAuthentication concurrent_SetAllowAnonymous_toggle without holding mu). NOT introduced by Plan 02-05. Documented in deferred-items.md with `git stash` repro confirmation.
 
 ### Active Blockers
 
@@ -121,6 +126,12 @@ These hard gates are enforced at every phase exit:
 **Phase 1 sign-off:** ❌ NOT READY for §4.1 row 1 commit. Orchestrator must run Plan 01-06 + re-verify before issuing the audit-trail row.
 
 ### Recent Decisions
+
+- **2026-05-02 (Plan 02-05 completed)**: Wave 5 migration landed on `otel`. One atomic commit: `1f4e187` feat (Task 1: bolt.Config.Logger *slog.Logger field + discard-fallback (D-01a) + Server.log pre-bound with component=bolt at NewWithDatabaseManager (D-10a) + Server.logger() race-free fallback accessor + 14 production log.Printf/fmt.Print* sites in pkg/bolt/server.go migrated to structured slog records + 3 doc-comment examples sanitized + cmd/nornicdb/main.go threads boltConfig.Logger=logger). NewWithDatabaseManager arity unchanged (3 positional args + 1 return) per B6. HELLO `credentials` field auto-redacted by Plan 02-01 redactingHandler chain — DefaultRedactKeys carries "credentials" (D-03a confirmed); end-to-end proof in `TestBoltServer_RedactsCredentials`. **Cumulative LOG-01 grep-zero surface across all four LOG-01 packages (pkg/server + pkg/cypher + pkg/storage + pkg/bolt) is now empty.** Build green; `go test -tags nolocalllm -count=1 ./pkg/bolt/ ./pkg/observability/ ./cmd/nornicdb/` PASS. pkg/audit/ untouched (Pitfall 9). Two deviations: Rule 1 auto-fix (Server.logger() accessor for test fixtures that construct &Server{} struct literals directly — race-free read-only path, prevents SIGSEGV in coverage_extra_test.go); Rule 2 auto-add (3 doc-comment examples reformatted so LOG-01 grep gate is unambiguously clean, mirroring Plan 02-04's pkg/storage/loader.go pattern). Two pre-existing -race failures recorded in deferred-items.md (TestServerCloseWithListener s.listener publication; TestConcurrentAuthentication AuthenticatorAdapter.allowAnonymous) — confirmed pre-existing by `git stash` repro against same `otel` HEAD. Phase 2 progress: 5 of 6 plans complete (83%). Next up: Plan 02-06 (LOG-09 lint gate `make lint-slog` to enforce LOG-01 grep-zero permanently in CI).
+
+- **2026-05-01 (Plan 02-04 completed)**: Wave 4 migration landed on `otel`. One atomic commit `ecdc5eb` feat: pkg/storage migration (48 raw call sites → 0 post-plan + 4 [COUNT BUG] structured WARN records). BadgerOptions.Logger / AsyncEngineConfig.Logger / WALConfig.SlogLogger fields added; D-06 single-allocation flushLog wired in AsyncEngine.flushLoop; D-07 walLog pre-bound at NewWAL; standalone WAL helpers take *slog.Logger as first parameter. NewBadgerEngineWithOptions / NewAsyncEngine ctor arities unchanged (B5). One deviation (Rule 2 auto-add): pkg/config.Config gained Logger *slog.Logger field with yaml/json:"-" tags so cmd/nornicdb/main.go can thread the structured *slog.Logger built by observability.NewLogger BEFORE nornicdb.Open into pkg/nornicdb/db.go's storage construction. One deviation (Rule 3 auto-fix): pkg/storage/storage_gap_extra_test.go's default_wal_logger sub-test rewritten to assert the new newSlogWALLogger adapter contract.
+
+- **2026-05-01 (Plan 02-03 completed)**: Wave 3 migration landed on `otel`. Two commits: `2c96f08` feat (cypher migration + AST literal redactor + plan_hash; lines 1650+1654 of pkg/server/server.go absorbed via D-04d slow-query collapse) + `6a227bc` docs SUMMARY.
 
 - **2026-05-01 (Plan 02-02 completed)**: First migration wave landed on `otel`. Two atomic commits: `17dcda3` feat (Task 1: Config.Logger field + discard fallback + Server.log field + cmd/nornicdb relocation of observability.NewLogger BEFORE server.New) and `c8028a8` feat (Task 2: 85 of 87 pkg/server log.Printf/fmt.Print* call sites migrated to s.log structured emission per D-10a; emoji-strip + bracket-prefix-to-subsystem-attribute; lines 1650 + 1654 deferred to Plan 02-03 D-04d collapse). server.New ctor arity unchanged (B2). pkg/audit/audit.go untouched (Pitfall 9). Falsifiable contract `TestRedactor_NoEmojiInJSONOutput` PASSES against new pkg/server records. Build green; `go test ./pkg/server/` PASS (76s). One deviation (Rule 3 auto-fix): relocated `observability.NewLogger` block in `cmd/nornicdb/main.go` to BEFORE `server.New` so the `*slog.Logger` could thread into `Config.Logger`. One deferred item: pre-existing race in `pkg/nornicdb/search_services.go` (background clustering goroutine vs test teardown) surfaces under `-race` + multi-test pkg/server runs; documented in `.planning/phases/02-structured-logging-migration/deferred-items.md`; out of M1 Phase 2 scope. Phase 2 progress: 2 of 6 plans complete (33%).
 
@@ -139,6 +150,18 @@ These hard gates are enforced at every phase exit:
 ## Session Continuity
 
 ### Last work
+
+Phase 2 Plan 05 (pkg/bolt log-call-site migration) ran 2026-05-02 — 1 atomic commit on `otel`:
+
+- `1f4e187` feat (Task 1: bolt.Config.Logger *slog.Logger field + discard-fallback (D-01a) + Server.log pre-bound with component=bolt at NewWithDatabaseManager (D-10a) + Server.logger() race-free fallback accessor + 14 production log.Printf/fmt.Print* sites in pkg/bolt/server.go migrated to structured slog records (1 listening announce + 3 in handleConnection + 2 auth-failure paths + 1 HELLO log + 2 in handleRun LogQueries + 1 query-error path + 4 in logRunTiming) + 3 doc-comment examples sanitized + cmd/nornicdb/main.go threads boltConfig.Logger=logger)
+
+Acceptance: LOG-01 grep-zero gate PASSES across pkg/bolt; **cumulative gate across all four LOG-01 packages (server/cypher/storage/bolt) is now empty** — Phase 2's grep-zero contract is satisfied. `go build -tags nolocalllm ./...` PASS; `go test -tags nolocalllm -count=1 ./pkg/bolt/ ./pkg/observability/ ./cmd/nornicdb/` PASS (12.9s + 0.6s + 1.1s). `TestRedactor_NoEmojiInJSONOutput` PASS. New `TestBoltServer_RedactsCredentials` proves D-03a end-to-end: bolt-emitted records with `credentials` attribute scrubbed by redaction chain. `pkg/audit/` untouched (Pitfall 9 boundary clean). NewWithDatabaseManager arity unchanged (3 positional args + 1 return) per B6 — verified by `grep -nE 'func NewWithDatabaseManager\(config \*Config, executor QueryExecutor, dbManager DatabaseManagerInterface\) \*Server' pkg/bolt/server.go` returning line 745. SUMMARY at `.planning/phases/02-structured-logging-migration/02-05-SUMMARY.md`.
+
+Two deviations: Rule 1 auto-fix (defensive `Server.logger()` accessor returns shared `discardBoltLogger` package-level var when test fixtures construct `&Server{config: DefaultConfig(), ...}` struct literals directly — read-only fallback path, race-free); Rule 2 auto-add (3 doc-comment examples reformatted so LOG-01 grep gate is unambiguously clean, mirroring Plan 02-04's pkg/storage/loader.go pattern). Two pre-existing -race failures recorded in deferred-items.md (`TestServerCloseWithListener` s.listener publication; `TestConcurrentAuthentication/concurrent_SetAllowAnonymous_toggle` AuthenticatorAdapter.allowAnonymous) — confirmed pre-existing by `git stash` repro against same `otel` HEAD without any of this plan's edits applied. Plan 02-05's own tests (TestLogRunTiming_*, TestBoltServer_NoBoltBracketPrefix, TestBoltServer_DiscardFallback, TestBoltServer_RedactsCredentials) are race-clean under `-race -count=1`.
+
+**Phase 2 progress: 5 of 6 plans complete (83%).** Next up: Plan 02-06 (LOG-09 lint gate `make lint-slog` to enforce LOG-01 grep-zero permanently in CI).
+
+### Earlier — Phase 2 Plan 02
 
 Phase 2 Plan 02 (pkg/server log-call-site migration) ran 2026-05-01 — 2 atomic commits on `otel`:
 
