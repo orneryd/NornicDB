@@ -176,8 +176,15 @@ func TestBridgeNamespaceParity_NoCollision(t *testing.T) {
 
 	assert.Contains(t, names, "nornicdb_cypher_queries_total",
 		"MET-01: hand-instrumented family must register at nornicdb_<subsystem>_<name>")
-	assert.Contains(t, names, "nornicdb_otel_queries",
-		"MET-23: OTel bridge must emit under nornicdb_otel_* (WithoutUnits drops _total auto-suffix)")
+	// Phase 1's registry.go calls WithoutUnits() (strips OTel unit suffixes
+	// like _seconds/_bytes) but NOT WithoutCounterSuffixes() — so monotonic
+	// OTel counters still get the Prometheus-convention _total suffix.
+	// Bridge family ends up at nornicdb_otel_queries_total. Distinct from
+	// the hand-instrumented nornicdb_cypher_queries_total — namespace parity
+	// (MET-23) is preserved by the disjoint nornicdb_otel_* prefix, not by
+	// suffix difference.
+	assert.Contains(t, names, "nornicdb_otel_queries_total",
+		"MET-23: OTel bridge must emit under nornicdb_otel_* (WithNamespace prefix)")
 	assert.NotContains(t, names, "nornicdb_otel_cypher_queries_total",
 		"MET-23: bridge MUST NOT collide with hand-instrumented family")
 }
