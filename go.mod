@@ -3,7 +3,7 @@ module github.com/orneryd/nornicdb
 go 1.26.0
 
 require (
-	cloud.google.com/go/kms v1.29.0
+	cloud.google.com/go/kms v1.30.0
 	github.com/99designs/gqlgen v0.17.89
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/dgraph-io/badger/v4 v4.9.1
