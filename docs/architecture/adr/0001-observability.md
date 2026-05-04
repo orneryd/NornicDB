@@ -297,13 +297,76 @@ The Go runtime collector (`collectors.NewGoCollector`) and process collector
 (`collectors.NewProcessCollector`) are registered alongside the above and
 provide `go_*`/`process_*` for free.
 
-#### 2.3.1 Reconciled amendments
+#### 2.3.0 Reconciled amendments (Phase 0)
 
 Three research-surfaced gap closures were folded into the §2.3 catalog above:
 
 - **A2 — GAP-1 `nornicdb_replication_last_contact_seconds{peer}`:** added to the Replication subsystem (10th metric family). Standard SRE alert for quiescence vs. stall.
 - **A3 — GAP-6 `nornicdb_auth_attempts_total{result,protocol}`:** added as a new Auth subsystem. Failed-auth rate is a standard security alert.
 - **A4 — GAP-2 `nornicdb_cache_hit_ratio`:** ships as a recording-rule template (Phase 10) over the existing `cache_hits_total` / `cache_misses_total` counters, not as a raw metric — keeps the catalog primitives bounded.
+
+### 2.3.1 Phase 5 amendment — Legacy translation layer & tenant flag (2026-05-04)
+
+This subsection records the customer-API contract additions delivered by Phase 5
+(Legacy Translation Layer & Tenant Flag, plans 05-01 through 05-05). Future
+changes to any of the four contract surfaces below require a follow-up ADR
+amendment + reviewer sign-off; the subsection IS the contract.
+
+**Sunset header value (D-03):** The legacy `:7474/metrics` endpoint emits
+`Sunset: Fri, 31 Dec 2027 23:59:59 GMT` (RFC 7231 IMF-fixdate format) on
+every response. This date is the customer-API contract for migration off
+the legacy 12-metric surface; changing it requires a follow-up ADR
+amendment + reviewer sign-off. The literal lives in
+`pkg/observability/legacy_translation.go` as `const LegacySunset` and is
+locked by `pkg/observability/legacy_translation_test.go::TestRenderLegacy_HeadersConsts`.
+
+**Deprecation header value (D-03a / R-01):** The endpoint emits
+`Deprecation: true` per the original draft of the Deprecation HTTP header.
+RFC 9745 (March 2025) supersedes that draft and now mandates a
+Structured-Field Date format (`Deprecation: @<unix-timestamp>`); M1
+deliberately ships `true` per the locked REQ MET-20 / ROADMAP SC#2 / D-03a
+contract. An RFC-9745 cutover is captured as a deferred item in
+`.planning/phases/05-legacy-translation-layer-tenant-flag/deferred-items.md`;
+the non-conformance with RFC 9745 §2.1 is intentional and customer-API-stable
+for M1.
+
+**Autodetect contract (D-02):** The `metrics.tenant_labels_enabled` flag
+defaults via multi-signal AND logic: `KUBERNETES_SERVICE_HOST` env var
+non-empty AND `/var/run/secrets/kubernetes.io/serviceaccount/token`
+exists AND has non-zero size. Operator can override via explicit YAML
+`metrics.tenant_labels_enabled: true|false` (R-02 sentinel `*bool` field
+`MetricsConfig.TenantLabelsExplicit` preserves operator intent through to
+startup-resolution time so `explicit_false` beats `autodetect_true` on K8s).
+Resolution happens once at startup, between `observability.New` and
+the first bag constructor (Phase 4 D-02c init-order chokepoint). The resolved
+value + source reason is logged once via the injected slog logger
+(LOG-09 compliant — never `slog.Default`):
+
+`level=INFO msg="resolved tenant labels enabled" enabled=<bool> reason=<enum> service_host_present=<bool> token_file_present=<bool>`
+
+The `reason` enum is closed-set with exactly six values:
+`explicit_yaml`, `k8s_detected`, `not_k8s_service_host_absent`,
+`not_k8s_token_file_absent`, `not_k8s_token_file_empty`,
+`not_k8s_token_stat_error`. Operators grep this finite vocabulary for
+forensic resolution outcomes. The token file is checked via `os.Stat` only —
+JWT bytes never enter process memory (T-05-11 mitigation).
+
+**Translation layer (D-01..D-01f):** Customer scrapers on `:7474/metrics`
+continue to receive 12 legacy metric names (`nornicdb_uptime_seconds`,
+`nornicdb_requests_total`, `nornicdb_errors_total`,
+`nornicdb_active_requests`, `nornicdb_nodes_total`, `nornicdb_edges_total`,
+`nornicdb_embeddings_processed`, `nornicdb_embeddings_failed`,
+`nornicdb_embedding_worker_running`, `nornicdb_slow_queries_total`,
+`nornicdb_slow_query_threshold_ms`, `nornicdb_info`) fed from the unified
+Phase 4 registry via the `pkg/observability.RenderLegacy(reg, now) []byte`
+pure function. The 12-row mapping table is locked by
+`pkg/observability/legacy_snapshot.golden` (1660 bytes, 36 emit lines); CI
+byte-equality verifies that future Phase-4 catalog changes do not silently
+break the legacy contract. Regeneration is gated behind `REGEN=1` env var
+(`go test -run TestRenderLegacy_RegenerateGolden`); CI never sets REGEN.
+The `:7474/metrics` auth gate (`s.withAuth(s.handleMetrics, auth.PermRead)`)
+is unchanged — dropping auth would itself require its own deprecation cycle
+per CLAUDE.md "Public API contract" (D-04).
 
 ### 2.4 Tracing — OpenTelemetry SDK with OTLP
 
