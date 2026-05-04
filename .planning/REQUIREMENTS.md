@@ -56,11 +56,11 @@
 
 **Customer-facing infrastructure**
 
-- [ ] **MET-18**: Operator can scrape `:9090/metrics` with no authentication and receive Prometheus exposition format
-- [ ] **MET-19**: Customer scraper on legacy `:7474/metrics` continues to receive the original 12 metric names with old labels via a translation layer for one full release cycle
-- [ ] **MET-20**: Legacy `:7474/metrics` responses include `Deprecation: true` and `Sunset: <date>` headers
-- [ ] **MET-21**: When `metrics.tenant_labels_enabled=false`, the registry strips the `database` label from `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series
-- [ ] **MET-22**: `metrics.tenant_labels_enabled` defaults to `true` on K8s detection (multi-signal: `KUBERNETES_SERVICE_HOST` env + ServiceAccount token presence), `false` otherwise; resolved value logged at startup
+- [x] **MET-18** ✅ (2026-05-04, Phase 5): Operator can scrape `:9090/metrics` with no authentication and receive Prometheus exposition format
+- [x] **MET-19** ✅ (2026-05-04, Phase 5): Customer scraper on legacy `:7474/metrics` continues to receive the original 12 metric names with old labels via a translation layer for one full release cycle
+- [x] **MET-20** ✅ (2026-05-04, Phase 5): Legacy `:7474/metrics` responses include `Deprecation: true` and `Sunset: <date>` headers
+- [x] **MET-21** ✅ (2026-05-04, Phase 5): When `metrics.tenant_labels_enabled=false`, the registry strips the `database` label from `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series
+- [x] **MET-22** ✅ (2026-05-04, Phase 5): `metrics.tenant_labels_enabled` defaults to `true` on K8s detection (multi-signal: `KUBERNETES_SERVICE_HOST` env + ServiceAccount token presence), `false` otherwise; resolved value logged at startup
 - [x] **MET-23** ✅ (2026-05-02, Phase 3): OTel meter API instrumentation is bridged to the same numbers via the `otelprom` exporter as additional egress, configured with `WithoutUnits()` and a `nornicdb_otel_*` namespace to prevent collision
 - [x] **MET-24** ✅ (2026-05-02, Phase 3): Histogram exemplars are emitted unconditionally via `client_golang` `ExemplarObserver`; `/metrics` negotiates `Accept: application/openmetrics-text`; `IsValid()` && `IsSampled()` guard applied before observe (single chokepoint in `pkg/observability/exemplar.go`)
 - [x] **MET-25** ✅ (2026-05-02, Phase 3): Hot-path metric handles are pre-bound at construction (`Bind(lvs...)` returns `BoundObserver`); no `WithLabelValues` calls inside request loops; `BenchmarkObserve_Hot/hot_no_span` = 0 allocs/op
@@ -152,7 +152,7 @@
 
 - [x] **TEST-01** ✅ (2026-05-02, Phase 3 confirms Phase 1 foundation): Every test in `pkg/observability` uses an isolated `*prometheus.Registry`, `InMemoryExporter`, and `*slog.Logger` — no global state (no `prometheus.DefaultRegisterer`, no `slog.SetDefault`)
 - [x] **TEST-02** ✅ (2026-05-02, Phase 3): Each `*Vec` has a cardinality ceiling test: `(*TestEnv).AssertCardinalityCeiling(t, name, ceiling, drive)` shipped in `pkg/observability/testenv.go`; drives 1k tenant UUIDs across 8 goroutines + adversarial label values via `errgroup.SetLimit(8)`
-- [ ] **TEST-03**: A golden-file test in `pkg/observability/legacy_translation_test.go` fails CI on any diff between new-registry-emitted-via-translation-layer and the locked legacy `:7474/metrics` snapshot
+- [x] **TEST-03** ✅ (2026-05-04, Phase 5): A golden-file test in `pkg/observability/legacy_translation_test.go` fails CI on any diff between new-registry-emitted-via-translation-layer and the locked legacy `:7474/metrics` snapshot
 - [ ] **TEST-04**: A `kube-prometheus-stack` integration test in CI verifies exemplar emission, NetworkPolicy enforcement, ServiceMonitor scrape, `/readyz` warm-up behavior, and OTel→Prom bridge parity
 - [ ] **TEST-05**: Bolt driver round-trip conformance test runs against the matrix defined for KD-08 (minimum: `neo4j-go-driver/v5`)
 - [ ] **TEST-06**: Replication codec rolling-upgrade test exercises pre-version follower → version-aware leader and the reverse without parse failures
@@ -245,11 +245,11 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | MET-16 | Phase 4 | Complete |
 | MET-17 | Phase 4 | Complete |
 | MET-26 | Phase 4 | Complete |
-| MET-18 | Phase 5 | Pending |
-| MET-19 | Phase 5 | Pending |
-| MET-20 | Phase 5 | Pending |
-| MET-21 | Phase 5 | Pending |
-| MET-22 | Phase 5 | Pending |
+| MET-18 | Phase 5 | Complete |
+| MET-19 | Phase 5 | Complete |
+| MET-20 | Phase 5 | Complete |
+| MET-21 | Phase 5 | Complete |
+| MET-22 | Phase 5 | Complete |
 | TRC-01 | Phase 6 | Pending |
 | TRC-02 | Phase 6 | Pending |
 | TRC-03 | Phase 6 | Pending |
@@ -307,7 +307,7 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | PERF-06 | Phase 1 | Complete |
 | TEST-01 | Phase 3 | Complete |
 | TEST-02 | Phase 3 | Complete |
-| TEST-03 | Phase 5 | Pending |
+| TEST-03 | Phase 5 | Complete |
 | TEST-05 | Phase 8 | Pending |
 | TEST-06 | Phase 7 | Pending |
 | TEST-07 | Phase 8 | Pending |

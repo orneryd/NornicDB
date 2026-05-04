@@ -98,13 +98,13 @@ metrics:
   coverage_pct: 92.4
   largest_phase5_file_loc: 409 (legacy_translation_test.go)
   largest_phase5_production_file_loc: 316 (legacy_translation.go)
-commit_range: 65f8771..<LAST_SHA> (filled by Task 05-05-05)
+commit_range: 65f8771..973bbd7
 ---
 
 # Phase 5: Legacy Translation Layer & Tenant Flag — SUMMARY
 
-**Phase exit:** <DATE> (filled by Task 05-05-05)
-**Commit range on `otel`:** `<FIRST_SHA>..<LAST_SHA>` (filled by Task 05-05-05)
+**Phase exit:** 2026-05-04
+**Commit range on `otel`:** `65f8771..973bbd7` (this Plan 05-05 final-commit closes the phase from a tracking standpoint; the ADR §4.1 row-5 fill is the second commit and is not included in the range it documents — same precedent as Phase 2's `4201a24..021a983`, Phase 3's `1ba8f01..a62d30a`, and Phase 4's `523c23d..9a0e574`).
 **ADR §4.1 row:** 5 (this phase)
 **Verifier:** asanabria
 **Single-PR strategy:** all Phase 5 commits land directly on `otel` (PR #126).
@@ -127,7 +127,7 @@ Customer scrapers on `:7474/metrics` continue to receive the original 12 metric 
 | 05-04 | Server adapter rewrite (handleMetrics 70 LOC → 7-line adapter; SetObsRegistry setter; Deprecation/Sunset headers; integration tests) | `1ca2e61` feat / `8d98b60` test RED / `6c8a875` feat GREEN / `28c25e3` feat / `dcbbf80` docs / `849f948` fix | 3 | 2 created (test + deferred-items) + 3 modified | MET-19 + MET-20 wire-level satisfied at customer-facing surface |
 | 05-05 | Phase exit (THIS PLAN — SUMMARY + ADR §2.3.1 amendment + §4.1 row 5 + cumulative evidence + STATE/ROADMAP/REQUIREMENTS sync + deferred-items + 05-VERIFICATION) | (this final commit) | 7 | SUMMARY + VERIFICATION + STATE/ROADMAP/REQUIREMENTS/ADR/deferred + bench/race captures | Phase 5 closed; M1 PR #126 §4.1 row 5 populated |
 
-**Total Phase 5 commits (cumulative):** 19 across plans 05-01..05-04 (commit range `65f8771..849f948`); plus the Plan 05-05 final commit recorded as `<LAST_SHA>` (filled by Task 05-05-05).
+**Total Phase 5 commits (cumulative):** 23 across plans 05-01..05-05 (commit range `65f8771..973bbd7`); the Plan 05-05 closing commits are `cf6791a` (SUMMARY narrative) → `3134cdf` (ADR §2.3.1 amendment) → `4ab8e09` (deferred-items + 05-VERIFICATION skeleton) → `973bbd7` (cumulative evidence) → final consolidation commit (Task 05-05-07).
 
 ## Files Created / Modified (grouped by package)
 
@@ -167,7 +167,7 @@ Customer scrapers on `:7474/metrics` continue to receive the original 12 metric 
 
 | File | Status | Purpose |
 |------|--------|---------|
-| `0001-observability.md` | MODIFIED | §2.3.1 Phase 5 amendment (Sunset value + Deprecation R-01 non-conformance + autodetect AND-signal + 12-metric translation-layer lock); §4.1 row 5 populated with `<RANGE> | <DATE> | asanabria` |
+| `0001-observability.md` | MODIFIED | §2.3.1 Phase 5 amendment (Sunset value + Deprecation R-01 non-conformance + autodetect AND-signal + 12-metric translation-layer lock); §4.1 row 5 populated with `65f8771..973bbd7 \| 2026-05-04 \| asanabria` |
 
 ### `.planning/`
 
@@ -329,9 +329,10 @@ See `.planning/phases/05-legacy-translation-layer-tenant-flag/deferred-items.md`
 
 ## Closing State
 
-- **Commit range:** `<FIRST_SHA>..<LAST_SHA>` (filled by Task 05-05-05)
-- **Verified:** <DATE>
+- **Commit range:** `65f8771..973bbd7`
+- **Verified:** 2026-05-04
 - **Verifier:** asanabria
+- **ADR §4.1 row 5:** `| Phase 5  | Legacy Translation Layer & Tenant Flag             | 65f8771..973bbd7 | 2026-05-04 | asanabria |`
 
 ---
 

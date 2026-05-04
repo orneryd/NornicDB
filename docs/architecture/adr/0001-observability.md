@@ -728,7 +728,7 @@ filled in below (§5 sign-off → §4.1 row 0) to establish the format.
 | Phase 2  | Structured Logging Migration                       | 4201a24..021a983 | 2026-05-02 | asanabria |
 | Phase 3  | Metrics Infrastructure & Discipline                | 1ba8f01..a62d30a | 2026-05-02 | asanabria |
 | Phase 4  | Subsystem Metric Catalog                           | 523c23d..9a0e574 | 2026-05-03 | asanabria |
-| Phase 5  | Legacy Translation Layer & Tenant Flag             |              |          |          |
+| Phase 5  | Legacy Translation Layer & Tenant Flag             | 65f8771..973bbd7 | 2026-05-04 | asanabria |
 | Phase 6  | Tracing SDK & Core Spans                           |              |          |          |
 | Phase 7  | Replication Codec Versioning                       |              |          |          |
 | Phase 8  | Bolt, Replication & Async Tracing + PII Defense    |              |          |          |

@@ -27,7 +27,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 - [x] **Phase 2: Structured Logging Migration** — slog handler init, 192-call-site migration, PII redaction, slow-query log (✅ 2026-05-02, commits 4201a24..021a983; ADR §4.1 row 2: `4201a24..021a983 | 2026-05-02 | asanabria`)
 - [x] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation (✅ 2026-05-02, commits 1ba8f01..<commit-6a-SHA>; ADR §4.1 row 3: `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria`)
 - [x] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime (✅ 2026-05-03, commits 523c23d..9a0e574; ADR §4.1 row 4: `523c23d..9a0e574 | 2026-05-03 | asanabria`)
-- [ ] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test
+- [x] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test (✅ 2026-05-04, commits 65f8771..973bbd7; ADR §4.1 row 5: `65f8771..973bbd7 | 2026-05-04 | asanabria`)
 - [ ] **Phase 6: Tracing SDK & Core Spans** — OTel SDK init, samplers (incl. `parent_capped`), HTTP/Cypher/Storage spans, BSP self-instrumentation
 - [ ] **Phase 7: Replication Codec Versioning** — `codec_version` field prerequisite + rolling-upgrade test (BEFORE optional `traceparent`)
 - [ ] **Phase 8: Bolt, Replication & Async Tracing + PII Defense** — Bolt session/message spans, traceparent propagation, AsyncEngine links, span redactor, baggage allow-list
@@ -139,7 +139,12 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
   3. Operator on a non-K8s host sees `tenant_labels_enabled=false` resolved at startup and confirms `database` label is absent on `nornicdb_storage_*`, `nornicdb_cypher_*`, `nornicdb_search_*`, `nornicdb_mvcc_*` series
   4. Operator on K8s (with `KUBERNETES_SERVICE_HOST` env + ServiceAccount token) sees `tenant_labels_enabled=true` resolved; can override via `metrics.tenant_labels_enabled=false`
   5. Developer running `go test ./pkg/observability/legacy_translation_test.go` against the locked snapshot fails CI on any diff between new-registry-emitted-via-translation-layer and the legacy snapshot (golden-file test)
-**Plans**: TBD
+**Plans**: 5 plans
+  - [x] 05-01-PLAN.md — Wave-0 RED scaffolding: legacy_translation.go + k8s_detect.go skeletons + failing tests (locks public-API surface for Plans 05-02/05-03) (✅ 2026-05-04, commits 65f8771..f18d7ff)
+  - [x] 05-02-PLAN.md — Translation engine: 12-row mapping table + reduction helpers + RenderLegacy emit + legacy_snapshot.golden contract lock (TEST-03) (✅ 2026-05-04, commits da0d1ca..58d8721)
+  - [x] 05-03-PLAN.md — K8s autodetect: AND-signal Detect + ResolveTenantLabels + R-02 sentinel *bool + cmd/nornicdb startup-resolution hook + slog log line (MET-22) (✅ 2026-05-04, commits 863376f..e7ca461)
+  - [x] 05-04-PLAN.md — Server adapter rewrite: handleMetrics 70 LOC → 7-line adapter + Deprecation/Sunset headers + integration tests (MET-19/20) (✅ 2026-05-04, commits 1ca2e61..849f948)
+  - [x] 05-05-PLAN.md — Phase exit: 05-SUMMARY + ADR §2.3.1 amendment + ADR §4.1 row 5 + cumulative evidence (bench/coverage/file-size/race/audit-untouched/neo4j) + STATE/ROADMAP/REQUIREMENTS sync (✅ 2026-05-04, commits cf6791a..973bbd7)
 
 ### Phase 6: Tracing SDK & Core Spans
 **Goal**: OTel tracing SDK initializes with production-correct BSP tuning and three sampler modes (default `TraceIDRatioBased(0.01)`, opt-in `parent_capped`, opt-in `parent_strict`); HTTP edge, Cypher executor, and Storage adapter produce the spans enumerated in ADR-0001 §2.4 — but Bolt and replication remain untraced (Phases 7–8).
@@ -244,7 +249,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 | 2. Structured Logging Migration | 0/0 | Not started | - |
 | 3. Metrics Infrastructure & Discipline | 6/6 | Done | 2026-05-02 |
 | 4. Subsystem Metric Catalog | 0/0 | Not started | - |
-| 5. Legacy Translation Layer & Tenant Flag | 0/0 | Not started | - |
+| 5. Legacy Translation Layer & Tenant Flag | 5/5 | Done | 2026-05-04 |
 | 6. Tracing SDK & Core Spans | 0/0 | Not started | - |
 | 7. Replication Codec Versioning | 0/0 | Not started | - |
 | 8. Bolt, Replication & Async Tracing + PII Defense | 0/0 | Not started | - |

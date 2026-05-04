@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
+current_phase: 06
 status: planned
-last_updated: "2026-05-03T23:50:00.000Z"
+last_updated: "2026-05-04T18:35:00.000Z"
 progress:
   total_phases: 13
-  completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
+  completed_phases: 6
+  total_plans: 31
+  completed_plans: 31
   percent: 100
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
 
-**Last updated:** 2026-05-03 (post-Phase-4 phase exit)
+**Last updated:** 2026-05-04 (post-Phase-5 phase exit)
 
 ## Project Reference
 
@@ -30,15 +30,15 @@ progress:
 
 ## Current Position
 
-Phase: 05 (legacy-translation-layer-tenant-flag) — Ready to plan; Phase 4 ✅ CLOSED
-Plan: 0 of TBD
+Phase: 05 (legacy-translation-layer-tenant-flag) — **CLOSED 2026-05-04** (commit range 65f8771..973bbd7; verifier: asanabria; ADR §4.1 row 5 populated)
+Next phase: 06 (tracing-sdk-and-core-spans) — ready to plan
 
 - **Milestone:** M1 — Best-in-Class Observability
-- **Current phase:** 05 (next)
+- **Current phase:** 06 (Phase 5 closed; awaiting `/gsd-plan-phase 6`)
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
-- **Status:** Phase 4 closed; awaiting Phase 5 planning
+- **Status:** Phase 5 closed; ready to plan Phase 6.
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
-- **Progress:** [████░░░░░░] 38% (5 of 13 phases complete)
+- **Progress:** [█████░░░░░] 46% (6 of 13 phases complete)
 
 ## Performance Metrics (Universal, KD-12)
 
@@ -107,7 +107,8 @@ These hard gates are enforced at every phase exit:
 - [x] Phase 2 §4.1 row 2 filled — `4201a24..021a983 | 2026-05-02 | asanabria`
 - [x] Phase 3 §4.1 row 3 filled — `1ba8f01..a62d30a | 2026-05-02 | asanabria`
 - [x] Phase 4 §4.1 row 4 filled — `523c23d..9a0e574 | 2026-05-03 | asanabria`
-- [ ] Repeat for Phases 5–12. At M1 completion, do final orneryd review + squash-merge of PR #126 to `main`.
+- [x] Phase 5 §4.1 row 5 filled — `65f8771..973bbd7 | 2026-05-04 | asanabria`
+- [ ] Repeat for Phases 6–12. At M1 completion, do final orneryd review + squash-merge of PR #126 to `main`.
 - [ ] Re-add `.planning/` to `.gitignore` at any convenient point (the gitignore rule was on a dropped commit during the rebase; `.planning/` is currently untracked-but-not-ignored locally).
 - [ ] Plan 02 Task 3 (`gh pr merge`) — formally pending until M1 completes. Marked `DEFERRED-TO-M1-COMPLETION` in Plan 02.
 - [x] Execute Plan 02-01 — pkg/observability slog stack + cmd/nornicdb runServe bootstrap (2026-05-01, commits 4201a24..a42054a + meta 2bf12c3)
@@ -136,7 +137,13 @@ These hard gates are enforced at every phase exit:
 - [x] Execute Plan 04-06 — Replication + Auth catalogs (MET-14 incl. GAP-1 last_contact_seconds; MET-15 GAP-6 auth_attempts_total; D-05a mode-aware ceiling; D-05b stale-peer GC) (2026-05-03, commits ...ad5f88a)
 - [x] **Phase 4 ✅ CLOSED** — All 10 subsystem catalogs registered (62 NornicDB families enumerated; ~70 with Go/process collectors); D-05a mode-aware ceiling; D-05b stale-peer GC; PERF-05 92.4% PASS; PERF-06 max LOC 512 PASS; pkg/audit untouched; lint-cardinality falsifiability proven; ADR §4.1 row 4 records `523c23d..9a0e574 | 2026-05-03 | asanabria` (2026-05-03).
 - [ ] Pre-existing race amplification under -count=10 matrix touches 50 NornicDB files across pkg/{cypher,storage,bolt,server,replication,search}. NOT introduced by Phase 4. Three known carry-forward races (Plan 02-04/02-05 deferred-items.md). One Phase-4-EXPOSED race (TestBytesMetricsSweeper_RaceSafe + b.opDur* deferred-arg-capture pattern) — production AttachMetrics is single-writer-then-many-readers, race-free at startup; mitigation candidate noted in `.planning/phases/04-subsystem-metric-catalog/deferred-items.md` for Phase 12 hardening.
-- [ ] Plan Phase 5 (`/gsd-plan-phase 5`) — Legacy Translation Layer & Tenant Flag. Consumes D-08 cfg.Metrics.TenantLabelsEnabled bool plumbing already wired through every tenant-tagged bag; adds K8s autodetect (KUBERNETES_SERVICE_HOST + ServiceAccount token check) per MET-22.
+- [x] Plan Phase 5 (`/gsd-plan-phase 5`) — Legacy Translation Layer & Tenant Flag. 5 plans authored (05-01..05-05); CONTEXT/RESEARCH/PATTERNS/VALIDATION + DISCUSSION-LOG retained.
+- [x] Execute Plan 05-01 — Wave-0 RED scaffolding: legacy_translation.go + k8s_detect.go skeletons + 5 RED test functions + parseLegacyValue + seedDeterministicLegacySources helpers + 6 Reason* consts + LegacySunset/LegacyDeprecation/LegacyContentType frozen consts (2026-05-04, commits 65f8771..f18d7ff)
+- [x] Execute Plan 05-02 — Translation engine + golden snapshot: RenderLegacy body + 4 reduction helpers + 12-row legacyMappings table + per-mapping emit format + locked legacy_snapshot.golden (1660 bytes, 36 emit lines) (2026-05-04, commits da0d1ca..58d8721)
+- [x] Execute Plan 05-03 — K8s autodetect + startup resolution: AND-signal Detect + ResolveTenantLabels precedence + R-02 sentinel TenantLabelsExplicit *bool + DefaultK8sProbe live wiring + ResolveAndLogTenantLabels helper + cmd/nornicdb/main.go startup hook between obs.New and first NewCacheMetrics (2026-05-04, commits 863376f..e7ca461)
+- [x] Execute Plan 05-04 — Server adapter rewrite: handleMetrics 70 LOC → 7-line RenderLegacy adapter + Server.obsRegistry + SetObsRegistry setter (mirrors Phase 4 SetHTTPMetrics) + obsRegistryForHandler RLock accessor + Test_HandleMetrics_DeprecationHeaders + Test_HandleMetrics_NilRegistry integration tests; cmd/nornicdb/main.go SetObsRegistry wiring between Plan 05-03 hook and Plan 04-01 NewCacheMetrics (2026-05-04, commits 1ca2e61..849f948)
+- [x] Execute Plan 05-05 — Phase exit: 05-SUMMARY (12 sections cumulative narrative) + ADR §2.3.1 amendment (Sunset literal + R-01 deliberate RFC-9745 non-conformance + autodetect AND-signal contract + 12-metric translation-layer lock) + ADR §4.1 row 5 (`65f8771..973bbd7 | 2026-05-04 | asanabria`) + 05-VERIFICATION evidence bundle (8/8 KD-12 universal gates GREEN: bench-cypher Δ N/A carry-forward, bench-bolt Δ N/A carry-forward, coverage 91.8%, max LOC 512, audit untouched, race -count=10 clean, Neo4j round-trip PASS, PII scan 0 matches) + deferred-items.md (RFC-9745 cutover, accessor cleanup, deprecation-usage telemetry, migration docs, post-Sunset removal) + STATE/ROADMAP/REQUIREMENTS sync (2026-05-04, commits cf6791a..973bbd7 + final consolidation)
+- [x] **Phase 5 ✅ CLOSED** — All 6 phase requirements GREEN (MET-18..22 + TEST-03); ROADMAP SC #1-5 GREEN (single source of truth via RenderLegacy; Deprecation+Sunset headers wire-level; tenant flag resolved off-K8s; tenant flag resolved on-K8s with override; golden-file CI lock); PERF-05 91.8% PASS; PERF-06 max LOC 512 PASS; pkg/audit untouched across 65f8771..973bbd7; ADR §4.1 row 5 records `65f8771..973bbd7 | 2026-05-04 | asanabria` (2026-05-04).
 
 ### Active Blockers
 
@@ -149,6 +156,8 @@ These hard gates are enforced at every phase exit:
 **Phase 1 sign-off:** ❌ NOT READY for §4.1 row 1 commit. Orchestrator must run Plan 01-06 + re-verify before issuing the audit-trail row.
 
 ### Recent Decisions
+
+- **2026-05-04 (Plan 05-05 completed; Phase 5 closed)**: Final Phase 5 wave landed on `otel`. Plan 05-05's two-commit phase-exit pattern preserved (mirrors Phase 2 `021a983` SUMMARY + `be5ab8a` audit-row split, Phase 3 `a62d30a` + `5f37dbd`, Phase 4 `9a0e574` + `c843e43`). Plan 05-05 actually decomposed into 4 substantive commits (SUMMARY + ADR amendment + deferred-items/VERIFICATION skeleton + cumulative evidence) plus a final consolidation commit (Task 05-05-07): `cf6791a` (SUMMARY narrative), `3134cdf` (ADR §2.3.1 amendment), `4ab8e09` (deferred-items + 05-VERIFICATION skeleton), `973bbd7` (cumulative evidence + 8/8 gates GREEN), then the final consolidation commit (Task 05-05-07) inscribes `65f8771..973bbd7 | 2026-05-04 | asanabria` into ADR §4.1 row 5 + STATE/ROADMAP/REQUIREMENTS post-exit updates. Phase 5 ✅ CLOSED. **Phase 5 progress: 5 of 5 plans complete (100%).** Milestone progress: 6 of 13 phases (Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5) complete. **Universal performance/coverage gates final measurements:** PERF-05 91.8% PASS (≥ 90% with 1.8% margin); PERF-06 max non-test LOC 512 (`logging.go`, Phase 2 — Phase 5 max non-test 316 LOC `legacy_translation.go`); race -race -count=10 clean across pkg/observability + pkg/server (Test_HandleMetrics_) + cmd/nornicdb (Test_TenantLabelsResolved_); KD-12 `make bench-cypher` / `make bench-bolt` deferred to Phase 12 (Phase 5 doesn't touch Cypher/Bolt hot paths — `RenderLegacy` is control-plane scrape ~15s interval); Neo4j round-trip TestNeo4j* PASS in pkg/bolt + pkg/server (carry-forward, no Phase 5 pkg/bolt change); PII scan on legacy_snapshot.golden = 0 matches against email/token/CC patterns. **R-01 deliberate non-conformance with RFC 9745 §2.1 documented in ADR §2.3.1 + deferred-items.md** — M1 ships `Deprecation: true` literal; cutover deferred to post-M1. **R-02 sentinel TenantLabelsExplicit *bool added** — preserves operator YAML intent through to startup-resolution time; Phase 4 D-08 forward-compat untouched. **Customer-API contract surfaces locked in ADR §2.3.1:** Sunset = `Fri, 31 Dec 2027 23:59:59 GMT`; Deprecation = `true`; 12 legacy metric names enumerated; autodetect AND-signal contract + 6 closed-set Reason* enum values for forensic logging. **Phase 6 entry-point ready:** Phase 4 metric catalog frozen + Phase 5 tenant-flag resolved at startup; Phase 6 (Tracing SDK & Core Spans) sampler flip will light up exemplars at every Phase-4-registered hot-path histogram automatically (Phase 3 `IsValid()` chokepoint forward-compat). Next up: `/gsd-plan-phase 6` (Tracing SDK & Core Spans — TRC-01..TRC-12, TRC-15..TRC-17, TRC-23..TRC-24).
 
 - **2026-05-02 (Plan 03-06 completed; Phase 3 closed)**: Final wave landed on `otel`. Two-commit phase-exit pattern preserved (mirrors Phase 2 `021a983` SUMMARY + `be5ab8a` audit-row split). Commit 6a (`docs(03-06): complete Phase 3 — STATE / ROADMAP / REQUIREMENTS post-exit updates`) records SUMMARY + STATE/ROADMAP/REQUIREMENTS post-exit updates; commit 6b (`docs(adr-0001): record Phase 3 audit-trail entry in §4.1 row 3`) inscribes `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria` into ADR §4.1 row 3 — same column structure as Phase 1 row 1 (`fa272fc..3ad44d9`) and Phase 2 row 2 (`4201a24..021a983`). Phase 3 ✅ CLOSED. Phase 3 progress: 6 of 6 plans complete (100%). Milestone progress: 4 of 13 phases (Phase 0, Phase 1, Phase 2, Phase 3) complete. **Universal performance/coverage gates final measurements:** PERF-05 92.2% PASS (≥ 90% with 2.2% margin); PERF-06 max LOC 512 (`logging.go`, Phase 2 — Phase 3 max is `testenv.go` at 292 LOC); race 5×10 = 50 runs PASS, 0 DATA RACE, 0 FAIL (race-phase3-final.txt); KD-12 `make bench-cypher` / `make bench-bolt` deferred to Phase 12 (Phase 3 doesn't touch Cypher/Bolt hot paths). **MET-04 belt-and-suspenders complete:** Layer 1 (`validateLabels` registration-time panic, Plan 03-02) + Layer 2 (`make lint-cardinality` POSIX-grep gate, Plan 03-05); falsifiability proven D-03d (inject `prometheus.NewCounterVec(...)` into pkg/cypher/helpers.go under `//go:build never_compile_this_falsifiability_proof` → `make lint-cardinality` exits 2 with `MET-04 violation` message → revert → exits 0). **MET-25 hot-path zero-alloc:** `BenchmarkObserve_Hot/hot_no_span` = 0 allocs/op, ≤ 2 budget cleared with margin; D-02b1 sync.Pool escalation NOT triggered. **D-02a stricter chokepoint:** exemplars guard `IsValid() && IsSampled()` (Plan 03-03 Rule-1 deviation — stricter than Phase 2 D-05's `IsValid()` alone, because exemplars without traces in backend would be operator-confusing; logs use `IsValid()` alone because grep-fallback exists). **Phase 4 entry-point ready:** subsystems consume typed constructors + exemplar wrappers + `AssertCardinalityCeiling` helper; lint-cardinality gate enforces helper-only registration in CI as `make test` prereq. Next up: `/gsd-plan-phase 4` (Subsystem Metric Catalog — ~60 metric families).
 
@@ -179,6 +188,10 @@ These hard gates are enforced at every phase exit:
 ## Session Continuity
 
 ### Last work
+
+Phase 5 closed 2026-05-04 via `/gsd-execute-phase 5` Plan 05-05 sequential execution on `otel`. Six commits: `cf6791a` (SUMMARY narrative — 12 sections, all 6 REQs traced to evidence, all 5 ROADMAP SCs verified, R-01/R-02 documented), `3134cdf` (ADR §2.3.1 amendment — Sunset literal `Fri, 31 Dec 2027 23:59:59 GMT` + R-01 deliberate RFC-9745 non-conformance + autodetect AND-signal contract + 12-metric translation-layer lock; existing `#### 2.3.1 Reconciled amendments` h4 renamed to `#### 2.3.0` to avoid section-number collision with new h3), `4ab8e09` (deferred-items.md captures 6 deferrals incl. RFC-9745 cutover R-01 + accessor cleanup + deprecation-usage telemetry + migration docs + post-Sunset removal; 05-VERIFICATION.md skeleton with KD-12 universal gates table + per-SC + per-REQ tables + TO_BE_CAPTURED placeholders), `973bbd7` (cumulative evidence: bench-cypher Δ N/A carry-forward, bench-bolt Δ N/A carry-forward, coverage 91.8%, max LOC 512, audit untouched, race -count=10 clean across observability + server + cmd, Neo4j round-trip PASS, PII scan 0 matches; 05-VERIFICATION placeholders all filled; Verdict: PASSED ready-to-close), final consolidation commit (Task 05-05-07 — STATE/ROADMAP/REQUIREMENTS sync + ADR §4.1 row 5 = `65f8771..973bbd7 | 2026-05-04 | asanabria` + 05-SUMMARY closing-state placeholders filled). **Phase 5 ✅ CLOSED.** No blockers. Ready to plan Phase 6 via `/gsd-plan-phase 6` (Tracing SDK & Core Spans — TRC-01..TRC-12, TRC-15..TRC-17, TRC-23..TRC-24; sampler flip lights up exemplars at every Phase-4-registered hot-path histogram automatically; Phase 7 codec-version PR must land BEFORE any Phase 8 traceparent PR per TRC-21 hard ordering).
+
+### Earlier — Phase 3 verification
 
 Phase 3 plans verified 2026-05-02 via `/gsd-plan-phase 3` (verification-only path). gsd-plan-checker returned 0 blockers, 5 warnings, 1 info; all 5 warnings addressed inline (W1/W2/W3 in 03-01-PLAN.md, 03-02-W1 added TestSubsystemValidation to 03-01 Wave 0, 03-06-W1 in 03-06-PLAN.md). VALIDATION.md flipped `draft` → `verified` with `nyquist_compliant: true`. STATE.md `current_phase` 02 → 03, `status` `executing` → `planned`. No new commits — `.planning/` is currently untracked-but-not-ignored locally per the M1 single-PR strategy; planning-doc edits do not commit. Phase 3 ready to execute via `/gsd-execute-phase 3` (Wave 0 RED scaffolding starts).
 
