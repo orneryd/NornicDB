@@ -362,6 +362,22 @@ See `.planning/phases/05-legacy-translation-layer-tenant-flag/deferred-items.md`
 
 ---
 
+## Verifier Sign-off Addendum (Task 05-05-06 → 05-05-07)
+
+**Phase 5 verifier sign-off:** orneryd 2026-05-04 — approved at Task 05-05-06 checkpoint (commit range `65f8771..973bbd7`).
+
+**Closing-commit note (Task 05-05-07):** The original Plan 05-05 design called for one bundled closing commit covering SUMMARY + ADR + STATE/ROADMAP/REQUIREMENTS + evidence files. During execution this was intentionally split into five atomic commits (`cf6791a` SUMMARY narrative → `3134cdf` ADR §2.3.1 amendment → `4ab8e09` deferred-items + 05-VERIFICATION skeleton → `973bbd7` cumulative evidence → `48af38d` cross-file STATE/ROADMAP/REQUIREMENTS sync + ADR §4.1 row 5), with `c50af83` adding the self-check confirmation. All Task 05-05-07 acceptance criteria are satisfied across this commit range:
+
+- ≥1 commit references Phase 5 / 05-05 / legacy-translation ✓ (all six Plan 05-05 commits)
+- All 9 expected files present in the commit range ✓ (05-SUMMARY.md, 05-VERIFICATION.md, deferred-items.md, bench-cypher-phase5.txt, bench-bolt-phase5.txt, race-evidence-phase5.txt, ADR 0001-observability.md, STATE.md, ROADMAP.md, REQUIREMENTS.md)
+- All commits include `Co-Authored-By: Claude Opus 4.7 (1M context)` trailer ✓
+- Working tree clean post-commit (only intentionally-untracked planning artifacts + ui/dist) ✓
+- pkg/audit/ untouched across the range ✓
+
+The atomic-commit form preserves blame granularity per artifact while still satisfying the bundled-commit acceptance contract — recorded here as a deliberate deviation (Rule 1 / scope discipline, not a defect).
+
+---
+
 *Phase 5 ✅ CLOSED.*
 *Phase: 05-legacy-translation-layer-tenant-flag*
 *Plans: 5/5 complete (100%)*
