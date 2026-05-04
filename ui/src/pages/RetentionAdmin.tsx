@@ -416,7 +416,8 @@ export function RetentionAdmin() {
       setError("");
       setSuccess("");
       try {
-        await api.updateRetentionPolicy(policy.id, { ...policy, ...patch });
+        const { __gridId: _, ...cleanPolicy } = policy as RetentionPolicy & { __gridId?: unknown };
+        await api.updateRetentionPolicy(policy.id, { ...cleanPolicy, ...patch });
         await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to update retention policy");
