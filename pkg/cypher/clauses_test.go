@@ -446,6 +446,43 @@ func TestCallNornicDbDecayInfo(t *testing.T) {
 	}
 }
 
+func TestCallNornicDbKnowledgePolicyInfo(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	e := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	result, err := e.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+	if err != nil {
+		t.Fatalf("CALL nornicdb.knowledgepolicy.info() failed: %v", err)
+	}
+
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(result.Rows))
+	}
+	if len(result.Columns) != 7 {
+		t.Fatalf("expected 7 columns, got %d", len(result.Columns))
+	}
+	expectedCols := []string{"enabled", "system", "decayProfiles", "decayBindings", "promotionProfiles", "promotionPolicies", "configuredVia"}
+	for i, col := range expectedCols {
+		if result.Columns[i] != col {
+			t.Fatalf("unexpected columns: %v", result.Columns)
+		}
+	}
+	if enabled, ok := result.Rows[0][0].(bool); !ok || enabled {
+		t.Fatalf("expected enabled=false for memory-backed test engine, got %v", result.Rows[0][0])
+	}
+	for idx := 2; idx <= 5; idx++ {
+		if count, ok := result.Rows[0][idx].(int); !ok || count != 0 {
+			t.Fatalf("expected zero count in column %d, got %T (%v)", idx, result.Rows[0][idx], result.Rows[0][idx])
+		}
+	}
+	if configuredVia, ok := result.Rows[0][6].(string); !ok || !strings.Contains(configuredVia, "CREATE DECAY PROFILE") || !strings.Contains(configuredVia, "CREATE PROMOTION POLICY") {
+		t.Fatalf("unexpected configuredVia value: %v", result.Rows[0][6])
+	}
+}
+
 func TestCallDbSchemaVisualization(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 

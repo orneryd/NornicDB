@@ -2600,7 +2600,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 	// NEO4J COMPAT: Handle CREATE ... SET pattern (e.g., CREATE (n) SET n.x = 1)
 	// Neo4j allows SET immediately after CREATE without requiring MATCH
-	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet {
+	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") != 0 {
 		return e.executeCreateSet(ctx, cypher)
 	}
 
@@ -2610,7 +2613,13 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	// Only route to executeSet if it's a MATCH ... SET or standalone SET
-	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet {
+	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") != 0 &&
+		findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION PROFILE") != 0 &&
+		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") != 0 {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
 			return e.executeSet(ctx, cypher)
 		}
@@ -2651,6 +2660,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	switch {
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "CREATE", "DECAY PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "CREATE", "PROMOTION POLICY") == 0:
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH") == 0:
 		// OPTIONAL MATCH must be at start (position 0) to be a standalone clause
 		// Handles flexible whitespace: "OPTIONAL MATCH", "OPTIONAL\tMATCH", "OPTIONAL\nMATCH", etc.
@@ -2735,6 +2748,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		// Schema command: DROP CONSTRAINT (must not be treated as generic DROP no-op).
 		// Must be at start (position 0) to be a standalone clause.
 		return e.executeSchemaCommand(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "DROP", "DECAY PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "DROP", "PROMOTION PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "DROP", "PROMOTION POLICY") == 0:
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case isDropProcedureCommand(cypher):
 		return e.executeDropProcedure(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "DROP", "INDEX") == 0:
@@ -2775,6 +2792,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		findMultiWordKeywordIndex(cypher, "SHOW", "INDEX") == 0:
 		// Must be at start (position 0) to be a standalone clause
 		return e.executeShowIndexes(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "DECAY PROFILES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION PROFILES") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "PROMOTION POLICIES") == 0:
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINTS") == 0,
 		findMultiWordKeywordIndex(cypher, "SHOW", "CONSTRAINT") == 0:
 		// Must be at start (position 0) to be a standalone clause
@@ -2812,6 +2833,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		// System command: ALTER COMPOSITE DATABASE (check before ALTER DATABASE)
 		// Must be at start (position 0) to be a standalone clause
 		return e.executeAlterCompositeDatabase(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION PROFILE") == 0,
+		findMultiWordKeywordIndex(cypher, "ALTER", "PROMOTION POLICY") == 0:
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	// Note: ALTER DATABASE is handled earlier (before SET check) to avoid routing conflict
 	case findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS") == 0:
 		// System command: SHOW LIMITS
