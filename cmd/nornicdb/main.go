@@ -724,10 +724,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//     build_info) on obs.Registry(). MUST NOT crash startup if go/process
 	//     collectors are already there (Phase 1 registry.go:34-35) — the cache
 	//     bag adds disjoint families so AlreadyRegisteredError cannot occur.
-	//     The `_ =` is intentional: Plans 04-02..04-06 wire the bag into
-	//     existing constructors via DI (cypher/cache.go, schema cache, etc.).
 	cacheMetrics := observability.NewCacheMetrics(obs.Registry())
-	_ = cacheMetrics
 
 	// 2b. Plan 04-02: construct HTTP + Bolt metric bags and inject into the
 	//     existing httpServer / boltServer instances via setters. Both bags
@@ -745,6 +742,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Plan 04-06 forward-compat: AuthMetrics bag ships in 04-06; until
 	// then the Bolt HELLO completion site no-ops on its nil-check.
 	// boltServer.SetAuthMetrics(authMetrics) // wired by Plan 04-06.
+
+	// 2b'. Plan 04-03: construct CypherMetrics (MET-08) — 11 families
+	//      including planner_cache_*, transaction_conflicts_total, and the
+	//      D-15b/MET-26 slow_query_threshold_seconds GaugeFunc that reads
+	//      cfg.Logging.SlowQueryThreshold().Seconds() on every scrape so
+	//      config reload is reflected without event wiring. The Cypher
+	//      bag is injected into the primary executor via SetCypherMetrics
+	//      (which also propagates into the executor's owned planCache for
+	//      D-12a planner-cache observation), and the cross-cutting Cache
+	//      bag is injected via SetCacheMetrics (which routes into the
+	//      owned SmartQueryCache for cache_hits_total{cache="query_result"}
+	//      bridge per D-12a).
+	cypherMetrics := observability.NewCypherMetrics(
+		obs.Registry(),
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		func() float64 { return cfg.Logging.SlowQueryThreshold.Seconds() },
+	)
+	if exec := db.GetCypherExecutor(); exec != nil {
+		exec.SetCypherMetrics(cypherMetrics, defaultBoltDatabaseName(db))
+		exec.SetCacheMetrics(cacheMetrics)
+	}
 
 	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
 	//     server. The instrumentedMux wrapper picks up s.httpMetrics at

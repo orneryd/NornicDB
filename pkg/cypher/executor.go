@@ -561,6 +561,10 @@ func (e *StorageExecutor) SlowQueryThreshold() time.Duration { return e.slowQuer
 // tenantLabelsEnabled=true. Mirrors the SetLogger / SetSlowQueryThreshold
 // non-breaking pattern (D-01 non-breaking ctor).
 //
+// Also propagates the bag into the executor's owned planCache so the
+// planner_cache_{hits,misses,size} families fire from QueryPlanCache.Get/Put
+// without callers having to reach into private fields.
+//
 // Nil-safe: passing m=nil leaves observation as a no-op so tests and
 // alternate constructors that don't wire metrics don't have to. The three
 // observation chokepoints in Execute() guard on m == nil.
@@ -570,6 +574,24 @@ func (e *StorageExecutor) SlowQueryThreshold() time.Duration { return e.slowQuer
 func (e *StorageExecutor) SetCypherMetrics(m *observability.CypherMetrics, database string) {
 	e.metrics = m
 	e.database = database
+	// D-12a planner cache wiring: propagate into the owned planCache so
+	// the cypher subsystem's planner_cache_{hits,misses,size} families
+	// observe automatically.
+	if e.planCache != nil {
+		e.planCache.SetCypherMetrics(m)
+	}
+}
+
+// SetCacheMetrics installs the Plan 04-01 cross-cutting CacheMetrics bag
+// for D-12a query-result cache observation. Routes the bag into the owned
+// SmartQueryCache so cache_hits_total{cache="query_result"} +
+// cache_misses_total + cache_evictions_total emit on every Get/Put/Evict.
+//
+// Nil-safe; mirrors SetCypherMetrics shape.
+func (e *StorageExecutor) SetCacheMetrics(m *observability.CacheMetrics) {
+	if e.cache != nil {
+		e.cache.SetCacheMetrics(m)
+	}
 }
 
 // CypherMetrics returns the injected metrics bag (or nil if unset). Exposed
