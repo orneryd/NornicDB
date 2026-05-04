@@ -24,8 +24,8 @@
 //	NewMVCCMetrics          — Plan 04-04 (SHIPPED — see catalog_mvcc.go;
 //	                          RISK-2 PinnedBytes accessor lives on
 //	                          *BadgerEngine in pkg/storage/badger_mvcc.go)
-//	NewEmbedMetrics         — Plan 04-05
-//	NewSearchMetrics        — Plan 04-05
+//	NewEmbedMetrics         — Plan 04-05 (SHIPPED — see catalog_embed.go)
+//	NewSearchMetrics        — Plan 04-05 (SHIPPED — see catalog_search.go)
 //	NewReplicationMetrics   — Plan 04-06 (with RISK-3 PeerConfig.ID + GAP-1
 //	                          last_contact_seconds + per-mode cardinality)
 //	NewAuthMetrics          — Plan 04-06 (GAP-6 / MET-15)
@@ -50,20 +50,12 @@ const stubPanic = "observability: stub constructor invoked; the GREEN bag for th
 
 // ----- MVCC (Plan 04-04) — GREEN bag lives in catalog_mvcc.go -------------
 
-// ----- Embeddings (Plan 04-05) ---------------------------------------------
-
-// EmbedMetrics is the Plan-04-05 stub.
-type EmbedMetrics struct {
-	FFIPanicTotal *prometheus.CounterVec
-}
-
-func NewEmbedMetrics(reg *prometheus.Registry) *EmbedMetrics {
-	panic(stubPanic)
-}
+// ----- Embeddings (Plan 04-05) — GREEN bag lives in catalog_embed.go ------
 
 // ----- Search (Plan 04-05) -------------------------------------------------
 
-// SearchMetrics is the Plan-04-05 stub.
+// SearchMetrics is the Plan-04-05 stub. The GREEN bag lands in
+// catalog_search.go in Plan 04-05-04 (this stub is removed at that point).
 type SearchMetrics struct {
 	Duration       *LatencyHistogram
 	IndexSizeBytes *prometheus.GaugeVec
