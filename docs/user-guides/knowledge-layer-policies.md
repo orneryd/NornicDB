@@ -108,14 +108,42 @@ When multiple bindings could match:
 3. If two bindings have equal specificity, the resolver returns a diagnostic warning
 4. No binding → entity scores 1.0 (no decay)
 
-## Admin API
+## Cypher Diagnostics
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /admin/knowledge-policies/profiles` | List all profiles and bindings |
-| `GET /admin/knowledge-policies/policies` | List all promotion policies |
-| `GET /admin/knowledge-policies/resolve?entityId=X` | Explain scoring for a specific entity |
-| `GET /admin/knowledge-policies/deindex/status` | Deindex cleanup job status |
+The knowledge-layer system is operated and inspected through Cypher.
+
+### Catalog and Status
+
+```cypher
+CALL nornicdb.knowledgepolicy.info();
+CALL nornicdb.knowledgepolicy.profiles();
+CALL nornicdb.knowledgepolicy.policies();
+
+SHOW DECAY PROFILES;
+SHOW PROMOTION PROFILES;
+SHOW PROMOTION POLICIES;
+```
+
+### Resolve an Effective Policy
+
+```cypher
+-- Resolve by entity ID
+CALL nornicdb.knowledgepolicy.resolve('nornic:episode-1', '', '');
+
+-- Resolve by label set
+CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode,SessionRecord', '');
+
+-- Resolve by edge type
+CALL nornicdb.knowledgepolicy.resolve('', '', 'CO_ACCESSED');
+```
+
+### Deindex Queue Status
+
+```cypher
+CALL nornicdb.knowledgepolicy.deindexStatus();
+```
+
+These procedures are the supported diagnostics surface. The older `/admin/knowledge-policies/*` HTTP endpoints have been removed.
 
 ## Browser UI
 
@@ -123,6 +151,8 @@ The Knowledge Policies admin page is available at **Security > Knowledge Policie
 - Overview of all profiles, bindings, and policies
 - Interactive resolve tool for debugging scoring
 - Deindex status monitoring
+
+The UI uses the same Cypher DDL and knowledge-policy procedures shown above rather than a separate admin API.
 
 Node detail views in the graph browser show decay metadata (score, suppression status, access count) when present.
 
