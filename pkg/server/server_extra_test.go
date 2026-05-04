@@ -2887,13 +2887,12 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	server.dbManager = origManager
 
-	// metrics output includes slow query gauges.
-	server.slowQueryCount.Store(3)
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec = httptest.NewRecorder()
-	server.handleMetrics(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), "nornicdb_slow_queries_total 3")
+	// NOTE: the handleMetrics slow-query content assertion was removed in
+	// Plan 05-04. The rewritten handler calls observability.RenderLegacy
+	// against the unified pkg/observability registry; metric content is
+	// owned by pkg/observability/legacy_translation_test.go +
+	// legacy_snapshot.golden, and server-layer wiring (headers + nil-safety)
+	// is owned by pkg/server/server_public_test.go.
 }
 
 func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
