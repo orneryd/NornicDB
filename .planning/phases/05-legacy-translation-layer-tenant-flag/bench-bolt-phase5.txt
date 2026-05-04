@@ -1,0 +1,21 @@
+make: *** No rule to make target `bench-bolt'.  Stop.
+
+Phase 5 baseline carry-forward note (mirrors Phase 1 + Phase 4 posture):
+The `bench-bolt` Makefile target is scoped for Phase 12 (Performance Gates &
+Hardening). Phase 1's `bench-bolt-phase1.txt` and Phase 4's
+`bench-bolt-phase4.txt` record the same "target not found" result. Phase 12
+owns the formal regression gate (CLAUDE.md: `make bench-bolt` Δ ≤ 5%
+measured against pre-M1 baseline).
+
+Why Phase 5 cannot regress bench-bolt:
+- Phase 5's only changes to `pkg/bolt/...` are zero — no Bolt server, dispatch,
+  or packstream code is touched.
+- The Plan 05-04 server adapter rewrite is in `pkg/server/server_public.go`
+  (the HTTP `:7474/metrics` legacy adapter), not in `pkg/bolt/...`.
+- Phase 5's startup hook (`ResolveAndLogTenantLabels`) runs exactly once at
+  startup, before the Bolt listener accepts traffic.
+
+Phase 12 will:
+1. Add `bench-bolt` Makefile target (or document the canonical invocation).
+2. Run regression vs `bench-bolt-phase1.txt` baseline.
+3. Sign off the Δ ≤ 5% perf gate in ADR §4.1 row 12.
