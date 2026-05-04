@@ -81,6 +81,7 @@ func (e *chunkingTestEmbedder) EmbedBatch(ctx context.Context, texts []string) (
 
 func (e *chunkingTestEmbedder) Dimensions() int { return e.dims }
 func (e *chunkingTestEmbedder) Model() string   { return "chunking-test-embedder" }
+func (e *chunkingTestEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (e *chunkingTestEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -114,6 +115,7 @@ func (e *scriptedBatchEmbedder) EmbedBatch(ctx context.Context, texts []string) 
 
 func (e *scriptedBatchEmbedder) Dimensions() int { return 0 }
 func (e *scriptedBatchEmbedder) Model() string   { return "scripted-batch" }
+func (e *scriptedBatchEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (e *scriptedBatchEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -378,6 +380,7 @@ func (e *factoryTestEmbedder) EmbedBatch(ctx context.Context, texts []string) ([
 }
 func (e *factoryTestEmbedder) Dimensions() int { return e.dims }
 func (e *factoryTestEmbedder) Model() string   { return "factory-test" }
+func (e *factoryTestEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (e *factoryTestEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }

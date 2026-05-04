@@ -369,6 +369,16 @@ func (e *LocalGGUFEmbedder) Model() string {
 	return e.modelName
 }
 
+// Backend returns the build-tag-derived runtime backend label per Plan
+// 04-05 D-06 / D-06a. Resolves to one of {metal, cuda, vulkan, cpu}
+// depending on the build tag matrix in pkg/embed/backend_*.go. Captures
+// the *static* compile-time backend; a dynamic CUDA→CPU fallback inside
+// llama.cpp is not surfaced here today (RESEARCH §Q9 A1 — improving this
+// to a runtime probe is deferred).
+func (e *LocalGGUFEmbedder) Backend() string {
+	return localGGUFBackend
+}
+
 // Stats returns embedding statistics for monitoring.
 type EmbedderStats struct {
 	EmbedCount    int64     `json:"embed_count"`

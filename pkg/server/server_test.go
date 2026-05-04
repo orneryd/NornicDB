@@ -271,6 +271,7 @@ func (e *countingEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]
 
 func (e *countingEmbedder) Dimensions() int { return e.dims }
 func (e *countingEmbedder) Model() string   { return "counting-embedder" }
+func (e *countingEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (e *countingEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }

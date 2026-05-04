@@ -41,6 +41,7 @@ func (e *staticTestEmbedder) EmbedBatch(ctx context.Context, texts []string) ([]
 
 func (e *staticTestEmbedder) Dimensions() int { return e.dims }
 func (e *staticTestEmbedder) Model() string   { return "static-test" }
+func (e *staticTestEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func (e *staticTestEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)

@@ -191,6 +191,7 @@ func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 
 func (m *mockEmbedder) Model() string   { return "mock-embed" }
 func (m *mockEmbedder) Dimensions() int { return 1024 }
+func (m *mockEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (m *mockEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
