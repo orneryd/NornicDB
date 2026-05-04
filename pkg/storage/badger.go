@@ -178,6 +178,14 @@ func (b *BadgerEngine) IsInMemory() bool {
 	return b.inMemory
 }
 
+// DB returns the underlying *badger.DB handle. Used by Plan 04-04-04
+// bytes_metrics_sweeper to call EstimateSize(prefix). Read-only handle —
+// callers must not invoke lifecycle methods (Close/DropAll) on the
+// returned pointer; the engine owns lifecycle.
+func (b *BadgerEngine) DB() *badger.DB {
+	return b.db
+}
+
 // OnNodeCreated sets a callback to be invoked when nodes are created.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {

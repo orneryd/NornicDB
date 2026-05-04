@@ -77,12 +77,28 @@ import (
 //	}
 //
 //	fmt.Printf("Config: %s\n", config)
+// StorageRuntimeConfig holds runtime-only storage settings that do not
+// belong on DatabaseConfig (which mirrors persisted ENV/YAML knobs).
+//
+// Plan 04-04 introduces BytesMetricInterval here so cmd/nornicdb can
+// override the D-07 30s default sweep cadence at startup without
+// polluting the on-disk config schema.
+type StorageRuntimeConfig struct {
+	// BytesMetricInterval overrides the bytes_metrics_sweeper cadence.
+	// Zero/unset uses storage.DefaultBytesMetricsInterval (30s).
+	BytesMetricInterval time.Duration `yaml:"bytes_metric_interval"`
+}
+
 type Config struct {
 	// Authentication (NORNICDB_AUTH format: "username/password" or "none")
 	Auth AuthConfig
 
 	// Database settings
 	Database DatabaseConfig
+
+	// Storage holds runtime-only storage settings (Plan 04-04). Distinct
+	// from Database which mirrors ENV/YAML on-disk schema.
+	Storage StorageRuntimeConfig
 
 	// Server settings
 	Server ServerConfig
@@ -1232,6 +1248,11 @@ type YAMLConfig struct {
 	// Storage alias for database
 	Storage struct {
 		Path string `yaml:"path"`
+		// BytesMetricInterval is the cadence for the Plan 04-04 D-07
+		// bytes_metrics_sweeper lifecycle.Component. Default 30s when
+		// zero/unset. Configurable for tests + ops who want denser or
+		// sparser cadence.
+		BytesMetricInterval time.Duration `yaml:"bytes_metric_interval"`
 	} `yaml:"storage"`
 
 	// Authentication configuration

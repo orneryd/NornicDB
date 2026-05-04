@@ -764,6 +764,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 		exec.SetCacheMetrics(cacheMetrics)
 	}
 
+	// 2b''. Plan 04-04: construct StorageMetrics (MET-10) + MVCCMetrics
+	//       (MET-11). The bags register against obs.Registry() — disjoint
+	//       families, no AlreadyRegisteredError risk. Inject into the
+	//       underlying *BadgerEngine via AttachMetrics, which pre-binds
+	//       the four op-duration observers (MET-25). The bytes_metrics
+	//       sweeper is registered as a lifecycle.Component below between
+	//       pprof and workers per RESEARCH §Q4 ordering — it drains AFTER
+	//       workers and BEFORE the telemetry listener so the final scrape
+	//       during drain reflects last-known sizes.
+	var bytesSweeper *storage.BytesMetricsSweeper
+	if badgerEngine := unwrapBadgerEngine(db.GetStorage()); badgerEngine != nil {
+		storageMetrics := observability.NewStorageMetrics(
+			obs.Registry(),
+			cfg.Observability.Metrics.TenantLabelsEnabled,
+			badgerStorageProbe{be: badgerEngine},
+		)
+		mvccMetrics := observability.NewMVCCMetrics(
+			obs.Registry(),
+			cfg.Observability.Metrics.TenantLabelsEnabled,
+			badgerMVCCProbe{be: badgerEngine},
+		)
+		badgerEngine.AttachMetrics(storageMetrics, mvccMetrics)
+
+		// D-07 sweep cadence: 30s default; Plan 04-04 introduces
+		// cfg.Storage.BytesMetricInterval. Override path is exercised by
+		// the BytesMetricsSweeper interval-override unit test.
+		interval := cfg.Storage.BytesMetricInterval
+		if interval <= 0 {
+			interval = storage.DefaultBytesMetricsInterval
+		}
+		bytesSweeper = storage.NewBytesMetricsSweeper(
+			storageMetrics,
+			badgerEngine.DB(),
+			nil, /* search size callback — Plan 04-05 wires */
+			interval,
+		)
+	}
+
 	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
 	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
 	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).
@@ -827,6 +865,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	components := []lifecycle.Component{telemetry}
 	if pprof != nil {
 		components = append(components, pprof)
+	}
+	// Plan 04-04: bytes_metrics_sweeper drains AFTER workers and BEFORE
+	// the telemetry listener (RESEARCH §Q4 ordering). It sits between
+	// pprof and workers in registration order — that places it earlier
+	// in the drain path than workers (drain runs in reverse), guaranteeing
+	// the final /metrics scrape during drain still reflects the last
+	// sweep's gauge values before the engine starts shutting down.
+	if bytesSweeper != nil {
+		components = append(components, bytesSweeper)
 	}
 	components = append(components, workersC, boltC, httpC)
 
