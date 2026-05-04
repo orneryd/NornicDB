@@ -111,6 +111,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -125,6 +126,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
@@ -341,6 +343,19 @@ type StorageExecutor struct {
 	// SetSlowQueryThreshold so the configured cfg.Logging.SlowQueryThreshold
 	// flows in from the bootstrap site without breaking the ctor.
 	slowQueryThreshold time.Duration
+
+	// metrics is the Plan 04-03 CypherMetrics typed bag (MET-08). Injected
+	// post-construction via SetCypherMetrics (D-01 non-breaking pattern,
+	// mirrors SetLogger / SetSlowQueryThreshold). Nil-safe: the
+	// observe* helpers no-op when metrics is nil so tests and alternate
+	// constructors don't have to wire it.
+	metrics *observability.CypherMetrics
+
+	// database is the tenant identifier passed as the `database` label
+	// on tenant-tagged Cypher families when D-08 tenantLabelsEnabled=true.
+	// Empty string is acceptable when the bag was constructed with the
+	// tenant flag off — Bind helpers drop the arg internally.
+	database string
 }
 
 type unwindMergeChainPlanCache struct {
@@ -378,6 +393,11 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		vectorQueryEmbedCache:       e.vectorQueryEmbedCache,
 		vectorQueryEmbedInflight:    e.vectorQueryEmbedInflight,
 		unwindMergeChainPlanCache:   e.unwindMergeChainPlanCache,
+		// Plan 04-03: propagate the metrics bag + database label through
+		// per-query / per-storage clones so observation chokepoints in
+		// Execute() see the same bag regardless of clone depth.
+		metrics:  e.metrics,
+		database: e.database,
 	}
 }
 
@@ -535,6 +555,104 @@ func (e *StorageExecutor) Logger() *slog.Logger { return e.logger() }
 // SlowQueryThreshold returns the configured slow-query emission gate.
 // Exposed so cloned executors inherit the threshold from their base.
 func (e *StorageExecutor) SlowQueryThreshold() time.Duration { return e.slowQueryThreshold }
+
+// SetCypherMetrics installs the Plan 04-03 CypherMetrics typed bag (MET-08)
+// and the database label value passed on tenant-tagged families when D-08
+// tenantLabelsEnabled=true. Mirrors the SetLogger / SetSlowQueryThreshold
+// non-breaking pattern (D-01 non-breaking ctor).
+//
+// Nil-safe: passing m=nil leaves observation as a no-op so tests and
+// alternate constructors that don't wire metrics don't have to. The three
+// observation chokepoints in Execute() guard on m == nil.
+//
+// Cloned executors inherit metrics + database via cloneWithStorage so the
+// bag flows through per-query / per-tx scoped clones.
+func (e *StorageExecutor) SetCypherMetrics(m *observability.CypherMetrics, database string) {
+	e.metrics = m
+	e.database = database
+}
+
+// CypherMetrics returns the injected metrics bag (or nil if unset). Exposed
+// so cloned executors can re-inject when constructed via newTxScopedExecutor
+// outside the cloneWithStorage pathway.
+func (e *StorageExecutor) CypherMetrics() *observability.CypherMetrics { return e.metrics }
+
+// Database returns the configured database label value used for tenant-tagged
+// Cypher metric observations (D-08).
+func (e *StorageExecutor) Database() string { return e.database }
+
+// observeQuery is the single Cypher-side observation helper. Called at the
+// three RISK-1 corrected chokepoints in Execute():
+//
+//	Site 1 — admin dispatch       (op_type="admin",       observeDuration=true)
+//	Site 2 — parse-error          (op_type="parse_error", observeDuration=false)
+//	Site 3 — normal-path-after-Analyze (op_type from classifyOpType, observeDuration=true)
+//
+// Nil-safe: no-ops when e.metrics is nil. Hot-path-cheap: per-call Bind via
+// the bag's BindQueryDuration helper (one WithLabelValues lookup); future
+// optimization can hoist Bind into struct fields cached at SetCypherMetrics
+// time per MET-25 — see RowsReturned for the precedent. The current shape
+// keeps SetCypherMetrics simple while still emitting via the typed bag.
+func (e *StorageExecutor) observeQuery(opType string, observeDuration bool, start time.Time) {
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.BindQueries(opType, e.database).Inc()
+	if observeDuration {
+		e.metrics.BindQueryDuration(opType, e.database).Observe(context.Background(), time.Since(start).Seconds())
+	}
+}
+
+// observeTransactionConflict is the D-16 chokepoint helper: storage detects
+// (returns storage.ErrConflict from the engine), Cypher counts (here, in the
+// transaction-wrapper site that surfaces ErrConflict to the caller). Storage
+// layer never imports observability — preserves AGENTS.md §8 separation.
+//
+// Nil-safe: no-ops when e.metrics is nil OR err is not ErrConflict OR err is
+// nil. Defensive: errors.Is check rather than equality so wrapped errors
+// (fmt.Errorf("...: %w", storage.ErrConflict)) still classify correctly.
+func (e *StorageExecutor) observeTransactionConflict(err error) {
+	if e.metrics == nil || err == nil {
+		return
+	}
+	if !errors.Is(err, storage.ErrConflict) {
+		return
+	}
+	e.metrics.BindTransactionConflicts(e.database).Inc()
+}
+
+// observeTransactionBegin increments the active_transactions gauge. Pair
+// with observeTransactionEnd at every Commit/Rollback site so the gauge
+// balances to 0 across normal, abort, and panic paths.
+func (e *StorageExecutor) observeTransactionBegin() {
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.ActiveTransactions.Inc()
+}
+
+// observeTransactionEnd decrements the active_transactions gauge. See
+// observeTransactionBegin.
+func (e *StorageExecutor) observeTransactionEnd() {
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.ActiveTransactions.Dec()
+}
+
+// observeSlowQueryIfThresholded increments the slow_queries counter when
+// duration meets the configured slowQueryThreshold (matches the Phase 2
+// D-04c emitSlowQueryLog gate semantics: zero or negative threshold
+// disables emission entirely).
+func (e *StorageExecutor) observeSlowQueryIfThresholded(duration time.Duration) {
+	if e.metrics == nil {
+		return
+	}
+	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
+		return
+	}
+	e.metrics.BindSlowQueries(e.database).Inc()
+}
 
 // logger returns the bound logger, lazily installing a discard fallback if
 // SetLogger was never called. Internal — every emission site must read the
@@ -815,10 +933,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	slowStart := time.Now()
 	originalCypher := cypher
 	defer func() {
+		dur := time.Since(slowStart)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
 		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
 		// thread the planned tree here once cypher EXPLAIN refactoring is in.
-		e.emitSlowQueryLog(originalCypher, nil, time.Since(slowStart))
+		e.emitSlowQueryLog(originalCypher, nil, dur)
+		// Plan 04-03 / MET-08 slow_queries_total: increments only when
+		// duration meets the configured threshold (matches the D-04c
+		// emitSlowQueryLog gate semantics — single threshold, single
+		// emission point per Execute return).
+		e.observeSlowQueryIfThresholded(dur)
 	}()
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
@@ -846,6 +970,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		mergedParams := e.mergeShellParams(params)
 		ctx = context.WithValue(ctx, paramsKey, mergedParams)
 		info := e.analyzer.Analyze(cypher)
+		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
+		// per RISK-1 corrected classifier. Observation pre-execute so the
+		// counter reflects intent regardless of execution outcome (errors
+		// still bucket by intended op_type, matching how queries_total works
+		// in Phase 3 reference catalogs).
+		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
 		inExplicitTx := e.txContext != nil && e.txContext.active
 		preparedFabric, err := e.prepareFabricExecution(ctx, cypher)
 		if err != nil {
@@ -944,6 +1074,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Validate basic syntax
 	if err := e.validateSyntax(cypher); err != nil {
+		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
+		// per D-04b sixth enum value. No duration observation — parse cost is
+		// sub-microsecond and not meaningful to bucket. The queries_total
+		// counter still increments so the SRE can alert on parse-error rate.
+		e.observeQuery("parse_error", false /* observeDuration */, slowStart)
 		return nil, err
 	}
 
@@ -997,6 +1132,17 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
 	info := e.analyzer.Analyze(cypher)
+
+	// Plan 04-03 Sites 1 + 3 (RISK-1 corrected): classify ONCE post-Analyze.
+	// isFabric=false here because the fabric branch returns at line ~963
+	// before reaching this code path. isAdmin=true overrides the QueryInfo-
+	// derived classification (e.g., SHOW DATABASES would otherwise classify
+	// as "schema" via HasShow → IsSchemaQuery; D-04a says system/admin
+	// commands bucket as "admin" instead). Single observation point covers
+	// cache-hit early-return AND every downstream execution path so the
+	// counter reflects intent regardless of how the query resolves.
+	opType := classifyOpType(info, false /* isFabric */, isSystemCommandNoGraph(cypher))
+	e.observeQuery(opType, true /* observeDuration */, slowStart)
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
