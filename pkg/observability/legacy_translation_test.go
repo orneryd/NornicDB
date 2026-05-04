@@ -121,10 +121,27 @@ func parseLegacyValue(t *testing.T, body []byte, legacyName string) float64 {
 	return 0
 }
 
+// gatherByName runs reg.Gather() and returns the family-by-name index used
+// by reduction helpers. Test-local mirror of the byName build inside
+// RenderLegacy.
+func gatherByName(t *testing.T, reg *prometheus.Registry) map[string]*dto.MetricFamily {
+	t.Helper()
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	out := map[string]*dto.MetricFamily{}
+	for _, mf := range families {
+		if mf == nil {
+			continue
+		}
+		out[mf.GetName()] = mf
+	}
+	return out
+}
+
 // TestRenderLegacy_Reductions covers the four reduction helpers across
-// edge cases. Wave-0 only exercises the nil-family rows (which return 0
-// trivially — accidental GREEN, fine). Plan 05-02 implements helpers AND
-// adds positive-value rows (single-sample, multi-sample, label-match).
+// edge cases — nil-family, single-sample, multi-sample, label-match,
+// no-match, and ConstLabel-bearing rows. Plan 05-02 implements the
+// positive-value paths.
 func TestRenderLegacy_Reductions(t *testing.T) {
 	t.Run("sumAcrossLabels_nil_family", func(t *testing.T) {
 		byName := map[string]*dto.MetricFamily{}
@@ -146,9 +163,108 @@ func TestRenderLegacy_Reductions(t *testing.T) {
 		got := dropExtraLabels(byName, legacyMapping{Sources: []string{"missing"}})
 		assert.Equal(t, float64(0), got)
 	})
-	// Additional rows (single-sample, multi-sample, label-match): Plan 05-02
-	// implements helpers AND adds these positive-value rows. Wave-0 only
-	// covers the nil-family edge so the test compiles + runs.
+
+	t.Run("sumAcrossLabels_multi_sample", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		vec := prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "x_total", Help: "x"},
+			[]string{"method"},
+		)
+		vec.WithLabelValues("GET").Add(5)
+		vec.WithLabelValues("POST").Add(10)
+		vec.WithLabelValues("PUT").Add(20)
+		reg.MustRegister(vec)
+		byName := gatherByName(t, reg)
+		got := sumAcrossLabels(byName, legacyMapping{Sources: []string{"x_total"}})
+		assert.Equal(t, float64(35), got)
+	})
+
+	t.Run("sumByMatchingLabel_match", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		vec := prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "y_total", Help: "y"},
+			[]string{"method"},
+		)
+		vec.WithLabelValues("GET").Add(10)
+		vec.WithLabelValues("POST").Add(99)
+		reg.MustRegister(vec)
+		byName := gatherByName(t, reg)
+		got := sumByMatchingLabel(byName, legacyMapping{
+			Sources:    []string{"y_total"},
+			MatchLabel: "method",
+			MatchValue: "GET",
+		})
+		assert.Equal(t, float64(10), got)
+	})
+
+	t.Run("sumByMatchingLabel_no_match", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		vec := prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "z_total", Help: "z"},
+			[]string{"method"},
+		)
+		vec.WithLabelValues("GET").Add(10)
+		reg.MustRegister(vec)
+		byName := gatherByName(t, reg)
+		got := sumByMatchingLabel(byName, legacyMapping{
+			Sources:    []string{"z_total"},
+			MatchLabel: "method",
+			MatchValue: "zzz",
+		})
+		assert.Equal(t, float64(0), got)
+	})
+
+	t.Run("takeLatest_single_sample", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		reg.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{Name: "g_value", Help: "g"},
+			func() float64 { return 42 },
+		))
+		byName := gatherByName(t, reg)
+		got := takeLatest(byName, legacyMapping{Sources: []string{"g_value"}})
+		assert.Equal(t, float64(42), got)
+	})
+
+	t.Run("takeLatest_empty_metric_slice", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		vec := prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "empty_total", Help: "empty"},
+			[]string{"label"},
+		)
+		// No WithLabelValues — Vec has zero observations.
+		reg.MustRegister(vec)
+		byName := gatherByName(t, reg)
+		got := takeLatest(byName, legacyMapping{Sources: []string{"empty_total"}})
+		assert.Equal(t, float64(0), got)
+	})
+
+	t.Run("dropExtraLabels_with_const_labels", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		reg.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Name:        "info_value",
+				Help:        "info",
+				ConstLabels: prometheus.Labels{"version": "1.0", "backend": "badger"},
+			},
+			func() float64 { return 1 },
+		))
+		byName := gatherByName(t, reg)
+		got := dropExtraLabels(byName, legacyMapping{
+			Sources:    []string{"info_value"},
+			KeepLabels: []string{"version", "backend"},
+		})
+		assert.Equal(t, float64(1), got)
+	})
+
+	t.Run("metricValue_unknown_type", func(t *testing.T) {
+		// A nil metric for any type returns 0. Use UNTYPED with nil Untyped.
+		got := metricValue(dto.MetricType_HISTOGRAM, &dto.Metric{})
+		assert.Equal(t, float64(0), got)
+	})
+
+	t.Run("labelMatches_empty_name", func(t *testing.T) {
+		assert.False(t, labelMatches(nil, "", ""))
+	})
 }
 
 // TestRenderLegacy_DeterministicOrdering enforces D-01d sort-by-LegacyName.
