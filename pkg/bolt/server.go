@@ -137,6 +137,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -234,6 +235,20 @@ type Server struct {
 	// fallback is installed (D-01a) so existing callers that never set the
 	// field compile and run unchanged.
 	log *slog.Logger
+
+	// metricsState is the Plan-04-02 BoltMetrics bag + pre-built per-op
+	// BoundLatencyObserver cache (CONTEXT D-02 / MET-25 hot-path). Nil
+	// until SetBoltMetrics is called from cmd/nornicdb startup; the
+	// observation sites in handleConnection / dispatchMessage / packstream
+	// nil-check this field so test fixtures that construct a Server
+	// literal continue to work unchanged.
+	metricsState *boltMetricsState
+
+	// authMetrics is the Plan-04-06 AuthMetrics bag for the D-11/D-05e
+	// auth_attempts_total{result, protocol="bolt"} crosswire. Plan 04-02
+	// adds the call site behind a nil-check (observeAuthAttempt no-ops);
+	// Plan 04-06 ships the GREEN bag and wires it via SetAuthMetrics.
+	authMetrics *observability.AuthMetrics
 }
 
 // DatabaseManagerInterface provides database management without importing multidb.
@@ -890,6 +905,23 @@ func (s *Server) IsClosed() bool {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	// Plan 04-02 D-11 session-lifecycle instrumentation: ConnectionsActive
+	// gauge Inc on accept, Dec on close (deferred); SessionDuration
+	// observed on close; ConnectionsTotal{result} incremented with the
+	// terminal-result enum (success | error | timeout). Result=success
+	// is the default; sessionResult mutates from the message-handling
+	// loop on error paths and from the panic-recover handler.
+	sessionStart := time.Now()
+	sessionResult := "success"
+	if ms := s.metricsState; ms != nil && ms.bag != nil {
+		ms.bag.ConnectionsActive.Inc()
+		defer func() {
+			ms.bag.ConnectionsActive.Dec()
+			ms.bag.ConnectionsTotal.WithLabelValues(sessionResult).Inc()
+			ms.bag.SessionDuration.Bind().Observe(context.Background(), time.Since(sessionStart).Seconds())
+		}()
+	}
+
 	// Disable Nagle's algorithm for lower latency
 	// Without this, small packets get delayed up to 40ms
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
@@ -900,6 +932,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger().Error("connection handler panic", slog.Any("recover", r))
+			sessionResult = "error"
 		}
 	}()
 
@@ -937,6 +970,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// Perform handshake
 	if err := session.handshake(); err != nil {
 		s.logger().Warn("handshake failed", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
+		sessionResult = "error"
 		return
 	}
 
@@ -956,6 +990,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				return
 			}
 			s.logger().Warn("message handling error", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
+			sessionResult = "error"
 			return
 		}
 	}
@@ -1187,7 +1222,47 @@ func (s *Session) handleMessage() error {
 }
 
 // dispatchMessage routes the message to the appropriate handler.
-func (s *Session) dispatchMessage(msgType byte, data []byte) error {
+//
+// Plan 04-02 D-11a per-message instrumentation: this is the SOLE
+// per-message observation site (DRY) — wraps the inner switch with a
+// pre-bound MessageDuration{op} observer (MET-25 hot-path) and a
+// MessagesTotal{op, result} counter increment. PULL chunks roll up into
+// the parent PULL message_duration_seconds (D-11b — chunk timing is NOT
+// observed separately). The observation runs in a deferred closure so
+// even handler panics still emit a metric (result="error") before the
+// panic re-propagates to the connection-handler's outer recover.
+func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
+	op := boltOpName(msgType)
+	start := time.Now()
+
+	if s.server != nil {
+		if ms := s.server.metricsState; ms != nil && ms.bag != nil {
+			defer func() {
+				rec := recover()
+				result := "success"
+				if rec != nil || (retErr != nil && retErr != io.EOF) {
+					result = "error"
+				}
+				if obs, ok := ms.msgDur[op]; ok {
+					obs.Observe(context.Background(), time.Since(start).Seconds())
+				}
+				ms.bag.MessagesTotal.WithLabelValues(op, result).Inc()
+				if rec != nil {
+					// Re-panic AFTER observation so the outer
+					// connection-handler panic-recover (Plan 04-02
+					// D-11) still fires (T-04-08-style discipline).
+					panic(rec)
+				}
+			}()
+		}
+	}
+
+	return s.dispatchInner(msgType, data)
+}
+
+// dispatchInner is the unobserved body of dispatchMessage; kept as a
+// sibling so the metrics wrapper above stays a thin chokepoint.
+func (s *Session) dispatchInner(msgType byte, data []byte) error {
 	switch msgType {
 	case MsgHello:
 		return s.handleHello(data)
@@ -1231,6 +1306,41 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) error {
 //
 // Server-to-server clustering uses the same auth mechanism with service accounts.
 func (s *Session) handleHello(data []byte) error {
+	// Plan 04-02 D-11 / D-05e auth-attempts crosswire: observe a single
+	// auth attempt per HELLO message at the function-exit chokepoint.
+	// Result enum closed (success | failure | denied):
+	//   - success: handshake completed and session.authenticated = true
+	//   - failure: auth credentials rejected by the authenticator
+	//   - denied:  request lacked auth when RequireAuth was true (or
+	//              an unsupported scheme was offered).
+	// No-op until Plan 04-06 wires the AuthMetrics bag.
+	wasAuthenticatedBefore := s.authenticated
+	defer func() {
+		if s.server == nil {
+			return
+		}
+		var result string
+		switch {
+		case s.authenticated && !wasAuthenticatedBefore:
+			result = "success"
+		case !s.authenticated:
+			// Either auth failed (failure) or auth was required but
+			// rejected the request before any credentials could
+			// validate (denied). The two are bucketed as "failure" /
+			// "denied" by the Phase 5 K8s-side aggregation; the Bolt
+			// path classifies based on whether the failure path took a
+			// scheme decision (failure) vs. a require-auth gate (denied).
+			// Keep the call site simple: any non-success outcome is
+			// "failure"; "denied" is reserved for explicit rejection
+			// without credential evaluation.
+			result = "failure"
+		default:
+			// Already authenticated (re-HELLO) — no new attempt.
+			return
+		}
+		s.server.observeAuthAttempt(result)
+	}()
+
 	// Parse HELLO message to extract authentication details
 	authParams, err := s.parseHelloAuth(data)
 	if err != nil {
