@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useId } from 'react';
+import { useState, useEffect, useCallback, useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { UiGrid } from '@ornery/ui-grid-react';
+import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from '@ornery/ui-grid-core';
 import { PageLayout } from '../components/common/PageLayout';
 import { PageHeader } from '../components/common/PageHeader';
 import { Button } from '../components/common/Button';
@@ -331,6 +333,144 @@ export function DatabaseAccess() {
 
   const userDefinedRoles = roles.filter((r) => !BUILTIN_ROLES.includes(r.toLowerCase()));
 
+  const accessGridData = useMemo<GridRecord[]>(() => roles.map((role) => ({
+    __gridId: role,
+    role,
+  })), [roles]);
+
+  const accessColumnDefs = useMemo<GridColumnDef[]>(() => [
+    {
+      name: 'role',
+      displayName: 'Role',
+      field: 'role',
+      width: 'minmax(12rem, 1fr)',
+    },
+    ...dbNames.map((db) => ({
+      name: db,
+      displayName: db,
+      width: '120px',
+      enableSorting: false,
+      enableFiltering: false,
+    })),
+  ], [dbNames]);
+
+  const accessGridOptions = useMemo<GridOptions>(() => ({
+    id: 'database-access-grid',
+    data: accessGridData,
+    columnDefs: accessColumnDefs,
+    rowIdentity: (row) => String(row.__gridId),
+    enableSorting: true,
+    enableFiltering: true,
+    viewportHeight: 420,
+    emptyMessage: 'No roles found',
+  }), [accessColumnDefs, accessGridData]);
+
+  const entitlementGridData = useMemo<GridRecord[]>(() => roles.map((role) => ({
+    __gridId: role,
+    role,
+  })), [roles]);
+
+  const entitlementColumnDefs = useMemo<GridColumnDef[]>(() => [
+    {
+      name: 'role',
+      displayName: 'Role',
+      field: 'role',
+      width: 'minmax(12rem, 1fr)',
+    },
+    ...globalEntitlements.map((ent) => ({
+      name: ent.id,
+      displayName: ent.name,
+      width: '120px',
+      enableSorting: false,
+      enableFiltering: false,
+    })),
+  ], [globalEntitlements]);
+
+  const entitlementGridOptions = useMemo<GridOptions>(() => ({
+    id: 'role-entitlements-grid',
+    data: entitlementGridData,
+    columnDefs: entitlementColumnDefs,
+    rowIdentity: (row) => String(row.__gridId),
+    enableSorting: true,
+    enableFiltering: true,
+    viewportHeight: 420,
+    emptyMessage: 'No entitlements found',
+  }), [entitlementColumnDefs, entitlementGridData]);
+
+  const renderAccessCell = (ctx: GridCellTemplateContext) => {
+    const row = ctx.row as GridRecord & { role: string };
+    const role = row.role;
+
+    if (ctx.column.name === 'role') {
+      const permissionTags = getEffectivePermissionTagsForRole(role, privilegesMatrix, roleEntitlements);
+      return (
+        <div className="flex items-center gap-2 flex-wrap py-1">
+          <span className="font-medium text-white capitalize">{role}</span>
+          <span className="flex gap-1.5">
+            {permissionTags.map((tag) => (
+              <span
+                key={tag}
+                className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  tag === 'read-only'
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'bg-emerald-500/20 text-emerald-400'
+                }`}
+              >
+                {tag}
+              </span>
+            ))}
+          </span>
+        </div>
+      );
+    }
+
+    const db = ctx.column.name;
+    const dbs = getDatabasesForRole(role);
+    const isAll = dbs.length === 0;
+    const checked = isAll || dbs.includes(db);
+    const isAdminSystemOrDefault =
+      role.toLowerCase() === 'admin' && (db === SYSTEM_DB || db === DEFAULT_DB);
+
+    return (
+      <div className="flex items-center justify-center py-1" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={isAdminSystemOrDefault}
+          onChange={() => {
+            toggleDbForRole(role, db);
+            setDirty(true);
+          }}
+          className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
+          title={isAdminSystemOrDefault ? 'Admin always has access to system and default database' : undefined}
+        />
+      </div>
+    );
+  };
+
+  const renderEntitlementCell = (ctx: GridCellTemplateContext) => {
+    const row = ctx.row as GridRecord & { role: string };
+    const role = row.role;
+
+    if (ctx.column.name === 'role') {
+      return <div className="font-medium text-white capitalize py-1">{role}</div>;
+    }
+
+    const adminEntitlementsReadOnly = role.toLowerCase() === 'admin';
+
+    return (
+      <div className="flex items-center justify-center py-1" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={getEntitlementsForRole(role).includes(ctx.column.name)}
+          disabled={adminEntitlementsReadOnly}
+          onChange={() => toggleEntitlementForRole(role, ctx.column.name)}
+          className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
+        />
+      </div>
+    );
+  };
+
   if (!isAdmin) return null;
 
   if (loading) {
@@ -381,80 +521,8 @@ export function DatabaseAccess() {
             <Database className="w-4 h-4" />
             Access by role
           </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-norse-stone/50">
-                <tr>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-norse-silver">Role</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-norse-silver">Databases</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-norse-rune">
-                {roles.map((role) => {
-                  const dbs = getDatabasesForRole(role);
-                  const isAll = dbs.length === 0;
-                  const permissionTags = getEffectivePermissionTagsForRole(role, privilegesMatrix, roleEntitlements);
-                  return (
-                    <tr key={role} className="hover:bg-norse-stone/30">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-white capitalize">{role}</span>
-                          <span className="flex gap-1.5">
-                            {permissionTags.map((tag) => (
-                              <span
-                                key={tag}
-                                className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                  tag === 'read-only'
-                                    ? 'bg-amber-500/20 text-amber-400'
-                                    : 'bg-emerald-500/20 text-emerald-400'
-                                }`}
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {dbNames.map((db) => {
-                            const checked = isAll || dbs.includes(db);
-                            const isAdminSystemOrDefault =
-                              role.toLowerCase() === 'admin' &&
-                              (db === SYSTEM_DB || db === DEFAULT_DB);
-                            return (
-                              <label
-                                key={db}
-                                className={`inline-flex items-center gap-1.5 text-sm ${
-                                  isAdminSystemOrDefault ? 'cursor-default opacity-90' : 'cursor-pointer'
-                                }`}
-                                title={
-                                  isAdminSystemOrDefault
-                                    ? 'Admin always has access to system and default database'
-                                    : undefined
-                                }
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={isAdminSystemOrDefault}
-                                  onChange={() => toggleDbForRole(role, db)}
-                                  className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
-                                />
-                                <span className="text-norse-silver">{db}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                        {isAll && (
-                          <span className="text-xs text-norse-fog mt-1 block">All databases</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="nornic-grid p-4">
+            <UiGrid options={accessGridOptions} cellRenderer={renderAccessCell} />
           </div>
         </div>
 
@@ -480,52 +548,8 @@ export function DatabaseAccess() {
             <p className="px-4 py-2 text-xs text-norse-fog border-b border-norse-rune">
               Assign global permissions to each role. These control API access (read, write, admin, user management, etc.).
             </p>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-norse-stone/50">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-sm font-medium text-norse-silver sticky left-0 bg-norse-stone/80 z-10">Role</th>
-                    {globalEntitlements.map((ent) => (
-                      <th key={ent.id} className="px-3 py-2 text-center text-xs font-medium text-norse-silver whitespace-nowrap" title={ent.description}>
-                        {ent.name}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-norse-rune">
-                  {roles.map((role) => {
-                    const adminEntitlementsReadOnly = role.toLowerCase() === 'admin';
-                    return (
-                      <tr
-                        key={role}
-                        className="hover:bg-norse-stone/30"
-                        title={adminEntitlementsReadOnly ? 'Admin role entitlements cannot be changed' : undefined}
-                      >
-                        <td className="px-4 py-2 font-medium text-white capitalize sticky left-0 bg-norse-shadow z-10">
-                          {role}
-                        </td>
-                        {globalEntitlements.map((ent) => (
-                          <td key={ent.id} className="px-3 py-2 text-center">
-                            <label
-                              className={`inline-flex items-center justify-center ${
-                                adminEntitlementsReadOnly ? 'cursor-default' : 'cursor-pointer'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={getEntitlementsForRole(role).includes(ent.id)}
-                                disabled={adminEntitlementsReadOnly}
-                                onChange={() => toggleEntitlementForRole(role, ent.id)}
-                                className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
-                              />
-                            </label>
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="nornic-grid p-4">
+              <UiGrid options={entitlementGridOptions} cellRenderer={renderEntitlementCell} />
             </div>
           </div>
         )}

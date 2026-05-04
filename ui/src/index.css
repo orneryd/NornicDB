@@ -1,6 +1,22 @@
 @import "tailwindcss";
+@import '@ornery/ui-grid-react/styles';
 
 @config "../tailwind.config.js";
+
+.nornic-grid {
+  --ui-grid-surface: #141824;
+  --ui-grid-border-color: #2a3247;
+  --ui-grid-header-background: #1e2433;
+  --ui-grid-cell-color: #f3f4f6;
+  --ui-grid-muted-color: #9ca3af;
+  --ui-grid-row-odd: #141824;
+  --ui-grid-row-even: #1a1f2e;
+  --ui-grid-row-hover: rgba(16, 185, 129, 0.08);
+  --ui-grid-accent: #10b981;
+  --ui-grid-group-background: #1e2433;
+  --ui-grid-radius: 8px;
+  --ui-grid-shadow: none;
+}
 
 body {
   background-color: #0a0e1a;

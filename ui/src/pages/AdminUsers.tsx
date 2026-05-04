@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useId } from 'react';
+import { useState, useEffect, useCallback, useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { UiGrid } from '@ornery/ui-grid-react';
+import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from '@ornery/ui-grid-core';
 import { PageLayout } from '../components/common/PageLayout';
 import { PageHeader } from '../components/common/PageHeader';
 import { FormInput } from '../components/common/FormInput';
 import { Button } from '../components/common/Button';
 import { Alert } from '../components/common/Alert';
-import { Modal } from '../components/common/Modal';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 import { BASE_PATH, joinBasePath } from '../utils/basePath';
 
@@ -30,7 +31,7 @@ export function AdminUsers() {
   const createPasswordId = useId();
   const createEmailId = useId();
   const createRolesId = useId();
-  const editRolesId = useId();
+  const [usersGridApi, setUsersGridApi] = useState<UiGridApi | null>(null);
 
   // Create user state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -40,13 +41,6 @@ export function AdminUsers() {
   const [newRoles, setNewRoles] = useState<string[]>(['viewer']);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
-  
-  // Edit user state
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [editRoles, setEditRoles] = useState<string[]>([]);
-  const [editDisabled, setEditDisabled] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [updateError, setUpdateError] = useState('');
 
   const loadUsers = useCallback(async () => {
     try {
@@ -117,6 +111,7 @@ export function AdminUsers() {
         body: JSON.stringify({
           username: newUsername,
           password: newPassword,
+          email: newEmail || undefined,
           roles: newRoles,
         }),
       });
@@ -142,29 +137,19 @@ export function AdminUsers() {
     }
   };
 
-  const handleEditUser = (user: User) => {
-    setEditingUser(user);
-    setEditRoles([...user.roles]);
-    setEditDisabled(user.disabled || false);
-    setUpdateError('');
-  };
-
-  const handleUpdateUser = async () => {
-    if (!editingUser) return;
-    
-    setUpdateError('');
-    setUpdating(true);
-
+  const handleUpdateUser = useCallback(async (user: User, overrides: Partial<User>) => {
+    setError('');
     try {
-      const response = await fetch(joinBasePath(BASE_PATH, `/auth/users/${editingUser.username}`), {
+      const response = await fetch(joinBasePath(BASE_PATH, `/auth/users/${user.username}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
         body: JSON.stringify({
-          roles: editRoles,
-          disabled: editDisabled,
+          email: overrides.email ?? user.email ?? undefined,
+          roles: overrides.roles ?? user.roles,
+          disabled: overrides.disabled ?? user.disabled ?? false,
         }),
       });
 
@@ -173,14 +158,12 @@ export function AdminUsers() {
         throw new Error(data.message || 'Failed to update user');
       }
 
-      setEditingUser(null);
       await loadUsers();
     } catch (err) {
-      setUpdateError(err instanceof Error ? err.message : 'Failed to update user');
-    } finally {
-      setUpdating(false);
+      setError(err instanceof Error ? err.message : 'Failed to update user');
+      await loadUsers();
     }
-  };
+  }, [loadUsers]);
 
   const handleDeleteUser = async (username: string) => {
     if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
@@ -210,6 +193,185 @@ export function AdminUsers() {
     } else {
       setRoles([...roles, role]);
     }
+  };
+
+  const usersGridData = useMemo<GridRecord[]>(() => users.map((user) => ({
+    ...user,
+    __gridId: user.username,
+  })), [users]);
+
+  const userColumns = useMemo<GridColumnDef[]>(() => [
+    {
+      name: 'username',
+      displayName: 'Username',
+      field: 'username',
+      width: 'minmax(10rem, 1.1fr)',
+    },
+    {
+      name: 'email',
+      displayName: 'Email',
+      field: 'email',
+      enableCellEdit: true,
+      width: 'minmax(14rem, 1.4fr)',
+    },
+    {
+      name: 'roles',
+      displayName: 'Roles',
+      field: 'roles',
+      enableSorting: false,
+      width: 'minmax(16rem, 1.5fr)',
+    },
+    {
+      name: 'status',
+      displayName: 'Status',
+      field: 'disabled',
+      enableSorting: false,
+      width: '140px',
+    },
+    {
+      name: 'last_login',
+      displayName: 'Last Login',
+      field: 'last_login',
+      width: 'minmax(12rem, 1fr)',
+      formatter: (value) => (value ? new Date(String(value)).toLocaleString() : 'Never'),
+    },
+    {
+      name: 'actions',
+      displayName: 'Actions',
+      width: '180px',
+      enableSorting: false,
+      enableFiltering: false,
+    },
+  ], []);
+
+  const userGridOptions = useMemo<GridOptions>(() => ({
+    id: 'admin-users-grid',
+    data: usersGridData,
+    columnDefs: userColumns,
+    rowIdentity: (row) => String(row.__gridId),
+    enableSorting: true,
+    enableFiltering: true,
+    enableCellEdit: true,
+    enableCellEditOnFocus: true,
+    viewportHeight: 560,
+    emptyMessage: 'No users found',
+  }), [userColumns, usersGridData]);
+
+  useEffect(() => {
+    if (!usersGridApi) {
+      return;
+    }
+
+    return usersGridApi.edit.on.afterCellEdit((row, column, newValue, oldValue) => {
+      if (column.name !== 'email') {
+        return;
+      }
+
+      const username = String(row.username ?? '');
+      const user = users.find((entry) => entry.username === username);
+      if (!user) {
+        return;
+      }
+
+      const nextEmail = String(newValue ?? '').trim();
+      const previousEmail = String(oldValue ?? '').trim();
+      if (nextEmail === previousEmail) {
+        return;
+      }
+
+      void handleUpdateUser(user, { email: nextEmail || undefined });
+    });
+  }, [handleUpdateUser, users, usersGridApi]);
+
+  const renderUserCell = (ctx: GridCellTemplateContext) => {
+    const row = ctx.row as GridRecord & User;
+
+    if (ctx.column.name === 'roles') {
+      return (
+        <div className="flex flex-wrap gap-3 py-1" onClick={(e) => e.stopPropagation()}>
+          {availableRoles.map((role) => {
+            const checked = row.roles.includes(role);
+            const disableRemoval = checked && row.roles.length === 1;
+            return (
+              <label key={role} className="inline-flex items-center gap-2 text-xs text-norse-silver">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disableRemoval}
+                  onChange={() => {
+                    const nextRoles = checked
+                      ? row.roles.filter((entry) => entry !== role)
+                      : [...row.roles, role];
+                    if (nextRoles.length > 0) {
+                      void handleUpdateUser(row, { roles: nextRoles });
+                    }
+                  }}
+                  className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary"
+                />
+                <span className="capitalize">{role}</span>
+              </label>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'status') {
+      return (
+        <div className="py-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => void handleUpdateUser(row, { disabled: !row.disabled })}
+            className={`px-2 py-1 rounded text-xs ${row.disabled ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}
+          >
+            {row.disabled ? 'Disabled' : 'Active'}
+          </button>
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'actions') {
+      return (
+        <div className="flex gap-2 py-1" onClick={(e) => e.stopPropagation()}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => usersGridApi?.edit.beginCellEdit(String(row.__gridId), 'email')}
+            icon={Edit}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => handleDeleteUser(row.username)}
+            icon={Trash2}
+          >
+            Delete
+          </Button>
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'username') {
+      return <div className="font-medium text-white py-1">{String(ctx.value ?? '')}</div>;
+    }
+
+    if (ctx.column.name === 'last_login') {
+      return (
+        <div className="text-sm text-norse-fog py-1">
+          {row.last_login ? new Date(row.last_login).toLocaleString() : 'Never'}
+        </div>
+      );
+    }
+
+    if (ctx.column.name === 'email') {
+      return (
+        <div className="text-norse-silver py-1">{String(ctx.value || '—')}</div>
+      );
+    }
+
+    return null;
   };
 
   if (!isAdmin) {
@@ -312,154 +474,14 @@ export function AdminUsers() {
 
         {/* Users Table */}
         <div className="bg-norse-shadow border border-norse-rune rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-norse-stone">
-                <tr>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Username</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Email</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Roles</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Status</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Last Login</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-norse-silver">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-norse-rune">
-                {users.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-norse-fog">
-                      No users found
-                    </td>
-                  </tr>
-                ) : (
-                  users.map((user) => (
-                    <tr key={user.username} className="hover:bg-norse-stone/50">
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-white">{user.username}</div>
-                      </td>
-                      <td className="px-4 py-3 text-norse-silver">
-                        {user.email || <span className="text-norse-fog">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1 flex-wrap">
-                          {user.roles.map(role => (
-                            <span
-                              key={role}
-                              className={`px-2 py-1 rounded text-xs ${
-                                role === 'admin'
-                                  ? 'bg-red-500/20 text-red-400'
-                                  : role === 'editor'
-                                  ? 'bg-blue-500/20 text-blue-400'
-                                  : 'bg-norse-stone text-norse-silver'
-                              }`}
-                            >
-                              {role}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {user.disabled ? (
-                          <span className="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400">
-                            Disabled
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
-                            Active
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-norse-fog text-sm">
-                        {user.last_login
-                          ? new Date(user.last_login).toLocaleString()
-                          : <span className="text-norse-fog">Never</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleEditUser(user)}
-                            icon={Edit}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => handleDeleteUser(user.username)}
-                            icon={Trash2}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="nornic-grid p-4">
+            <UiGrid
+              options={userGridOptions}
+              onRegisterApi={setUsersGridApi}
+              cellRenderer={renderUserCell}
+            />
           </div>
         </div>
-
-        {/* Edit User Modal */}
-        {editingUser && (
-          <Modal
-            isOpen={!!editingUser}
-            onClose={() => setEditingUser(null)}
-            title={`Edit User: ${editingUser.username}`}
-          >
-            <div className="space-y-4">
-              <fieldset>
-                <legend id={editRolesId} className="text-sm text-norse-silver mb-2">Roles</legend>
-                <div className="flex gap-4 flex-wrap">
-                  {availableRoles.map(role => (
-                    <label key={role} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editRoles.includes(role)}
-                        onChange={() => toggleRole(role, editRoles, setEditRoles)}
-                        className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary focus:ring-nornic-primary"
-                        aria-describedby={editRolesId}
-                      />
-                      <span className="text-sm capitalize text-norse-silver">{role}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editDisabled}
-                    onChange={(e) => setEditDisabled(e.target.checked)}
-                    className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary focus:ring-nornic-primary"
-                  />
-                  <span className="text-sm text-norse-silver">Disabled</span>
-                </label>
-              </div>
-
-              {updateError && <Alert type="error" message={updateError} />}
-
-              <div className="flex gap-2 justify-end pt-4 border-t border-norse-rune">
-                <Button
-                  variant="secondary"
-                  onClick={() => setEditingUser(null)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleUpdateUser}
-                  disabled={updating || editRoles.length === 0}
-                  loading={updating}
-                >
-                  Update
-                </Button>
-              </div>
-            </div>
-          </Modal>
-        )}
       </main>
     </PageLayout>
   );
