@@ -194,6 +194,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -627,6 +628,15 @@ type Server struct {
 
 	httpServer *http.Server
 	listener   net.Listener
+
+	// httpMetrics is the Plan-04-02 HTTP catalog bag (D-02 typed handle DI).
+	// Populated by SetHTTPMetrics(...) AFTER observability.New runs in
+	// cmd/nornicdb/main.go (Phase 2 D-08 two-phase bootstrap: server is
+	// constructed BEFORE obs to keep the existing logger plumbing; metrics
+	// bag is injected post-hoc and applied at Start() time when the http
+	// handler is wrapped). Nil-safe: instrumentedMux is a pass-through
+	// when nil, so test fixtures and pre-Phase-4 callers compile unchanged.
+	httpMetrics *observability.HTTPMetrics
 
 	// Rate limiter for DoS protection
 	rateLimiter *IPRateLimiter
@@ -1664,6 +1674,21 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	return s, nil
 }
 
+// SetHTTPMetrics injects the Plan-04-02 HTTP catalog bag (D-02 typed
+// handle DI). MUST be called BEFORE Start() — once the http.Server's
+// Handler is wired in Start(), the wrapper is fixed for the server
+// lifetime. Callers (cmd/nornicdb/main.go) inject after observability.New
+// returns the registry, then call Start().
+//
+// Nil-safe: passing nil is equivalent to never calling — instrumentedMux
+// is a pass-through. Test fixtures and pre-Phase-4 callers compile and
+// run unchanged.
+func (s *Server) SetHTTPMetrics(m *observability.HTTPMetrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.httpMetrics = m
+}
+
 // SetAuditLogger sets the audit logger for compliance logging.
 func (s *Server) SetAuditLogger(logger *audit.Logger) {
 	s.mu.Lock()
@@ -1736,8 +1761,18 @@ func (s *Server) Start() error {
 	// Build router
 	mux := s.buildRouter()
 
+	// Plan 04-02 D-03: instrumentedMux is the SOLE HTTP observation
+	// chokepoint per AGENTS.md §7 DRY. It wraps mux.ServeHTTP, reading
+	// `r.Pattern` post-dispatch (Go 1.22+ stdlib field) so path_template
+	// values come from the closed route table — never from r.URL.Path
+	// (cardinality bomb). Nil-safe: when s.httpMetrics is nil (test
+	// fixtures, pre-Phase-4 callers), the wrapper is a pass-through.
+	// Panic-safe: handler panics still emit a 5xx observation before
+	// re-propagating (T-04-08).
+	instrumented := instrumentedMux(mux, s.httpMetrics)
+
 	s.httpServer = &http.Server{
-		Handler:      mux,
+		Handler:      instrumented,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
@@ -1758,7 +1793,9 @@ func (s *Server) Start() error {
 	} else {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
-		s.httpServer.Handler = h2c.NewHandler(mux, http2Config)
+		// Wrap the INSTRUMENTED mux (not bare mux) so observation runs
+		// inside the h2c transport adapter (Plan 04-02 D-03).
+		s.httpServer.Handler = h2c.NewHandler(instrumented, http2Config)
 		s.log.Info("HTTP/2 enabled", "mode", "h2c_cleartext", "compat", "http/1.1")
 	}
 
