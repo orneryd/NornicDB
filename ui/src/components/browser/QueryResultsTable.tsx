@@ -110,7 +110,7 @@ export function QueryResultsTable({
       columnDefs,
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
-      enableFiltering: true,
+      enableFiltering: false,
       enableCellEdit: false,
       viewportHeight: 520,
       emptyMessage: "No rows returned",
