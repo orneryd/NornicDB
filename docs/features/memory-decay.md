@@ -181,14 +181,23 @@ Nodes and edges whose decay score drops below the visibility threshold are autom
 
 A background job periodically removes suppressed entities from secondary indexes (BM25, vector) to reclaim space. Primary data remains intact.
 
-## Admin Endpoints
+## Cypher Introspection
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /admin/knowledge-policies/profiles` | List decay profiles and bindings |
-| `GET /admin/knowledge-policies/policies` | List promotion policies |
-| `GET /admin/knowledge-policies/resolve?entityId=X` | Explain scoring for an entity |
-| `GET /admin/knowledge-policies/deindex/status` | Deindex cleanup job status |
+The supported operational surface for knowledge-layer scoring is Cypher, not a dedicated admin HTTP API.
+
+```cypher
+CALL nornicdb.knowledgepolicy.info();
+CALL nornicdb.knowledgepolicy.profiles();
+CALL nornicdb.knowledgepolicy.policies();
+CALL nornicdb.knowledgepolicy.resolve('nornic:episode-1', '', '');
+CALL nornicdb.knowledgepolicy.deindexStatus();
+
+SHOW DECAY PROFILES;
+SHOW PROMOTION PROFILES;
+SHOW PROMOTION POLICIES;
+```
+
+Use these procedures to inspect effective policy resolution, catalog stored profiles and policies, and monitor deindex cleanup state.
 
 ## Disable Scoring
 

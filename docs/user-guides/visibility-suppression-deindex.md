@@ -65,14 +65,13 @@ ORDER BY decayScore(n)
 
 `reveal()` is a query-time bypass — it does not change the entity's suppression status. The entity remains suppressed for all other queries.
 
-### Using the Admin API
+### Inspecting Suppression with Cypher
 
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:7474/admin/knowledge-policies/resolve?entityId=node-123"
+```cypher
+CALL nornicdb.knowledgepolicy.resolve('node-123', '', '');
 ```
 
-Returns the full `ScoringResolution` including explanation of why the entity was suppressed.
+This returns the full scoring resolution, including the effective threshold, final score, suppression eligibility, and explanation of why the entity was suppressed.
 
 ## Deindex Cleanup
 
@@ -91,28 +90,16 @@ The deindex job runs every 24 hours by default. No configuration is required —
 
 ### Monitoring
 
-Check deindex status via the admin API:
+Check deindex status with the supported Cypher procedure:
 
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:7474/admin/knowledge-policies/deindex/status"
+```cypher
+CALL nornicdb.knowledgepolicy.deindexStatus();
 ```
 
-Response:
-```json
-{
-  "pending_count": 3,
-  "items": [
-    {
-      "workItemId": "deindex:nornic:node-123",
-      "targetId": "node-123",
-      "targetScope": "NODE",
-      "enqueuedAt": 1714000000,
-      "status": "pending"
-    }
-  ],
-  "supported": true
-}
+Example result columns:
+
+```text
+pending_count | supported | message | workItemId | targetId | targetScope | enqueuedAt | status
 ```
 
 The browser UI also shows deindex status on the **Security > Knowledge Policies > Deindex Status** tab.
