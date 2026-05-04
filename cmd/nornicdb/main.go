@@ -857,6 +857,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 	_ = embedMetrics
 	_ = searchMetrics
 
+	// 2b''''. Plan 04-06: construct ReplicationMetrics + AuthMetrics bags
+	//        and wire them into the Bolt server (Plan-04-02 HELLO call
+	//        site already added; this lights it up), the Authenticator
+	//        (HTTP/gRPC adapter chokepoints), and the Replicator (when
+	//        replication is enabled — Standalone/HAStandby/Raft/MultiRegion
+	//        all satisfy the MetricsAware optional interface).
+	//
+	//        The peer_metrics_gc lifecycle.Component is registered between
+	//        the bytes_metrics_sweeper and workersC per RESEARCH §Q4
+	//        ordering — drains AFTER workers and BEFORE telemetry so the
+	//        final scrape during drain reflects the last GC pass.
+	replicationMode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	replicatorIface := db.GetReplicator()
+	var replicatorAny any
+	if replicatorIface != nil {
+		replicatorAny = replicatorIface
+	}
+	replAuthWiring := initReplicationAuthMetrics(
+		obs.Registry(),
+		replicationMode,
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		authenticator,
+		boltServer,
+		replicatorAny,
+	)
+	_ = replAuthWiring.authMetrics
+	_ = replAuthWiring.replMetrics
+
 	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
 	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
 	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).
@@ -929,6 +957,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// sweep's gauge values before the engine starts shutting down.
 	if bytesSweeper != nil {
 		components = append(components, bytesSweeper)
+	}
+	// Plan 04-06: peer_metrics_gc drains AFTER workers and BEFORE telemetry
+	// so the final scrape during drain reflects the last GC sweep. Registered
+	// unconditionally — when replication is disabled the GC runs idle waiting
+	// for ctx cancel (D-05b nil-metrics tolerated path).
+	if replAuthWiring.peerGC != nil {
+		components = append(components, replAuthWiring.peerGC)
 	}
 	components = append(components, workersC, boltC, httpC)
 

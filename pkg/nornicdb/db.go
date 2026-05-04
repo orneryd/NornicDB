@@ -2556,6 +2556,16 @@ func (db *DB) GetEmbedQueue() *EmbedQueue {
 	return db.embedQueue
 }
 
+// GetReplicator returns the active replicator (nil when running in
+// standalone mode or before maybeEnableReplication has run). Used by
+// cmd/nornicdb to inject Plan-04-06 ReplicationMetrics via the
+// replication.MetricsAware optional interface.
+func (db *DB) GetReplicator() replication.Replicator {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.replicator
+}
+
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
