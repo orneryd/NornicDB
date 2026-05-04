@@ -402,6 +402,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.Database.DataDir = dataDir
 	dbConfig.Server.BoltPort = boltPort
 	dbConfig.Server.HTTPPort = httpPort
+	dbConfig.Memory.DecayEnabled = cfg.Memory.DecayEnabled
+	dbConfig.Memory.DecayInterval = cfg.Memory.DecayInterval
+	dbConfig.Memory.AccessFlushBufferSize = cfg.Memory.AccessFlushBufferSize
+	dbConfig.Memory.VisibilityThreshold = cfg.Memory.VisibilityThreshold
 	dbConfig.Memory.EmbeddingAPIURL = embeddingURL
 	dbConfig.Memory.EmbeddingAPIKey = embeddingKey
 	dbConfig.Memory.EmbeddingModel = embeddingModel

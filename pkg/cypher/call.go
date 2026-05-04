@@ -2644,6 +2644,8 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callNornicDbStats()
 	case strings.Contains(upper, "NORNICDB.DECAY.INFO"):
 		result, err = e.callNornicDbDecayInfo()
+	case strings.Contains(upper, "NORNICDB.KNOWLEDGEPOLICY.INFO"):
+		result, err = e.callNornicDbKnowledgePolicyInfo()
 	// Seam-aligned RAG procedures
 	case strings.Contains(upper, "DB.RETRIEVE"):
 		result, err = e.callDbRetrieve(ctx, callCypher)
@@ -3039,6 +3041,38 @@ func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 		Columns: []string{"enabled", "system", "configuredVia"},
 		Rows: [][]interface{}{
 			{enabled, "knowledge-layer scoring (decay profile bundles + bindings)", "CREATE DECAY PROFILE ... OPTIONS / CREATE DECAY PROFILE ... FOR ... APPLY DDL"},
+		},
+	}, nil
+}
+
+func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, error) {
+	enabled := false
+	if be := unwrapBadgerEngine(e.storage); be != nil {
+		enabled = be.IsDecayEnabled()
+	}
+
+	var decayProfiles, decayBindings int
+	var promotionProfiles, promotionPolicies int
+	if schema := e.storage.GetSchema(); schema != nil {
+		bundles, bindings := schema.ShowDecayProfiles()
+		decayProfiles = len(bundles)
+		decayBindings = len(bindings)
+		promotionProfiles = len(schema.ShowPromotionProfiles())
+		promotionPolicies = len(schema.ShowPromotionPolicies())
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"enabled", "system", "decayProfiles", "decayBindings", "promotionProfiles", "promotionPolicies", "configuredVia"},
+		Rows: [][]interface{}{
+			{
+				enabled,
+				"knowledge-layer scoring and promotion policy system",
+				decayProfiles,
+				decayBindings,
+				promotionProfiles,
+				promotionPolicies,
+				"CREATE DECAY PROFILE ... OPTIONS / CREATE DECAY PROFILE ... FOR ... APPLY / CREATE PROMOTION PROFILE ... OPTIONS / CREATE PROMOTION POLICY ... APPLY DDL",
+			},
 		},
 	}, nil
 }

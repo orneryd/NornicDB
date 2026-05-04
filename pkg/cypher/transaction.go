@@ -394,6 +394,12 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	// IMPORTANT: Also exclude compound MATCH...MERGE...SET queries which are handled by executeCompoundMatchMerge
 	if strings.Contains(normalizedUpper, " SET ") &&
 		!isCreateProcedureCommand(cypher) &&
+		!strings.HasPrefix(upper, "CREATE DECAY PROFILE") &&
+		!strings.HasPrefix(upper, "CREATE PROMOTION PROFILE") &&
+		!strings.HasPrefix(upper, "CREATE PROMOTION POLICY") &&
+		!strings.HasPrefix(upper, "ALTER DECAY PROFILE") &&
+		!strings.HasPrefix(upper, "ALTER PROMOTION PROFILE") &&
+		!strings.HasPrefix(upper, "ALTER PROMOTION POLICY") &&
 		!strings.HasPrefix(upper, "MERGE") &&
 		!strings.Contains(normalizedUpper, "ON CREATE SET") &&
 		!strings.Contains(normalizedUpper, "ON MATCH SET") &&
@@ -409,6 +415,10 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	switch {
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)
+	case strings.HasPrefix(upper, "CREATE DECAY PROFILE"),
+		strings.HasPrefix(upper, "CREATE PROMOTION PROFILE"),
+		strings.HasPrefix(upper, "CREATE PROMOTION POLICY"):
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case strings.HasPrefix(upper, "CREATE CONSTRAINT"),
 		strings.HasPrefix(upper, "CREATE RANGE INDEX"),
 		strings.HasPrefix(upper, "CREATE FULLTEXT INDEX"),
@@ -455,6 +465,10 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	case strings.HasPrefix(upper, "SHOW"):
 		// Handle SHOW commands (indexes, constraints, procedures, etc.)
 		switch {
+		case strings.HasPrefix(upper, "SHOW DECAY PROFILE"),
+			strings.HasPrefix(upper, "SHOW PROMOTION PROFILE"),
+			strings.HasPrefix(upper, "SHOW PROMOTION POLIC"):
+			return e.executeKnowledgePolicyDDL(ctx, cypher)
 		case strings.HasPrefix(upper, "SHOW FULLTEXT INDEX"),
 			strings.HasPrefix(upper, "SHOW RANGE INDEX"),
 			strings.HasPrefix(upper, "SHOW VECTOR INDEX"):
@@ -479,11 +493,20 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 			return nil, fmt.Errorf("unsupported SHOW command in transaction: %s", cypher)
 		}
 	case strings.HasPrefix(upper, "DROP"):
+		if strings.HasPrefix(upper, "DROP DECAY PROFILE") ||
+			strings.HasPrefix(upper, "DROP PROMOTION PROFILE") ||
+			strings.HasPrefix(upper, "DROP PROMOTION POLICY") {
+			return e.executeKnowledgePolicyDDL(ctx, cypher)
+		}
 		if isDropProcedureCommand(cypher) {
 			return e.executeDropProcedure(ctx, cypher)
 		}
 		// DROP INDEX/CONSTRAINT - treat as no-op (NornicDB manages indexes internally)
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+	case strings.HasPrefix(upper, "ALTER DECAY PROFILE"),
+		strings.HasPrefix(upper, "ALTER PROMOTION PROFILE"),
+		strings.HasPrefix(upper, "ALTER PROMOTION POLICY"):
+		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case strings.HasPrefix(upper, "UNWIND"):
 		return e.executeUnwind(ctx, cypher)
 	case strings.HasPrefix(upper, "WITH"):
