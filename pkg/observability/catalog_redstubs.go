@@ -21,7 +21,9 @@
 //
 //	NewCypherMetrics        — Plan 04-03 (SHIPPED — see catalog_cypher.go)
 //	NewStorageMetrics       — Plan 04-04
-//	NewMVCCMetrics          — Plan 04-04 (with RISK-2 PinnedBytes accessor)
+//	NewMVCCMetrics          — Plan 04-04 (SHIPPED — see catalog_mvcc.go;
+//	                          RISK-2 PinnedBytes accessor lives on
+//	                          *BadgerEngine in pkg/storage/badger_mvcc.go)
 //	NewEmbedMetrics         — Plan 04-05
 //	NewSearchMetrics        — Plan 04-05
 //	NewReplicationMetrics   — Plan 04-06 (with RISK-3 PeerConfig.ID + GAP-1
@@ -56,25 +58,7 @@ func NewStorageMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool) *Stor
 	panic(stubPanic)
 }
 
-// ----- MVCC (Plan 04-04) ---------------------------------------------------
-
-// MVCCProbe is the seam between pkg/storage MVCC accessors and the GaugeFunc
-// callbacks Plan 04-04 will register. Stub kept compatible with the
-// catalog_mvcc_test.go mvccProbeStub.
-type MVCCProbe interface {
-	PinnedBytes() int64
-	OldestReaderAgeSeconds() float64
-	ActiveReaders() int64
-}
-
-// MVCCMetrics is the Plan-04-04 stub.
-type MVCCMetrics struct {
-	PressureBand *prometheus.GaugeVec
-}
-
-func NewMVCCMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool, probe MVCCProbe) *MVCCMetrics {
-	panic(stubPanic)
-}
+// ----- MVCC (Plan 04-04) — GREEN bag lives in catalog_mvcc.go -------------
 
 // ----- Embeddings (Plan 04-05) ---------------------------------------------
 
