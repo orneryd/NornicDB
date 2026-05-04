@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -459,6 +461,116 @@ func TestServe_OTLPCollectorDownStaysUp(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/livez status with OTLP down: got %d, want 200 (OBS-11 / Phase-success-5)", resp.StatusCode)
+	}
+}
+
+// Test_TenantLabelsResolved_Override_Precedence asserts at the cmd-package
+// boundary that observability.ResolveTenantLabels enforces D-02a precedence
+// (explicit YAML > autodetect > default). This is a thin cmd-level smoke
+// test on top of pkg/observability's TestResolveTenantLabels_Precedence —
+// it provides extra confidence that cmd/nornicdb is reading the correct
+// pkg/observability symbols (the ones the startup hook in main.go relies
+// on).
+//
+// MET-22 coverage: precedence chain.
+func Test_TenantLabelsResolved_Override_Precedence(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	// Use the production probe; on a non-K8s test host this returns
+	// (false, ReasonServiceHostAbsent). The cases below assert the EXPLICIT
+	// precedence path which short-circuits the probe — independent of host.
+	probe := observability.DefaultK8sProbe()
+
+	cases := []struct {
+		name       string
+		explicit   *bool
+		wantResult bool
+		wantSource string
+	}{
+		{name: "explicit_true_overrides_host_default", explicit: boolPtr(true), wantResult: true, wantSource: observability.ReasonExplicitYAML},
+		{name: "explicit_false_overrides_host_default", explicit: boolPtr(false), wantResult: false, wantSource: observability.ReasonExplicitYAML},
+		// Note: the nil-explicit case yields whatever the host autodetect
+		// returns (on non-K8s CI: ReasonServiceHostAbsent); covered by the
+		// pkg/observability matrix test, not duplicated here.
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved, source := observability.ResolveTenantLabels(tc.explicit, probe)
+			if resolved != tc.wantResult {
+				t.Fatalf("resolved: got %v, want %v", resolved, tc.wantResult)
+			}
+			if source != tc.wantSource {
+				t.Fatalf("source: got %q, want %q", source, tc.wantSource)
+			}
+		})
+	}
+}
+
+// Test_TenantLabelsResolved_LogsViaInjectedSlog exercises the exact helper
+// (observability.ResolveAndLogTenantLabels) that cmd/nornicdb/main.go calls
+// at startup. It captures the slog output via a bytes.Buffer-backed JSON
+// handler, calls the helper with explicit=nil (defers to autodetect on a
+// non-K8s test host → resolved=false, reason=ReasonServiceHostAbsent), and
+// asserts:
+//
+//   - exactly ONE log record with msg="resolved tenant labels enabled" is
+//     emitted (MET-22: logged once at startup).
+//   - all four canonical fields (enabled, reason, service_host_present,
+//     token_file_present) are present and well-typed.
+//
+// LOG-09 compliance: the helper uses the injected logger only — never
+// slog.Default. This test verifies that contract.
+func Test_TenantLabelsResolved_LogsViaInjectedSlog(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// Call the same helper main.go calls. Resolved bool is host-dependent
+	// (false on non-K8s CI, true if the test host happens to be a real
+	// pod) — we don't assert on it. We assert on the LOG SHAPE.
+	_ = observability.ResolveAndLogTenantLabels(nil, logger)
+
+	var found int
+	for _, line := range bytes.Split(bytes.TrimRight(buf.Bytes(), "\n"), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil {
+			t.Fatalf("invalid JSON log line: %s err=%v", line, err)
+		}
+		msg, _ := rec["msg"].(string)
+		if msg != "resolved tenant labels enabled" {
+			continue
+		}
+		found++
+		// All four canonical fields must be present.
+		if _, ok := rec["enabled"]; !ok {
+			t.Errorf("log record missing 'enabled' field: %v", rec)
+		}
+		if _, ok := rec["reason"]; !ok {
+			t.Errorf("log record missing 'reason' field: %v", rec)
+		}
+		if _, ok := rec["service_host_present"]; !ok {
+			t.Errorf("log record missing 'service_host_present' field: %v", rec)
+		}
+		if _, ok := rec["token_file_present"]; !ok {
+			t.Errorf("log record missing 'token_file_present' field: %v", rec)
+		}
+		// Type checks: reason is string, enabled is bool, *_present are bools.
+		if _, ok := rec["reason"].(string); !ok {
+			t.Errorf("'reason' field must be string, got %T", rec["reason"])
+		}
+		if _, ok := rec["enabled"].(bool); !ok {
+			t.Errorf("'enabled' field must be bool, got %T", rec["enabled"])
+		}
+		if _, ok := rec["service_host_present"].(bool); !ok {
+			t.Errorf("'service_host_present' field must be bool, got %T", rec["service_host_present"])
+		}
+		if _, ok := rec["token_file_present"].(bool); !ok {
+			t.Errorf("'token_file_present' field must be bool, got %T", rec["token_file_present"])
+		}
+	}
+	if found != 1 {
+		t.Fatalf("MET-22: resolution log line must be emitted exactly once, got %d (buf=%s)", found, buf.String())
 	}
 }
 
