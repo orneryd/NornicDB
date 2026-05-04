@@ -1247,6 +1247,17 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
 					obs.Observe(context.Background(), time.Since(start).Seconds())
 				}
 				ms.bag.MessagesTotal.WithLabelValues(op, result).Inc()
+
+				// Plan 04-02 D-11c packstream decode-error reason
+				// classification: when a handler returned an error
+				// that classifies as a packstream decode failure,
+				// increment packstream_decode_errors_total{reason}
+				// under the closed enum. observePackstreamDecodeError
+				// is a no-op for non-decode errors.
+				if retErr != nil && retErr != io.EOF {
+					_ = s.server.observePackstreamDecodeError(retErr)
+				}
+
 				if rec != nil {
 					// Re-panic AFTER observation so the outer
 					// connection-handler panic-recover (Plan 04-02
