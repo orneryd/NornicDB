@@ -65,18 +65,4 @@ func NewReplicationMetrics(reg *prometheus.Registry, mode string, tenantLabelsEn
 	panic(stubPanic)
 }
 
-// ----- Auth (Plan 04-06) ---------------------------------------------------
-
-// AuthMetrics is the Plan-04-06 stub (GAP-6 / MET-15).
-//
-// Plan 04-02's pkg/bolt/server.go HELLO completion site references this
-// type via `*observability.AuthMetrics` for its forward-compat nil-check
-// (the auth attempt counter only fires when the bag is non-nil; Plan 04-06
-// constructs the bag and wires it in via setter).
-type AuthMetrics struct {
-	AuthAttempts *prometheus.CounterVec
-}
-
-func NewAuthMetrics(reg *prometheus.Registry) *AuthMetrics {
-	panic(stubPanic)
-}
+// ----- Auth (Plan 04-06) — GREEN bag lives in catalog_auth.go ---------------
