@@ -26,10 +26,21 @@ type MetricsConfig struct {
 	Enabled bool
 	// Listen is the bind address for the telemetry mux. Default ":9090".
 	Listen string
-	// TenantLabelsEnabled controls whether per-tenant labels are attached to
-	// metric series. Default false (D-02c). MET-22 K8s autodetect ships in
-	// Phase 5; M1 does not pseudonymize tenant labels.
+	// TenantLabelsEnabled is the resolved per-process tenant-labels switch.
+	// Phase 5 startup hook (cmd/nornicdb/main.go) writes this from the
+	// explicit YAML value (TenantLabelsExplicit) or K8s autodetect
+	// (DefaultK8sProbe + ResolveTenantLabels) BEFORE any Phase 4 bag
+	// constructor reads it. Bag constructors continue to read this bool
+	// directly per Phase 4 D-08 plumbing — do NOT bypass them by reading
+	// TenantLabelsExplicit. Default false (D-02c) until startup hook runs.
 	TenantLabelsEnabled bool
+	// TenantLabelsExplicit is the operator's YAML intent before defaulting.
+	// nil = field omitted in YAML; non-nil = operator explicitly set true
+	// or false. Phase 5 ResolveTenantLabels reads this to enforce
+	// precedence (explicit YAML > K8s autodetect > default false).
+	// R-02: this sentinel is the smallest blast-radius change to allow
+	// YAML "explicit false" to win over autodetect "true on K8s".
+	TenantLabelsExplicit *bool
 }
 
 // TracingConfig governs OTLP/gRPC trace egress.
@@ -65,9 +76,10 @@ type PprofConfig struct {
 func DefaultConfig() ObservabilityConfig {
 	return ObservabilityConfig{
 		Metrics: MetricsConfig{
-			Enabled:             true,
-			Listen:              ":9090",
-			TenantLabelsEnabled: false,
+			Enabled:              true,
+			Listen:               ":9090",
+			TenantLabelsEnabled:  false,
+			TenantLabelsExplicit: nil, // R-02: nil sentinel = "no explicit operator intent".
 		},
 		Tracing: TracingConfig{
 			Enabled:  false,

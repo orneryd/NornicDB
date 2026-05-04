@@ -3160,9 +3160,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Observability.Metrics.Listen != "" {
 		config.Observability.Metrics.Listen = yamlCfg.Observability.Metrics.Listen
 	}
-	if yamlCfg.Observability.Metrics.TenantLabelsEnabled != nil {
-		config.Observability.Metrics.TenantLabelsEnabled = *yamlCfg.Observability.Metrics.TenantLabelsEnabled
-	}
+	// Phase 5 R-02: defer dereference of *bool. The Phase 5 startup hook in
+	// cmd/nornicdb/main.go calls ResolveTenantLabels(TenantLabelsExplicit, ...)
+	// which enforces the precedence chain (explicit > autodetect > default).
+	// Storing the *bool sentinel — instead of dereferencing into the resolved
+	// bool here — allows YAML "explicit false" to win over autodetect on K8s.
+	config.Observability.Metrics.TenantLabelsExplicit = yamlCfg.Observability.Metrics.TenantLabelsEnabled
 	if yamlCfg.Observability.Tracing.Enabled != nil {
 		config.Observability.Tracing.Enabled = *yamlCfg.Observability.Tracing.Enabled
 	}
