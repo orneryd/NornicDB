@@ -89,23 +89,37 @@ func TestResolveTenantLabels_Precedence(t *testing.T) {
 }
 
 // stubProbe builds a k8sProbe whose Detect returns (enabled, reason).
-// Implementation strategy: for enabled=true case, return env="x" + token-size>0;
-// for enabled=false case, return env="" (always yields ReasonServiceHostAbsent).
-// Wave-0 leaves a TODO; Plan 05-03 implements the helper alongside Detect.
+// For enabled=true, both signals are present. For enabled=false, the probe
+// is wired to produce the specific failure reason so future test rows that
+// exercise non-ReasonServiceHostAbsent disabled paths yield the correct result.
 func stubProbe(enabled bool, reason string) k8sProbe {
-	_ = reason
 	if enabled {
 		return k8sProbe{
 			Getenv:   func(string) string { return "10.0.0.1" },
 			StatFile: func(string) (os.FileInfo, error) { return fakeFI{size: 1024}, nil },
 		}
 	}
-	// For disabled cases we just return env-absent — ResolveTenantLabels
-	// tests only assert the reason-passthrough behavior for non-explicit
-	// rows; matching the exact reason is Plan 05-03's job once Detect lands.
-	return k8sProbe{
-		Getenv:   func(string) string { return "" },
-		StatFile: func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+	switch reason {
+	case ReasonTokenFileAbsent:
+		return k8sProbe{
+			Getenv:   func(string) string { return "10.0.0.1" },
+			StatFile: func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		}
+	case ReasonTokenFileEmpty:
+		return k8sProbe{
+			Getenv:   func(string) string { return "10.0.0.1" },
+			StatFile: func(string) (os.FileInfo, error) { return fakeFI{size: 0}, nil },
+		}
+	case ReasonTokenStatError:
+		return k8sProbe{
+			Getenv:   func(string) string { return "10.0.0.1" },
+			StatFile: func(string) (os.FileInfo, error) { return nil, errors.New("permission denied") },
+		}
+	default: // ReasonServiceHostAbsent or unknown
+		return k8sProbe{
+			Getenv:   func(string) string { return "" },
+			StatFile: func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		}
 	}
 }
 
