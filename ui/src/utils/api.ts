@@ -376,6 +376,39 @@ interface DiscoveryResponse {
   default_database?: string; // NornicDB extension
 }
 
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  const out = asString(value);
+  return out ? out : undefined;
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const strings = value.filter((item): item is string => typeof item === "string");
+  return strings.length > 0 ? strings : undefined;
+}
+
+function escapeCypherStringLiteral(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 class NornicDBClient {
   private defaultDatabase: string | null = null;
   private static readonly TX_COMMIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -730,6 +763,12 @@ class NornicDBClient {
       }
       return out as T;
     });
+  }
+
+  private assertCypherSuccess(resp: CypherResponse, fallback: string): void {
+    if (resp.errors && resp.errors.length > 0) {
+      throw new Error(resp.errors.map((err) => err.message).join("; ") || fallback);
+    }
   }
 
   async listDatabases(): Promise<DatabaseInfo[]> {
@@ -1394,27 +1433,96 @@ class NornicDBClient {
   }
 
   async getKnowledgePolicyProfiles(database?: string): Promise<KPProfilesResponse> {
-    const params = database ? `?database=${encodeURIComponent(database)}` : "";
-    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/profiles${params}`), {
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const message = await this.parseErrorMessage(res, `Failed to load profiles: ${res.status}`);
-      throw new Error(message);
+    const dbName = await this.getResolvedDatabaseName(database);
+    const [profilesResp, infoResp] = await Promise.all([
+      this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.profiles()"),
+      this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.info()"),
+    ]);
+    this.assertCypherSuccess(profilesResp, "Failed to load knowledge policy profiles");
+    this.assertCypherSuccess(infoResp, "Failed to load knowledge policy info");
+
+    const rows = this.parseCypherRows<Record<string, unknown>>(profilesResp);
+    const infoRows = this.parseCypherRows<Record<string, unknown>>(infoResp);
+    const bundles: DecayProfileBundle[] = [];
+    const bindings: DecayProfileBinding[] = [];
+
+    for (const row of rows) {
+      const kind = asString(row.kind);
+      if (kind === "bundle") {
+        bundles.push({
+          Name: asString(row.Name),
+          HalfLifeSeconds: asNumber(row.HalfLifeSeconds),
+          VisibilityThreshold: asNumber(row.VisibilityThreshold),
+          ScoreFloor: asNumber(row.ScoreFloor),
+          Function: asString(row.Function),
+          Scope: asString(row.Scope),
+          DecayEnabled: asBoolean(row.DecayEnabled),
+          ScoreFrom: asString(row.ScoreFrom),
+          ScoreFromProperty: asOptionalString(row.ScoreFromProperty),
+          Enabled: asBoolean(row.Enabled),
+        });
+        continue;
+      }
+      if (kind === "binding") {
+        bindings.push({
+          Name: asString(row.Name),
+          TargetLabels: asStringArray(row.TargetLabels),
+          TargetEdgeType: asOptionalString(row.TargetEdgeType),
+          IsWildcard: asBoolean(row.IsWildcard),
+          IsEdge: asBoolean(row.IsEdge),
+          ProfileRef: asOptionalString(row.ProfileRef),
+          NoDecay: asBoolean(row.NoDecay),
+          VisibilityThreshold: asOptionalNumber(row.VisibilityThreshold),
+          Order: asNumber(row.Order),
+        });
+      }
     }
-    return res.json();
+
+    return {
+      bundles,
+      bindings,
+      decay_enabled: asBoolean(infoRows[0]?.enabled),
+    };
   }
 
   async getKnowledgePolicyPolicies(database?: string): Promise<KPPoliciesResponse> {
-    const params = database ? `?database=${encodeURIComponent(database)}` : "";
-    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/policies${params}`), {
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const message = await this.parseErrorMessage(res, `Failed to load policies: ${res.status}`);
-      throw new Error(message);
+    const dbName = await this.getResolvedDatabaseName(database);
+    const resp = await this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.policies()");
+    this.assertCypherSuccess(resp, "Failed to load knowledge policy policies");
+
+    const rows = this.parseCypherRows<Record<string, unknown>>(resp);
+    const promotion_profiles: PromotionProfileDef[] = [];
+    const promotion_policies: PromotionPolicyDef[] = [];
+
+    for (const row of rows) {
+      const kind = asString(row.kind);
+      if (kind === "profile") {
+        promotion_profiles.push({
+          Name: asString(row.Name),
+          Scope: asString(row.Scope),
+          Multiplier: asNumber(row.Multiplier),
+          ScoreFloor: asNumber(row.ScoreFloor),
+          ScoreCap: asNumber(row.ScoreCap),
+          Enabled: asBoolean(row.Enabled),
+        });
+        continue;
+      }
+      if (kind === "policy") {
+        promotion_policies.push({
+          Name: asString(row.Name),
+          TargetLabels: asStringArray(row.TargetLabels),
+          TargetEdgeType: asOptionalString(row.TargetEdgeType),
+          IsWildcard: asBoolean(row.IsWildcard),
+          IsEdge: asBoolean(row.IsEdge),
+          Enabled: asBoolean(row.Enabled),
+        });
+      }
     }
-    return res.json();
+
+    return {
+      promotion_profiles,
+      promotion_policies,
+    };
   }
 
   async resolveKnowledgePolicy(params: {
@@ -1423,31 +1531,59 @@ class NornicDBClient {
     edgeType?: string;
     database?: string;
   }): Promise<ScoringResolution> {
-    const searchParams = new URLSearchParams();
-    if (params.entityId) searchParams.set("entityId", params.entityId);
-    if (params.labels?.length) searchParams.set("labels", params.labels.join(","));
-    if (params.edgeType) searchParams.set("edgeType", params.edgeType);
-    if (params.database) searchParams.set("database", params.database);
-    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/resolve?${searchParams}`), {
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const message = await this.parseErrorMessage(res, `Failed to resolve: ${res.status}`);
-      throw new Error(message);
-    }
-    return res.json();
+    const dbName = await this.getResolvedDatabaseName(params.database);
+    const statement = `CALL nornicdb.knowledgepolicy.resolve('${escapeCypherStringLiteral(
+      params.entityId ?? "",
+    )}', '${escapeCypherStringLiteral((params.labels ?? []).join(","))}', '${escapeCypherStringLiteral(
+      params.edgeType ?? "",
+    )}')`;
+    const resp = await this.executeCypherOnDatabase(dbName, statement);
+    this.assertCypherSuccess(resp, "Failed to resolve knowledge policy");
+
+    const row = this.parseCypherRows<Record<string, unknown>>(resp)[0] ?? {};
+    return {
+      TargetID: asString(row.TargetID),
+      TargetScope: asString(row.TargetScope),
+      ResolvedDecayProfileID: asString(row.ResolvedDecayProfileID),
+      ResolvedScoreFrom: asString(row.ResolvedScoreFrom),
+      ResolutionSourceChain: asStringArray(row.ResolutionSourceChain) ?? [],
+      AppliedDecayProfileNames: asStringArray(row.AppliedDecayProfileNames) ?? [],
+      AppliedPromotionPolicyName: asString(row.AppliedPromotionPolicyName),
+      AppliedPromotionProfileName: asString(row.AppliedPromotionProfileName),
+      EffectiveRate: asNumber(row.EffectiveRate),
+      EffectiveThreshold: asNumber(row.EffectiveThreshold),
+      EffectiveMultiplier: asNumber(row.EffectiveMultiplier),
+      BaseScore: asNumber(row.BaseScore),
+      FinalScore: asNumber(row.FinalScore),
+      NoDecay: asBoolean(row.NoDecay),
+      SuppressionEligible: asBoolean(row.SuppressionEligible),
+      Explanation: asString(row.Explanation),
+    };
   }
 
   async getDeindexStatus(database?: string): Promise<KPDeindexStatusResponse> {
-    const params = database ? `?database=${encodeURIComponent(database)}` : "";
-    const res = await fetch(joinBasePath(BASE_PATH, `/admin/knowledge-policies/deindex/status${params}`), {
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const message = await this.parseErrorMessage(res, `Failed to load deindex status: ${res.status}`);
-      throw new Error(message);
-    }
-    return res.json();
+    const dbName = await this.getResolvedDatabaseName(database);
+    const resp = await this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.deindexStatus()");
+    this.assertCypherSuccess(resp, "Failed to load deindex status");
+
+    const rows = this.parseCypherRows<Record<string, unknown>>(resp);
+    const first = rows[0] ?? {};
+    const items = rows
+      .filter((row) => asString(row.workItemId) !== "")
+      .map((row) => ({
+        workItemId: asString(row.workItemId),
+        targetId: asString(row.targetId),
+        targetScope: asString(row.targetScope),
+        enqueuedAt: asNumber(row.enqueuedAt),
+        status: asString(row.status),
+      }));
+
+    return {
+      pending_count: asNumber(first.pending_count),
+      items,
+      supported: first.supported !== false,
+      message: asOptionalString(first.message),
+    };
   }
 }
 
