@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // RaftState represents the current state of a Raft node.
@@ -139,6 +141,17 @@ type RaftReplicator struct {
 
 	// Random source for election timeouts
 	rand *rand.Rand
+
+	// metrics is the Plan-04-06 observation seam (D-15a per-event role
+	// gauge updates + per-peer lag/RTT/last_contact). nil-safe — production
+	// code injects via SetReplicatorMetrics; existing tests work unchanged.
+	metrics metricsHolder
+}
+
+// SetReplicatorMetrics implements MetricsAware — Plan-04-06 D-15a
+// observation seam. Idempotent. Calling with nil disables observation.
+func (r *RaftReplicator) SetReplicatorMetrics(bag *observability.ReplicationMetrics, tracker *PeerTracker) {
+	r.metrics.set(newReplicatorMetrics(bag, tracker))
 }
 
 // applyFuture represents a pending apply operation.
@@ -280,6 +293,8 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 		r.currentTerm = 1
 		r.mu.Unlock()
 		log.Printf("[Raft %s] Bootstrap: became leader (term 1)", r.config.NodeID)
+		// Plan 04-06-03 D-15a: observe role transition at the same log site.
+		r.metrics.get().observeRoleTransition("leader", 1, 0, 0)
 	}
 
 	// Start listening for peer connections if transport available
@@ -439,6 +454,13 @@ func (r *RaftReplicator) requestVoteFromPeer(ctx context.Context, peer PeerConfi
 		r.leaderID = ""
 		r.leaderAddr = ""
 		log.Printf("[Raft %s] Stepping down: discovered higher term %d from %s", r.config.NodeID, resp.Term, peer.ID)
+		// Plan 04-06-03 D-15a: observe role transition. commitIndex /
+		// lastApplied are protected by logMu (separate from r.mu) — read
+		// under RLock to satisfy -race.
+		r.logMu.RLock()
+		ci, ai := r.commitIndex, r.lastApplied
+		r.logMu.RUnlock()
+		r.metrics.get().observeRoleTransition("follower", resp.Term, ci, ai)
 		return
 	}
 
@@ -509,6 +531,15 @@ func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
 	r.mu.Unlock()
 
 	log.Printf("[Raft %s] Became leader for term %d", r.config.NodeID, term)
+
+	// Plan 04-06-03 D-15a: observe role transition at the same log site.
+	// commit/apply indexes read-locked outside r.mu to avoid double-locking;
+	// stale by a few µs is acceptable for the gauge.
+	r.logMu.RLock()
+	commitIdx := r.commitIndex
+	applyIdx := r.lastApplied
+	r.logMu.RUnlock()
+	r.metrics.get().observeRoleTransition("leader", term, commitIdx, applyIdx)
 
 	// Start heartbeat routine
 	r.wg.Add(1)
@@ -659,6 +690,13 @@ func (r *RaftReplicator) handleAppendEntriesResponse(peerID string, term uint64,
 		r.leaderAddr = ""
 		r.votedFor = ""
 		log.Printf("[Raft %s] Stepping down: discovered higher term %d", r.config.NodeID, resp.Term)
+		// Plan 04-06-03 D-15a: observe role transition. commitIndex and
+		// lastApplied are guarded by logMu, not r.mu — read-lock them
+		// here. Slight staleness is acceptable for the gauge.
+		r.logMu.RLock()
+		ci, ai := r.commitIndex, r.lastApplied
+		r.logMu.RUnlock()
+		r.metrics.get().observeRoleTransition("follower", resp.Term, ci, ai)
 		return
 	}
 
@@ -1215,6 +1253,17 @@ func (r *RaftReplicator) HandleForwardApply(cmd *Command, timeout time.Duration)
 // Apply applies a command through Raft consensus.
 // If this node is not the leader, it forwards the command to the leader automatically.
 func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	// Plan 04-06-03 D-15a: observe apply latency at the function-exit
+	// chokepoint via the pre-bound MET-25 observer (zero alloc when ctx
+	// has no sampled span). Wrapped at the outer entry so retries /
+	// forwards / queue waits all roll up into the single histogram.
+	startApply := time.Now()
+	defer func() {
+		if m := r.metrics.get(); m != nil {
+			m.observeApplyDuration(context.Background(), time.Since(startApply).Seconds())
+		}
+	}()
+
 	if r.closed.Load() {
 		return ErrClosed
 	}
