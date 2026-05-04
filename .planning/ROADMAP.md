@@ -26,7 +26,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 - [ ] **Phase 1: Observability Foundation Skeleton** — `pkg/observability` package, listeners, lifecycle supervision, shutdown, config block
 - [x] **Phase 2: Structured Logging Migration** — slog handler init, 192-call-site migration, PII redaction, slow-query log (✅ 2026-05-02, commits 4201a24..021a983; ADR §4.1 row 2: `4201a24..021a983 | 2026-05-02 | asanabria`)
 - [x] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation (✅ 2026-05-02, commits 1ba8f01..<commit-6a-SHA>; ADR §4.1 row 3: `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria`)
-- [ ] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime
+- [x] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime (✅ 2026-05-03, commits 523c23d..<final-summary-sha>; ADR §4.1 row 4: `523c23d..<final-summary-sha> | 2026-05-03 | asanabria`)
 - [ ] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test
 - [ ] **Phase 6: Tracing SDK & Core Spans** — OTel SDK init, samplers (incl. `parent_capped`), HTTP/Cypher/Storage spans, BSP self-instrumentation
 - [ ] **Phase 7: Replication Codec Versioning** — `codec_version` field prerequisite + rolling-upgrade test (BEFORE optional `traceparent`)
@@ -119,7 +119,14 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
   3. Operator queries `nornicdb_storage_index_rebuild_total{index=...}` and sees only enum index names — no free-form values; `nornicdb_storage_bytes{kind=...}` similarly bounded
   4. Operator queries `nornicdb_cypher_slow_query_threshold_seconds` and gets the value in seconds; the legacy ms variant is not yet removed (Phase 13 cutover)
   5. Hot-path benchmark (`go test -bench Hot -benchmem ./pkg/observability/...`) shows ≤ 2 heap allocs per observation call (verified via `testing.AllocsPerRun`)
-**Plans**: TBD
+**Plans**:
+  - [x] 04-01-PLAN.md — Wave-0 RED scaffolding (10 catalog stubs) + Cache+Runtime GREEN + build-tag matrix (✅ 2026-05-03, commits 523c23d..d8bc55c)
+  - [x] 04-02-PLAN.md — HTTP + Bolt subsystem catalogs (MET-06, MET-07); instrumentedMux chokepoint (D-03) (✅ 2026-05-03)
+  - [x] 04-03-PLAN.md — Cypher subsystem catalog (MET-08, MET-09 op_type closed enum, MET-26 slow_query_threshold GaugeFunc) (✅ 2026-05-03)
+  - [x] 04-04-PLAN.md — Storage + MVCC catalogs (MET-10, MET-11; D-07 30s sweeper; D-13c index_rebuild enum; D-14 pressure_band) (✅ 2026-05-03)
+  - [x] 04-05-PLAN.md — Embeddings + Search catalogs (MET-12, MET-13; D-06 Backend()+build-tag matrix; D-09 FFI panic counter) (✅ 2026-05-03)
+  - [x] 04-06-PLAN.md — Replication + Auth catalogs (MET-14 incl. GAP-1 last_contact_seconds; MET-15 GAP-6 auth_attempts_total; D-05a/b) (✅ 2026-05-03)
+  - [x] 04-07-PLAN.md — Phase 4 SUMMARY + ADR §4.1 row 4 + cumulative bench/coverage/lint-cardinality/audit-untouched/race-stability evidence (✅ 2026-05-03)
 
 ### Phase 5: Legacy Translation Layer & Tenant Flag
 **Goal**: Existing customer scrapers on `:7474/metrics` continue to receive the original 12 metric names with their old labels — fed from the new `pkg/observability` registry via a translation layer — while a tenant-label kill switch with K8s auto-detect prevents tenant enumeration on `:9090`.

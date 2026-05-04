@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 04
+current_phase: 05
 status: planned
-last_updated: "2026-05-02T20:30:00.000Z"
+last_updated: "2026-05-03T23:50:00.000Z"
 progress:
   total_phases: 13
-  completed_phases: 4
-  total_plans: 25
-  completed_plans: 19
-  percent: 76
+  completed_phases: 5
+  total_plans: 26
+  completed_plans: 26
+  percent: 100
 ---
 
 # STATE: NornicDB Milestone 1 (Observability)
 
-**Last updated:** 2026-05-02 (post-Phase-3 plan verification)
+**Last updated:** 2026-05-03 (post-Phase-4 phase exit)
 
 ## Project Reference
 
@@ -30,15 +30,15 @@ progress:
 
 ## Current Position
 
-Phase: 04 (subsystem-metric-catalog) — Ready to plan
+Phase: 05 (legacy-translation-layer-tenant-flag) — Ready to plan; Phase 4 ✅ CLOSED
 Plan: 0 of TBD
 
 - **Milestone:** M1 — Best-in-Class Observability
-- **Current phase:** 03
+- **Current phase:** 05 (next)
 - **Phase 0 audit trail:** ADR-0001 Status = `**Accepted**`, Sign-off date = 2026-04-30. §5 has all four roles signed (orneryd × 2 + linuxdynasty × 2, all dated 2026-04-30, all referencing PR #126). §4.1 row 0 = `e97ed2b..8e384cf | 2026-04-30 | orneryd` — the GOV-03 audit-trail format is proven self-referentially.
-- **Status:** Executing Phase 03
+- **Status:** Phase 4 closed; awaiting Phase 5 planning
 - **PR strategy:** Single PR (#126) carries all 13 phases. ADR §4.1 audit trail uses commit ranges on `otel`. GitHub may auto-dismiss orneryd's review on subsequent commits — that's expected; the §5 text in the ADR is the durable audit trail.
-- **Progress:** [█████████░] 92%
+- **Progress:** [████░░░░░░] 38% (5 of 13 phases complete)
 
 ## Performance Metrics (Universal, KD-12)
 
@@ -103,8 +103,11 @@ These hard gates are enforced at every phase exit:
 - [⚠] Execute Plan 01-05 — quality gate ran 2026-04-30; PERF-05 92.1% PASS, PERF-06 228 LOC PASS, OBS-01 boundary clean — but **race-stability sub-gate FAILS** (TestFakeComponent_StartedBefore flakes 40% under full -race -count=10). SUMMARY `.planning/phases/01-observability-foundation-skeleton/01-05-SUMMARY.md` records measurement; phase sign-off blocked.
 - [ ] Plan 01-06 (proposed) — pkg/lifecycle/testenv.go atomicity fix (reorder Start/Shutdown counter operations); ~4-8 LOC diff; re-run race gate 5/5 green to unblock Phase 1.
 - [ ] Re-run Plan 01-05 gates after Plan 01-06 lands; flip race row to ✅ in SUMMARY; mark PERF-05 / PERF-06 GREEN in REQUIREMENTS.md.
-- [ ] At Phase 1 exit, fill §4.1 row 1 with the Phase 1 commit range using the same two-commit pattern.
-- [ ] Repeat for Phases 2–12. At M1 completion, do final orneryd review + squash-merge of PR #126 to `main`.
+- [x] Phase 1 §4.1 row 1 filled — `fa272fc..3ad44d9 | 2026-04-30 | asanabria`
+- [x] Phase 2 §4.1 row 2 filled — `4201a24..021a983 | 2026-05-02 | asanabria`
+- [x] Phase 3 §4.1 row 3 filled — `1ba8f01..a62d30a | 2026-05-02 | asanabria`
+- [x] Phase 4 §4.1 row 4 filled — `523c23d..<final-summary-sha> | 2026-05-03 | asanabria`
+- [ ] Repeat for Phases 5–12. At M1 completion, do final orneryd review + squash-merge of PR #126 to `main`.
 - [ ] Re-add `.planning/` to `.gitignore` at any convenient point (the gitignore rule was on a dropped commit during the rebase; `.planning/` is currently untracked-but-not-ignored locally).
 - [ ] Plan 02 Task 3 (`gh pr merge`) — formally pending until M1 completes. Marked `DEFERRED-TO-M1-COMPLETION` in Plan 02.
 - [x] Execute Plan 02-01 — pkg/observability slog stack + cmd/nornicdb runServe bootstrap (2026-05-01, commits 4201a24..a42054a + meta 2bf12c3)
@@ -124,7 +127,16 @@ These hard gates are enforced at every phase exit:
 - [x] Execute Plan 03-05 — `make lint-cardinality` POSIX-portable Makefile gate (MET-04 Layer 2) (2026-05-02, commit 5d6a243)
 - [x] Execute Plan 03-06 — Phase 3 SUMMARY (commit 6a) + ADR-0001 §4.1 row 3 audit-trail entry (commit 6b) using two-commit sign-off pattern (2026-05-02)
 - [x] **Phase 3 ✅ CLOSED** — All 10 phase requirements GREEN (MET-01..05, MET-23, MET-24, MET-25, TEST-01, TEST-02); ROADMAP SC #1-5 GREEN; PERF-05 92.2% PASS; PERF-06 max LOC 512 PASS; race 5×10 PASS; pkg/audit untouched across 935389c..HEAD; ADR §4.1 row 3 records `1ba8f01..<commit-6a> | 2026-05-02 | asanabria` (2026-05-02).
-- [ ] Plan Phase 4 (`/gsd-plan-phase 4`) — Subsystem Metric Catalog. ~60 metric families across HTTP/Bolt/Cypher/Storage/MVCC/Embed/Search/Replication/Auth/Cache+Runtime via Phase 3's helpers and exemplar wrappers; lint-cardinality gate enforces helper-only registration.
+- [x] Plan Phase 4 (`/gsd-plan-phase 4`) — Subsystem Metric Catalog. 7 plans authored (04-01..04-07); CONTEXT/RESEARCH/PATTERNS/VALIDATION + DISCUSSION-LOG retained.
+- [x] Execute Plan 04-01 — Wave-0 RED scaffolding for 10 catalog stubs + Cache+Runtime GREEN + build-tag matrix (2026-05-03, commits 523c23d..d8bc55c)
+- [x] Execute Plan 04-02 — HTTP + Bolt subsystem catalogs (MET-06 / MET-07); instrumentedMux chokepoint (D-03) (2026-05-03, commits ...8bb989e)
+- [x] Execute Plan 04-03 — Cypher subsystem catalog (MET-08, MET-09 op_type closed enum, MET-26 slow_query_threshold GaugeFunc) (2026-05-03, commits ...246e229)
+- [x] Execute Plan 04-04 — Storage + MVCC catalogs (MET-10/11; D-07 30s sweeper; D-13c index_rebuild enum; D-14 pressure_band enum; RISK-2 MVCC accessors) (2026-05-03, commits ...04ea5b7)
+- [x] Execute Plan 04-05 — Embeddings + Search catalogs (MET-12/13; D-06 Backend()+build-tag matrix; D-09 FFI panic counter via recoverFFI wrapper) (2026-05-03, commits ...70746a2)
+- [x] Execute Plan 04-06 — Replication + Auth catalogs (MET-14 incl. GAP-1 last_contact_seconds; MET-15 GAP-6 auth_attempts_total; D-05a mode-aware ceiling; D-05b stale-peer GC) (2026-05-03, commits ...ad5f88a)
+- [x] **Phase 4 ✅ CLOSED** — All 10 subsystem catalogs registered (62 NornicDB families enumerated; ~70 with Go/process collectors); D-05a mode-aware ceiling; D-05b stale-peer GC; PERF-05 92.4% PASS; PERF-06 max LOC 512 PASS; pkg/audit untouched; lint-cardinality falsifiability proven; ADR §4.1 row 4 records `523c23d..<final-summary-sha> | 2026-05-03 | asanabria` (2026-05-03).
+- [ ] Pre-existing race amplification under -count=10 matrix touches 50 NornicDB files across pkg/{cypher,storage,bolt,server,replication,search}. NOT introduced by Phase 4. Three known carry-forward races (Plan 02-04/02-05 deferred-items.md). One Phase-4-EXPOSED race (TestBytesMetricsSweeper_RaceSafe + b.opDur* deferred-arg-capture pattern) — production AttachMetrics is single-writer-then-many-readers, race-free at startup; mitigation candidate noted in `.planning/phases/04-subsystem-metric-catalog/deferred-items.md` for Phase 12 hardening.
+- [ ] Plan Phase 5 (`/gsd-plan-phase 5`) — Legacy Translation Layer & Tenant Flag. Consumes D-08 cfg.Metrics.TenantLabelsEnabled bool plumbing already wired through every tenant-tagged bag; adds K8s autodetect (KUBERNETES_SERVICE_HOST + ServiceAccount token check) per MET-22.
 
 ### Active Blockers
 

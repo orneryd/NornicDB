@@ -41,18 +41,18 @@
 
 **Subsystem catalogs** (each REQ delivers the full set of metric families for that subsystem)
 
-- [ ] **MET-06**: HTTP edge exposes 5 metric families: `requests_total{method,path_template,status_class,database}`, `request_duration_seconds`, `in_flight_requests`, `request_body_bytes`, `response_body_bytes`
-- [ ] **MET-07**: Bolt protocol exposes 6 metric families: `connections_active`, `connections_total{result}`, `session_duration_seconds`, `messages_total{op,result}`, `message_duration_seconds{op}`, `packstream_decode_errors_total{reason}`
-- [ ] **MET-08**: Cypher exposes 11 metric families per ADR-0001 §2.3 (queries_total, query_duration_seconds, planner_duration_seconds, planner_cache_hits/misses_total, planner_cache_size, rows_returned, active_transactions, transaction_conflicts_total, slow_queries_total, slow_query_threshold_seconds)
-- [ ] **MET-09**: Cypher `op_type` label values come from the planner output, never from query text (read|write|schema|admin|fabric); `admin` queries that bypass the planner are classified at dispatch
-- [ ] **MET-10**: Storage exposes 8 metric families: `nodes_total`, `edges_total`, `bytes{kind=nodes|edges|index|wal|search}`, `op_duration_seconds{op=get|put|delete|scan}`, `compactions_total{level,result}`, `compaction_duration_seconds{level}`, `wal_lag_bytes`, `index_rebuild_total{database,index,result}` (index label values are an enum, not free-form)
-- [ ] **MET-11**: MVCC exposes 4 metric families: `pressure_band{database,band=normal|warn|high|critical}`, `pinned_bytes`, `oldest_reader_age_seconds`, `active_readers`
-- [ ] **MET-12**: Embeddings expose 6 metric families: `queue_depth`, `processed_total{provider,model,result,mode}` (where `mode` is `gpu|cpu|cuda|metal|vulkan`), `duration_seconds` (long-tail buckets), `cache_hits_total`, `cache_misses_total`, `worker_running`; plus an FFI panic counter
-- [ ] **MET-13**: Search exposes 4 metric families: `requests_total{database,mode,result}`, `duration_seconds{database,mode,stage=embed|index|fuse}`, `candidates`, `index_size_bytes{kind=hnsw|bm25}`
-- [ ] **MET-14**: Replication exposes 10 metric families: `role`, `term`, `commit_index`, `apply_index`, `lag_bytes{peer}`, `lag_entries{peer}`, `apply_duration_seconds`, `rtt_seconds{peer}`, `leader_changes_total`, **`last_contact_seconds{peer}`** (GAP-1)
-- [ ] **MET-15**: A new Auth subsystem exposes **`auth_attempts_total{result,protocol}`** (GAP-6)
-- [ ] **MET-16**: Cache and runtime expose 6 metric families: `cache_hits_total{cache}`, `cache_misses_total{cache}`, `cache_size_bytes{cache}`, `cache_evictions_total{cache,reason}`, `process_uptime_seconds`, `build_info{version,commit,go_version,backend}`
-- [ ] **MET-17**: Go runtime collector (`collectors.NewGoCollector`) and process collector (`collectors.NewProcessCollector`) are registered alongside NornicDB metrics
+- [x] **MET-06** ✅ (2026-05-03, Phase 4): HTTP edge exposes 5 metric families: `requests_total{method,path_template,status_class,database}`, `request_duration_seconds`, `in_flight_requests`, `request_body_bytes`, `response_body_bytes`
+- [x] **MET-07** ✅ (2026-05-03, Phase 4): Bolt protocol exposes 6 metric families: `connections_active`, `connections_total{result}`, `session_duration_seconds`, `messages_total{op,result}`, `message_duration_seconds{op}`, `packstream_decode_errors_total{reason}`
+- [x] **MET-08** ✅ (2026-05-03, Phase 4): Cypher exposes 11 metric families per ADR-0001 §2.3 (queries_total, query_duration_seconds, planner_duration_seconds, planner_cache_hits/misses_total, planner_cache_size, rows_returned, active_transactions, transaction_conflicts_total, slow_queries_total, slow_query_threshold_seconds)
+- [x] **MET-09** ✅ (2026-05-03, Phase 4): Cypher `op_type` label values come from the planner output, never from query text (read|write|schema|admin|fabric); `admin` queries that bypass the planner are classified at dispatch
+- [x] **MET-10** ✅ (2026-05-03, Phase 4): Storage exposes 8 metric families: `nodes_total`, `edges_total`, `bytes{kind=nodes|edges|index|wal|search}`, `op_duration_seconds{op=get|put|delete|scan}`, `compactions_total{level,result}`, `compaction_duration_seconds{level}`, `wal_lag_bytes`, `index_rebuild_total{database,index,result}` (index label values are an enum, not free-form)
+- [x] **MET-11** ✅ (2026-05-03, Phase 4): MVCC exposes 4 metric families: `pressure_band{database,band=normal|warn|high|critical}`, `pinned_bytes`, `oldest_reader_age_seconds`, `active_readers`
+- [x] **MET-12** ✅ (2026-05-03, Phase 4): Embeddings expose 6 metric families: `queue_depth`, `processed_total{provider,model,result,mode}` (where `mode` is `gpu|cpu|cuda|metal|vulkan`), `duration_seconds` (long-tail buckets), `cache_hits_total`, `cache_misses_total`, `worker_running`; plus an FFI panic counter
+- [x] **MET-13** ✅ (2026-05-03, Phase 4): Search exposes 4 metric families: `requests_total{database,mode,result}`, `duration_seconds{database,mode,stage=embed|index|fuse}`, `candidates`, `index_size_bytes{kind=hnsw|bm25}`
+- [x] **MET-14** ✅ (2026-05-03, Phase 4): Replication exposes 10 metric families: `role`, `term`, `commit_index`, `apply_index`, `lag_bytes{peer}`, `lag_entries{peer}`, `apply_duration_seconds`, `rtt_seconds{peer}`, `leader_changes_total`, **`last_contact_seconds{peer}`** (GAP-1)
+- [x] **MET-15** ✅ (2026-05-03, Phase 4): A new Auth subsystem exposes **`auth_attempts_total{result,protocol}`** (GAP-6)
+- [x] **MET-16** ✅ (2026-05-03, Phase 4): Cache and runtime expose 6 metric families: `cache_hits_total{cache}`, `cache_misses_total{cache}`, `cache_size_bytes{cache}`, `cache_evictions_total{cache,reason}`, `process_uptime_seconds`, `build_info{version,commit,go_version,backend}`
+- [x] **MET-17** ✅ (2026-05-03, Phase 4): Go runtime collector (`collectors.NewGoCollector`) and process collector (`collectors.NewProcessCollector`) are registered alongside NornicDB metrics
 
 **Customer-facing infrastructure**
 
@@ -64,7 +64,7 @@
 - [x] **MET-23** ✅ (2026-05-02, Phase 3): OTel meter API instrumentation is bridged to the same numbers via the `otelprom` exporter as additional egress, configured with `WithoutUnits()` and a `nornicdb_otel_*` namespace to prevent collision
 - [x] **MET-24** ✅ (2026-05-02, Phase 3): Histogram exemplars are emitted unconditionally via `client_golang` `ExemplarObserver`; `/metrics` negotiates `Accept: application/openmetrics-text`; `IsValid()` && `IsSampled()` guard applied before observe (single chokepoint in `pkg/observability/exemplar.go`)
 - [x] **MET-25** ✅ (2026-05-02, Phase 3): Hot-path metric handles are pre-bound at construction (`Bind(lvs...)` returns `BoundObserver`); no `WithLabelValues` calls inside request loops; `BenchmarkObserve_Hot/hot_no_span` = 0 allocs/op
-- [ ] **MET-26**: Slow-query threshold metric is exposed in seconds (`nornicdb_cypher_slow_query_threshold_seconds`), not milliseconds (legacy unit removed at deprecation cutover)
+- [x] **MET-26** ✅ (2026-05-03, Phase 4): Slow-query threshold metric is exposed in seconds (`nornicdb_cypher_slow_query_threshold_seconds`), not milliseconds (legacy unit removed at deprecation cutover)
 
 ### Tracing (TRC)
 
@@ -232,19 +232,19 @@ Each requirement maps to exactly one phase in `.planning/ROADMAP.md`. Generated 
 | MET-23 | Phase 3 | Complete |
 | MET-24 | Phase 3 | Complete |
 | MET-25 | Phase 3 | Complete |
-| MET-06 | Phase 4 | Pending |
-| MET-07 | Phase 4 | Pending |
-| MET-08 | Phase 4 | Pending |
-| MET-09 | Phase 4 | Pending |
-| MET-10 | Phase 4 | Pending |
-| MET-11 | Phase 4 | Pending |
-| MET-12 | Phase 4 | Pending |
-| MET-13 | Phase 4 | Pending |
-| MET-14 | Phase 4 | Pending |
-| MET-15 | Phase 4 | Pending |
-| MET-16 | Phase 4 | Pending |
-| MET-17 | Phase 4 | Pending |
-| MET-26 | Phase 4 | Pending |
+| MET-06 | Phase 4 | Complete |
+| MET-07 | Phase 4 | Complete |
+| MET-08 | Phase 4 | Complete |
+| MET-09 | Phase 4 | Complete |
+| MET-10 | Phase 4 | Complete |
+| MET-11 | Phase 4 | Complete |
+| MET-12 | Phase 4 | Complete |
+| MET-13 | Phase 4 | Complete |
+| MET-14 | Phase 4 | Complete |
+| MET-15 | Phase 4 | Complete |
+| MET-16 | Phase 4 | Complete |
+| MET-17 | Phase 4 | Complete |
+| MET-26 | Phase 4 | Complete |
 | MET-18 | Phase 5 | Pending |
 | MET-19 | Phase 5 | Pending |
 | MET-20 | Phase 5 | Pending |
