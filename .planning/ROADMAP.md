@@ -26,7 +26,7 @@ These hard gates are checked at every phase exit (do not repeat in per-phase suc
 - [ ] **Phase 1: Observability Foundation Skeleton** — `pkg/observability` package, listeners, lifecycle supervision, shutdown, config block
 - [x] **Phase 2: Structured Logging Migration** — slog handler init, 192-call-site migration, PII redaction, slow-query log (✅ 2026-05-02, commits 4201a24..021a983; ADR §4.1 row 2: `4201a24..021a983 | 2026-05-02 | asanabria`)
 - [x] **Phase 3: Metrics Infrastructure & Discipline** — Naming, buckets, registration helpers, OTel→Prom bridge, exemplars, test isolation (✅ 2026-05-02, commits 1ba8f01..<commit-6a-SHA>; ADR §4.1 row 3: `1ba8f01..<commit-6a-SHA> | 2026-05-02 | asanabria`)
-- [x] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime (✅ 2026-05-03, commits 523c23d..<final-summary-sha>; ADR §4.1 row 4: `523c23d..<final-summary-sha> | 2026-05-03 | asanabria`)
+- [x] **Phase 4: Subsystem Metric Catalog** — 60+ metric families across HTTP, Bolt, Cypher, Storage, MVCC, Embed, Search, Replication, Auth, Cache+Runtime (✅ 2026-05-03, commits 523c23d..9a0e574; ADR §4.1 row 4: `523c23d..9a0e574 | 2026-05-03 | asanabria`)
 - [ ] **Phase 5: Legacy Translation Layer & Tenant Flag** — `:7474/metrics` translation, `tenant_labels_enabled` flag with K8s detection, golden-file test
 - [ ] **Phase 6: Tracing SDK & Core Spans** — OTel SDK init, samplers (incl. `parent_capped`), HTTP/Cypher/Storage spans, BSP self-instrumentation
 - [ ] **Phase 7: Replication Codec Versioning** — `codec_version` field prerequisite + rolling-upgrade test (BEFORE optional `traceparent`)

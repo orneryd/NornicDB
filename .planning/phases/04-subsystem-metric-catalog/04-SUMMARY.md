@@ -119,7 +119,7 @@ commit_range: 523c23d..(this SUMMARY commit, 9a)
 # Phase 4: Subsystem Metric Catalog — SUMMARY
 
 **Phase exit:** 2026-05-03
-**Commit range on `otel`:** `523c23d..<commit-9a-SHA>` (this SUMMARY commit closes the phase from a tracking standpoint; the ADR §4.1 row-4 fill is the second commit and is not included in the range it documents — same precedent as Phase 2's `4201a24..021a983` and Phase 3's `1ba8f01..a62d30a`).
+**Commit range on `otel`:** `523c23d..9a0e574` (this SUMMARY commit closes the phase from a tracking standpoint; the ADR §4.1 row-4 fill is the second commit and is not included in the range it documents — same precedent as Phase 2's `4201a24..021a983` and Phase 3's `1ba8f01..a62d30a`).
 **ADR §4.1 row:** 4 (this phase)
 **Verifier:** asanabria
 **Single-PR strategy:** all Phase 4 commits land directly on `otel` (PR #126).
@@ -304,7 +304,7 @@ Source: `race-stability-phase4.txt`, `deferred-items.md`.
 
 | Phase | Title | Commit range | Verified | Verifier |
 |-------|-------|--------------|----------|----------|
-| Phase 4 | Subsystem Metric Catalog | `523c23d..<commit-9a-SHA>` | 2026-05-03 | asanabria |
+| Phase 4 | Subsystem Metric Catalog | `523c23d..9a0e574` | 2026-05-03 | asanabria |
 
 The audit-trail row is filled in a SECOND commit immediately after this SUMMARY commit lands (two-commit phase-exit pattern; mirrors Phase 2's `021a983` SUMMARY + `be5ab8a` row-fill, and Phase 3's `a62d30a` SUMMARY + `5f37dbd` row-fill).
 
