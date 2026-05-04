@@ -713,6 +713,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
 
+	// 2a. Construct the Cache + Runtime metric bag (Plan 04-01 / MET-16).
+	//     Inserted between the registry build (inside observability.New) and
+	//     the telemetry listener — Phase 4 D-02c init-order chokepoint.
+	//     Registers six families (cache_hits_total, cache_misses_total,
+	//     cache_size_bytes, cache_evictions_total, process_uptime_seconds,
+	//     build_info) on obs.Registry(). MUST NOT crash startup if go/process
+	//     collectors are already there (Phase 1 registry.go:34-35) — the cache
+	//     bag adds disjoint families so AlreadyRegisteredError cannot occur.
+	//     The `_ =` is intentional: Plans 04-02..04-06 wire the bag into
+	//     existing constructors via DI (cypher/cache.go, schema cache, etc.).
+	cacheMetrics := observability.NewCacheMetrics(obs.Registry())
+	_ = cacheMetrics
+
 	// 2. Build the health registry.
 	health := observability.NewHealth()
 

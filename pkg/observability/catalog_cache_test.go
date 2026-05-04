@@ -28,6 +28,14 @@ func TestCacheMetrics_RegistersSixFamilies(t *testing.T) {
 	bag := NewCacheMetrics(te.Registry)
 	require.NotNil(t, bag)
 
+	// Materialize one instance per *Vec so Gather() emits the family
+	// (client_golang skips empty *Vec families). GaugeFunc-based families
+	// (build_info, process_uptime_seconds) surface unconditionally.
+	bag.Hits.WithLabelValues("query_result").Inc()
+	bag.Misses.WithLabelValues("query_result").Inc()
+	bag.SizeBytes.WithLabelValues("query_result").Set(0)
+	bag.Evictions.WithLabelValues("query_result", "lru").Inc()
+
 	mfs, err := te.Registry.Gather()
 	require.NoError(t, err)
 	names := metricNames(mfs)
