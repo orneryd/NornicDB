@@ -15,6 +15,16 @@
 // by the existing pkg/server middleware test suite (e.g. server_middleware_auth_test.go);
 // the D-04 invariant ("auth gate verbatim") is enforced separately at the
 // plan-verification layer via `git diff --quiet pkg/server/server_router.go`.
+//
+// Lint-cardinality note (MET-04 / Plan 03-02): pkg/server is in scope of
+// the Makefile lint-cardinality scanner, which forbids direct
+// prometheus.New(Counter|Gauge|Histogram|Summary)(Vec) calls in business
+// packages. Source-family seeding is therefore intentionally NOT done in
+// this file — the byte-stream contract for RenderLegacy is already locked
+// by pkg/observability/legacy_snapshot.golden (Plan 05-02 / Plan 05-04
+// integration uses an empty registry, which still emits all 12 # HELP /
+// # TYPE header lines + zero-value samples — sufficient to prove the
+// server-layer wiring without registering any business metric).
 package server
 
 import (
@@ -44,48 +54,21 @@ func newMinimalServerForMetricsHandler(t *testing.T) *Server {
 	return &Server{}
 }
 
-// seedLegacyTestRegistry registers a tiny set of source families on `reg`
-// so that RenderLegacy emits a recognisable body. Full 12-metric coverage
-// is already validated in pkg/observability/legacy_translation_test.go
-// (TestRenderLegacy_Snapshot against the locked golden file). The
-// integration test only needs to prove the SERVER-LAYER WIRING:
-// handler -> RenderLegacy -> headers + bytes.
-func seedLegacyTestRegistry(t *testing.T, reg *prometheus.Registry) {
-	t.Helper()
-
-	// nornicdb_process_uptime_seconds → maps to nornicdb_uptime_seconds (gauge, %.2f)
-	reg.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{Name: "nornicdb_process_uptime_seconds", Help: "test uptime"},
-		func() float64 { return 42 },
-	))
-
-	// nornicdb_storage_nodes_total → maps to nornicdb_nodes_total (gauge, %d)
-	reg.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{Name: "nornicdb_storage_nodes_total", Help: "test nodes"},
-		func() float64 { return 10 },
-	))
-
-	// nornicdb_storage_edges_total → maps to nornicdb_edges_total (gauge, %d)
-	reg.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{Name: "nornicdb_storage_edges_total", Help: "test edges"},
-		func() float64 { return 0 },
-	))
-
-	// nornicdb_http_in_flight_requests → maps to nornicdb_active_requests (gauge, %d)
-	inflight := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "nornicdb_http_in_flight_requests", Help: "test inflight",
-	})
-	inflight.Set(1)
-	reg.MustRegister(inflight)
-}
-
 // Test_HandleMetrics_DeprecationHeaders is the SERVER-LAYER wiring contract
 // for Plan 05-04: handleMetrics must call observability.RenderLegacy AND
 // set all three locked headers (Content-Type, Deprecation, Sunset) before
 // writing the body. ROADMAP SC #1 + SC #2 wire-level satisfied.
+//
+// Uses an empty *prometheus.Registry: RenderLegacy still emits the 12
+// `# HELP` + `# TYPE` header pairs and zero-value samples for every
+// mapping row when no source family is registered (Plan 05-02 nil-safe
+// emit contract). This proves the handler invoked RenderLegacy without
+// requiring this server-layer test to register source metrics directly
+// (lint-cardinality MET-04 forbids prometheus.NewGauge/Counter in
+// pkg/server — the byte-stream contract under populated sources is
+// locked separately by pkg/observability/legacy_snapshot.golden).
 func Test_HandleMetrics_DeprecationHeaders(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	seedLegacyTestRegistry(t, reg)
 
 	s := newMinimalServerForMetricsHandler(t)
 	s.SetObsRegistry(reg)
@@ -108,20 +91,23 @@ func Test_HandleMetrics_DeprecationHeaders(t *testing.T) {
 	require.Equal(t, "Fri, 31 Dec 2027 23:59:59 GMT", rec.Header().Get("Sunset"))
 
 	body := rec.Body.String()
-	// Spot-check: at least one mapped metric line appears with the expected
-	// reduced value. The full 12-metric byte-stream contract is locked by
-	// pkg/observability/legacy_snapshot.golden — this assertion only
-	// proves the server handed bytes off to RenderLegacy.
-	assert.Contains(t, body, "nornicdb_uptime_seconds 42.00",
-		"body must contain the legacy uptime line — proves RenderLegacy was invoked")
-	assert.Contains(t, body, "nornicdb_nodes_total 10",
-		"body must contain the legacy nodes_total line")
-	assert.Contains(t, body, "nornicdb_active_requests 1",
-		"body must contain the legacy active_requests line")
+
+	// Spot-check: RenderLegacy emits all 12 # HELP / # TYPE header pairs
+	// even with an empty registry — proves the handler invoked it. We
+	// assert on three representative mapping rows (uptime, nodes_total,
+	// info) covering the three emit-format branches (%.2f, %d, labeled).
 	assert.Contains(t, body, "# HELP nornicdb_uptime_seconds",
-		"body must include Prometheus exposition HELP comments")
+		"body must include the legacy uptime HELP comment — proves RenderLegacy was invoked")
 	assert.Contains(t, body, "# TYPE nornicdb_uptime_seconds gauge",
-		"body must include Prometheus exposition TYPE comments")
+		"body must include the legacy uptime TYPE comment")
+	assert.Contains(t, body, "nornicdb_uptime_seconds 0.00",
+		"body must contain the legacy uptime sample line at zero (no source registered)")
+	assert.Contains(t, body, "# HELP nornicdb_nodes_total",
+		"body must include the legacy nodes_total HELP comment")
+	assert.Contains(t, body, "nornicdb_nodes_total 0",
+		"body must contain the legacy nodes_total sample line at zero")
+	assert.Contains(t, body, "# HELP nornicdb_info",
+		"body must include the legacy info HELP comment")
 }
 
 // Test_HandleMetrics_NilRegistry_ReturnsEmptyBodyWithHeaders pins the
@@ -148,7 +134,10 @@ func Test_HandleMetrics_NilRegistry_ReturnsEmptyBodyWithHeaders(t *testing.T) {
 	require.Equal(t, observability.LegacyContentType, rec.Header().Get("Content-Type"))
 	require.Equal(t, observability.LegacyDeprecation, rec.Header().Get("Deprecation"))
 	require.Equal(t, observability.LegacySunset, rec.Header().Get("Sunset"))
-	// Body is allowed to be empty when registry is nil — RenderLegacy
-	// returns []byte{} for a nil registry per Plan 05-02 contract. The
-	// important guarantee is no panic + correct headers.
+	// Body MUST be empty when registry is nil — RenderLegacy returns []byte{}
+	// for a nil registry per Plan 05-02 contract. The important guarantee
+	// is no panic + correct headers + zero-byte body (vs the empty-registry
+	// path above, which emits 12 # HELP/# TYPE/zero-value triples).
+	require.Equal(t, 0, rec.Body.Len(),
+		"nil registry must produce empty body — distinct from empty-registry path")
 }
