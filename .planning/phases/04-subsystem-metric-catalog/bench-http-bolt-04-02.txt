@@ -1,0 +1,27 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/observability
+cpu: Apple M1 Max
+BenchmarkObserve_HotBolt/bolt_message_duration_bound-10         	46983748	        25.57 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_message_duration_bound-10         	47118028	        25.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_message_duration_bound-10         	47212030	        25.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_messages_total_bound-10           	173960650	         6.933 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_messages_total_bound-10           	172614783	         6.966 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_messages_total_bound-10           	174065349	         6.880 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_session_duration_bound-10         	47478918	        25.29 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_session_duration_bound-10         	46477549	        25.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_session_duration_bound-10         	46784004	        25.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_packstream_decode_errors_bound-10 	173778993	         6.926 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_packstream_decode_errors_bound-10 	173941990	         6.931 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotBolt/bolt_packstream_decode_errors_bound-10 	172976941	         6.886 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound-10         	46211090	        25.29 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound-10         	47469292	        25.32 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound-10         	48446433	        25.46 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound_tenant-10  	47680222	        25.29 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound_tenant-10  	46538007	        25.46 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_request_duration_bound_tenant-10  	46499085	        25.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_requests_counter_bound-10         	172988650	         6.961 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_requests_counter_bound-10         	174845817	         6.880 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotHTTP/http_requests_counter_bound-10         	173804866	         6.903 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/observability	33.075s
