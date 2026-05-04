@@ -100,8 +100,9 @@ func ResolveAndLogTenantLabels(explicit *bool, logger *slog.Logger) bool {
 	probe := DefaultK8sProbe()
 	resolved, source := ResolveTenantLabels(explicit, probe)
 	serviceHostPresent := strings.TrimSpace(probe.Getenv(k8sServiceHostEnv)) != ""
-	_, tokenStatErr := probe.StatFile(k8sTokenPath)
-	tokenFilePresent := tokenStatErr == nil
+	tokenInfo, tokenStatErr := probe.StatFile(k8sTokenPath)
+	// Mirror the same size check Detect() uses: "present" means exists AND non-empty.
+	tokenFilePresent := tokenStatErr == nil && tokenInfo != nil && tokenInfo.Size() > 0
 	logger.Info("resolved tenant labels enabled",
 		"enabled", resolved,
 		"reason", source,
