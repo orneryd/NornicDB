@@ -716,6 +716,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
 
+	// Phase 5 D-02d: resolve the tenant-labels-enabled bool BEFORE any Phase
+	// 4 bag constructor below reads cfg.Observability.Metrics.TenantLabelsEnabled.
+	// Precedence (D-02a): explicit YAML (TenantLabelsExplicit *bool, R-02) >
+	// K8s autodetect (KUBERNETES_SERVICE_HOST + non-empty SA-token) > default
+	// false. The helper logs the outcome via the injected slog logger
+	// (Phase 2 D-08 plumbing — LOG-09 compliant, no slog.Default).
+	cfg.Observability.Metrics.TenantLabelsEnabled = observability.ResolveAndLogTenantLabels(
+		cfg.Observability.Metrics.TenantLabelsExplicit, logger,
+	)
+
 	// 2a. Construct the Cache + Runtime metric bag (Plan 04-01 / MET-16).
 	//     Inserted between the registry build (inside observability.New) and
 	//     the telemetry listener — Phase 4 D-02c init-order chokepoint.

@@ -9,6 +9,7 @@
 package observability
 
 import (
+	"log/slog"
 	"os"
 	"strings"
 )
@@ -73,6 +74,41 @@ func (p k8sProbe) Detect() (enabled bool, reason string) {
 	default:
 		return true, ReasonK8sDetected
 	}
+}
+
+// ResolveAndLogTenantLabels is the cmd-level convenience wrapper used at
+// startup to resolve the tenant-labels-enabled bool AND emit the single
+// MET-22 forensic log line in one call. It:
+//
+//  1. Constructs the production K8s probe (DefaultK8sProbe).
+//  2. Resolves the bool via ResolveTenantLabels(explicit, probe).
+//  3. Re-derives the two boolean signal flags from the same probe inputs
+//     so the log line documents what was actually checked (no duplicate
+//     AND-logic).
+//  4. Emits exactly one slog INFO record via the supplied logger with the
+//     four canonical fields: enabled, reason, service_host_present,
+//     token_file_present.
+//
+// LOG-09 compliance: the caller must inject the *slog.Logger — this helper
+// never touches slog.Default() / slog.SetDefault(). cmd/nornicdb/main.go
+// passes the same Phase 2 D-08 logger that flows to pkg/server / pkg/bolt.
+//
+// Returns the resolved bool which the caller writes into
+// cfg.Observability.Metrics.TenantLabelsEnabled before any Phase 4 bag
+// constructor reads it.
+func ResolveAndLogTenantLabels(explicit *bool, logger *slog.Logger) bool {
+	probe := DefaultK8sProbe()
+	resolved, source := ResolveTenantLabels(explicit, probe)
+	serviceHostPresent := strings.TrimSpace(probe.Getenv(k8sServiceHostEnv)) != ""
+	_, tokenStatErr := probe.StatFile(k8sTokenPath)
+	tokenFilePresent := tokenStatErr == nil
+	logger.Info("resolved tenant labels enabled",
+		"enabled", resolved,
+		"reason", source,
+		"service_host_present", serviceHostPresent,
+		"token_file_present", tokenFilePresent,
+	)
+	return resolved
 }
 
 // ResolveTenantLabels enforces D-02a precedence:
