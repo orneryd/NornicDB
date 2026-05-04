@@ -68,7 +68,12 @@ func (p k8sProbe) Detect() (enabled bool, reason string) {
 	case err != nil:
 		// Permission denied or other stat error — fail-safe to not-K8s.
 		return false, ReasonTokenStatError
-	case info != nil && info.Size() == 0:
+	case info == nil:
+		// Defensive: StatFile returned (nil, nil) — treat as absent.
+		// The os.Stat signature does not guarantee non-nil FileInfo on nil error,
+		// and custom StatFile implementations may return this combination.
+		return false, ReasonTokenFileAbsent
+	case info.Size() == 0:
 		// Empty token file — likely a volume-mount race during pod startup.
 		return false, ReasonTokenFileEmpty
 	default:
