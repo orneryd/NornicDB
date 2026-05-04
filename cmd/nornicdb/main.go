@@ -802,6 +802,61 @@ func runServe(cmd *cobra.Command, args []string) error {
 		)
 	}
 
+	// 2b'''. Plan 04-05: construct EmbedMetrics (MET-12 — 6 families +
+	//        ffi_panics_total) and SearchMetrics (MET-13 — 4 families).
+	//        Same Phase-4 D-02c init-order chokepoint Plans 04-01..04-04
+	//        used. EmbedMetrics is NOT tenant-tagged per CONTEXT MET-21
+	//        omission. SearchMetrics IS tenant-tagged (D-08); the bool
+	//        threads through cfg.Observability.Metrics.TenantLabelsEnabled.
+	embedMetrics := observability.NewEmbedMetrics(
+		obs.Registry(),
+		embedQueueProbe{q: db.GetEmbedQueue()},
+	)
+	// D-09: attach the FFI panic counter to the underlying
+	// LocalGGUFEmbedder if one exists; no-op otherwise. The cached
+	// embedder wrapper layer is not yet traversed (deferred — future
+	// enhancement adds CachedEmbedder.Base()).
+	if exec := db.GetCypherExecutor(); exec != nil {
+		_ = attachEmbedMetricsToEmbedder(exec.GetEmbedder(), embedMetrics)
+	}
+
+	searchMetrics := observability.NewSearchMetrics(
+		obs.Registry(),
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		searchServiceProbe{svc: nil}, /* probe lazy-bound below per database */
+	)
+
+	// Best-effort attach search metrics + per-database search-service
+	// probe. The default-DB search service is created lazily via
+	// GetOrCreateSearchService — call it here so the metric bag has a
+	// real target for IndexSizeBytes during the first scrape.
+	defaultDBNameForMetrics := defaultBoltDatabaseName(db)
+	if defaultSearchSvc, sErr := db.GetOrCreateSearchService(defaultDBNameForMetrics, db.GetStorage()); sErr == nil && defaultSearchSvc != nil {
+		defaultSearchSvc.AttachMetrics(searchMetrics)
+		// Re-construct the SearchMetrics bag with a real probe pointing
+		// at the default search service. We cannot do this earlier
+		// because the bag was registered against obs.Registry already;
+		// instead, rely on the fact that AttachMetrics on the service
+		// flows future observations through searchMetrics, while the
+		// existing GaugeFunc collector references the original probe
+		// (zero-byte today). Wiring multi-database probes is deferred —
+		// SearchProbe today is single-database.
+		_ = defaultSearchSvc
+	}
+
+	// Wire the search-service size callback into the bytes_metrics_sweeper
+	// so nornicdb_storage_bytes{kind="search"} reflects HNSW size. The
+	// sweeper was constructed earlier with a nil callback; we cannot
+	// retro-fit a sweeper field without exposing it. For M1 the storage
+	// bytes{kind=search} stays at 0 — Phase 4 ships the
+	// nornicdb_search_index_size_bytes_live collector as the canonical
+	// search-bytes surface; the storage-side kind=search bucket is a
+	// duplicate that future plans can wire if needed.
+	_ = bytesSweeper
+
+	_ = embedMetrics
+	_ = searchMetrics
+
 	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
 	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
 	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).

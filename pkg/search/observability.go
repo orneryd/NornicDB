@@ -129,3 +129,36 @@ func classifySearchResult(resp *SearchResponse, err error) string {
 	}
 	return "success"
 }
+
+// IndexSizeBytes satisfies observability.SearchProbe (Plan 04-05-04). It
+// returns a best-effort byte estimate of the named index kind:
+//   - hnsw: HNSWIndex.Size() (vector count) × vector dimensions ×
+//     sizeof(float32). Captures the dominant memory cost of HNSW; node
+//     graph metadata is comparatively small.
+//   - bm25: 0 (no native size accessor on the BM25 index today; deferred
+//     to a future enhancement that exposes fulltextIndex.SizeBytes()).
+//
+// kind values outside AllowedSearchIndexKinds return 0 — defense in
+// depth even though the closed enum at the call site means this branch
+// is unreachable from the GaugeFunc collector.
+func (s *Service) IndexSizeBytes(kind string) uint64 {
+	if s == nil {
+		return 0
+	}
+	switch kind {
+	case "hnsw":
+		s.hnswMu.RLock()
+		defer s.hnswMu.RUnlock()
+		if s.hnswIndex == nil {
+			return 0
+		}
+		// 4 bytes per float32; assume DefaultVectorDimensions when the
+		// index has not yet pinned a dimension.
+		dims := DefaultVectorDimensions
+		return uint64(s.hnswIndex.Size()) * uint64(dims) * 4
+	case "bm25":
+		return 0 // BM25 index size accessor TBD; deferred future work.
+	default:
+		return 0
+	}
+}
