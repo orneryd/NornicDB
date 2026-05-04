@@ -127,11 +127,11 @@ func (c *ObservabilityConfig) ApplyEnv() {
 	if v := os.Getenv("NORNICDB_TELEMETRY_PORT"); v != "" && c.Metrics.Listen == "" {
 		c.Metrics.Listen = ":" + v
 	}
-	if os.Getenv("NORNICDB_TRACING_ENABLED") == "true" {
-		c.Tracing.Enabled = true
+	if v := os.Getenv("NORNICDB_TRACING_ENABLED"); v != "" {
+		c.Tracing.Enabled = v == "true"
 	}
-	if os.Getenv("NORNICDB_PPROF_ENABLED") == "true" {
-		c.Pprof.Enabled = true
+	if v := os.Getenv("NORNICDB_PPROF_ENABLED"); v != "" {
+		c.Pprof.Enabled = v == "true"
 	}
 	if v := os.Getenv("NORNICDB_PPROF_LISTEN"); v != "" {
 		c.Pprof.Listen = v

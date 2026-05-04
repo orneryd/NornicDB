@@ -2288,11 +2288,11 @@ func applyEnvVars(config *Config) error {
 	if v := getEnv("NORNICDB_TELEMETRY_PORT", ""); v != "" && config.Observability.Metrics.Listen == "" {
 		config.Observability.Metrics.Listen = ":" + v
 	}
-	if getEnv("NORNICDB_TRACING_ENABLED", "") == "true" {
-		config.Observability.Tracing.Enabled = true
+	if v := getEnv("NORNICDB_TRACING_ENABLED", ""); v != "" {
+		config.Observability.Tracing.Enabled = v == "true"
 	}
-	if getEnv("NORNICDB_PPROF_ENABLED", "") == "true" {
-		config.Observability.Pprof.Enabled = true
+	if v := getEnv("NORNICDB_PPROF_ENABLED", ""); v != "" {
+		config.Observability.Pprof.Enabled = v == "true"
 	}
 	if v := getEnv("NORNICDB_PPROF_LISTEN", ""); v != "" {
 		config.Observability.Pprof.Listen = v
