@@ -48,43 +48,162 @@ func TestRenderLegacy_Snapshot(t *testing.T) {
 		"byte-mismatch against legacy_snapshot.golden — regenerate by running Plan 05-02 fixture generator after legitimate change")
 }
 
-// seedDeterministicLegacySources registers the 12 source metric families
-// on reg with fixed values. Plan 05-02 fills in the body — Wave-0 declares
-// the helper so TestRenderLegacy_Snapshot compiles.
+// seedDeterministicLegacySources registers the source metric families on
+// reg with deterministic fixed values. The choice of values is locked by
+// pkg/observability/legacy_snapshot.golden — change a value here and the
+// snapshot test goes RED, forcing a conscious regenerate via REGEN=1.
+//
+// Coverage rationale:
+//   - http_requests_total has three samples across {method, path_template,
+//     status_class} — tests sumAcrossLabels (total=12) and the
+//     status_class==5xx branch of sumByMatchingLabel (total=2).
+//   - embed_processed_total has three rows across result={success,
+//     failure, cached} — tests both result-filter branches AND that
+//     cached observations are not counted by either legacy mapping.
+//   - storage nodes/edges + cypher_slow_query_threshold_seconds + uptime
+//     are label-less GaugeFuncs (per Phase 4 catalog reality).
+//   - cypher_slow_queries_total uses the no-label CounterVec shape (the
+//     tenantLabels=false branch); multi-shape coverage is in
+//     TestRenderLegacy_Reductions.
+//   - build_info uses ConstLabels {version, commit, go_version, backend}
+//     — the dropExtraLabels emit retains only {version, backend} per
+//     mapping row 12.
 func seedDeterministicLegacySources(t *testing.T, reg *prometheus.Registry) {
 	t.Helper()
-	// TODO(plan-05-02): register 12 deterministic source families here.
-	_ = reg
+
+	// 1. uptime
+	reg.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{Name: "nornicdb_process_uptime_seconds", Help: "Server uptime in seconds"},
+		func() float64 { return 42 },
+	))
+
+	// 2-3. http requests (multi-label) — feeds requests_total + errors_total
+	httpReq := prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "nornicdb_http_requests_total", Help: "Total HTTP requests"},
+		[]string{"method", "path_template", "status_class"},
+	)
+	httpReq.WithLabelValues("GET", "/x", "2xx").Add(8)
+	httpReq.WithLabelValues("POST", "/y", "2xx").Add(2)
+	httpReq.WithLabelValues("GET", "/x", "5xx").Add(2)
+	reg.MustRegister(httpReq)
+
+	// 4. http in-flight (no labels)
+	inflight := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nornicdb_http_in_flight_requests",
+		Help: "In-flight HTTP requests",
+	})
+	inflight.Set(3)
+	reg.MustRegister(inflight)
+
+	// 5-6. storage nodes/edges (label-less GaugeFunc per RESEARCH MAPPING-CORRECTION)
+	reg.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{Name: "nornicdb_storage_nodes_total", Help: "Total nodes"},
+		func() float64 { return 100 },
+	))
+	reg.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{Name: "nornicdb_storage_edges_total", Help: "Total edges"},
+		func() float64 { return 200 },
+	))
+
+	// 7-8. embed processed (success / failure / cached)
+	embed := prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "nornicdb_embed_processed_total", Help: "Total embeddings processed"},
+		[]string{"provider", "model", "result", "mode"},
+	)
+	embed.WithLabelValues("local", "m", "success", "cpu").Add(50)
+	embed.WithLabelValues("local", "m", "failure", "cpu").Add(5)
+	embed.WithLabelValues("local", "m", "cached", "cpu").Add(99)
+	reg.MustRegister(embed)
+
+	// 9. embed worker
+	worker := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nornicdb_embed_worker_running",
+		Help: "Worker running",
+	})
+	worker.Set(1)
+	reg.MustRegister(worker)
+
+	// 10. cypher slow queries (no labels — tenantLabels=false case)
+	slow := prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "nornicdb_cypher_slow_queries_total", Help: "Total slow queries"},
+		[]string{},
+	)
+	slow.WithLabelValues().Add(7)
+	reg.MustRegister(slow)
+
+	// 11. cypher slow_query_threshold_seconds
+	reg.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{Name: "nornicdb_cypher_slow_query_threshold_seconds", Help: "Slow query threshold seconds"},
+		func() float64 { return 1.0 },
+	))
+
+	// 12. build info (with ConstLabels; KeepLabels filters at emit time)
+	reg.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "nornicdb_build_info",
+			Help: "Build info",
+			ConstLabels: prometheus.Labels{
+				"version":    "1.0.0",
+				"commit":     "abc1234",
+				"go_version": "go1.26.0",
+				"backend":    "badger",
+			},
+		},
+		func() float64 { return 1 },
+	))
+}
+
+// TestRenderLegacy_RegenerateGolden writes legacy_snapshot.golden from a
+// fresh seedDeterministicLegacySources fixture. Gated behind REGEN=1 so
+// CI cannot accidentally re-write the locked file.
+//
+// Operator workflow: when a Phase 4 catalog change legitimately alters
+// the legacy translation output, run:
+//
+//	REGEN=1 go test ./pkg/observability/ -run TestRenderLegacy_RegenerateGolden -count=1
+//
+// then commit the new golden file alongside the catalog change + an ADR
+// amendment recording the bytes diff.
+func TestRenderLegacy_RegenerateGolden(t *testing.T) {
+	if os.Getenv("REGEN") == "" {
+		t.Skip("set REGEN=1 to regenerate legacy_snapshot.golden")
+	}
+	te := NewTestEnv(t)
+	seedDeterministicLegacySources(t, te.Registry)
+	got := RenderLegacy(te.Registry, time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, os.WriteFile("legacy_snapshot.golden", got, 0o644))
+	t.Logf("wrote legacy_snapshot.golden (%d bytes)", len(got))
 }
 
 // TestRenderLegacy_Mapping table-driven, one row per legacy metric name.
-// RED in Wave-0 because RenderLegacy returns nil (parseLegacyValue can't
-// find any metric). Plan 05-02 turns GREEN by populating the setupReg
-// closures and implementing RenderLegacy.
+// Each row registers all 12 deterministic source families via the shared
+// seedDeterministicLegacySources fixture and asserts the row's specific
+// rendered value. The wantValue column is the canonical reduction
+// outcome locked alongside the golden file.
 func TestRenderLegacy_Mapping(t *testing.T) {
 	cases := []struct {
 		legacyName string
-		setupReg   func(*prometheus.Registry)
+		setupReg   func(*testing.T, *prometheus.Registry)
 		wantValue  float64
 	}{
-		{legacyName: "nornicdb_uptime_seconds", setupReg: func(r *prometheus.Registry) { /* TODO(plan-05-02) */ }, wantValue: 42},
-		{legacyName: "nornicdb_requests_total", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 12},
-		{legacyName: "nornicdb_errors_total", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 2},
-		{legacyName: "nornicdb_active_requests", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 3},
-		{legacyName: "nornicdb_nodes_total", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 100},
-		{legacyName: "nornicdb_edges_total", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 200},
-		{legacyName: "nornicdb_embeddings_processed", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 50},
-		{legacyName: "nornicdb_embeddings_failed", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 5},
-		{legacyName: "nornicdb_embedding_worker_running", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 1},
-		{legacyName: "nornicdb_slow_queries_total", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 7},
-		{legacyName: "nornicdb_slow_query_threshold_ms", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 1000},
-		{legacyName: "nornicdb_info", setupReg: func(r *prometheus.Registry) { /* TODO */ }, wantValue: 1},
+		{legacyName: "nornicdb_uptime_seconds", setupReg: seedDeterministicLegacySources, wantValue: 42},
+		{legacyName: "nornicdb_requests_total", setupReg: seedDeterministicLegacySources, wantValue: 12},
+		{legacyName: "nornicdb_errors_total", setupReg: seedDeterministicLegacySources, wantValue: 2},
+		{legacyName: "nornicdb_active_requests", setupReg: seedDeterministicLegacySources, wantValue: 3},
+		{legacyName: "nornicdb_nodes_total", setupReg: seedDeterministicLegacySources, wantValue: 100},
+		{legacyName: "nornicdb_edges_total", setupReg: seedDeterministicLegacySources, wantValue: 200},
+		{legacyName: "nornicdb_embeddings_processed", setupReg: seedDeterministicLegacySources, wantValue: 50},
+		{legacyName: "nornicdb_embeddings_failed", setupReg: seedDeterministicLegacySources, wantValue: 5},
+		{legacyName: "nornicdb_embedding_worker_running", setupReg: seedDeterministicLegacySources, wantValue: 1},
+		{legacyName: "nornicdb_slow_queries_total", setupReg: seedDeterministicLegacySources, wantValue: 7},
+		{legacyName: "nornicdb_slow_query_threshold_ms", setupReg: seedDeterministicLegacySources, wantValue: 1000},
+		{legacyName: "nornicdb_info", setupReg: seedDeterministicLegacySources, wantValue: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.legacyName, func(t *testing.T) {
 			te := NewTestEnv(t)
 			if tc.setupReg != nil {
-				tc.setupReg(te.Registry)
+				tc.setupReg(t, te.Registry)
 			}
 			body := RenderLegacy(te.Registry, time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC))
 			require.NotEmpty(t, body, "RenderLegacy returned empty bytes — Plan 05-02 must implement")
