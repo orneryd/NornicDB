@@ -375,6 +375,11 @@ type Authenticator struct {
 
 	// Cached token validation results for repeated auth checks.
 	tokenCache *tokenCache
+
+	// metrics holds the Plan-04-06 AuthMetrics bag for the
+	// auth_attempts_total{result, protocol} counter (D-11 / D-05e / GAP-6).
+	// Injected via SetAuthMetrics; nil-safe pre-injection.
+	metrics authMetricsHolder
 }
 
 // AuditEvent represents an authentication-related event for compliance logging.
