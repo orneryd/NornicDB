@@ -19,7 +19,7 @@
 //
 // Plan ownership map:
 //
-//	NewCypherMetrics        — Plan 04-03
+//	NewCypherMetrics        — Plan 04-03 (SHIPPED — see catalog_cypher.go)
 //	NewStorageMetrics       — Plan 04-04
 //	NewMVCCMetrics          — Plan 04-04 (with RISK-2 PinnedBytes accessor)
 //	NewEmbedMetrics         — Plan 04-05
@@ -42,19 +42,7 @@ import (
 // programming bug — the RED tests must skip first per CONTEXT D-01a.
 const stubPanic = "observability: stub constructor invoked; the GREEN bag for this subsystem ships in a downstream Plan 04-NN — see catalog_redstubs.go header for the plan map"
 
-// ----- Cypher (Plan 04-03) -------------------------------------------------
-
-// CypherMetrics is the Plan-04-03 stub. Field set covers what the RED
-// test references; downstream plan replaces with the GREEN bag.
-type CypherMetrics struct {
-	// Plan 04-03 owns the field set per CONTEXT D-04.
-}
-
-// NewCypherMetrics is the Plan-04-03 stub constructor. Panics if called
-// (RED tests t.Skip before reaching this line).
-func NewCypherMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool, slowQueryThresholdFn func() float64) *CypherMetrics {
-	panic(stubPanic)
-}
+// ----- Cypher (Plan 04-03) — GREEN bag lives in catalog_cypher.go ---------
 
 // ----- Storage (Plan 04-04) ------------------------------------------------
 
