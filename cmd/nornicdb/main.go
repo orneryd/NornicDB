@@ -726,6 +726,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		cfg.Observability.Metrics.TenantLabelsExplicit, logger,
 	)
 
+	// Phase 5 / Plan 05-04: plumb the unified prometheus registry to the
+	// legacy :7474/metrics adapter so handleMetrics can call
+	// observability.RenderLegacy. Mirrors the Phase 4 SetHTTPMetrics
+	// injection pattern (post-construction setter; nil-safe handler).
+	// MUST happen BEFORE httpServer.Start() — the legacy /metrics handler
+	// reads s.obsRegistry on every scrape via the RLock-protected
+	// obsRegistryForHandler accessor; injecting before Start eliminates
+	// the (otherwise possible) nil-body race window for early scrapes.
+	httpServer.SetObsRegistry(obs.Registry())
+
 	// 2a. Construct the Cache + Runtime metric bag (Plan 04-01 / MET-16).
 	//     Inserted between the registry build (inside observability.New) and
 	//     the telemetry listener — Phase 4 D-02c init-order chokepoint.
