@@ -33,16 +33,11 @@
 // Plan 04-02 (this plan) DELIVERS NewHTTPMetrics + NewBoltMetrics — those
 // live in catalog_http.go and catalog_bolt.go respectively (NOT in this
 // stubs file).
+//
+// As of Plan 04-06 all bags have shipped — the stub bodies are empty and
+// this file remains as a historical pointer to the per-subsystem catalog
+// files (one entry per <plan ownership map> row).
 package observability
-
-import (
-	"github.com/prometheus/client_golang/prometheus"
-)
-
-// stubPanic is the canonical panic message used by every stub constructor.
-// Calling a stub at runtime (outside a t.Skip()-guarded test) is a
-// programming bug — the RED tests must skip first per CONTEXT D-01a.
-const stubPanic = "observability: stub constructor invoked; the GREEN bag for this subsystem ships in a downstream Plan 04-NN — see catalog_redstubs.go header for the plan map"
 
 // ----- Cypher (Plan 04-03) — GREEN bag lives in catalog_cypher.go ---------
 
@@ -54,15 +49,6 @@ const stubPanic = "observability: stub constructor invoked; the GREEN bag for th
 
 // ----- Search (Plan 04-05) — GREEN bag lives in catalog_search.go ---------
 
-// ----- Replication (Plan 04-06) --------------------------------------------
-
-// ReplicationMetrics is the Plan-04-06 stub.
-type ReplicationMetrics struct {
-	LagBytes *prometheus.GaugeVec
-}
-
-func NewReplicationMetrics(reg *prometheus.Registry, mode string, tenantLabelsEnabled bool) *ReplicationMetrics {
-	panic(stubPanic)
-}
+// ----- Replication (Plan 04-06) — GREEN bag lives in catalog_replication.go -
 
 // ----- Auth (Plan 04-06) — GREEN bag lives in catalog_auth.go ---------------
