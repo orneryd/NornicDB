@@ -177,6 +177,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -637,6 +638,15 @@ type Server struct {
 	// handler is wrapped). Nil-safe: instrumentedMux is a pass-through
 	// when nil, so test fixtures and pre-Phase-4 callers compile unchanged.
 	httpMetrics *observability.HTTPMetrics
+
+	// obsRegistry is the unified pkg/observability *prometheus.Registry,
+	// injected post-construction via SetObsRegistry from cmd/nornicdb/main.go.
+	// Used by handleMetrics (Phase 5 / Plan 05-04) to call
+	// observability.RenderLegacy and produce the legacy :7474/metrics body
+	// from the same registry that backs :9090/metrics — eliminating the
+	// pre-Phase-5 hand-built second source of truth (ROADMAP SC #1).
+	// Nil-safe: handleMetrics tolerates nil (RenderLegacy returns empty bytes).
+	obsRegistry *prometheus.Registry
 
 	// Rate limiter for DoS protection
 	rateLimiter *IPRateLimiter
@@ -1687,6 +1697,21 @@ func (s *Server) SetHTTPMetrics(m *observability.HTTPMetrics) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.httpMetrics = m
+}
+
+// SetObsRegistry plumbs the unified prometheus registry from
+// observability.New into the server so handleMetrics can call
+// observability.RenderLegacy. Phase 5 / Plan 05-04. Mirrors the
+// SetHTTPMetrics pattern (mu.Lock + assign + unlock).
+//
+// Nil-safe: passing nil is equivalent to never calling — handleMetrics
+// tolerates a nil registry by emitting empty body bytes (RenderLegacy
+// contract). Test fixtures and pre-Phase-5 callers compile and run
+// unchanged.
+func (s *Server) SetObsRegistry(reg *prometheus.Registry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.obsRegistry = reg
 }
 
 // SetAuditLogger sets the audit logger for compliance logging.
