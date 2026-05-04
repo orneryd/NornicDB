@@ -440,7 +440,6 @@ export function DatabaseAccess() {
           onChange={() => {
             toggleDbForRole(role, db);
             setDirty(true);
-            setDirty(true);
           }}
           className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
           title={isAdminSystemOrDefault ? 'Admin always has access to system and default database' : undefined}

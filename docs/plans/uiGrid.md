@@ -50,7 +50,7 @@ Every `<UiGrid>` must be wrapped in `<div className="nornic-grid">`.
 
 ```tsx
 import { UiGrid } from '@ornery/ui-grid-react';
-import type { GridOptions, GridColumnDef, UiGridApi, GridCellTemplateContext } from '@ornery/ui-grid-react';
+import type { GridOptions, GridColumnDef, UiGridApi, GridCellTemplateContext } from '@ornery/ui-grid-core';
 
 // Basic usage
 <UiGrid
