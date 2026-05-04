@@ -239,7 +239,22 @@ Designed to work with existing Neo4j drivers and Bolt/Cypher workflows, with min
 
 ### 🧠 Knowledge-Layer Scoring
 
-Profile-driven decay and promotion scoring with the [Ebbinghaus-Roynard four-layer decomposition](https://arxiv.org/pdf/2604.11364). Define decay profiles and promotion policies via Cypher DDL — no hardcoded tiers.
+Profile-driven decay and promotion scoring with the [Ebbinghaus-Roynard four-layer decomposition](https://arxiv.org/pdf/2604.11364). The engine does not hardcode cognitive tiers. Operators model their own labels and lifecycle rules using Cypher DDL.
+
+Typical deployments map the four-layer decomposition onto labels such as:
+
+- **Knowledge**: durable fact labels using `NO DECAY` or neutral profiles
+- **Memory**: episodic/session labels using bounded half-life decay
+- **Wisdom**: stable directive labels using conservative decay plus promotion rules
+- **Evidence/links**: edge types with their own decay and suppression behavior
+
+Those categories are conventions, not built-in engine classes. NornicDB provides the authoring and diagnostics surface:
+
+- `CREATE/ALTER/DROP/SHOW DECAY PROFILE`
+- `CREATE/ALTER/DROP/SHOW PROMOTION PROFILE`
+- `CREATE/ALTER/DROP/SHOW PROMOTION POLICY`
+- `decayScore(entity)`, `decay(entity)`, `policy(entity)`, `reveal(entity)`
+- `CALL nornicdb.knowledgepolicy.info|profiles|policies|resolve|deindexStatus()`
 
 ```cypher
 CREATE DECAY PROFILE working_memory OPTIONS {
@@ -259,7 +274,7 @@ MATCH (n:SessionRecord) WHERE decayScore(n) > 0.5
 RETURN n ORDER BY decayScore(n) DESC
 ```
 
-> 📖 Deep dive: [Knowledge-Layer Policies](docs/user-guides/knowledge-layer-policies.md) and [Ebbinghaus-Roynard Bootstrap](docs/user-guides/ebbinghaus-roynard-bootstrap.md).
+> 📖 Deep dive: [Knowledge-Layer Policies](docs/user-guides/knowledge-layer-policies.md), [Decay Profiles](docs/user-guides/decay-profiles.md), [Promotion Policies](docs/user-guides/promotion-policies.md), and [Ebbinghaus-Roynard Bootstrap](docs/user-guides/ebbinghaus-roynard-bootstrap.md).
 
 ### 🔗 Auto-Relationships
 
