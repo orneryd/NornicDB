@@ -653,10 +653,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating server: %w", err)
 	}
 
-	// Start HTTP server (non-blocking)
-	if err := httpServer.Start(); err != nil {
-		return fmt.Errorf("starting server: %w", err)
-	}
+	// HTTP server START is deferred until AFTER observability.New runs
+	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02
+	// instrumentedMux wrapper consults s.httpMetrics at Handler-mount
+	// time inside Start(); we must therefore inject the bag (via
+	// SetHTTPMetrics) AFTER obs.Registry() exists. The two-phase
+	// bootstrap (Phase 2 D-08) keeps server.New BEFORE obs so the same
+	// *slog.Logger reference threads through both — only Start() moves.
 
 	// Create and start Bolt server for Neo4j driver compatibility.
 	// Plan 02-05 D-01: Logger flows in via Config.Logger so Bolt records
@@ -725,6 +728,30 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//     existing constructors via DI (cypher/cache.go, schema cache, etc.).
 	cacheMetrics := observability.NewCacheMetrics(obs.Registry())
 	_ = cacheMetrics
+
+	// 2b. Plan 04-02: construct HTTP + Bolt metric bags and inject into the
+	//     existing httpServer / boltServer instances via setters. Both bags
+	//     register against obs.Registry() — disjoint families per the
+	//     Phase-3 typed constructors so AlreadyRegisteredError cannot
+	//     occur with cacheMetrics or the Phase-1 go/process collectors.
+	//     The D-08 tenantLabelsEnabled bool is taken from the loaded
+	//     observability config; Phase 5's K8s autodetect will set it
+	//     automatically once it lands.
+	httpMetrics := observability.NewHTTPMetrics(obs.Registry(), cfg.Observability.Metrics.TenantLabelsEnabled)
+	httpServer.SetHTTPMetrics(httpMetrics)
+
+	boltMetrics := observability.NewBoltMetrics(obs.Registry())
+	boltServer.SetBoltMetrics(boltMetrics)
+	// Plan 04-06 forward-compat: AuthMetrics bag ships in 04-06; until
+	// then the Bolt HELLO completion site no-ops on its nil-check.
+	// boltServer.SetAuthMetrics(authMetrics) // wired by Plan 04-06.
+
+	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
+	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
+	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).
+	if err := httpServer.Start(); err != nil {
+		return fmt.Errorf("starting server: %w", err)
+	}
 
 	// 2. Build the health registry.
 	health := observability.NewHealth()
