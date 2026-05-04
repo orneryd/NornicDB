@@ -52,18 +52,7 @@ const stubPanic = "observability: stub constructor invoked; the GREEN bag for th
 
 // ----- Embeddings (Plan 04-05) — GREEN bag lives in catalog_embed.go ------
 
-// ----- Search (Plan 04-05) -------------------------------------------------
-
-// SearchMetrics is the Plan-04-05 stub. The GREEN bag lands in
-// catalog_search.go in Plan 04-05-04 (this stub is removed at that point).
-type SearchMetrics struct {
-	Duration       *LatencyHistogram
-	IndexSizeBytes *prometheus.GaugeVec
-}
-
-func NewSearchMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool) *SearchMetrics {
-	panic(stubPanic)
-}
+// ----- Search (Plan 04-05) — GREEN bag lives in catalog_search.go ---------
 
 // ----- Replication (Plan 04-06) --------------------------------------------
 
