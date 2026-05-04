@@ -20,7 +20,7 @@
 // Plan ownership map:
 //
 //	NewCypherMetrics        — Plan 04-03 (SHIPPED — see catalog_cypher.go)
-//	NewStorageMetrics       — Plan 04-04
+//	NewStorageMetrics       — Plan 04-04 (SHIPPED — see catalog_storage.go)
 //	NewMVCCMetrics          — Plan 04-04 (SHIPPED — see catalog_mvcc.go;
 //	                          RISK-2 PinnedBytes accessor lives on
 //	                          *BadgerEngine in pkg/storage/badger_mvcc.go)
@@ -46,17 +46,7 @@ const stubPanic = "observability: stub constructor invoked; the GREEN bag for th
 
 // ----- Cypher (Plan 04-03) — GREEN bag lives in catalog_cypher.go ---------
 
-// ----- Storage (Plan 04-04) ------------------------------------------------
-
-// StorageMetrics is the Plan-04-04 stub.
-type StorageMetrics struct {
-	Bytes        *prometheus.GaugeVec
-	IndexRebuild *prometheus.CounterVec
-}
-
-func NewStorageMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool) *StorageMetrics {
-	panic(stubPanic)
-}
+// ----- Storage (Plan 04-04) — GREEN bag lives in catalog_storage.go -------
 
 // ----- MVCC (Plan 04-04) — GREEN bag lives in catalog_mvcc.go -------------
 
