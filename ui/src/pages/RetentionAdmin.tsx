@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { UiGrid } from "@ornery/ui-grid-react";
+import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from "@ornery/ui-grid-core";
 import {
   AlertTriangle,
   Clock3,
@@ -11,8 +13,6 @@ import {
   Shield,
   Trash2,
 } from "lucide-react";
-import { UiGrid } from "@ornery/ui-grid-react";
-import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from "@ornery/ui-grid-core";
 import { Alert } from "../components/common/Alert";
 import { Button } from "../components/common/Button";
 import { FormInput } from "../components/common/FormInput";
@@ -253,6 +253,83 @@ export function RetentionAdmin() {
     [policies],
   );
 
+  const policyGridData = useMemo<GridRecord[]>(
+    () => policies.map((policy) => ({ ...policy, __gridId: policy.id })),
+    [policies],
+  );
+
+  const policyColumnDefs = useMemo<GridColumnDef[]>(
+    () => [
+      {
+        name: "name",
+        displayName: "Name",
+        field: "name",
+        width: "minmax(12rem, 1.1fr)",
+      },
+      {
+        name: "id",
+        displayName: "ID",
+        field: "id",
+        width: "minmax(11rem, 1fr)",
+      },
+      {
+        name: "description",
+        displayName: "Description",
+        field: "description",
+        width: "minmax(16rem, 1.5fr)",
+      },
+      {
+        name: "category",
+        displayName: "Category",
+        field: "category",
+        width: "150px",
+      },
+      {
+        name: "retention",
+        displayName: "Retention",
+        width: "120px",
+        valueGetter: (row) => formatRetentionPeriod(row as unknown as RetentionPolicy),
+      },
+      {
+        name: "archive",
+        displayName: "Archive",
+        width: "minmax(12rem, 1.2fr)",
+        valueGetter: (row) => {
+          const policy = row as unknown as RetentionPolicy;
+          return policy.archive_before_delete ? policy.archive_path || "Archive enabled" : "Delete directly";
+        },
+      },
+      {
+        name: "active",
+        displayName: "State",
+        field: "active",
+        width: "120px",
+      },
+      {
+        name: "actions",
+        displayName: "Actions",
+        width: "170px",
+        enableSorting: false,
+        enableFiltering: false,
+      },
+    ],
+    [],
+  );
+
+  const policyGridOptions = useMemo<GridOptions>(
+    () => ({
+      id: "retention-policy-grid",
+      data: policyGridData,
+      columnDefs: policyColumnDefs,
+      rowIdentity: (row) => String(row.__gridId),
+      enableSorting: true,
+      enableFiltering: true,
+      viewportHeight: 480,
+      emptyMessage: "No retention policies loaded. Add one manually or load the built-in defaults.",
+    }),
+    [policyColumnDefs, policyGridData],
+  );
+
   const loadRetention = useCallback(async () => {
     setError("");
     const nextStatus = await api.getRetentionStatus();
@@ -333,35 +410,6 @@ export function RetentionAdmin() {
     setPolicyForm(policyToForm(policy));
     setPolicyModalOpen(true);
   };
-
-  const policyGridData = useMemo<GridRecord[]>(() => policies.map((policy) => ({
-    ...policy,
-    __gridId: policy.id,
-    retention: formatRetentionPeriod(policy),
-    archive: policy.archive_before_delete ? policy.archive_path || "Archive enabled" : "Delete directly",
-  })), [policies]);
-
-  const policyColumnDefs = useMemo<GridColumnDef[]>(() => [
-    { name: "name", displayName: "Policy", field: "name", width: "minmax(14rem, 1.4fr)" },
-    { name: "id", displayName: "ID", field: "id", width: "minmax(10rem, 1fr)" },
-    { name: "description", displayName: "Description", field: "description", width: "minmax(18rem, 1.8fr)" },
-    { name: "category", displayName: "Category", field: "category", width: "140px" },
-    { name: "retention", displayName: "Retention", field: "retention", width: "120px" },
-    { name: "archive", displayName: "Archive", field: "archive", width: "minmax(12rem, 1.2fr)" },
-    { name: "active", displayName: "State", field: "active", width: "160px", enableSorting: false },
-    { name: "actions", displayName: "Actions", width: "180px", enableSorting: false, enableFiltering: false },
-  ], []);
-
-  const policyGridOptions = useMemo<GridOptions>(() => ({
-    id: "retention-policy-grid",
-    data: policyGridData,
-    columnDefs: policyColumnDefs,
-    rowIdentity: (row) => String(row.__gridId),
-    enableSorting: true,
-    enableFiltering: true,
-    viewportHeight: 520,
-    emptyMessage: "No retention policies loaded. Add one manually or load the built-in defaults.",
-  }), [policyColumnDefs, policyGridData]);
 
   const updatePolicyInline = useCallback(
     async (policy: RetentionPolicy, patch: Partial<RetentionPolicy>) => {

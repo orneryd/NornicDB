@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { UiGrid } from "@ornery/ui-grid-react";
+import type { GridColumnDef, GridOptions, GridRecord } from "@ornery/ui-grid-core";
 import {
   Activity,
   AlertTriangle,
@@ -130,6 +132,96 @@ export function LifecycleAdmin() {
     if (!Number.isFinite(parsed) || parsed <= 0) return 25;
     return Math.min(parsed, 100);
   }, [debtLimit]);
+
+  const debtGridData = useMemo<GridRecord[]>(
+    () => debtKeys.map((key) => ({ ...key, __gridId: key.logical_key })),
+    [debtKeys],
+  );
+
+  const debtColumnDefs = useMemo<GridColumnDef[]>(
+    () => [
+      { name: "logical_key", displayName: "Logical key", field: "logical_key", width: "minmax(14rem, 1.6fr)" },
+      { name: "namespace", displayName: "Namespace", field: "namespace", width: "minmax(10rem, 1fr)" },
+      {
+        name: "debt_bytes",
+        displayName: "Debt",
+        field: "debt_bytes",
+        align: "end",
+        width: "120px",
+        formatter: (value) => formatBytes(Number(value ?? 0)),
+      },
+      {
+        name: "tombstone_depth",
+        displayName: "Tombstones",
+        field: "tombstone_depth",
+        align: "end",
+        width: "120px",
+      },
+      {
+        name: "versions_to_delete",
+        displayName: "Deletes",
+        field: "versions_to_delete",
+        align: "end",
+        width: "120px",
+      },
+    ],
+    [],
+  );
+
+  const debtGridOptions = useMemo<GridOptions>(
+    () => ({
+      id: "lifecycle-debt-grid",
+      data: debtGridData,
+      columnDefs: debtColumnDefs,
+      rowIdentity: (row) => String(row.__gridId),
+      enableSorting: true,
+      enableFiltering: true,
+      viewportHeight: 360,
+      emptyMessage: "No lifecycle debt keys reported for this database.",
+    }),
+    [debtColumnDefs, debtGridData],
+  );
+
+  const readerGridData = useMemo<GridRecord[]>(
+    () =>
+      (status?.readers ?? []).map((reader, index) => ({
+        ...reader,
+        ReaderID: reader.ReaderID || `reader-${index + 1}`,
+        Namespace: reader.Namespace || "—",
+        StartTime: reader.StartTime || "",
+        __gridId: `${reader.ReaderID || "reader"}-${index}`,
+      })),
+    [status?.readers],
+  );
+
+  const readerColumnDefs = useMemo<GridColumnDef[]>(
+    () => [
+      { name: "ReaderID", displayName: "Reader", field: "ReaderID", width: "minmax(12rem, 1.1fr)" },
+      { name: "Namespace", displayName: "Namespace", field: "Namespace", width: "minmax(10rem, 1fr)" },
+      {
+        name: "StartTime",
+        displayName: "Started",
+        field: "StartTime",
+        width: "minmax(12rem, 1fr)",
+        formatter: (value) => formatTimestamp(typeof value === "string" ? value : undefined),
+      },
+    ],
+    [],
+  );
+
+  const readerGridOptions = useMemo<GridOptions>(
+    () => ({
+      id: "lifecycle-readers-grid",
+      data: readerGridData,
+      columnDefs: readerColumnDefs,
+      rowIdentity: (row) => String(row.__gridId),
+      enableSorting: true,
+      enableFiltering: true,
+      viewportHeight: 320,
+      emptyMessage: "No active snapshot readers are currently registered.",
+    }),
+    [readerColumnDefs, readerGridData],
+  );
 
   const loadDatabases = useCallback(async () => {
     const list = await api.listDatabases();
@@ -725,63 +817,8 @@ export function LifecycleAdmin() {
                     />
                   </div>
                 </div>
-                <div className="overflow-x-auto border border-norse-rune rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-norse-stone/60">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-norse-silver font-medium">
-                          Logical key
-                        </th>
-                        <th className="px-4 py-3 text-left text-norse-silver font-medium">
-                          Namespace
-                        </th>
-                        <th className="px-4 py-3 text-right text-norse-silver font-medium">
-                          Debt
-                        </th>
-                        <th className="px-4 py-3 text-right text-norse-silver font-medium">
-                          Tombstones
-                        </th>
-                        <th className="px-4 py-3 text-right text-norse-silver font-medium">
-                          Deletes
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {debtKeys.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={5}
-                            className="px-4 py-6 text-center text-norse-silver"
-                          >
-                            No lifecycle debt keys reported for this database.
-                          </td>
-                        </tr>
-                      ) : (
-                        debtKeys.map((key) => (
-                          <tr
-                            key={key.logical_key}
-                            className="border-t border-norse-rune/50"
-                          >
-                            <td className="px-4 py-3 text-white font-medium">
-                              {key.logical_key}
-                            </td>
-                            <td className="px-4 py-3 text-norse-silver">
-                              {key.namespace || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-right text-white">
-                              {formatBytes(key.debt_bytes)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-white">
-                              {key.tombstone_depth}
-                            </td>
-                            <td className="px-4 py-3 text-right text-white">
-                              {key.versions_to_delete}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                <div className="nornic-grid border border-norse-rune rounded-lg p-4">
+                  <UiGrid options={debtGridOptions} />
                 </div>
               </div>
 
@@ -863,51 +900,8 @@ export function LifecycleAdmin() {
                     behind the floor.
                   </p>
                 </div>
-                <div className="overflow-x-auto border border-norse-rune rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-norse-stone/60">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-norse-silver font-medium">
-                          Reader
-                        </th>
-                        <th className="px-4 py-3 text-left text-norse-silver font-medium">
-                          Namespace
-                        </th>
-                        <th className="px-4 py-3 text-left text-norse-silver font-medium">
-                          Started
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(status?.readers ?? []).length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={3}
-                            className="px-4 py-6 text-center text-norse-silver"
-                          >
-                            No active snapshot readers are currently registered.
-                          </td>
-                        </tr>
-                      ) : (
-                        (status?.readers ?? []).map((reader, index) => (
-                          <tr
-                            key={`${reader.ReaderID || "reader"}-${index}`}
-                            className="border-t border-norse-rune/50"
-                          >
-                            <td className="px-4 py-3 text-white">
-                              {reader.ReaderID || `reader-${index + 1}`}
-                            </td>
-                            <td className="px-4 py-3 text-norse-silver">
-                              {reader.Namespace || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-norse-silver">
-                              {formatTimestamp(reader.StartTime)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                <div className="nornic-grid border border-norse-rune rounded-lg p-4">
+                  <UiGrid options={readerGridOptions} />
                 </div>
               </div>
 

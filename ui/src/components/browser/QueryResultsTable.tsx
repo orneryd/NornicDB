@@ -1,4 +1,5 @@
 /**
+/**
  * QueryResultsTable - Table view for Cypher query results
  * Extracted from Browser.tsx for reusability
  */
@@ -74,12 +75,12 @@ export function QueryResultsTable({
     });
 
     const nextColumnDefs: GridColumnDef[] = nextColumns.map((column) => ({
-        name: column,
-        displayName: column,
-        field: column,
-        type: "object" as const,
-        width: "minmax(12rem, 1fr)",
-      }));
+      name: column,
+      displayName: column,
+      field: column,
+      type: "object" as const,
+      width: "minmax(12rem, 1fr)",
+    }));
 
     return {
       columnDefs: nextColumnDefs,
