@@ -13,6 +13,8 @@ import (
 
 // CreateEdge creates a new edge between two nodes.
 func (b *BadgerEngine) CreateEdge(edge *Edge) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurPut)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -120,6 +122,8 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 
 // GetEdge retrieves an edge by ID.
 func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -150,6 +154,8 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 // UpdateEdge updates an existing edge.
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurPut)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -281,6 +287,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurDelete)
 	if id == "" {
 		return ErrInvalidID
 	}

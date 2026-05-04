@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Key prefixes for BadgerDB storage organization
@@ -156,6 +157,19 @@ type BadgerEngine struct {
 	// D-01 logger DI; D-07 storage internals use e.log directly. Discard
 	// fallback installed in NewBadgerEngineWithOptions when opts.Logger == nil.
 	log *slog.Logger
+
+	// Plan 04-04-06: pre-bound storage observers cached at AttachMetrics
+	// time (MET-25). Hot-path observation funnels through these — zero
+	// WithLabelValues lookup per Get/Put/Delete/Scan call. Nil-safe: when
+	// opObserve is the zero value (no metrics attached) the deferred
+	// observation in observeStorageOp is a no-op.
+	storageMetrics *observability.StorageMetrics
+	mvccMetrics    *observability.MVCCMetrics
+	opDurGet       observability.BoundLatencyObserver
+	opDurPut       observability.BoundLatencyObserver
+	opDurDelete    observability.BoundLatencyObserver
+	opDurScan      observability.BoundLatencyObserver
+	metricsAttached atomic.Bool
 }
 
 // IsInMemory returns true if the engine is running in memory-only mode.

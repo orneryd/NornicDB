@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -180,6 +181,8 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurScan)
 	var nodes []*Node
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
@@ -214,6 +217,8 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 
 // AllEdges returns all edges (implements Engine interface).
 func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurScan)
 	var edges []*Edge
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
