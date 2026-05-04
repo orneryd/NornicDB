@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localllm"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // LocalGGUFEmbedder implements Embedder using a local GGUF model via llama.cpp.
@@ -70,6 +71,21 @@ type LocalGGUFEmbedder struct {
 	errorCount    atomic.Int64
 	panicCount    atomic.Int64
 	lastEmbedTime atomic.Int64 // Unix timestamp
+
+	// metrics is the observability bag for D-09 FFI panic counter
+	// (Plan 04-05). Injected via AttachMetrics; nil-tolerated for
+	// embedded-library callers that have no observability wired.
+	metrics *observability.EmbedMetrics
+}
+
+// AttachMetrics injects the observability handle bag for D-09 FFI panic
+// counter increments (Plan 04-05-03). Idempotent — subsequent calls
+// overwrite the previous handle. nil is tolerated and disables FFI
+// counter increments without disabling panic recovery.
+func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.metrics = m
 }
 
 // NewLocalGGUF creates an embedder using the existing Config pattern.
@@ -200,10 +216,21 @@ func (e *LocalGGUFEmbedder) warmupLoop(interval time.Duration) {
 // CGO calls can panic on segfaults or other C-level errors.
 // This prevents the entire process from crashing.
 func (e *LocalGGUFEmbedder) embedWithRecovery(ctx context.Context, text string) (embedding []float32, err error) {
-	// Recover from panics in CGO
+	// Recover from panics in CGO. Plan 04-05-03 / D-09: increment the
+	// observability ffi_panics_total{mode} counter when we recover, so
+	// SREs can alert on FFI faults. The closed mode enum (Backend()) is
+	// enforced at this call site — no free-form values flow into the
+	// label.
 	defer func() {
 		if r := recover(); r != nil {
 			e.panicCount.Add(1)
+
+			// D-09: bump observability FFI panic counter (mode label
+			// from the build-tag-derived backend). nil-bag tolerated for
+			// embedded-library callers that have no observability wired.
+			if e.metrics != nil && e.metrics.FFIPanicTotal != nil {
+				e.metrics.FFIPanicTotal.WithLabelValues(e.Backend()).Inc()
+			}
 
 			// Capture stack trace for debugging
 			buf := make([]byte, 4096)

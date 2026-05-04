@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // LocalGGUFEmbedder is a stub for when localllm build tag is not set.
@@ -76,3 +78,8 @@ func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
 func (e *LocalGGUFEmbedder) Close() error {
 	return nil
 }
+
+// AttachMetrics is a no-op (stub). Plan 04-05-03 D-09 — symmetric with the
+// production type so cmd/nornicdb wiring can call AttachMetrics without
+// build-tag branching.
+func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {}
