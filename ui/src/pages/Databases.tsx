@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { UiGrid } from "@ornery/ui-grid-react";
+import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from "@ornery/ui-grid-core";
 import { Activity, Database, Info, Plus, Settings, Trash2 } from "lucide-react";
 import { api } from "../utils/api";
 import type { DatabaseInfo } from "../utils/api";
@@ -55,6 +57,8 @@ export function Databases() {
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [configError, setConfigError] = useState("");
+  const [configGridApi, setConfigGridApi] = useState<UiGridApi | null>(null);
+  const configSectionRef = useRef<HTMLElement | null>(null);
 
   const formatEta = (etaSeconds?: number): string => {
     if (etaSeconds == null || etaSeconds < 0) return "estimating...";
@@ -237,6 +241,152 @@ export function Databases() {
     }
   };
 
+  const configGridData = useMemo<GridRecord[]>(() => configKeys.map((meta) => ({
+    __gridId: meta.key,
+    key: meta.key.replace(/^NORNICDB_/, ""),
+    rawKey: meta.key,
+    type: meta.type,
+    category: meta.category || "Other",
+    value: configFormValues[meta.key] ?? "",
+    useDefault: configUseDefault[meta.key] ?? true,
+    effectiveDefault: configEffective[meta.key] ?? "",
+  })), [configEffective, configFormValues, configKeys, configUseDefault]);
+
+  const configColumnDefs = useMemo<GridColumnDef[]>(() => [
+    {
+      name: "category",
+      displayName: "Category",
+      field: "category",
+      width: "160px",
+    },
+    {
+      name: "key",
+      displayName: "Key",
+      field: "key",
+      width: "minmax(18rem, 1.4fr)",
+    },
+    {
+      name: "value",
+      displayName: "Value",
+      field: "value",
+      width: "minmax(14rem, 1.3fr)",
+      enableCellEdit: true,
+      cellEditableCondition: (ctx) => !Boolean(ctx.row.useDefault) && ctx.row.type !== "boolean",
+    },
+    {
+      name: "useDefault",
+      displayName: "Use Default",
+      field: "useDefault",
+      width: "120px",
+      enableSorting: false,
+    },
+    {
+      name: "effectiveDefault",
+      displayName: "Effective Default",
+      field: "effectiveDefault",
+      width: "minmax(12rem, 1fr)",
+    },
+  ], []);
+
+  const configGridOptions = useMemo<GridOptions>(() => ({
+    id: "database-config-grid",
+    data: configGridData,
+    columnDefs: configColumnDefs,
+    rowIdentity: (row) => String(row.__gridId),
+    enableGrouping: true,
+    grouping: { groupBy: ["category"] },
+    enableSorting: true,
+    enableFiltering: true,
+    enableCellEdit: true,
+    enableCellEditOnFocus: true,
+    viewportHeight: 400,
+    emptyMessage: "No configuration keys available",
+  }), [configColumnDefs, configGridData]);
+
+  useEffect(() => {
+    if (!configGridApi) {
+      return;
+    }
+
+    return configGridApi.edit.on.afterCellEdit((row, column, newValue, oldValue) => {
+      if (column.name !== "value") {
+        return;
+      }
+      if (String(newValue ?? "") === String(oldValue ?? "")) {
+        return;
+      }
+      setConfigFormValue(String(row.rawKey), String(newValue ?? ""));
+    });
+  }, [configGridApi]);
+
+  useEffect(() => {
+    if (!configDbName || !configSectionRef.current) {
+      return;
+    }
+
+    configSectionRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [configDbName]);
+
+  const renderConfigCell = (ctx: GridCellTemplateContext) => {
+    const row = ctx.row as GridRecord & {
+      rawKey: string;
+      type: string;
+      useDefault: boolean;
+      value: string;
+      effectiveDefault: string;
+    };
+
+    if (ctx.column.name === "value" && row.type === "boolean") {
+      return (
+        <div className="py-1" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={String(row.value) === "true"}
+            disabled={row.useDefault}
+            onChange={(e) => setConfigFormValue(row.rawKey, e.target.checked ? "true" : "false")}
+            className="rounded border-norse-rune bg-norse-stone text-nornic-primary"
+          />
+        </div>
+      );
+    }
+
+    if (ctx.column.name === "useDefault") {
+      return (
+        <div className="py-1" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={row.useDefault}
+            onChange={(e) => setConfigUseDefaultForKey(row.rawKey, e.target.checked)}
+            className="rounded border-norse-rune bg-norse-stone text-nornic-primary"
+          />
+        </div>
+      );
+    }
+
+    if (ctx.column.name === "effectiveDefault") {
+      return <div className="py-1 text-norse-silver">{String(ctx.value || "—")}</div>;
+    }
+
+    if (ctx.column.name === "key") {
+      return <div className="py-1 text-white font-medium">{String(ctx.value ?? "")}</div>;
+    }
+
+    if (ctx.column.name === "value" && row.useDefault) {
+      return <div className="py-1 text-norse-fog">{String(row.value || "—")}</div>;
+    }
+
+    return null;
+  };
+
+  const configCellRenderers = useMemo(() => ({
+    key: renderConfigCell,
+    value: renderConfigCell,
+    useDefault: renderConfigCell,
+    effectiveDefault: renderConfigCell,
+  }), [renderConfigCell]);
   if (loading) {
     return (
       <PageLayout>
@@ -303,8 +453,9 @@ export function Databases() {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {databases.map((db) => {
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {databases.map((db) => {
               const isComposite = db.type === "composite";
               const ready = db.searchReady === true;
               const searchLabel = ready
@@ -316,11 +467,11 @@ export function Databases() {
                 db.searchStrategy && db.searchStrategy !== "unknown"
                   ? ` (${db.searchStrategy})`
                   : "";
-              return (
-                <div
-                  key={db.name}
-                  className="bg-norse-shadow border border-norse-rune rounded-lg p-4 hover:border-nornic-primary transition-colors"
-                >
+                return (
+                  <div
+                    key={db.name}
+                    className="bg-norse-shadow border border-norse-rune rounded-lg p-4 hover:border-nornic-primary transition-colors"
+                  >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <h3 className="text-lg font-semibold text-white mb-1">
@@ -512,10 +663,71 @@ export function Databases() {
                       </div>
                     </div>
                   )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {configDbName && (
+              <section
+                ref={configSectionRef}
+                className="mt-8 bg-norse-shadow border border-norse-rune rounded-lg"
+              >
+                <div className="flex items-start justify-between gap-4 border-b border-norse-rune px-6 py-5">
+                  <div>
+                    <h2 className="text-xl font-semibold text-white">
+                      Database Settings
+                    </h2>
+                    <p className="mt-1 text-sm text-norse-silver">
+                      Editing configuration for {configDbName}.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setConfigDbName(null)}
+                      disabled={configSaving}
+                    >
+                      Close
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={handleConfigSave}
+                      disabled={configSaving || configLoading}
+                    >
+                      {configSaving ? "Saving..." : "Save"}
+                    </Button>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+
+                <div className="p-6 space-y-4">
+                  {configLoading ? (
+                    <div className="text-norse-silver py-8 text-center">Loading...</div>
+                  ) : (
+                    <>
+                      {configError && (
+                        <Alert
+                          type="error"
+                          message={configError}
+                          dismissible
+                          onDismiss={() => setConfigError("")}
+                        />
+                      )}
+                      <div className="nornic-grid">
+                        <UiGrid
+                          options={configGridOptions}
+                          onRegisterApi={setConfigGridApi}
+                          cellRenderers={configCellRenderers}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+            )}
+          </>
         )}
       </main>
 
@@ -740,150 +952,6 @@ export function Databases() {
           </div>
         ) : (
           <div className="text-norse-silver">No database selected.</div>
-        )}
-      </Modal>
-
-      <Modal
-        isOpen={configDbName !== null}
-        onClose={() => setConfigDbName(null)}
-        title={
-          configDbName ? `Configure ${configDbName}` : "Database configuration"
-        }
-        size="lg"
-      >
-        {configLoading ? (
-          <div className="text-norse-silver py-8 text-center">Loading...</div>
-        ) : (
-          <div className="space-y-4 max-h-[70vh] overflow-y-auto">
-            {configError && (
-              <Alert
-                type="error"
-                message={configError}
-                dismissible
-                onDismiss={() => setConfigError("")}
-              />
-            )}
-            {(() => {
-              const byCategory = configKeys.reduce<
-                Record<string, typeof configKeys>
-              >((acc, k) => {
-                const c = k.category || "Other";
-                if (!acc[c]) acc[c] = [];
-                acc[c].push(k);
-                return acc;
-              }, {});
-              const categories = Object.keys(byCategory).sort();
-              return (
-                <>
-                  {categories.map((cat) => (
-                    <div key={cat} className="space-y-2">
-                      <h4 className="text-sm font-medium text-norse-silver border-b border-norse-rune pb-1">
-                        {cat}
-                      </h4>
-                      <div className="space-y-3 pl-2">
-                        {byCategory[cat].map((meta) => (
-                          <div
-                            key={meta.key}
-                            className="flex flex-wrap items-center gap-2 text-sm"
-                          >
-                            <label
-                              htmlFor={`config-input-${meta.key}`}
-                              className="w-full sm:w-64 shrink-0 text-norse-silver truncate"
-                              title={meta.key}
-                            >
-                              {meta.key.replace(/^NORNICDB_/, "")}
-                            </label>
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              {meta.type === "boolean" ? (
-                                <input
-                                  id={`config-input-${meta.key}`}
-                                  type="checkbox"
-                                  checked={
-                                    (configFormValues[meta.key] ?? "false") ===
-                                    "true"
-                                  }
-                                  onChange={(e) =>
-                                    setConfigFormValue(
-                                      meta.key,
-                                      e.target.checked ? "true" : "false",
-                                    )
-                                  }
-                                  disabled={configUseDefault[meta.key]}
-                                  className="rounded border-norse-rune bg-norse-stone text-nornic-primary"
-                                />
-                              ) : (
-                                <input
-                                  id={`config-input-${meta.key}`}
-                                  type={
-                                    meta.type === "number" ? "number" : "text"
-                                  }
-                                  value={configFormValues[meta.key] ?? ""}
-                                  onChange={(e) =>
-                                    setConfigFormValue(meta.key, e.target.value)
-                                  }
-                                  disabled={configUseDefault[meta.key]}
-                                  placeholder={
-                                    configUseDefault[meta.key]
-                                      ? `Default: ${configEffective[meta.key] ?? ""}`
-                                      : ""
-                                  }
-                                  className="flex-1 min-w-0 px-2 py-1 rounded border border-norse-rune bg-norse-stone text-white text-sm"
-                                />
-                              )}
-                              <label
-                                htmlFor={`config-use-default-${meta.key}`}
-                                className="flex items-center gap-1 shrink-0 text-norse-silver text-xs whitespace-nowrap"
-                              >
-                                <input
-                                  id={`config-use-default-${meta.key}`}
-                                  type="checkbox"
-                                  checked={configUseDefault[meta.key]}
-                                  onChange={(e) =>
-                                    setConfigUseDefaultForKey(
-                                      meta.key,
-                                      e.target.checked,
-                                    )
-                                  }
-                                  className="rounded border-norse-rune bg-norse-stone text-nornic-primary"
-                                />
-                                Use default
-                              </label>
-                            </div>
-                            {configUseDefault[meta.key] &&
-                              configEffective[meta.key] !== undefined &&
-                              configEffective[meta.key] !== "" && (
-                                <span className="text-xs text-norse-silver block w-full">
-                                  Using default:{" "}
-                                  {String(configEffective[meta.key])}
-                                </span>
-                              )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </>
-              );
-            })()}
-            <div className="flex justify-end gap-2 pt-4 border-t border-norse-rune">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setConfigDbName(null)}
-                disabled={configSaving}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                onClick={handleConfigSave}
-                disabled={configSaving}
-              >
-                {configSaving ? "Saving..." : "Save"}
-              </Button>
-            </div>
-          </div>
         )}
       </Modal>
     </PageLayout>

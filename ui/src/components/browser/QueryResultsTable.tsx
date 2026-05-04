@@ -1,11 +1,18 @@
 /**
+/**
  * QueryResultsTable - Table view for Cypher query results
  * Extracted from Browser.tsx for reusability
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UiGrid } from "@ornery/ui-grid-react";
-import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from "@ornery/ui-grid-core";
+import type {
+  GridCellTemplateContext,
+  GridColumnDef,
+  GridOptions,
+  GridRecord,
+  UiGridApi,
+} from "@ornery/ui-grid-core";
 import { ExpandableCell } from "../common/ExpandableCell";
 import { extractNodeFromResult } from "../../utils/nodeUtils";
 
@@ -127,9 +134,13 @@ export function QueryResultsTable({
     [columnDefs, gridData],
   );
 
-  const getSelectableNodeIds = (rows: GridRecord[]) => rows
-    .map((row) => row.__nodeId)
-    .filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.length > 0);
+  const getSelectableNodeIds = (rows: GridRecord[]) =>
+    rows
+      .map((row) => row.__nodeId)
+      .filter(
+        (nodeId): nodeId is string =>
+          typeof nodeId === "string" && nodeId.length > 0,
+      );
 
   useEffect(() => {
     if (!gridApi?.selection) {
@@ -148,9 +159,11 @@ export function QueryResultsTable({
     const unsubscribeSingle = gridApi.selection.on.rowSelectionChanged(() => {
       syncSelectionFromGrid();
     });
-    const unsubscribeBatch = gridApi.selection.on.rowSelectionChangedBatch(() => {
-      syncSelectionFromGrid();
-    });
+    const unsubscribeBatch = gridApi.selection.on.rowSelectionChangedBatch(
+      () => {
+        syncSelectionFromGrid();
+      },
+    );
 
     return () => {
       unsubscribeSingle();
@@ -163,7 +176,9 @@ export function QueryResultsTable({
       return;
     }
 
-    const targetRows = gridData.filter((row) => selectedNodeIds.has(String(row.__nodeId ?? "")));
+    const targetRows = gridData.filter((row) =>
+      selectedNodeIds.has(String(row.__nodeId ?? "")),
+    );
     const currentSelectedRows = gridApi.selection.getSelectedRows?.() ?? [];
     const targetIds = new Set(getSelectableNodeIds(targetRows));
     const currentIds = new Set(getSelectableNodeIds(currentSelectedRows));
@@ -235,14 +250,24 @@ export function QueryResultsTable({
   };
 
   const cellRenderers = useMemo(
-    () => Object.fromEntries(columnDefs.map(({ name }) => [name, name === "__select__" ? renderSelectCell : renderCell])),
+    () =>
+      Object.fromEntries(
+        columnDefs.map(({ name }) => [
+          name,
+          name === "__select__" ? renderSelectCell : renderCell,
+        ]),
+      ),
     [columnDefs, renderCell, renderSelectCell],
   );
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-hidden nornic-grid">
-        <UiGrid options={gridOptions} cellRenderers={cellRenderers} onRegisterApi={setGridApi} />
+        <UiGrid
+          options={gridOptions}
+          cellRenderers={cellRenderers}
+          onRegisterApi={setGridApi}
+        />
       </div>
       <p className="text-xs text-norse-silver mt-2 px-2">
         {result.data.length} row(s) returned

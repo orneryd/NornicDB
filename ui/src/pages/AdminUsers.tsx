@@ -7,7 +7,6 @@ import { PageHeader } from '../components/common/PageHeader';
 import { FormInput } from '../components/common/FormInput';
 import { Button } from '../components/common/Button';
 import { Alert } from '../components/common/Alert';
-import { Modal } from '../components/common/Modal';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 import { BASE_PATH, joinBasePath } from '../utils/basePath';
 
@@ -32,7 +31,7 @@ export function AdminUsers() {
   const createPasswordId = useId();
   const createEmailId = useId();
   const createRolesId = useId();
-  const editRolesId = useId();
+  const [usersGridApi, setUsersGridApi] = useState<UiGridApi | null>(null);
 
   // Create user state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -42,14 +41,6 @@ export function AdminUsers() {
   const [newRoles, setNewRoles] = useState<string[]>(['viewer']);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
-  
-  // Edit user state
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [editRoles, setEditRoles] = useState<string[]>([]);
-  const [editDisabled, setEditDisabled] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [updateError, setUpdateError] = useState('');
-  const [usersGridApi, setUsersGridApi] = useState<UiGridApi | null>(null);
 
   const loadUsers = useCallback(async () => {
     try {
@@ -120,6 +111,7 @@ export function AdminUsers() {
         body: JSON.stringify({
           username: newUsername,
           password: newPassword,
+          email: newEmail || undefined,
           roles: newRoles,
         }),
       });
@@ -145,13 +137,8 @@ export function AdminUsers() {
     }
   };
 
-  const handleUpdateUser = async (targetUser?: User, patch?: Partial<User>) => {
-    const user = targetUser ?? editingUser;
-    if (!user) return;
-    
-    setUpdateError('');
-    setUpdating(true);
-
+  const handleUpdateUser = useCallback(async (user: User, overrides: Partial<User>) => {
+    setError('');
     try {
       const response = await fetch(joinBasePath(BASE_PATH, `/auth/users/${user.username}`), {
         method: 'PUT',
@@ -160,9 +147,9 @@ export function AdminUsers() {
         },
         credentials: 'include',
         body: JSON.stringify({
-          email: patch && 'email' in patch ? patch.email : user.email,
-          roles: patch?.roles ?? (targetUser ? user.roles : editRoles),
-          disabled: patch?.disabled ?? (targetUser ? Boolean(user.disabled) : editDisabled),
+          email: overrides.email ?? user.email ?? undefined,
+          roles: overrides.roles ?? user.roles,
+          disabled: overrides.disabled ?? user.disabled ?? false,
         }),
       });
 
@@ -171,16 +158,12 @@ export function AdminUsers() {
         throw new Error(data.message || 'Failed to update user');
       }
 
-      if (!targetUser) {
-        setEditingUser(null);
-      }
       await loadUsers();
     } catch (err) {
-      setUpdateError(err instanceof Error ? err.message : 'Failed to update user');
-    } finally {
-      setUpdating(false);
+      setError(err instanceof Error ? err.message : 'Failed to update user');
+      await loadUsers();
     }
-  };
+  }, [loadUsers]);
 
   const handleDeleteUser = async (username: string) => {
     if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
@@ -506,65 +489,6 @@ export function AdminUsers() {
             />
           </div>
         </div>
-
-        {/* Edit User Modal */}
-        {editingUser && (
-          <Modal
-            isOpen={!!editingUser}
-            onClose={() => setEditingUser(null)}
-            title={`Edit User: ${editingUser.username}`}
-          >
-            <div className="space-y-4">
-              <fieldset>
-                <legend id={editRolesId} className="text-sm text-norse-silver mb-2">Roles</legend>
-                <div className="flex gap-4 flex-wrap">
-                  {availableRoles.map(role => (
-                    <label key={role} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editRoles.includes(role)}
-                        onChange={() => toggleRole(role, editRoles, setEditRoles)}
-                        className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary focus:ring-nornic-primary"
-                        aria-describedby={editRolesId}
-                      />
-                      <span className="text-sm capitalize text-norse-silver">{role}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editDisabled}
-                    onChange={(e) => setEditDisabled(e.target.checked)}
-                    className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary focus:ring-nornic-primary"
-                  />
-                  <span className="text-sm text-norse-silver">Disabled</span>
-                </label>
-              </div>
-
-              {updateError && <Alert type="error" message={updateError} />}
-
-              <div className="flex gap-2 justify-end pt-4 border-t border-norse-rune">
-                <Button
-                  variant="secondary"
-                  onClick={() => setEditingUser(null)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleUpdateUser}
-                  disabled={updating || editRoles.length === 0}
-                  loading={updating}
-                >
-                  Update
-                </Button>
-              </div>
-            </div>
-          </Modal>
-        )}
       </main>
     </PageLayout>
   );

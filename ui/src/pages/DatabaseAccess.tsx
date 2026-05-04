@@ -439,6 +439,8 @@ export function DatabaseAccess() {
           disabled={isAdminSystemOrDefault}
           onChange={() => {
             toggleDbForRole(role, db);
+            setDirty(true);
+            setDirty(true);
           }}
           className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary disabled:opacity-70"
           title={isAdminSystemOrDefault ? 'Admin always has access to system and default database' : undefined}
@@ -451,7 +453,6 @@ export function DatabaseAccess() {
     () => Object.fromEntries(accessColumnDefs.map(({ name }) => [name, renderAccessCell])),
     [accessColumnDefs, renderAccessCell],
   );
-
   const renderEntitlementCell = (ctx: GridCellTemplateContext) => {
     const row = ctx.row as GridRecord & { role: string };
     const role = row.role;
