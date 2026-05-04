@@ -334,6 +334,32 @@ See `.planning/phases/05-legacy-translation-layer-tenant-flag/deferred-items.md`
 - **Verifier:** asanabria
 - **ADR §4.1 row 5:** `| Phase 5  | Legacy Translation Layer & Tenant Flag             | 65f8771..973bbd7 | 2026-05-04 | asanabria |`
 
+## Self-Check: PASSED
+
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/05-SUMMARY.md` exists ✓
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/05-VERIFICATION.md` exists ✓
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/deferred-items.md` exists ✓
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/bench-cypher-phase5.txt` exists ✓
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/bench-bolt-phase5.txt` exists ✓
+- File `.planning/phases/05-legacy-translation-layer-tenant-flag/race-evidence-phase5.txt` exists ✓
+- Commit `cf6791a` (SUMMARY narrative) exists in git log ✓
+- Commit `3134cdf` (ADR §2.3.1 amendment) exists in git log ✓
+- Commit `4ab8e09` (deferred-items + 05-VERIFICATION skeleton) exists in git log ✓
+- Commit `973bbd7` (cumulative evidence) exists in git log ✓
+- Commit `48af38d` (cross-file STATE/ROADMAP/REQUIREMENTS sync + ADR §4.1 row 5) exists in git log ✓
+- ADR §2.3.1 amendment present: `grep -c '^### 2\.3\.1 ' docs/architecture/adr/0001-observability.md` = 1 ✓
+- ROADMAP Phase 5 [x]: `grep -c '\[x\] \*\*Phase 5:' .planning/ROADMAP.md` = 1 ✓
+- ROADMAP all 5 plans [x]: `awk '/### Phase 5/,/### Phase 6/' .planning/ROADMAP.md | grep -cE '\[x\] 05-0[12345]-PLAN'` = 5 ✓
+- ROADMAP Progress 5/5 Done: present ✓
+- REQUIREMENTS MET-18..22 [x]: 5 ✓
+- REQUIREMENTS TEST-03 [x]: 1 ✓
+- REQUIREMENTS Traceability Phase 5 → Complete: 6 (MET-18..22 + TEST-03) ✓
+- ADR §4.1 row 5 verifier "asanabria": 1 ✓
+- 05-SUMMARY.md no remaining placeholders: 0 ✓
+- Cross-file commit-range consistency: `65f8771..973bbd7` appears in STATE.md, ROADMAP.md, ADR, 05-SUMMARY.md (4/4 files) ✓
+- pkg/audit/ untouched across `65f8771..973bbd7`: `git diff --name-only 65f8771..973bbd7 -- pkg/audit/ | wc -l` = 0 ✓
+- 8/8 KD-12 universal gates GREEN per 05-VERIFICATION.md ✓
+
 ---
 
 *Phase 5 ✅ CLOSED.*
