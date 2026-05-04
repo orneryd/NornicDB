@@ -355,8 +355,23 @@ func TestServe_DrainOrder(t *testing.T) {
 		done <- lifecycle.Run(ctx, components...)
 	}()
 
-	// Give all Starts a moment to record their startedAt timestamps.
-	time.Sleep(50 * time.Millisecond)
+	// Wait until every component has recorded its startedAt timestamp before
+	// triggering shutdown. A poll loop with a generous deadline replaces the
+	// unconditional time.Sleep(50ms) which is flaky under high CI load — if
+	// cancel() fires before a goroutine reaches startedAt.Store the subsequent
+	// shutdownAt ordering assertions become unreliable.
+	for _, r := range recorders {
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if r.startedAt.Load() != 0 {
+				break
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+		if r.startedAt.Load() == 0 {
+			t.Fatalf("component %q did not record startedAt within 500ms", r.Name())
+		}
+	}
 
 	// Trigger shutdown.
 	cancel()
