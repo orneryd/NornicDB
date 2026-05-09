@@ -528,6 +528,7 @@ export function RetentionAdmin() {
     active: renderPolicyCell,
     actions: renderPolicyCell,
   }), [renderPolicyCell]);
+
   const savePolicy = async () => {
     setPolicySaving(true);
     setError("");
