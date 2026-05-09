@@ -387,6 +387,7 @@ export function Databases() {
     useDefault: renderConfigCell,
     effectiveDefault: renderConfigCell,
   }), [renderConfigCell]);
+
   if (loading) {
     return (
       <PageLayout>
