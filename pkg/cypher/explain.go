@@ -135,6 +135,9 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	// Calculate total DB hits (estimate based on operations)
 	plan.TotalDBHits = e.estimateDBHits(plan.Root)
 
+	// TRC-16: emit per-operator spans with estimated/actual rows.
+	emitOperatorSpans(ctx, plan.Root)
+
 	if result == nil {
 		result = &ExecuteResult{
 			Columns: []string{},

@@ -41,6 +41,11 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // statusRecorder wraps http.ResponseWriter to capture the status code
@@ -121,15 +126,39 @@ type cacheKey struct {
 // If m is nil, the wrapper is a no-op pass-through — keeps existing test
 // fixtures and pre-Phase-1 callers compiling unchanged. Production
 // startup (cmd/nornicdb/main.go) always supplies a non-nil bag.
+//
+// Phase 6 TRC-12: the same chokepoint also creates an `nornicdb.http.<route>`
+// span per request. The span is started BEFORE ServeHTTP with a placeholder
+// name (so handler code inherits the span via r.Context()), then renamed
+// once r.Pattern resolves. W3C traceparent extraction is performed via the
+// package-level propagator (set in observability.buildTracerProvider for
+// TRC-11).
 func instrumentedMux(mux http.Handler, m *observability.HTTPMetrics) http.Handler {
 	if m == nil {
 		return mux
 	}
 	cache := &boundObservers{}
+	tracer := otel.Tracer("nornicdb/http")
+	propagator := otel.GetTextMapPropagator()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		m.InFlight.Inc()
+
+		// TRC-11 propagation: extract upstream traceparent/baggage from
+		// incoming headers into ctx. TRC-12: start an HTTP span whose
+		// parent is the extracted context (or empty for a fresh root
+		// trace). Span name is a placeholder until r.Pattern resolves.
+		ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		ctx, span := tracer.Start(ctx, "nornicdb.http.pending",
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(
+				attribute.String("http.request.method", r.Method),
+				attribute.String("url.path", r.URL.Path),
+			),
+		)
+		// Propagate the span-bearing ctx to downstream handlers.
+		r = r.WithContext(ctx)
 
 		defer func() {
 			// Always dec InFlight + observe — even on handler panic.
@@ -156,6 +185,22 @@ func instrumentedMux(mux http.Handler, m *observability.HTTPMetrics) http.Handle
 			// pattern variable when present; empty when the matched
 			// template has no {database} segment (e.g. /livez).
 			db := r.PathValue("database")
+
+			// TRC-12: rename the span now that the template is known;
+			// attach status + database attributes. Mark 5xx spans as
+			// error status per OTel semantic conventions.
+			span.SetName("nornicdb.http." + tmpl)
+			span.SetAttributes(
+				attribute.String("http.route", tmpl),
+				attribute.Int("http.response.status_code", sw.status),
+			)
+			if db != "" {
+				span.SetAttributes(attribute.String("nornicdb.database", db))
+			}
+			if sw.status >= 500 {
+				span.SetStatus(codes.Error, http.StatusText(sw.status))
+			}
+			span.End()
 
 			key := cacheKey{method: r.Method, template: tmpl, class: class, database: db}
 

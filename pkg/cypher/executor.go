@@ -130,6 +130,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Subquery detection tags. Routing uses scanner helpers below rather than regex.
@@ -986,8 +987,20 @@ func queryDeletesNodes(query string) bool {
 //
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
-func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	e.resetHotPathTrace()
+
+	// TRC-15: top-level cypher execute span. Started before timing so the
+	// span duration matches the metric observation window exactly. The span
+	// is ended in the same defer that emits the slow-query log.
+	ctx, execSpan := startExecuteSpan(ctx, "", cypher)
+
+	// TRC-17: propagate span context to the storage layer so storage spans
+	// nest as children of the cypher execute span.
+	if te, ok := e.storage.(*storage.TracedEngine); ok {
+		te.SetContext(ctx)
+	}
+
 	// D-04c slow-query log timing. Captured at the top so the threshold check
 	// covers every Execute return path (early-out, fabric, normal). Pre-bind
 	// the original query text — by the time the deferred emission fires,
@@ -1005,6 +1018,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// emitSlowQueryLog gate semantics — single threshold, single
 		// emission point per Execute return).
 		e.observeSlowQueryIfThresholded(dur)
+		recordSpanError(execSpan, retErr)
+		execSpan.End()
 	}()
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
@@ -1038,6 +1053,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// still bucket by intended op_type, matching how queries_total works
 		// in Phase 3 reference catalogs).
 		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
+		execSpan.SetAttributes(attribute.String("cypher.op_type", "fabric"))
 		inExplicitTx := e.txContext != nil && e.txContext.active
 		preparedFabric, err := e.prepareFabricExecution(ctx, cypher)
 		if err != nil {
@@ -1141,6 +1157,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// sub-microsecond and not meaningful to bucket. The queries_total
 		// counter still increments so the SRE can alert on parse-error rate.
 		e.observeQuery("parse_error", false /* observeDuration */, slowStart)
+		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
 		return nil, err
 	}
 
@@ -1190,6 +1207,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 	}
 
+	// TRC-15: plan span wraps the analysis/classification phase.
+	_, planSpan := startPlanSpan(ctx)
 	// Analyze query - uses cached analysis if available
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
@@ -1205,6 +1224,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// counter reflects intent regardless of how the query resolves.
 	opType := classifyOpType(info, false /* isFabric */, isSystemCommandNoGraph(cypher))
 	e.observeQuery(opType, true /* observeDuration */, slowStart)
+	planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	planSpan.End()
+	// Update the execute span with the resolved op_type.
+	execSpan.SetAttributes(attribute.String("cypher.op_type", opType))
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
@@ -1247,7 +1270,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Auto-commit single query - use async path for performance
 	// This uses AsyncEngine's write-behind cache instead of synchronous disk I/O
 	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
-	result, err := e.executeImplicitAsync(ctx, cypher, upperQuery)
+	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
 
 	// Apply result limit if set
 	if err == nil && result != nil {
