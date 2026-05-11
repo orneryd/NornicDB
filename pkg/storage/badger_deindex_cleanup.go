@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -65,9 +64,9 @@ func (j *DeindexCleanupJob) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if n, err := j.RunOnce(ctx); err != nil {
-				log.Printf("[deindex] cleanup error: %v", err)
+				j.engine.log.Warn("deindex cleanup error", "component", "deindex", "error", err)
 			} else if n > 0 {
-				log.Printf("[deindex] cleaned up %d entries", n)
+				j.engine.log.Info("deindex cleanup complete", "component", "deindex", "entries", n)
 			}
 		}
 	}
@@ -91,7 +90,12 @@ func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
 		}
 
 		if err := j.processWorkItem(item); err != nil {
-			log.Printf("[deindex] failed to process %s (retry %d): %v", item.TargetID, item.RetryCount, err)
+			j.engine.log.Warn("deindex work item failed",
+				"component", "deindex",
+				"target_id", item.TargetID,
+				"retry", item.RetryCount,
+				"error", err,
+			)
 			j.retryWorkItem(item)
 			continue
 		}
