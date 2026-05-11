@@ -1439,3 +1439,30 @@ test-parsers:
 antlr-clean:
 	@echo "Cleaning ANTLR artifacts..."
 	$(MAKE) -C pkg/cypher/antlr clean
+
+# ==============================================================================
+# Observability Performance Gates (Phase 12)
+# ==============================================================================
+
+bench-observability:
+	@echo "Running observability hot-path benchmarks..."
+	go test -bench BenchmarkObserve_Hot ./pkg/observability/... -benchmem -count=3
+
+bench-cypher:
+	@echo "Running cypher benchmarks..."
+	go test -bench Benchmark ./pkg/cypher/... -benchmem -count=3 -timeout=120s
+
+bench-bolt:
+	@echo "Running bolt benchmarks..."
+	go test -bench Benchmark ./pkg/bolt/... -benchmem -count=3 -timeout=60s
+
+bench-all: bench-observability bench-cypher bench-bolt
+
+perf-gates:
+	@echo "Running performance gate tests..."
+	go test -run "TestObservability_MemoryFloor|TestObservability_SpanAllocsPerOp|TestRedactingSpanProcessor_AllocsPerOp" ./pkg/observability/ -v -count=1
+
+metrics-doc:
+	@echo "Generating metrics reference..."
+	go run ./cmd/metrics-doc-gen/ > docs/operations/metrics-reference.md
+	@echo "Generated docs/operations/metrics-reference.md"

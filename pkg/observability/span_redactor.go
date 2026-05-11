@@ -46,7 +46,11 @@ func (r *redactingSpanProcessor) OnStart(parent context.Context, s sdktrace.Read
 }
 
 func (r *redactingSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
-	r.inner.OnEnd(newRedactedSpan(s))
+	if needsRedaction(s) {
+		r.inner.OnEnd(newRedactedSpan(s))
+	} else {
+		r.inner.OnEnd(s)
+	}
 }
 
 func (r *redactingSpanProcessor) Shutdown(ctx context.Context) error {
@@ -66,6 +70,18 @@ func isSensitiveKey(key string) bool {
 	}
 	for sensitive := range SensitiveKeys {
 		if strings.Contains(lower, sensitive) {
+			return true
+		}
+	}
+	return false
+}
+
+// needsRedaction scans attributes without allocating. Returns true only if
+// at least one key is sensitive — the common case (no PII) exits early with
+// zero allocations.
+func needsRedaction(s sdktrace.ReadOnlySpan) bool {
+	for _, a := range s.Attributes() {
+		if isSensitiveKey(string(a.Key)) {
 			return true
 		}
 	}
