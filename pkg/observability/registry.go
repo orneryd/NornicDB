@@ -40,16 +40,30 @@ func newRegistry(serviceInfo ServiceInfo) (*prometheus.Registry, *sdkmetric.Mete
 		Namespace: "nornicdb_otel",
 		Subsystem: "bsp",
 		Name:      "queue_depth",
-		Help:      "Current depth of the BatchSpanProcessor queue. Phase-1 placeholder; populated by Phase 6 TRC-02.",
+		Help:      "Current depth of the BatchSpanProcessor queue (TRC-02).",
 	})
 	bspDroppedSpans := prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "nornicdb_otel",
 		Subsystem: "bsp",
 		Name:      "dropped_spans_total",
-		Help:      "Cumulative spans dropped due to BSP backpressure. Phase-1 placeholder; populated by Phase 6 TRC-02.",
+		Help:      "Cumulative spans dropped due to BSP backpressure (TRC-02).",
 	})
 	reg.MustRegister(bspQueueDepth)
 	reg.MustRegister(bspDroppedSpans)
+
+	// Phase 6 TRC-02: publish the metric refs so buildTracerProvider's
+	// bspSelfMetrics wrapper can feed queue depth + drop counts.
+	setBSPMetricsRefs(bspQueueDepth, bspDroppedSpans)
+
+	// TRC-24: sample-rate-mismatch counter. Registered now (Phase 6) so the
+	// family is scrape-discoverable; actual increment wiring ships in Phase 7
+	// when replication peers exchange codec version + sample-rate metadata.
+	sampleRateMismatch := prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "nornicdb_otel",
+		Name:      "sample_rate_mismatch_total",
+		Help:      "Cumulative peer-replica sample-rate mismatches observed (TRC-24). Populated by Phase 7 replication wiring.",
+	})
+	reg.MustRegister(sampleRateMismatch)
 
 	// OTel→Prom bridge.
 	//   - WithRegisterer pins the bridge to OUR registry (NOT prometheus.DefaultRegisterer

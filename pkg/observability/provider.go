@@ -7,13 +7,16 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -112,14 +115,33 @@ func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger 
 }
 
 // buildTracerProvider constructs the real OTLP-backed TracerProvider, or
-// returns a noop one (with WARN log) if the exporter cannot be initialized.
+// returns a noop one (with WARN log) if the exporter cannot be initialized
+// or configuration is unsafe (TRC-09 plaintext reject).
 //
 // Per OBS-11 contract this NEVER returns an error: telemetry init failure is
 // logged and the noop provider is installed. The exporter init is bounded by
 // cfg.Timeout (default 5s) via a context.WithTimeout so a misconfigured
 // collector endpoint cannot hang startup (Pitfall 2).
+//
+// Phase 6 additions:
+//   - TRC-09: reject plaintext OTLP endpoints (http:// scheme or explicit
+//     Insecure=true with no override) when NORNICDB_OTLP_INSECURE != true.
+//   - TRC-05/06/07: root sampler is built from cfg.ParentMode + SampleRatio
+//     rather than NeverSample().
+//   - TRC-11: W3C traceparent/tracestate/baggage set as global propagator.
+//   - TRC-02: BSP is wrapped by bspSelfMetrics so nornicdb_otel_bsp_queue_depth
+//   - _dropped_spans_total reflect real pipeline state.
 func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.Resource) trace.TracerProvider {
 	if !cfg.Enabled {
+		return noop.NewTracerProvider()
+	}
+
+	// TRC-09: plaintext guard. If the resolved endpoint starts with http://
+	// and neither cfg.Insecure nor NORNICDB_OTLP_INSECURE=true is set, we
+	// refuse to build a real provider and fall back to noop + WARN. This is
+	// a cheap check before we spend 5s dialing.
+	if ep, _ := cfg.OTLPEndpoint(); strings.HasPrefix(strings.ToLower(ep), "http://") && !cfg.Insecure {
+		log.Printf("WARN observability: OTLP endpoint %q is plaintext but NORNICDB_OTLP_INSECURE is not set; installing noop tracer provider (TRC-09)", ep)
 		return noop.NewTracerProvider()
 	}
 
@@ -137,15 +159,37 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 		return noop.NewTracerProvider()
 	}
 
+	// TRC-11: set the global propagator chain to W3C traceparent + tracestate +
+	// baggage. Done here (not in New) so that a Provider with tracing disabled
+	// leaves the global propagator untouched.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	// TRC-02: wrap the real exporter-backed BSP with a span processor that
+	// feeds queue depth + dropped-span state into the Phase-1 placeholder
+	// Prometheus metrics. The inner BSP still owns the real export pipeline.
 	bsp := sdktrace.NewBatchSpanProcessor(exporter,
 		sdktrace.WithMaxQueueSize(8192),          // ADR §2.4.1 / A6
 		sdktrace.WithMaxExportBatchSize(1024),    // ADR §2.4.1 / A6
 		sdktrace.WithBatchTimeout(2*time.Second), // ADR §2.4.1 / A6
 	)
+	sp := newBSPSelfMetrics(bsp, 8192)
+
+	// TRC-05/06/07: root sampler.
+	mode, modeErr := parseParentMode(cfg.ParentMode)
+	if modeErr != nil {
+		log.Printf("WARN observability: %v; falling back to default sampler mode (TRC-05)", modeErr)
+	}
+	if mode == ParentModeStrict {
+		log.Printf("WARN observability: parent_strict sampler honors upstream decisions unconditionally; trace volume is unbounded (TRC-07)")
+	}
+	sampler := buildSampler(mode, cfg.SampleRatio, cfg.ParentMaxQPS)
 
 	return sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.NeverSample()), // Phase-1 default per D-02; Phase 6 swaps
-		sdktrace.WithSpanProcessor(bsp),
+		sdktrace.WithSampler(sampler),
+		sdktrace.WithSpanProcessor(sp),
 		sdktrace.WithResource(res),
 	)
 }
