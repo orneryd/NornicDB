@@ -75,3 +75,4 @@ northwind_power
 northwind_power_bench
 bench-data
 scripts/benchmark_reports
+metrics-doc-gen
