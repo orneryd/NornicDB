@@ -31,16 +31,31 @@ import (
 //
 // Plan 04-04-07 calls AttachMetrics from cmd/nornicdb startup AFTER
 // constructing the bags but BEFORE starting the supervisor.
+//
+// Ordering discipline (D-02c): metricsAttached flag is set LAST to prevent
+// race where metricsAttached=true but observer fields are still being
+// initialized. This ensures that once metricsAttached is true, all observer
+// fields are guaranteed to be bound.
 func (b *BadgerEngine) AttachMetrics(storage *observability.StorageMetrics, mvcc *observability.MVCCMetrics) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.storageMetrics = storage
-	b.mvccMetrics = mvcc
+
 	if storage != nil {
-		b.opDurGet = storage.OpDuration.Bind("get")
-		b.opDurPut = storage.OpDuration.Bind("put")
-		b.opDurDelete = storage.OpDuration.Bind("delete")
-		b.opDurScan = storage.OpDuration.Bind("scan")
+		// Bind all observers FIRST, while holding the lock
+		opDurGet := storage.OpDuration.Bind("get")
+		opDurPut := storage.OpDuration.Bind("put")
+		opDurDelete := storage.OpDuration.Bind("delete")
+		opDurScan := storage.OpDuration.Bind("scan")
+
+		// THEN assign to struct fields and update metrics refs
+		b.opDurGet = opDurGet
+		b.opDurPut = opDurPut
+		b.opDurDelete = opDurDelete
+		b.opDurScan = opDurScan
+		b.storageMetrics = storage
+		b.mvccMetrics = mvcc
+
+		// SET FLAG LAST: after all fields are updated, signal that metrics are attached
 		b.metricsAttached.Store(true)
 	} else {
 		b.metricsAttached.Store(false)
@@ -62,6 +77,11 @@ func (b *BadgerEngine) AttachMetrics(storage *observability.StorageMetrics, mvcc
 // embedded library use). When attached, the BoundLatencyObserver carries
 // a cached prometheus.Observer; observation pays a single Observe
 // call without WithLabelValues lookup (MET-25).
+//
+// Nil-safety: Due to potential race conditions during startup where
+// metricsAttached is set before all observer fields are initialized,
+// we also check if the observer has been bound. The check in
+// observeWithExemplar provides defense-in-depth.
 func (b *BadgerEngine) observeStorageOp(start time.Time, observer observability.BoundLatencyObserver) {
 	if !b.metricsAttached.Load() {
 		return

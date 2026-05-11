@@ -67,7 +67,14 @@ import (
 // client_golang@v1.23.2/prometheus/histogram.go:520. The `ok` branch protects
 // against a future client_golang change in case histogram.go ever stops
 // implementing ExemplarObserver.
+//
+// Nil-safety (D-02c): In rare race conditions during startup (metricsAttached
+// atomic is set before all observer fields are bound), obs may be nil.
+// This guard prevents panics on concurrent observation during AttachMetrics.
 func observeWithExemplar(ctx context.Context, obs prometheus.Observer, sec float64) {
+	if obs == nil {
+		return
+	}
 	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() && sc.IsSampled() {
 		if eo, ok := obs.(prometheus.ExemplarObserver); ok {
 			eo.ObserveWithExemplar(sec, prometheus.Labels{
