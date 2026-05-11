@@ -163,9 +163,10 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 	// TRC-11: set the global propagator chain to W3C traceparent + tracestate +
 	// baggage. Done here (not in New) so that a Provider with tracing disabled
 	// leaves the global propagator untouched.
+	// SEC-02: FilteredBaggagePropagator drops keys not in BaggageAllowList.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
-		propagation.Baggage{},
+		FilteredBaggagePropagator{},
 	))
 
 	// TRC-02: wrap the real exporter-backed BSP with a span processor that
@@ -176,7 +177,9 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 		sdktrace.WithMaxExportBatchSize(1024),    // ADR §2.4.1 / A6
 		sdktrace.WithBatchTimeout(2*time.Second), // ADR §2.4.1 / A6
 	)
-	sp := newBSPSelfMetrics(bsp, 8192)
+	// SEC-01: redacting processor strips sensitive attributes before export.
+	redactor := NewRedactingSpanProcessor(bsp)
+	sp := newBSPSelfMetrics(redactor, 8192)
 
 	// TRC-05/06/07: root sampler.
 	mode, modeErr := parseParentMode(cfg.ParentMode)
