@@ -2,6 +2,7 @@ package observability
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,11 +56,25 @@ type TracingConfig struct {
 	// Protocol is "grpc" (default) or "http". Phase 1 wires gRPC; HTTP is the
 	// fallback for Phase 6 hardening.
 	Protocol string
-	// Insecure controls TLS for the OTLP connection.
+	// Insecure allows a plaintext OTLP connection. When an env var sets an
+	// http:// endpoint and Insecure is false, Phase 6 TRC-09 rejects the
+	// configuration and installs a noop provider.
 	Insecure bool
 	// Timeout bounds exporter init. Default 5s. A misconfigured collector
 	// MUST NOT hang process startup (OBS-11).
 	Timeout time.Duration
+
+	// SampleRatio is the TraceIDRatioBased sampler ratio (TRC-05). Defaults to
+	// 0.01 (1%) when Enabled=true. Clamped to [0, 1] at sampler construction.
+	SampleRatio float64
+	// ParentMode selects the parent-honoring sampler policy (TRC-05/06/07).
+	// Empty/"none" (default) = standalone TraceIDRatioBased (KD-05 default).
+	// "capped"                = parentCappedSampler (TRC-06).
+	// "strict"                = ParentBased (TRC-07; WARN at startup).
+	ParentMode string
+	// ParentMaxQPS caps the number of sampled-parent spans honored per second
+	// when ParentMode="capped" (TRC-06). Default 100. Clamped to >=1.
+	ParentMaxQPS int
 }
 
 // PprofConfig governs the optional :9091 debug surface.
@@ -82,9 +97,12 @@ func DefaultConfig() ObservabilityConfig {
 			TenantLabelsExplicit: nil, // R-02: nil sentinel = "no explicit operator intent".
 		},
 		Tracing: TracingConfig{
-			Enabled:  false,
-			Protocol: "grpc",
-			Timeout:  5 * time.Second,
+			Enabled:      false,
+			Protocol:     "grpc",
+			Timeout:      5 * time.Second,
+			SampleRatio:  0.01, // TRC-05 v1 default
+			ParentMode:   "",   // KD-05 default: standalone ratio-based
+			ParentMaxQPS: 100,  // TRC-06 default cap
 		},
 		Pprof: PprofConfig{
 			Enabled: false,
@@ -129,6 +147,22 @@ func (c *ObservabilityConfig) ApplyEnv() {
 	}
 	if v := os.Getenv("NORNICDB_TRACING_ENABLED"); v != "" {
 		c.Tracing.Enabled = v == "true"
+	}
+	if v := os.Getenv("NORNICDB_OTLP_INSECURE"); v != "" {
+		c.Tracing.Insecure = v == "true"
+	}
+	if v := os.Getenv("NORNICDB_TRACE_SAMPLE_RATIO"); v != "" {
+		if r, err := strconv.ParseFloat(v, 64); err == nil {
+			c.Tracing.SampleRatio = r
+		}
+	}
+	if v := os.Getenv("NORNICDB_TRACE_PARENT_MODE"); v != "" {
+		c.Tracing.ParentMode = v
+	}
+	if v := os.Getenv("NORNICDB_TRACE_PARENT_MAX_QPS"); v != "" {
+		if q, err := strconv.Atoi(v); err == nil {
+			c.Tracing.ParentMaxQPS = q
+		}
 	}
 	if v := os.Getenv("NORNICDB_PPROF_ENABLED"); v != "" {
 		c.Pprof.Enabled = v == "true"
