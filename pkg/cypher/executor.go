@@ -2857,6 +2857,15 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 
 	// Compound queries: MATCH ... CREATE ... (create relationship between matched nodes)
 	if startsWithMatch && createIdx > 0 {
+		// Try the general pipeline executor first — it handles composite
+		// queries like MATCH ... CREATE ... WITH ... UNWIND ... MATCH ...
+		// CREATE ... which executeCompoundMatchCreate miscategorises
+		// (treats everything after the first CREATE as CREATE patterns,
+		// consuming intervening WITH/UNWIND/MATCH clauses as property map
+		// garbage).
+		if result, ok, err := e.executePipeline(ctx, cypher); ok {
+			return result, err
+		}
 		return e.executeCompoundMatchCreate(ctx, cypher)
 	}
 

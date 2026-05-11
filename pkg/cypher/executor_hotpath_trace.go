@@ -2,19 +2,20 @@ package cypher
 
 // HotPathTrace records which key query hot paths were used for the most recent Execute call.
 type HotPathTrace struct {
-	OuterIndexTopK            bool
-	OuterScanFallbackUsed     bool
-	FabricBatchedApplyRows    bool
-	SimpleMatchLimitFastPath  bool
-	CompoundQueryFastPath     bool
-	TraversalStartSeedTopK    bool
-	TraversalEndSeedTopK      bool
-	UnwindSimpleMergeBatch    bool
-	UnwindMergeChainBatch     bool
-	UnwindFixedChainLinkBatch bool
-	CallTailTraversalFastPath bool
-	MergeSchemaLookupUsed     bool
-	MergeScanFallbackUsed     bool
+	OuterIndexTopK              bool
+	OuterScanFallbackUsed       bool
+	FabricBatchedApplyRows      bool
+	SimpleMatchLimitFastPath    bool
+	CompoundQueryFastPath       bool
+	TraversalStartSeedTopK      bool
+	TraversalEndSeedTopK        bool
+	UnwindSimpleMergeBatch      bool
+	UnwindMergeChainBatch       bool
+	UnwindFixedChainLinkBatch   bool
+	UnwindMultiMatchCreateBatch bool
+	CallTailTraversalFastPath   bool
+	MergeSchemaLookupUsed       bool
+	MergeScanFallbackUsed       bool
 }
 
 func (e *StorageExecutor) resetHotPathTrace() {
@@ -116,6 +117,23 @@ func (e *StorageExecutor) markUnwindFixedChainLinkBatchUsed() {
 	}
 	e.hotPathTraceState.mu.Lock()
 	e.hotPathTraceState.trace.UnwindFixedChainLinkBatch = true
+	e.hotPathTraceState.mu.Unlock()
+}
+
+// markUnwindMultiMatchCreateBatchUsed records that the UNWIND + multi-MATCH
+// + CREATE batched path was used. This shape is what bulk seeders emit:
+//
+//	UNWIND $rows AS row
+//	MATCH (a:A {k: row.kA})   (one or more independent MATCH clauses)
+//	MATCH (b:B {k: row.kB})
+//	CREATE (n:N {...})
+//	CREATE (n)-[:REL]->(a)    (one or more CREATEs binding matched + new nodes)
+func (e *StorageExecutor) markUnwindMultiMatchCreateBatchUsed() {
+	if e.hotPathTraceState == nil {
+		e.hotPathTraceState = &hotPathTraceState{}
+	}
+	e.hotPathTraceState.mu.Lock()
+	e.hotPathTraceState.trace.UnwindMultiMatchCreateBatch = true
 	e.hotPathTraceState.mu.Unlock()
 }
 
