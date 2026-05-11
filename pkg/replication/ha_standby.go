@@ -115,6 +115,7 @@ type RaftAppendEntriesRequest struct {
 	PrevLogTerm  uint64          `json:"prev_log_term"`
 	Entries      []*RaftLogEntry `json:"entries"`
 	LeaderCommit uint64          `json:"leader_commit"`
+	CodecVersion uint32          `json:"codec_version,omitempty"`
 }
 
 // RaftAppendEntriesResponse is a Raft AppendEntries RPC response.
@@ -125,6 +126,7 @@ type RaftAppendEntriesResponse struct {
 	ConflictIndex uint64 `json:"conflict_index,omitempty"`
 	ConflictTerm  uint64 `json:"conflict_term,omitempty"`
 	ResponderID   string `json:"responder_id"`
+	CodecVersion  uint32 `json:"codec_version,omitempty"`
 }
 
 // ConnectionHandler handles incoming connections.

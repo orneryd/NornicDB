@@ -35,6 +35,11 @@ func (s RaftState) String() string {
 	}
 }
 
+// CurrentCodecVersion is the codec generation this binary speaks. Pre-version
+// peers omit the field (wire value 0). Version 1 is the first versioned frame
+// that supports the optional traceparent field added in Phase 8.
+const CurrentCodecVersion uint32 = 1
+
 // RaftLogEntry represents an entry in the Raft log.
 type RaftLogEntry struct {
 	Index   uint64   `json:"index"`
@@ -66,6 +71,11 @@ type AppendEntriesRequest struct {
 	PrevLogTerm  uint64          `json:"prev_log_term"`
 	Entries      []*RaftLogEntry `json:"entries"`
 	LeaderCommit uint64          `json:"leader_commit"`
+	// CodecVersion identifies the wire format generation (TRC-21/TRC-22).
+	// 0 (or absent via omitempty) = pre-version frame; 1 = first versioned frame.
+	// Rolling-upgrade compat: receivers treat absent/0 as pre-version and accept
+	// gracefully; leaders omit the field when any peer is at version 0.
+	CodecVersion uint32 `json:"codec_version,omitempty"`
 }
 
 // AppendEntriesResponse is the response to an append entries request.
@@ -76,6 +86,9 @@ type AppendEntriesResponse struct {
 	ConflictIndex uint64 `json:"conflict_index"`
 	ConflictTerm  uint64 `json:"conflict_term"`
 	ResponderID   string `json:"responder_id"`
+	// CodecVersion echoes the responder's supported codec version so the leader
+	// can track peer capabilities for mixed-cluster compat (TRC-22).
+	CodecVersion uint32 `json:"codec_version,omitempty"`
 }
 
 // RaftRPCType identifies the type of Raft RPC message.
@@ -115,10 +128,11 @@ type RaftReplicator struct {
 	lastApplied uint64
 
 	// Peer state (leader only)
-	peerMu     sync.RWMutex
-	nextIndex  map[string]uint64
-	matchIndex map[string]uint64
-	peerConns  map[string]PeerConnection
+	peerMu            sync.RWMutex
+	nextIndex         map[string]uint64
+	matchIndex        map[string]uint64
+	peerConns         map[string]PeerConnection
+	peerCodecVersions map[string]uint32
 
 	// Pending futures for in-flight applies
 	futuresMu sync.Mutex
@@ -152,6 +166,20 @@ type RaftReplicator struct {
 // observation seam. Idempotent. Calling with nil disables observation.
 func (r *RaftReplicator) SetReplicatorMetrics(bag *observability.ReplicationMetrics, tracker *PeerTracker) {
 	r.metrics.set(newReplicatorMetrics(bag, tracker))
+}
+
+// peerCodecVersion returns the codec version to use when sending to peerID.
+// If the peer has never responded (version 0 / unknown), we send at version 0
+// (pre-version frame) for rolling-upgrade safety. Once a peer echoes a version
+// >= CurrentCodecVersion, we send at CurrentCodecVersion.
+func (r *RaftReplicator) peerCodecVersion(peerID string) uint32 {
+	r.peerMu.RLock()
+	v := r.peerCodecVersions[peerID]
+	r.peerMu.RUnlock()
+	if v >= CurrentCodecVersion {
+		return CurrentCodecVersion
+	}
+	return 0
 }
 
 // applyFuture represents a pending apply operation.
@@ -627,6 +655,7 @@ func (r *RaftReplicator) replicateLogToPeer(ctx context.Context, peer PeerConfig
 		PrevLogTerm:  prevLogTerm,
 		Entries:      entries,
 		LeaderCommit: commitIndex,
+		CodecVersion: r.peerCodecVersion(peer.ID),
 	}
 
 	// Send AppendEntries RPC
@@ -658,6 +687,7 @@ func (r *RaftReplicator) sendAppendEntriesRPC(ctx context.Context, conn PeerConn
 		PrevLogTerm:  req.PrevLogTerm,
 		Entries:      transportEntries,
 		LeaderCommit: req.LeaderCommit,
+		CodecVersion: req.CodecVersion,
 	}
 
 	// Send actual Raft AppendEntries RPC via peer connection
@@ -707,6 +737,12 @@ func (r *RaftReplicator) handleAppendEntriesResponse(peerID string, term uint64,
 
 	r.peerMu.Lock()
 	defer r.peerMu.Unlock()
+
+	// TRC-22: record the peer's codec version for mixed-cluster compat.
+	if r.peerCodecVersions == nil {
+		r.peerCodecVersions = make(map[string]uint32)
+	}
+	r.peerCodecVersions[peerID] = resp.CodecVersion
 
 	if resp.Success {
 		// Update matchIndex and nextIndex
@@ -1104,9 +1140,10 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 	r.mu.Lock()
 
 	resp := &AppendEntriesResponse{
-		Term:        r.currentTerm,
-		Success:     false,
-		ResponderID: r.config.NodeID,
+		Term:         r.currentTerm,
+		Success:      false,
+		ResponderID:  r.config.NodeID,
+		CodecVersion: CurrentCodecVersion,
 	}
 
 	// If request term is stale, reject
