@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nornicdb.fullname" . }}
+  labels:
+    {{- include "nornicdb.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.boltPort }}
+      targetPort: bolt
+      protocol: TCP
+      name: bolt
+    - port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.telemetryPort }}
+      targetPort: telemetry
+      protocol: TCP
+      name: telemetry
+  selector:
+    {{- include "nornicdb.selectorLabels" . | nindent 4 }}

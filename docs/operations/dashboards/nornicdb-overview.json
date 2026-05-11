@@ -1,0 +1,286 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "HTTP Request Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_http_requests_total[5m])) by (method, route, status)",
+          "legendFormat": "{{method}} {{route}} {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "HTTP Latency (p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p99 {{route}}"
+        }
+      ]
+    },
+    {
+      "title": "Bolt Connections Active",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "nornicdb_bolt_connections_active",
+          "legendFormat": "active"
+        }
+      ]
+    },
+    {
+      "title": "Bolt Message Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_bolt_messages_total[5m])) by (op, result)",
+          "legendFormat": "{{op}} {{result}}"
+        }
+      ]
+    },
+    {
+      "title": "Bolt Message Latency (p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_bolt_message_duration_seconds_bucket[5m])) by (le, op))",
+          "legendFormat": "p99 {{op}}"
+        }
+      ]
+    },
+    {
+      "title": "Cypher Query Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_cypher_queries_total[5m])) by (op_type, result)",
+          "legendFormat": "{{op_type}} {{result}}"
+        }
+      ]
+    },
+    {
+      "title": "Cypher Query Latency (p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_cypher_query_duration_seconds_bucket[5m])) by (le, op_type))",
+          "legendFormat": "p99 {{op_type}}"
+        }
+      ]
+    },
+    {
+      "title": "Active Transactions",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "nornicdb_cypher_active_transactions",
+          "legendFormat": "active"
+        }
+      ]
+    },
+    {
+      "title": "Slow Queries",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 24},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_cypher_slow_queries_total[5m]))",
+          "legendFormat": "slow/s"
+        }
+      ]
+    },
+    {
+      "title": "Storage Operations",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_storage_op_duration_seconds_bucket[5m])) by (le, op))",
+          "legendFormat": "p99 {{op}}"
+        }
+      ]
+    },
+    {
+      "title": "Storage Size",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "targets": [
+        {
+          "expr": "nornicdb_storage_bytes",
+          "legendFormat": "total bytes"
+        },
+        {
+          "expr": "nornicdb_storage_nodes_total",
+          "legendFormat": "nodes"
+        },
+        {
+          "expr": "nornicdb_storage_edges_total",
+          "legendFormat": "edges"
+        }
+      ]
+    },
+    {
+      "title": "MVCC Readers & Pressure",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "targets": [
+        {
+          "expr": "nornicdb_mvcc_active_readers",
+          "legendFormat": "active readers"
+        },
+        {
+          "expr": "nornicdb_mvcc_pressure_band",
+          "legendFormat": "pressure band"
+        }
+      ]
+    },
+    {
+      "title": "MVCC Oldest Reader Age",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "targets": [
+        {
+          "expr": "nornicdb_mvcc_oldest_reader_age_seconds",
+          "legendFormat": "oldest reader age"
+        }
+      ]
+    },
+    {
+      "title": "Replication Lag",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 44},
+      "targets": [
+        {
+          "expr": "nornicdb_replication_lag_entries",
+          "legendFormat": "lag entries {{instance}}"
+        },
+        {
+          "expr": "nornicdb_replication_lag_bytes",
+          "legendFormat": "lag bytes {{instance}}"
+        }
+      ]
+    },
+    {
+      "title": "Replication RTT & Role",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 44},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_replication_rtt_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99 RTT"
+        }
+      ]
+    },
+    {
+      "title": "Search Request Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 52},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_search_requests_total[5m])) by (mode, result)",
+          "legendFormat": "{{mode}} {{result}}"
+        }
+      ]
+    },
+    {
+      "title": "Search Latency (p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 52},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(nornicdb_search_duration_seconds_bucket[5m])) by (le, mode))",
+          "legendFormat": "p99 {{mode}}"
+        }
+      ]
+    },
+    {
+      "title": "Embedding Processing",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 60},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_embed_processed_total[5m])) by (mode)",
+          "legendFormat": "{{mode}}/s"
+        },
+        {
+          "expr": "nornicdb_embed_queue_depth",
+          "legendFormat": "queue depth"
+        }
+      ]
+    },
+    {
+      "title": "Cache Hit Ratio",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 60},
+      "targets": [
+        {
+          "expr": "nornicdb_cache_hit_ratio",
+          "legendFormat": "{{cache}} hit ratio"
+        }
+      ]
+    },
+    {
+      "title": "OTel BSP Health",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 68},
+      "targets": [
+        {
+          "expr": "nornicdb_otel_bsp_queue_depth",
+          "legendFormat": "queue depth"
+        },
+        {
+          "expr": "rate(nornicdb_otel_bsp_dropped_spans_total[5m])",
+          "legendFormat": "dropped/s"
+        }
+      ]
+    },
+    {
+      "title": "Auth Attempts",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 68},
+      "targets": [
+        {
+          "expr": "sum(rate(nornicdb_auth_attempts_total[5m])) by (result, protocol)",
+          "legendFormat": "{{protocol}} {{result}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["nornicdb", "graph-database"],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "query": "label_values(nornicdb_build_info, instance)",
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "NornicDB Overview",
+  "uid": "nornicdb-overview",
+  "version": 1
+}
