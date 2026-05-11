@@ -1,1 +1,0 @@
-ok  	github.com/orneryd/nornicdb/pkg/observability	(cached)	coverage: 92.2% of statements
