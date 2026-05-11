@@ -563,6 +563,15 @@ const (
 	defaultEmbeddingContextCap = 8192
 )
 
+// modelLoadMu serializes llama.cpp model/context creation.
+//
+// Some backends (notably Metal init paths) are not robust when multiple models
+// are initialized concurrently from separate goroutines during process startup
+// (e.g. Heimdall + embedding model). Serializing load avoids startup crashes
+// while keeping inference concurrency unchanged (per-model Embed already has
+// its own mutex).
+var modelLoadMu sync.Mutex
+
 // DefaultOptions returns options optimized for embedding generation.
 //
 // GPU is enabled by default (-1 = auto-detect and use all layers).
@@ -656,6 +665,9 @@ func resolveEmbeddingContextAndBatch(opts Options, modelCtxTrain int) (ctxSize, 
 //
 //	fmt.Printf("Model loaded: %d dimensions\n", model.Dimensions())
 func LoadModel(opts Options) (*Model, error) {
+	modelLoadMu.Lock()
+	defer modelLoadMu.Unlock()
+
 	cPath := C.CString(opts.ModelPath)
 	defer C.free(unsafe.Pointer(cPath))
 
@@ -1058,6 +1070,9 @@ func resolveGenerationContextAndBatch(opts GenerationOptions, modelCtxTrain int)
 
 // LoadGenerationModel loads a GGUF model for text generation.
 func LoadGenerationModel(opts GenerationOptions) (*GenerationModel, error) {
+	modelLoadMu.Lock()
+	defer modelLoadMu.Unlock()
+
 	cPath := C.CString(opts.ModelPath)
 	defer C.free(unsafe.Pointer(cPath))
 

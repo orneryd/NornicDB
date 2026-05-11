@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -48,6 +49,9 @@ func NewTelemetryListener(prov *Provider, health *Health) (*telemetryListener, e
 	if addr == "" {
 		addr = ":9090"
 	}
+	if isNumericPort(addr) {
+		addr = ":" + addr
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("observability: listen on telemetry %s: %w", addr, err)
@@ -82,6 +86,19 @@ func NewTelemetryListener(prov *Provider, health *Health) (*telemetryListener, e
 		prov:   prov,
 		health: health,
 	}, nil
+}
+
+func isNumericPort(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	for _, ch := range v {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Name returns "telemetry" for supervisor logging.

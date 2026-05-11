@@ -40,10 +40,26 @@ func (a *boltAdapter) Name() string { return "bolt" }
 // signal from a clean shutdown) is filtered to nil so errgroup does not
 // interpret a graceful drain as a runtime failure.
 func (a *boltAdapter) Start(ctx context.Context) error {
-	if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, net.ErrClosed) {
-		return fmt.Errorf("bolt: %w", err)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.srv.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Ensure Ctrl+C can always unblock a blocking ListenAndServe.
+		_ = a.srv.Close()
+		err := <-errCh
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			return fmt.Errorf("bolt: %w", err)
+		}
+		return nil
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			return fmt.Errorf("bolt: %w", err)
+		}
+		return nil
 	}
-	return nil
 }
 
 // Shutdown closes the Bolt listener. A double-close (e.g. ListenAndServe

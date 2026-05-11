@@ -31,8 +31,13 @@ func (a *httpAdapter) Name() string { return "http" }
 // Start binds the HTTP listener and blocks until ctx is cancelled.
 // The actual serve loop runs in a goroutine spawned inside srv.Start.
 func (a *httpAdapter) Start(ctx context.Context) error {
-	if err := a.srv.Start(); err != nil {
-		return err
+	// main.go may pre-start HTTP before entering lifecycle.Run so metrics,
+	// health, and endpoint summaries are ready before supervision begins.
+	// If already listening, do not bind again.
+	if a.srv.Addr() == "" {
+		if err := a.srv.Start(); err != nil {
+			return err
+		}
 	}
 	<-ctx.Done()
 	return nil

@@ -195,11 +195,6 @@ func (ew *EmbedWorker) StartWorkers() {
 	if ew.closed.Load() || ew.workersStarted {
 		return
 	}
-	ew.lifecycleMu.Lock()
-	defer ew.lifecycleMu.Unlock()
-	if ew.closed.Load() {
-		return
-	}
 	ew.workersStarted = true
 	numWorkers := ew.config.NumWorkers
 	if numWorkers < 1 {
@@ -352,8 +347,6 @@ func (ew *EmbedWorker) Reset() {
 	ew.mu.Unlock()
 
 	fmt.Println("🔄 Resetting embed worker for regeneration...")
-	ew.lifecycleMu.Lock()
-	defer ew.lifecycleMu.Unlock()
 
 	// Cancel context to stop current processing
 	ew.cancel()
@@ -407,8 +400,6 @@ func (ew *EmbedWorker) Close() {
 	defer ew.lifecycleMu.Unlock()
 
 	ew.closed.Store(true)
-	ew.lifecycleMu.Lock()
-	defer ew.lifecycleMu.Unlock()
 
 	// Stop pending debounced trigger timer.
 	ew.triggerMu.Lock()

@@ -77,6 +77,7 @@ import (
 //	}
 //
 //	fmt.Printf("Config: %s\n", config)
+//
 // StorageRuntimeConfig holds runtime-only storage settings that do not
 // belong on DatabaseConfig (which mirrors persisted ENV/YAML knobs).
 //
@@ -2304,7 +2305,7 @@ func applyEnvVars(config *Config) error {
 	// they are read on demand by observability.TracingConfig.OTLPEndpoint()
 	// at exporter-init time so OBS-12 precedence (env > YAML) is honored.
 	if v := getEnv("NORNICDB_TELEMETRY_LISTEN", ""); v != "" {
-		config.Observability.Metrics.Listen = v
+		config.Observability.Metrics.Listen = normalizeTelemetryListen(v)
 	}
 	if v := getEnv("NORNICDB_TELEMETRY_PORT", ""); v != "" && config.Observability.Metrics.Listen == "" {
 		config.Observability.Metrics.Listen = ":" + v
@@ -3180,7 +3181,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		config.Observability.Metrics.Enabled = *yamlCfg.Observability.Metrics.Enabled
 	}
 	if yamlCfg.Observability.Metrics.Listen != "" {
-		config.Observability.Metrics.Listen = yamlCfg.Observability.Metrics.Listen
+		config.Observability.Metrics.Listen = normalizeTelemetryListen(yamlCfg.Observability.Metrics.Listen)
 	}
 	// Phase 5 R-02: defer dereference of *bool. The Phase 5 startup hook in
 	// cmd/nornicdb/main.go calls ResolveTenantLabels(TenantLabelsExplicit, ...)
@@ -3328,6 +3329,22 @@ func getEnvStringSlice(key string, defaultVal []string) []string {
 		}
 	}
 	return defaultVal
+}
+
+// normalizeTelemetryListen accepts either a full bind address (":9090",
+// "127.0.0.1:9090") or a numeric port ("9090"). Numeric-only values are
+// normalized to ":<port>" for net.Listen compatibility.
+func normalizeTelemetryListen(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	for _, ch := range v {
+		if ch < '0' || ch > '9' {
+			return v
+		}
+	}
+	return ":" + v
 }
 
 func generateDefaultSecret() string {
