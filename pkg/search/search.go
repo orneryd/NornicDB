@@ -111,6 +111,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var ErrSearchIndexBuilding = errors.New("search index being built, please try again when they are complete")
@@ -2966,6 +2967,21 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// the dispatch below; defaulting to "hybrid" matches the most common
 	// path and is overwritten in the early-return branches.
 	mode := "hybrid"
+
+	// TRC-19: search span wraps the entire search operation.
+	ctx, searchSpan := startSearchSpan(ctx, query, len(embedding) > 0, mode)
+	defer func() {
+		if resp != nil {
+			searchSpan.SetAttributes(
+				attribute.Int("search.results", len(resp.Results)),
+				attribute.Int("search.candidates", resp.TotalCandidates),
+				attribute.String("search.mode", mode),
+			)
+		}
+		recordSearchError(searchSpan, err)
+		searchSpan.End()
+	}()
+
 	defer func() {
 		candidates := -1
 		if resp != nil {

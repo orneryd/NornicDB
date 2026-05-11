@@ -139,6 +139,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Protocol versions supported
@@ -936,6 +939,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 	}()
 
+	// TRC-13: session-level span wraps the entire connection lifetime.
+	sessionCtx, sessionSpan := startSessionSpan(conn.RemoteAddr().String())
+	defer func() {
+		sessionSpan.SetAttributes(attribute.String("bolt.result", sessionResult))
+		if sessionResult != "success" {
+			sessionSpan.SetStatus(codes.Error, sessionResult)
+		}
+		sessionSpan.End()
+	}()
+
 	session := &Session{
 		conn:       conn,
 		reader:     bufio.NewReaderSize(conn, s.config.ReadBufferSize),
@@ -944,6 +957,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		baseExec:   s.executor,
 		executor:   s.executor,
 		messageBuf: make([]byte, 0, 4096), // Pre-allocate 4KB message buffer
+		spanCtx:    sessionCtx,
 	}
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
 		session.executor = factory.NewSessionExecutor()
@@ -1005,6 +1019,9 @@ type Session struct {
 	baseExec QueryExecutor
 	executor QueryExecutor
 	version  uint32
+
+	// TRC-13: session span context for parenting per-message spans.
+	spanCtx context.Context
 
 	// Database context (from HELLO message)
 	database string // Database name for this session (defaults to default database)
@@ -1268,36 +1285,45 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
 		}
 	}
 
-	return s.dispatchInner(msgType, data)
+	return s.dispatchInner(msgType, data, op)
 }
 
 // dispatchInner is the unobserved body of dispatchMessage; kept as a
 // sibling so the metrics wrapper above stays a thin chokepoint.
-func (s *Session) dispatchInner(msgType byte, data []byte) error {
+func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
+	// TRC-13: per-message span, child of session span.
+	_, msgSpan := startMessageSpan(s.spanCtx, op)
+	defer func() {
+		msgSpan.End()
+	}()
+
+	var err error
 	switch msgType {
 	case MsgHello:
-		return s.handleHello(data)
+		err = s.handleHello(data)
 	case MsgGoodbye:
 		return io.EOF
 	case MsgRun:
-		return s.handleRun(data)
+		err = s.handleRun(data)
 	case MsgPull:
-		return s.handlePull(data)
+		err = s.handlePull(data)
 	case MsgDiscard:
-		return s.handleDiscard(data)
+		err = s.handleDiscard(data)
 	case MsgReset:
-		return s.handleReset(data)
+		err = s.handleReset(data)
 	case MsgBegin:
-		return s.handleBegin(data)
+		err = s.handleBegin(data)
 	case MsgCommit:
-		return s.handleCommit(data)
+		err = s.handleCommit(data)
 	case MsgRollback:
-		return s.handleRollback(data)
+		err = s.handleRollback(data)
 	case MsgRoute:
-		return s.handleRoute(data)
+		err = s.handleRoute(data)
 	default:
-		return fmt.Errorf("unknown message type: 0x%02X", msgType)
+		err = fmt.Errorf("unknown message type: 0x%02X", msgType)
 	}
+	recordBoltError(msgSpan, err)
+	return err
 }
 
 // handleHello handles the HELLO message with authentication.
@@ -1443,6 +1469,16 @@ func (s *Session) handleHello(data []byte) error {
 	// Store database for this session
 	s.database = dbName
 
+	// SEC-03 / TRC-13: enrich session span with auth outcome (never credentials).
+	if s.spanCtx != nil {
+		if span := trace.SpanFromContext(s.spanCtx); span.IsRecording() {
+			span.SetAttributes(
+				attribute.String("bolt.user", s.authResult.Username),
+				attribute.String("bolt.database", dbName),
+			)
+		}
+	}
+
 	if s.server != nil && s.server.config.LogQueries {
 		remoteAddr := "unknown"
 		if s.conn != nil {
@@ -1553,8 +1589,9 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 
-	// Create context with timeout if tx_timeout is specified
-	ctx := context.Background()
+	// Create context with timeout if tx_timeout is specified.
+	// TRC-14: extract nornicdb.traceparent from metadata for distributed tracing.
+	ctx := extractTraceparent(s.spanCtx, metadata)
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		// tx_timeout is in milliseconds, convert to time.Duration
 		timeout := time.Duration(txTimeout) * time.Millisecond
@@ -2136,10 +2173,12 @@ func (s *Session) handleBegin(data []byte) error {
 		s.txDatabase = ""
 	}
 
+	// TRC-14: extract traceparent from BEGIN metadata for distributed tracing.
+	txCtx := extractTraceparent(s.spanCtx, metadata)
+
 	// If executor supports transactions, start one
 	if txExec, ok := s.executor.(TransactionalExecutor); ok {
-		ctx := context.Background()
-		if err := txExec.BeginTransaction(ctx, metadata); err != nil {
+		if err := txExec.BeginTransaction(txCtx, metadata); err != nil {
 			return s.sendFailure("Neo.ClientError.Transaction.TransactionStartFailed", err.Error())
 		}
 	}

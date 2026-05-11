@@ -624,6 +624,16 @@ func (r *RaftReplicator) replicateLogToPeer(ctx context.Context, peer PeerConfig
 		return
 	}
 
+	// TRC-20: leader-side append span.
+	r.logMu.RLock()
+	entryCount := len(r.log) - int(r.nextIndex[peer.ID])
+	if entryCount < 0 {
+		entryCount = 0
+	}
+	r.logMu.RUnlock()
+	ctx, appendSpan := startAppendSpan(ctx, peer.ID, term, entryCount)
+	defer appendSpan.End()
+
 	// Get next index for this peer
 	r.peerMu.RLock()
 	nextIdx := r.nextIndex[peer.ID]
@@ -1137,6 +1147,10 @@ func (r *RaftReplicator) handleVoteRequest(req *VoteRequest) *VoteResponse {
 
 // handleAppendEntriesRequest processes an incoming AppendEntries request.
 func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *AppendEntriesResponse {
+	// TRC-20: follower-side apply span.
+	_, applySpan := startApplySpan(context.Background(), req.LeaderID, req.Term, req.PrevLogIndex, len(req.Entries))
+	defer applySpan.End()
+
 	r.mu.Lock()
 
 	resp := &AppendEntriesResponse{
