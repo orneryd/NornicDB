@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/observability
+cpu: Apple M1 Max
+BenchmarkObserve_HotMVCC/mvcc_pressure_band_set-10         	559650700	         2.035 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotMVCC/mvcc_pressure_band_set-10         	585507471	         2.029 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotMVCC/mvcc_pressure_band_set-10         	593441970	         2.031 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotMVCC/mvcc_update_band_full-10          	10216178	       117.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotMVCC/mvcc_update_band_full-10          	10219828	       117.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotMVCC/mvcc_update_band_full-10          	10215642	       118.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_op_duration_bound_get-10         	46614840	        25.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_op_duration_bound_get-10         	46788945	        25.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_op_duration_bound_get-10         	48567345	        25.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_index_rebuild_inc-10             	174578031	         6.916 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_index_rebuild_inc-10             	174290462	         6.954 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_index_rebuild_inc-10             	174398610	         6.875 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_bytes_set-10                     	584823702	         2.068 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_bytes_set-10                     	579395256	         2.059 ns/op	       0 B/op	       0 allocs/op
+BenchmarkObserve_HotStorage/storage_bytes_set-10                     	571792407	         2.076 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/observability	22.210s

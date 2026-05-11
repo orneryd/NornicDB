@@ -44,6 +44,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"gopkg.in/yaml.v3"
 )
 
@@ -75,12 +77,28 @@ import (
 //	}
 //
 //	fmt.Printf("Config: %s\n", config)
+// StorageRuntimeConfig holds runtime-only storage settings that do not
+// belong on DatabaseConfig (which mirrors persisted ENV/YAML knobs).
+//
+// Plan 04-04 introduces BytesMetricInterval here so cmd/nornicdb can
+// override the D-07 30s default sweep cadence at startup without
+// polluting the on-disk config schema.
+type StorageRuntimeConfig struct {
+	// BytesMetricInterval overrides the bytes_metrics_sweeper cadence.
+	// Zero/unset uses storage.DefaultBytesMetricsInterval (30s).
+	BytesMetricInterval time.Duration `yaml:"bytes_metric_interval"`
+}
+
 type Config struct {
 	// Authentication (NORNICDB_AUTH format: "username/password" or "none")
 	Auth AuthConfig
 
 	// Database settings
 	Database DatabaseConfig
+
+	// Storage holds runtime-only storage settings (Plan 04-04). Distinct
+	// from Database which mirrors ENV/YAML on-disk schema.
+	Storage StorageRuntimeConfig
 
 	// Server settings
 	Server ServerConfig
@@ -100,8 +118,19 @@ type Config struct {
 	// Logging
 	Logging LoggingConfig
 
+	// Observability holds telemetry config (metrics, tracing, pprof).
+	// Phase 1 introduces this; Phase 2 wires slog from Logging.
+	Observability observability.ObservabilityConfig
+
 	// Feature flags for experimental/optional features
 	Features FeatureFlagsConfig
+
+	// Logger is the structured *slog.Logger threaded into storage and other
+	// runtime subsystems by Phase 2 D-01 logger DI. Optional; nil falls
+	// back to discard handlers at storage ctor entry per D-01a. Marked
+	// yaml:"-" / json:"-" because it is a runtime-only handle that must
+	// not appear in YAML/JSON config payloads.
+	Logger *slog.Logger `yaml:"-" json:"-"`
 }
 
 // AuthConfig holds authentication settings.
@@ -601,8 +630,13 @@ type LoggingConfig struct {
 	Output string
 	// QueryLogEnabled for query logging
 	QueryLogEnabled bool
-	// SlowQueryThreshold for logging slow queries
+	// SlowQueryThreshold for logging slow queries (single source of truth
+	// per D-04d; replaces the prior pkg/server.Config.SlowQueryThreshold).
 	SlowQueryThreshold time.Duration
+	// SlowQueryLogFile is the optional file path for the slow-query log
+	// stream. Empty => log to the configured server logger. Single source of
+	// truth per D-04d.
+	SlowQueryLogFile string
 }
 
 // FeatureFlagsConfig holds all feature flags for experimental/optional features.
@@ -1224,6 +1258,11 @@ type YAMLConfig struct {
 	// Storage alias for database
 	Storage struct {
 		Path string `yaml:"path"`
+		// BytesMetricInterval is the cadence for the Plan 04-04 D-07
+		// bytes_metrics_sweeper lifecycle.Component. Default 30s when
+		// zero/unset. Configurable for tests + ops who want denser or
+		// sparser cadence.
+		BytesMetricInterval time.Duration `yaml:"bytes_metric_interval"`
 	} `yaml:"storage"`
 
 	// Authentication configuration
@@ -1410,6 +1449,26 @@ type YAMLConfig struct {
 		QueryLogEnabled    bool   `yaml:"query_log_enabled"`
 		SlowQueryThreshold string `yaml:"slow_query_threshold"`
 	} `yaml:"logging"`
+
+	// Observability configuration (Phase 1 — OBS-02)
+	Observability struct {
+		Metrics struct {
+			Enabled             *bool  `yaml:"enabled"`
+			Listen              string `yaml:"listen"`
+			TenantLabelsEnabled *bool  `yaml:"tenant_labels_enabled"`
+		} `yaml:"metrics"`
+		Tracing struct {
+			Enabled  *bool  `yaml:"enabled"`
+			Endpoint string `yaml:"endpoint"`
+			Protocol string `yaml:"protocol"`
+			Insecure *bool  `yaml:"insecure"`
+			Timeout  string `yaml:"timeout"`
+		} `yaml:"tracing"`
+		Pprof struct {
+			Enabled *bool  `yaml:"enabled"`
+			Listen  string `yaml:"listen"`
+		} `yaml:"pprof"`
+	} `yaml:"observability"`
 
 	// Plugins configuration
 	Plugins struct {
@@ -1598,6 +1657,9 @@ func LoadDefaults() *Config {
 	config.Logging.Output = "stdout"
 	config.Logging.QueryLogEnabled = false
 	config.Logging.SlowQueryThreshold = 5 * time.Second
+
+	// Observability defaults (Phase 1 — OBS-02)
+	config.Observability = observability.DefaultConfig()
 
 	// Feature flags defaults
 	config.Features.KalmanEnabled = false
@@ -2235,6 +2297,26 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvDuration("NORNICDB_SLOW_QUERY_THRESHOLD", 0); v > 0 {
 		config.Logging.SlowQueryThreshold = v
+	}
+
+	// Observability settings (Phase 1 — OBS-02).
+	// OTEL_EXPORTER_OTLP_* env vars are intentionally NOT consumed here —
+	// they are read on demand by observability.TracingConfig.OTLPEndpoint()
+	// at exporter-init time so OBS-12 precedence (env > YAML) is honored.
+	if v := getEnv("NORNICDB_TELEMETRY_LISTEN", ""); v != "" {
+		config.Observability.Metrics.Listen = v
+	}
+	if v := getEnv("NORNICDB_TELEMETRY_PORT", ""); v != "" && config.Observability.Metrics.Listen == "" {
+		config.Observability.Metrics.Listen = ":" + v
+	}
+	if v := getEnv("NORNICDB_TRACING_ENABLED", ""); v != "" {
+		config.Observability.Tracing.Enabled = v == "true"
+	}
+	if v := getEnv("NORNICDB_PPROF_ENABLED", ""); v != "" {
+		config.Observability.Pprof.Enabled = v == "true"
+	}
+	if v := getEnv("NORNICDB_PPROF_LISTEN", ""); v != "" {
+		config.Observability.Pprof.Listen = v
 	}
 
 	// Feature flags
@@ -3091,6 +3173,43 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
 			config.Logging.SlowQueryThreshold = d
 		}
+	}
+
+	// === Observability Settings (Phase 1 — OBS-02) ===
+	if yamlCfg.Observability.Metrics.Enabled != nil {
+		config.Observability.Metrics.Enabled = *yamlCfg.Observability.Metrics.Enabled
+	}
+	if yamlCfg.Observability.Metrics.Listen != "" {
+		config.Observability.Metrics.Listen = yamlCfg.Observability.Metrics.Listen
+	}
+	// Phase 5 R-02: defer dereference of *bool. The Phase 5 startup hook in
+	// cmd/nornicdb/main.go calls ResolveTenantLabels(TenantLabelsExplicit, ...)
+	// which enforces the precedence chain (explicit > autodetect > default).
+	// Storing the *bool sentinel — instead of dereferencing into the resolved
+	// bool here — allows YAML "explicit false" to win over autodetect on K8s.
+	config.Observability.Metrics.TenantLabelsExplicit = yamlCfg.Observability.Metrics.TenantLabelsEnabled
+	if yamlCfg.Observability.Tracing.Enabled != nil {
+		config.Observability.Tracing.Enabled = *yamlCfg.Observability.Tracing.Enabled
+	}
+	if yamlCfg.Observability.Tracing.Endpoint != "" {
+		config.Observability.Tracing.Endpoint = yamlCfg.Observability.Tracing.Endpoint
+	}
+	if yamlCfg.Observability.Tracing.Protocol != "" {
+		config.Observability.Tracing.Protocol = yamlCfg.Observability.Tracing.Protocol
+	}
+	if yamlCfg.Observability.Tracing.Insecure != nil {
+		config.Observability.Tracing.Insecure = *yamlCfg.Observability.Tracing.Insecure
+	}
+	if yamlCfg.Observability.Tracing.Timeout != "" {
+		if d, err := time.ParseDuration(yamlCfg.Observability.Tracing.Timeout); err == nil {
+			config.Observability.Tracing.Timeout = d
+		}
+	}
+	if yamlCfg.Observability.Pprof.Enabled != nil {
+		config.Observability.Pprof.Enabled = *yamlCfg.Observability.Pprof.Enabled
+	}
+	if yamlCfg.Observability.Pprof.Listen != "" {
+		config.Observability.Pprof.Listen = yamlCfg.Observability.Pprof.Listen
 	}
 
 	// === Plugins Settings ===

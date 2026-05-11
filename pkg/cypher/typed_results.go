@@ -25,7 +25,7 @@ type TypedExecuteResult[T any] struct {
 //
 //	result, err := TypedExecute[MemoryNode](ctx, executor, "MATCH (n:Memory) RETURN n", nil)
 //	for _, node := range result.Rows {
-//	    fmt.Println(node.Title, node.Content)
+//	    // print or process node.Title, node.Content
 //	}
 func TypedExecute[T any](ctx context.Context, exec *StorageExecutor, cypher string, params map[string]interface{}) (*TypedExecuteResult[T], error) {
 	// Execute the raw query

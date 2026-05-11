@@ -3,7 +3,11 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // =============================================================================
@@ -174,95 +178,54 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, response)
 }
 
-// handleMetrics returns Prometheus-compatible metrics.
-// This endpoint can be scraped by Prometheus at /metrics.
+// handleMetrics serves the legacy :7474/metrics endpoint by translating
+// the unified pkg/observability *prometheus.Registry through
+// observability.RenderLegacy (Phase 5 / Plan 05-04 D-01e). The body
+// stream is identical (byte-for-byte, locked by
+// pkg/observability/legacy_snapshot.golden) to the pre-Phase-5 hand-built
+// emit in this file — but every line now flows from the unified Phase 4
+// registry, eliminating the second source of truth (ROADMAP SC #1).
 //
-// Metrics exported:
-//   - nornicdb_uptime_seconds: Server uptime in seconds
-//   - nornicdb_requests_total: Total HTTP requests
-//   - nornicdb_errors_total: Total request errors
-//   - nornicdb_active_requests: Currently active requests
-//   - nornicdb_nodes_total: Total nodes in database
-//   - nornicdb_edges_total: Total edges in database
-//   - nornicdb_embeddings_processed: Embeddings processed
-//   - nornicdb_embeddings_failed: Embedding failures
-//   - nornicdb_embedding_worker_running: Whether embed worker is active (0/1)
+// Three locked headers per MET-19/MET-20:
+//   - Content-Type: text/plain; version=0.0.4; charset=utf-8 (Prometheus exposition v0.0.4)
+//   - Deprecation: true                                       (RFC 8594 — surface is sunset-tagged)
+//   - Sunset:      Fri, 31 Dec 2027 23:59:59 GMT              (RFC 8594 — public deprecation cutoff)
 //
-// Example Prometheus config:
+// The auth gate at server_router.go:117 (s.withAuth(s.handleMetrics, auth.PermRead))
+// is intentionally PRESERVED VERBATIM per CONTEXT D-04 — relaxing auth on
+// the deprecated surface would itself require a separate deprecation cycle.
+//
+// Nil-safe: if SetObsRegistry was never called (test fixtures, pre-Phase-5
+// callers), s.obsRegistryForHandler returns nil and observability.RenderLegacy
+// emits empty bytes — handler still sets the three headers and returns 200.
+//
+// Example Prometheus config (legacy scrape — operators should migrate to
+// the new :9090 telemetry listener before 31 Dec 2027):
 //
 //	scrape_configs:
-//	  - job_name: 'nornicdb'
+//	  - job_name: 'nornicdb-legacy'
 //	    static_configs:
 //	      - targets: ['localhost:7474']
 //	    metrics_path: '/metrics'
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	stats := s.Stats()
-	dbStats := s.db.Stats()
-
-	// Build Prometheus format output
-	var sb strings.Builder
-
-	// Server metrics
-	sb.WriteString("# HELP nornicdb_uptime_seconds Server uptime in seconds\n")
-	sb.WriteString("# TYPE nornicdb_uptime_seconds gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_uptime_seconds %.2f\n", stats.Uptime.Seconds())
-
-	sb.WriteString("# HELP nornicdb_requests_total Total HTTP requests\n")
-	sb.WriteString("# TYPE nornicdb_requests_total counter\n")
-	fmt.Fprintf(&sb, "nornicdb_requests_total %d\n", stats.RequestCount)
-
-	sb.WriteString("# HELP nornicdb_errors_total Total request errors\n")
-	sb.WriteString("# TYPE nornicdb_errors_total counter\n")
-	fmt.Fprintf(&sb, "nornicdb_errors_total %d\n", stats.ErrorCount)
-
-	sb.WriteString("# HELP nornicdb_active_requests Currently active requests\n")
-	sb.WriteString("# TYPE nornicdb_active_requests gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_active_requests %d\n", stats.ActiveRequests)
-
-	// Database metrics
-	sb.WriteString("# HELP nornicdb_nodes_total Total nodes in database\n")
-	sb.WriteString("# TYPE nornicdb_nodes_total gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_nodes_total %d\n", dbStats.NodeCount)
-
-	sb.WriteString("# HELP nornicdb_edges_total Total edges in database\n")
-	sb.WriteString("# TYPE nornicdb_edges_total gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_edges_total %d\n", dbStats.EdgeCount)
-
-	// Embedding metrics
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
-		sb.WriteString("# HELP nornicdb_embeddings_processed Total embeddings processed\n")
-		sb.WriteString("# TYPE nornicdb_embeddings_processed counter\n")
-		fmt.Fprintf(&sb, "nornicdb_embeddings_processed %d\n", embedStats.Processed)
-
-		sb.WriteString("# HELP nornicdb_embeddings_failed Total embedding failures\n")
-		sb.WriteString("# TYPE nornicdb_embeddings_failed counter\n")
-		fmt.Fprintf(&sb, "nornicdb_embeddings_failed %d\n", embedStats.Failed)
-
-		sb.WriteString("# HELP nornicdb_embedding_worker_running Whether embed worker is active\n")
-		sb.WriteString("# TYPE nornicdb_embedding_worker_running gauge\n")
-		running := 0
-		if embedStats.Running {
-			running = 1
-		}
-		fmt.Fprintf(&sb, "nornicdb_embedding_worker_running %d\n", running)
-	}
-
-	// Slow query metrics
-	sb.WriteString("# HELP nornicdb_slow_queries_total Total slow queries logged\n")
-	sb.WriteString("# TYPE nornicdb_slow_queries_total counter\n")
-	fmt.Fprintf(&sb, "nornicdb_slow_queries_total %d\n", s.slowQueryCount.Load())
-
-	sb.WriteString("# HELP nornicdb_slow_query_threshold_ms Slow query threshold in milliseconds\n")
-	sb.WriteString("# TYPE nornicdb_slow_query_threshold_ms gauge\n")
-	fmt.Fprintf(&sb, "nornicdb_slow_query_threshold_ms %d\n", s.config.SlowQueryThreshold.Milliseconds())
-
-	// Info metric with version
-	sb.WriteString("# HELP nornicdb_info Database information\n")
-	sb.WriteString("# TYPE nornicdb_info gauge\n")
-	sb.WriteString("nornicdb_info{version=\"1.0.0\",backend=\"badger\"} 1\n")
-
-	// Set content type for Prometheus
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	body := observability.RenderLegacy(s.obsRegistryForHandler(), time.Now())
+	w.Header().Set("Content-Type", observability.LegacyContentType)
+	w.Header().Set("Deprecation", observability.LegacyDeprecation)
+	w.Header().Set("Sunset", observability.LegacySunset)
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(sb.String()))
+	_, _ = w.Write(body)
+}
+
+// obsRegistryForHandler is a small RLock-protected accessor for the
+// obsRegistry field (Phase 5 / Plan 05-04). Used by handleMetrics so the
+// per-call read of the post-construction-injected registry is race-clean
+// under -race -count=10.
+//
+// Nil-safe: returns nil when SetObsRegistry has not been called.
+// observability.RenderLegacy tolerates a nil registry by emitting empty
+// body bytes (Plan 05-02 contract).
+func (s *Server) obsRegistryForHandler() *prometheus.Registry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.obsRegistry
 }

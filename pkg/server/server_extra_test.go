@@ -979,8 +979,8 @@ func TestNewAdditionalInitializationCoverage(t *testing.T) {
 		cfg.RateLimitPerHour = 10
 		cfg.RateLimitBurst = 2
 		cfg.SlowQueryEnabled = true
-		cfg.SlowQueryThreshold = 50 * time.Millisecond
-		cfg.SlowQueryLogFile = filepath.Join(t.TempDir(), "slow.log")
+		cfg.Logging.SlowQueryThreshold = 50 * time.Millisecond
+		cfg.Logging.SlowQueryLogFile = filepath.Join(t.TempDir(), "slow.log")
 
 		server, err := New(db, authenticator, cfg)
 		if err != nil {
@@ -1848,12 +1848,12 @@ func TestSlowQueryLoggingBranches(t *testing.T) {
 
 	// Enabled but below threshold.
 	server.config.SlowQueryEnabled = true
-	server.config.SlowQueryThreshold = 5 * time.Second
+	server.config.Logging.SlowQueryThreshold = 5 * time.Second
 	server.logSlowQuery("MATCH (n) RETURN n", nil, 10*time.Millisecond, nil)
 	assert.Equal(t, int64(0), server.slowQueryCount.Load())
 
 	// Above threshold with truncation and params.
-	server.config.SlowQueryThreshold = 1 * time.Millisecond
+	server.config.Logging.SlowQueryThreshold = 1 * time.Millisecond
 	longQuery := strings.Repeat("x", 700)
 	longParam := strings.Repeat("y", 300)
 	server.logSlowQuery(longQuery, map[string]interface{}{"p": longParam}, 100*time.Millisecond, fmt.Errorf("query failed"))
@@ -2570,7 +2570,7 @@ func TestConstructorAdditionalBranches(t *testing.T) {
 	t.Run("slow query open failure and security mode", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.SlowQueryEnabled = true
-		cfg.SlowQueryLogFile = t.TempDir() // directory path causes open failure branch
+		cfg.Logging.SlowQueryLogFile = t.TempDir() // directory path causes open failure branch
 		cfg.MCPEnabled = false
 		cfg.EmbeddingEnabled = false
 		cfg.Features = nil // hit fallback feature resolution
@@ -2588,7 +2588,7 @@ func TestConstructorAdditionalBranches(t *testing.T) {
 	t.Run("slow query logger success and embeddings retry branch", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.SlowQueryEnabled = true
-		cfg.SlowQueryLogFile = filepath.Join(t.TempDir(), "slow.log")
+		cfg.Logging.SlowQueryLogFile = filepath.Join(t.TempDir(), "slow.log")
 		cfg.RateLimitEnabled = true
 		cfg.MCPEnabled = true
 		cfg.EmbeddingEnabled = true
@@ -2887,13 +2887,12 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	server.dbManager = origManager
 
-	// metrics output includes slow query gauges.
-	server.slowQueryCount.Store(3)
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec = httptest.NewRecorder()
-	server.handleMetrics(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), "nornicdb_slow_queries_total 3")
+	// NOTE: the handleMetrics slow-query content assertion was removed in
+	// Plan 05-04. The rewritten handler calls observability.RenderLegacy
+	// against the unified pkg/observability registry; metric content is
+	// owned by pkg/observability/legacy_translation_test.go +
+	// legacy_snapshot.golden, and server-layer wiring (headers + nil-safety)
+	// is owned by pkg/server/server_public_test.go.
 }
 
 func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {

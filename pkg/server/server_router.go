@@ -1,8 +1,6 @@
 package server
 
 import (
-	"fmt"
-	"log"
 	"net/http"
 
 	// _ "net/http/pprof" // Register pprof handlers
@@ -41,21 +39,21 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) *uiHandler {
 	// UI Browser (if enabled and not in headless mode)
 	// ==========================================================================
 	if s.config.Headless {
-		log.Println("🔇 Headless mode: UI disabled")
+		s.log.Info("headless mode: UI disabled")
 		return nil
 	}
 
 	SetUIBasePath(s.config.BasePath)
 	uiHandler, uiErr := newUIHandler()
 	if uiErr != nil {
-		log.Printf("⚠️  UI initialization failed: %v", uiErr)
+		s.log.Warn("UI initialization failed", "error", uiErr)
 		return nil
 	}
 	if uiHandler == nil {
 		return nil
 	}
 
-	log.Println("📱 UI Browser enabled at /")
+	s.log.Info("UI browser enabled", "route", "/")
 
 	// Serve UI assets
 	mux.Handle("/assets/", uiHandler)
@@ -295,7 +293,12 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 		if os.Getenv("NORNICDB_TRACE_GRAPHQL") != "" {
 			start := time.Now()
 			s.graphqlHandler.ServeHTTP(w, r)
-			fmt.Printf("[GRAPHQL] %s %s %v\n", r.Method, r.URL.Path, time.Since(start))
+			s.log.Debug("graphql request",
+				"subsystem", "graphql",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"duration", time.Since(start),
+			)
 			return
 		}
 		s.graphqlHandler.ServeHTTP(w, r)
@@ -306,7 +309,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 		r = s.withBifrostRBAC(r)
 		s.graphqlHandler.Playground().ServeHTTP(w, r)
 	}, auth.PermRead))
-	log.Println("📊 GraphQL API enabled at /graphql")
+	s.log.Info("graphql API enabled", "route", "/graphql")
 }
 
 // registerDebugRoutes registers pprof profiling endpoints
@@ -336,7 +339,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 // 		http.DefaultServeMux.ServeHTTP(w, r)
 // 	})
 //
-// 	log.Println("🔍 Pprof profiling enabled at /debug/pprof/")
+// 	// (would log: pprof profiling enabled at /debug/pprof/)
 // }
 
 func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {

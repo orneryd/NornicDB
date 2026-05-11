@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"runtime"
@@ -62,7 +61,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			start := time.Now()
 			claims, err = s.auth.ValidateToken(token)
 			if traceAuth && r.URL.Path == "/graphql" {
-				fmt.Printf("[AUTH] %s %s validate_token=%v err=%v\n", r.Method, r.URL.Path, time.Since(start), err)
+				s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "validate_token", "duration", time.Since(start), "error", err)
 			}
 		} else if strings.HasPrefix(authHeader, "Basic ") {
 			start := time.Now()
@@ -74,7 +73,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 					claims = cached
 					err = nil
 					if traceAuth && r.URL.Path == "/graphql" {
-						fmt.Printf("[AUTH] %s %s basic_auth_cache=%v err=%v\n", r.Method, r.URL.Path, time.Since(start), err)
+						s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "basic_auth_cache", "duration", time.Since(start), "error", err)
 					}
 					goto doneAuth
 				}
@@ -98,7 +97,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 				s.basicAuthCache.SetFromHeader(authHeader, claims)
 			}
 			if traceAuth && r.URL.Path == "/graphql" {
-				fmt.Printf("[AUTH] %s %s basic_auth=%v err=%v\n", r.Method, r.URL.Path, time.Since(start), err)
+				s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "basic_auth", "duration", time.Since(start), "error", err)
 			}
 		} else {
 			s.writeNeo4jError(w, http.StatusUnauthorized, "Neo.ClientError.Security.Unauthorized", "No authentication provided")
@@ -321,15 +320,15 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				// Log panic summary to stderr (without stack trace to prevent info exposure)
-				// #nosec CWE-209 -- Panic type only logged to stderr, not exposed to clients
-				log.Printf("PANIC: %v", err)
-				// Stack trace only in debug mode, written to stderr
+				// Log panic summary (without stack trace to prevent info exposure)
+				// #nosec CWE-209 -- Panic type only logged via slog stack, not exposed to clients
+				s.log.Error("panic recovered in HTTP handler", "panic", fmt.Sprintf("%v", err))
+				// Stack trace only in debug mode
 				if os.Getenv("NORNICDB_DEBUG") == "true" {
 					buf := make([]byte, 4096)
 					n := runtime.Stack(buf, false)
-					// #nosec CWE-209 -- Debug-only, stderr output, not exposed to clients
-					log.Printf("Stack trace:\n%s", buf[:n])
+					// #nosec CWE-209 -- Debug-only, slog output, not exposed to clients
+					s.log.Error("panic stack trace", "stack", string(buf[:n]))
 				}
 
 				s.errorCount.Add(1)

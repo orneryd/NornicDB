@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -296,7 +296,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
 	if removedStale > 0 || removedNoLongerNeeds > 0 {
-		log.Printf("🧹 Pending embeddings cleanup: removed %d stale entries, %d no-longer-needed", removedStale, removedNoLongerNeeds)
+		b.log.Info("pending embeddings cleanup",
+			"subsystem", "embeddings_index",
+			"removed_stale", removedStale,
+			"removed_no_longer_needed", removedNoLongerNeeds,
+		)
 	}
 
 	return found
@@ -378,18 +382,29 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 			if err == badger.ErrKeyNotFound {
 				// Node doesn't exist - remove from pending index
-				// This is a stale entry - log it for debugging
-				if removed < 10 { // Only log first 10 to avoid spam
-					fmt.Printf("🧹 RefreshPendingEmbeddingsIndex: Removing stale entry %s (node doesn't exist)\n", nodeID)
+				// This is a stale entry - log it for debugging.
+				// Cap the per-call log volume so a corrupted/oversized
+				// pending index does not flood the log pipeline.
+				if removed < 10 {
+					b.log.Debug("refresh pending embeddings: removing stale entry",
+						"subsystem", "embeddings_index",
+						"reason", "node_not_found",
+						"node_id", string(nodeID),
+					)
 				}
 				txn.Delete(key)
 				removed++
 				continue
 			}
 			if err != nil {
-				// Error reading - mark as stale
+				// Error reading - mark as stale.
 				if removed < 10 {
-					fmt.Printf("🧹 RefreshPendingEmbeddingsIndex: Removing corrupted entry %s (error: %v)\n", nodeID, err)
+					b.log.Debug("refresh pending embeddings: removing corrupted entry",
+						"subsystem", "embeddings_index",
+						"reason", "read_error",
+						"node_id", string(nodeID),
+						slog.Any("error", err),
+					)
 				}
 				txn.Delete(key)
 				removed++
@@ -466,14 +481,16 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 		return nil
 	})
 
-	// Always log if there were changes, or if we're cleaning up stale entries
+	// Always log if there were changes, or if we're cleaning up stale entries.
 	if added > 0 || removed > 0 {
-		fmt.Printf("📊 Pending embeddings index refreshed: added %d nodes, removed %d stale entries\n", added, removed)
-	} else if removed == 0 && added == 0 {
-		// Log even if no changes, to confirm refresh ran (helps with debugging)
-		// But only in verbose mode - commented out to reduce noise
-		// fmt.Printf("📊 Pending embeddings index refreshed: no changes\n")
+		b.log.Info("pending embeddings index refreshed",
+			"subsystem", "embeddings_index",
+			"added", added,
+			"removed_stale", removed,
+		)
 	}
+	// No changes case: previously a commented-out verbose-mode print; left
+	// silent so steady-state refreshes do not contribute log volume.
 	return added
 }
 
@@ -791,18 +808,28 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		}
 		node.ChunkEmbeddings = nil
 		if err := b.UpdateNode(node); err != nil {
-			log.Printf("Warning: failed to clear embedding for node %s: %v", id, err)
+			b.log.Warn("failed to clear embedding for node",
+				"subsystem", "embeddings_index",
+				"node_id", string(id),
+				slog.Any("error", err),
+			)
 			continue
 		}
 		cleared++
 	}
 
-	log.Printf("✓ Cleared embeddings from %d nodes", cleared)
+	b.log.Info("cleared embeddings",
+		"subsystem", "embeddings_index",
+		"cleared", cleared,
+	)
 
 	// Refresh the pending embeddings index so nodes get re-processed
 	added := b.RefreshPendingEmbeddingsIndex()
 	if added > 0 {
-		log.Printf("📊 Added %d nodes to pending embeddings queue", added)
+		b.log.Info("added nodes to pending embeddings queue",
+			"subsystem", "embeddings_index",
+			"added", added,
+		)
 	}
 
 	return cleared, nil

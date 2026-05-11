@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -97,15 +97,28 @@ func (b *BadgerEngine) startEdgeBetweenIndexBackfill() {
 	go func() {
 		defer close(done)
 		start := time.Now()
-		log.Printf("edge-between index backfill started")
+		// D-07: subsystem-tag once at goroutine entry; reuse for the entire
+		// backfill lifecycle so attribute payload allocates once.
+		idxLog := b.log.With("subsystem", "index_rebuild", "index", "edge_between")
+		idxLog.Info("edge-between index backfill started")
 		processed, err := b.rebuildEdgeBetweenIndex(ctx)
 		switch {
 		case err == nil:
-			log.Printf("edge-between index backfill completed: edges=%d duration=%s", processed, time.Since(start))
+			idxLog.Info("edge-between index backfill completed",
+				"edges", processed,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
 		case errors.Is(err, context.Canceled), errors.Is(err, ErrStorageClosed):
-			log.Printf("edge-between index backfill canceled: edges=%d duration=%s", processed, time.Since(start))
+			idxLog.Info("edge-between index backfill canceled",
+				"edges", processed,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
 		default:
-			log.Printf("edge-between index backfill failed: edges=%d duration=%s err=%v", processed, time.Since(start), err)
+			idxLog.Error("edge-between index backfill failed",
+				"edges", processed,
+				"duration_ms", time.Since(start).Milliseconds(),
+				slog.Any("error", err),
+			)
 		}
 	}()
 }
@@ -139,6 +152,10 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 		return 0, fmt.Errorf("clear edge-between head index before rebuild: %w", err)
 	}
 
+	// D-07 single-allocation: pre-bind subsystem attributes once for the
+	// rebuild's progress emissions (every edgeBetweenIndexRebuildLogEvery
+	// edges) so the steady-state path adds no .With(...) allocations.
+	idxLog := b.log.With("subsystem", "index_rebuild", "index", "edge_between")
 	batch := b.db.NewWriteBatch()
 	defer batch.Cancel()
 	batchCount := 0
@@ -180,7 +197,9 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 				batchCount++
 				processed++
 				if processed%edgeBetweenIndexRebuildLogEvery == 0 {
-					log.Printf("edge-between index backfill progress: edges=%d", processed)
+					idxLog.Info("edge-between index backfill progress",
+						"edges", processed,
+					)
 				}
 				if batchCount >= edgeBetweenIndexRebuildBatchSize {
 					return flushBatch()

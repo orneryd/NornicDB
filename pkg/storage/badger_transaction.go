@@ -7,7 +7,7 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -1132,9 +1132,15 @@ func (tx *BadgerTransaction) Commit() error {
 		return fmt.Errorf("buffering temporal index writes: %w", err)
 	}
 
-	// Log metadata
+	// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
+	// attribute so log aggregators can group commits by transaction without
+	// parsing message text.
 	if len(tx.Metadata) > 0 {
-		log.Printf("[Transaction %s] Committing with metadata: %v", tx.ID, tx.Metadata)
+		tx.engine.log.Debug("transaction committing with metadata",
+			"subsystem", "transaction",
+			"transaction_id", tx.ID,
+			slog.Any("metadata", tx.Metadata),
+		)
 	}
 
 	if len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 {
@@ -1277,9 +1283,14 @@ func (tx *BadgerTransaction) Commit() error {
 	// Note: In-memory mode (testing) skips fsync as there's no disk
 	if !tx.engine.IsInMemory() {
 		if err := tx.engine.Sync(); err != nil {
-			// Transaction is committed in Badger but fsync failed
-			// Log error but don't rollback - data is in Badger's WAL
-			log.Printf("[Transaction %s] Warning: fsync failed after commit: %v", tx.ID, err)
+			// Transaction is committed in Badger but fsync failed.
+			// Log error but don't rollback - data is in Badger's WAL.
+			// D-10a transaction_id slog attribute replaces the prior bracket prefix.
+			tx.engine.log.Warn("fsync failed after commit",
+				"subsystem", "transaction",
+				"transaction_id", tx.ID,
+				slog.Any("error", err),
+			)
 		}
 	}
 

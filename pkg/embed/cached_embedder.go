@@ -223,6 +223,14 @@ func (c *CachedEmbedder) Model() string {
 	return c.base.Model()
 }
 
+// Backend delegates to the wrapped embedder per Plan 04-05 D-06. The
+// wrapping layer never changes the execution backend; transparently
+// forwards so the observability `mode` label reflects the underlying
+// backend (e.g., "metal" for a cached LocalGGUF embedder running on Metal).
+func (c *CachedEmbedder) Backend() string {
+	return c.base.Backend()
+}
+
 // Stats returns cache statistics.
 func (c *CachedEmbedder) Stats() CacheStats {
 	hits := atomic.LoadUint64(&c.hits)

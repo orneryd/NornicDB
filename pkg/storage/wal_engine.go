@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,16 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 )
+
+// logger returns a non-nil *slog.Logger for WALEngine emissions. If the
+// wrapped *WAL was constructed without a SlogLogger, a discard logger is
+// returned. Calls are O(1); the underlying walLog is set once at NewWAL.
+func (w *WALEngine) logger() *slog.Logger {
+	if w == nil || w.wal == nil || w.wal.walLog == nil {
+		return discardWALSlog()
+	}
+	return w.wal.walLog
+}
 
 // WALEngine wraps a storage engine with write-ahead logging.
 //
@@ -336,8 +347,13 @@ func (w *WALEngine) autoSnapshotLoop() {
 		select {
 		case <-ticker.C:
 			if err := w.createSnapshotAndCompact(); err != nil {
-				// Log error but continue - don't crash on snapshot failure
-				fmt.Printf("WAL auto-compaction failed: %v\n", err)
+				// Log error but continue - don't crash on snapshot failure.
+				// Pre-bound subsystem=wal logger from the WAL config keeps
+				// per-failure emission allocation-free in the steady path.
+				w.logger().Warn("wal auto-compaction failed",
+					"subsystem", "wal_compaction",
+					slog.Any("error", err),
+				)
 			}
 		case <-stopCh:
 			return
@@ -376,8 +392,11 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 
 	// Prune old snapshot files so disk space stays bounded
 	if err := PruneOldSnapshotFiles(w.snapshotDir, w.wal.config); err != nil {
-		// Log but don't fail the compaction
-		fmt.Printf("WAL snapshot pruning failed: %v\n", err)
+		// Log but don't fail the compaction.
+		w.logger().Warn("wal snapshot pruning failed",
+			"subsystem", "wal_compaction",
+			slog.Any("error", err),
+		)
 	}
 
 	// Update stats

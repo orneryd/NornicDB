@@ -109,6 +109,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -522,6 +523,15 @@ type Service struct {
 	strategyTransitionSeq        uint64
 	strategyTransitionDeltas     []strategyDeltaMutation
 	strategyTransitionStarts     uint64
+
+	// Plan 04-05-05: observability metric bag + pre-bound observers for
+	// the hybrid hot path. AttachMetrics injects + binds; observeSearchStage
+	// picks the bound observer when mode=hybrid (fast path), lazy-binds
+	// otherwise. nil-tolerated for tests / embedded-library callers.
+	// See pkg/search/observability.go for the chokepoint helpers.
+	metrics            *observability.SearchMetrics
+	boundDurationIndex observability.BoundLatencyObserver
+	boundDurationFuse  observability.BoundLatencyObserver
 }
 
 type strategyMode int
@@ -2948,8 +2958,23 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //	}
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
-func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
 	start := time.Now()
+	// Plan 04-05-05: observe requests_total + candidates_rows at the
+	// single Search chokepoint so all internal call paths (vector-only,
+	// BM25-only, hybrid, fallbacks) record uniformly. Mode is decided by
+	// the dispatch below; defaulting to "hybrid" matches the most common
+	// path and is overwritten in the early-return branches.
+	mode := "hybrid"
+	defer func() {
+		candidates := -1
+		if resp != nil {
+			candidates = resp.TotalCandidates
+		}
+		s.observeSearchRequest(mode, classifySearchResult(resp, err), candidates)
+		_ = start
+	}()
+
 	if s.buildAttempted.Load() && !s.IsReady() {
 		return nil, ErrSearchIndexBuilding
 	}
@@ -2971,6 +2996,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 
 	// If no embedding provided, fall back to full-text only
 	if len(embedding) == 0 {
+		mode = "bm25" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.fullTextSearchOnly(ctx, query, opts)
 		if err == nil && s.resultCache != nil {
 			s.resultCache.Put(cacheKey, resp)
@@ -2983,6 +3009,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// vector search. This avoids unnecessary BM25+RRF overhead and matches the
 	// intended semantics of "pure embedding" search.
 	if strings.TrimSpace(query) == "" {
+		mode = "vector" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.vectorSearchOnly(ctx, embedding, opts)
 		if err == nil && s.resultCache != nil {
 			s.resultCache.Put(cacheKey, resp)
@@ -3014,7 +3041,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	}
 
 	// Final fallback to full-text
-	resp, err := s.fullTextSearchOnly(ctx, query, opts)
+	mode = "bm25" // Plan 04-05-05: final fallback to BM25-only
+	resp, err = s.fullTextSearchOnly(ctx, query, opts)
 	if err == nil && s.resultCache != nil {
 		s.resultCache.Put(cacheKey, resp)
 	}
@@ -3064,6 +3092,15 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		bm25Results = fulltextIndex.Search(query, bm25CandidateLimit)
 	}
 	bm25Ms := int(time.Since(bm25Start).Milliseconds())
+
+	// Plan 04-05-05: observe combined vector+bm25 wall-clock as the
+	// "index" stage per AllowedSearchStages. Both lookups execute
+	// sequentially today; combining them at observation cadence captures
+	// the joint stage budget for capacity planning. Per-index micro-detail
+	// remains in the SearchMetrics struct response payload (vectorMs +
+	// bm25Ms separately).
+	s.observeSearchStage(ctx, "hybrid", "index",
+		time.Since(vectorStart)) // vectorStart→bm25End wall clock
 
 	// Collapse vector IDs back to unique node IDs.
 	vectorResults = collapseIndexResultsByNodeID(vectorResults)
@@ -3120,6 +3157,10 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	results := s.enrichResults(ctx, fusedResults, opts.Limit, seenOrphans)
 	fusionMs := int(time.Since(fusionStart).Milliseconds())
 	totalMs := int(time.Since(totalStart).Milliseconds())
+
+	// Plan 04-05-05: observe fuse stage (RRF + MMR + rerank + enrich)
+	// per AllowedSearchStages.
+	s.observeSearchStage(ctx, "hybrid", "fuse", time.Since(fusionStart))
 
 	return &SearchResponse{
 		Status:          "success",

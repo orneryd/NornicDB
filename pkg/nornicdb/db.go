@@ -557,6 +557,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					TTL:               config.Database.MVCCRetentionTTL,
 				},
 			},
+			// Phase 2 D-01: thread the structured *slog.Logger from
+			// nornicConfig.Config (set by cmd/nornicdb/main.go before Open)
+			// into BadgerEngine so all storage emissions flow through the
+			// production handler stack. Discard fallback in NewBadgerEngine-
+			// WithOptions handles nil per D-01a.
+			Logger: config.Logger,
 		}
 		if config.Database.StorageSerializer != "" {
 			serializer, err := storage.ParseStorageSerializer(config.Database.StorageSerializer)
@@ -800,6 +806,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		if config.Database.WALSnapshotRetentionMaxAge > 0 {
 			walConfig.SnapshotRetentionMaxAge = config.Database.WALSnapshotRetentionMaxAge
 		}
+		// D-07: thread the structured *slog.Logger into the WAL config so
+		// the wal/wal_compaction/wal_recovery subsystems emit through the
+		// production handler stack. Discard fallback inside NewWAL.
+		walConfig.SlogLogger = config.Logger
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
 			badgerEngine.Close()
@@ -830,6 +840,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				FlushInterval:    config.Database.AsyncFlushInterval,
 				MaxNodeCacheSize: config.Database.AsyncMaxNodeCacheSize,
 				MaxEdgeCacheSize: config.Database.AsyncMaxEdgeCacheSize,
+				// Phase 2 D-01 + D-06: thread the structured *slog.Logger
+				// so the AsyncEngine flush goroutine derives the
+				// single-allocation flushLog (subsystem=async_flush) from
+				// the same handler stack used everywhere else.
+				Logger: config.Logger,
 			}
 			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
 			if config.Database.AsyncMaxNodeCacheSize > 0 || config.Database.AsyncMaxEdgeCacheSize > 0 {
@@ -1624,6 +1639,50 @@ func (db *DB) Close() error {
 	return db.closeInternal()
 }
 
+// HealthCheck reports whether the underlying storage engine is responsive.
+//
+// Phase 1 (M1) implementation: probes the namespaced storage engine via
+// NodeCount(), which is the cheapest synchronous Engine accessor that
+// returns storage.ErrStorageClosed when the engine has been Closed
+// (contract verified in pkg/storage/badger_test.go — "NodeCount returns
+// ErrStorageClosed").
+//
+// Why NodeCount and not a Begin/Discard round-trip:
+//   - NodeCount is a stat read; no Badger txn allocation.
+//   - The Engine interface guarantees it; both BadgerEngine and
+//     MemoryEngine implement it. AsyncEngine forwards to the underlying
+//     engine.
+//   - The closed-engine sentinel path is already covered by an existing
+//     test, so we inherit that contract for free.
+//
+// Future phases may extend with deeper liveness probes (replication peer
+// reachability, MVCC scheduler health, etc.) — the contract stays
+// "nil iff process can serve queries right now."
+//
+// Used by pkg/observability.Health via cmd/nornicdb/main.go:
+//
+//	obs.Health().Register("storage", db.HealthCheck)
+//
+// The signature matches observability.CheckFunc exactly so registration
+// is a direct method-value pass.
+func (db *DB) HealthCheck(ctx context.Context) error {
+	if db == nil {
+		return errors.New("nornicdb: nil DB")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if db.storage == nil {
+		return errors.New("nornicdb: storage engine not initialized")
+	}
+	// Real probe: NodeCount returns storage.ErrStorageClosed on a closed
+	// engine; treat any error as "not responsive right now."
+	if _, err := db.storage.NodeCount(); err != nil {
+		return fmt.Errorf("nornicdb: storage probe: %w", err)
+	}
+	return nil
+}
+
 // GetRetentionManager returns the retention manager or nil when retention is disabled.
 func (db *DB) GetRetentionManager() *retention.Manager {
 	return db.retentionManager
@@ -2080,6 +2139,16 @@ func (db *DB) GetEmbedQueue() *EmbedQueue {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return db.embedQueue
+}
+
+// GetReplicator returns the active replicator (nil when running in
+// standalone mode or before maybeEnableReplication has run). Used by
+// cmd/nornicdb to inject Plan-04-06 ReplicationMetrics via the
+// replication.MetricsAware optional interface.
+func (db *DB) GetReplicator() replication.Replicator {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.replicator
 }
 
 // Cypher executes a Cypher query.

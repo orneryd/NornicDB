@@ -17,6 +17,8 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
 		return "", ErrInvalidData
 	}
@@ -126,6 +128,8 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -179,6 +183,8 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(node *Node) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -601,6 +607,8 @@ func (b *BadgerEngine) writeEmbeddingChunksBatched(nodeID NodeID, embeddings [][
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurDelete)
 	if id == "" {
 		return ErrInvalidID
 	}

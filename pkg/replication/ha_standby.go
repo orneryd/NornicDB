@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // HAStandbyReplicator implements hot standby replication between 2 nodes.
@@ -39,6 +41,11 @@ type HAStandbyReplicator struct {
 	closed  atomic.Bool
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
+
+	// metrics is the Plan-04-06 observation seam (D-15a per-event role
+	// updates + per-peer lag/RTT/last_contact). nil-safe — production code
+	// injects via SetReplicatorMetrics; existing tests work unchanged.
+	metrics metricsHolder
 
 	// Transport for peer communication
 	transport Transport
@@ -194,6 +201,12 @@ func (r *HAStandbyReplicator) SetTransport(t Transport) {
 	r.transport = t
 }
 
+// SetReplicatorMetrics implements MetricsAware — Plan-04-06 D-15a
+// observation seam. Idempotent. Calling with nil disables observation.
+func (r *HAStandbyReplicator) SetReplicatorMetrics(bag *observability.ReplicationMetrics, tracker *PeerTracker) {
+	r.metrics.set(newReplicatorMetrics(bag, tracker))
+}
+
 // Start initializes and starts the HA standby replicator.
 func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 	if !r.started.CompareAndSwap(false, true) {
@@ -230,6 +243,15 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 	}
 
 	log.Printf("[HA] Started as %s, peer: %s", r.role, r.config.HAStandby.PeerAddr)
+
+	// Plan 04-06-03 D-15a: emit initial role gauge at the same lifecycle
+	// log site that announces start-up. HA primary maps to "leader",
+	// standby maps to "standby".
+	roleStr := "standby"
+	if r.role == "primary" {
+		roleStr = "leader"
+	}
+	r.metrics.get().observeRoleTransition(roleStr, 0, 0, 0)
 
 	return nil
 }
@@ -521,6 +543,10 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 	r.isPromoted.Store(true)
 
 	log.Printf("[HA] Promoted to primary")
+
+	// Plan 04-06-03 D-15a: emit role transition at the same site that
+	// emits the "Promoted to primary" log line.
+	r.metrics.get().observeRoleTransition("leader", 0, 0, 0)
 
 	// Restart as primary
 	return r.startPrimary(ctx)

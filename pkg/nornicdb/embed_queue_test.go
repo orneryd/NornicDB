@@ -61,6 +61,8 @@ func (m *mockEmbedder) Dimensions() int {
 	return m.dims
 }
 
+func (m *mockEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
+
 func (m *mockEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -109,6 +111,8 @@ func (m *recordingBatchEmbedder) Model() string {
 func (m *recordingBatchEmbedder) Dimensions() int {
 	return m.dims
 }
+
+func (m *recordingBatchEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func (m *recordingBatchEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
@@ -1654,6 +1658,8 @@ func (e *emptyBatchEmbedder) Model() string { return "empty" }
 
 func (e *emptyBatchEmbedder) Dimensions() int { return e.dims }
 
+func (e *emptyBatchEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
+
 func (e *emptyBatchEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -1693,6 +1699,8 @@ func (f *flakyBatchEmbedder) Model() string { return "flaky" }
 
 func (f *flakyBatchEmbedder) Dimensions() int { return f.dims }
 
+func (f *flakyBatchEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
+
 func (f *flakyBatchEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -1722,6 +1730,8 @@ func (d *deterministicChunkEmbedder) EmbedBatch(ctx context.Context, texts []str
 func (d *deterministicChunkEmbedder) Model() string { return "deterministic" }
 
 func (d *deterministicChunkEmbedder) Dimensions() int { return d.dims }
+
+func (d *deterministicChunkEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func (d *deterministicChunkEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return append([]string(nil), d.chunks...), nil

@@ -84,6 +84,7 @@ func (e *errorEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string
 }
 func (e *errorEmbedder) Dimensions() int { return 0 }
 func (e *errorEmbedder) Model() string   { return "error" }
+func (e *errorEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06: closed enum
 
 func TestCachedEmbedder_Embed_BaseError(t *testing.T) {
 	cached := NewCachedEmbedder(&errorEmbedder{}, 100)

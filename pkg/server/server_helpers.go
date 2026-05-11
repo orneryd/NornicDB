@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"runtime"
@@ -434,8 +433,14 @@ func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, messag
 // Logging helpers
 
 func (s *Server) logRequest(r *http.Request, status int, duration time.Duration) {
-	// Could be enhanced with structured logging
-	fmt.Printf("[HTTP] %s %s %d %v\n", r.Method, r.URL.Path, status, duration)
+	// Phase 2 D-13: conventional "http" group for request records.
+	s.log.Info("http request",
+		"subsystem", "http",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", status,
+		"duration", duration,
+	)
 }
 
 // logSlowQuery logs queries that exceed the configured threshold.
@@ -445,7 +450,7 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 		return
 	}
 
-	if duration < s.config.SlowQueryThreshold {
+	if duration < s.config.Logging.SlowQueryThreshold {
 		return
 	}
 
@@ -477,11 +482,14 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 	logMsg := fmt.Sprintf("[SLOW QUERY] duration=%v status=%s query=%q params=%s",
 		duration, status, queryLog, paramStr)
 
-	// Log to slow query logger if configured, otherwise to stderr
+	// Log to slow query logger (file-backed *log.Logger) if configured;
+	// otherwise emit via the structured slog stack tagged event=slow_query
+	// per Phase 2 D-04c. The full slow-query observability pipeline (with
+	// AST literal redactor + plan_hash) lands in Plan 02-03 (cypher wave).
 	if s.slowQueryLogger != nil {
 		s.slowQueryLogger.Println(logMsg)
 	} else {
-		log.Println(logMsg)
+		s.log.Warn("slow query", "event", "slow_query", "msg", logMsg)
 	}
 }
 

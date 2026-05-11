@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
@@ -195,9 +194,14 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 		if err != nil || node == nil {
 			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
 				if !seenOrphans[hit.ID] {
-					log.Printf("[cypher] orphaned embedding detected, removing from indexes: nodeID=%s", hit.ID)
+					e.logger().Warn("orphaned embedding detected, removing from indexes",
+						"subsystem", "vector_search",
+						"node_id", hit.ID)
 					if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {
-						log.Printf("[cypher] failed to remove orphaned embedding for nodeID=%s: %v", hit.ID, removeErr)
+						e.logger().Error("failed to remove orphaned embedding",
+							"subsystem", "vector_search",
+							"node_id", hit.ID,
+							"error", removeErr)
 					}
 					seenOrphans[hit.ID] = true
 				}

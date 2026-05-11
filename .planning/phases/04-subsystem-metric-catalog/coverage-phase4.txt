@@ -1,0 +1,38 @@
+=== PERF-05: pkg/observability coverage ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	2.785s	coverage: 92.4% of statements
+
+=== PERF-06: file-size cap (≤ 800 LOC for non-test .go in pkg/observability) ===
+       7 pkg/observability/build_cuda.go
+       7 pkg/observability/build_noembed.go
+       7 pkg/observability/build_vulkan.go
+       8 pkg/observability/build_metal.go
+      12 pkg/observability/build_default.go
+      54 pkg/observability/catalog_redstubs.go
+      65 pkg/observability/doc.go
+      69 pkg/observability/recovering.go
+      75 pkg/observability/registry.go
+      86 pkg/observability/resource.go
+      88 pkg/observability/mandatory_fields.go
+      94 pkg/observability/registration.go
+     100 pkg/observability/logger.go
+     104 pkg/observability/catalog_auth.go
+     121 pkg/observability/pprof.go
+     127 pkg/observability/config.go
+     140 pkg/observability/redaction.go
+     157 pkg/observability/listener.go
+     182 pkg/observability/catalog_cache.go
+     185 pkg/observability/catalog_http.go
+     193 pkg/observability/catalog_bolt.go
+     200 pkg/observability/exemplar.go
+     226 pkg/observability/metrics.go
+     228 pkg/observability/health.go
+     229 pkg/observability/catalog_mvcc.go
+     240 pkg/observability/provider.go
+     248 pkg/observability/catalog_embed.go
+     274 pkg/observability/catalog_storage.go
+     284 pkg/observability/catalog_search.go
+     292 pkg/observability/testenv.go
+     359 pkg/observability/catalog_cypher.go
+     369 pkg/observability/catalog_replication.go
+     512 pkg/observability/logging.go
+    5342 total

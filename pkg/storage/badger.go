@@ -9,12 +9,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Key prefixes for BadgerDB storage organization
@@ -163,12 +165,39 @@ type BadgerEngine struct {
 	accumulator   accessIncrementor
 	revealAll     atomic.Bool
 	revealQueryMu sync.RWMutex
+
+	// log is the structured *slog.Logger for storage subsystem emissions.
+	// Tagged at construction with component=storage, engine=badger.
+	// D-01 logger DI; D-07 storage internals use e.log directly. Discard
+	// fallback installed in NewBadgerEngineWithOptions when opts.Logger == nil.
+	log *slog.Logger
+
+	// Plan 04-04-06: pre-bound storage observers cached at AttachMetrics
+	// time (MET-25). Hot-path observation funnels through these — zero
+	// WithLabelValues lookup per Get/Put/Delete/Scan call. Nil-safe: when
+	// opObserve is the zero value (no metrics attached) the deferred
+	// observation in observeStorageOp is a no-op.
+	storageMetrics  *observability.StorageMetrics
+	mvccMetrics     *observability.MVCCMetrics
+	opDurGet        observability.BoundLatencyObserver
+	opDurPut        observability.BoundLatencyObserver
+	opDurDelete     observability.BoundLatencyObserver
+	opDurScan       observability.BoundLatencyObserver
+	metricsAttached atomic.Bool
 }
 
 // IsInMemory returns true if the engine is running in memory-only mode.
 // In-memory mode is used for testing - there's no disk to fsync to.
 func (b *BadgerEngine) IsInMemory() bool {
 	return b.inMemory
+}
+
+// DB returns the underlying *badger.DB handle. Used by Plan 04-04-04
+// bytes_metrics_sweeper to call EstimateSize(prefix). Read-only handle —
+// callers must not invoke lifecycle methods (Close/DropAll) on the
+// returned pointer; the engine owns lifecycle.
+func (b *BadgerEngine) DB() *badger.DB {
+	return b.db
 }
 
 // OnNodeCreated sets a callback to be invoked when nodes are created.
@@ -299,9 +328,20 @@ type BadgerOptions struct {
 	// Slower but more durable.
 	SyncWrites bool
 
-	// Logger for BadgerDB internal logging.
-	// If nil, BadgerDB's default logger is used.
-	Logger badger.Logger
+	// BadgerInternalLogger is the logger handed to BadgerDB itself for its
+	// own internal logging (compaction, value-log GC, etc.). If nil, BadgerDB's
+	// quiet/default logger is used. This field replaces the previous
+	// BadgerOptions.Logger which collided with the new structured *slog.Logger
+	// field below; rename is internal-only (no external setter ever existed
+	// outside doc comments — verified 2026-05-01).
+	BadgerInternalLogger badger.Logger
+
+	// Logger is the structured *slog.Logger threaded into the storage engine.
+	// D-01 logger DI: optional; nil falls back to a discard handler at ctor
+	// entry per D-01a so existing callers (and tests) compile unchanged.
+	// Once set, BadgerEngine emits all operational diagnostics through this
+	// logger tagged with component=storage, engine=badger.
+	Logger *slog.Logger
 
 	// LowMemory enables memory-constrained settings.
 	// Reduces MemTableSize and other buffers to use less RAM.
@@ -498,12 +538,21 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		badgerOpts = badgerOpts.WithSyncWrites(true)
 	}
 
-	if opts.Logger != nil {
-		badgerOpts = badgerOpts.WithLogger(opts.Logger)
+	if opts.BadgerInternalLogger != nil {
+		badgerOpts = badgerOpts.WithLogger(opts.BadgerInternalLogger)
 	} else {
 		// Use a quiet logger by default
 		badgerOpts = badgerOpts.WithLogger(nil)
 	}
+
+	// D-01a discard fallback: structured *slog.Logger is optional. When the
+	// caller does not supply one (e.g., test paths, scripts/perf_direct), a
+	// discard logger keeps the LOG-01 invariant that no storage code path
+	// reaches stdlib log printers even when no observability stack exists.
+	if opts.Logger == nil {
+		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	storageLog := opts.Logger.With("component", "storage", "engine", "badger")
 
 	// Enable encryption at rest if key is provided
 	if len(opts.EncryptionKey) > 0 {
@@ -569,8 +618,13 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	if hasData {
 		activeSerializer = detectedSerializer
 		if detectedSerializer != configuredSerializer {
-			log.Printf("⚠️  Storage serializer mismatch for %s: configured=%s detected=%s. Using detected serializer for this database. New databases will use configured value.",
-				opts.DataDir, configuredSerializer, detectedSerializer)
+			storageLog.Warn("storage serializer mismatch; using detected serializer for this database",
+				"data_dir", opts.DataDir,
+				"configured", string(configuredSerializer),
+				"detected", string(detectedSerializer),
+				"action", "use_detected_for_this_db",
+				"note", "new databases will use configured value",
+			)
 		}
 	}
 
@@ -588,6 +642,8 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		nodeCacheMaxEntries:   opts.NodeCacheMaxEntries,
 		edgeTypeCacheMaxTypes: opts.EdgeTypeCacheMaxTypes,
 		labelFirstCacheMax:    opts.LabelFirstNodeCacheMaxEntries,
+
+		log: storageLog,
 	}
 
 	if engine.nodeCacheMaxEntries <= 0 {
