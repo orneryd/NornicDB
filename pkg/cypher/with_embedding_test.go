@@ -31,6 +31,7 @@ func (e *inlineEmbeddingTestEmbedder) ChunkText(text string, _ int, _ int) ([]st
 
 func (e *inlineEmbeddingTestEmbedder) Model() string   { return e.model }
 func (e *inlineEmbeddingTestEmbedder) Dimensions() int { return e.dims }
+func (e *inlineEmbeddingTestEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func TestWithEmbedding_CreateMutation(t *testing.T) {
 	base := newTestMemoryEngine(t)

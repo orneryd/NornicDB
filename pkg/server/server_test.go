@@ -271,6 +271,7 @@ func (e *countingEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]
 
 func (e *countingEmbedder) Dimensions() int { return e.dims }
 func (e *countingEmbedder) Model() string   { return "counting-embedder" }
+func (e *countingEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 func (e *countingEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
@@ -1827,24 +1828,17 @@ func TestHandleCommitTransaction_AdditionalBranches(t *testing.T) {
 	}
 }
 
-func TestHandleMetrics_BranchesWithAndWithoutEmbedQueue(t *testing.T) {
-	server, _ := setupTestServer(t)
-
-	// Baseline metrics response.
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec := httptest.NewRecorder()
-	server.handleMetrics(rec, req)
-	require.Contains(t, []int{http.StatusOK, http.StatusAccepted}, rec.Code)
-	require.Contains(t, rec.Body.String(), "nornicdb_info")
-
-	// Ensure embed-worker metrics path is present once embedder is configured.
-	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec = httptest.NewRecorder()
-	server.handleMetrics(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "nornicdb_embedding_worker_running")
-}
+// TestHandleMetrics_BranchesWithAndWithoutEmbedQueue was removed in Plan 05-04.
+//
+// The rewritten handleMetrics calls observability.RenderLegacy against the
+// unified pkg/observability registry. The metric-content assertions
+// (nornicdb_info, nornicdb_embedding_worker_running) belonged to the old
+// hand-built handler; they now live in two dedicated owners:
+//
+//   - Server-layer wiring (headers, nil-safety, status): pkg/server/server_public_test.go
+//     (Test_HandleMetrics_DeprecationHeaders, Test_HandleMetrics_NilRegistry_ReturnsEmptyBodyWithHeaders)
+//   - Metric byte-stream content: pkg/observability/legacy_translation_test.go
+//     + pkg/observability/legacy_snapshot.golden
 
 func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 	server, _ := setupTestServer(t)

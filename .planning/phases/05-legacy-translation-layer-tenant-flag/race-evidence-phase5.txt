@@ -1,0 +1,9 @@
+ok  	github.com/orneryd/nornicdb/pkg/observability	25.447s
+=== pkg/server (Plan 05-04 specific tests, race -count=10) ===
+# github.com/orneryd/nornicdb/pkg/server.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/server	2.013s
+=== cmd/nornicdb (Plan 05-03 specific tests, race -count=5) ===
+# github.com/orneryd/nornicdb/cmd/nornicdb.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb	1.689s

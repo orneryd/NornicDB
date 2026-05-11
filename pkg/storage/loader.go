@@ -131,7 +131,7 @@ import (
 //		log.Fatalf("Failed to load Neo4j data: %v", err)
 //	}
 //
-//	fmt.Println("Successfully loaded Neo4j data into NornicDB")
+//	// emit "Successfully loaded Neo4j data into NornicDB" via the configured logger
 //
 // Expected Directory Structure:
 //
@@ -190,7 +190,7 @@ func LoadFromNeo4jJSON(engine Engine, dir string) error {
 //		log.Fatalf("Failed to load export: %v", err)
 //	}
 //
-//	fmt.Println("Successfully loaded data from export file")
+//	// emit "Successfully loaded data from export file" via the configured logger
 //
 // File Format:
 //
@@ -262,7 +262,7 @@ func LoadFromNeo4jExport(engine Engine, path string) error {
 //		log.Fatalf("Export failed: %v", err)
 //	}
 //
-//	fmt.Println("Data exported successfully")
+//	// emit "Data exported successfully" via the configured logger
 //
 //	// The exported file can be loaded back with:
 //	// storage.LoadFromNeo4jExport(newEngine, "./backup.json")

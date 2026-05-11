@@ -5,8 +5,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -209,6 +210,8 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurScan)
 	var nodes []*Node
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
@@ -248,6 +251,8 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 
 // AllEdges returns all edges (implements Engine interface).
 func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
+	start := time.Now()
+	defer b.observeStorageOp(start, b.opDurScan)
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
@@ -624,7 +629,13 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	if edgeType != "" {
 		edge, err := b.edgeBetweenFromHeadIndex(source, target, edgeType)
 		if err != nil {
-			log.Printf("edge-between head lookup failed; falling back to set/legacy scan: start=%q end=%q type=%q err=%v", source, target, edgeType, err)
+			b.log.Warn("edge-between head lookup failed; falling back to set/legacy scan",
+				"subsystem", "edge_between_index",
+				"start", string(source),
+				"end", string(target),
+				"edge_type", edgeType,
+				slog.Any("error", err),
+			)
 		}
 		if edge != nil {
 			return edge
@@ -769,7 +780,9 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 		return nil
 	})
 	if errors.Is(err, badger.ErrConflict) {
-		log.Printf("edge-between index self-heal skipped after Badger conflict")
+		b.log.Debug("edge-between index self-heal skipped after badger conflict",
+			"subsystem", "edge_between_index",
+		)
 		return nil
 	}
 	return err

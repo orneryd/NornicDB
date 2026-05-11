@@ -107,7 +107,7 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cpu push-llama-cpu deploy-llama-cpu ensure-llama-cpu
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda ensure-llama-cuda
-.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless sync-version test install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
+.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
 .PHONY: download-models download-bge download-qwen download-bge-reranker check-models
 .PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers
 
@@ -830,7 +830,53 @@ else
 endif
 endif
 
-test:
+# LOG-09 falsifiability gate (Phase 2 / ADR-0001 §2.5).
+#
+# Rejects two forbidden patterns in the four LOG-01 business packages
+# (and cmd/nornicdb), so the slog migration cannot regress in CI:
+#
+#   1. `slog.Default()` — every business package MUST consume an injected
+#      *slog.Logger (constructor injection per D-01); reaching into the
+#      process-global default logger bypasses the redaction / mandatory-
+#      fields / recovering handler stack.
+#   2. `log.Printf` / `log.Println` / `fmt.Print` / `fmt.Println` /
+#      `fmt.Printf` — the LOG-01 grep-zero contract; production logging
+#      must flow through slog so the 4-layer handler stack applies.
+#
+# POSIX-portable grep only: `-RnE` (POSIX ERE), no `-P` (Perl regex —
+# unsupported on BSD grep on macOS per W2 / Pitfall 5). The boundary
+# pattern `(^|[^a-zA-Z_])` is the portable analog of `\b` (BSD grep
+# treats `\b` inconsistently across versions).
+#
+# *_test.go is excluded — tests construct fixtures and may legitimately
+# call into stdlib log helpers.
+lint-slog:
+	@! grep -RnE '(^|[^a-zA-Z_])slog\.Default\(' pkg/server pkg/cypher pkg/storage pkg/bolt cmd/ --include='*.go' 2>/dev/null \
+		|| (echo "LOG-09 violation: slog.Default() forbidden in business packages — use injected *slog.Logger"; exit 1)
+	@! grep -RnE '(^|[^a-zA-Z_])log\.(Printf|Println)|(^|[^a-zA-Z_])fmt\.(Print|Println|Printf)\(' pkg/server pkg/cypher pkg/storage pkg/bolt --include='*.go' --exclude='*_test.go' 2>/dev/null \
+		|| (echo "LOG-01 violation: log.Printf|log.Println|fmt.Print|fmt.Println|fmt.Printf forbidden — use injected *slog.Logger"; exit 1)
+	@echo "lint-slog: PASS (LOG-09 + LOG-01 gates clean)"
+
+# pattern `(^|[^a-zA-Z_])` is the portable analog of `\b` (BSD grep treats
+# `\b` inconsistently across versions; mirrors lint-slog precedent above).
+#
+# Path list excludes pkg/observability/ — that package legitimately
+# constructs raw prometheus.* types (registry.go, etc.); the helper layer
+# discipline applies to business-package CALLERS of pkg/observability,
+# not pkg/observability itself.
+#
+# *_test.go is included — test fixtures that register raw *Vec to test
+# the helper layer's behavior should also go through the helpers, OR live
+# in pkg/observability/ where the lint does not scan.
+lint-cardinality:
+	@! grep -RnE '(^|[^a-zA-Z_])prometheus\.New(Counter|Gauge|Histogram|Summary)(Vec)?\(' \
+		--include='*.go' \
+		pkg/cypher pkg/storage pkg/bolt pkg/server pkg/replication pkg/auth pkg/embed pkg/search pkg/cache cmd/ \
+		2>/dev/null \
+		|| (echo "MET-04 violation: subsystems must register metrics via pkg/observability helpers (D-01 / Plan 03-02); see ADR §3.2 'Cardinality discipline' and pkg/observability/metrics.go"; exit 1)
+	@echo "lint-cardinality: PASS (MET-04 helper-only registration enforced)"
+
+test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
 	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
 else

@@ -1,0 +1,33 @@
+make: *** No rule to make target `bench-cypher'.  Stop.
+
+Phase 5 baseline carry-forward note (mirrors Phase 1 + Phase 4 posture):
+The `bench-cypher` Makefile target is scoped for Phase 12 (Performance Gates &
+Hardening). Phase 1's `bench-cypher-phase1.txt` and Phase 4's
+`bench-cypher-04-03.txt` record the same "target not found" result. Phase 12
+owns the formal regression gate (CLAUDE.md: `make bench-cypher` Δ ≤ 2%
+measured against pre-M1 baseline, with tracing both ON and OFF).
+
+Why Phase 5 cannot regress bench-cypher:
+- Phase 5's only changes to `pkg/cypher/...` are zero — no Cypher executor or
+  planner code is touched.
+- Phase 5's only changes to hot-path observation are zero — `RenderLegacy` is
+  control-plane scrape (~15s scrape interval), not a hot path; the Phase 5
+  reduction helpers (sumAcrossLabels / sumByMatchingLabel / takeLatest /
+  dropExtraLabels) walk `reg.Gather()` once per scrape.
+- Phase 5's startup hook (`ResolveAndLogTenantLabels`) runs exactly once at
+  startup, before any listener accepts traffic.
+
+What Phase 5 DOES capture (no separate capture file because all evidence is in
+per-plan SUMMARYs):
+- Plan 05-02 reports `go test -race -count=10 ./pkg/observability/ -run
+  TestRenderLegacy_` ok in 1.68s — no Cypher path involvement.
+- Plan 05-03 reports `go test -race -count=10 ./pkg/observability/ -run
+  'TestDetectK8s_|TestResolveTenantLabels_|TestK8sProbe_'` ok in 1.57s.
+- Plan 05-04 reports `go test -race -count=10 -run Test_HandleMetrics_
+  ./pkg/server/` ok in 1.76s.
+
+Phase 12 will:
+1. Add `bench-cypher` Makefile target (or document the canonical invocation).
+2. Run regression vs `bench-cypher-phase1.txt` baseline (with tracing ON and
+   OFF — the harder gate is tracing-ON since Phase 6 lights up exemplars).
+3. Sign off the Δ ≤ 2% perf gate in ADR §4.1 row 12.

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -160,10 +161,10 @@ func NewQueryCache(maxSize int) *QueryCache {
 //
 //	result, found := cache.Get("MATCH (n) RETURN n.name", nil)
 //	if found {
-//		fmt.Println("Cache hit! Using cached result")
+//		// cache hit — return the cached result
 //		return result
 //	}
-//	fmt.Println("Cache miss, executing query...")
+//	// cache miss — execute the query and Put() the result into the cache
 //
 // Example 2 - With Parameters:
 //
@@ -371,8 +372,7 @@ func (qc *QueryCache) Invalidate() {
 //
 //	hits, misses, size := cache.Stats()
 //	hitRate := float64(hits) / float64(hits+misses) * 100
-//	fmt.Printf("Cache hit rate: %.2f%% (%d/%d entries)\n", hitRate, size, cache.maxSize)
-//	// Output: Cache hit rate: 87.50% (450/1000 entries)
+//	// emit hit-rate metric e.g. "Cache hit rate: 87.50% (450/1000 entries)"
 //
 // Example 2 - Prometheus Metrics:
 //
@@ -389,8 +389,8 @@ func (qc *QueryCache) Invalidate() {
 //	hitRate := float64(hits) / float64(hits+misses)
 //
 //	if hitRate < 0.5 && size == maxSize {
-//		// Low hit rate and cache is full - might need bigger cache
-//		log.Printf("Consider increasing cache size (hit rate: %.2f%%)", hitRate*100)
+//		// Low hit rate and cache is full — emit a structured warning so
+//		// operators can react (e.g. via the package logger).
 //	}
 //
 // ELI12:
@@ -488,6 +488,14 @@ type SmartQueryCache struct {
 	misses      int64
 	smartInvals int64 // Smart invalidations (partial)
 	fullInvals  int64 // Full invalidations
+
+	// metrics is the Plan 04-03 cross-cutting cache bag (D-12a bridge).
+	// SmartQueryCache emits cache_hits_total{cache="query_result"} +
+	// cache_misses_total{cache="query_result"} + cache_evictions_total{
+	// cache="query_result", reason="lru"} on the unified Cache subsystem
+	// surface so the Phase 10 K8S-11 hit-ratio recording rule sees the
+	// query-result workload alongside other caches. Nil-safe.
+	metrics *observability.CacheMetrics
 }
 
 // smartCachedResult extends cachedResult with label tracking.
@@ -510,6 +518,44 @@ func NewSmartQueryCache(maxSize int) *SmartQueryCache {
 	}
 }
 
+// SetCacheMetrics installs the Plan 04-03 D-12a cross-cutting cache bag for
+// query-result observation. Nil-safe (nil bag → no observation). Per
+// CONTEXT D-12 the closed `cache` enum binds to "query_result" here.
+func (sc *SmartQueryCache) SetCacheMetrics(m *observability.CacheMetrics) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.metrics = m
+}
+
+// observeHit / observeMiss / observeEviction emit into the cross-cutting
+// CacheMetrics bag with closed-enum label values (per CONTEXT D-12). All
+// nil-safe.
+func (sc *SmartQueryCache) observeHit() {
+	if sc.metrics == nil {
+		return
+	}
+	sc.metrics.Hits.WithLabelValues("query_result").Inc()
+}
+
+func (sc *SmartQueryCache) observeMiss() {
+	if sc.metrics == nil {
+		return
+	}
+	sc.metrics.Misses.WithLabelValues("query_result").Inc()
+}
+
+func (sc *SmartQueryCache) observeEviction(reason string) {
+	if sc.metrics == nil {
+		return
+	}
+	// Phase 3 D-03a forbidden-label discipline: reason MUST be one of
+	// observability.AllowedEvictionReasons {lru, ttl, capacity, manual}.
+	// Closed-enum string literal at the call site enforces; the bag's
+	// CounterVec is constructed against the closed enum so a free-form
+	// string would not register as a new series silently.
+	sc.metrics.Evictions.WithLabelValues("query_result", reason).Inc()
+}
+
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
 	key := cacheKeyFNV(cypher, params)
@@ -522,6 +568,8 @@ func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*E
 		sc.mu.Lock()
 		sc.misses++
 		sc.mu.Unlock()
+		// Plan 04-03 D-12a: cross-cutting cache_misses_total{cache="query_result"}.
+		sc.observeMiss()
 		return nil, false
 	}
 
@@ -531,6 +579,11 @@ func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*E
 		sc.removeEntry(key)
 		sc.misses++
 		sc.mu.Unlock()
+		// Plan 04-03 D-12a: TTL-expired entries are MISSES from the caller's
+		// perspective AND TTL EVICTIONS from the cache's perspective — emit
+		// both observations so dashboards see the cause-and-effect.
+		sc.observeMiss()
+		sc.observeEviction("ttl")
 		return nil, false
 	}
 
@@ -542,6 +595,8 @@ func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*E
 	sc.hits++
 	sc.mu.Unlock()
 
+	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
+	sc.observeHit()
 	return cached.result, true
 }
 
@@ -666,11 +721,15 @@ func (sc *SmartQueryCache) removeEntry(key string) {
 	}
 }
 
-// evictOldestLRU removes the least recently used entry.
+// evictOldestLRU removes the least recently used entry. Plan 04-03 D-12b:
+// emits cache_evictions_total{cache="query_result", reason="lru"} into the
+// cross-cutting Cache bag. Reason is the closed-enum literal "lru" — never
+// free-form (Phase 3 D-03a forbidden-label discipline).
 func (sc *SmartQueryCache) evictOldestLRU() {
 	if elem := sc.lru.Back(); elem != nil {
 		entry := elem.Value.(*smartCachedResult)
 		sc.removeEntry(entry.key)
+		sc.observeEviction("lru")
 	}
 }
 
@@ -761,6 +820,13 @@ type QueryPlanCache struct {
 	maxSize int
 	hits    int64
 	misses  int64
+
+	// metrics is the Plan 04-03 CypherMetrics bag for planner-cache
+	// observation per CONTEXT D-12a. Planner cache stays under the cypher
+	// subsystem (nornicdb_cypher_planner_*), NOT the cross-cutting cache
+	// subsystem (which is for general-purpose caches; planner cache is
+	// Cypher-specific). Nil-safe.
+	metrics *observability.CypherMetrics
 }
 
 // CachedPlan wraps a parsed query with metadata.
@@ -783,6 +849,40 @@ func NewQueryPlanCache(maxSize int) *QueryPlanCache {
 	}
 }
 
+// SetCypherMetrics installs the Plan 04-03 CypherMetrics bag for planner-
+// specific observation per CONTEXT D-12a. Nil-safe (nil bag → no observation).
+func (pc *QueryPlanCache) SetCypherMetrics(m *observability.CypherMetrics) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.metrics = m
+}
+
+// observePlannerHit / observePlannerMiss / setPlannerSize emit into the
+// Cypher subsystem's planner_cache_* families per D-12a. All nil-safe.
+func (pc *QueryPlanCache) observePlannerHit() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheHits.WithLabelValues().Inc()
+}
+
+func (pc *QueryPlanCache) observePlannerMiss() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheMisses.WithLabelValues().Inc()
+}
+
+// setPlannerSize sets the planner_cache_size gauge to the current cache
+// occupancy. Called from inside Put after a successful insertion (or from
+// LRU eviction inside the same call). Caller MUST hold pc.mu.
+func (pc *QueryPlanCache) setPlannerSize() {
+	if pc.metrics == nil {
+		return
+	}
+	pc.metrics.PlannerCacheSize.Set(float64(len(pc.cache)))
+}
+
 // Get retrieves a cached query plan.
 func (pc *QueryPlanCache) Get(cypher string) ([]Clause, QueryType, bool) {
 	key := normalizeQuery(cypher)
@@ -795,6 +895,8 @@ func (pc *QueryPlanCache) Get(cypher string) ([]Clause, QueryType, bool) {
 		pc.mu.Lock()
 		pc.misses++
 		pc.mu.Unlock()
+		// Plan 04-03 D-12a: planner-specific miss counter (Cypher subsystem).
+		pc.observePlannerMiss()
 		return nil, 0, false
 	}
 
@@ -806,6 +908,8 @@ func (pc *QueryPlanCache) Get(cypher string) ([]Clause, QueryType, bool) {
 	pc.hits++
 	pc.mu.Unlock()
 
+	// Plan 04-03 D-12a: planner-specific hit counter (Cypher subsystem).
+	pc.observePlannerHit()
 	return plan.clauses, plan.queryType, true
 }
 
@@ -840,6 +944,10 @@ func (pc *QueryPlanCache) Put(cypher string, clauses []Clause, queryType QueryTy
 	pc.cache[key] = plan
 	elem := pc.lru.PushFront(plan)
 	pc.lruMap[key] = elem
+
+	// Plan 04-03 D-12a: planner_cache_size gauge tracks current occupancy.
+	// Set inside the lock so the value reflects the post-mutation state.
+	pc.setPlannerSize()
 }
 
 // Stats returns plan cache statistics.

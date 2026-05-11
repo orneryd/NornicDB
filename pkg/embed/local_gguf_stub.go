@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // LocalGGUFEmbedder is a stub for when localllm build tag is not set.
@@ -47,6 +49,16 @@ func (e *LocalGGUFEmbedder) Model() string {
 	return ""
 }
 
+// Backend returns the build-tag-derived backend label per Plan 04-05 D-06.
+// On the !localllm path the value is whichever build_tag matrix file
+// (backend_default.go / backend_metal.go / backend_cuda.go /
+// backend_vulkan.go) was selected. The stub still returns a real value so
+// the closed enum {gpu,cpu,cuda,metal,vulkan} holds for embedder probes
+// even in nolocalllm builds.
+func (e *LocalGGUFEmbedder) Backend() string {
+	return localGGUFBackend
+}
+
 // EmbedderStats holds embedding statistics (stub).
 type EmbedderStats struct {
 	EmbedCount    int64     `json:"embed_count"`
@@ -66,3 +78,8 @@ func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
 func (e *LocalGGUFEmbedder) Close() error {
 	return nil
 }
+
+// AttachMetrics is a no-op (stub). Plan 04-05-03 D-09 — symmetric with the
+// production type so cmd/nornicdb wiring can call AttachMetrics without
+// build-tag branching.
+func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {}

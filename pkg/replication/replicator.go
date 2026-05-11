@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Errors returned by replication operations.
@@ -326,6 +328,18 @@ type StandaloneReplicator struct {
 	mu      sync.RWMutex
 	started bool
 	closed  bool
+
+	// metrics is the Plan-04-06 observation seam. Standalone never
+	// publishes per-peer or transition metrics (no peers, no role
+	// transitions), but accepts the bag for callsite uniformity.
+	metrics metricsHolder
+}
+
+// SetReplicatorMetrics implements MetricsAware. Standalone uses metrics
+// only to emit an initial Role=standalone (well, follower with no peers)
+// observation at Start; the bag is otherwise quiescent.
+func (r *StandaloneReplicator) SetReplicatorMetrics(bag *observability.ReplicationMetrics, tracker *PeerTracker) {
+	r.metrics.set(newReplicatorMetrics(bag, tracker))
 }
 
 // NewStandaloneReplicator creates a new standalone (no-op) replicator.

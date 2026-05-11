@@ -1,0 +1,22 @@
+=== Plan 03-05 D-03d Falsifiability Proof ===
+=== Date: 2026-05-02T19:43:00Z ===
+=== Branch: otel HEAD: e0a1298 ===
+
+=== Step 1: Inject prometheus.NewCounterVec into pkg/cypher/helpers.go ===
+(under //go:build never_compile_this_falsifiability_proof so even compilation is harmless)
+
+=== Step 2: Run make lint-cardinality (expect non-zero exit + violation message) ===
+
+pkg/cypher/helpers.go:335:    _ = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "foo_total"}, []string{"path"})
+MET-04 violation: subsystems must register metrics via pkg/observability helpers (D-01 / Plan 03-02); see ADR §3.2 'Cardinality discipline' and pkg/observability/metrics.go
+make: *** [lint-cardinality] Error 1
+
+=== Lint exit code: 2 (expect non-zero) ===
+
+=== Step 3: Revert injection (mv .preinject backup back) ===
+
+=== Step 4: Re-run make lint-cardinality (expect exit 0 + PASS line) ===
+
+lint-cardinality: PASS (MET-04 helper-only registration enforced)
+
+=== Post-revert exit code: 0 (expect 0) ===

@@ -391,6 +391,7 @@ func (f *fixedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]flo
 
 func (f *fixedEmbedder) Dimensions() int { return f.dims }
 func (f *fixedEmbedder) Model() string   { return "fixed" }
+func (f *fixedEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
 func (f *fixedEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return []string{text}, nil

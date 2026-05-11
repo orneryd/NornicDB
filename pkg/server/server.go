@@ -37,7 +37,7 @@
 //		log.Fatal(err)
 //	}
 //
-//	fmt.Printf("Server listening on %s\n", server.Addr())
+//	// Server listening on server.Addr()
 //
 //	// Use with Neo4j Browser
 //	// Open: http://localhost:7474
@@ -164,7 +164,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -175,6 +177,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -192,6 +195,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -406,12 +410,14 @@ type Config struct {
 	// Slow Query Logging Configuration
 	// SlowQueryEnabled turns on slow query logging (default: true)
 	SlowQueryEnabled bool
-	// SlowQueryThreshold is minimum duration to log (default: 100ms)
-	// Queries taking longer than this will be logged
-	SlowQueryThreshold time.Duration
-	// SlowQueryLogFile is optional file path for slow query log
-	// If empty, logs to stderr with other server logs
-	SlowQueryLogFile string
+	// D-04d: SlowQueryThreshold and SlowQueryLogFile collapsed into
+	// pkg/config.LoggingConfig (the single source of truth). Threaded into
+	// the server via the Logging field below; readers go through
+	// s.config.Logging.SlowQueryThreshold / .SlowQueryLogFile.
+	//
+	// Logging carries the runtime LoggingConfig snapshot. Populated by
+	// cmd/nornicdb/main.go from cfg.Logging at server construction.
+	Logging nornicConfig.LoggingConfig
 
 	// Headless Mode Configuration
 	// Headless disables the web UI and browser-related endpoints
@@ -442,6 +448,13 @@ type Config struct {
 	// WARNING: Only enable in development/testing environments
 	// Env: NORNICDB_ENABLE_PPROF=true|false
 	EnablePprof bool
+
+	// Logger is the structured-logging entrypoint per Phase 2 D-01.
+	// If nil, a discard-handler fallback is installed at New() — graceful
+	// degrade for the transitional period; ctors will be tightened post-M1
+	// once all consumers are updated to pass an explicit logger via
+	// observability.Provider.Logger().
+	Logger *slog.Logger
 }
 
 // DefaultConfig returns Neo4j-compatible default server configuration.
@@ -525,9 +538,11 @@ func DefaultConfig() *Config {
 		//   NORNICDB_SLOW_QUERY_ENABLED=false
 		//   NORNICDB_SLOW_QUERY_THRESHOLD=200ms
 		//   NORNICDB_SLOW_QUERY_LOG=/var/log/nornicdb/slow.log
-		SlowQueryEnabled:   false,
-		SlowQueryThreshold: 100 * time.Millisecond,
-		SlowQueryLogFile:   "", // Empty = log to stderr
+		// D-04d: Threshold + LogFile defaults now live in
+		// pkg/config.DefaultConfig().Logging (the single source of truth);
+		// callers populate Logging from cfg.Logging.
+		SlowQueryEnabled: false,
+		Logging:          nornicConfig.LoggingConfig{SlowQueryThreshold: 100 * time.Millisecond},
 
 		// Headless mode disabled by default (UI enabled)
 		// Override via:
@@ -576,11 +591,11 @@ func DefaultConfig() *Config {
 //	}
 //
 //	// Server is now handling requests
-//	fmt.Printf("Listening on %s\n", server.Addr())
+//	// (Listening on server.Addr())
 //
 //	// Get metrics
 //	stats := server.Stats()
-//	fmt.Printf("Requests: %d, Errors: %d\n", stats.RequestCount, stats.ErrorCount)
+//	// stats.RequestCount, stats.ErrorCount expose request/error counts
 //
 //	// Graceful shutdown
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -592,6 +607,12 @@ type Server struct {
 	dbManager *multidb.DatabaseManager // Manages multiple databases
 	auth      *auth.Authenticator
 	audit     *audit.Logger
+
+	// log is the structured logger for operational events (Phase 2 D-01).
+	// Tagged .With("component", "server") at construction so every record
+	// carries component attribution. NEVER nil after New() returns
+	// (discard-fallback handler installed when cfg.Logger == nil).
+	log *slog.Logger
 
 	// MCP server for LLM tool interface
 	mcpServer *mcp.Server
@@ -608,6 +629,24 @@ type Server struct {
 
 	httpServer *http.Server
 	listener   net.Listener
+
+	// httpMetrics is the Plan-04-02 HTTP catalog bag (D-02 typed handle DI).
+	// Populated by SetHTTPMetrics(...) AFTER observability.New runs in
+	// cmd/nornicdb/main.go (Phase 2 D-08 two-phase bootstrap: server is
+	// constructed BEFORE obs to keep the existing logger plumbing; metrics
+	// bag is injected post-hoc and applied at Start() time when the http
+	// handler is wrapped). Nil-safe: instrumentedMux is a pass-through
+	// when nil, so test fixtures and pre-Phase-4 callers compile unchanged.
+	httpMetrics *observability.HTTPMetrics
+
+	// obsRegistry is the unified pkg/observability *prometheus.Registry,
+	// injected post-construction via SetObsRegistry from cmd/nornicdb/main.go.
+	// Used by handleMetrics (Phase 5 / Plan 05-04) to call
+	// observability.RenderLegacy and produce the legacy :7474/metrics body
+	// from the same registry that backs :9090/metrics — eliminating the
+	// pre-Phase-5 hand-built second source of truth (ROADMAP SC #1).
+	// Nil-safe: handleMetrics tolerates nil (RenderLegacy returns empty bytes).
+	obsRegistry *prometheus.Registry
 
 	// Rate limiter for DoS protection
 	rateLimiter *IPRateLimiter
@@ -675,11 +714,11 @@ func (s *Server) ensureSearchBuildStartedForKnownDatabases() {
 		}
 		storageEngine, err := s.dbManager.GetStorage(info.Name)
 		if err != nil {
-			log.Printf("⚠️ startup search reconcile: storage for db %s unavailable: %v", info.Name, err)
+			s.log.Warn("startup search reconcile: storage unavailable", "subsystem", "search", "db", info.Name, "error", err)
 			continue
 		}
 		if _, err := s.db.EnsureSearchIndexesBuildStarted(info.Name, storageEngine); err != nil {
-			log.Printf("⚠️ startup search reconcile: failed for db %s: %v", info.Name, err)
+			s.log.Warn("startup search reconcile failed", "subsystem", "search", "db", info.Name, "error", err)
 		}
 	}
 }
@@ -930,6 +969,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if db == nil {
 		return nil, fmt.Errorf("database required")
 	}
+	// Phase 2 D-01a: graceful-degrade discard fallback when caller did not
+	// thread observability.Provider.Logger() through Config.Logger. Keeps
+	// existing tests/callers compileable; tightens post-M1 once all
+	// consumers wire the logger explicitly.
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 
 	// Note: GPU status is logged in main.go during GPU manager initialization
 	// This avoids duplicate logs and provides more detailed information
@@ -947,7 +993,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		mcpConfig.DefaultNodeLabel = globalConfig.Memory.DefaultNodeLabel
 		mcpServer = mcp.NewServer(db, mcpConfig)
 	} else {
-		log.Println("ℹ️  MCP server disabled via configuration")
+		config.Logger.With("component", "server").Info("mcp server disabled via configuration")
 	}
 
 	// Initialize DatabaseManager for multi-database support.
@@ -962,10 +1008,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		remoteCredentialEncryptionKey = strings.TrimSpace(os.Getenv("NORNICDB_REMOTE_CREDENTIALS_KEY"))
 	case strings.TrimSpace(globalConfig.Database.EncryptionPassword) != "":
 		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Database.EncryptionPassword)
-		log.Printf("⚠️  Remote credential encryption key fallback in use: using database encryption password. Set NORNICDB_REMOTE_CREDENTIALS_KEY for key separation.")
+		config.Logger.With("component", "server").Warn("remote credential encryption key fallback in use",
+			"fallback", "database_encryption_password",
+			"remediation", "set NORNICDB_REMOTE_CREDENTIALS_KEY for key separation")
 	case strings.TrimSpace(globalConfig.Auth.JWTSecret) != "":
 		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Auth.JWTSecret)
-		log.Printf("⚠️  Remote credential encryption key fallback in use: using JWT signing secret. Set NORNICDB_REMOTE_CREDENTIALS_KEY for stronger key separation.")
+		config.Logger.With("component", "server").Warn("remote credential encryption key fallback in use",
+			"fallback", "jwt_signing_secret",
+			"remediation", "set NORNICDB_REMOTE_CREDENTIALS_KEY for stronger key separation")
 	}
 	multiDBConfig := &multidb.Config{
 		DefaultDatabase:               globalConfig.Database.DefaultDatabase,
@@ -997,6 +1047,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		db:             db,
 		dbManager:      dbManager,
 		auth:           authenticator,
+		log:            config.Logger.With("component", "server"),
 		mcpServer:      mcpServer,
 		graphqlHandler: graphql.NewHandler(db, dbManager),
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
@@ -1133,7 +1184,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil
 	})
 	if featuresConfig.HeimdallEnabled {
-		log.Println("🛡️  Heimdall AI Assistant initializing asynchronously...")
+		// Derive a child logger once at goroutine entry so every record
+		// carries subsystem=heimdall (Phase 2 D-10a).
+		heimdallLog := s.log.With("subsystem", "heimdall")
+		heimdallLog.Info("heimdall AI assistant initializing asynchronously")
 		go func() {
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
@@ -1143,12 +1197,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if provider == "" {
 				provider = "local"
 			}
-			log.Printf("   → Provider: %s (set NORNICDB_HEIMDALL_PROVIDER=openai|ollama|local to override config file)", provider)
+			heimdallLog.Info("heimdall provider resolved",
+				"provider", provider,
+				"override_env", "NORNICDB_HEIMDALL_PROVIDER")
 			manager, err := heimdall.NewManager(heimdallCfg)
 			if err != nil {
-				log.Printf("⚠️  Heimdall initialization failed: %v", err)
-				log.Println("   → AI Assistant will not be available")
-				log.Println("   → Check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR")
+				heimdallLog.Warn("heimdall initialization failed",
+					"error", err,
+					"remediation", "check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR")
 				return
 			}
 			if baseExec := db.GetCypherExecutor(); baseExec != nil {
@@ -1190,40 +1246,47 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			// Load plugins from configured directories.
 			if config.PluginsDir != "" {
-				log.Printf("   [Debug] Loading APOC plugins from: %s", config.PluginsDir)
+				heimdallLog.Debug("loading APOC plugins", "dir", config.PluginsDir)
 				if err := nornicdb.LoadPluginsFromDir(config.PluginsDir, &subsystemCtx); err != nil {
-					log.Printf("   ⚠️  Failed to load APOC plugins from %s: %v", config.PluginsDir, err)
+					heimdallLog.Warn("failed to load APOC plugins", "dir", config.PluginsDir, "error", err)
 				}
 			}
 			if config.HeimdallPluginsDir != "" && config.HeimdallPluginsDir != config.PluginsDir {
-				log.Printf("   [Debug] Loading Heimdall plugins from: %s", config.HeimdallPluginsDir)
+				heimdallLog.Debug("loading Heimdall plugins", "dir", config.HeimdallPluginsDir)
 				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
-					log.Printf("   ⚠️  Failed to load Heimdall plugins from %s: %v", config.HeimdallPluginsDir, err)
+					heimdallLog.Warn("failed to load Heimdall plugins", "dir", config.HeimdallPluginsDir, "error", err)
 				}
 			} else if config.HeimdallPluginsDir == "" {
-				log.Printf("   [Debug] HeimdallPluginsDir is empty")
+				heimdallLog.Debug("heimdall plugins dir is empty")
 			} else {
-				log.Printf("   [Debug] HeimdallPluginsDir (%s) same as PluginsDir (%s), skipping", config.HeimdallPluginsDir, config.PluginsDir)
+				heimdallLog.Debug("heimdall plugins dir same as plugins dir; skipping",
+					"heimdall_dir", config.HeimdallPluginsDir,
+					"plugins_dir", config.PluginsDir)
 			}
 
 			s.setHeimdallHandler(handler)
 
 			plugins := heimdall.ListHeimdallPlugins()
 			actions := heimdall.ListHeimdallActions()
-			log.Printf("✅ Heimdall AI Assistant ready")
-			log.Printf("   → Model: %s", heimdallCfg.Model)
-			log.Printf("   → Plugins: %d loaded, %d actions available", len(plugins), len(actions))
-			log.Printf("   → Bifrost chat: /api/bifrost/chat/completions")
-			log.Printf("   → Status: /api/bifrost/status")
+			heimdallLog.Info("heimdall AI assistant ready",
+				"model", heimdallCfg.Model,
+				"plugins_loaded", len(plugins),
+				"actions_available", len(actions),
+				"bifrost_chat_route", "/api/bifrost/chat/completions",
+				"status_route", "/api/bifrost/status",
+			)
 			if len(plugins) == 0 {
-				log.Printf("   ⚠️  No Heimdall plugins loaded (Watcher logs will be absent). Ensure a .so exists in HeimdallPluginsDir.")
+				heimdallLog.Warn("no heimdall plugins loaded — watcher logs will be absent",
+					"remediation", "ensure a .so exists in HeimdallPluginsDir")
 			}
 			for _, actionName := range actions {
-				log.Printf("   → Action: %s", actionName)
+				heimdallLog.Debug("heimdall action registered", "action", actionName)
 			}
 		}()
 	} else {
-		log.Println("ℹ️  Heimdall AI Assistant disabled (set NORNICDB_HEIMDALL_ENABLED=true to enable)")
+		s.log.Info("heimdall AI assistant disabled",
+			"subsystem", "heimdall",
+			"override_env", "NORNICDB_HEIMDALL_ENABLED")
 	}
 
 	// Independent search rerank (Stage-2 reranking, not tied to Heimdall).
@@ -1250,16 +1313,19 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 			modelPath := filepath.Join(modelsDir, modelName)
 
-			log.Printf("🔄 Loading search reranker model: %s (provider=local)...", modelPath)
-			log.Println("   → Server will start immediately, reranking available after model loads")
+			rerankLog := s.log.With("subsystem", "search_rerank")
+			rerankLog.Info("loading search reranker model",
+				"provider", "local",
+				"model_path", modelPath,
+				"note", "server starts immediately; reranking available after model loads")
 
 			go func() {
 				opts := localllm.DefaultOptions(modelPath)
 				opts.GPULayers = -1
 				rerankerModel, err := localllm.LoadRerankerModel(opts)
 				if err != nil {
-					log.Printf("⚠️  Search reranker model unavailable: %v", err)
-					log.Println("   → Stage-2 reranking disabled; search will use RRF order only")
+					rerankLog.Warn("search reranker model unavailable; stage-2 reranking disabled, RRF order only",
+						"error", err)
 					return
 				}
 
@@ -1268,7 +1334,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				cancel()
 				if healthErr != nil {
 					rerankerModel.Close()
-					log.Printf("⚠️  Search reranker failed health check: %v", healthErr)
+					rerankLog.Warn("search reranker failed health check", "error", healthErr)
 					return
 				}
 
@@ -1277,7 +1343,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				r := search.NewLocalReranker(rerankerModel, cfg)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
-				log.Printf("✅ Search reranker ready: %s (Stage-2 reranking enabled)", modelName)
+				rerankLog.Info("search reranker ready (stage-2 reranking enabled)",
+					"model", modelName)
 			}()
 		} else {
 			// External provider: use HTTP rerank API (Cohere, HuggingFace TEI, Ollama adapter, etc.).
@@ -1288,7 +1355,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 			}
 			if apiURL == "" {
-				log.Printf("⚠️  Search rerank enabled with provider=%q but NORNICDB_SEARCH_RERANK_API_URL is not set; Stage-2 reranking disabled", provider)
+				s.log.Warn("search rerank enabled but API URL not set; stage-2 reranking disabled",
+					"subsystem", "search_rerank",
+					"provider", provider,
+					"required_env", "NORNICDB_SEARCH_RERANK_API_URL")
 			} else {
 				ceConfig := &search.CrossEncoderConfig{
 					Enabled:  true,
@@ -1305,11 +1375,16 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				ce := search.NewCrossEncoder(ceConfig)
 				db.SetSearchReranker(ce)
 				setGlobalRerankerResolver(func(string) search.Reranker { return ce })
-				log.Printf("✅ Search reranker ready: provider=%s, url=%s (Stage-2 reranking enabled)", provider, apiURL)
+				s.log.Info("search reranker ready (stage-2 reranking enabled)",
+					"subsystem", "search_rerank",
+					"provider", provider,
+					"url", apiURL)
 			}
 		}
 	} else {
-		log.Println("ℹ️  Search rerank disabled (set NORNICDB_SEARCH_RERANK_ENABLED=true to enable Stage-2 reranking)")
+		s.log.Info("search rerank disabled",
+			"subsystem", "search_rerank",
+			"override_env", "NORNICDB_SEARCH_RERANK_ENABLED")
 	}
 
 	// Configure embeddings if enabled
@@ -1341,8 +1416,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 		// Initialize embeddings asynchronously to prevent startup blocking
 		// Local GGUF models can take 5-30 seconds to load (graph compilation)
-		log.Printf("🔄 Loading embedding model: %s (%s)...", embedConfig.Model, embedConfig.Provider)
-		log.Println("   → Server will start immediately, embeddings available after model loads")
+		embedInitLog := s.log.With("subsystem", "embed_init")
+		embedInitLog.Info("loading embedding model",
+			"model", embedConfig.Model,
+			"provider", embedConfig.Provider,
+			"note", "server starts immediately; embeddings available after model loads")
 
 		go func() {
 			// Retry forever: exponential backoff to 5m, then fixed 5m interval.
@@ -1356,7 +1434,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			for {
 				if s.closed.Load() {
-					log.Println("🛑 Embedding init retry loop stopped: server shutting down")
+					embedInitLog.Info("embedding init retry loop stopped: server shutting down")
 					return
 				}
 
@@ -1378,16 +1456,22 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					// Wrap with caching if enabled (default: 10K cache).
 					if config.EmbeddingCacheSize > 0 {
 						embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
-						log.Printf("✓ Embedding cache enabled: %d entries (~%dMB)",
-							config.EmbeddingCacheSize, embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
+						embedInitLog.Info("embedding cache enabled",
+							"entries", config.EmbeddingCacheSize,
+							"memory_mb", embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
 					}
 
 					if config.EmbeddingProvider == "local" {
-						log.Printf("✅ Embeddings ready: local GGUF (%s, %d dims)",
-							config.EmbeddingModel, config.EmbeddingDimensions)
+						embedInitLog.Info("embeddings ready",
+							"provider", "local_gguf",
+							"model", config.EmbeddingModel,
+							"dims", config.EmbeddingDimensions)
 					} else {
-						log.Printf("✅ Embeddings ready: %s (%s, %d dims)",
-							config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions)
+						embedInitLog.Info("embeddings ready",
+							"provider", config.EmbeddingProvider,
+							"url", config.EmbeddingAPIURL,
+							"model", config.EmbeddingModel,
+							"dims", config.EmbeddingDimensions)
 					}
 
 					if mcpServer != nil {
@@ -1402,17 +1486,24 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 
 				if config.EmbeddingProvider == "local" {
-					log.Printf("⚠️  Embedding init attempt %d failed (provider=local, model=%s): %v",
-						attempt, config.EmbeddingModel, err)
+					embedInitLog.Warn("embedding init attempt failed",
+						"attempt", attempt,
+						"provider", "local",
+						"model", config.EmbeddingModel,
+						"error", err)
 				} else {
-					log.Printf("⚠️  Embedding init attempt %d failed (provider=%s, model=%s, url=%s): %v",
-						attempt, config.EmbeddingProvider, config.EmbeddingModel, config.EmbeddingAPIURL, err)
+					embedInitLog.Warn("embedding init attempt failed",
+						"attempt", attempt,
+						"provider", config.EmbeddingProvider,
+						"model", config.EmbeddingModel,
+						"url", config.EmbeddingAPIURL,
+						"error", err)
 				}
 
 				if backoff < maxBackoff {
-					log.Printf("⏳ Retrying embedding init in %s (exponential backoff)", backoff)
+					embedInitLog.Info("retrying embedding init (exponential backoff)", "wait", backoff)
 					if !waitForDurationOrServerClose(s, backoff) {
-						log.Println("🛑 Embedding init retry interrupted by server shutdown")
+						embedInitLog.Info("embedding init retry interrupted by server shutdown")
 						return
 					}
 					backoff *= 2
@@ -1420,9 +1511,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 						backoff = maxBackoff
 					}
 				} else {
-					log.Printf("⏳ Embedding init retry interval capped at %s; continuing periodic retries", maxBackoff)
+					embedInitLog.Info("embedding init retry interval capped; continuing periodic retries",
+						"interval", maxBackoff)
 					if !waitForDurationOrServerClose(s, maxBackoff) {
-						log.Println("🛑 Embedding init retry interrupted by server shutdown")
+						embedInitLog.Info("embedding init retry interrupted by server shutdown")
 						return
 					}
 				}
@@ -1432,14 +1524,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 	// Log authentication status
 	if authenticator == nil || !authenticator.IsSecurityEnabled() {
-		log.Println("⚠️  Authentication disabled")
+		s.log.Warn("authentication disabled")
 	}
 
 	// Initialize rate limiter if enabled
 	var rateLimiter *IPRateLimiter
 	if config.RateLimitEnabled {
 		rateLimiter = NewIPRateLimiter(config.RateLimitPerMinute, config.RateLimitPerHour, config.RateLimitBurst)
-		log.Printf("✓ Rate limiting enabled: %d/min, %d/hour per IP", config.RateLimitPerMinute, config.RateLimitPerHour)
+		s.log.Info("rate limiting enabled",
+			"per_minute", config.RateLimitPerMinute,
+			"per_hour", config.RateLimitPerHour,
+			"scope", "per_ip")
 	}
 	s.rateLimiter = rateLimiter
 
@@ -1509,38 +1604,38 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		ctx := context.Background()
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
-			log.Printf("⚠️  Failed to load RBAC roles: %v", loadErr)
+			s.log.Warn("failed to load RBAC roles", "subsystem", "rbac", "error", loadErr)
 		} else {
 			s.roleStore = roleStore
 		}
 		allowlistStore := auth.NewAllowlistStore(systemStorage)
 		if loadErr := allowlistStore.Load(ctx); loadErr != nil {
-			log.Printf("⚠️  Failed to load RBAC allowlist: %v", loadErr)
+			s.log.Warn("failed to load RBAC allowlist", "subsystem", "rbac", "error", loadErr)
 		} else {
 			dbList := make([]string, 0, len(dbManager.ListDatabases()))
 			for _, info := range dbManager.ListDatabases() {
 				dbList = append(dbList, info.Name)
 			}
 			if seedErr := allowlistStore.SeedIfEmpty(ctx, dbList); seedErr != nil {
-				log.Printf("⚠️  Failed to seed RBAC allowlist: %v", seedErr)
+				s.log.Warn("failed to seed RBAC allowlist", "subsystem", "rbac", "error", seedErr)
 			}
 			s.allowlistStore = allowlistStore
 		}
 		privilegesStore := auth.NewPrivilegesStore(systemStorage)
 		if loadErr := privilegesStore.Load(ctx); loadErr != nil {
-			log.Printf("⚠️  Failed to load RBAC privileges: %v", loadErr)
+			s.log.Warn("failed to load RBAC privileges", "subsystem", "rbac", "error", loadErr)
 		} else {
 			s.privilegesStore = privilegesStore
 		}
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
-			log.Printf("⚠️  Failed to load RBAC role entitlements: %v", loadErr)
+			s.log.Warn("failed to load RBAC role entitlements", "subsystem", "rbac", "error", loadErr)
 		} else {
 			s.roleEntitlementsStore = roleEntitlementsStore
 		}
 		dbConfigStore := dbconfig.NewStore(systemStorage)
 		if loadErr := dbConfigStore.Load(ctx); loadErr != nil {
-			log.Printf("⚠️  Failed to load per-DB config store: %v", loadErr)
+			s.log.Warn("failed to load per-DB config store", "subsystem", "dbconfig", "error", loadErr)
 		} else {
 			s.dbConfigStore = dbConfigStore
 			globalConfig := nornicConfig.LoadFromEnv()
@@ -1564,20 +1659,60 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		}
 	}
 
-	// Initialize slow query logger if file specified
-	if config.SlowQueryEnabled && config.SlowQueryLogFile != "" {
-		file, err := os.OpenFile(config.SlowQueryLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Initialize slow query logger if file specified.
+	// D-04d collapse: threshold + log file path read from the canonical
+	// pkg/config.LoggingConfig snapshot threaded via Config.Logging.
+	if config.SlowQueryEnabled && config.Logging.SlowQueryLogFile != "" {
+		file, err := os.OpenFile(config.Logging.SlowQueryLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Printf("⚠️  Failed to open slow query log file %s: %v", config.SlowQueryLogFile, err)
+			s.log.Warn("failed to open slow query log file",
+				"subsystem", "slow_query",
+				"file", config.Logging.SlowQueryLogFile,
+				"error", err)
 		} else {
 			s.slowQueryLogger = log.New(file, "", log.LstdFlags)
-			log.Printf("✓ Slow query logging to: %s (threshold: %v)", config.SlowQueryLogFile, config.SlowQueryThreshold)
+			s.log.Info("slow query logging configured",
+				"subsystem", "slow_query",
+				"file", config.Logging.SlowQueryLogFile,
+				"threshold", config.Logging.SlowQueryThreshold)
 		}
 	} else if config.SlowQueryEnabled {
-		log.Printf("✓ Slow query logging enabled (threshold: %v)", config.SlowQueryThreshold)
+		s.log.Info("slow query logging enabled",
+			"subsystem", "slow_query",
+			"threshold", config.Logging.SlowQueryThreshold)
 	}
 
 	return s, nil
+}
+
+// SetHTTPMetrics injects the Plan-04-02 HTTP catalog bag (D-02 typed
+// handle DI). MUST be called BEFORE Start() — once the http.Server's
+// Handler is wired in Start(), the wrapper is fixed for the server
+// lifetime. Callers (cmd/nornicdb/main.go) inject after observability.New
+// returns the registry, then call Start().
+//
+// Nil-safe: passing nil is equivalent to never calling — instrumentedMux
+// is a pass-through. Test fixtures and pre-Phase-4 callers compile and
+// run unchanged.
+func (s *Server) SetHTTPMetrics(m *observability.HTTPMetrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.httpMetrics = m
+}
+
+// SetObsRegistry plumbs the unified prometheus registry from
+// observability.New into the server so handleMetrics can call
+// observability.RenderLegacy. Phase 5 / Plan 05-04. Mirrors the
+// SetHTTPMetrics pattern (mu.Lock + assign + unlock).
+//
+// Nil-safe: passing nil is equivalent to never calling — handleMetrics
+// tolerates a nil registry by emitting empty body bytes (RenderLegacy
+// contract). Test fixtures and pre-Phase-5 callers compile and run
+// unchanged.
+func (s *Server) SetObsRegistry(reg *prometheus.Registry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.obsRegistry = reg
 }
 
 // SetAuditLogger sets the audit logger for compliance logging.
@@ -1625,7 +1760,7 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
 //		log.Fatalf("Failed to start server: %v", err)
 //	}
 //
-//	fmt.Printf("Server started on %s\n", server.Addr())
+//	// Server started on server.Addr()
 //
 //	// Server is now accepting connections
 //	// Keep main goroutine alive
@@ -1652,8 +1787,18 @@ func (s *Server) Start() error {
 	// Build router
 	mux := s.buildRouter()
 
+	// Plan 04-02 D-03: instrumentedMux is the SOLE HTTP observation
+	// chokepoint per AGENTS.md §7 DRY. It wraps mux.ServeHTTP, reading
+	// `r.Pattern` post-dispatch (Go 1.22+ stdlib field) so path_template
+	// values come from the closed route table — never from r.URL.Path
+	// (cardinality bomb). Nil-safe: when s.httpMetrics is nil (test
+	// fixtures, pre-Phase-4 callers), the wrapper is a pass-through.
+	// Panic-safe: handler panics still emit a 5xx observation before
+	// re-propagating (T-04-08).
+	instrumented := instrumentedMux(mux, s.httpMetrics)
+
 	s.httpServer = &http.Server{
-		Handler:      mux,
+		Handler:      instrumented,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
@@ -1670,12 +1815,14 @@ func (s *Server) Start() error {
 		if err := http2.ConfigureServer(s.httpServer, http2Config); err != nil {
 			return fmt.Errorf("failed to configure HTTP/2 for TLS: %w", err)
 		}
-		log.Println("🚀 HTTP/2 enabled (HTTPS mode)")
+		s.log.Info("HTTP/2 enabled", "mode", "https")
 	} else {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
-		s.httpServer.Handler = h2c.NewHandler(mux, http2Config)
-		log.Println("🚀 HTTP/2 enabled (h2c cleartext mode, backwards compatible with HTTP/1.1)")
+		// Wrap the INSTRUMENTED mux (not bare mux) so observation runs
+		// inside the h2c transport adapter (Plan 04-02 D-03).
+		s.httpServer.Handler = h2c.NewHandler(instrumented, http2Config)
+		s.log.Info("HTTP/2 enabled", "mode", "h2c_cleartext", "compat", "http/1.1")
 	}
 
 	// Start serving
@@ -1688,7 +1835,7 @@ func (s *Server) Start() error {
 		}
 		if err != nil && err != http.ErrServerClosed {
 			// Log error but don't crash
-			fmt.Printf("HTTP server error: %v\n", err)
+			s.log.Error("http server error", "error", err)
 		}
 	}()
 
@@ -1757,10 +1904,10 @@ func (s *Server) Addr() string {
 // Example:
 //
 //	stats := server.Stats()
-//	fmt.Printf("Server uptime: %v\n", stats.Uptime)
-//	fmt.Printf("Total requests: %d\n", stats.RequestCount)
-//	fmt.Printf("Error rate: %.2f%%\n", float64(stats.ErrorCount)/float64(stats.RequestCount)*100)
-//	fmt.Printf("Active requests: %d\n", stats.ActiveRequests)
+//	// stats.Uptime: server uptime
+//	// stats.RequestCount: total requests
+//	// stats.ErrorCount / stats.RequestCount: error rate
+//	// stats.ActiveRequests: in-flight requests
 //
 //	// Use for monitoring/alerting
 //	if stats.ErrorCount > 1000 {

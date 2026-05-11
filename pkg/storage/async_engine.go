@@ -15,7 +15,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -82,6 +83,12 @@ type AsyncEngine struct {
 
 	// Flush mutex prevents concurrent flushes (race condition fix)
 	flushMu sync.RWMutex
+
+	// log is the structured *slog.Logger for AsyncEngine emissions, tagged
+	// with component=storage, engine=async at construction. D-01 logger DI;
+	// D-06 single-allocation flushLog derives from this in flushLoop. Discard
+	// fallback installed in NewAsyncEngine when config.Logger == nil.
+	log *slog.Logger
 }
 
 // HoldFlush acquires a shared flush guard and returns a release function.
@@ -138,6 +145,13 @@ type AsyncEngineConfig struct {
 	// Set to 0 for unlimited (not recommended for bulk operations).
 	// Default: 100000 (100K edges, ~50MB assuming 500 bytes/edge)
 	MaxEdgeCacheSize int
+
+	// Logger is the structured *slog.Logger threaded into the AsyncEngine.
+	// D-01 logger DI: optional; nil falls back to a discard handler at ctor
+	// entry per D-01a so existing callers (tests, scripts) compile unchanged.
+	// D-06: the flush goroutine derives a single-allocation child logger from
+	// this field at goroutine start.
+	Logger *slog.Logger
 }
 
 // NewAsyncEngine wraps an engine with write-behind caching.
@@ -156,6 +170,12 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 	}
 	if config.MinFlushInterval > config.MaxFlushInterval {
 		config.MinFlushInterval = config.MaxFlushInterval
+	}
+	// D-01a discard fallback: callers that do not supply a structured logger
+	// get a discard handler so LOG-01 holds even on uninstrumented paths
+	// (tests, scripts/perf_direct, embedded usage).
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
 	ae := &AsyncEngine{
@@ -179,6 +199,7 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 		maxEdgeCacheSize:   config.MaxEdgeCacheSize,
 		stopChan:           make(chan struct{}),
 		lastFlush:          time.Now(),
+		log:                config.Logger.With("component", "storage", "engine", "async"),
 	}
 
 	// Start background flush goroutine
@@ -202,8 +223,15 @@ func (e *AsyncEngine) GetInnerEngine() Engine {
 }
 
 // flushLoop periodically flushes pending writes to the underlying engine.
+//
+// D-06 single-allocation rule: flushLog is derived ONCE at goroutine start
+// from ae.log via .With("subsystem","async_flush","operation","flush"). Per-
+// flush emissions reuse flushLog with no further .With(...) allocations on
+// the hot path. This pre-bind pattern matches Phase 1's pre-bound metric-
+// counter rule for hot paths in pkg/observability.
 func (ae *AsyncEngine) flushLoop() {
 	defer ae.wg.Done()
+	flushLog := ae.log.With("subsystem", "async_flush", "operation", "flush")
 
 	for {
 		select {
@@ -224,7 +252,7 @@ func (ae *AsyncEngine) flushLoop() {
 			if err := ae.Flush(); err != nil {
 				// Don't log storage closed during shutdown (engine closed by teardown order or race with stopChan).
 				if !errors.Is(err, ErrStorageClosed) && !strings.Contains(err.Error(), ErrStorageClosed.Error()) {
-					log.Printf("async flush failed: %v", err)
+					flushLog.Warn("async flush failed", slog.Any("error", err))
 				}
 			}
 		case <-ae.stopChan:
@@ -1629,10 +1657,21 @@ func (ae *AsyncEngine) NodeCount() (int64, error) {
 	// Include inFlightCreates because they're being written but not yet in engineCount
 	count := engineCount + pendingCreates + inFlightCreates - pendingDeletes
 
-	// Clamp to zero if negative (should never happen, log for debugging)
+	// Clamp to zero if negative (should never happen, log for debugging).
+	// D-06 structured form: emit operator-actionable WARN with stable
+	// attributes so dashboards can alert on (op=NodeCount AND result < 0)
+	// aggregations. The original bracketed marker is replaced by the op
+	// attribute combined with action=clamp_to_zero.
 	if count < 0 {
-		log.Printf("⚠️ [COUNT BUG] NodeCount went negative: engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
-			engineCount, pendingCreates, pendingDeletes, count)
+		ae.log.Warn("count went negative",
+			"op", "NodeCount",
+			"engine_count", engineCount,
+			"pending_creates", pendingCreates,
+			"in_flight_creates", inFlightCreates,
+			"pending_deletes", pendingDeletes,
+			"result", count,
+			"action", "clamp_to_zero",
+		)
 		return 0, nil
 	}
 	return count, nil
@@ -1676,10 +1715,18 @@ func (ae *AsyncEngine) EdgeCount() (int64, error) {
 	// Include inFlightCreates because they're being written but not yet in engineCount
 	count := engineCount + pendingCreates + inFlightCreates - pendingDeletes
 
-	// Clamp to zero if negative (should never happen, log for debugging)
+	// Clamp to zero if negative (should never happen, log for debugging).
+	// D-06 structured form (see NodeCount above for rationale).
 	if count < 0 {
-		log.Printf("⚠️ [COUNT BUG] EdgeCount went negative: engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
-			engineCount, pendingCreates, pendingDeletes, count)
+		ae.log.Warn("count went negative",
+			"op", "EdgeCount",
+			"engine_count", engineCount,
+			"pending_creates", pendingCreates,
+			"in_flight_creates", inFlightCreates,
+			"pending_deletes", pendingDeletes,
+			"result", count,
+			"action", "clamp_to_zero",
+		)
 		return 0, nil
 	}
 	return count, nil
@@ -1735,8 +1782,16 @@ func (ae *AsyncEngine) NodeCountByPrefix(prefix string) (int64, error) {
 
 	count := engineCount + pendingCreates + inFlightCreates - pendingDeletes
 	if count < 0 {
-		log.Printf("⚠️ [COUNT BUG] NodeCountByPrefix went negative: prefix=%q engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
-			prefix, engineCount, pendingCreates, pendingDeletes, count)
+		ae.log.Warn("count went negative",
+			"op", "NodeCountByPrefix",
+			"prefix", prefix,
+			"engine_count", engineCount,
+			"pending_creates", pendingCreates,
+			"in_flight_creates", inFlightCreates,
+			"pending_deletes", pendingDeletes,
+			"result", count,
+			"action", "clamp_to_zero",
+		)
 		return 0, nil
 	}
 	_ = pendingUpdates // no-op (kept for symmetry with NodeCount)
@@ -1789,8 +1844,16 @@ func (ae *AsyncEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 
 	count := engineCount + pendingCreates + inFlightCreates - pendingDeletes
 	if count < 0 {
-		log.Printf("⚠️ [COUNT BUG] EdgeCountByPrefix went negative: prefix=%q engineCount=%d pendingCreates=%d pendingDeletes=%d result=%d (clamping to 0)",
-			prefix, engineCount, pendingCreates, pendingDeletes, count)
+		ae.log.Warn("count went negative",
+			"op", "EdgeCountByPrefix",
+			"prefix", prefix,
+			"engine_count", engineCount,
+			"pending_creates", pendingCreates,
+			"in_flight_creates", inFlightCreates,
+			"pending_deletes", pendingDeletes,
+			"result", count,
+			"action", "clamp_to_zero",
+		)
 		return 0, nil
 	}
 	return count, nil

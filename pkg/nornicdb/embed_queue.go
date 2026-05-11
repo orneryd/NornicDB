@@ -305,6 +305,28 @@ type WorkerStats struct {
 }
 
 // Stats returns current worker statistics.
+// QueueLen returns the current pending-embedding queue depth for the
+// observability nornicdb_embed_queue_depth GaugeFunc (Plan 04-05 D-15b).
+//
+// EmbedWorker is pull-based: there is no in-memory queue of work items
+// waiting to be processed. Instead, the worker periodically scans
+// storage for nodes lacking embeddings (the storage-side
+// "pending-embedding index" is the durable queue). For the M1 scrape
+// surface we report the trigger channel buffer depth (a coarse upper
+// bound on outstanding wake-up signals); deeper visibility into the
+// storage-side pending count is deferred to a future plan that wires
+// the AddToPendingEmbeddings counter through here.
+//
+// The metric value is therefore a lower-bound on actual outstanding
+// work — when alerts trigger SREs should also check the storage-side
+// pending-embeddings index. Documented in CONTEXT D-15b.
+func (ew *EmbedWorker) QueueLen() int {
+	if ew == nil {
+		return 0
+	}
+	return len(ew.trigger)
+}
+
 func (ew *EmbedWorker) Stats() WorkerStats {
 	return WorkerStats{
 		Running:   ew.running.Load(),

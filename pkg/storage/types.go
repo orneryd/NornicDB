@@ -350,12 +350,13 @@ type Edge struct {
 //
 //	// Query
 //	people, _ := engine.GetNodesByLabel("Person")
-//	fmt.Printf("Found %d people\n", len(people))
+//	// emit "Found N people" via the configured logger
 //
 //	// Traversal
 //	outgoing, _ := engine.GetOutgoingEdges("n1")
 //	for _, edge := range outgoing {
-//		fmt.Printf("%s -> %s [%s]\n", edge.StartNode, edge.EndNode, edge.Type)
+//		// emit "<start> -> <end> [<type>]" via the configured logger
+//		_ = edge
 //	}
 type Engine interface {
 	// Node operations
@@ -807,13 +808,13 @@ type Neo4jRelationship struct {
 //	rel := &Neo4jRelationship{
 //		StartNode: "user-123",
 //	}
-//	fmt.Println(rel.GetStartID()) // "user-123"
+//	// rel.GetStartID() returns "user-123"
 //
 //	// APOC format
 //	rel = &Neo4jRelationship{
 //		Start: Neo4jNodeRef{ID: "user-456"},
 //	}
-//	fmt.Println(rel.GetStartID()) // "user-456"
+//	// rel.GetStartID() returns "user-456"
 func (r *Neo4jRelationship) GetStartID() string {
 	if r.Start.ID != "" {
 		return r.Start.ID
@@ -932,7 +933,7 @@ func ToNeo4jExport(nodes []*Node, edges []*Edge) *Neo4jExport {
 //		log.Fatal(err)
 //	}
 //
-//	fmt.Printf("Imported %d nodes, %d edges\n", len(nodes), len(edges))
+//	// emit "Imported N nodes, M edges" via the configured logger
 //
 // Returns nodes and edges ready for storage engine insertion.
 func FromNeo4jExport(export *Neo4jExport) ([]*Node, []*Edge) {

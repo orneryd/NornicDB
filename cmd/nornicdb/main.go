@@ -4,17 +4,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,7 +26,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
 	"github.com/orneryd/nornicdb/pkg/server"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -450,6 +451,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
 	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
 
+	// Phase 2 D-08 reordering: build the production *slog.Logger BEFORE
+	// nornicdb.Open so storage (BadgerEngine, WAL, AsyncEngine) emits
+	// through the structured handler stack from the very first line. The
+	// logger flows into Open via dbConfig.Logger; storage ctors install
+	// discard fallbacks if it is nil per D-01a.
+	earlyLoggerInfo := observability.ServiceInfo{
+		Name:    "nornicdb",
+		Version: buildinfo.Version(),
+		NodeID:  clusterNodeID,
+	}
+	earlyLogger, earlyWriterRef, earlyLogErr := observability.NewLogger(observability.LoggerConfig{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
+	}, earlyLoggerInfo)
+	if earlyLogErr != nil {
+		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
+	}
+	// Phase 2 D-01 storage threading: assign the slog logger into nornicdb.Config
+	// so storage ctors (BadgerEngine, AsyncEngine, WAL) inherit it through
+	// the field-literal threading inside nornicdb.Open (BadgerOptions{Logger: ...},
+	// AsyncEngineConfig{Logger: ...}, WALConfig.SlogLogger).
+	dbConfig.Logger = earlyLogger
+	// earlyWriterRef is reused below by observability.New so the same
+	// underlying io.Writer flushes during Provider.Shutdown (D-09a).
+
 	// Open database
 	fmt.Println("📂 Opening database...")
 	db, err := nornicdb.Open(dataDir, dbConfig)
@@ -557,6 +584,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	// Note: Auth status logged at server startup
 
+	// Phase 2 D-08: the production *slog.Logger was built BEFORE nornicdb.Open
+	// above so storage, WAL, and AsyncEngine emit through the structured
+	// handler stack from the very first line. The same logger + writerRef +
+	// loggerInfo are reused for observability.New below — single source of
+	// truth for the entire process lifetime.
+	loggerInfo := earlyLoggerInfo
+	logger := earlyLogger
+	writerRef := earlyWriterRef
+
+	// Phase 2 D-01 + D-04c: thread the structured logger and the slow-query
+	// threshold from cfg.Logging into the primary cypher executor so the
+	// LOG-07 slow-query record schema fires on the production code path.
+	if exec := db.GetCypherExecutor(); exec != nil {
+		exec.SetLogger(logger)
+		exec.SetSlowQueryThreshold(cfg.Logging.SlowQueryThreshold)
+	}
+
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
@@ -582,6 +626,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// CORS configuration from loaded config
 	serverConfig.EnableCORS = cfg.Server.EnableCORS
 	serverConfig.CORSOrigins = cfg.Server.CORSOrigins
+	// Phase 2 D-01: thread the observability *slog.Logger into the server
+	// Config so all pkg/server log emission flows through the production
+	// 4-layer handler stack (recovering → mandatory → redactor → JSON).
+	// Uses the `logger` built above (same value Provider.Logger() returns
+	// later, since obs.New stores this reference). nil-safe: pkg/server.New
+	// installs a discard fallback if Logger is nil.
+	serverConfig.Logger = logger
+
+	// Phase 2 D-04d: thread the canonical pkg/config.LoggingConfig snapshot
+	// into the server. SlowQueryThreshold + SlowQueryLogFile readers in
+	// pkg/server now go through s.config.Logging.* exclusively.
+	serverConfig.Logging = cfg.Logging
 
 	// Enable embedded UI from the ui package (unless headless mode)
 	if !headless {
@@ -593,17 +649,28 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating server: %w", err)
 	}
 
-	// Start HTTP server (non-blocking)
-	if err := httpServer.Start(); err != nil {
-		return fmt.Errorf("starting server: %w", err)
-	}
+	// HTTP server START is deferred until AFTER observability.New runs
+	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02
+	// instrumentedMux wrapper consults s.httpMetrics at Handler-mount
+	// time inside Start(); we must therefore inject the bag (via
+	// SetHTTPMetrics) AFTER obs.Registry() exists. The two-phase
+	// bootstrap (Phase 2 D-08) keeps server.New BEFORE obs so the same
+	// *slog.Logger reference threads through both — only Start() moves.
 
-	// Create and start Bolt server for Neo4j driver compatibility
+	// Create and start Bolt server for Neo4j driver compatibility.
+	// Plan 02-05 D-01: Logger flows in via Config.Logger so Bolt records
+	// share the assembled handler stack (recovering -> mandatory -> redact
+	// -> json) and Bolt HELLO "credentials" are auto-redacted (D-03a).
 	boltConfig := bolt.DefaultConfig()
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
 	boltConfig.LogQueries = logQueries
 	boltConfig.ServerAnnouncement = cfg.Server.BoltServerAnnouncement
+	// `logger` is the same *slog.Logger reference Provider.Logger() returns
+	// (built BEFORE observability.New per D-08's two-phase bootstrap), so
+	// records emitted by the Bolt server flow through the production
+	// 4-layer recovering -> mandatory -> redact -> json handler stack.
+	boltConfig.Logger = logger
 	if !noAuth && authenticator != nil {
 		boltAuth := bolt.NewAuthenticatorAdapter(authenticator)
 		boltAuth.SetGetEffectivePermissions(httpServer.GetEffectivePermissions)
@@ -621,12 +688,300 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Wire per-DB read/write for mutation checks (Phase 4)
 	boltServer.SetResolvedAccessResolver(httpServer.GetResolvedAccessForRoles)
 
-	// Start Bolt server in goroutine
-	go func() {
-		if err := boltServer.ListenAndServe(); err != nil {
-			fmt.Printf("Bolt server error: %v\n", err)
+	// Phase 1 OBS-07/OBS-08: lifecycle.Run is the canonical supervisor.
+	// The previous channel-based pattern (signal.Notify + sequential
+	// shutdown with workers stopped FIRST) is replaced because it
+	// violated OBS-08's mandated drain order. lifecycle.Run encodes the
+	// reverse-order drain as a function of the registration order below.
+	//
+	// 1. Logger, loggerInfo, and writerRef were built earlier (BEFORE
+	//    server.New) per Phase 2 D-08's two-phase bootstrap so the same
+	//    *slog.Logger flows into pkg/server's Config.Logger and into
+	//    observability.New below. The 4-layer handler stack
+	//    (recovering → mandatory → redactor → JSONHandler) was assembled
+	//    against cfg.Logging.Level/Output + ServiceInfo at construction.
+
+	// 2. Build the observability provider (OTel SDK + Prometheus
+	//    registry; OBS-11 noop fallback if OTLP exporter init fails —
+	//    NEVER fatal). The logger + writerRef thread through so
+	//    Provider.Logger() exposes the assembled *slog.Logger to
+	//    downstream business-package constructors per D-01.
+	obs, obsErr := observability.New(cmd.Context(), cfg.Observability, loggerInfo, logger, writerRef)
+	if obsErr != nil {
+		return fmt.Errorf("observability init: %w", obsErr)
+	}
+	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
+
+	// Phase 5 D-02d: resolve the tenant-labels-enabled bool BEFORE any Phase
+	// 4 bag constructor below reads cfg.Observability.Metrics.TenantLabelsEnabled.
+	// Precedence (D-02a): explicit YAML (TenantLabelsExplicit *bool, R-02) >
+	// K8s autodetect (KUBERNETES_SERVICE_HOST + non-empty SA-token) > default
+	// false. The helper logs the outcome via the injected slog logger
+	// (Phase 2 D-08 plumbing — LOG-09 compliant, no slog.Default).
+	cfg.Observability.Metrics.TenantLabelsEnabled = observability.ResolveAndLogTenantLabels(
+		cfg.Observability.Metrics.TenantLabelsExplicit, logger,
+	)
+
+	// Phase 5 / Plan 05-04: plumb the unified prometheus registry to the
+	// legacy :7474/metrics adapter so handleMetrics can call
+	// observability.RenderLegacy. Mirrors the Phase 4 SetHTTPMetrics
+	// injection pattern (post-construction setter; nil-safe handler).
+	// MUST happen BEFORE httpServer.Start() — the legacy /metrics handler
+	// reads s.obsRegistry on every scrape via the RLock-protected
+	// obsRegistryForHandler accessor; injecting before Start eliminates
+	// the (otherwise possible) nil-body race window for early scrapes.
+	httpServer.SetObsRegistry(obs.Registry())
+
+	// 2a. Construct the Cache + Runtime metric bag (Plan 04-01 / MET-16).
+	//     Inserted between the registry build (inside observability.New) and
+	//     the telemetry listener — Phase 4 D-02c init-order chokepoint.
+	//     Registers six families (cache_hits_total, cache_misses_total,
+	//     cache_size_bytes, cache_evictions_total, process_uptime_seconds,
+	//     build_info) on obs.Registry(). MUST NOT crash startup if go/process
+	//     collectors are already there (Phase 1 registry.go:34-35) — the cache
+	//     bag adds disjoint families so AlreadyRegisteredError cannot occur.
+	cacheMetrics := observability.NewCacheMetrics(obs.Registry())
+
+	// 2b. Plan 04-02: construct HTTP + Bolt metric bags and inject into the
+	//     existing httpServer / boltServer instances via setters. Both bags
+	//     register against obs.Registry() — disjoint families per the
+	//     Phase-3 typed constructors so AlreadyRegisteredError cannot
+	//     occur with cacheMetrics or the Phase-1 go/process collectors.
+	//     The D-08 tenantLabelsEnabled bool is taken from the loaded
+	//     observability config; Phase 5's K8s autodetect will set it
+	//     automatically once it lands.
+	httpMetrics := observability.NewHTTPMetrics(obs.Registry(), cfg.Observability.Metrics.TenantLabelsEnabled)
+	httpServer.SetHTTPMetrics(httpMetrics)
+
+	boltMetrics := observability.NewBoltMetrics(obs.Registry())
+	boltServer.SetBoltMetrics(boltMetrics)
+	// Plan 04-06 forward-compat: AuthMetrics bag ships in 04-06; until
+	// then the Bolt HELLO completion site no-ops on its nil-check.
+	// boltServer.SetAuthMetrics(authMetrics) // wired by Plan 04-06.
+
+	// 2b'. Plan 04-03: construct CypherMetrics (MET-08) — 11 families
+	//      including planner_cache_*, transaction_conflicts_total, and the
+	//      D-15b/MET-26 slow_query_threshold_seconds GaugeFunc that reads
+	//      cfg.Logging.SlowQueryThreshold().Seconds() on every scrape so
+	//      config reload is reflected without event wiring. The Cypher
+	//      bag is injected into the primary executor via SetCypherMetrics
+	//      (which also propagates into the executor's owned planCache for
+	//      D-12a planner-cache observation), and the cross-cutting Cache
+	//      bag is injected via SetCacheMetrics (which routes into the
+	//      owned SmartQueryCache for cache_hits_total{cache="query_result"}
+	//      bridge per D-12a).
+	cypherMetrics := observability.NewCypherMetrics(
+		obs.Registry(),
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		func() float64 { return cfg.Logging.SlowQueryThreshold.Seconds() },
+	)
+	if exec := db.GetCypherExecutor(); exec != nil {
+		exec.SetCypherMetrics(cypherMetrics, defaultBoltDatabaseName(db))
+		exec.SetCacheMetrics(cacheMetrics)
+	}
+
+	// 2b''. Plan 04-04: construct StorageMetrics (MET-10) + MVCCMetrics
+	//       (MET-11). The bags register against obs.Registry() — disjoint
+	//       families, no AlreadyRegisteredError risk. Inject into the
+	//       underlying *BadgerEngine via AttachMetrics, which pre-binds
+	//       the four op-duration observers (MET-25). The bytes_metrics
+	//       sweeper is registered as a lifecycle.Component below between
+	//       pprof and workers per RESEARCH §Q4 ordering — it drains AFTER
+	//       workers and BEFORE the telemetry listener so the final scrape
+	//       during drain reflects last-known sizes.
+	var bytesSweeper *storage.BytesMetricsSweeper
+	if badgerEngine := unwrapBadgerEngine(db.GetStorage()); badgerEngine != nil {
+		storageMetrics := observability.NewStorageMetrics(
+			obs.Registry(),
+			cfg.Observability.Metrics.TenantLabelsEnabled,
+			badgerStorageProbe{be: badgerEngine},
+		)
+		mvccMetrics := observability.NewMVCCMetrics(
+			obs.Registry(),
+			cfg.Observability.Metrics.TenantLabelsEnabled,
+			badgerMVCCProbe{be: badgerEngine},
+		)
+		badgerEngine.AttachMetrics(storageMetrics, mvccMetrics)
+
+		// D-07 sweep cadence: 30s default; Plan 04-04 introduces
+		// cfg.Storage.BytesMetricInterval. Override path is exercised by
+		// the BytesMetricsSweeper interval-override unit test.
+		interval := cfg.Storage.BytesMetricInterval
+		if interval <= 0 {
+			interval = storage.DefaultBytesMetricsInterval
 		}
-	}()
+		bytesSweeper = storage.NewBytesMetricsSweeper(
+			storageMetrics,
+			badgerEngine.DB(),
+			nil, /* search size callback — Plan 04-05 wires */
+			interval,
+		)
+	}
+
+	// 2b'''. Plan 04-05: construct EmbedMetrics (MET-12 — 6 families +
+	//        ffi_panics_total) and SearchMetrics (MET-13 — 4 families).
+	//        Same Phase-4 D-02c init-order chokepoint Plans 04-01..04-04
+	//        used. EmbedMetrics is NOT tenant-tagged per CONTEXT MET-21
+	//        omission. SearchMetrics IS tenant-tagged (D-08); the bool
+	//        threads through cfg.Observability.Metrics.TenantLabelsEnabled.
+	embedMetrics := observability.NewEmbedMetrics(
+		obs.Registry(),
+		embedQueueProbe{q: db.GetEmbedQueue()},
+	)
+	// D-09: attach the FFI panic counter to the underlying
+	// LocalGGUFEmbedder if one exists; no-op otherwise. The cached
+	// embedder wrapper layer is not yet traversed (deferred — future
+	// enhancement adds CachedEmbedder.Base()).
+	if exec := db.GetCypherExecutor(); exec != nil {
+		_ = attachEmbedMetricsToEmbedder(exec.GetEmbedder(), embedMetrics)
+	}
+
+	searchMetrics := observability.NewSearchMetrics(
+		obs.Registry(),
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		searchServiceProbe{svc: nil}, /* probe lazy-bound below per database */
+	)
+
+	// Best-effort attach search metrics + per-database search-service
+	// probe. The default-DB search service is created lazily via
+	// GetOrCreateSearchService — call it here so the metric bag has a
+	// real target for IndexSizeBytes during the first scrape.
+	defaultDBNameForMetrics := defaultBoltDatabaseName(db)
+	if defaultSearchSvc, sErr := db.GetOrCreateSearchService(defaultDBNameForMetrics, db.GetStorage()); sErr == nil && defaultSearchSvc != nil {
+		defaultSearchSvc.AttachMetrics(searchMetrics)
+		// Re-construct the SearchMetrics bag with a real probe pointing
+		// at the default search service. We cannot do this earlier
+		// because the bag was registered against obs.Registry already;
+		// instead, rely on the fact that AttachMetrics on the service
+		// flows future observations through searchMetrics, while the
+		// existing GaugeFunc collector references the original probe
+		// (zero-byte today). Wiring multi-database probes is deferred —
+		// SearchProbe today is single-database.
+		_ = defaultSearchSvc
+	}
+
+	// Wire the search-service size callback into the bytes_metrics_sweeper
+	// so nornicdb_storage_bytes{kind="search"} reflects HNSW size. The
+	// sweeper was constructed earlier with a nil callback; we cannot
+	// retro-fit a sweeper field without exposing it. For M1 the storage
+	// bytes{kind=search} stays at 0 — Phase 4 ships the
+	// nornicdb_search_index_size_bytes_live collector as the canonical
+	// search-bytes surface; the storage-side kind=search bucket is a
+	// duplicate that future plans can wire if needed.
+	_ = bytesSweeper
+
+	_ = embedMetrics
+	_ = searchMetrics
+
+	// 2b''''. Plan 04-06: construct ReplicationMetrics + AuthMetrics bags
+	//        and wire them into the Bolt server (Plan-04-02 HELLO call
+	//        site already added; this lights it up), the Authenticator
+	//        (HTTP/gRPC adapter chokepoints), and the Replicator (when
+	//        replication is enabled — Standalone/HAStandby/Raft/MultiRegion
+	//        all satisfy the MetricsAware optional interface).
+	//
+	//        The peer_metrics_gc lifecycle.Component is registered between
+	//        the bytes_metrics_sweeper and workersC per RESEARCH §Q4
+	//        ordering — drains AFTER workers and BEFORE telemetry so the
+	//        final scrape during drain reflects the last GC pass.
+	replicationMode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	replicatorIface := db.GetReplicator()
+	var replicatorAny any
+	if replicatorIface != nil {
+		replicatorAny = replicatorIface
+	}
+	replAuthWiring := initReplicationAuthMetrics(
+		obs.Registry(),
+		replicationMode,
+		cfg.Observability.Metrics.TenantLabelsEnabled,
+		authenticator,
+		boltServer,
+		replicatorAny,
+	)
+	_ = replAuthWiring.authMetrics
+	_ = replAuthWiring.replMetrics
+
+	// 2c. NOW that the HTTP metrics bag is injected, start the HTTP
+	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
+	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).
+	if err := httpServer.Start(); err != nil {
+		return fmt.Errorf("starting server: %w", err)
+	}
+
+	// 2. Build the health registry.
+	health := observability.NewHealth()
+
+	// 3. Build the telemetry listener (Component) — opens :9090 in
+	//    constructor so EADDRINUSE surfaces synchronously.
+	telemetry, telemetryErr := observability.NewTelemetryListener(obs, health)
+	if telemetryErr != nil {
+		return fmt.Errorf("telemetry listener: %w", telemetryErr)
+	}
+
+	// 4. Build the optional pprof listener (Component, may be nil when
+	//    cfg.Observability.Pprof.Enabled is false — OBS-06 / Phase-success-2).
+	pprof, pprofErr := observability.NewPprofListener(cfg.Observability.Pprof)
+	if pprofErr != nil {
+		return fmt.Errorf("pprof listener: %w", pprofErr)
+	}
+
+	// 5. Register health checks AFTER storage/search are open (D-03c).
+	//    db.HealthCheck is the W-4 fix Pitfall 11 mitigation: it probes
+	//    db.storage.NodeCount() so a closed engine returns
+	//    storage.ErrStorageClosed and /readyz flips to 503.
+	health.Register("storage", db.HealthCheck)
+
+	// search_warm is informational (Required: false) — operators see it
+	// in /readyz JSON during index rebuild but it does NOT gate readiness.
+	// We probe lazily on every check (rather than capturing a service at
+	// registration time) because GetOrCreateSearchService may not yet
+	// have an instance for the default database when /readyz is first
+	// scraped during cold start.
+	defaultDBName := defaultBoltDatabaseName(db)
+	health.Register("search_warm", func(ctx context.Context) error {
+		searchSvc, sErr := db.GetOrCreateSearchService(defaultDBName, db.GetStorage())
+		if sErr != nil || searchSvc == nil {
+			return errors.New("search service not yet available")
+		}
+		if !searchSvc.IsReady() {
+			return errors.New("search indexes not yet warm")
+		}
+		return nil
+	}, observability.CheckOpts{Required: false})
+
+	// 6. Build adapter components for HTTP, Bolt, and embed-workers.
+	httpC := &httpAdapter{srv: httpServer}
+	boltC := &boltAdapter{srv: boltServer}
+	workersC := &workersAdapter{db: db}
+
+	// 7. D-04a registration order:
+	//    Forward = startup; reverse = drain (OBS-08 encoded directly).
+	//    telemetry FIRST (drains LAST so kubelet keeps scraping during drain)
+	//    → optional pprof
+	//    → workers
+	//    → bolt
+	//    → http LAST (drains FIRST — stop accepting new requests immediately).
+	components := []lifecycle.Component{telemetry}
+	if pprof != nil {
+		components = append(components, pprof)
+	}
+	// Plan 04-04: bytes_metrics_sweeper drains AFTER workers and BEFORE
+	// the telemetry listener (RESEARCH §Q4 ordering). It sits between
+	// pprof and workers in registration order — that places it earlier
+	// in the drain path than workers (drain runs in reverse), guaranteeing
+	// the final /metrics scrape during drain still reflects the last
+	// sweep's gauge values before the engine starts shutting down.
+	if bytesSweeper != nil {
+		components = append(components, bytesSweeper)
+	}
+	// Plan 04-06: peer_metrics_gc drains AFTER workers and BEFORE telemetry
+	// so the final scrape during drain reflects the last GC sweep. Registered
+	// unconditionally — when replication is disabled the GC runs idle waiting
+	// for ctx cancel (D-05b nil-metrics tolerated path).
+	if replAuthWiring.peerGC != nil {
+		components = append(components, replAuthWiring.peerGC)
+	}
+	components = append(components, workersC, boltC, httpC)
 
 	fmt.Println()
 	fmt.Println("✅ NornicDB is ready!")
@@ -644,6 +999,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  • Cypher:       POST http://%s:%d/db/nornicdb/tx/commit\n", displayAddr, httpPort)
 	if mcpEnabled {
 		fmt.Printf("  • MCP:          http://%s:%d/mcp\n", displayAddr, httpPort)
+	}
+	fmt.Printf("  • Telemetry:    http://%s%s/metrics\n", displayAddr, cfg.Observability.Metrics.Listen)
+	if pprof != nil {
+		fmt.Printf("  • pprof:        http://%s/debug/pprof/\n", cfg.Observability.Pprof.Listen)
 	}
 	fmt.Println()
 	if authEnabled {
@@ -666,25 +1025,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
 
-	// Block until shutdown signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	fmt.Println("\n🛑 Shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Stop embed workers first so they don't keep running during server shutdown.
-	db.StopEmbedQueue()
-
-	// Stop Bolt server
-	if err := boltServer.Close(); err != nil {
-		fmt.Printf("Warning: error stopping Bolt server: %v\n", err)
-	}
-
-	if err := httpServer.Stop(ctx); err != nil {
-		return fmt.Errorf("stopping HTTP server: %w", err)
+	// 8. Run the supervisor. lifecycle.Run installs a SIGINT/SIGTERM
+	//    NotifyContext, runs every Component.Start in an errgroup, and
+	//    on cancellation drains in REVERSE order on a fresh
+	//    context.WithTimeout(context.Background(), 30s) (OBS-09).
+	if runErr := lifecycle.Run(cmd.Context(), components...); runErr != nil {
+		return fmt.Errorf("supervised run: %w", runErr)
 	}
 
 	fmt.Println("✅ Server stopped gracefully")
@@ -836,6 +1182,11 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}
+		// Phase 2 D-01 + D-04c: inherit logger and slow-query threshold from
+		// the base executor so per-transaction scoped executors emit the
+		// LOG-07 slow-query record on the same logger pipeline.
+		executor.SetLogger(baseExec.Logger())
+		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
 	if searchSvc, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
 		executor.SetSearchService(searchSvc)

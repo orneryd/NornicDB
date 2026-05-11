@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -247,9 +248,16 @@ type WALConfig struct {
 	// Snapshots older than this are deleted even if under MaxCount.
 	SnapshotRetentionMaxAge time.Duration
 
-	// Logger receives WAL diagnostics events (optional).
-	// If nil, a default stdlib-backed logger is used.
+	// Logger receives WAL diagnostics events (optional, legacy structured
+	// channel implemented by pkg/storage's WALLogger interface). If nil,
+	// a default slog-backed logger is installed at ctor entry — the
+	// previous stdlib-printer-backed default has been removed per LOG-01.
 	Logger WALLogger
+
+	// SlogLogger is the structured *slog.Logger used by D-07 WAL recovery
+	// emissions (subsystem=wal, subsystem=wal_recovery). Optional; nil
+	// falls back to a discard handler at NewWAL entry per D-01a.
+	SlogLogger *slog.Logger
 
 	// OnCorruption is called when WAL corruption diagnostics are produced (optional).
 	// This allows the server layer to surface "WAL degraded" health state without
@@ -302,6 +310,12 @@ type WAL struct {
 	// Degraded state (set when corruption is detected / recovery actions taken)
 	degraded       atomic.Bool
 	lastCorruption atomic.Value // *CorruptionDiagnostics
+
+	// walLog is the pre-bound subsystem=wal *slog.Logger derived from
+	// cfg.SlogLogger at NewWAL entry. D-07 single-allocation: every WAL
+	// instance pays one .With(...) cost; recovery / truncate / corruption
+	// paths reuse this child logger.
+	walLog *slog.Logger
 }
 
 // WALStats provides observability into WAL state.
@@ -341,9 +355,16 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		return nil, fmt.Errorf("wal: failed to create segments directory: %w", err)
 	}
 
+	// D-01a discard fallback for the structured *slog.Logger before the
+	// existing WALLogger fallback so the latter can adopt a slog backing.
+	if cfg.SlogLogger == nil {
+		cfg.SlogLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	// Ensure logger is available early (used by startup repair diagnostics).
+	// The default WALLogger now writes into the structured slog channel
+	// instead of stdlib log printers (LOG-01 storage clean).
 	if cfg.Logger == nil {
-		cfg.Logger = defaultWALLogger{}
+		cfg.Logger = newSlogWALLogger(cfg.SlogLogger)
 	}
 
 	// Startup repair: if the previous process crashed mid-write, the WAL can end with a
@@ -385,6 +406,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		file:     file,
 		writer:   bufio.NewWriterSize(file, 64*1024), // 64KB buffer
 		stopSync: make(chan struct{}),
+		// D-07 subsystem-tag once: walLog inherits cfg.SlogLogger with
+		// subsystem=wal. Recovery, truncation, and corruption paths reuse it.
+		walLog: cfg.SlogLogger.With("subsystem", "wal"),
 	}
 	// cfg.Logger is guaranteed non-nil above.
 	w.encoder = json.NewEncoder(w.writer)
@@ -1246,13 +1270,23 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 		// Try to salvage entries after snapshot sequence using best-effort read.
 		keptEntries, _ = ReadWALEntriesAfterFromDir(w.config.Dir, snapshotSeq)
+		// D-07 single-record-per-event: collapse the original two-line
+		// fmt.Printf pair into a single structured WARN with backup_path
+		// as an attribute so log aggregators key on a single event.
 		if len(keptEntries) == 0 {
 			// No entries to keep - just start fresh with empty WAL
-			fmt.Printf("⚠️  WAL corrupted but snapshot saved; starting fresh WAL\n")
-			fmt.Printf("    Backup saved to: %s\n", backupPath)
+			w.walLog.Warn("wal corrupted; snapshot saved; starting fresh wal",
+				"backup_path", backupPath,
+				"snapshot_seq", snapshotSeq,
+				"action", "truncate_after_snapshot",
+			)
 		} else {
-			fmt.Printf("⚠️  WAL partially corrupted; salvaged %d entries after snapshot\n", len(keptEntries))
-			fmt.Printf("    Backup saved to: %s\n", backupPath)
+			w.walLog.Warn("wal partially corrupted; salvaged entries after snapshot",
+				"backup_path", backupPath,
+				"snapshot_seq", snapshotSeq,
+				"salvaged", len(keptEntries),
+				"action", "truncate_after_snapshot",
+			)
 		}
 	} else {
 		for _, entry := range allEntries {
@@ -1441,7 +1475,22 @@ func (w *WAL) reopenWAL() error {
 // Supports both legacy JSON format and new atomic format with automatic detection.
 // Returns error on corruption of critical entries (nodes, edges).
 // Embedding updates are safe to skip as they can be regenerated.
+//
+// Uses a discard *slog.Logger for recovery diagnostics. Callers that want
+// structured visibility into partial-write detection / skipped embedding
+// entries should use ReadWALEntriesWithLogger.
 func ReadWALEntries(walPath string) ([]WALEntry, error) {
+	return ReadWALEntriesWithLogger(walPath, discardWALSlog())
+}
+
+// ReadWALEntriesWithLogger is the slog-aware variant of ReadWALEntries.
+// D-07: callers (notably WAL recovery in pkg/nornicdb/storage_recovery.go)
+// thread a subsystem=wal_recovery logger so partial-write and corrupted-
+// embedding diagnostics land in the structured log stream.
+func ReadWALEntriesWithLogger(walPath string, logger *slog.Logger) ([]WALEntry, error) {
+	if logger == nil {
+		logger = discardWALSlog()
+	}
 	file, err := os.Open(walPath)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to open: %w", err)
@@ -1466,17 +1515,24 @@ func ReadWALEntries(walPath string) ([]WALEntry, error) {
 	// Detect format: new format starts with magic "WALE", legacy starts with '{'
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return readAtomicWALEntries(file)
+		return readAtomicWALEntries(file, logger)
 	}
 
 	// Legacy JSON format (for backward compatibility)
-	return readLegacyWALEntries(file)
+	return readLegacyWALEntries(file, logger)
 }
 
 // readAtomicWALEntries reads entries in the new atomic format.
 // Format v1: [magic:4][version:1][length:4][payload:N][crc:4]
 // Format v2: [magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
-func readAtomicWALEntries(file *os.File) ([]WALEntry, error) {
+//
+// D-07: logger is a pre-bound (subsystem=wal_recovery) child; callers that
+// pass nil get an internal discard logger. No allocations in the steady
+// path beyond what the slog handler emits per record.
+func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
+	if logger == nil {
+		logger = discardWALSlog()
+	}
 	var entries []WALEntry
 	var skippedEmbeddings int
 	var partialWriteDetected bool
@@ -1625,10 +1681,17 @@ func readAtomicWALEntries(file *os.File) ([]WALEntry, error) {
 	}
 
 	if partialWriteDetected {
-		fmt.Printf("⚠️  WAL recovery: detected incomplete write at end (crash recovery)\n")
+		logger.Warn("wal recovery: detected incomplete write at end",
+			"reason", "crash_recovery",
+			"format", "atomic",
+		)
 	}
 	if skippedEmbeddings > 0 {
-		fmt.Printf("⚠️  WAL recovery: skipped %d corrupted embedding entries (will regenerate)\n", skippedEmbeddings)
+		logger.Warn("wal recovery: skipped corrupted embedding entries",
+			"skipped_embeddings", skippedEmbeddings,
+			"format", "atomic",
+			"action", "will_regenerate",
+		)
 	}
 
 	return entries, nil
@@ -1636,7 +1699,10 @@ func readAtomicWALEntries(file *os.File) ([]WALEntry, error) {
 
 // readLegacyWALEntries reads entries in the legacy JSON-per-line format.
 // This is for backward compatibility with existing WAL files.
-func readLegacyWALEntries(file *os.File) ([]WALEntry, error) {
+func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
+	if logger == nil {
+		logger = discardWALSlog()
+	}
 	var entries []WALEntry
 	var skippedEmbeddings int
 	decoder := json.NewDecoder(file)
@@ -1671,7 +1737,11 @@ func readLegacyWALEntries(file *os.File) ([]WALEntry, error) {
 	}
 
 	if skippedEmbeddings > 0 {
-		fmt.Printf("⚠️  WAL recovery: skipped %d corrupted embedding entries (will regenerate)\n", skippedEmbeddings)
+		logger.Warn("wal recovery: skipped corrupted embedding entries",
+			"skipped_embeddings", skippedEmbeddings,
+			"format", "legacy",
+			"action", "will_regenerate",
+		)
 	}
 
 	return entries, nil
@@ -2360,17 +2430,42 @@ func (r *TransactionRecoveryResult) HasErrors() bool {
 
 // RecoverFromWAL recovers database state from a snapshot and WAL.
 // Returns a new MemoryEngine with the recovered state.
+//
+// Uses a discard *slog.Logger for diagnostics. Callers wanting structured
+// recovery visibility should use RecoverFromWALWithLogger.
 func RecoverFromWAL(walDir, snapshotPath string) (*MemoryEngine, error) {
+	return RecoverFromWALWithLogger(walDir, snapshotPath, discardWALSlog())
+}
+
+// RecoverFromWALWithLogger is the slog-aware variant of RecoverFromWAL.
+// D-07: pass a child logger tagged subsystem=wal_recovery so completion-
+// with-errors records land in the structured stream. Operator-actionable
+// fields: failed, errors, summary; per-error attributes seq, operation, error.
+func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) (*MemoryEngine, error) {
+	if logger == nil {
+		logger = discardWALSlog()
+	}
 	engine, result, err := RecoverFromWALWithResult(walDir, snapshotPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Log recovery results
+	// D-07 single record summarising recovery completion-with-errors. The
+	// per-error detail block below is debug-level so production volume is
+	// bounded by the (rare) failure rate but operators can grep for
+	// `recovery_error` when triaging.
 	if result.Failed > 0 {
-		fmt.Printf("⚠️  WAL recovery completed with errors: %s\n", result.Summary())
+		recoveryLog := logger.With("subsystem", "wal_recovery")
+		recoveryLog.Warn("wal recovery completed with errors",
+			"failed", result.Failed,
+			"summary", result.Summary(),
+		)
 		for _, e := range result.Errors {
-			fmt.Printf("   - seq %d op %s: %v\n", e.Sequence, e.Operation, e.Error)
+			recoveryLog.Debug("wal recovery error",
+				"seq", e.Sequence,
+				"operation", e.Operation,
+				slog.Any("error", e.Error),
+			)
 		}
 	}
 

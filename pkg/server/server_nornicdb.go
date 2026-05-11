@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -64,42 +63,45 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusAccepted, response)
 
-		// Start background clearing and regeneration
+		// Start background clearing and regeneration. Derive a child logger
+		// once at goroutine entry so every record carries subsystem=embed
+		// (Phase 2 D-10a bracket-prefix → component-attribute rewrite).
+		embedLog := s.log.With("subsystem", "embed")
 		go func() {
 			defer func() {
 				if rec := recover(); rec != nil {
 					// Background regeneration can race with DB shutdown in tests/teardown.
 					// Never crash the process for this async maintenance path.
-					log.Printf("[EMBED] ⚠️ Regeneration aborted during shutdown: %v", rec)
+					embedLog.Warn("regeneration aborted during shutdown", "panic", rec)
 				}
 			}()
 
-			log.Printf("[EMBED] Starting background regeneration - stopping worker and clearing embeddings...")
+			embedLog.Info("starting background regeneration: stopping worker and clearing embeddings")
 
 			// First, reset the embed worker to stop any in-progress work and clear its state
 			if err := s.db.ResetEmbedWorker(); err != nil {
-				log.Printf("[EMBED] ⚠️ Failed to reset embed worker: %v", err)
+				embedLog.Warn("failed to reset embed worker", "error", err)
 			}
 
 			// Now clear all embeddings
 			cleared, err := s.db.ClearAllEmbeddings()
 			if err != nil {
 				if errors.Is(err, nornicdb.ErrClosed) || strings.Contains(strings.ToLower(err.Error()), "closed") {
-					log.Printf("[EMBED] ℹ️ Regeneration skipped: database is closing")
+					embedLog.Info("regeneration skipped: database is closing")
 					return
 				}
-				log.Printf("[EMBED] ❌ Failed to clear embeddings: %v", err)
+				embedLog.Error("failed to clear embeddings", "error", err)
 				return
 			}
-			log.Printf("[EMBED] ✅ Cleared %d embeddings - triggering regeneration", cleared)
+			embedLog.Info("cleared embeddings; triggering regeneration", "cleared", cleared)
 
 			// Trigger embedding worker to regenerate (worker was already restarted by Reset)
 			ctx := context.Background()
 			if _, err := s.db.EmbedExisting(ctx); err != nil {
-				log.Printf("[EMBED] ❌ Failed to trigger embedding worker: %v", err)
+				embedLog.Error("failed to trigger embedding worker", "error", err)
 				return
 			}
-			log.Printf("[EMBED] 🚀 Embedding worker triggered for regeneration")
+			embedLog.Info("embedding worker triggered for regeneration")
 		}()
 		return
 	}
@@ -322,7 +324,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if dbName == "" {
 		dbName = s.dbManager.DefaultDatabaseName()
 	}
-	log.Printf("🔍 Search request database=%q query=%q", dbName, req.Query)
+	s.log.Info("search request", "subsystem", "search", "db", dbName, "query", req.Query)
 	if dbName == "translations" {
 		searchDiagEnabled = true
 	}
@@ -354,7 +356,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// Get namespaced storage for the specified database
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		log.Printf("⚠️ Search database=%q: %v", dbName, err)
+		s.log.Warn("search: storage lookup failed", "subsystem", "search", "db", dbName, "error", err)
 		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
 		return
 	}
@@ -448,7 +450,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				s.writeError(w, http.StatusBadRequest, embedErr.Error(), ErrBadRequest)
 				return
 			}
-			log.Printf("⚠️ Query embedding failed: %v", embedErr)
+			s.log.Warn("query embedding failed", "subsystem", "search", "error", embedErr)
 		}
 		if len(emb) > 0 {
 			searchCalls++
@@ -491,7 +493,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					s.writeError(w, http.StatusBadRequest, embedErr.Error(), ErrBadRequest)
 					return
 				}
-				log.Printf("⚠️ Query embedding failed (chunked): %v", embedErr)
+				s.log.Warn("query embedding failed (chunked)", "subsystem", "search", "error", embedErr)
 				continue
 			}
 			if len(emb) == 0 {
@@ -585,9 +587,23 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if searchDiagEnabled {
-			log.Printf("🔎 Search timing db=%q status=error total=%v svc_lookup=%v embed_total=%v embed_calls=%d embed_ok=%d search_total=%v search_calls=%d chunks=%d vector_chunks=%d chunk_loop=%v fallback_bm25=%d err=%v",
-				dbName, time.Since(reqStart), serviceLookupDur, embedTotalDur, embedCalls, embedSuccessCalls,
-				searchExecDur, searchCalls, len(queryChunks), vectorChunkQueries, chunkLoopDur, fallbackBM25Calls, err)
+			s.log.Info("search timing",
+				"subsystem", "search",
+				"status", "error",
+				"db", dbName,
+				"total", time.Since(reqStart),
+				"svc_lookup", serviceLookupDur,
+				"embed_total", embedTotalDur,
+				"embed_calls", embedCalls,
+				"embed_ok", embedSuccessCalls,
+				"search_total", searchExecDur,
+				"search_calls", searchCalls,
+				"chunks", len(queryChunks),
+				"vector_chunks", vectorChunkQueries,
+				"chunk_loop", chunkLoopDur,
+				"fallback_bm25", fallbackBM25Calls,
+				"error", err,
+			)
 		}
 		if errors.Is(err, search.ErrSearchIndexBuilding) {
 			s.writeError(w, http.StatusServiceUnavailable, err.Error(), ErrServiceUnavailable)
@@ -600,9 +616,25 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// Canonical mapping keeps DB and server adapters consistent.
 	results := nornicdb.MapSearchResponse(searchResponse)
 	if searchDiagEnabled {
-		log.Printf("🔎 Search timing db=%q status=ok total=%v svc_lookup=%v embed_total=%v embed_calls=%d embed_ok=%d search_total=%v search_calls=%d chunks=%d vector_chunks=%d chunk_loop=%v fallback_bm25=%d search_method=%q fallback=%t results=%d",
-			dbName, time.Since(reqStart), serviceLookupDur, embedTotalDur, embedCalls, embedSuccessCalls,
-			searchExecDur, searchCalls, len(queryChunks), vectorChunkQueries, chunkLoopDur, fallbackBM25Calls, searchResponse.SearchMethod, searchResponse.FallbackTriggered, len(searchResponse.Results))
+		s.log.Info("search timing",
+			"subsystem", "search",
+			"status", "ok",
+			"db", dbName,
+			"total", time.Since(reqStart),
+			"svc_lookup", serviceLookupDur,
+			"embed_total", embedTotalDur,
+			"embed_calls", embedCalls,
+			"embed_ok", embedSuccessCalls,
+			"search_total", searchExecDur,
+			"search_calls", searchCalls,
+			"chunks", len(queryChunks),
+			"vector_chunks", vectorChunkQueries,
+			"chunk_loop", chunkLoopDur,
+			"fallback_bm25", fallbackBM25Calls,
+			"search_method", searchResponse.SearchMethod,
+			"fallback", searchResponse.FallbackTriggered,
+			"results", len(searchResponse.Results),
+		)
 	}
 
 	s.writeJSON(w, http.StatusOK, results)

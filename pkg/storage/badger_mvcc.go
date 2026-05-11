@@ -1597,3 +1597,92 @@ func mvccBootstrapTime(createdAt, updatedAt time.Time) time.Time {
 	}
 	return time.Now().UTC()
 }
+
+// ----- Plan 04-04-01 RISK-2: read-only accessors for observability D-15b ---
+//
+// PinnedBytes / OldestReaderAgeSeconds / ActiveReaders are pure-read
+// accessors used by the observability MVCC bag's GaugeFunc callbacks
+// (pkg/observability/catalog_mvcc.go). They satisfy the MVCCProbe interface
+// declared next to NewMVCCMetrics — D-02d leaf-package boundary preserved
+// because pkg/observability never imports pkg/storage; the engine here
+// merely satisfies an interface that the observability layer declares.
+//
+// Concurrency: each method either reads an atomic counter or takes the
+// existing reader-registry RWMutex via the lifecycle controller's
+// SnapshotReaderRegistry. No new lock surface is introduced; all three
+// methods are safe to call concurrently with reader open/close and with
+// each other.
+//
+// Fallback path (no lifecycle controller wired): the engine tracks an
+// atomic counter only. PinnedBytes returns 0 (no per-reader byte
+// accounting in fallback); OldestReaderAgeSeconds returns 0 (no per-reader
+// StartTime tracked in fallback); ActiveReaders returns the atomic count.
+// Per RESEARCH RISK-2 the GaugeFunc callbacks tolerate 0 — the metric
+// surface is what matters, not numeric fidelity in the unconfigured path.
+
+// ActiveReaders returns the count of currently-open MVCC reader snapshots.
+// Always non-nil; returns 0 when the engine has no active readers.
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// active_readers GaugeFunc callback.
+func (b *BadgerEngine) ActiveReaders() int64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller != nil {
+		if reg := controller.ReaderRegistry(); reg != nil {
+			return reg.ActiveCount()
+		}
+	}
+	return b.activeMVCCSnapshotReaders.Load()
+}
+
+// PinnedBytes returns the cumulative byte count pinned by all active MVCC
+// readers. Returns 0 when no controller is wired (fallback path tracks
+// counts only, not bytes). Always non-nil.
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// pinned_bytes GaugeFunc callback.
+func (b *BadgerEngine) PinnedBytes() int64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller == nil {
+		return 0
+	}
+	// Optional accessor: not every controller implementation tracks bytes.
+	// We probe via the optional interface to avoid coupling the storage
+	// types.go MVCCLifecycleController surface to a metric-only accessor.
+	if probe, ok := controller.(interface{ PinnedBytes() int64 }); ok {
+		return probe.PinnedBytes()
+	}
+	return 0
+}
+
+// OldestReaderAgeSeconds returns the wall-clock age (in seconds) of the
+// oldest still-open MVCC reader snapshot. Returns 0 when no readers are
+// active or no controller is wired (atomic-counter fallback does not
+// track per-reader StartTime).
+//
+// Plan 04-04-01 RISK-2 fix — used by the observability MVCC bag's
+// oldest_reader_age_seconds GaugeFunc callback.
+func (b *BadgerEngine) OldestReaderAgeSeconds() float64 {
+	b.mu.RLock()
+	controller := b.lifecycleController
+	b.mu.RUnlock()
+	if controller == nil {
+		return 0
+	}
+	// Probe via optional interface: the lifecycle.ReaderRegistry exposes
+	// OldestReaderAge(); the observability layer wants seconds as float64.
+	type ageProvider interface{ OldestReaderAge() time.Duration }
+	if probe, ok := controller.(ageProvider); ok {
+		return probe.OldestReaderAge().Seconds()
+	}
+	if reg := controller.ReaderRegistry(); reg != nil {
+		if probe, ok := reg.(ageProvider); ok {
+			return probe.OldestReaderAge().Seconds()
+		}
+	}
+	return 0
+}

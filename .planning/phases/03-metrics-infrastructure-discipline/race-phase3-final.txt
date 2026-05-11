@@ -1,0 +1,10 @@
+=== race iteration 1 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.982s
+=== race iteration 2 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.939s
+=== race iteration 3 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.896s
+=== race iteration 4 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.921s
+=== race iteration 5 ===
+ok  	github.com/orneryd/nornicdb/pkg/observability	5.873s

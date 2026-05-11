@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -314,7 +313,8 @@ func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("OAuth redirect: Stored state in memory: %s (expires in 10 minutes)", state[:16]+"...")
+	s.log.Info("oauth redirect: stored state in memory (expires in 10 minutes)",
+		"subsystem", "oauth", "state_prefix", state[:16])
 
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
@@ -355,7 +355,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Handle callback using OAuth manager
 	user, token, _, err := s.oauthManager.HandleCallback(code, state)
 	if err != nil {
-		log.Printf("OAuth callback error: %v", err)
+		s.log.Warn("oauth callback error", "subsystem", "oauth", "error", err)
 		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
 		return
 	}
@@ -376,7 +376,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   86400 * 7, // 7 days
 	})
 
-	log.Printf("OAuth callback: authenticated user %s", user.Username)
+	s.log.Info("oauth callback: authenticated user", "subsystem", "oauth", "user", user.Username)
 
 	// Redirect to UI
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -744,7 +744,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 					return
 				}
 				if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-					log.Printf("role entitlements Set %q: %v", role, err)
+					s.log.Warn("role entitlements set failed", "subsystem", "rbac", "role", role, "error", err)
 					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 					return
 				}
@@ -940,7 +940,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 		if req.Mappings != nil {
 			for _, m := range *req.Mappings {
 				if err := s.allowlistStore.SaveRoleDatabases(r.Context(), m.Role, m.Databases); err != nil {
-					log.Printf("allowlist SaveRoleDatabases %q: %v", m.Role, err)
+					s.log.Warn("allowlist save role databases failed", "subsystem", "rbac", "role", m.Role, "error", err)
 					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 					return
 				}
@@ -951,7 +951,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
-				log.Printf("allowlist SaveRoleDatabases %q: %v", req.Role, err)
+				s.log.Warn("allowlist save role databases failed", "subsystem", "rbac", "role", req.Role, "error", err)
 				s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 				return
 			}
@@ -985,7 +985,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {
-			log.Printf("privileges PutMatrix: %v", err)
+			s.log.Warn("privileges PutMatrix failed", "subsystem", "rbac", "error", err)
 			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 			return
 		}

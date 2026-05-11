@@ -83,6 +83,21 @@ type Embedder interface {
 
 	// Model returns the model name
 	Model() string
+
+	// Backend returns the runtime execution backend as a value in the
+	// closed enum {gpu, cpu, cuda, metal, vulkan} per Plan 04-05 D-06 /
+	// D-06a. The observability layer (pkg/observability EmbedMetrics) reads
+	// this once at constructor time to bind the `mode` label on
+	// processed_total / duration_seconds / ffi_panics_total. HTTP-fronted
+	// embedders (Ollama, OpenAI) report "cpu" because the local process
+	// only marshals JSON and waits — RESEARCH §Q9 A1. Local GGUF reports
+	// the build-tag-derived backend (metal / cuda / vulkan / cpu) so a
+	// dynamic CUDA→CPU fallback is captured truthfully. CachedEmbedder
+	// delegates to the wrapped embedder.
+	//
+	// Adding a new backend = update {gpu,cpu,cuda,metal,vulkan} closed
+	// enum in pkg/observability/catalog_embed.go AND amend ADR §2.3.
+	Backend() string
 }
 
 // Config holds embedding provider configuration.
@@ -472,6 +487,15 @@ func (e *OllamaEmbedder) Model() string {
 	return e.config.Model
 }
 
+// Backend returns "cpu" for Ollama. Ollama runs the model in a separate
+// process (or remote host) and the local process only marshals JSON over
+// HTTP — from the NornicDB process perspective, the work is offloaded and
+// the local execution path is CPU-only HTTP I/O. Per RESEARCH §Q9 A1 /
+// CONTEXT D-06.
+func (e *OllamaEmbedder) Backend() string {
+	return "cpu"
+}
+
 // OpenAIEmbedder implements Embedder for OpenAI's embedding API.
 //
 // Supported models:
@@ -783,6 +807,14 @@ func (e *OpenAIEmbedder) Dimensions() int {
 // Model returns the model name.
 func (e *OpenAIEmbedder) Model() string {
 	return e.config.Model
+}
+
+// Backend returns "cpu" for OpenAI. The local process performs HTTP I/O
+// only; model execution happens in OpenAI's cloud, which is opaque to the
+// NornicDB process. Per CONTEXT D-06 the `mode` label captures *local*
+// execution backend, not remote service backend.
+func (e *OpenAIEmbedder) Backend() string {
+	return "cpu"
 }
 
 // NewEmbedder creates an embedder based on the provider specified in config.

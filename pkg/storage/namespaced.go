@@ -28,6 +28,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -45,6 +47,48 @@ type NamespacedEngine struct {
 	inner     Engine
 	namespace string
 	separator string // Default ":"
+
+	// log is the structured *slog.Logger for namespace-scoped emissions.
+	// Resolved lazily: if the inner engine implements StructuredLogger
+	// (currently BadgerEngine via .Logger()), the namespace's logger is
+	// derived from it with namespace=<n.namespace>. Otherwise a discard
+	// logger is installed at first access.
+	log *slog.Logger
+}
+
+// StructuredLogger is implemented by storage engines that expose their
+// structured *slog.Logger so wrappers (NamespacedEngine, WALEngine) can
+// derive a child logger without constructor plumbing.
+type StructuredLogger interface {
+	Logger() *slog.Logger
+}
+
+// Logger returns the BadgerEngine's structured logger (D-01 accessor).
+// Used by NamespacedEngine and other wrappers to derive child loggers
+// without an additional ctor parameter. Returns a discard logger if no
+// logger was supplied at construction.
+func (b *BadgerEngine) Logger() *slog.Logger {
+	if b == nil || b.log == nil {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return b.log
+}
+
+// namespaceLog returns a lazily-initialized namespace-scoped child logger.
+// Single allocation per NamespacedEngine for the lifetime of the wrapper.
+func (n *NamespacedEngine) namespaceLog() *slog.Logger {
+	if n.log != nil {
+		return n.log
+	}
+	var base *slog.Logger
+	if sl, ok := n.inner.(StructuredLogger); ok {
+		base = sl.Logger()
+	}
+	if base == nil {
+		base = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	n.log = base.With("subsystem", "namespaced", "namespace", n.namespace)
+	return n.log
 }
 
 // NewNamespacedEngine creates a namespaced view of the storage engine.
@@ -1015,7 +1059,9 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 			// Return a user-facing copy (never mutate inner engine objects in-place).
 			out := n.toUserNode(node)
 			if skippedCount > 0 && skippedCount%100 == 0 {
-				fmt.Printf("🧹 Skipped %d nodes from other namespaces while searching\n", skippedCount)
+				n.namespaceLog().Debug("skipped nodes from other namespaces while searching",
+					"skipped", skippedCount,
+				)
 			}
 			return out
 		}
@@ -1126,11 +1172,20 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	totalRemoved := underlyingRemoved + removed
+	nsLog := n.namespaceLog()
 	if added > 0 || totalRemoved > 0 {
-		fmt.Printf("📊 Pending embeddings index refreshed for namespace '%s': added %d nodes, removed %d stale entries (including %d from underlying cleanup)\n", n.namespace, added, totalRemoved, underlyingRemoved)
+		nsLog.Info("pending embeddings index refreshed",
+			"subsystem", "embeddings_index",
+			"added", added,
+			"removed_stale", totalRemoved,
+			"underlying_removed", underlyingRemoved,
+		)
 	} else {
-		// Log even if no changes, to help debug why nodes aren't being found
-		fmt.Printf("📊 Pending embeddings index refreshed for namespace '%s': scanned %d nodes, no changes needed\n", n.namespace, len(nodes))
+		// Log even if no changes, to help debug why nodes aren't being found.
+		nsLog.Debug("pending embeddings index refreshed: no changes",
+			"subsystem", "embeddings_index",
+			"scanned", len(nodes),
+		)
 	}
 
 	return totalRemoved

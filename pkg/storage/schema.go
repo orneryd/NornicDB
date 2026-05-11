@@ -385,7 +385,8 @@ type CompositeKey struct {
 //
 //	loc2 := storage.NewCompositeKey(40.7128, -74.0060) // Same coords
 //	if _, exists := locations[loc2.Hash]; exists {
-//		fmt.Println("Location already exists!")
+//		// the configured logger should emit "Location already exists!"
+//		_ = exists
 //	}
 //
 // ELI12:

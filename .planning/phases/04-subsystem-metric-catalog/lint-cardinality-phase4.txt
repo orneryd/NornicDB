@@ -1,0 +1,24 @@
+=== Step 1: clean repo make lint-cardinality ===
+lint-cardinality: PASS (MET-04 helper-only registration enforced)
+
+=== Step 2: inject sentinel pkg/cypher/lint_falsify.go ===
+//go:build ignore_lint_falsify
+
+package cypher
+
+import "github.com/prometheus/client_golang/prometheus"
+
+// Sentinel — Plan 04-07-05 falsifiability proof. Should be deleted after lint check.
+var _ = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "lint_test_should_fail"}, []string{"x"})
+
+=== Step 3: make lint-cardinality WITH sentinel — expects FAIL ===
+pkg/cypher/lint_falsify.go:8:var _ = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "lint_test_should_fail"}, []string{"x"})
+MET-04 violation: subsystems must register metrics via pkg/observability helpers (D-01 / Plan 03-02); see ADR §3.2 'Cardinality discipline' and pkg/observability/metrics.go
+make: *** [lint-cardinality] Error 1
+(exit code: 2)
+
+=== Step 4: revert sentinel ===
+(removed)
+
+=== Step 5: make lint-cardinality CLEAN — expects PASS ===
+lint-cardinality: PASS (MET-04 helper-only registration enforced)
