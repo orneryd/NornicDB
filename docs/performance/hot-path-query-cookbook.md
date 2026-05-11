@@ -22,9 +22,14 @@ Traced executor hot paths:
 - `UnwindSimpleMergeBatch`: single-node `UNWIND ... MERGE` upsert with optional `SET` and optional `RETURN count(...)`
 - `UnwindMergeChainBatch`: generalized `UNWIND` batch mutation pipeline with N-ary node `MERGE`s, relationship `MERGE`s, `MATCH` and `OPTIONAL MATCH` lookups on row-bound expressions, non-aggregating `WITH` aliases, and `WHERE` filters such as `IS NOT NULL`
 - `UnwindFixedChainLinkBatch`: `UNWIND`-driven fixed-depth chain materialization by key or root `elementId()`
+- `UnwindMultiMatchCreateBatch`: `UNWIND $rows AS row` driving N independent `MATCH (v:Label {k: row.f})` lookups and M `CREATE` clauses (node + edge) with no `RETURN`/`WITH`/nested `UNWIND`. Parses the mutation once, then for each row resolves MATCHes via property index and writes created nodes/edges directly against storage. Bulk-seed shape used by fixtures and import pipelines.
 - `CallTailTraversalFastPath`: `CALL { ... }` tail traversal/path-count shapes
 - `MergeSchemaLookupUsed`: index-backed `MERGE` lookup on property or composite schema keys
 - `MergeScanFallbackUsed`: label-scan `MERGE` lookup when no suitable schema path exists
+
+Composite pipeline executor:
+
+- `executePipeline` (pkg/cypher/pipeline_executor.go) walks a query as an ordered sequence of `MATCH`/`CREATE`/`WITH`/`UNWIND`/`RETURN` clauses, threading a binding context between them. It handles composite shapes that the single-clause handlers mis-parse — most notably `MATCH ... CREATE ... WITH ... UNWIND <list> AS x MATCH ... CREATE ...` where a nested `UNWIND` follows a `WITH` that carries a row forward. `$param` references are substituted from context before clause splitting. The pipeline refuses (falls back) on `MERGE`, `OPTIONAL MATCH`, `SET`, `REMOVE`, `DELETE`, `FOREACH`, and `CALL` clauses — those stay on their dedicated handlers.
 
 Optimized executor patterns:
 
@@ -683,6 +688,30 @@ MERGE (event)-[:BELONGS_TO]->(key)
 ```
 
 This is the exact single-row fallback form commonly used when a batched version pipeline times out or is retried one row at a time. It is semantically covered by deterministic E2E tests and should remain behaviorally equivalent to the batched version family, but it is not itself a batch hot path.
+
+### 7.3h Bulk-Seed: Multi-MATCH Lookups Plus CREATE Writes (No RETURN)
+
+```cypher
+UNWIND $rows AS row
+MATCH (c:Category {categoryID: row.categoryID})
+MATCH (s:Supplier {supplierID: row.supplierID})
+CREATE (p:Product {productID: row.productID, productName: row.productName, unitPrice: row.unitPrice})
+CREATE (p)-[:PART_OF]->(c)
+CREATE (s)-[:SUPPLIES]->(p);
+```
+
+Use this for bulk seeder / fixture / importer shapes that need to attach newly-created nodes to multiple already-existing entities found via property lookup. Matches the `UnwindMultiMatchCreateBatch` hot path: the mutation body is parsed once, then for each row the executor resolves every MATCH via property index (when available) and writes the CREATE nodes and edges directly against storage, bypassing the per-row Cypher re-parse used by the generic fallback. Requires all MATCH property values to reference `row.<field>`; all CREATE property values to be either `row.<field>` references or scalar literals; no `RETURN`, `WITH`, `SET`, `MERGE`, `DELETE`, `REMOVE`, `FOREACH`, `WHERE`, nested `UNWIND`, or inline relationship patterns inside `MATCH`.
+
+A typical two-pass edge-only variant — used when the targets were already seeded in an earlier pass — also falls on this hot path:
+
+```cypher
+UNWIND $lineRows AS row
+MATCH (o:Order {orderID: row.orderID})
+MATCH (p:Product {productID: row.productID})
+CREATE (o)-[:ORDERS {quantity: row.quantity, discount: row.discount}]->(p);
+```
+
+Match the row map keys exactly to the field names used in `row.<field>` references. Scale batch size to roughly 100–2000 rows per request for balanced throughput/latency.
 
 ### 7.4 Single-Statement Autocommit Shape
 

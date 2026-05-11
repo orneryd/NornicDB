@@ -71,3 +71,7 @@ pkg/cypher/file:
 .todos.md
 ui/dist/index.html
 .claude
+northwind_power
+northwind_power_bench
+bench-data
+scripts/benchmark_reports

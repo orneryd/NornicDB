@@ -492,6 +492,15 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				findKeywordIndexInContext(trimmedRest, "CREATE") >= 0 ||
 				findKeywordIndexInContext(trimmedRest, "SET") >= 0)
 		if matchStartedMutation {
+			// Bulk-seed fast path: UNWIND $rows MATCH (...) [MATCH (...)...]
+			// CREATE (...) [CREATE (...)...] without RETURN / WITH / nested
+			// UNWIND. Parses the mutation body once, then runs each row
+			// directly against storage (no per-row Cypher re-parse).
+			if strings.HasPrefix(upperRest, "MATCH") {
+				if fast, ok, err := e.executeUnwindMultiMatchCreateBatch(ctx, variable, items, restQuery); ok {
+					return fast, err
+				}
+			}
 			if strings.HasPrefix(upperRest, "MATCH") {
 				if fast, ok, err := e.executeUnwindFixedChainLinkBatch(ctx, variable, items, restQuery); ok {
 					return fast, err
@@ -561,8 +570,16 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				// in WITH pipelines, execute with per-item parameters instead of literal substitution.
 				// This preserves complex map/string payloads and avoids corrupting clauses like
 				// `WITH cc, row, csByID` when `row` is a map.
+				// Also covers mutations that pass `row` through a WITH clause to a
+				// nested UNWIND (UNWIND row.xs AS x) — literal-substituting `row`
+				// with a map literal breaks the parser, and substituting it with
+				// `{}` loses the property list the inner UNWIND needs.
+				trimmedMutation := strings.TrimSpace(mutationPart)
+				upperMutation := strings.ToUpper(trimmedMutation)
 				useParamExecution := strings.Contains(mutationPart, "+=") ||
-					strings.HasPrefix(strings.ToUpper(strings.TrimSpace(mutationPart)), "OPTIONAL MATCH")
+					strings.HasPrefix(upperMutation, "OPTIONAL MATCH") ||
+					(findKeywordIndexInContext(mutationPart, "WITH") >= 0 &&
+						findKeywordIndexInContext(mutationPart, "UNWIND") >= 0)
 
 				var mutationResult *ExecuteResult
 				var err error
@@ -4835,6 +4852,16 @@ func (e *StorageExecutor) replaceVariableInQuery(query string, variable string, 
 
 	// Convert to a Cypher literal so maps/lists remain valid expressions.
 	valueStr := e.valueToLiteral(value)
+	// Guard against corrupting clauses like `WITH o, row` or
+	// `UNWIND row.xs AS x` where bare `row` must survive substitution —
+	// injecting a full map literal breaks the parser because `{...}` is
+	// parsed as a node-property map.
+	if _, ok := toStringAnyMap(value); ok {
+		if findKeywordIndexInContext(query, "WITH") >= 0 ||
+			findKeywordIndexInContext(query, "UNWIND") >= 0 {
+			valueStr = "{}"
+		}
+	}
 	return replaceIdentifierOutsideQuotes(result, variable, valueStr)
 }
 
@@ -4854,7 +4881,13 @@ func (e *StorageExecutor) replaceVariableInMutationQuery(query string, variable 
 			backtickedPattern := variable + ".`" + strings.ReplaceAll(key, "`", "``") + "`"
 			result = strings.ReplaceAll(result, backtickedPattern, propValStr)
 		}
-		if findKeywordIndexInContext(query, "WITH") >= 0 {
+		// When the mutation contains WITH (carrying the row forward) or a
+		// nested UNWIND over a row property, substituting bare `row` with the
+		// full map literal corrupts the query shape. Use an empty-map
+		// placeholder instead — the WITH/UNWIND bindings are recomputed by
+		// the executor anyway.
+		if findKeywordIndexInContext(query, "WITH") >= 0 ||
+			findKeywordIndexInContext(query, "UNWIND") >= 0 {
 			valueStr = "{}"
 		}
 	}

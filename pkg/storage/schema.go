@@ -1708,6 +1708,16 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 	return nil
 }
 
+// HasPropertyIndex reports whether a property index exists for the given
+// label+property combination. Callers can use this to choose between
+// index-backed per-row lookups and batch preloads.
+func (sm *SchemaManager) HasPropertyIndex(label, property string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
+	return exists
+}
+
 // PropertyIndexLookup looks up node IDs by property value using an index.
 // Returns nil if no index exists for the label/property.
 func (sm *SchemaManager) PropertyIndexLookup(label, property string, value interface{}) []NodeID {
