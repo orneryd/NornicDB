@@ -72,7 +72,7 @@ IMAGE_CPU_BGE_HEADLESS := $(REGISTRY)/nornicdb-cpu-bge-headless:$(VERSION)
 IMAGE_AMD64_VULKAN := $(REGISTRY)/nornicdb-amd64-vulkan:$(VERSION)
 IMAGE_AMD64_VULKAN_BGE := $(REGISTRY)/nornicdb-amd64-vulkan-bge:$(VERSION)
 IMAGE_AMD64_VULKAN_HEADLESS := $(REGISTRY)/nornicdb-amd64-vulkan-headless:$(VERSION)
-LLAMA_VERSION ?= b8796
+LLAMA_VERSION ?= b9106
 LLAMA_CPU := $(REGISTRY)/llama-cpu-libs:$(LLAMA_VERSION)
 LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:$(LLAMA_VERSION)
 
