@@ -30,6 +30,12 @@ type ServiceInfo struct {
 	Component string
 	// NodeID feeds the service.instance.id resolution chain (OBS-10).
 	NodeID string
+	// ClusterMode is the deployment topology (e.g. "standalone", "cluster").
+	// TRC-10: emitted as nornicdb.cluster.mode resource attribute.
+	ClusterMode string
+	// ReplicationRole is the node's role (e.g. "primary", "replica", "standalone").
+	// TRC-10: emitted as nornicdb.replication.role resource attribute.
+	ReplicationRole string
 	// ExtraResourceAttrs are merged after semconv defaults; duplicate keys win.
 	ExtraResourceAttrs []attribute.KeyValue
 }
@@ -70,6 +76,12 @@ func buildResource(info ServiceInfo) *resource.Resource {
 	}
 	if info.Component != "" {
 		attrs = append(attrs, attribute.String("service.component", info.Component))
+	}
+	if info.ClusterMode != "" {
+		attrs = append(attrs, attribute.String("nornicdb.cluster.mode", info.ClusterMode))
+	}
+	if info.ReplicationRole != "" {
+		attrs = append(attrs, attribute.String("nornicdb.replication.role", info.ReplicationRole))
 	}
 
 	base, _ := resource.Merge(
