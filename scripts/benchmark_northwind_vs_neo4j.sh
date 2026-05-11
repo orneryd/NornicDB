@@ -4,6 +4,9 @@
 #
 # Serialized Northwind benchmark for NornicDB and Neo4j:
 #
+#   0. Wipe NornicDB's data directory and Neo4j's databases/ + transactions/
+#      subtrees up front so both engines start from a fresh store. Any stale
+#      Neo4j JVM is SIGKILL'd before the wipe.
 #   1. Start NornicDB, sample powermetrics during seed+benchmark,
 #      measure on-disk data size, stop NornicDB.
 #   2. Start local Neo4j, sample powermetrics during seed+benchmark,
@@ -191,7 +194,8 @@ kill_pid() {
 
 run_nornic() {
   log "=== NornicDB run ==="
-  rm -rf "${NORNIC_DATA_DIR}"
+  # Data dir already wiped at script start. Just make sure the directory
+  # exists (some engines refuse to boot without it).
   mkdir -p "${NORNIC_DATA_DIR}"
 
   # Powermetrics wraps the entire DB lifecycle — startup, seed, benchmark,
@@ -305,10 +309,9 @@ run_neo4j() {
     sleep 2
   fi
 
-  # Ensure clean state. These dirs are owned by the neo4j user (root or the
-  # brew owner) from prior runs; use sudo to wipe.
-  rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions" 2>/dev/null || \
-    sudo rm -rf "${NEO4J_DATA_DIR}/databases" "${NEO4J_DATA_DIR}/transactions"
+  # Data dir already wiped at script start (including any prior Neo4j
+  # `databases/` + `transactions/` subtrees). Just re-set the password on
+  # the fresh store.
   configure_neo4j_password
 
   # Powermetrics wraps the entire DB lifecycle.
