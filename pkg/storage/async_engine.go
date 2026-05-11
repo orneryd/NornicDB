@@ -21,6 +21,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // AsyncEngine wraps a storage engine with write-behind caching.
@@ -89,6 +93,11 @@ type AsyncEngine struct {
 	// D-06 single-allocation flushLog derives from this in flushLoop. Discard
 	// fallback installed in NewAsyncEngine when config.Logger == nil.
 	log *slog.Logger
+
+	// spanLinks collects span contexts from request-scoped writes so the
+	// flush span (TRC-23) can link back to the originating requests.
+	spanLinks   []trace.Link
+	spanLinksMu sync.Mutex
 }
 
 // HoldFlush acquires a shared flush guard and returns a release function.
@@ -339,6 +348,28 @@ func (ae *AsyncEngine) Flush() error {
 	return nil
 }
 
+// AddSpanLink records a request span context so the next flush span can link
+// back to it (TRC-23). Called by TracedEngine on each write operation.
+func (ae *AsyncEngine) AddSpanLink(sc trace.SpanContext) {
+	if !sc.IsValid() {
+		return
+	}
+	ae.spanLinksMu.Lock()
+	if len(ae.spanLinks) < 32 {
+		ae.spanLinks = append(ae.spanLinks, trace.Link{SpanContext: sc})
+	}
+	ae.spanLinksMu.Unlock()
+}
+
+// drainSpanLinks returns and clears accumulated span links for the flush span.
+func (ae *AsyncEngine) drainSpanLinks() []trace.Link {
+	ae.spanLinksMu.Lock()
+	links := ae.spanLinks
+	ae.spanLinks = nil
+	ae.spanLinksMu.Unlock()
+	return links
+}
+
 // FlushWithResult writes pending changes and returns detailed results.
 // Use this for programmatic access to flush statistics.
 func (ae *AsyncEngine) FlushWithResult() FlushResult {
@@ -354,6 +385,23 @@ func (ae *AsyncEngine) FlushWithResult() FlushResult {
 		ae.mu.Unlock()
 		return result
 	}
+
+	// TRC-23: start a flush span linked to the originating request spans.
+	links := ae.drainSpanLinks()
+	_, flushSpan := otel.Tracer("nornicdb/storage").Start(
+		context.Background(), "nornicdb.storage.flush",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithLinks(links...),
+	)
+	defer func() {
+		flushSpan.SetAttributes(
+			attribute.Int("nodes_written", result.NodesWritten),
+			attribute.Int("edges_written", result.EdgesWritten),
+			attribute.Int("nodes_deleted", result.NodesDeleted),
+			attribute.Int("edges_deleted", result.EdgesDeleted),
+		)
+		flushSpan.End()
+	}()
 
 	ae.totalFlushes++
 

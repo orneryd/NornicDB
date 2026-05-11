@@ -14,6 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -152,10 +154,9 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 	exporterCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	opts := otlpExporterOptions(cfg)
-	exporter, err := otlptracegrpc.New(exporterCtx, opts...)
+	exporter, err := buildSpanExporter(exporterCtx, cfg)
 	if err != nil {
-		log.Printf("WARN observability: OTLP/gRPC exporter init failed: %v; installing noop tracer provider — process continues", err)
+		log.Printf("WARN observability: span exporter init failed: %v; installing noop tracer provider — process continues", err)
 		return noop.NewTracerProvider()
 	}
 
@@ -212,6 +213,33 @@ func otlpExporterOptions(cfg TracingConfig) []otlptracegrpc.Option {
 		opts = append(opts, otlptracegrpc.WithTimeout(cfg.Timeout))
 	}
 	return opts
+}
+
+// buildSpanExporter selects the exporter implementation based on cfg.Protocol:
+//   - "grpc" (default): OTLP/gRPC (TRC-01)
+//   - "http":           OTLP/HTTP fallback (TRC-03)
+//   - "stdout":         stdout exporter for DEV builds (TRC-04)
+func buildSpanExporter(ctx context.Context, cfg TracingConfig) (sdktrace.SpanExporter, error) {
+	switch strings.ToLower(cfg.Protocol) {
+	case "http":
+		var opts []otlptracehttp.Option
+		endpoint, fromEnv := cfg.OTLPEndpoint()
+		if !fromEnv && endpoint != "" {
+			opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
+		}
+		if cfg.Insecure {
+			opts = append(opts, otlptracehttp.WithInsecure())
+		}
+		if cfg.Timeout > 0 {
+			opts = append(opts, otlptracehttp.WithTimeout(cfg.Timeout))
+		}
+		return otlptracehttp.New(ctx, opts...)
+	case "stdout":
+		return stdouttrace.New(stdouttrace.WithPrettyPrint())
+	default:
+		opts := otlpExporterOptions(cfg)
+		return otlptracegrpc.New(ctx, opts...)
+	}
 }
 
 // TracerProvider returns the tracer provider. Always non-nil; may be a noop
