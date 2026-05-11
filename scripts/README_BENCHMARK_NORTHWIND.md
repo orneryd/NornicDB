@@ -19,9 +19,9 @@ For each database:
 2. **Start powermetrics** so the sampler captures startup cost too.
 3. Start the database and wait for Bolt + a smoke `RETURN 1` to succeed.
 4. Seed a randomised, Northwind-shaped graph over Bolt — `CATEGORIES`
-   categories (default 16), `SUPPLIERS` suppliers (default 24), `CUSTOMERS`
-   customers (default 200), `PRODUCTS` products (default 8 000), `ORDERS`
-   orders (default 8 000) with between `ORDER_LINES_MIN` and
+   categories (default 96), `SUPPLIERS` suppliers (default 144), `CUSTOMERS`
+   customers (default 1 200), `PRODUCTS` products (default 48 000), `ORDERS`
+   orders (default 48 000) with between `ORDER_LINES_MIN` and
    `ORDER_LINES_MAX` line items each (default 1..6, picked uniformly at
    random). Property values vary in length (names, multi-block descriptions,
    tag arrays, contact names, addresses, phone numbers, timestamps) so each
@@ -160,14 +160,14 @@ comparison.md                side-by-side report
 |---|---|---|
 | `ITERATIONS` | `10` | Iterations per query (excluding warmup). |
 | `WARMUP` | `2` | Warmup iterations per query (not recorded). |
-| `CATEGORIES` | `16` | Category nodes seeded. |
-| `SUPPLIERS` | `24` | Supplier nodes seeded. |
-| `CUSTOMERS` | `200` | Customer nodes seeded. |
-| `PRODUCTS` | `8000` | Product nodes seeded. |
-| `ORDERS` | `8000` | Order nodes seeded. |
+| `CATEGORIES` | `96` | Category nodes seeded. |
+| `SUPPLIERS` | `144` | Supplier nodes seeded. |
+| `CUSTOMERS` | `1200` | Customer nodes seeded. |
+| `PRODUCTS` | `48000` | Product nodes seeded. |
+| `ORDERS` | `48000` | Order nodes seeded. |
 | `ORDER_LINES_MIN` | `1` | Minimum ORDERS edges per Order (randomised per order). |
 | `ORDER_LINES_MAX` | `6` | Maximum ORDERS edges per Order. |
-| `BATCH_SIZE` | `200` | Rows per `UNWIND` seed batch. |
+| `BATCH_SIZE` | `500` | Rows per `UNWIND` seed batch. |
 | `SEED` | `42` | PRNG seed — same seed produces an identical dataset on both DBs. |
 | `NORNIC_DATA_DIR` | `./bench-data/nornic` | NornicDB data directory. Wiped each run. |
 | `NEO4J_HOME` | `/opt/homebrew/opt/neo4j` | Neo4j install prefix. |
