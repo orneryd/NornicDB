@@ -1481,8 +1481,8 @@ func TestHandleSearch_FiltersParameter(t *testing.T) {
 
 	// Search with filter — should return only user_a nodes.
 	resp := makeRequest(t, server, http.MethodPost, "/nornicdb/search", map[string]interface{}{
-		"query":  "document",
-		"limit":  10,
+		"query": "document",
+		"limit": 10,
 		"filters": map[string]interface{}{
 			"collection": []string{"user_a"},
 		},

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - See `docs/latest-untagged.md` for the untagged `latest` image changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Property pre-filter for hybrid search REST endpoint**:
+  - added an optional `filters` field to `POST /nornicdb/search` that restricts the candidate set by property values *before* top-K vector/BM25 selection, preserving recall for sparse filtered sets (the existing Cypher `WHERE` post-filter silently returns fewer than `limit` results when filtered values are rare in the corpus).
+  - filter semantics: OR within a key (`{"collection": ["user_a", "user_b"]}`), AND across keys (`{"collection": ["user_a"], "type": ["text"]}`); scalar and array property values both supported.
+  - missing or empty `filters` field → no filtering; fully backward-compatible.
+  - filter applied in `rrfHybridSearch`, `vectorSearchOnly`, and `fullTextSearchOnly` paths.
+  - primary use case: multi-tenant RAG where each node carries a `collection` array identifying which users may access it.
+  - no measurable performance regression on the unfiltered path (benchmark delta <1%, within noise).
+
 ## [v1.1.0-preview] - 2026-05-12
 
 ### Added
