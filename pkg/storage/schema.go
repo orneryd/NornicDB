@@ -646,25 +646,35 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 // whether the value is present, and the third reports whether the unique
 // constraint exists.
 func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (NodeID, bool, bool) {
+	nodeID, found, exists, _ := sm.LookupUniqueConstraintValueForPlanning(label, property, value)
+	return nodeID, found, exists
+}
+
+// LookupUniqueConstraintValueForPlanning returns the node currently registered
+// for a single-property uniqueness constraint value, plus whether the derived
+// value cache is authoritative. Planners may trust absence only when
+// authoritative is true; otherwise they must retain a scan fallback because the
+// cache may not have been rebuilt from storage yet.
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (NodeID, bool, bool, bool) {
 	sm.mu.RLock()
 	key := fmt.Sprintf("%s:%s", label, property)
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
-		return "", false, exists
+		return "", false, exists, false
 	}
 	valueKey, ok := uniqueConstraintValueKey(value)
 	if !ok {
-		return "", false, true
+		return "", false, true, false
 	}
 	if !isComparableConstraintValue(value) {
-		return "", true, false
+		return "", true, false, false
 	}
 
 	constraint.mu.RLock()
 	defer constraint.mu.RUnlock()
 	nodeID, found := constraint.values[valueKey]
-	return nodeID, found, true
+	return nodeID, found, true, constraint.valuesAuthoritative
 }
 
 func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (NodeID, bool, bool, bool) {
