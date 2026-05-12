@@ -39,6 +39,11 @@ func TestMapTransientTransactionError(t *testing.T) {
 			ok:   false,
 		},
 		{
+			name: "commit-time unique text without query context is not transient",
+			err:  fmt.Errorf("commit failed: constraint violation: Constraint violation (UNIQUE on TerraformResource.[uid]): Node with uid=X already exists (nodeID: nornic:abc)"),
+			ok:   false,
+		},
+		{
 			name: "empty",
 			ok:   false,
 		},

@@ -39,3 +39,37 @@ func EnsureDatabasePrefix(dbName, id string) string {
 	}
 	return dbName + ":" + id
 }
+
+// EnsureNodeIDDatabasePrefixForEngine adds the active engine namespace to an
+// unprefixed node ID. Schema backfills use this so cache entries match the
+// storage IDs later seen by transaction commit validation.
+func EnsureNodeIDDatabasePrefixForEngine(engine Engine, id NodeID) NodeID {
+	namespace := namespaceForEngine(engine)
+	if namespace == "" {
+		return id
+	}
+	return NodeID(EnsureDatabasePrefix(namespace, string(id)))
+}
+
+func namespaceForEngine(engine Engine) string {
+	visited := make(map[Engine]bool)
+	for engine != nil && !visited[engine] {
+		visited[engine] = true
+
+		if provider, ok := engine.(interface{ Namespace() string }); ok {
+			if namespace := provider.Namespace(); namespace != "" {
+				return namespace
+			}
+		}
+
+		switch wrapper := engine.(type) {
+		case interface{ GetEngine() Engine }:
+			engine = wrapper.GetEngine()
+		case interface{ GetInnerEngine() Engine }:
+			engine = wrapper.GetInnerEngine()
+		default:
+			engine = nil
+		}
+	}
+	return ""
+}

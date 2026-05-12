@@ -1034,9 +1034,11 @@ type Session struct {
 	forwardedAuthHeader string
 
 	// Transaction state
-	inTransaction bool
-	txMetadata    map[string]any // Transaction metadata from BEGIN
-	txDatabase    string
+	inTransaction      bool
+	txMetadata         map[string]any // Transaction metadata from BEGIN
+	txDatabase         string
+	txHasMerge         bool
+	txHasNonMergeWrite bool
 
 	// Query result state (for streaming with PULL)
 	lastResult  *QueryResult
@@ -1736,7 +1738,7 @@ func (s *Session) handleRun(data []byte) error {
 		if s.server != nil && s.server.config.LogQueries {
 			s.server.logger().Warn("query error", slog.Any("error", err))
 		}
-		code, msg := mapBoltQueryError(err)
+		code, msg := mapBoltQueryErrorForQuery(err, query)
 		return s.sendFailure(code, msg)
 	}
 	rows := 0
@@ -1764,6 +1766,9 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	s.lastQueryIsWrite = isWrite
 	s.lastQueryDatabase = dbName
+	if s.inTransaction {
+		s.recordExplicitTransactionWrite(upperQuery, isWrite)
+	}
 
 	// Store result for PULL
 	s.lastResult = result
@@ -1862,15 +1867,52 @@ func mapBoltQueryError(err error) (code, message string) {
 	return "Neo.ClientError.Statement.SyntaxError", msg
 }
 
-// mapBoltCommitError preserves Bolt's commit-failed fallback for ordinary
-// errors while allowing retryable transaction conflicts to surface as Neo4j
-// transient errors.
-func mapBoltCommitError(err error) (code, message string) {
+func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
 	code, message = mapBoltQueryError(err)
+	if err != nil &&
+		strings.Contains(strings.ToUpper(query), "MERGE") &&
+		nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
+	return code, message
+}
+
+// mapBoltCommitError preserves Bolt's commit-failed fallback for ordinary
+// errors while allowing MERGE transaction conflicts to surface as Neo4j
+// transient errors for clients that choose retry-managed transaction APIs.
+//
+// A commit-time UNIQUE constraint violation from a concurrent MERGE race is
+// resolvable by a fresh attempt: the loser, on retry, observes the peer's
+// now-committed node via the constraint cache and the MERGE matches. The
+// raw storage error does not wrap ErrTransactionConflict, so the mapper
+// uses the explicit transaction's observed MERGE shape plus the commit error
+// body. Non-MERGE transactions keep the ordinary commit-failed code even
+// when the body is a UNIQUE violation.
+func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message string) {
+	code, message = mapBoltQueryError(err)
+	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
 	if code == "Neo.ClientError.Statement.SyntaxError" {
 		return "Neo.ClientError.Transaction.TransactionCommitFailed", message
 	}
 	return code, message
+}
+
+func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
+	if !isWrite {
+		return
+	}
+	upperQuery := strings.ToUpper(query)
+	if strings.Contains(upperQuery, "MERGE") {
+		s.txHasMerge = true
+		return
+	}
+	s.txHasNonMergeWrite = true
+}
+
+func (s *Session) canRetryMergeCommitConflict() bool {
+	return s.txHasMerge && !s.txHasNonMergeWrite
 }
 
 // truncateQuery truncates a query for logging.
@@ -2129,6 +2171,8 @@ func (s *Session) handleReset(data []byte) error {
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
+	s.txHasMerge = false
+	s.txHasNonMergeWrite = false
 	if s.baseExec != nil {
 		s.executor = s.baseExec
 	}
@@ -2184,6 +2228,8 @@ func (s *Session) handleBegin(data []byte) error {
 	}
 
 	s.inTransaction = true
+	s.txHasMerge = false
+	s.txHasNonMergeWrite = false
 	if err := s.sendSuccessNoFlush(nil); err != nil {
 		return err
 	}
@@ -2208,7 +2254,9 @@ func (s *Session) handleCommit(data []byte) error {
 			if s.baseExec != nil {
 				s.executor = s.baseExec
 			}
-			code, message := mapBoltCommitError(err)
+			code, message := mapBoltCommitError(err, s.canRetryMergeCommitConflict())
+			s.txHasMerge = false
+			s.txHasNonMergeWrite = false
 			return s.sendFailure(code, message)
 		}
 	}
@@ -2216,6 +2264,8 @@ func (s *Session) handleCommit(data []byte) error {
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
+	s.txHasMerge = false
+	s.txHasNonMergeWrite = false
 	if s.baseExec != nil {
 		s.executor = s.baseExec
 	}
@@ -2399,6 +2449,8 @@ func (s *Session) handleRollback(data []byte) error {
 			// Rollback failed, but we still clear state
 			s.inTransaction = false
 			s.txMetadata = nil
+			s.txHasMerge = false
+			s.txHasNonMergeWrite = false
 			if err := s.sendFailure("Neo.ClientError.Transaction.TransactionRollbackFailed", err.Error()); err != nil {
 				return err
 			}
@@ -2409,6 +2461,8 @@ func (s *Session) handleRollback(data []byte) error {
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
+	s.txHasMerge = false
+	s.txHasNonMergeWrite = false
 	if s.baseExec != nil {
 		s.executor = s.baseExec
 	}

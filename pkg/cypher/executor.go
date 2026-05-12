@@ -1812,9 +1812,10 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 
-// executeWithImplicitTransaction wraps a write query in an implicit transaction.
-// If any part of the query fails, all changes are rolled back atomically.
-// This prevents data corruption from partially executed queries.
+// executeWithImplicitTransaction wraps a write query in a single implicit
+// transaction. Commit-time conflicts are returned to the caller; retry-aware
+// clients own any replay decision because NornicDB does not know whether a
+// conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
@@ -2161,6 +2162,20 @@ type transactionStorageWrapper struct {
 	separator        string
 	mutatedNodeIDs   map[string]struct{}
 	mutatedNodeIDsMu sync.Mutex
+}
+
+func (w *transactionStorageWrapper) Namespace() string {
+	if w == nil {
+		return ""
+	}
+	return w.namespace
+}
+
+func (w *transactionStorageWrapper) GetEngine() storage.Engine {
+	if w == nil {
+		return nil
+	}
+	return w.underlying
 }
 
 func (w *transactionStorageWrapper) markMutatedNodeID(id storage.NodeID) {

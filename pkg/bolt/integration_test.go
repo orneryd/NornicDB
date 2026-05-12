@@ -138,16 +138,29 @@ func startBoltIntegrationServer(t *testing.T, store storage.Engine) (*Server, in
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	requireNoError(t, err)
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || addr.Port == 0 {
+		t.Fatalf("expected TCP listener with assigned port, got %T %v", listener.Addr(), listener.Addr())
+	}
+	server.listener = listener
+
+	errCh := make(chan error, 1)
 	t.Cleanup(func() {
-		server.Close()
-	})
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			t.Logf("Server error: %v", err)
+		if err := server.Close(); err != nil {
+			t.Fatalf("close server: %v", err)
 		}
+		if err := <-errCh; err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+	})
+
+	go func() {
+		errCh <- server.serve()
 	}()
-	time.Sleep(100 * time.Millisecond)
-	return server, server.listener.Addr().(*net.TCPAddr).Port
+	return server, addr.Port
 }
 
 func openBoltTestConn(t *testing.T, port int) net.Conn {

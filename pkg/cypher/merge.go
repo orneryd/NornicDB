@@ -93,6 +93,38 @@ func cloneNodePropertiesMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+func cloneNodeForMergeMutation(in *storage.Node) *storage.Node {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.Labels != nil {
+		out.Labels = append([]string(nil), in.Labels...)
+	}
+	if in.Properties != nil {
+		out.Properties = cloneNodePropertiesMap(in.Properties)
+	}
+	if in.NamedEmbeddings != nil {
+		out.NamedEmbeddings = make(map[string][]float32, len(in.NamedEmbeddings))
+		for k, v := range in.NamedEmbeddings {
+			out.NamedEmbeddings[k] = append([]float32(nil), v...)
+		}
+	}
+	if in.ChunkEmbeddings != nil {
+		out.ChunkEmbeddings = make([][]float32, len(in.ChunkEmbeddings))
+		for i, v := range in.ChunkEmbeddings {
+			out.ChunkEmbeddings[i] = append([]float32(nil), v...)
+		}
+	}
+	if in.EmbedMeta != nil {
+		out.EmbedMeta = make(map[string]any, len(in.EmbedMeta))
+		for k, v := range in.EmbedMeta {
+			out.EmbedMeta[k] = v
+		}
+	}
+	return &out
+}
+
 func (e *StorageExecutor) evictMergeNodeCacheEntries(labels []string, props map[string]interface{}, nodeID storage.NodeID) {
 	if len(labels) == 0 || len(props) == 0 {
 		return
@@ -244,13 +276,15 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 
 		for _, prop := range mergePropertyNamesSorted(props) {
 			val := props[prop]
-			nodeID, valueFound, constraintExists := schema.LookupUniqueConstraintValue(label, prop, val)
+			nodeID, valueFound, constraintExists, authoritative := schema.LookupUniqueConstraintValueForPlanning(label, prop, val)
 			if !constraintExists {
 				continue
 			}
-			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
 			if !valueFound {
+				if authoritative {
+					schemaLookupUsed = true
+				}
 				continue
 			}
 			for _, n := range e.loadMergeCandidateNodes(store, []storage.NodeID{nodeID}) {
@@ -258,6 +292,9 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 					e.cacheMergeNode(labels, props, n)
 					return n, nil
 				}
+			}
+			if authoritative {
+				schemaLookupUsed = true
 			}
 		}
 
@@ -529,8 +566,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 	var node *storage.Node
 	if existingNode != nil {
 		// Node exists - apply ON MATCH SET if present
-		node = existingNode
-		e.cacheMergeNode(labels, matchProps, node)
+		node = cloneNodeForMergeMutation(existingNode)
 		if onMatchIdx > 0 {
 			setEnd := len(cypher)
 			for _, idx := range []int{onCreateIdx, returnIdx} {
@@ -559,8 +595,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 				}
 				if recoveredNode != nil {
 					existingNode = recoveredNode
-					node = recoveredNode
-					e.cacheMergeNode(labels, matchProps, node)
+					node = cloneNodeForMergeMutation(recoveredNode)
 				} else {
 					return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
 				}
@@ -572,7 +607,6 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 			node.ID = actualID
 			e.notifyNodeMutated(string(node.ID))
 			result.Stats.NodesCreated = 1
-			e.cacheMergeNode(labels, matchProps, node)
 
 			// Apply ON CREATE SET if present
 			if onCreateIdx > 0 {
@@ -607,6 +641,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 		e.notifyNodeMutated(string(node.ID))
 		e.cacheMergeNode(labels, matchProps, node)
 	}
+	e.cacheMergeNode(labels, matchProps, node)
 
 	// Handle RETURN clause
 	if returnIdx > 0 {

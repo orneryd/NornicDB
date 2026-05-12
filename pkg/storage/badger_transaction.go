@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1366,6 +1367,22 @@ func (tx *BadgerTransaction) Commit() error {
 		return err
 	}
 
+	// Acquire per-(label, property, value) commit locks for every unique
+	// constraint value touched by this transaction's pending nodes. Held
+	// across validateAllConstraints + badgerTx.Commit + the post-commit
+	// RegisterUniqueValue calls below so that a peer transaction touching the
+	// same constrained value cannot pass validation against an empty cache
+	// while we are still committing. Without this lock, two concurrent
+	// transactions that both add a node with the same constrained property
+	// value both pass deferred validation (cache empty for both), both reach
+	// badgerTx.Commit (Badger writes them under distinct node IDs so the KV
+	// layer does not detect the conflict), and both call RegisterUniqueValue
+	// — the second overwriting the first — leaving the UNIQUE constraint
+	// silently violated in storage. See cross_session_merge_unique_test.go
+	// for the reproduction.
+	releaseCommitLocks := tx.acquireUniqueConstraintCommitLocks()
+	defer releaseCommitLocks()
+
 	// Final constraint validation before commit
 	if err := tx.validateAllConstraints(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2314,6 +2331,103 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 }
 
 // validateAllConstraints performs final validation before commit.
+// acquireUniqueConstraintCommitLocks collects the unique constraints touched
+// by this transaction's pending nodes and acquires bounded
+// per-(label, property, value) mutex stripes on each affected schema. Returns
+// a release function that unlocks in reverse order; safe to defer.
+//
+// Locks are keyed by value, not only by constraint: a transaction adding
+// nodes with uids "X" and "Y" hashes those values to bounded lock stripes; a
+// peer transaction with uids "X" and "Z" serializes against "X" and commits
+// "Z" in parallel unless the bounded stripe hash collides. This was changed
+// from coarser per-(label, property) granularity that effectively serialized
+// every writer touching a UNIQUE-constrained property — see
+// uniqueConstraintLockKey doc.
+//
+// Locks are partitioned by namespace because each namespace has its own
+// SchemaManager and its own constraint registry — a transaction that spans
+// multiple namespaces locks each namespace's affected values independently.
+// Namespaces are processed in sorted order so that two transactions
+// touching overlapping namespaces always acquire locks in the same order,
+// eliminating the AB-BA deadlock risk.
+//
+// Pending nodes with non-comparable property values skip lock acquisition
+// for that property. Constraint validation still fires at commit time;
+// commit-window serialization is best-effort for non-comparable types
+// (which UNIQUE-constrained Eshu/Neo4j workloads do not use in practice).
+func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
+	if len(tx.pendingNodes) == 0 {
+		return func() {}
+	}
+	perNamespace := make(map[string]map[uniqueConstraintLockKey]struct{})
+	for _, node := range tx.pendingNodes {
+		if node == nil {
+			continue
+		}
+		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
+		if !ok {
+			continue
+		}
+		schema := tx.engine.GetSchemaForNamespace(dbName)
+		if schema == nil {
+			continue
+		}
+		constraints := schema.GetConstraintsForLabels(node.Labels)
+		for _, c := range constraints {
+			if c.Type != ConstraintUnique || len(c.Properties) != 1 {
+				continue
+			}
+			prop := c.Properties[0]
+			rawValue, has := node.Properties[prop]
+			if !has {
+				continue
+			}
+			canonicalValue, ok := uniqueConstraintValueKey(rawValue)
+			if !ok {
+				// Non-comparable value: skip lock acquisition. Validation
+				// still runs at commit; commit-window serialization is
+				// best-effort for these (no constraint cache anyway).
+				continue
+			}
+			if perNamespace[dbName] == nil {
+				perNamespace[dbName] = make(map[uniqueConstraintLockKey]struct{})
+			}
+			perNamespace[dbName][uniqueConstraintLockKey{
+				label:    c.Label,
+				property: prop,
+				value:    canonicalValue,
+			}] = struct{}{}
+		}
+	}
+	if len(perNamespace) == 0 {
+		return func() {}
+	}
+
+	namespaces := make([]string, 0, len(perNamespace))
+	for ns := range perNamespace {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	releases := make([]func(), 0, len(namespaces))
+	for _, ns := range namespaces {
+		schema := tx.engine.GetSchemaForNamespace(ns)
+		if schema == nil {
+			continue
+		}
+		keys := make([]uniqueConstraintLockKey, 0, len(perNamespace[ns]))
+		for k := range perNamespace[ns] {
+			keys = append(keys, k)
+		}
+		releases = append(releases, schema.acquireUniqueConstraintCommitLocks(keys))
+	}
+	return func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+}
+
 func (tx *BadgerTransaction) validateAllConstraints() error {
 	for _, node := range tx.pendingNodes {
 		if err := tx.validateNodeConstraints(node); err != nil {

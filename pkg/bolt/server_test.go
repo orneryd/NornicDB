@@ -2239,6 +2239,84 @@ func TestMapBoltQueryError(t *testing.T) {
 	}
 }
 
+func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
+	err := fmt.Errorf("failed to commit implicit transaction: constraint violation: Constraint violation (UNIQUE on TerraformResource.[uid]): Node with uid=X already exists (nodeID: nornic:abc)")
+
+	tests := []struct {
+		name     string
+		query    string
+		wantCode string
+	}{
+		{
+			name:     "merge conflict is retryable",
+			query:    "MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'x'",
+			wantCode: nornicerrors.TransientOutdated,
+		},
+		{
+			name:     "create duplicate remains hard error",
+			query:    "CREATE (r:TerraformResource {uid: 'X'})",
+			wantCode: "Neo.ClientError.Statement.SyntaxError",
+		},
+		{
+			name:     "empty query remains hard error",
+			query:    "",
+			wantCode: "Neo.ClientError.Statement.SyntaxError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _ := mapBoltQueryErrorForQuery(err, tt.query)
+			if code != tt.wantCode {
+				t.Fatalf("code = %q, want %q", code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
+	err := fmt.Errorf("commit failed: constraint violation: Constraint violation (UNIQUE on TerraformResource.[uid]): Node with uid=X already exists (nodeID: nornic:abc)")
+
+	tests := []struct {
+		name     string
+		canRetry bool
+		wantCode string
+	}{
+		{
+			name:     "merge transaction conflict is retryable",
+			canRetry: true,
+			wantCode: nornicerrors.TransientOutdated,
+		},
+		{
+			name:     "non-merge transaction duplicate remains commit failed",
+			canRetry: false,
+			wantCode: "Neo.ClientError.Transaction.TransactionCommitFailed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, _ := mapBoltCommitError(err, tt.canRetry)
+			if code != tt.wantCode {
+				t.Fatalf("code = %q, want %q", code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", true)
+	if !session.canRetryMergeCommitConflict() {
+		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
+	}
+
+	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", true)
+	if session.canRetryMergeCommitConflict() {
+		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
 // =============================================================================
 // Tests for isShowDatabasesQuery – case/whitespace normalization
 // =============================================================================

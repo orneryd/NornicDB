@@ -450,8 +450,8 @@ func (s *NodeConfigStore) IsEdgeAllowed(sourceID, targetID, label string) bool {
 		return true
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	s.totalChecks++
 

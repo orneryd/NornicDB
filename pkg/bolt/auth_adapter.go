@@ -3,6 +3,7 @@ package bolt
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 )
@@ -54,7 +55,7 @@ import (
 //	boltServer := bolt.New(boltConfig, executor)
 type AuthenticatorAdapter struct {
 	auth                    *auth.Authenticator
-	allowAnonymous          bool
+	allowAnonymous          atomic.Bool
 	basicAuthCache          *auth.BasicAuthCache
 	getEffectivePermissions func(roles []string) []string // optional; when set, BoltAuthResult.Permissions is filled
 }
@@ -75,11 +76,12 @@ type AuthenticatorAdapter struct {
 //	config.Authenticator = boltAuth
 //	config.RequireAuth = true
 func NewAuthenticatorAdapter(authenticator *auth.Authenticator) *AuthenticatorAdapter {
-	return &AuthenticatorAdapter{
+	adapter := &AuthenticatorAdapter{
 		auth:           authenticator,
-		allowAnonymous: false,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	adapter.allowAnonymous.Store(false)
+	return adapter
 }
 
 // NewAuthenticatorAdapterWithAnonymous creates an adapter that allows anonymous connections.
@@ -87,11 +89,12 @@ func NewAuthenticatorAdapter(authenticator *auth.Authenticator) *AuthenticatorAd
 //
 // Use with caution - this allows unauthenticated connections.
 func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *AuthenticatorAdapter {
-	return &AuthenticatorAdapter{
+	adapter := &AuthenticatorAdapter{
 		auth:           authenticator,
-		allowAnonymous: true,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	adapter.allowAnonymous.Store(true)
+	return adapter
 }
 
 // SetGetEffectivePermissions sets the callback used to resolve roles to effective permission IDs.
@@ -132,7 +135,7 @@ func (a *AuthenticatorAdapter) SetGetEffectivePermissions(fn func(roles []string
 func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials string) (*BoltAuthResult, error) {
 	// Handle anonymous authentication (canonical role from auth)
 	if scheme == "none" || scheme == "" {
-		if !a.allowAnonymous {
+		if !a.allowAnonymous.Load() {
 			return nil, fmt.Errorf("anonymous authentication not allowed")
 		}
 		roles := []string{string(auth.RoleViewer)}
@@ -230,7 +233,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 
 // SetAllowAnonymous enables or disables anonymous authentication.
 func (a *AuthenticatorAdapter) SetAllowAnonymous(allow bool) {
-	a.allowAnonymous = allow
+	a.allowAnonymous.Store(allow)
 }
 
 // looksLikeJWT checks if a string appears to be a JWT token.
