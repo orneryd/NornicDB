@@ -99,6 +99,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,6 +268,11 @@ type SearchOptions struct {
 	RerankEnabled  bool    // Enable cross-encoder reranking (default: false)
 	RerankTopK     int     // How many candidates to rerank (default: 100)
 	RerankMinScore float64 // Minimum cross-encoder score to include (default: 0)
+
+	// Filters pre-filters nodes by property values before top-K selection.
+	// Keys are property names; values are acceptable values (OR within a key, AND across keys).
+	// Scalar and array property values are both supported.
+	Filters map[string][]string
 }
 
 // DefaultSearchOptions returns sensible defaults.
@@ -330,6 +336,21 @@ func searchCacheKey(query string, opts *SearchOptions) string {
 	typesCopy := make([]string, len(opts.Types))
 	copy(typesCopy, opts.Types)
 	sort.Strings(typesCopy)
+
+	// Build a stable representation of Filters: sorted keys, sorted values within each key.
+	filterKeys := make([]string, 0, len(opts.Filters))
+	for k := range opts.Filters {
+		filterKeys = append(filterKeys, k)
+	}
+	sort.Strings(filterKeys)
+	filterParts := make([]string, 0, len(filterKeys))
+	for _, k := range filterKeys {
+		vals := make([]string, len(opts.Filters[k]))
+		copy(vals, opts.Filters[k])
+		sort.Strings(vals)
+		filterParts = append(filterParts, k+"="+strings.Join(vals, ","))
+	}
+
 	return strings.Join([]string{
 		query,
 		strconv.Itoa(opts.Limit),
@@ -339,6 +360,7 @@ func searchCacheKey(query string, opts *SearchOptions) string {
 		strconv.FormatBool(opts.MMREnabled),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
+		strings.Join(filterParts, ";"),
 	}, "\x00")
 }
 
@@ -3133,6 +3155,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	vectorResults = s.filterDecayedCandidates(vectorResults)
 	bm25Results = s.filterDecayedCandidates(bm25Results)
 
+	// Step 3c: Pre-filter by property values before top-K selection
+	if len(opts.Filters) > 0 {
+		vectorResults = s.filterByProperties(ctx, vectorResults, opts.Filters, seenOrphans)
+		bm25Results = s.filterByProperties(ctx, bm25Results, opts.Filters, seenOrphans)
+	}
+
 	// Step 4: Fuse with RRF
 	fusionStart := time.Now()
 	fusedResults := s.fuseRRF(vectorResults, bm25Results, opts)
@@ -4986,6 +5014,9 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	if len(opts.Types) > 0 {
 		results = s.filterByType(ctx, results, opts.Types, seenOrphans)
 	}
+	if len(opts.Filters) > 0 {
+		results = s.filterByProperties(ctx, results, opts.Filters, seenOrphans)
+	}
 
 	searchResults := s.enrichIndexResults(ctx, results, opts.Limit, seenOrphans)
 	// Vector-only: set vector_rank from position (1-based), bm25_rank = 0
@@ -5039,6 +5070,9 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	seenOrphans := make(map[string]bool)
 	if len(opts.Types) > 0 {
 		results = s.filterByType(ctx, results, opts.Types, seenOrphans)
+	}
+	if len(opts.Filters) > 0 {
+		results = s.filterByProperties(ctx, results, opts.Filters, seenOrphans)
 	}
 
 	searchResults := s.enrichIndexResults(ctx, results, opts.Limit, seenOrphans)
@@ -5247,6 +5281,70 @@ func vectorFromPropertyValue(value any, expectedDim int) ([]float32, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// nodeMatchesFilters reports whether node satisfies all filters (AND across keys, OR within values).
+// Each filter value is matched against the property as a string; for array properties every
+// element is checked individually.
+func nodeMatchesFilters(node *storage.Node, filters map[string][]string) bool {
+	for propName, wantVals := range filters {
+		propVal, exists := node.Properties[propName]
+		if !exists {
+			return false
+		}
+		if !propValueMatchesAny(propVal, wantVals) {
+			return false
+		}
+	}
+	return true
+}
+
+// propValueMatchesAny returns true if any of wantVals matches propVal.
+// For slice properties (any concrete slice type) every element is tested via
+// fmt.Sprint; for scalar properties the fmt.Sprint representation is compared
+// directly. Using reflect for the slice fallback means we handle whatever
+// concrete type gob/msgpack produces ([]any, []string, []interface{}, etc.).
+func propValueMatchesAny(propVal any, wantVals []string) bool {
+	rv := reflect.ValueOf(propVal)
+	if rv.Kind() == reflect.Slice {
+		for i := 0; i < rv.Len(); i++ {
+			elem := fmt.Sprint(rv.Index(i).Interface())
+			for _, w := range wantVals {
+				if elem == w {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	s := fmt.Sprint(propVal)
+	for _, w := range wantVals {
+		if s == w {
+			return true
+		}
+	}
+	return false
+}
+
+// filterByProperties filters results to only include nodes matching all property filters.
+func (s *Service) filterByProperties(ctx context.Context, results []indexResult, filters map[string][]string, seenOrphans map[string]bool) []indexResult {
+	if len(filters) == 0 {
+		return results
+	}
+	var filtered []indexResult
+	for _, r := range results {
+		node, err := s.engine.GetNode(storage.NodeID(r.ID))
+		if err != nil {
+			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
+				continue
+			}
+			continue
+		}
+		if nodeMatchesFilters(node, filters) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
 }
 
 // filterByType filters results to only include specified node types.

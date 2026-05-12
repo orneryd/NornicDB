@@ -1431,6 +1431,102 @@ func TestHandleSearch(t *testing.T) {
 	}
 }
 
+// TestHandleSearch_FiltersParameter verifies that the `filters` field is accepted in the
+// request body and that results are restricted to nodes matching the filter.
+func TestHandleSearch_FiltersParameter(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := getAuthToken(t, auth, "admin")
+
+	// Seed a few nodes with a "collection" property.
+	dbName := server.dbManager.DefaultDatabaseName()
+	eng, err := server.dbManager.GetStorage(dbName)
+	require.NoError(t, err)
+
+	nodes := []*storage.Node{
+		{
+			ID:     "chunk_user_a",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "user_a exclusive document",
+				"collection": []any{"user_a"},
+			},
+		},
+		{
+			ID:     "chunk_user_b",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "user_b exclusive document",
+				"collection": []any{"user_b"},
+			},
+		},
+		{
+			ID:     "chunk_shared",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "shared document",
+				"collection": []any{"user_a", "user_b"},
+			},
+		},
+	}
+	require.NoError(t, eng.BulkCreateNodes(nodes))
+
+	// Trigger search index rebuild so the new nodes are indexed.
+	rebuildResp := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild",
+		map[string]interface{}{"database": dbName}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, rebuildResp.Code, rebuildResp.Body.String())
+	require.Eventually(t, func() bool {
+		st := server.db.GetDatabaseSearchStatus(dbName)
+		return st.Ready && !st.Building
+	}, 5*time.Second, 50*time.Millisecond)
+
+	// Search with filter — should return only user_a nodes.
+	resp := makeRequest(t, server, http.MethodPost, "/nornicdb/search", map[string]interface{}{
+		"query":  "document",
+		"limit":  10,
+		"filters": map[string]interface{}{
+			"collection": []string{"user_a"},
+		},
+	}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	// Response shape: [{"node": {"id":..., "properties": {...}}, "score": ...}, ...]
+	var results []map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&results))
+
+	for _, r := range results {
+		nodeObj, ok := r["node"].(map[string]interface{})
+		require.True(t, ok, "result missing 'node' field: %v", r)
+		props, ok := nodeObj["properties"].(map[string]interface{})
+		require.True(t, ok, "node missing 'properties' field: %v", nodeObj)
+		coll := props["collection"]
+		// The collection must include user_a (either scalar or array).
+		matched := false
+		switch v := coll.(type) {
+		case string:
+			matched = v == "user_a"
+		case []interface{}:
+			for _, elem := range v {
+				if s, ok := elem.(string); ok && s == "user_a" {
+					matched = true
+					break
+				}
+			}
+		}
+		require.True(t, matched, "result %v has collection=%v — expected user_a membership", nodeObj["id"], coll)
+	}
+
+	// Search without filters — all three nodes are eligible.
+	respAll := makeRequest(t, server, http.MethodPost, "/nornicdb/search", map[string]interface{}{
+		"query": "document",
+		"limit": 10,
+	}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, respAll.Code, respAll.Body.String())
+
+	var allResults []map[string]interface{}
+	require.NoError(t, json.NewDecoder(respAll.Body).Decode(&allResults))
+	require.Len(t, allResults, 3, "unfiltered search should return all 3 nodes")
+}
+
 func TestStartupSearchReconcile_InitializesMetadataOnlyDatabase(t *testing.T) {
 	server, _ := setupTestServer(t)
 

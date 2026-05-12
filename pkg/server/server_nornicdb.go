@@ -304,10 +304,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Database string   `json:"database,omitempty"` // Optional: defaults to default database
-		Query    string   `json:"query"`
-		Labels   []string `json:"labels,omitempty"`
-		Limit    int      `json:"limit,omitempty"`
+		Database string              `json:"database,omitempty"` // Optional: defaults to default database
+		Query    string              `json:"query"`
+		Labels   []string            `json:"labels,omitempty"`
+		Limit    int                 `json:"limit,omitempty"`
+		Filters  map[string][]string `json:"filters,omitempty"`
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
@@ -415,6 +416,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		opts.Limit = limit
 		if len(req.Labels) > 0 {
 			opts.Types = req.Labels
+		}
+		if len(req.Filters) > 0 {
+			opts.Filters = req.Filters
 		}
 		opts.RerankEnabled = searchSvc.RerankerAvailable(ctx)
 		return opts

@@ -3941,3 +3941,211 @@ func TestSearchWithMMROption(t *testing.T) {
 		assert.NotContains(t, response.SearchMethod, "mmr", "Search method should not mention MMR")
 	})
 }
+
+// TestNodeMatchesFilters covers the scalar, array, multi-value, and multi-key filter logic.
+func TestNodeMatchesFilters(t *testing.T) {
+	node := &storage.Node{
+		ID:     "n1",
+		Labels: []string{"Chunk"},
+		Properties: map[string]any{
+			"collection": []any{"user_a", "user_b"},
+			"type":       "text",
+			"score":      42,
+		},
+	}
+
+	t.Run("scalar_match", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"type": {"text"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"type": {"image"}}))
+	})
+
+	t.Run("array_membership_match", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_a"}}))
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_b"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c"}}))
+	})
+
+	t.Run("multi_value_or", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_a", "user_b"}}))
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c", "user_a"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"collection": {"user_c", "user_d"}}))
+	})
+
+	t.Run("multi_property_and", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"text"},
+		}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"image"},
+		}))
+	})
+
+	t.Run("missing_property", func(t *testing.T) {
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"nonexistent": {"x"}}))
+	})
+
+	t.Run("empty_filters", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{}))
+	})
+
+	t.Run("numeric_scalar_as_string", func(t *testing.T) {
+		assert.True(t, nodeMatchesFilters(node, map[string][]string{"score": {"42"}}))
+		assert.False(t, nodeMatchesFilters(node, map[string][]string{"score": {"99"}}))
+	})
+}
+
+// TestPropValueMatchesAny exercises propValueMatchesAny directly for all supported property types.
+func TestPropValueMatchesAny(t *testing.T) {
+	t.Run("string_scalar", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny("hello", []string{"hello"}))
+		assert.False(t, propValueMatchesAny("hello", []string{"world"}))
+	})
+
+	t.Run("any_slice", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny([]any{"a", "b"}, []string{"b"}))
+		assert.False(t, propValueMatchesAny([]any{"a", "b"}, []string{"c"}))
+	})
+
+	t.Run("string_slice", func(t *testing.T) {
+		assert.True(t, propValueMatchesAny([]string{"x", "y"}, []string{"y"}))
+		assert.False(t, propValueMatchesAny([]string{"x", "y"}, []string{"z"}))
+	})
+}
+
+// TestFilterByProperties_PrefiltersBeforeTopK verifies that nodes not matching the
+// filter are excluded from results even when they would otherwise rank in the top-K.
+func TestFilterByProperties_PrefiltersBeforeTopK(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store)
+	ctx := context.Background()
+
+	// Create 10 nodes; only 2 belong to "user_a".
+	for i := 0; i < 10; i++ {
+		collection := []any{"user_b"}
+		if i == 3 || i == 7 {
+			collection = []any{"user_a"}
+		}
+		node := &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("node%d", i)),
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    fmt.Sprintf("chunk number %d", i),
+				"collection": collection,
+			},
+		}
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+		svc.IndexNode(node)
+	}
+
+	opts := &SearchOptions{
+		Limit:   10,
+		Filters: map[string][]string{"collection": {"user_a"}},
+	}
+
+	// BM25-only path (no embedding).
+	resp, err := svc.Search(ctx, "chunk", nil, opts)
+	require.NoError(t, err)
+
+	for _, r := range resp.Results {
+		props := r.Properties
+		coll, ok := props["collection"]
+		require.True(t, ok, "result %s missing collection property", r.ID)
+		assert.True(t, propValueMatchesAny(coll, []string{"user_a"}),
+			"result %s has collection=%v, want user_a", r.ID, coll)
+	}
+	// Only the 2 user_a nodes should be returned (not all 10 minus filtered).
+	assert.LessOrEqual(t, len(resp.Results), 2,
+		"expected at most 2 user_a results, got %d", len(resp.Results))
+}
+
+// TestFilterByProperties_MultiPropertyAnd verifies that all filter keys must match.
+func TestFilterByProperties_MultiPropertyAnd(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store)
+	ctx := context.Background()
+
+	nodes := []*storage.Node{
+		{
+			ID:     "match",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "matching node",
+				"collection": []any{"user_a"},
+				"type":       "text",
+			},
+		},
+		{
+			ID:     "wrong_collection",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "wrong collection",
+				"collection": []any{"user_b"},
+				"type":       "text",
+			},
+		},
+		{
+			ID:     "wrong_type",
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content":    "wrong type",
+				"collection": []any{"user_a"},
+				"type":       "image",
+			},
+		},
+	}
+	require.NoError(t, store.BulkCreateNodes(nodes))
+	for _, n := range nodes {
+		svc.IndexNode(n)
+	}
+
+	opts := &SearchOptions{
+		Limit: 10,
+		Filters: map[string][]string{
+			"collection": {"user_a"},
+			"type":       {"text"},
+		},
+	}
+
+	resp, err := svc.Search(ctx, "node", nil, opts)
+	require.NoError(t, err)
+
+	ids := make(map[string]bool)
+	for _, r := range resp.Results {
+		ids[r.ID] = true
+	}
+	assert.True(t, ids["match"], "expected 'match' node in results")
+	assert.False(t, ids["wrong_collection"], "unexpected 'wrong_collection' node in results")
+	assert.False(t, ids["wrong_type"], "unexpected 'wrong_type' node in results")
+}
+
+// TestFilterByProperties_NoFilterPreservesAllResults verifies backward compatibility.
+func TestFilterByProperties_NoFilterPreservesAllResults(t *testing.T) {
+	baseStore := newNamespacedEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	svc := NewService(store)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		node := &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("doc%d", i)),
+			Labels: []string{"Chunk"},
+			Properties: map[string]any{
+				"content": fmt.Sprintf("document %d", i),
+			},
+		}
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+		svc.IndexNode(node)
+	}
+
+	// Without filters, all 5 docs should be reachable.
+	opts := &SearchOptions{Limit: 10}
+	resp, err := svc.Search(ctx, "document", nil, opts)
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 5)
+}
