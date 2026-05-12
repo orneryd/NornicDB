@@ -1,4 +1,24 @@
-# pprof Quick Guide for HNSW Profiling
+# pprof Quick Guide
+
+This guide covers the pprof surface NornicDB exposes when the opt-in listener is enabled, including CPU, goroutine, mutex, and block profiles.
+
+Enable the listener explicitly:
+
+```bash
+export NORNICDB_PPROF_ENABLED=true
+export NORNICDB_PPROF_LISTEN=127.0.0.1:9091
+```
+
+Available endpoints include:
+
+- `/debug/pprof/profile`
+- `/debug/pprof/goroutine`
+- `/debug/pprof/mutex`
+- `/debug/pprof/block`
+- `/debug/pprof/heap`
+- `/debug/pprof/allocs`
+
+When pprof is enabled, NornicDB also turns on mutex and block profiling so `/debug/pprof/mutex` and `/debug/pprof/block` have useful data immediately.
 
 ## You're in pprof interactive mode - here's what to do:
 
@@ -8,19 +28,20 @@
 (pprof) top10
 ```
 
-This shows the top 10 functions consuming CPU time. Look for:
-- HNSW search functions
-- GC-related functions (`runtime.gcBgMarkWorker`)
-- Vector operations
-- Lock contention
+This shows the top CPU consumers. Look for:
 
-### Step 2: Focus on HNSW Functions
+- HNSW and search functions
+- GC-related functions such as `runtime.gcBgMarkWorker`
+- vector operations
+- lock-heavy code showing up in sampled CPU work
+
+### Step 2: Check the Full Call Chain
 
 ```pprof
 (pprof) top20 -cum
 ```
 
-Shows functions with cumulative time (includes called functions). This helps find the call chain.
+Use cumulative time to find the higher-level path that leads into the hotspot.
 
 ### Step 3: Check for GC Overhead
 
@@ -29,60 +50,108 @@ Shows functions with cumulative time (includes called functions). This helps fin
 ```
 
 Look for:
-- `runtime.gcBgMarkWorker` - GC background work
-- `runtime.mallocgc` - Memory allocation
-- High percentage (>10%) indicates GC pressure
 
-### Step 4: Focus on HNSW Search
+- `runtime.gcBgMarkWorker`
+- `runtime.mallocgc`
+- high runtime percentages indicating GC or allocation pressure
+
+### Step 4: Inspect Goroutine Growth
+
+Use the goroutine profile when queues are growing, requests look stuck, or background work appears to stop draining.
+
+```bash
+go tool pprof http://127.0.0.1:9091/debug/pprof/goroutine
+```
+
+Inside pprof:
+
+```pprof
+(pprof) top20 -cum
+(pprof) traces
+```
+
+What to look for:
+
+- many goroutines blocked in the same stack
+- repeated wait paths in flush, storage, or search work
+- channels, mutexes, or I/O waits dominating the traces
+
+For raw stack dumps instead of pprof's aggregated view:
+
+```bash
+curl http://127.0.0.1:9091/debug/pprof/goroutine?debug=2
+```
+
+### Step 5: Focus on a Specific Function
 
 ```pprof
 (pprof) list searchWithEf
 ```
 
-Shows line-by-line CPU time in the search function. This identifies hot spots.
+Shows line-by-line sampled time inside the selected function.
 
-### Step 5: Generate Visual Report
+### Step 6: Check Mutex Contention
+
+```bash
+go tool pprof http://127.0.0.1:9091/debug/pprof/mutex
+```
+
+Useful commands:
+
+```pprof
+(pprof) top20
+(pprof) top20 -cum
+(pprof) list <function>
+```
+
+What to look for:
+
+- `sync.(*Mutex).Lock`
+- `sync.(*RWMutex).Lock`
+- `sync.(*RWMutex).RLock`
+- lock-heavy stacks in storage, cache, search, or knowledge-policy flush paths
+
+### Step 7: Check Blocking Waits
+
+```bash
+go tool pprof http://127.0.0.1:9091/debug/pprof/block
+```
+
+Use the block profile when the process is not CPU-hot but requests or background work still look stalled.
+
+### Step 8: Generate Visual Reports
 
 ```pprof
 (pprof) web
 ```
 
-Opens a visual call graph in your browser. Requires Graphviz installed.
-
 Or generate SVG:
-```pprof
-(pprof) svg > /tmp/hnsw_profile.svg
-```
-
-### Step 6: Check Specific Functions
 
 ```pprof
-(pprof) list selectNeighbors
-(pprof) list searchLayerHeapPooled
-(pprof) list vector.DotProductSIMD
+(pprof) svg > /tmp/profile.svg
 ```
 
-### Step 7: Exit and Generate HTML Report
+### Step 9: Exit and Use the HTML UI
 
 ```pprof
 (pprof) exit
 ```
 
 Then generate a web UI:
+
 ```bash
 go tool pprof -http=:8080 cpu.prof
 ```
-
-Opens interactive web UI at http://localhost:8080
 
 ## Quick Commands Reference
 
 | Command | Purpose |
 |---------|---------|
-| `top10` | Top 10 CPU consumers |
+| `top10` | Top 10 consumers |
 | `top20 -cum` | Top 20 with cumulative time |
 | `list <function>` | Line-by-line breakdown |
-| `web` | Visual call graph (requires Graphviz) |
+| `traces` | Stack-oriented goroutine or blocking analysis |
+| `web` | Visual call graph |
 | `svg > file.svg` | Generate SVG graph |
 | `png > file.png` | Generate PNG graph |
 | `help` | Show all commands |
@@ -91,37 +160,59 @@ Opens interactive web UI at http://localhost:8080
 ## What to Look For
 
 ### GC Problems
+
 - `runtime.gcBgMarkWorker` > 10% of total time
 - `runtime.mallocgc` in top functions
-- Frequent GC pauses in trace
+- frequent runtime-heavy paths in profiles
 
 ### Allocation Hotspots
-- Functions with high `flat` time that allocate
-- `make()` calls in hot paths
-- `append()` on slices without pre-allocation
+
+- functions with high `flat` time that allocate
+- `make()` in hot paths
+- `append()` without pre-allocation
 
 ### Lock Contention
-- `sync.(*RWMutex).RLock` in top functions
-- High time in lock acquisition
 
-### Vector Operations
-- `vector.DotProductSIMD` should be fast
-- If slow, may need SIMD optimization
+- `sync.(*RWMutex).RLock` or `sync.(*Mutex).Lock` high in mutex profiles
+- cumulative time dominated by lock acquisition
+- lock-heavy call chains in storage or background work
+
+### Goroutine Pressure
+
+- large numbers of goroutines in identical blocked stacks
+- repeated background-worker stacks that do not drain over time
+- blocked flush, search, or storage work paired with growing queues
+
+### Knowledge Policy Hot Paths
+
+Correlate pprof with these telemetry signals:
+
+- `nornicdb_knowledge_policy_access_flush_duration_seconds`
+- `nornicdb_knowledge_policy_access_flush_buffer_fullness`
+- `nornicdb_knowledge_policy_suppressions_total`
+- `nornicdb_knowledge_policy_reconcile_total`
+
+If flush duration rises and mutex or block profiles show heavy waiting, investigate the access flusher, suppression-recheck path, or downstream storage writes first.
 
 ## Next Steps After Profiling
 
 1. **If GC is the problem:**
-   - Check memory profile: `go tool pprof -alloc_space mem.prof`
-   - Look for allocation hotspots
-   - Implement sync.Pool optimizations
+   - check memory profile: `go tool pprof -alloc_space mem.prof`
+   - look for allocation hotspots
+   - apply pooling or reuse strategies, then re-profile
 
 2. **If allocations are the problem:**
-   - Use `list <function>` to find exact lines
-   - Add pools or pre-allocate buffers
-   - Re-profile to verify improvements
+   - use `list <function>` to find exact lines
+   - add pools or pre-allocate buffers
+   - re-profile to verify the improvement
 
 3. **If locks are the problem:**
-   - Consider lock-free reads (advanced)
-   - Reduce lock scope
-   - Use read-only operations where possible
+   - reduce lock scope
+   - prefer read-only paths where possible
+   - only consider lock-free redesigns when profiling proves they are necessary
+
+4. **If goroutines are the problem:**
+   - inspect repeated blocked stacks
+   - correlate with queue depth, flush duration, and suppression metrics
+   - verify that the issue is a real backlog and not expected background concurrency
 

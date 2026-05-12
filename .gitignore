@@ -79,3 +79,4 @@ bench-data
 scripts/benchmark_reports
 metrics-doc-gen
 *.pyc
+site

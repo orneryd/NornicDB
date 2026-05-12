@@ -80,118 +80,117 @@ void* metal_create_device(void) {
         // If no metallib, compile from source
         if (!ctx->library) {
             // Embedded shader source (simplified version for initial implementation)
-            NSString* shaderSource = @R"(
-                #include <metal_stdlib>
-                using namespace metal;
-                
-                kernel void cosine_similarity_normalized(
-                    device const float* embeddings [[buffer(0)]],
-                    device const float* query [[buffer(1)]],
-                    device float* scores [[buffer(2)]],
-                    constant uint& n [[buffer(3)]],
-                    constant uint& dimensions [[buffer(4)]],
-                    uint gid [[thread_position_in_grid]])
-                {
-                    if (gid >= n) return;
-                    
-                    float dot = 0.0f;
-                    uint base = gid * dimensions;
-                    
-                    for (uint i = 0; i < dimensions; i++) {
-                        dot += embeddings[base + i] * query[i];
-                    }
-                    
-                    scores[gid] = dot;
-                }
-                
-                kernel void cosine_similarity_full(
-                    device const float* embeddings [[buffer(0)]],
-                    device const float* query [[buffer(1)]],
-                    device float* scores [[buffer(2)]],
-                    constant uint& n [[buffer(3)]],
-                    constant uint& dimensions [[buffer(4)]],
-                    uint gid [[thread_position_in_grid]])
-                {
-                    if (gid >= n) return;
-                    
-                    float dot = 0.0f;
-                    float normA = 0.0f;
-                    float normB = 0.0f;
-                    
-                    uint base = gid * dimensions;
-                    
-                    for (uint i = 0; i < dimensions; i++) {
-                        float a = embeddings[base + i];
-                        float b = query[i];
-                        dot += a * b;
-                        normA += a * a;
-                        normB += b * b;
-                    }
-                    
-                    if (normA == 0.0f || normB == 0.0f) {
-                        scores[gid] = 0.0f;
-                        return;
-                    }
-                    
-                    scores[gid] = dot / (sqrt(normA) * sqrt(normB));
-                }
-                
-                kernel void topk_simple(
-                    device const float* scores [[buffer(0)]],
-                    device uint* topk_indices [[buffer(1)]],
-                    device float* topk_scores [[buffer(2)]],
-                    constant uint& n [[buffer(3)]],
-                    constant uint& k [[buffer(4)]],
-                    uint gid [[thread_position_in_grid]])
-                {
-                    if (gid != 0) return;
-                    
-                    for (uint i = 0; i < k; i++) {
-                        topk_scores[i] = -2.0f;
-                        topk_indices[i] = UINT_MAX;
-                    }
-                    
-                    for (uint i = 0; i < n; i++) {
-                        float score = scores[i];
-                        
-                        if (score > topk_scores[k-1]) {
-                            uint pos = k - 1;
-                            while (pos > 0 && score > topk_scores[pos-1]) {
-                                topk_scores[pos] = topk_scores[pos-1];
-                                topk_indices[pos] = topk_indices[pos-1];
-                                pos--;
-                            }
-                            topk_scores[pos] = score;
-                            topk_indices[pos] = i;
-                        }
-                    }
-                }
-                
-                kernel void normalize_vectors(
-                    device float* vectors [[buffer(0)]],
-                    constant uint& n [[buffer(1)]],
-                    constant uint& dimensions [[buffer(2)]],
-                    uint gid [[thread_position_in_grid]])
-                {
-                    if (gid >= n) return;
-                    
-                    uint base = gid * dimensions;
-                    
-                    float sum_sq = 0.0f;
-                    for (uint i = 0; i < dimensions; i++) {
-                        float v = vectors[base + i];
-                        sum_sq += v * v;
-                    }
-                    
-                    if (sum_sq == 0.0f) return;
-                    
-                    float inv_norm = rsqrt(sum_sq);
-                    
-                    for (uint i = 0; i < dimensions; i++) {
-                        vectors[base + i] *= inv_norm;
-                    }
-                }
-            )";
+            NSString* shaderSource =
+                @"#include <metal_stdlib>\n"
+                @"using namespace metal;\n"
+                @"\n"
+                @"kernel void cosine_similarity_normalized(\n"
+                @"    device const float* embeddings [[buffer(0)]],\n"
+                @"    device const float* query [[buffer(1)]],\n"
+                @"    device float* scores [[buffer(2)]],\n"
+                @"    constant uint& n [[buffer(3)]],\n"
+                @"    constant uint& dimensions [[buffer(4)]],\n"
+                @"    uint gid [[thread_position_in_grid]])\n"
+                @"{\n"
+                @"    if (gid >= n) return;\n"
+                @"    \n"
+                @"    float dot = 0.0f;\n"
+                @"    uint base = gid * dimensions;\n"
+                @"    \n"
+                @"    for (uint i = 0; i < dimensions; i++) {\n"
+                @"        dot += embeddings[base + i] * query[i];\n"
+                @"    }\n"
+                @"    \n"
+                @"    scores[gid] = dot;\n"
+                @"}\n"
+                @"\n"
+                @"kernel void cosine_similarity_full(\n"
+                @"    device const float* embeddings [[buffer(0)]],\n"
+                @"    device const float* query [[buffer(1)]],\n"
+                @"    device float* scores [[buffer(2)]],\n"
+                @"    constant uint& n [[buffer(3)]],\n"
+                @"    constant uint& dimensions [[buffer(4)]],\n"
+                @"    uint gid [[thread_position_in_grid]])\n"
+                @"{\n"
+                @"    if (gid >= n) return;\n"
+                @"    \n"
+                @"    float dot = 0.0f;\n"
+                @"    float normA = 0.0f;\n"
+                @"    float normB = 0.0f;\n"
+                @"    \n"
+                @"    uint base = gid * dimensions;\n"
+                @"    \n"
+                @"    for (uint i = 0; i < dimensions; i++) {\n"
+                @"        float a = embeddings[base + i];\n"
+                @"        float b = query[i];\n"
+                @"        dot += a * b;\n"
+                @"        normA += a * a;\n"
+                @"        normB += b * b;\n"
+                @"    }\n"
+                @"    \n"
+                @"    if (normA == 0.0f || normB == 0.0f) {\n"
+                @"        scores[gid] = 0.0f;\n"
+                @"        return;\n"
+                @"    }\n"
+                @"    \n"
+                @"    scores[gid] = dot / (sqrt(normA) * sqrt(normB));\n"
+                @"}\n"
+                @"\n"
+                @"kernel void topk_simple(\n"
+                @"    device const float* scores [[buffer(0)]],\n"
+                @"    device uint* topk_indices [[buffer(1)]],\n"
+                @"    device float* topk_scores [[buffer(2)]],\n"
+                @"    constant uint& n [[buffer(3)]],\n"
+                @"    constant uint& k [[buffer(4)]],\n"
+                @"    uint gid [[thread_position_in_grid]])\n"
+                @"{\n"
+                @"    if (gid != 0) return;\n"
+                @"    \n"
+                @"    for (uint i = 0; i < k; i++) {\n"
+                @"        topk_scores[i] = -2.0f;\n"
+                @"        topk_indices[i] = UINT_MAX;\n"
+                @"    }\n"
+                @"    \n"
+                @"    for (uint i = 0; i < n; i++) {\n"
+                @"        float score = scores[i];\n"
+                @"        \n"
+                @"        if (score > topk_scores[k-1]) {\n"
+                @"            uint pos = k - 1;\n"
+                @"            while (pos > 0 && score > topk_scores[pos-1]) {\n"
+                @"                topk_scores[pos] = topk_scores[pos-1];\n"
+                @"                topk_indices[pos] = topk_indices[pos-1];\n"
+                @"                pos--;\n"
+                @"            }\n"
+                @"            topk_scores[pos] = score;\n"
+                @"            topk_indices[pos] = i;\n"
+                @"        }\n"
+                @"    }\n"
+                @"}\n"
+                @"\n"
+                @"kernel void normalize_vectors(\n"
+                @"    device float* vectors [[buffer(0)]],\n"
+                @"    constant uint& n [[buffer(1)]],\n"
+                @"    constant uint& dimensions [[buffer(2)]],\n"
+                @"    uint gid [[thread_position_in_grid]])\n"
+                @"{\n"
+                @"    if (gid >= n) return;\n"
+                @"    \n"
+                @"    uint base = gid * dimensions;\n"
+                @"    \n"
+                @"    float sum_sq = 0.0f;\n"
+                @"    for (uint i = 0; i < dimensions; i++) {\n"
+                @"        float v = vectors[base + i];\n"
+                @"        sum_sq += v * v;\n"
+                @"    }\n"
+                @"    \n"
+                @"    if (sum_sq == 0.0f) return;\n"
+                @"    \n"
+                @"    float inv_norm = rsqrt(sum_sq);\n"
+                @"    \n"
+                @"    for (uint i = 0; i < dimensions; i++) {\n"
+                @"        vectors[base + i] *= inv_norm;\n"
+                @"    }\n"
+                @"}\n";
             
             ctx->library = [device newLibraryWithSource:shaderSource options:nil error:&error];
             if (!ctx->library) {

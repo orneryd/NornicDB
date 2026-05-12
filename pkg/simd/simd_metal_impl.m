@@ -46,141 +46,140 @@ typedef struct {
 } SIMDMetalContext;
 
 // Embedded Metal shaders for SIMD operations
-static NSString* simd_shader_source = @R"(
-#include <metal_stdlib>
-using namespace metal;
-
-// Parallel reduction helper - sum across threadgroup
-kernel void reduce_sum(
-    device const float* input [[buffer(0)]],
-    device float* output [[buffer(1)]],
-    constant uint& n [[buffer(2)]],
-    threadgroup float* shared [[threadgroup(0)]],
-    uint gid [[thread_position_in_grid]],
-    uint lid [[thread_position_in_threadgroup]],
-    uint tg_size [[threads_per_threadgroup]])
-{
-    float sum = 0.0f;
-    for (uint i = gid; i < n; i += tg_size * 64) { // 64 threadgroups
-        sum += input[i];
-    }
-    shared[lid] = sum;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    
-    // Reduce within threadgroup
-    for (uint s = tg_size / 2; s > 0; s >>= 1) {
-        if (lid < s) {
-            shared[lid] += shared[lid + s];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    
-    if (lid == 0) {
-        output[0] = shared[0];
-    }
-}
-
-// Batch cosine similarity - each thread handles one vector
-kernel void batch_cosine_similarity(
-    device const float* embeddings [[buffer(0)]],
-    device const float* query [[buffer(1)]],
-    device float* scores [[buffer(2)]],
-    constant uint& num_vectors [[buffer(3)]],
-    constant uint& dimensions [[buffer(4)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= num_vectors) return;
-    
-    float dot = 0.0f;
-    float normA = 0.0f;
-    float normB = 0.0f;
-    
-    uint base = gid * dimensions;
-    
-    // Vectorized inner loop (Metal compiler will optimize this)
-    for (uint i = 0; i < dimensions; i++) {
-        float a = embeddings[base + i];
-        float b = query[i];
-        dot += a * b;
-        normA += a * a;
-        normB += b * b;
-    }
-    
-    float denom = sqrt(normA * normB);
-    scores[gid] = (denom > 0.0f) ? (dot / denom) : 0.0f;
-}
-
-// Batch dot product - each thread handles one vector
-kernel void batch_dot_product(
-    device const float* embeddings [[buffer(0)]],
-    device const float* query [[buffer(1)]],
-    device float* results [[buffer(2)]],
-    constant uint& num_vectors [[buffer(3)]],
-    constant uint& dimensions [[buffer(4)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= num_vectors) return;
-    
-    float dot = 0.0f;
-    uint base = gid * dimensions;
-    
-    for (uint i = 0; i < dimensions; i++) {
-        dot += embeddings[base + i] * query[i];
-    }
-    
-    results[gid] = dot;
-}
-
-// Batch Euclidean distance - each thread handles one vector
-kernel void batch_euclidean_distance(
-    device const float* embeddings [[buffer(0)]],
-    device const float* query [[buffer(1)]],
-    device float* distances [[buffer(2)]],
-    constant uint& num_vectors [[buffer(3)]],
-    constant uint& dimensions [[buffer(4)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= num_vectors) return;
-    
-    float sum = 0.0f;
-    uint base = gid * dimensions;
-    
-    for (uint i = 0; i < dimensions; i++) {
-        float diff = embeddings[base + i] - query[i];
-        sum += diff * diff;
-    }
-    
-    distances[gid] = sqrt(sum);
-}
-
-// Batch normalize - each thread handles one vector
-kernel void batch_normalize(
-    device float* vectors [[buffer(0)]],
-    constant uint& num_vectors [[buffer(1)]],
-    constant uint& dimensions [[buffer(2)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= num_vectors) return;
-    
-    uint base = gid * dimensions;
-    
-    // Compute norm
-    float sum = 0.0f;
-    for (uint i = 0; i < dimensions; i++) {
-        float v = vectors[base + i];
-        sum += v * v;
-    }
-    
-    float norm = sqrt(sum);
-    if (norm == 0.0f) return;
-    
-    // Normalize in-place
-    float inv_norm = 1.0f / norm;
-    for (uint i = 0; i < dimensions; i++) {
-        vectors[base + i] *= inv_norm;
-    }
-}
-)";
+static NSString* simd_shader_source =
+    @"#include <metal_stdlib>\n"
+    @"using namespace metal;\n"
+    @"\n"
+    @"// Parallel reduction helper - sum across threadgroup\n"
+    @"kernel void reduce_sum(\n"
+    @"    device const float* input [[buffer(0)]],\n"
+    @"    device float* output [[buffer(1)]],\n"
+    @"    constant uint& n [[buffer(2)]],\n"
+    @"    threadgroup float* shared [[threadgroup(0)]],\n"
+    @"    uint gid [[thread_position_in_grid]],\n"
+    @"    uint lid [[thread_position_in_threadgroup]],\n"
+    @"    uint tg_size [[threads_per_threadgroup]])\n"
+    @"{\n"
+    @"    float sum = 0.0f;\n"
+    @"    for (uint i = gid; i < n; i += tg_size * 64) { // 64 threadgroups\n"
+    @"        sum += input[i];\n"
+    @"    }\n"
+    @"    shared[lid] = sum;\n"
+    @"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+    @"    \n"
+    @"    // Reduce within threadgroup\n"
+    @"    for (uint s = tg_size / 2; s > 0; s >>= 1) {\n"
+    @"        if (lid < s) {\n"
+    @"            shared[lid] += shared[lid + s];\n"
+    @"        }\n"
+    @"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+    @"    }\n"
+    @"    \n"
+    @"    if (lid == 0) {\n"
+    @"        output[0] = shared[0];\n"
+    @"    }\n"
+    @"}\n"
+    @"\n"
+    @"// Batch cosine similarity - each thread handles one vector\n"
+    @"kernel void batch_cosine_similarity(\n"
+    @"    device const float* embeddings [[buffer(0)]],\n"
+    @"    device const float* query [[buffer(1)]],\n"
+    @"    device float* scores [[buffer(2)]],\n"
+    @"    constant uint& num_vectors [[buffer(3)]],\n"
+    @"    constant uint& dimensions [[buffer(4)]],\n"
+    @"    uint gid [[thread_position_in_grid]])\n"
+    @"{\n"
+    @"    if (gid >= num_vectors) return;\n"
+    @"    \n"
+    @"    float dot = 0.0f;\n"
+    @"    float normA = 0.0f;\n"
+    @"    float normB = 0.0f;\n"
+    @"    \n"
+    @"    uint base = gid * dimensions;\n"
+    @"    \n"
+    @"    // Vectorized inner loop (Metal compiler will optimize this)\n"
+    @"    for (uint i = 0; i < dimensions; i++) {\n"
+    @"        float a = embeddings[base + i];\n"
+    @"        float b = query[i];\n"
+    @"        dot += a * b;\n"
+    @"        normA += a * a;\n"
+    @"        normB += b * b;\n"
+    @"    }\n"
+    @"    \n"
+    @"    float denom = sqrt(normA * normB);\n"
+    @"    scores[gid] = (denom > 0.0f) ? (dot / denom) : 0.0f;\n"
+    @"}\n"
+    @"\n"
+    @"// Batch dot product - each thread handles one vector\n"
+    @"kernel void batch_dot_product(\n"
+    @"    device const float* embeddings [[buffer(0)]],\n"
+    @"    device const float* query [[buffer(1)]],\n"
+    @"    device float* results [[buffer(2)]],\n"
+    @"    constant uint& num_vectors [[buffer(3)]],\n"
+    @"    constant uint& dimensions [[buffer(4)]],\n"
+    @"    uint gid [[thread_position_in_grid]])\n"
+    @"{\n"
+    @"    if (gid >= num_vectors) return;\n"
+    @"    \n"
+    @"    float dot = 0.0f;\n"
+    @"    uint base = gid * dimensions;\n"
+    @"    \n"
+    @"    for (uint i = 0; i < dimensions; i++) {\n"
+    @"        dot += embeddings[base + i] * query[i];\n"
+    @"    }\n"
+    @"    \n"
+    @"    results[gid] = dot;\n"
+    @"}\n"
+    @"\n"
+    @"// Batch Euclidean distance - each thread handles one vector\n"
+    @"kernel void batch_euclidean_distance(\n"
+    @"    device const float* embeddings [[buffer(0)]],\n"
+    @"    device const float* query [[buffer(1)]],\n"
+    @"    device float* distances [[buffer(2)]],\n"
+    @"    constant uint& num_vectors [[buffer(3)]],\n"
+    @"    constant uint& dimensions [[buffer(4)]],\n"
+    @"    uint gid [[thread_position_in_grid]])\n"
+    @"{\n"
+    @"    if (gid >= num_vectors) return;\n"
+    @"    \n"
+    @"    float sum = 0.0f;\n"
+    @"    uint base = gid * dimensions;\n"
+    @"    \n"
+    @"    for (uint i = 0; i < dimensions; i++) {\n"
+    @"        float diff = embeddings[base + i] - query[i];\n"
+    @"        sum += diff * diff;\n"
+    @"    }\n"
+    @"    \n"
+    @"    distances[gid] = sqrt(sum);\n"
+    @"}\n"
+    @"\n"
+    @"// Batch normalize - each thread handles one vector\n"
+    @"kernel void batch_normalize(\n"
+    @"    device float* vectors [[buffer(0)]],\n"
+    @"    constant uint& num_vectors [[buffer(1)]],\n"
+    @"    constant uint& dimensions [[buffer(2)]],\n"
+    @"    uint gid [[thread_position_in_grid]])\n"
+    @"{\n"
+    @"    if (gid >= num_vectors) return;\n"
+    @"    \n"
+    @"    uint base = gid * dimensions;\n"
+    @"    \n"
+    @"    // Compute norm\n"
+    @"    float sum = 0.0f;\n"
+    @"    for (uint i = 0; i < dimensions; i++) {\n"
+    @"        float v = vectors[base + i];\n"
+    @"        sum += v * v;\n"
+    @"    }\n"
+    @"    \n"
+    @"    float norm = sqrt(sum);\n"
+    @"    if (norm == 0.0f) return;\n"
+    @"    \n"
+    @"    // Normalize in-place\n"
+    @"    float inv_norm = 1.0f / norm;\n"
+    @"    for (uint i = 0; i < dimensions; i++) {\n"
+    @"        vectors[base + i] *= inv_norm;\n"
+    @"    }\n"
+    @"}\n";
 
 // Global context (singleton pattern)
 static SIMDMetalContext* g_simd_ctx = NULL;

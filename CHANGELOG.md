@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - See `docs/latest-untagged.md` for the untagged `latest` image changelog.
 
+## [v1.1.0-preview] - 2026-05-12
+
+### Added
+
+- **Cypher-native knowledge policy administration**:
+  - added `CREATE`, `ALTER`, `DROP`, and `SHOW` support for knowledge-policy management so decay and promotion behavior can be administered directly through Cypher.
+  - added built-in `CALL nornicdb.knowledgepolicy.*` procedures for inspecting policy state, profiles, resolution, and deindexing status.
+  - added the corresponding browser-side management flow so the policy UI now works against the Cypher-backed surface instead of a separate admin API.
+
+- **Knowledge lifecycle scoring and visibility control**:
+  - added the new knowledge-policy runtime model, including shared profile resolution, access metadata indexing, scoring-before-visibility, and suppression/deindex infrastructure.
+  - added Cypher functions for policy-aware scoring and diagnostics, including `decayScore`, `decay`, and `policy`.
+
+- **End-to-end observability stack**:
+  - added OpenTelemetry tracing across HTTP, Cypher planning and execution, Bolt sessions, storage operations, embeddings, and search flows.
+  - added Helm chart support for observability deployment, including `ServiceMonitor`, `PodMonitor`, startup/readiness/liveness probes, and default network-policy wiring.
+  - added a curated Grafana dashboard, Prometheus alert rules, and an auto-generated metrics reference covering the current exported metric catalog.
+  - added pprof hooks for goroutine and mutex profiling to make production debugging easier.
+
+- **More compact storage internals**:
+  - added internal numerical IDs and a freelist-based key reclamation path to reduce storage overhead while keeping keys monotonic and reusable.
+
+### Changed
+
+- **Knowledge-policy operator surface**:
+  - moved knowledge-policy administration away from the dedicated HTTP API surface and onto the new Cypher DDL and procedure model.
+  - aligned the admin UI, runtime behavior, and diagnostics around the new suppression-anchor and decay-profile model.
+
+- **Write-heavy query execution**:
+  - expanded and tuned bulk-insert and canonical write paths so more high-volume ingestion shapes avoid unnecessary reads and stay on optimized execution paths.
+  - refreshed the bulk-insert cookbook and related operator guidance to match the current fast-path behavior.
+
+- **Management UI grid behavior**:
+  - updated the browser management pages to use newer `uiGrid` capabilities for database and retention administration views.
+
+- **Local LLM runtime bits**:
+  - upgraded the bundled `llama.cpp` integration to `b9106`.
+
+### Fixed
+
+- **Knowledge-policy correctness and stability**:
+  - fixed decay diagnostics, targeted suppression invalidation, score-argument handling, and reveal-path correctness.
+  - hardened embed/reveal worker concurrency so the new knowledge lifecycle features behave predictably under load.
+
+- **Storage metadata and schema recovery**:
+  - fixed MVCC schema metadata recovery, edge-between deindexing behavior, and schema lock leak scenarios.
+  - tightened uniqueness-vs-constraint-contract handling in the affected storage and Cypher paths.
+
+- **Observability safety**:
+  - fixed trace redaction and baggage filtering so credentials and other sensitive values are not emitted into spans.
+  - fixed nil-pointer and span-property edge cases in the observability pipeline.
+
+- **Cross-platform build and packaging reliability**:
+  - fixed Windows and macOS build and packaging regressions that were affecting release CI and local packaging flows.
+
+### Compatibility
+
+- **MVCC is now opt-in by default**:
+  - the default retained-version count is now `0`, which disables MVCC history unless explicitly enabled in configuration.
+
+### Documentation
+
+- Added and refreshed:
+  - the metrics reference generated from the current observability catalog
+  - Helm, dashboard, and alerting guidance for the new observability stack
+  - knowledge-policy and decay diagnostics documentation aligned to the Cypher-backed administration model
+  - bulk-insert cookbook material for the current optimized write paths
+
+### Technical Details
+
+- **Range covered**: `v1.0.45..HEAD`
+- **Commits in range**: 62 (non-merge)
+- **Repository delta**: 490 files changed, +65,079 / -8,480 lines
+- **Primary focus areas**: knowledge-policy lifecycle management, full-stack observability, storage compaction and write-path performance, cross-platform packaging reliability, and release-facing documentation.
+
 ## [v1.0.45] - 2026-05-08
 
 ### Added

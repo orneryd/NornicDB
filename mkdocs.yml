@@ -97,6 +97,11 @@ nav:
       - First Queries: getting-started/first-queries.md
   - User Guides:
       - Overview: user-guides/README.md
+      - Knowledge-Layer Policies: user-guides/knowledge-layer-policies.md
+      - Knowledge Policy Tuning and Testing: user-guides/knowledge-policy-tuning-testing.md
+      - Decay Profiles: user-guides/decay-profiles.md
+      - Promotion Policies: user-guides/promotion-policies.md
+      - Visibility Suppression and Deindex: user-guides/visibility-suppression-deindex.md
       - Vector Search: user-guides/vector-search.md
       - Hybrid Search: user-guides/hybrid-search.md
       - Historical Reads & MVCC Retention: user-guides/historical-reads-mvcc-retention.md
