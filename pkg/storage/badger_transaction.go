@@ -2332,16 +2332,28 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 
 // validateAllConstraints performs final validation before commit.
 // acquireUniqueConstraintCommitLocks collects the unique constraints touched
-// by this transaction's pending nodes and acquires per-(label, property)
-// mutexes on each affected schema. Returns a release function that unlocks
-// in reverse order; safe to defer.
+// by this transaction's pending nodes and acquires per-(label, property,
+// value) mutexes on each affected schema. Returns a release function that
+// unlocks in reverse order; safe to defer.
+//
+// Locks are per-value, not per-constraint: a transaction adding nodes with
+// uids "X" and "Y" acquires two separate locks; a peer transaction with
+// uids "X" and "Z" serializes only against the "X" lock and commits its
+// "Z" write in parallel. This was changed from coarser per-(label,
+// property) granularity that effectively serialized every writer touching
+// a UNIQUE-constrained property — see uniqueConstraintLockKey doc.
 //
 // Locks are partitioned by namespace because each namespace has its own
 // SchemaManager and its own constraint registry — a transaction that spans
-// multiple namespaces locks each namespace's affected constraints
-// independently. Namespaces are processed in sorted order so that two
-// transactions touching overlapping namespaces always acquire locks in the
-// same order, eliminating the AB-BA deadlock risk.
+// multiple namespaces locks each namespace's affected values independently.
+// Namespaces are processed in sorted order so that two transactions
+// touching overlapping namespaces always acquire locks in the same order,
+// eliminating the AB-BA deadlock risk.
+//
+// Pending nodes with non-comparable property values skip lock acquisition
+// for that property. Constraint validation still fires at commit time;
+// commit-window serialization is best-effort for non-comparable types
+// (which UNIQUE-constrained Eshu/Neo4j workloads do not use in practice).
 func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
 	if len(tx.pendingNodes) == 0 {
 		return func() {}
@@ -2365,13 +2377,25 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
 				continue
 			}
 			prop := c.Properties[0]
-			if _, has := node.Properties[prop]; !has {
+			rawValue, has := node.Properties[prop]
+			if !has {
+				continue
+			}
+			canonicalValue, ok := uniqueConstraintValueKey(rawValue)
+			if !ok {
+				// Non-comparable value: skip lock acquisition. Validation
+				// still runs at commit; commit-window serialization is
+				// best-effort for these (no constraint cache anyway).
 				continue
 			}
 			if perNamespace[dbName] == nil {
 				perNamespace[dbName] = make(map[uniqueConstraintLockKey]struct{})
 			}
-			perNamespace[dbName][uniqueConstraintLockKey{label: c.Label, property: prop}] = struct{}{}
+			perNamespace[dbName][uniqueConstraintLockKey{
+				label:    c.Label,
+				property: prop,
+				value:    canonicalValue,
+			}] = struct{}{}
 		}
 	}
 	if len(perNamespace) == 0 {

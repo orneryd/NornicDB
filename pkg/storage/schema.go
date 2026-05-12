@@ -706,28 +706,50 @@ func isComparableConstraintValue(value interface{}) bool {
 	return reflect.TypeOf(value).Comparable()
 }
 
-// uniqueConstraintLockKey identifies one (label, property) pair for the
-// purpose of acquiring a commit-time mutex. Two transactions whose pending
-// nodes touch overlapping keys serialize at commit; transactions touching
-// disjoint constraints commit in parallel.
+// uniqueConstraintLockKey identifies one (label, property, value) triple for
+// the purpose of acquiring a commit-time mutex. Two transactions whose
+// pending nodes touch the same (label, property, value) serialize at commit;
+// transactions touching disjoint values commit in parallel — the lock
+// granularity is per-key-value, not per-constraint.
+//
+// The value is stored in its canonical comparable form returned by
+// uniqueConstraintValueKey so semantically equal but type-distinct values
+// (e.g. int and int64) hash to the same lock and serialize correctly. Values
+// that are not comparable cannot acquire a lock; their constraint is still
+// validated at commit but without commit-window serialization. (In practice
+// every UNIQUE-constrained property in Eshu and Neo4j-compatible workloads
+// uses comparable scalar types — strings, ints, floats, bools.)
+//
+// Lock granularity history: an earlier per-(label, property) design
+// effectively serialized every writer touching any value of a constrained
+// property. Under bootstrap-index Pass 2 fan-out (8 projector workers + the
+// collector + the ingester all writing TerraformResource nodes with
+// disjoint uids), this collapsed throughput to single-writer levels — a
+// "serialization workaround" in disguise. Per-value locking lets disjoint
+// writers commit concurrently while still preventing the silent-overwrite
+// race that motivated the lock.
 type uniqueConstraintLockKey struct {
 	label    string
 	property string
+	value    interface{}
 }
 
-// acquireUniqueConstraintCommitLocks acquires per-(label, property) mutexes
-// in a deterministic order (sorted by label, then property) and returns a
-// release function. Deterministic ordering eliminates the AB-BA deadlock
-// risk when two transactions both touch the same N>1 constraints.
+// acquireUniqueConstraintCommitLocks acquires per-(label, property, value)
+// mutexes in a deterministic order (sorted by label, then property, then a
+// stable string form of the value) and returns a release function.
+// Deterministic ordering eliminates the AB-BA deadlock risk when two
+// transactions both touch overlapping sets of constrained values.
 //
 // Duplicate keys in the input are deduplicated. An empty input returns a
 // no-op release function so callers can safely defer the result regardless
 // of whether locks were acquired.
 //
-// The lock guards the entire commit window — validateAllConstraints,
-// badgerTx.Commit, and the RegisterUniqueValue calls that publish committed
-// values to the constraint cache — so a subsequent transaction's
-// validation always observes a coherent cache.
+// The lock guards the entire commit window for its specific value —
+// validateAllConstraints, badgerTx.Commit, and the RegisterUniqueValue call
+// that publishes the committed value to the constraint cache — so a
+// subsequent transaction touching the same value always observes a coherent
+// cache. Transactions touching disjoint values acquire disjoint locks and
+// commit in parallel.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstraintLockKey) func() {
 	if len(keys) == 0 {
 		return func() {}
@@ -745,7 +767,10 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstra
 		if deduped[i].label != deduped[j].label {
 			return deduped[i].label < deduped[j].label
 		}
-		return deduped[i].property < deduped[j].property
+		if deduped[i].property != deduped[j].property {
+			return deduped[i].property < deduped[j].property
+		}
+		return fmt.Sprintf("%v", deduped[i].value) < fmt.Sprintf("%v", deduped[j].value)
 	})
 
 	sm.uniqueConstraintCommitLocksMu.Lock()
