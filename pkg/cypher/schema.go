@@ -75,6 +75,9 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 			"Schema DDL on composite databases requires a constituent target. " +
 			"Use USE <composite>.<alias> to target a specific constituent")
 	}
+	if err := flushPendingAsyncWritesBeforeSchemaDDL(e.storage); err != nil {
+		return nil, err
+	}
 
 	upper := strings.ToUpper(cypher)
 
@@ -104,6 +107,34 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	}
 
 	return result, err
+}
+
+func flushPendingAsyncWritesBeforeSchemaDDL(engine storage.Engine) error {
+	visited := make(map[storage.Engine]bool)
+	for engine != nil && !visited[engine] {
+		visited[engine] = true
+
+		if async, ok := engine.(interface {
+			HasPendingWrites() bool
+			Flush() error
+		}); ok {
+			if async.HasPendingWrites() {
+				if err := async.Flush(); err != nil {
+					return fmt.Errorf("flush pending async writes before schema DDL: %w", err)
+				}
+			}
+		}
+
+		switch wrapper := engine.(type) {
+		case interface{ GetEngine() storage.Engine }:
+			engine = wrapper.GetEngine()
+		case interface{ GetInnerEngine() storage.Engine }:
+			engine = wrapper.GetInnerEngine()
+		default:
+			engine = nil
+		}
+	}
+	return nil
 }
 
 // executeCreateConstraint handles CREATE CONSTRAINT commands.
@@ -1428,7 +1459,8 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 		if !ok {
 			continue
 		}
-		if err := schema.PropertyIndexInsert(label, property, node.ID, value); err != nil {
+		nodeID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)
+		if err := schema.PropertyIndexInsert(label, property, nodeID, value); err != nil {
 			return fmt.Errorf("failed to backfill property index %s(%s): %w", label, property, err)
 		}
 	}

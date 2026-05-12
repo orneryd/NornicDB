@@ -2272,6 +2272,20 @@ type transactionStorageWrapper struct {
 	mutatedNodeIDsMu sync.Mutex
 }
 
+func (w *transactionStorageWrapper) Namespace() string {
+	if w == nil {
+		return ""
+	}
+	return w.namespace
+}
+
+func (w *transactionStorageWrapper) GetEngine() storage.Engine {
+	if w == nil {
+		return nil
+	}
+	return w.underlying
+}
+
 func (w *transactionStorageWrapper) markMutatedNodeID(id storage.NodeID) {
 	if id == "" || w.mutatedNodeIDs == nil {
 		return

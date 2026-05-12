@@ -68,12 +68,13 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 		if node == nil {
 			continue
 		}
+		storageNodeID := EnsureNodeIDDatabasePrefixForEngine(engine, node.ID)
 		for _, label := range node.Labels {
 			for propName, propValue := range node.Properties {
-				if err := schema.CheckUniqueConstraint(label, propName, propValue, node.ID); err != nil {
+				if err := schema.CheckUniqueConstraint(label, propName, propValue, storageNodeID); err != nil {
 					return fmt.Errorf("refresh unique constraint values: %w", err)
 				}
-				schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+				schema.RegisterUniqueValue(label, propName, propValue, storageNodeID)
 			}
 		}
 	}
