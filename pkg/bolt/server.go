@@ -1865,8 +1865,23 @@ func mapBoltQueryError(err error) (code, message string) {
 // mapBoltCommitError preserves Bolt's commit-failed fallback for ordinary
 // errors while allowing retryable transaction conflicts to surface as Neo4j
 // transient errors.
+//
+// A commit-time UNIQUE constraint violation from a concurrent MERGE race is
+// resolvable by a fresh attempt: the loser, on retry, observes the peer's
+// now-committed node via the constraint cache and the MERGE matches. The
+// raw storage error does not wrap ErrTransactionConflict (it is built via
+// fmt.Errorf), so the standard sentinel-based mapper would classify it as
+// a ClientError. Pattern-match the error body via
+// nornicerrors.IsMergeCommitTimeUniqueConflict so neo4j-go-driver's
+// session.ExecuteWrite (and any retryable-error-aware client) auto-retries
+// against the post-commit cache state. Genuine duplicate-key violations
+// from non-MERGE writes will share the same body but originate from a path
+// that does not carry the commit-prefix substrings the classifier requires.
 func mapBoltCommitError(err error) (code, message string) {
 	code, message = mapBoltQueryError(err)
+	if err != nil && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
 	if code == "Neo.ClientError.Statement.SyntaxError" {
 		return "Neo.ClientError.Transaction.TransactionCommitFailed", message
 	}
