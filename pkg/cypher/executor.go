@@ -1812,10 +1812,104 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 
-// executeWithImplicitTransaction wraps a write query in an implicit transaction.
-// If any part of the query fails, all changes are rolled back atomically.
-// This prevents data corruption from partially executed queries.
+// mergeCommitRetryBudget bounds the number of additional implicit-transaction
+// attempts permitted after a commit-time UNIQUE constraint violation on a
+// MERGE-shaped query. Concurrent MERGE on the same constrained key can race
+// past the deferred-validation pass (each transaction sees the cache as
+// empty while the peer is in flight); the first commit lands, the second
+// commit fires UNIQUE at the storage layer. Re-running the implicit
+// transaction makes the loser see the now-committed peer node and converge
+// to MATCH semantics. Bounded so a genuine UNIQUE conflict (truly
+// duplicate user-provided values that no MERGE will ever resolve) still
+// fails fast.
+const mergeCommitRetryBudget = 5
+
+// mergeCommitRetryBaseDelay is the initial backoff before retrying a
+// commit-time MERGE/UNIQUE conflict. Doubles each attempt. Chosen so that
+// 5 retries span a window long enough to outlast a typical peer
+// transaction's commit, while still finishing within a single Bolt RUN
+// latency budget on success.
+const mergeCommitRetryBaseDelay = 50 * time.Millisecond
+
+// commitMergeRetryableError marks a "failed to commit implicit transaction"
+// error as resulting from a concurrent-MERGE race that a fresh attempt
+// would resolve. It is set only inside executeWithImplicitTransactionAttempt
+// and consumed only by executeWithImplicitTransaction's retry loop. The
+// wrapped error remains the original commit-time error so callers that
+// inspect error strings (e.g. "failed to commit implicit transaction")
+// observe unchanged behavior on the final attempt.
+type commitMergeRetryableError struct {
+	err error
+}
+
+func (e *commitMergeRetryableError) Error() string { return e.err.Error() }
+func (e *commitMergeRetryableError) Unwrap() error { return e.err }
+
+// isMergeCommitTimeUniqueConflict matches the storage-layer constraint
+// violation message that surfaces when a MERGE-driven CREATE loses a race
+// to a concurrent peer transaction. Both pre- and post-v1.0.45 NornicDB
+// shapes are accepted: older releases wrap as "failed to commit implicit
+// transaction: constraint violation:..." and v1.0.45+ wraps as
+// Neo.ClientError.Transaction.TransactionCommitFailed with body
+// "commit failed: constraint violation:...". Both describe the same race
+// class and are safe to retry on a MERGE-shaped statement.
+func isMergeCommitTimeUniqueConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "constraint violation") {
+		return false
+	}
+	if !strings.Contains(msg, "UNIQUE on") {
+		return false
+	}
+	if !strings.Contains(msg, "already exists") {
+		return false
+	}
+	return strings.Contains(msg, "failed to commit implicit transaction") ||
+		strings.Contains(msg, "commit failed") ||
+		strings.Contains(msg, "TransactionCommitFailed")
+}
+
+// executeWithImplicitTransaction wraps a write query in an implicit
+// transaction with bounded retry on commit-time UNIQUE conflicts for
+// MERGE-shaped statements. Without the retry, two Bolt sessions racing
+// to MERGE the same constrained key both pass the deferred-validation
+// pass against the (still-empty) constraint cache, both reach commit,
+// and the second commit fails with UNIQUE — even though MERGE's contract
+// is that the loser should MATCH the winning node, not fail. The retry
+// re-runs the entire implicit transaction; the next attempt sees the
+// peer's committed node and the MERGE matches.
+//
+// Non-MERGE queries and non-retryable commit failures (e.g. genuine
+// duplicate-key violations from user-provided data) bypass the retry
+// path and surface immediately.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	isMergeQuery := strings.Contains(upperQuery, "MERGE")
+	for attempt := 0; ; attempt++ {
+		result, err := e.executeWithImplicitTransactionAttempt(ctx, cypher, upperQuery)
+		if err == nil {
+			return result, nil
+		}
+		var retryable *commitMergeRetryableError
+		if !isMergeQuery || attempt >= mergeCommitRetryBudget || !errors.As(err, &retryable) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(mergeCommitRetryBaseDelay << uint(attempt)):
+		}
+	}
+}
+
+// executeWithImplicitTransactionAttempt is the single-attempt body of
+// executeWithImplicitTransaction. On commit-time UNIQUE conflict for a
+// concurrent-MERGE race, it wraps the error in commitMergeRetryableError
+// so the outer wrapper can decide whether to retry. All other failure
+// modes return as-is.
+func (e *StorageExecutor) executeWithImplicitTransactionAttempt(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -1965,7 +2059,22 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
 		}
-		return nil, fmt.Errorf("failed to commit implicit transaction: %w", err)
+		wrapped := fmt.Errorf("failed to commit implicit transaction: %w", err)
+		// A commit-time UNIQUE constraint violation on a MERGE-shaped query
+		// signals a race with a peer transaction that committed a node with
+		// the same constrained property between this transaction's
+		// deferred-validation pass and its commit. The outer wrapper
+		// re-runs the implicit transaction so the loser observes the
+		// peer's now-committed node and the MERGE matches.
+		//
+		// Classify against the WRAPPED error so the commit-prefix substring
+		// the classifier looks for is present; tx.Commit's raw error wraps
+		// the constraint violation but does not add a "failed to commit"
+		// prefix on its own.
+		if isMergeCommitTimeUniqueConflict(wrapped) && strings.Contains(upperQuery, "MERGE") {
+			return nil, &commitMergeRetryableError{err: wrapped}
+		}
+		return nil, wrapped
 	}
 
 	// Attach receipt metadata if WAL markers were recorded.

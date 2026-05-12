@@ -74,6 +74,16 @@ func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 type SchemaManager struct {
 	mu sync.RWMutex
 
+	// Per-(label, property) commit-time mutexes for unique constraints.
+	// Acquired by BadgerTransaction.Commit BEFORE validateAllConstraints and
+	// released AFTER RegisterUniqueValue, so that two transactions touching
+	// the same unique constraint cannot both pass validation against an
+	// empty cache and both register conflicting values. Created lazily on
+	// first acquisition; the registry mutex guards only the map itself, the
+	// per-key mutexes are independent.
+	uniqueConstraintCommitLocksMu sync.Mutex
+	uniqueConstraintCommitLocks   map[uniqueConstraintLockKey]*sync.Mutex
+
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
 	constraints             map[string]Constraint             // key: constraint name, stores all constraint types
@@ -694,6 +704,73 @@ func isComparableConstraintValue(value interface{}) bool {
 		return true
 	}
 	return reflect.TypeOf(value).Comparable()
+}
+
+// uniqueConstraintLockKey identifies one (label, property) pair for the
+// purpose of acquiring a commit-time mutex. Two transactions whose pending
+// nodes touch overlapping keys serialize at commit; transactions touching
+// disjoint constraints commit in parallel.
+type uniqueConstraintLockKey struct {
+	label    string
+	property string
+}
+
+// acquireUniqueConstraintCommitLocks acquires per-(label, property) mutexes
+// in a deterministic order (sorted by label, then property) and returns a
+// release function. Deterministic ordering eliminates the AB-BA deadlock
+// risk when two transactions both touch the same N>1 constraints.
+//
+// Duplicate keys in the input are deduplicated. An empty input returns a
+// no-op release function so callers can safely defer the result regardless
+// of whether locks were acquired.
+//
+// The lock guards the entire commit window — validateAllConstraints,
+// badgerTx.Commit, and the RegisterUniqueValue calls that publish committed
+// values to the constraint cache — so a subsequent transaction's
+// validation always observes a coherent cache.
+func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstraintLockKey) func() {
+	if len(keys) == 0 {
+		return func() {}
+	}
+	deduped := keys[:0:0]
+	seen := make(map[uniqueConstraintLockKey]struct{}, len(keys))
+	for _, k := range keys {
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		deduped = append(deduped, k)
+	}
+	sort.Slice(deduped, func(i, j int) bool {
+		if deduped[i].label != deduped[j].label {
+			return deduped[i].label < deduped[j].label
+		}
+		return deduped[i].property < deduped[j].property
+	})
+
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	if sm.uniqueConstraintCommitLocks == nil {
+		sm.uniqueConstraintCommitLocks = make(map[uniqueConstraintLockKey]*sync.Mutex)
+	}
+	locks := make([]*sync.Mutex, 0, len(deduped))
+	for _, k := range deduped {
+		m, ok := sm.uniqueConstraintCommitLocks[k]
+		if !ok {
+			m = &sync.Mutex{}
+			sm.uniqueConstraintCommitLocks[k] = m
+		}
+		locks = append(locks, m)
+	}
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+
+	for _, m := range locks {
+		m.Lock()
+	}
+	return func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			locks[i].Unlock()
+		}
+	}
 }
 
 // RegisterUniqueValue registers a value for a unique constraint.

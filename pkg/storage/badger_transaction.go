@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1366,6 +1367,22 @@ func (tx *BadgerTransaction) Commit() error {
 		return err
 	}
 
+	// Acquire per-(label, property) commit locks for every unique constraint
+	// touched by this transaction's pending nodes. Held across
+	// validateAllConstraints + badgerTx.Commit + the post-commit
+	// RegisterUniqueValue calls below so that a peer transaction touching the
+	// same constraint cannot pass validation against an empty cache while we
+	// are still committing. Without this lock, two concurrent transactions
+	// that both add a node with the same constrained property value both pass
+	// the deferred validation (cache empty for both), both reach
+	// badgerTx.Commit (Badger writes them under distinct node IDs so the KV
+	// layer does not detect the conflict), and both call RegisterUniqueValue —
+	// the second overwriting the first — leaving the UNIQUE constraint
+	// silently violated in storage. See cross_session_merge_unique_test.go
+	// for the reproduction.
+	releaseCommitLocks := tx.acquireUniqueConstraintCommitLocks()
+	defer releaseCommitLocks()
+
 	// Final constraint validation before commit
 	if err := tx.validateAllConstraints(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2314,6 +2331,78 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 }
 
 // validateAllConstraints performs final validation before commit.
+// acquireUniqueConstraintCommitLocks collects the unique constraints touched
+// by this transaction's pending nodes and acquires per-(label, property)
+// mutexes on each affected schema. Returns a release function that unlocks
+// in reverse order; safe to defer.
+//
+// Locks are partitioned by namespace because each namespace has its own
+// SchemaManager and its own constraint registry — a transaction that spans
+// multiple namespaces locks each namespace's affected constraints
+// independently. Namespaces are processed in sorted order so that two
+// transactions touching overlapping namespaces always acquire locks in the
+// same order, eliminating the AB-BA deadlock risk.
+func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() func() {
+	if len(tx.pendingNodes) == 0 {
+		return func() {}
+	}
+	perNamespace := make(map[string]map[uniqueConstraintLockKey]struct{})
+	for _, node := range tx.pendingNodes {
+		if node == nil {
+			continue
+		}
+		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
+		if !ok {
+			continue
+		}
+		schema := tx.engine.GetSchemaForNamespace(dbName)
+		if schema == nil {
+			continue
+		}
+		constraints := schema.GetConstraintsForLabels(node.Labels)
+		for _, c := range constraints {
+			if c.Type != ConstraintUnique || len(c.Properties) != 1 {
+				continue
+			}
+			prop := c.Properties[0]
+			if _, has := node.Properties[prop]; !has {
+				continue
+			}
+			if perNamespace[dbName] == nil {
+				perNamespace[dbName] = make(map[uniqueConstraintLockKey]struct{})
+			}
+			perNamespace[dbName][uniqueConstraintLockKey{label: c.Label, property: prop}] = struct{}{}
+		}
+	}
+	if len(perNamespace) == 0 {
+		return func() {}
+	}
+
+	namespaces := make([]string, 0, len(perNamespace))
+	for ns := range perNamespace {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	releases := make([]func(), 0, len(namespaces))
+	for _, ns := range namespaces {
+		schema := tx.engine.GetSchemaForNamespace(ns)
+		if schema == nil {
+			continue
+		}
+		keys := make([]uniqueConstraintLockKey, 0, len(perNamespace[ns]))
+		for k := range perNamespace[ns] {
+			keys = append(keys, k)
+		}
+		releases = append(releases, schema.acquireUniqueConstraintCommitLocks(keys))
+	}
+	return func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+}
+
 func (tx *BadgerTransaction) validateAllConstraints() error {
 	for _, node := range tx.pendingNodes {
 		if err := tx.validateNodeConstraints(node); err != nil {
