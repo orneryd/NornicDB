@@ -580,6 +580,10 @@ func (p RetentionPolicy) RetainsHistory() bool {
 // EngineOptions contains storage-engine-wide options shared across engine implementations.
 type EngineOptions struct {
 	RetentionPolicy RetentionPolicy
+	// IDFreelistTTL debounces numID recycling: after a node/edge is
+	// pruned, its numID stays parked for this long before allocations
+	// can reclaim it. Zero = engine default (30 seconds).
+	IDFreelistTTL time.Duration
 }
 
 func normalizeRetentionPolicy(policy RetentionPolicy) RetentionPolicy {

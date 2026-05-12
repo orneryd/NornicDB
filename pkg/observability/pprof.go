@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"runtime"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -61,6 +62,14 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("observability: listen on pprof %s: %w", listen, err)
 	}
+	// Enable mutex and block profiling when pprof is explicitly opted in.
+	// These are opt-in because each adds runtime overhead. Kept modest:
+	// MutexProfileFraction=1 records every contention event; BlockProfileRate
+	// = 1_000_000 ns (1ms) records every block longer than 1ms. Operators
+	// gathering /debug/pprof/{mutex,block} will see meaningful data
+	// without a full-detail tax on every goroutine switch.
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1_000_000)
 
 	mux := http.NewServeMux()
 	// Explicit registration — see godoc above for the rationale.
@@ -69,6 +78,15 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Named profiles (mutex, block, goroutine, heap, allocs, threadcreate)
+	// are all routed through pprof.Index, but we register explicit handles
+	// so operators can query them directly with short paths.
+	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
 
 	return &pprofListener{
 		srv: &http.Server{

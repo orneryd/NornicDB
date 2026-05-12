@@ -58,7 +58,11 @@ func buildMVCCSearchBenchFixture(tb testing.TB, nodeCount, historyDepth, dimensi
 func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions int, forceHNSW bool) mvccSearchBenchFixture {
 	tb.Helper()
 
-	engine := storage.NewMemoryEngine()
+	// Use the history-retaining engine so UpdateNode archives prior bodies
+	// into per-version MVCC records. The head-only default (NewMemoryEngine)
+	// overwrites in place and the pruner has nothing to reclaim — which is
+	// exactly what a test asserting `deleted > 0` needs to exercise.
+	engine := storage.NewMemoryEngineWithMVCCHistory()
 	tb.Cleanup(func() { _ = engine.Close() })
 
 	ctx := context.Background()

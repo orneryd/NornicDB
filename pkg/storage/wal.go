@@ -282,7 +282,16 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// syncMu serializes fsync syscalls without blocking Append. w.mu
+	// only guards Go-side state (bufio writer, encoder, segment
+	// bookkeeping) — the kernel-level fsync on w.file is independent
+	// once the bufio buffer has been drained. Holding w.mu across
+	// fsync was the top source of mutex contention during bulk seed
+	// workloads (see perf investigation notes), because batchSyncLoop
+	// ticks every 100ms and fsync can take tens of ms, blocking every
+	// Append waiting on w.mu for that duration.
+	syncMu   sync.Mutex
 	config   *WALConfig
 	file     *os.File
 	writer   *bufio.Writer
@@ -611,23 +620,63 @@ func (w *WAL) AppendTxAbort(database, txID, reason string) (uint64, error) {
 }
 
 // Sync flushes all buffered writes to disk.
+//
+// Lock discipline: we acquire w.mu ONLY to drain the bufio userspace
+// buffer to the kernel (a short, bounded memcpy+write), then release
+// it BEFORE the kernel fsync. The fsync is serialized instead through
+// syncMu so concurrent Sync() callers don't issue duplicate fsyncs
+// while still letting Append() progress against w.mu in parallel.
+// This eliminated the dominant mutex-contention source seen during
+// bulk seed: batchSyncLoop's 100ms ticks used to block every Append
+// for the duration of each fsync.
 func (w *WAL) Sync() error {
 	if w.closed.Load() {
 		return ErrWALClosed
 	}
 
+	// Step 1: drain the userspace buffer under w.mu.
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.syncLocked()
+	if err := w.writer.Flush(); err != nil {
+		w.mu.Unlock()
+		return fmt.Errorf("wal: flush failed: %w", err)
+	}
+	file := w.file
+	syncMode := w.config.SyncMode
+	w.mu.Unlock()
+
+	// Step 2: fsync without w.mu, so concurrent Appends don't block.
+	// syncMu serializes fsyncs themselves so we don't pile them up.
+	if syncMode != "none" {
+		w.syncMu.Lock()
+		err := file.Sync()
+		w.syncMu.Unlock()
+		if err != nil {
+			return fmt.Errorf("wal: sync failed: %w", err)
+		}
+	}
+
+	w.totalSyncs.Add(1)
+	w.lastSyncTime.Store(time.Now().UnixNano())
+	return nil
 }
 
+// syncLocked performs the full flush+fsync while the caller already
+// holds w.mu. Used by rotation and immediate-mode Append where write
+// and fsync must be atomic relative to the writer state. Hot-path
+// Sync() callers MUST go through Sync() instead so they can release
+// w.mu across the fsync.
 func (w *WAL) syncLocked() error {
 	if err := w.writer.Flush(); err != nil {
 		return fmt.Errorf("wal: flush failed: %w", err)
 	}
 
 	if w.config.SyncMode != "none" {
-		if err := w.file.Sync(); err != nil {
+		// Even under w.mu, coordinate with concurrent Sync() callers
+		// on syncMu so we don't double-fsync.
+		w.syncMu.Lock()
+		err := w.file.Sync()
+		w.syncMu.Unlock()
+		if err != nil {
 			return fmt.Errorf("wal: sync failed: %w", err)
 		}
 	}

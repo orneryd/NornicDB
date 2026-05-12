@@ -784,10 +784,10 @@ func TestBadgerEngine_GetEdgeBetweenHeadIndexSelfHealsFromLegacyScan(t *testing.
 	edge := testEdge("edge-head-heal-e1", n1.ID, n2.ID, "KNOWS")
 	require.NoError(t, engine.CreateEdge(edge))
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Delete(edgeBetweenHeadKey(n1.ID, n2.ID, "KNOWS")); err != nil {
+		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(n1.ID, n2.ID, "KNOWS")); err != nil {
 			return err
 		}
-		return txn.Delete(edgeBetweenIndexKey(n1.ID, n2.ID, "KNOWS", edge.ID))
+		return txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(n1.ID, n2.ID, "KNOWS", edge.ID))
 	}))
 
 	requireEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
@@ -843,10 +843,10 @@ func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
 		)
 		require.NoError(t, engine.CreateEdge(edge))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			if err := txn.Delete(edgeBetweenHeadKey(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
+			if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 				return err
 			}
-			return txn.Delete(edgeBetweenIndexKey(edge.StartNode, edge.EndNode, edge.Type, edge.ID))
+			return txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type, edge.ID))
 		}))
 	}
 
@@ -873,13 +873,28 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 	staleEdgeID := EdgeID(prefixTestID("edge-index-backfill-stale"))
 	require.NoError(t, engine.CreateEdge(edge))
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Delete(edgeBetweenIndexKey(n1.ID, n2.ID, "KNOWS", edge.ID)); err != nil {
+		if err := txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(n1.ID, n2.ID, "KNOWS", edge.ID)); err != nil {
 			return err
 		}
-		if err := txn.Delete(edgeBetweenHeadKey(n1.ID, n2.ID, "KNOWS")); err != nil {
+		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(n1.ID, n2.ID, "KNOWS")); err != nil {
 			return err
 		}
-		if err := txn.Set(edgeBetweenIndexKey(n1.ID, n3.ID, "STALE", staleEdgeID), []byte{}); err != nil {
+		// Allocate num IDs for the stale entry so we can construct a
+		// compact key for it (test simulates an orphan written under the
+		// current numID scheme).
+		n1Num, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, n1.ID)
+		if err != nil {
+			return err
+		}
+		n3Num, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, n3.ID)
+		if err != nil {
+			return err
+		}
+		staleEdgeNum, err := engine.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, staleEdgeID)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(edgeBetweenIndexKey(n1Num, n3Num, "STALE", staleEdgeNum), []byte(staleEdgeID)); err != nil {
 			return err
 		}
 		return txn.Delete(edgeBetweenIndexReadyKey)
@@ -912,10 +927,10 @@ func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *test
 	edge := testEdge("edge-index-async-e1", n1.ID, n2.ID, "KNOWS")
 	require.NoError(t, engine.CreateEdge(edge))
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Delete(edgeBetweenHeadKey(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
+		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 			return err
 		}
-		if err := txn.Delete(edgeBetweenIndexKey(edge.StartNode, edge.EndNode, edge.Type, edge.ID)); err != nil {
+		if err := txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type, edge.ID)); err != nil {
 			return err
 		}
 		return txn.Delete(edgeBetweenIndexReadyKey)
@@ -1660,57 +1675,49 @@ func TestKeyEncoding(t *testing.T) {
 		assert.Equal(t, prefixTestID("test-edge"), string(key[1:]))
 	})
 
-	t.Run("labelIndexKey and extraction", func(t *testing.T) {
-		key := labelIndexKey("Person", NodeID(prefixTestID("node-123")))
+	t.Run("labelIndexKey round-trips the numID suffix", func(t *testing.T) {
+		key := labelIndexKey("Person", 123)
 		assert.Equal(t, prefixLabelIndex, key[0])
-
-		// Extract node ID
-		nodeID := extractNodeIDFromLabelIndex(key, len("Person"))
-		assert.Equal(t, NodeID(prefixTestID("node-123")), nodeID)
+		num, ok := extractNodeNumIDFromLabelIndex(key, len("person"))
+		require.True(t, ok)
+		assert.Equal(t, uint64(123), num)
 	})
 
-	t.Run("outgoingIndexKey and extraction", func(t *testing.T) {
-		key := outgoingIndexKey(NodeID(prefixTestID("node-1")), EdgeID(prefixTestID("edge-1")))
+	t.Run("outgoingIndexKey is compact and round-trips edgeNumID", func(t *testing.T) {
+		key := outgoingIndexKey(42, 100)
 		assert.Equal(t, prefixOutgoingIndex, key[0])
-
-		// Extract edge ID
-		edgeID := extractEdgeIDFromIndexKey(key)
-		assert.Equal(t, EdgeID(prefixTestID("edge-1")), edgeID)
+		require.Len(t, key, 1+8+8)
+		n, ok := extractEdgeNumIDFromOutgoingKey(key)
+		require.True(t, ok)
+		assert.Equal(t, uint64(100), n)
 	})
 
-	t.Run("incomingIndexKey and extraction", func(t *testing.T) {
-		key := incomingIndexKey(NodeID(prefixTestID("node-1")), EdgeID(prefixTestID("edge-1")))
+	t.Run("incomingIndexKey is compact", func(t *testing.T) {
+		key := incomingIndexKey(42, 100)
 		assert.Equal(t, prefixIncomingIndex, key[0])
-
-		// Extract edge ID
-		edgeID := extractEdgeIDFromIndexKey(key)
-		assert.Equal(t, EdgeID(prefixTestID("edge-1")), edgeID)
+		require.Len(t, key, 1+8+8)
 	})
 
-	t.Run("edgeBetweenIndexKey and extraction", func(t *testing.T) {
-		key := edgeBetweenIndexKey(
-			NodeID(prefixTestID("node-1")),
-			NodeID(prefixTestID("node-2")),
-			"KNOWS",
-			EdgeID(prefixTestID("edge-1")),
-		)
+	t.Run("edgeBetweenIndexKey is compact and prefix-scannable", func(t *testing.T) {
+		// Post-dict-refactor: keys are (prefix + 8-byte start numID +
+		// 8-byte end numID + type + \0 + 8-byte edge numID).
+		key := edgeBetweenIndexKey(42, 43, "KNOWS", 100)
 		assert.Equal(t, prefixEdgeBetweenIndex, key[0])
-		assert.Equal(t, EdgeID(prefixTestID("edge-1")), extractEdgeIDFromEdgeBetweenIndexKey(key))
-		assert.True(t, hasBytePrefix(key, edgeBetweenIndexPrefix(NodeID(prefixTestID("node-1")), NodeID(prefixTestID("node-2")))))
-		assert.True(t, hasBytePrefix(key, typedEdgeBetweenIndexPrefix(NodeID(prefixTestID("node-1")), NodeID(prefixTestID("node-2")), "knows")))
+		assert.True(t, hasBytePrefix(key, edgeBetweenIndexPrefix(42, 43)))
+		assert.True(t, hasBytePrefix(key, typedEdgeBetweenIndexPrefix(42, 43, "knows")))
 
-		headKey := edgeBetweenHeadKey(
-			NodeID(prefixTestID("node-1")),
-			NodeID(prefixTestID("node-2")),
-			"KNOWS",
-		)
+		headKey := edgeBetweenHeadKey(42, 43, "KNOWS")
 		assert.Equal(t, prefixEdgeBetweenHead, headKey[0])
+		// Head key encodes only (start, end, type) with no edge ID — a
+		// second edge of the same type reuses the same head key.
+		require.Len(t, headKey, 1+8+8+len("knows"))
 	})
 
 	t.Run("extract helpers return empty on malformed keys", func(t *testing.T) {
-		assert.Equal(t, EdgeID(""), extractEdgeIDFromIndexKey([]byte{prefixOutgoingIndex, 'x', 'y'}))
-		assert.Equal(t, EdgeID(""), extractEdgeIDFromEdgeBetweenIndexKey([]byte{prefixEdgeBetweenIndex, 'x', 'y'}))
-		assert.Equal(t, NodeID(""), extractNodeIDFromLabelIndex([]byte{prefixLabelIndex, 'P', 'e'}, len("Person")))
+		_, ok := extractEdgeNumIDFromOutgoingKey([]byte{prefixOutgoingIndex, 'x', 'y'})
+		assert.False(t, ok)
+		_, ok = extractNodeNumIDFromLabelIndex([]byte{prefixLabelIndex, 'P', 'e'}, len("Person"))
+		assert.False(t, ok)
 	})
 }
 
@@ -1727,7 +1734,9 @@ func requireEdgeBetweenHeadEntry(
 ) {
 	t.Helper()
 
-	key := edgeBetweenHeadKey(startID, endID, edgeType)
+	startNum, _ := engine.idDict.lookupNodeNumID(startID)
+	endNum, _ := engine.idDict.lookupNodeNumID(endID)
+	key := edgeBetweenHeadKey(startNum, endNum, edgeType)
 	var exists bool
 	err := engine.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
@@ -1758,7 +1767,9 @@ func hasEdgeBetweenHeadEntry(
 ) bool {
 	t.Helper()
 
-	key := edgeBetweenHeadKey(startID, endID, edgeType)
+	startNum, _ := engine.idDict.lookupNodeNumID(startID)
+	endNum, _ := engine.idDict.lookupNodeNumID(endID)
+	key := edgeBetweenHeadKey(startNum, endNum, edgeType)
 	var exists bool
 	err := engine.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
@@ -1781,8 +1792,10 @@ func hasEdgeBetweenHeadEntry(
 func countEdgeBetweenSetEntries(t *testing.T, engine *BadgerEngine, startID, endID NodeID) int {
 	t.Helper()
 
+	startNum, _ := engine.idDict.lookupNodeNumID(startID)
+	endNum, _ := engine.idDict.lookupNodeNumID(endID)
 	count := 0
-	prefix := edgeBetweenIndexPrefix(startID, endID)
+	prefix := edgeBetweenIndexPrefix(startNum, endNum)
 	err := engine.withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
@@ -1829,7 +1842,10 @@ func requireEdgeBetweenIndexEntry(
 ) {
 	t.Helper()
 
-	key := edgeBetweenIndexKey(startID, endID, edgeType, edgeID)
+	startNum, _ := engine.idDict.lookupNodeNumID(startID)
+	endNum, _ := engine.idDict.lookupNodeNumID(endID)
+	edgeNum, _ := engine.idDict.lookupEdgeNumID(edgeID)
+	key := edgeBetweenIndexKey(startNum, endNum, edgeType, edgeNum)
 	var exists bool
 	err := engine.withView(func(txn *badger.Txn) error {
 		_, err := txn.Get(key)

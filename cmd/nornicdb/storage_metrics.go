@@ -69,6 +69,26 @@ func (p badgerStorageProbe) EdgeCount() int64 {
 	return n
 }
 
+func (p badgerStorageProbe) IDDictCounterNodes() uint64 {
+	n, _ := p.be.IDDictCounters()
+	return n
+}
+
+func (p badgerStorageProbe) IDDictCounterEdges() uint64 {
+	_, e := p.be.IDDictCounters()
+	return e
+}
+
+func (p badgerStorageProbe) IDDictFreelistNodes() int64 {
+	n, _ := p.be.IDDictFreelistPending()
+	return n
+}
+
+func (p badgerStorageProbe) IDDictFreelistEdges() int64 {
+	_, e := p.be.IDDictFreelistPending()
+	return e
+}
+
 // badgerMVCCProbe satisfies observability.MVCCProbe by routing to the
 // RISK-2 accessors shipped in Plan 04-04-01.
 type badgerMVCCProbe struct {

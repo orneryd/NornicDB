@@ -72,7 +72,10 @@ pkg/cypher/file:
 ui/dist/index.html
 .claude
 northwind_power
+!testing/benchmarks/northwind_power
+
 northwind_power_bench
 bench-data
 scripts/benchmark_reports
 metrics-doc-gen
+*.pyc

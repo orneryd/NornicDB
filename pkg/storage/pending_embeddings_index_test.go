@@ -664,6 +664,10 @@ func newTestBadgerEngineForPending(t *testing.T) *BadgerEngine {
 	engine, err := NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { engine.Close() })
+	// These tests are specifically exercising the pending-embed index. The
+	// engine defaults the flag to false so servers with embeddings disabled
+	// pay zero write amplification; flip it on for the suite.
+	engine.SetEmbeddingsEnabled(true)
 	return engine
 }
 

@@ -10,6 +10,7 @@ func TestPendingEmbeddingsIndex_SkipsSystemNamespace(t *testing.T) {
 	engine, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
+	engine.SetEmbeddingsEnabled(true)
 
 	// System node should never be added to pending index.
 	_, err = engine.CreateNode(&Node{

@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -92,6 +92,23 @@ func (a storageProbeAdapter) EdgeCount() int64 {
 		return 0
 	}
 	return n
+}
+
+func (a storageProbeAdapter) IDDictCounterNodes() uint64 {
+	n, _ := a.be.IDDictCounters()
+	return n
+}
+func (a storageProbeAdapter) IDDictCounterEdges() uint64 {
+	_, e := a.be.IDDictCounters()
+	return e
+}
+func (a storageProbeAdapter) IDDictFreelistNodes() int64 {
+	n, _ := a.be.IDDictFreelistPending()
+	return n
+}
+func (a storageProbeAdapter) IDDictFreelistEdges() int64 {
+	_, e := a.be.IDDictFreelistPending()
+	return e
 }
 
 // TestBytesMetricsSweeper_FirstTick: interval=10ms; verify the initial

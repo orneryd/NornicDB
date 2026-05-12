@@ -11,15 +11,17 @@ import (
 func TestMVCCNodeVersionKeyOrdersByCommitVersion(t *testing.T) {
 	t.Parallel()
 
-	nodeID := NodeID("nornic:node-1")
+	// Post-refactor version keys use 8-byte numeric IDs; the sort check
+	// only depends on the version suffix, so any fixed numID works.
+	const numID uint64 = 42
 	base := time.Unix(1700000000, 0).UTC()
 
 	earlier := MVCCVersion{CommitTimestamp: base, CommitSequence: 1}
 	sameTimeLaterSeq := MVCCVersion{CommitTimestamp: base, CommitSequence: 2}
 	later := MVCCVersion{CommitTimestamp: base.Add(time.Second), CommitSequence: 1}
 
-	require.Less(t, bytes.Compare(mvccNodeVersionKey(nodeID, earlier), mvccNodeVersionKey(nodeID, sameTimeLaterSeq)), 0)
-	require.Less(t, bytes.Compare(mvccNodeVersionKey(nodeID, sameTimeLaterSeq), mvccNodeVersionKey(nodeID, later)), 0)
+	require.Less(t, bytes.Compare(mvccNodeVersionKey(numID, earlier), mvccNodeVersionKey(numID, sameTimeLaterSeq)), 0)
+	require.Less(t, bytes.Compare(mvccNodeVersionKey(numID, sameTimeLaterSeq), mvccNodeVersionKey(numID, later)), 0)
 
 	decoded, err := decodeMVCCSortVersion(encodeMVCCSortVersion(later))
 	require.NoError(t, err)

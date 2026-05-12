@@ -12,10 +12,14 @@ import (
 
 func countNodeMVCCVersions(t *testing.T, engine *BadgerEngine, nodeID NodeID) int {
 	t.Helper()
+	prefix := engine.mvccNodeVersionPrefixString(nodeID)
+	if prefix == nil {
+		return 0
+	}
 	count := 0
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.Prefix = mvccNodeVersionPrefix(nodeID)
+		opts.Prefix = prefix
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
@@ -175,7 +179,11 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(mvccNodeHeadKey(nodeID))
+		key := engine.mvccNodeHeadKeyStringLookup(nodeID)
+		if key == nil {
+			return nil
+		}
+		return txn.Delete(key)
 	}))
 	_, err = engine.GetNodeCurrentHead(nodeID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -250,10 +258,15 @@ func TestBadgerTransaction_CreateEdge_AllowsReadableNodesWithoutMVCCHead(t *test
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Delete(mvccNodeHeadKey(startID)); err != nil {
-			return err
+		if key := engine.mvccNodeHeadKeyStringLookup(startID); key != nil {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
 		}
-		return txn.Delete(mvccNodeHeadKey(endID))
+		if key := engine.mvccNodeHeadKeyStringLookup(endID); key != nil {
+			return txn.Delete(key)
+		}
+		return nil
 	}))
 
 	_, err = engine.GetNodeCurrentHead(startID)

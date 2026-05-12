@@ -84,9 +84,20 @@ var AllowedStorageResults = []string{"success", "failure", "aborted"}
 // *BadgerEngine's existing NodeCount() / EdgeCount() return (int64, error);
 // callers wrap the error-discarding form via a thin adapter at the
 // cmd/nornicdb wiring site (see Plan 04-04-07).
+//
+// IDDictCounterNodes / IDDictCounterEdges expose the monotonic counters
+// of allocated numIDs. IDDictFreelistNodes / IDDictFreelistEdges report
+// the number of entries currently parked on the debounced freelist,
+// awaiting TTL expiry before they can be reclaimed. Together these give
+// operators visibility into (counter-freelist) = roughly the live-entity
+// count and freelist pending work.
 type StorageProbe interface {
 	NodeCount() int64
 	EdgeCount() int64
+	IDDictCounterNodes() uint64
+	IDDictCounterEdges() uint64
+	IDDictFreelistNodes() int64
+	IDDictFreelistEdges() int64
 }
 
 // StorageMetrics is the typed handle-bag (CONTEXT D-02 / D-02a) for the
@@ -192,6 +203,85 @@ func NewStorageMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool, probe
 		return float64(probe.EdgeCount())
 	}))
 
+	// ID dictionary counter gauges: monotonic per-kind counter of numID
+	// allocations. Together with the freelist gauge, operators can see
+	// (counter - freelist_pending) ≈ live-entity count, and watch the
+	// freelist drain as TTL expires.
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "nornicdb",
+		Subsystem: "storage",
+		Name:      "id_dict_counter_nodes",
+		Help: "Monotonic counter of node numIDs ever allocated. Does not " +
+			"decrease — recycled numIDs don't change this number; the " +
+			"freelist gauge tracks reusable parked IDs.",
+	}, func() (val float64) {
+		defer func() {
+			if r := recover(); r != nil {
+				val = 0
+			}
+		}()
+		if probe == nil {
+			return 0
+		}
+		return float64(probe.IDDictCounterNodes())
+	}))
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "nornicdb",
+		Subsystem: "storage",
+		Name:      "id_dict_counter_edges",
+		Help:      "Monotonic counter of edge numIDs ever allocated.",
+	}, func() (val float64) {
+		defer func() {
+			if r := recover(); r != nil {
+				val = 0
+			}
+		}()
+		if probe == nil {
+			return 0
+		}
+		return float64(probe.IDDictCounterEdges())
+	}))
+
+	// Freelist pending gauges: count of deleted numIDs parked on the
+	// debounced freelist, awaiting TTL expiry before allocation can
+	// recycle them. Healthy-steady-state patterns: zero during pure
+	// growth; non-zero pulses during churn that drain back to zero as
+	// the TTL elapses.
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "nornicdb",
+		Subsystem: "storage",
+		Name:      "id_dict_freelist_nodes",
+		Help: "Node numIDs parked on the debounced freelist awaiting " +
+			"TTL expiry. When it drops to zero, allocation falls back " +
+			"to bumping the counter.",
+	}, func() (val float64) {
+		defer func() {
+			if r := recover(); r != nil {
+				val = 0
+			}
+		}()
+		if probe == nil {
+			return 0
+		}
+		return float64(probe.IDDictFreelistNodes())
+	}))
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "nornicdb",
+		Subsystem: "storage",
+		Name:      "id_dict_freelist_edges",
+		Help:      "Edge numIDs parked on the debounced freelist.",
+	}, func() (val float64) {
+		defer func() {
+			if r := recover(); r != nil {
+				val = 0
+			}
+		}()
+		if probe == nil {
+			return 0
+		}
+		return float64(probe.IDDictFreelistEdges())
+	}))
+
 	bag.Bytes = NewGaugeVec(reg,
 		MetricOpts{
 			Subsystem: "storage",
@@ -226,7 +316,7 @@ func NewStorageMetrics(reg *prometheus.Registry, tenantLabelsEnabled bool, probe
 		MetricOpts{
 			Subsystem: "storage",
 			Name:      "compaction_duration_seconds",
-			Help: "BadgerDB compaction wall-clock time by level.",
+			Help:      "BadgerDB compaction wall-clock time by level.",
 		},
 		[]string{"level"})
 

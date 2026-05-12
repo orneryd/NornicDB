@@ -204,6 +204,7 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 	t.Run("tracks_processed_nodes", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -234,6 +235,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 
 	t.Run("cleans_old_entries", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -292,6 +294,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 func TestEmbedWorkerPersistence(t *testing.T) {
 	t.Run("embedding_persisted_to_storage", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -352,6 +355,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 
 	t.Run("node_not_reprocessed_after_embedding", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -415,6 +419,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	t.Run("finds_node_without_embedding", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -440,6 +445,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 
 	t.Run("skips_node_with_embedding", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -465,6 +471,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 
 	t.Run("skips_internal_nodes", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -489,6 +496,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 
 	t.Run("skips_deleted_nodes", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -941,6 +949,7 @@ func (a *Application) Stop(ctx context.Context) error {
 func TestLargeContentEmbedding(t *testing.T) {
 	t.Run("large_file_gets_chunked_and_embedded", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1029,6 +1038,7 @@ func TestLargeContentEmbedding(t *testing.T) {
 func TestEmbedWorkerMicroBatching(t *testing.T) {
 	t.Run("large_node_uses_bounded_embed_batch_size", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newRecordingBatchEmbedder()
 
@@ -1077,6 +1087,7 @@ func TestEmbedWorkerMicroBatching(t *testing.T) {
 func TestEmbedWorkerConcurrency(t *testing.T) {
 	t.Run("concurrent_triggers_safe", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1127,6 +1138,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 
 	t.Run("reset_close_overlap_no_waitgroup_reuse_panic", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
@@ -1172,6 +1184,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 	t.Run("skip_message_should_not_repeat", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1231,6 +1244,7 @@ func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 	t.Run("no_content_node_stops_loop", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1369,6 +1383,7 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 func TestEmbeddingPersistenceVerification(t *testing.T) {
 	t.Run("embedding_readable_after_update", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1420,6 +1435,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 
 	t.Run("storage_update_persists_embedding_field", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -1459,6 +1475,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 func TestRaceConditionPrevention(t *testing.T) {
 	t.Run("concurrent_node_access_during_embedding", func(t *testing.T) {
 		baseEngine := storage.NewMemoryEngine()
+		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()

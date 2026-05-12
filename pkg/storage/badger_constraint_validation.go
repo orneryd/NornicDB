@@ -239,9 +239,13 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 	labelLen := len(strings.ToLower(label))
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().Key()
-		nodeID := extractNodeIDFromLabelIndex(key, labelLen)
-		if nodeID == "" || nodeID == excludeNodeID {
+		key := iter.Item().KeyCopy(nil)
+		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+		if !ok {
+			continue
+		}
+		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+		if !ok || nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 		if !strings.HasPrefix(string(nodeID), nsPrefix) {
@@ -292,9 +296,13 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 	labelLen := len(strings.ToLower(label))
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().Key()
-		nodeID := extractNodeIDFromLabelIndex(key, labelLen)
-		if nodeID == "" || nodeID == excludeNodeID {
+		key := iter.Item().KeyCopy(nil)
+		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+		if !ok {
+			continue
+		}
+		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+		if !ok || nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 		if !strings.HasPrefix(string(nodeID), nsPrefix) {
@@ -351,9 +359,13 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 	labelLen := len(strings.ToLower(label))
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().Key()
-		nodeID := extractNodeIDFromLabelIndex(key, labelLen)
-		if nodeID == "" || nodeID == excludeNodeID {
+		key := iter.Item().KeyCopy(nil)
+		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+		if !ok {
+			continue
+		}
+		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+		if !ok || nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 		if !strings.HasPrefix(string(nodeID), nsPrefix) {
@@ -599,14 +611,15 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 	defer iter.Close()
 
 	nsPrefix := namespace + ":"
-	prefixLen := len(prefix)
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().Key()
-		// Edge type index key format: prefix + edgeType(lowercase) + 0x00 + edgeID
-		// The prefix already includes edgeType + 0x00, so edgeID is everything after prefix
-		edgeID := EdgeID(key[prefixLen:])
-		if edgeID == "" || edgeID == excludeEdgeID {
+		key := iter.Item().KeyCopy(nil)
+		edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok || edgeID == "" || edgeID == excludeEdgeID {
 			continue
 		}
 		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
@@ -626,7 +639,7 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 			continue
 		}
 
-		existingEdge, err := decodeEdge(edgeBytes)
+		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -736,12 +749,15 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 	defer iter.Close()
 
 	nsPrefix := namespace + ":"
-	prefixLen := len(prefix)
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().Key()
-		edgeID := EdgeID(key[prefixLen:])
-		if edgeID == "" || edgeID == excludeEdgeID {
+		key := iter.Item().KeyCopy(nil)
+		edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok || edgeID == "" || edgeID == excludeEdgeID {
 			continue
 		}
 		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
@@ -761,7 +777,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			continue
 		}
 
-		existingEdge, err := decodeEdge(edgeBytes)
+		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -807,9 +823,13 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 	// Choose the index prefix based on direction.
 	var prefix []byte
 	if c.Direction == "OUTGOING" {
-		prefix = outgoingIndexPrefix(anchorNode)
+		prefix = b.outgoingIndexPrefixString(anchorNode)
 	} else {
-		prefix = incomingIndexPrefix(anchorNode)
+		prefix = b.incomingIndexPrefixString(anchorNode)
+	}
+	if prefix == nil {
+		// Anchor node has no numID → no adjacent edges indexed.
+		return nil
 	}
 
 	count := 0
@@ -821,8 +841,12 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 	defer iter.Close()
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		edgeID := extractEdgeIDFromIndexKey(iter.Item().Key())
-		if edgeID == "" || edgeID == excludeEdgeID {
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(iter.Item().KeyCopy(nil))
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok || edgeID == "" || edgeID == excludeEdgeID {
 			continue
 		}
 		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
@@ -841,7 +865,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		}); err != nil {
 			continue
 		}
-		existingEdge, err := decodeEdge(edgeBytes)
+		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -970,12 +994,15 @@ func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(txn *badger.Txn, nod
 // validatePolicyForAdjacentEdgesInTxn scans all outgoing and incoming edges for a node
 // and re-validates policy constraints with the node's current labels.
 func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string) error {
-	// Scan outgoing edges.
-	if err := b.validatePolicyForEdgesWithPrefixInTxn(txn, outgoingIndexPrefix(node.ID), node, true, schema, namespace); err != nil {
-		return err
+	if outPrefix := b.outgoingIndexPrefixString(node.ID); outPrefix != nil {
+		if err := b.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, node, true, schema, namespace); err != nil {
+			return err
+		}
 	}
-	// Scan incoming edges.
-	return b.validatePolicyForEdgesWithPrefixInTxn(txn, incomingIndexPrefix(node.ID), node, false, schema, namespace)
+	if inPrefix := b.incomingIndexPrefixString(node.ID); inPrefix != nil {
+		return b.validatePolicyForEdgesWithPrefixInTxn(txn, inPrefix, node, false, schema, namespace)
+	}
+	return nil
 }
 
 // validatePolicyForEdgesWithPrefixInTxn scans edges with the given index prefix and
@@ -989,8 +1016,12 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		edgeID := extractEdgeIDFromIndexKey(iter.Item().Key())
-		if edgeID == "" {
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(iter.Item().KeyCopy(nil))
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok || edgeID == "" {
 			continue
 		}
 		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
@@ -1009,7 +1040,7 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}); err != nil {
 			continue
 		}
-		edge, err := decodeEdge(edgeBytes)
+		edge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}

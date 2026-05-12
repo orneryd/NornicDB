@@ -14,12 +14,20 @@ import (
 // storageProbeStub is the test seam for the StorageProbe accessors used by
 // the nodes_total / edges_total GaugeFunc callbacks.
 type storageProbeStub struct {
-	nodes int64
-	edges int64
+	nodes         int64
+	edges         int64
+	counterNodes  uint64
+	counterEdges  uint64
+	freelistNodes int64
+	freelistEdges int64
 }
 
-func (s storageProbeStub) NodeCount() int64 { return s.nodes }
-func (s storageProbeStub) EdgeCount() int64 { return s.edges }
+func (s storageProbeStub) NodeCount() int64           { return s.nodes }
+func (s storageProbeStub) EdgeCount() int64           { return s.edges }
+func (s storageProbeStub) IDDictCounterNodes() uint64 { return s.counterNodes }
+func (s storageProbeStub) IDDictCounterEdges() uint64 { return s.counterEdges }
+func (s storageProbeStub) IDDictFreelistNodes() int64 { return s.freelistNodes }
+func (s storageProbeStub) IDDictFreelistEdges() int64 { return s.freelistEdges }
 
 // TestStorageMetrics_RegistersEight asserts that all 8 storage families
 // surface from a single Gather().
@@ -136,8 +144,12 @@ func TestNodesEdgesGaugeFunc(t *testing.T) {
 // return 0 so the scrape does not 500.
 type panickyStorageProbe struct{}
 
-func (p panickyStorageProbe) NodeCount() int64 { panic("nodes panic") }
-func (p panickyStorageProbe) EdgeCount() int64 { panic("edges panic") }
+func (p panickyStorageProbe) NodeCount() int64           { panic("nodes panic") }
+func (p panickyStorageProbe) EdgeCount() int64           { panic("edges panic") }
+func (p panickyStorageProbe) IDDictCounterNodes() uint64 { panic("id-dict counter nodes panic") }
+func (p panickyStorageProbe) IDDictCounterEdges() uint64 { panic("id-dict counter edges panic") }
+func (p panickyStorageProbe) IDDictFreelistNodes() int64 { panic("id-dict freelist nodes panic") }
+func (p panickyStorageProbe) IDDictFreelistEdges() int64 { panic("id-dict freelist edges panic") }
 
 func TestStorageGaugeFuncs_PanicSafe(t *testing.T) {
 	te := NewTestEnv(t)

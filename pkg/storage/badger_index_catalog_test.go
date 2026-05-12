@@ -2,6 +2,8 @@ package storage
 
 import (
 	"testing"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 func TestIndexCatalog_PutAndGet(t *testing.T) {
@@ -11,8 +13,8 @@ func TestIndexCatalog_PutAndGet(t *testing.T) {
 		TargetID:    "nornic:node1",
 		TargetScope: "NODE",
 		IndexKeys: [][]byte{
-			labelIndexKey("person", "nornic:node1"),
-			labelIndexKey("user", "nornic:node1"),
+			labelIndexKey("person", 1),
+			labelIndexKey("user", 1),
 		},
 	}
 
@@ -53,7 +55,7 @@ func TestIndexCatalog_Delete(t *testing.T) {
 	cat := &IndexEntryCatalog{
 		TargetID:    "nornic:node1",
 		TargetScope: "NODE",
-		IndexKeys:   [][]byte{labelIndexKey("person", "nornic:node1")},
+		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 	}
 	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
 		t.Fatal(err)
@@ -76,7 +78,7 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 	cat := &IndexEntryCatalog{
 		TargetID:    "nornic:node1",
 		TargetScope: "NODE",
-		IndexKeys:   [][]byte{labelIndexKey("person", "nornic:node1")},
+		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 		Deindexed:   true,
 	}
 	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
@@ -93,7 +95,19 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 }
 
 func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
-	keys := collectNodeIndexKeys("nornic:n1", []string{"Person", "User"})
+	engine, err := NewBadgerEngineInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	// Seed a numID so the compact collector returns the expected keys.
+	if err := engine.withUpdate(func(txn *badger.Txn) error {
+		_, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:n1")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys := engine.collectNodeIndexKeys("nornic:n1", []string{"Person", "User"})
 	if len(keys) != 2 {
 		t.Fatalf("expected 2 keys, got %d", len(keys))
 	}
@@ -105,7 +119,26 @@ func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
 }
 
 func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
-	keys := collectEdgeIndexKeys("nornic:e1", "nornic:a", "nornic:b", "KNOWS")
+	engine, err := NewBadgerEngineInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	// Pre-seed the dict so the edge-between key makes it into the catalog.
+	err = engine.withUpdate(func(txn *badger.Txn) error {
+		if _, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:a"); err != nil {
+			return err
+		}
+		if _, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:b"); err != nil {
+			return err
+		}
+		_, err := engine.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, "nornic:e1")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := engine.collectEdgeIndexKeys("nornic:e1", "nornic:a", "nornic:b", "KNOWS")
 	if len(keys) != 4 {
 		t.Fatalf("expected 4 keys, got %d", len(keys))
 	}

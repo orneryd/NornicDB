@@ -332,6 +332,14 @@ type DatabaseConfig struct {
 	// Env: NORNICDB_MVCC_RETENTION_TTL
 	MVCCRetentionTTL time.Duration
 
+	// IDFreelistTTL is the debounce window before a deleted node/edge's
+	// numID can be recycled. Long enough that any in-flight snapshot
+	// reader that started before the delete has finished. Default 30s
+	// — query-scoped readers finish in seconds, so 30s is comfortably
+	// beyond the normal read window.
+	// Env: NORNICDB_ID_FREELIST_TTL (e.g. "30s", "5m", "1h")
+	IDFreelistTTL time.Duration
+
 	// MVCCLifecycleEnabled enables the MVCC lifecycle manager.
 	MVCCLifecycleEnabled bool
 
@@ -1132,6 +1140,9 @@ func (c *Config) Validate() error {
 	if c.Database.MVCCRetentionMaxVersions < 0 {
 		return fmt.Errorf("invalid mvcc retention max versions: %d", c.Database.MVCCRetentionMaxVersions)
 	}
+	if c.Database.IDFreelistTTL < 0 {
+		return fmt.Errorf("invalid id freelist ttl: %s", c.Database.IDFreelistTTL)
+	}
 	if c.Database.MVCCRetentionTTL < 0 {
 		return fmt.Errorf("invalid mvcc retention ttl: %s", c.Database.MVCCRetentionTTL)
 	}
@@ -1248,6 +1259,7 @@ type YAMLConfig struct {
 		BadgerEdgeTypeCacheMaxTypes       int    `yaml:"badger_edge_type_cache_max_types"`
 		MVCCRetentionMaxVersions          int    `yaml:"mvcc_retention_max_versions"`
 		MVCCRetentionTTL                  string `yaml:"mvcc_retention_ttl"`
+		IDFreelistTTL                     string `yaml:"id_freelist_ttl"`
 		MVCCLifecycleEnabled              *bool  `yaml:"mvcc_lifecycle_enabled"`
 		MVCCLifecycleCycleInterval        string `yaml:"mvcc_lifecycle_interval"`
 		MVCCLifecycleMaxSnapshotAge       string `yaml:"mvcc_lifecycle_max_snapshot_age"`
@@ -1555,6 +1567,10 @@ func LoadDefaults() *Config {
 	// this via NORNICDB_MVCC_RETENTION_MAX_VERSIONS or YAML.
 	config.Database.MVCCRetentionMaxVersions = 0
 	config.Database.MVCCRetentionTTL = 0
+	// 30s debounce is larger than any normal query-scoped snapshot
+	// reader, so freed numIDs recycle quickly. Operators with long
+	// analytics queries raise this via NORNICDB_ID_FREELIST_TTL.
+	config.Database.IDFreelistTTL = 30 * time.Second
 	config.Database.MVCCLifecycleEnabled = true
 	config.Database.MVCCLifecycleCycleInterval = 30 * time.Second
 	config.Database.MVCCLifecycleMaxSnapshotAge = time.Hour
@@ -1846,6 +1862,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvDuration("NORNICDB_MVCC_RETENTION_TTL", 0); v > 0 {
 		config.Database.MVCCRetentionTTL = v
+	}
+	if v := getEnvDuration("NORNICDB_ID_FREELIST_TTL", 0); v > 0 {
+		config.Database.IDFreelistTTL = v
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_MVCC_LIFECYCLE_ENABLED"); ok {
 		config.Database.MVCCLifecycleEnabled = v
@@ -2725,6 +2744,11 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Database.MVCCRetentionTTL != "" {
 		if d, err := time.ParseDuration(yamlCfg.Database.MVCCRetentionTTL); err == nil {
 			config.Database.MVCCRetentionTTL = d
+		}
+	}
+	if yamlCfg.Database.IDFreelistTTL != "" {
+		if d, err := time.ParseDuration(yamlCfg.Database.IDFreelistTTL); err == nil {
+			config.Database.IDFreelistTTL = d
 		}
 	}
 	if yamlCfg.Database.MVCCLifecycleEnabled != nil {

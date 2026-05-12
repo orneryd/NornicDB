@@ -69,20 +69,40 @@ func deleteIndexEntryCatalogInTxn(txn *badger.Txn, entityID string) error {
 }
 
 // collectNodeIndexKeys returns all secondary-index keys written for a node.
-func collectNodeIndexKeys(nodeID NodeID, labels []string) [][]byte {
+// Label keys use the compact numID format — callers with no numID yet
+// get an empty slice (matching "no index entry exists" semantics).
+func (b *BadgerEngine) collectNodeIndexKeys(nodeID NodeID, labels []string) [][]byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
 	keys := make([][]byte, 0, len(labels))
 	for _, label := range labels {
-		keys = append(keys, labelIndexKey(label, nodeID))
+		keys = append(keys, labelIndexKey(label, nodeNum))
 	}
 	return keys
 }
 
 // collectEdgeIndexKeys returns all secondary-index keys written for an edge.
-func collectEdgeIndexKeys(edgeID EdgeID, startNode NodeID, endNode NodeID, edgeType string) [][]byte {
-	return [][]byte{
-		outgoingIndexKey(startNode, edgeID),
-		incomingIndexKey(endNode, edgeID),
-		edgeTypeIndexKey(edgeType, edgeID),
-		edgeBetweenIndexKey(startNode, endNode, edgeType, edgeID),
+// All index keys use 8-byte numeric IDs from the engine's id dictionary.
+// Missing numID entries are skipped — they indicate the edge never made
+// it into the corresponding index.
+func (b *BadgerEngine) collectEdgeIndexKeys(edgeID EdgeID, startNode NodeID, endNode NodeID, edgeType string) [][]byte {
+	var keys [][]byte
+	startNum, sOK := b.idDict.lookupNodeNumID(startNode)
+	endNum, eOK := b.idDict.lookupNodeNumID(endNode)
+	edgeNum, edgeOK := b.idDict.lookupEdgeNumID(edgeID)
+	if sOK && edgeOK {
+		keys = append(keys, outgoingIndexKey(startNum, edgeNum))
 	}
+	if eOK && edgeOK {
+		keys = append(keys, incomingIndexKey(endNum, edgeNum))
+	}
+	if edgeOK {
+		keys = append(keys, edgeTypeIndexKey(edgeType, edgeNum))
+	}
+	if sOK && eOK && edgeOK {
+		keys = append(keys, edgeBetweenIndexKey(startNum, endNum, edgeType, edgeNum))
+	}
+	return keys
 }

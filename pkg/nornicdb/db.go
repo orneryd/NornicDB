@@ -560,6 +560,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
 					TTL:               config.Database.MVCCRetentionTTL,
 				},
+				IDFreelistTTL: config.Database.IDFreelistTTL,
 			},
 			// Phase 2 D-01: thread the structured *slog.Logger from
 			// nornicConfig.Config (set by cmd/nornicdb/main.go before Open)
@@ -956,6 +957,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 	// If MaxWorkers is 0, the parallel package will use runtime.NumCPU()
 	cypher.SetParallelConfig(parallelCfg)
+
+	// Gate the pending-embed index at the storage layer. When embeddings are
+	// globally disabled nobody consumes the marker, so writing it is pure
+	// write amplification on every CreateNode/UpsertNode. Thread the flag
+	// down to the engine once at startup.
+	if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
+		be.SetEmbeddingsEnabled(config.Memory.EmbeddingEnabled)
+	}
 
 	// Initialize knowledge-layer decay: wire scorer into BadgerEngine read paths.
 	// The flusher is created here but started later (after buildCtx is initialized).

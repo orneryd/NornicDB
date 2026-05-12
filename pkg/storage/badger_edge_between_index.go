@@ -156,66 +156,70 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 	// rebuild's progress emissions (every edgeBetweenIndexRebuildLogEvery
 	// edges) so the steady-state path adds no .With(...) allocations.
 	idxLog := b.log.With("subsystem", "index_rebuild", "index", "edge_between")
-	batch := b.db.NewWriteBatch()
-	defer batch.Cancel()
-	batchCount := 0
 	processed := 0
 
-	flushBatch := func() error {
-		if batchCount == 0 {
+	// Rebuild in txn-scoped chunks so each batch's dict allocations +
+	// index writes commit together. Scan cursors across the edge prefix
+	// advance between chunks.
+	var cursor []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return processed, err
+		}
+		done := false
+		err := b.withUpdate(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixEdge}, 100))
+			defer it.Close()
+			start := cursor
+			if len(start) == 0 {
+				start = []byte{prefixEdge}
+			}
+			writes := 0
+			for it.Seek(start); it.ValidForPrefix([]byte{prefixEdge}); it.Next() {
+				item := it.Item()
+				key := item.KeyCopy(nil)
+				var edgeID EdgeID
+				if len(key) > 1 {
+					edgeID = EdgeID(key[1:])
+				}
+				if err := item.Value(func(val []byte) error {
+					edge, err := b.decodeEdgeBodyWithID(val, edgeID)
+					if err != nil {
+						return fmt.Errorf("decode edge for edge-between index: %w", err)
+					}
+					if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+						return err
+					}
+					writes++
+					processed++
+					if processed%edgeBetweenIndexRebuildLogEvery == 0 {
+						idxLog.Info("edge-between index backfill progress",
+							"edges", processed,
+						)
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+				if writes >= edgeBetweenIndexRebuildBatchSize {
+					it.Next()
+					if it.ValidForPrefix([]byte{prefixEdge}) {
+						cursor = append([]byte(nil), it.Item().Key()...)
+					} else {
+						done = true
+					}
+					return nil
+				}
+			}
+			done = true
 			return nil
+		})
+		if err != nil {
+			return processed, err
 		}
-		if err := batch.Flush(); err != nil {
-			return err
+		if done {
+			break
 		}
-		batch.Cancel()
-		batch = b.db.NewWriteBatch()
-		batchCount = 0
-		return nil
-	}
-
-	if err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsPrefetchValues([]byte{prefixEdge}, 100))
-		defer it.Close()
-
-		for it.Rewind(); it.ValidForPrefix([]byte{prefixEdge}); it.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			item := it.Item()
-			if err := item.Value(func(val []byte) error {
-				edge, err := decodeEdge(val)
-				if err != nil {
-					return fmt.Errorf("decode edge for edge-between index: %w", err)
-				}
-				if err := batch.Set(edgeBetweenIndexKey(edge.StartNode, edge.EndNode, edge.Type, edge.ID), []byte{}); err != nil {
-					return err
-				}
-				if err := batch.Set(edgeBetweenHeadKey(edge.StartNode, edge.EndNode, edge.Type), []byte(edge.ID)); err != nil {
-					return err
-				}
-				batchCount++
-				processed++
-				if processed%edgeBetweenIndexRebuildLogEvery == 0 {
-					idxLog.Info("edge-between index backfill progress",
-						"edges", processed,
-					)
-				}
-				if batchCount >= edgeBetweenIndexRebuildBatchSize {
-					return flushBatch()
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return processed, err
-	}
-
-	if err := flushBatch(); err != nil {
-		return processed, err
 	}
 
 	if err := ctx.Err(); err != nil {

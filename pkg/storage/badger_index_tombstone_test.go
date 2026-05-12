@@ -9,7 +9,7 @@ import (
 func TestIndexTombstone_WriteAndProbe(t *testing.T) {
 	eng := newTestEngine(t)
 
-	origKey := labelIndexKey("person", "nornic:node1")
+	origKey := labelIndexKey("person", 1)
 	if err := eng.WriteIndexTombstones([][]byte{origKey}); err != nil {
 		t.Fatal(err)
 	}
@@ -18,7 +18,7 @@ func TestIndexTombstone_WriteAndProbe(t *testing.T) {
 		if !hasIndexTombstone(txn, origKey) {
 			t.Error("expected tombstone to exist")
 		}
-		if hasIndexTombstone(txn, labelIndexKey("person", "nornic:node2")) {
+		if hasIndexTombstone(txn, labelIndexKey("person", 2)) {
 			t.Error("tombstone should not exist for different node")
 		}
 		return nil
@@ -28,7 +28,7 @@ func TestIndexTombstone_WriteAndProbe(t *testing.T) {
 func TestIndexTombstone_Delete(t *testing.T) {
 	eng := newTestEngine(t)
 
-	origKey := labelIndexKey("person", "nornic:node1")
+	origKey := labelIndexKey("person", 1)
 	if err := eng.WriteIndexTombstones([][]byte{origKey}); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,10 @@ func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := labelIndexKey("person", "nornic:hidden")
+	tombstoneKey := eng.labelIndexKeyStringLookup("person", "nornic:hidden")
+	if tombstoneKey == nil {
+		t.Fatal("missing numID for nornic:hidden")
+	}
 	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +96,10 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tombstoneKey := labelIndexKey("person", "nornic:revealed")
+	tombstoneKey := eng.labelIndexKeyStringLookup("person", "nornic:revealed")
+	if tombstoneKey == nil {
+		t.Fatal("missing numID for nornic:revealed")
+	}
 	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +147,10 @@ func TestIndexTombstone_ForEachNodeIDSkipsTombstoned(t *testing.T) {
 		}
 	}
 
-	tombstoneKey := labelIndexKey("item", "nornic:b")
+	tombstoneKey := eng.labelIndexKeyStringLookup("item", "nornic:b")
+	if tombstoneKey == nil {
+		t.Fatal("missing numID for nornic:b")
+	}
 	if err := eng.WriteIndexTombstones([][]byte{tombstoneKey}); err != nil {
 		t.Fatal(err)
 	}

@@ -321,9 +321,24 @@ func (r FlushResult) isStorageClosedOnly() bool {
 //
 // Thread-safe: Uses flushMu to prevent concurrent flushes which can cause
 // race conditions when cache limit is reached during concurrent writes.
+//
+// Fast path: if there's nothing pending, avoid taking the exclusive
+// flushMu.Lock() entirely. In seed-heavy workloads the implicit-txn
+// path flushes the cache inline before starting each transaction, so by
+// the time the background ticker fires the cache is almost always
+// empty. Skipping the lock here keeps transaction-path HoldFlush
+// RLockers from queueing behind a no-op write lock acquisition.
 func (ae *AsyncEngine) Flush() error {
+	if ae.pendingWriteCount() == 0 {
+		return nil
+	}
 	ae.flushMu.Lock()
 	defer ae.flushMu.Unlock()
+	// Re-check inside the lock: another goroutine may have flushed
+	// between our initial check and taking the write lock.
+	if ae.pendingWriteCount() == 0 {
+		return nil
+	}
 
 	result := ae.FlushWithResult()
 	if result.HasErrors() {

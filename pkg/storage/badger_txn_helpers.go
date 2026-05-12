@@ -31,7 +31,20 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 		return err
 	}
 	return recoverBadgerClosedPanic(func() error {
-		return b.db.Update(fn)
+		return b.db.Update(func(txn *badger.Txn) error {
+			if err := fn(txn); err != nil {
+				if b.idDict != nil {
+					b.idDict.discardTxnCounters(txn)
+				}
+				return err
+			}
+			if b.idDict != nil {
+				if err := b.idDict.flushTxnCounters(txn); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	})
 }
 

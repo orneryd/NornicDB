@@ -645,10 +645,15 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			}
 
 			item := it.Item()
+			key := item.Key()
+			var edgeID EdgeID
+			if len(key) > 1 {
+				edgeID = EdgeID(key[1:])
+			}
 			var edge *Edge
 			err := item.Value(func(val []byte) error {
 				var decErr error
-				edge, decErr = decodeEdge(val)
+				edge, decErr = b.decodeEdgeBodyWithID(val, edgeID)
 				return decErr
 			})
 			if err != nil {

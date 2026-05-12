@@ -132,7 +132,11 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 	// Delete the label index entry to prove duplicate detection comes from the
 	// registered unique-value index, not from a label scan.
 	if err := engine.db.Update(func(txn *badger.Txn) error {
-		return txn.Delete(labelIndexKey("User", firstID))
+		key := engine.labelIndexKeyStringLookup("User", firstID)
+		if key == nil {
+			return nil
+		}
+		return txn.Delete(key)
 	}); err != nil {
 		t.Fatalf("delete label index: %v", err)
 	}

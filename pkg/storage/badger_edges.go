@@ -90,29 +90,41 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err != nil {
 			return err
 		}
-		data, err := encodeEdge(edge)
+		data, err := b.encodeEdgeInTxn(txn, edge)
 		if err != nil {
 			return fmt.Errorf("failed to encode edge: %w", err)
 		}
 		if err := txn.Set(edgeKey(edge.ID), data); err != nil {
 			return err
 		}
-		if err := txn.Set(outgoingIndexKey(edge.StartNode, edge.ID), []byte{}); err != nil {
+		outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
+		if err != nil {
 			return err
 		}
-		if err := txn.Set(incomingIndexKey(edge.EndNode, edge.ID), []byte{}); err != nil {
+		if err := txn.Set(outKey, []byte{}); err != nil {
 			return err
 		}
-		if err := txn.Set(edgeTypeIndexKey(edge.Type, edge.ID), []byte{}); err != nil {
+		inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
+		if err != nil {
 			return err
 		}
-		if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+		if err := txn.Set(inKey, []byte{}); err != nil {
+			return err
+		}
+		typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(typeKey, []byte{}); err != nil {
+			return err
+		}
+		if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 			return err
 		}
 		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
 			TargetID:    string(edge.ID),
 			TargetScope: "EDGE",
-			IndexKeys:   collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
+			IndexKeys:   b.collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
 		}); err != nil {
 			return err
 		}
@@ -155,7 +167,7 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 		return item.Value(func(val []byte) error {
 			var decodeErr error
-			edge, decodeErr = decodeEdge(val)
+			edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
 			return decodeErr
 		})
 	})
@@ -209,7 +221,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		var existing *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existing, decodeErr = decodeEdge(val)
+			existing, decodeErr = b.decodeEdgeBodyWithID(val, edge.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -236,25 +248,37 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 				return ErrNotFound
 			}
 
-			// Remove old indexes
-			if err := txn.Delete(outgoingIndexKey(existing.StartNode, edge.ID)); err != nil {
-				return err
+			// Remove old indexes (lookup-only; existed at write time)
+			if oldOut := b.outgoingIndexKeyStringLookup(existing.StartNode, edge.ID); oldOut != nil {
+				if err := txn.Delete(oldOut); err != nil {
+					return err
+				}
 			}
-			if err := txn.Delete(incomingIndexKey(existing.EndNode, edge.ID)); err != nil {
-				return err
+			if oldIn := b.incomingIndexKeyStringLookup(existing.EndNode, edge.ID); oldIn != nil {
+				if err := txn.Delete(oldIn); err != nil {
+					return err
+				}
 			}
-			if err := deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
+			if err := b.deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
 				return err
 			}
 
-			// Add new indexes
-			if err := txn.Set(outgoingIndexKey(edge.StartNode, edge.ID), []byte{}); err != nil {
+			// Add new indexes (allocate/resolve num IDs for new endpoints)
+			outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
+			if err != nil {
 				return err
 			}
-			if err := txn.Set(incomingIndexKey(edge.EndNode, edge.ID), []byte{}); err != nil {
+			if err := txn.Set(outKey, []byte{}); err != nil {
 				return err
 			}
-			if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+			inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(inKey, []byte{}); err != nil {
+				return err
+			}
+			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
 		}
@@ -262,29 +286,35 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		// If type changed, update edge type index.
 		if existing.Type != edge.Type {
 			if existing.Type != "" {
-				if err := txn.Delete(edgeTypeIndexKey(existing.Type, edge.ID)); err != nil {
-					return err
+				if oldTypeKey := b.edgeTypeIndexKeyStringLookup(existing.Type, edge.ID); oldTypeKey != nil {
+					if err := txn.Delete(oldTypeKey); err != nil {
+						return err
+					}
 				}
 			}
 			if existing.StartNode == edge.StartNode && existing.EndNode == edge.EndNode {
-				if err := deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
+				if err := b.deleteEdgeBetweenIndexesInTxn(txn, existing); err != nil {
 					return err
 				}
 			}
 			if edge.Type != "" {
-				if err := txn.Set(edgeTypeIndexKey(edge.Type, edge.ID), []byte{}); err != nil {
+				newTypeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
+				if err != nil {
+					return err
+				}
+				if err := txn.Set(newTypeKey, []byte{}); err != nil {
 					return err
 				}
 			}
 			if existing.StartNode == edge.StartNode && existing.EndNode == edge.EndNode {
-				if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+				if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 					return err
 				}
 			}
 		}
 
 		// Store updated edge
-		data, err := encodeEdge(edge)
+		data, err := b.encodeEdgeInTxn(txn, edge)
 		if err != nil {
 			return fmt.Errorf("failed to encode edge: %w", err)
 		}
@@ -295,7 +325,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
 			TargetID:    string(edge.ID),
 			TargetScope: "EDGE",
-			IndexKeys:   collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
+			IndexKeys:   b.collectEdgeIndexKeys(edge.ID, edge.StartNode, edge.EndNode, edge.Type),
 		}); err != nil {
 			return err
 		}
@@ -385,7 +415,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = decodeEdge(val)
+		edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
 		return decodeErr
 	}); err != nil {
 		return err
@@ -405,23 +435,32 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 		return headErr
 	}
 
-	// Delete indexes
-	if err := txn.Delete(outgoingIndexKey(edge.StartNode, id)); err != nil {
-		return err
+	// Delete indexes. Lookup-based because the num IDs already exist for
+	// any edge that made it into the primary key store.
+	if oldOut := b.outgoingIndexKeyStringLookup(edge.StartNode, id); oldOut != nil {
+		if err := txn.Delete(oldOut); err != nil {
+			return err
+		}
 	}
-	if err := txn.Delete(incomingIndexKey(edge.EndNode, id)); err != nil {
-		return err
+	if oldIn := b.incomingIndexKeyStringLookup(edge.EndNode, id); oldIn != nil {
+		if err := txn.Delete(oldIn); err != nil {
+			return err
+		}
 	}
-	if err := txn.Delete(edgeTypeIndexKey(edge.Type, id)); err != nil {
-		return err
+	if oldType := b.edgeTypeIndexKeyStringLookup(edge.Type, id); oldType != nil {
+		if err := txn.Delete(oldType); err != nil {
+			return err
+		}
 	}
-	if err := deleteEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+	if err := b.deleteEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 		return err
 	}
 
 	deleteIndexEntryCatalogInTxn(txn, string(id))
 
-	// Delete edge
+	// Delete edge primary key. Dict cleanup deferred to the prune
+	// pipeline — the caller still writes MVCC tombstone + head which
+	// reuses the numID.
 	return txn.Delete(key)
 }
 
@@ -478,28 +517,35 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 
 	// Delete label indexes
 	for _, label := range deletedNode.Labels {
-		if err := txn.Delete(labelIndexKey(label, id)); err != nil {
+		lblKey := b.labelIndexKeyStringLookup(label, id)
+		if lblKey == nil {
+			continue
+		}
+		if err := txn.Delete(lblKey); err != nil {
 			return 0, nil, nil, err
 		}
 	}
 
-	// Delete outgoing edges (and track count)
-	outPrefix := outgoingIndexPrefix(id)
-	outCount, outIDs, err := b.deleteEdgesWithPrefix(txn, outPrefix)
-	if err != nil {
-		return 0, nil, nil, err
+	// Delete outgoing edges (and track count). Lookup-only: if the node
+	// never got a numID no outgoing entries exist either.
+	if outPrefix := b.outgoingIndexPrefixString(id); outPrefix != nil {
+		outCount, outIDs, err := b.deleteEdgesWithPrefix(txn, outPrefix)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		edgesDeleted += outCount
+		deletedEdgeIDs = append(deletedEdgeIDs, outIDs...)
 	}
-	edgesDeleted += outCount
-	deletedEdgeIDs = append(deletedEdgeIDs, outIDs...)
 
-	// Delete incoming edges (and track count)
-	inPrefix := incomingIndexPrefix(id)
-	inCount, inIDs, err := b.deleteEdgesWithPrefix(txn, inPrefix)
-	if err != nil {
-		return 0, nil, nil, err
+	// Delete incoming edges.
+	if inPrefix := b.incomingIndexPrefixString(id); inPrefix != nil {
+		inCount, inIDs, err := b.deleteEdgesWithPrefix(txn, inPrefix)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		edgesDeleted += inCount
+		deletedEdgeIDs = append(deletedEdgeIDs, inIDs...)
 	}
-	edgesDeleted += inCount
-	deletedEdgeIDs = append(deletedEdgeIDs, inIDs...)
 
 	// Remove from pending embeddings index (if present)
 	txn.Delete(pendingEmbedKey(id))
@@ -508,7 +554,15 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	deleteIndexEntryCatalogInTxn(txn, string(id))
 
 	// Delete the node
-	return edgesDeleted, deletedEdgeIDs, deletedNode, txn.Delete(key)
+	// Delete the primary key. Dict entry cleanup is deferred — the
+	// caller (DeleteNode / BulkDeleteNodes) writes the MVCC tombstone
+	// and head AFTER this helper returns, and those writes reuse the
+	// existing numID. The prune pipeline is the final owner of dict
+	// cleanup for tombstoned entities.
+	if err := txn.Delete(key); err != nil {
+		return 0, nil, nil, err
+	}
+	return edgesDeleted, deletedEdgeIDs, deletedNode, nil
 }
 
 // BulkDeleteNodes removes multiple nodes in a single transaction.

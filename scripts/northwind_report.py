@@ -234,6 +234,124 @@ def parse_powermetrics_plist(path: Path) -> dict:
     }
 
 
+def parse_vmstat_log(path: Path) -> dict:
+    """Parse a vm_stat interval log into memory pressure stats.
+
+    vm_stat <interval> prints a header line with page size, a column-name
+    row, then one row of absolute page counts per sample.  State columns
+    (free, active, specul, inactive, throttle, wired, prgable, file-backed,
+    anonymous, cmprssed, cmprssor) are absolute values on every row; counter
+    columns (faults, copy, etc.) are deltas and may carry a K/M suffix on
+    the first snapshot row.
+
+    Returns dict with byte values:
+      samples, page_size,
+      mem_used_avg, mem_used_peak  (active + wired + compressor pages),
+      mem_compressed_avg, mem_compressed_peak  (cmprssed pages — logical),
+      mem_free_avg, mem_free_min,
+      mem_active_avg, mem_wired_avg, mem_compressor_avg
+    """
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {"samples": 0, "error": f"missing: {path}"}
+
+    if not text.strip():
+        return {"samples": 0, "error": "empty vmstat file"}
+
+    lines = text.strip().splitlines()
+
+    # Extract page size from the header, e.g.
+    # "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+    page_size = 16384
+    for line in lines[:2]:
+        if "page size of" in line:
+            import re as _re
+            m = _re.search(r"page size of (\d+)", line)
+            if m:
+                page_size = int(m.group(1))
+            break
+
+    # Identify the column-name row and map column indices.
+    col_names = None
+    col_line_idx = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("free"):
+            col_names = stripped.split()
+            col_line_idx = i
+            break
+
+    if col_names is None:
+        return {"samples": 0, "error": "could not find column header row"}
+
+    # Column indices we care about (state columns — absolute page counts).
+    want = {"free", "active", "inactive", "wired", "cmprssed", "cmprssor"}
+    col_idx = {}
+    for idx, name in enumerate(col_names):
+        if name in want:
+            col_idx[name] = idx
+
+    if not col_idx:
+        return {"samples": 0, "error": f"expected columns not found in: {col_names}"}
+
+    # Parse data rows.
+    free_pages = []
+    active_pages = []
+    wired_pages = []
+    cmprssed_pages = []
+    cmprssor_pages = []
+    for line in lines[col_line_idx + 1:]:
+        parts = line.split()
+        if not parts or len(parts) < len(col_names):
+            continue
+        try:
+            def parse_val(s):
+                s = s.rstrip(".")
+                if s.endswith("K"):
+                    return int(s[:-1]) * 1024
+                if s.endswith("M"):
+                    return int(s[:-1]) * 1024 * 1024
+                return int(s)
+
+            if "free" in col_idx:
+                free_pages.append(parse_val(parts[col_idx["free"]]))
+            if "active" in col_idx:
+                active_pages.append(parse_val(parts[col_idx["active"]]))
+            if "wired" in col_idx:
+                wired_pages.append(parse_val(parts[col_idx["wired"]]))
+            if "cmprssed" in col_idx:
+                cmprssed_pages.append(parse_val(parts[col_idx["cmprssed"]]))
+            if "cmprssor" in col_idx:
+                cmprssor_pages.append(parse_val(parts[col_idx["cmprssor"]]))
+        except (ValueError, IndexError):
+            continue
+
+    n = len(free_pages)
+    if n == 0:
+        return {"samples": 0, "error": "no data rows parsed"}
+
+    def avg(xs):
+        return sum(xs) / len(xs) if xs else 0.0
+
+    # "used" = active + wired + compressor (resident non-free, non-inactive)
+    used = [a + w + c for a, w, c in zip(active_pages, wired_pages, cmprssor_pages)]
+
+    return {
+        "samples": n,
+        "page_size": page_size,
+        "mem_used_avg": avg(used) * page_size,
+        "mem_used_peak": max(used) * page_size,
+        "mem_compressed_avg": avg(cmprssed_pages) * page_size,
+        "mem_compressed_peak": max(cmprssed_pages) * page_size,
+        "mem_free_avg": avg(free_pages) * page_size,
+        "mem_free_min": min(free_pages) * page_size,
+        "mem_active_avg": avg(active_pages) * page_size,
+        "mem_wired_avg": avg(wired_pages) * page_size,
+        "mem_compressor_avg": avg(cmprssor_pages) * page_size,
+    }
+
+
 def read_int(path: Path, default=0) -> int:
     try:
         return int(path.read_text().strip())
@@ -255,6 +373,7 @@ def load_run(dir_: Path, label: str) -> dict:
     with results_path.open() as fh:
         results = json.load(fh)
     power = parse_powermetrics_plist(dir_ / f"{label}.powermetrics.plist")
+    memory = parse_vmstat_log(dir_ / f"{label}.vmstat.log")
     disk_total = read_int(dir_ / f"{label}.disk_bytes.txt")
     wall_s = read_float(dir_ / f"{label}.wall_seconds.txt")
 
@@ -271,6 +390,7 @@ def load_run(dir_: Path, label: str) -> dict:
         "label": label,
         "results": results,
         "power": power,
+        "memory": memory,
         "disk_total_bytes": disk_total,
         "storage": storage,
         "wall_seconds": wall_s,
@@ -396,6 +516,21 @@ def render_single_report(run: dict, iterations: int, products: int, orders: int)
     else:
         lines.append(f"- _No powermetrics samples available:_ {p.get('error', 'unknown')}")
     lines.append("")
+
+    mem = run["memory"]
+    lines.append("## Memory Pressure")
+    lines.append("")
+    if mem.get("samples", 0) > 0:
+        lines.append(f"- Samples collected: **{mem['samples']}** (~1s each)")
+        lines.append(f"- Avg used (active + wired + compressor): **{human_bytes(mem['mem_used_avg'])}**")
+        lines.append(f"- Peak used: **{human_bytes(mem['mem_used_peak'])}**")
+        lines.append(f"- Avg free: **{human_bytes(mem['mem_free_avg'])}**")
+        lines.append(f"- Min free: **{human_bytes(mem['mem_free_min'])}**")
+        lines.append(f"- Avg compressed (logical): **{human_bytes(mem['mem_compressed_avg'])}**")
+        lines.append(f"- Peak compressed: **{human_bytes(mem['mem_compressed_peak'])}**")
+    else:
+        lines.append(f"- _No vm_stat samples available:_ {mem.get('error', 'unknown')}")
+    lines.append("")
     lines.append("## Storage")
     lines.append("")
     lines.append(f"- **Raw data files:** {human_bytes(raw)} ({raw:,} bytes)")
@@ -497,6 +632,10 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
     row("Avg package power (mW)", n_p.get("package_power_mw_avg", 0), m_p.get("package_power_mw_avg", 0))
     row("Energy during benchmark (J)", n_p.get("energy_joules", 0), m_p.get("energy_joules", 0))
     row("Benchmark wall-clock (s)", n["wall_seconds"], m["wall_seconds"])
+    row("Peak memory used (bytes)",
+        float(n["memory"].get("mem_used_peak", 0)),
+        float(m["memory"].get("mem_used_peak", 0)),
+        lambda x: human_bytes(int(x)))
     n_raw = n["storage"]["totals"]["raw_data"]
     m_raw = m["storage"]["totals"]["raw_data"]
     row("Raw data files (bytes)", float(n_raw), float(m_raw), lambda x: f"{int(x):,}")
@@ -654,6 +793,26 @@ def render_comparison(runs: dict[str, dict], iterations: int, products: int, ord
     lines.append(f"| GPU avg (mW) | {fmt_num(n_p.get('gpu_power_mw_avg', 0), 1)} | {fmt_num(m_p.get('gpu_power_mw_avg', 0), 1)} |")
     lines.append(f"| Package avg (mW) | {fmt_num(n_p.get('package_power_mw_avg', 0), 1)} | {fmt_num(m_p.get('package_power_mw_avg', 0), 1)} |")
     lines.append(f"| Energy (J) | {fmt_num(n_p.get('energy_joules', 0), 2)} | {fmt_num(m_p.get('energy_joules', 0), 2)} |")
+    lines.append("")
+
+    n_mem = n["memory"]
+    m_mem = m["memory"]
+    lines.append("## Memory Pressure")
+    lines.append("")
+    if n_mem.get("samples", 0) > 0 or m_mem.get("samples", 0) > 0:
+        lines.append("System-wide memory during each engine's full lifecycle (startup → benchmark → shutdown).")
+        lines.append("")
+        lines.append("| | NornicDB | Neo4j |")
+        lines.append("|---|---:|---:|")
+        lines.append(f"| Samples | {n_mem.get('samples', 0)} | {m_mem.get('samples', 0)} |")
+        lines.append(f"| Avg used (active+wired+compressor) | {human_bytes(n_mem.get('mem_used_avg', 0))} | {human_bytes(m_mem.get('mem_used_avg', 0))} |")
+        lines.append(f"| Peak used | {human_bytes(n_mem.get('mem_used_peak', 0))} | {human_bytes(m_mem.get('mem_used_peak', 0))} |")
+        lines.append(f"| Avg free | {human_bytes(n_mem.get('mem_free_avg', 0))} | {human_bytes(m_mem.get('mem_free_avg', 0))} |")
+        lines.append(f"| Min free | {human_bytes(n_mem.get('mem_free_min', 0))} | {human_bytes(m_mem.get('mem_free_min', 0))} |")
+        lines.append(f"| Avg compressed (logical) | {human_bytes(n_mem.get('mem_compressed_avg', 0))} | {human_bytes(m_mem.get('mem_compressed_avg', 0))} |")
+        lines.append(f"| Peak compressed | {human_bytes(n_mem.get('mem_compressed_peak', 0))} | {human_bytes(m_mem.get('mem_compressed_peak', 0))} |")
+    else:
+        lines.append("_No vm_stat samples available for either engine._")
     lines.append("")
     lines.append("## Notes")
     lines.append("")

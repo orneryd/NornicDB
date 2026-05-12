@@ -930,6 +930,7 @@ func TestAsyncEngine_FindNodeNeedingEmbedding(t *testing.T) {
 	t.Run("exportable engine fallback finds first matching node", func(t *testing.T) {
 		engine := NewMemoryEngine()
 		t.Cleanup(func() { _ = engine.Close() })
+		engine.SetEmbeddingsEnabled(true)
 		ae := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		t.Cleanup(func() { _ = ae.Close() })
 

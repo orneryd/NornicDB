@@ -89,6 +89,15 @@ type Operation struct {
 	EdgeID  EdgeID
 	Edge    *Edge // New state (for create/update) or nil
 	OldEdge *Edge // Old state (for update/delete rollback)
+
+	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
+	// the ID is newly minted and cannot collide with any prior tombstoned
+	// MVCC head (the same contract that lets CreateNode skip its existence
+	// read). When true, the commit loop writes the MVCC head without the
+	// load-existing-floor round-trip. Safe default is false — the commit
+	// loop falls back to the read-before-write path, preserving snapshot
+	// semantics for recreated user-supplied IDs.
+	FreshID bool
 }
 
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.

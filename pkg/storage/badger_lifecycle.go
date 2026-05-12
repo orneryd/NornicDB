@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -259,14 +260,15 @@ func mvccVersionPrefixForLogicalKey(logicalKey []byte) []byte {
 }
 
 func mvccVersionKeyForLogicalKey(logicalKey []byte, version MVCCVersion) ([]byte, error) {
-	if len(logicalKey) < 2 {
+	if len(logicalKey) != 1+8 {
 		return nil, ErrInvalidData
 	}
+	numID := binary.BigEndian.Uint64(logicalKey[1:])
 	switch logicalKey[0] {
 	case prefixMVCCNode:
-		return mvccNodeVersionKey(NodeID(logicalKey[1:]), version), nil
+		return mvccNodeVersionKey(numID, version), nil
 	case prefixMVCCEdge:
-		return mvccEdgeVersionKey(EdgeID(logicalKey[1:]), version), nil
+		return mvccEdgeVersionKey(numID, version), nil
 	default:
 		return nil, fmt.Errorf("unknown logical key prefix: %x", logicalKey[0])
 	}

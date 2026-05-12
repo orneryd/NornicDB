@@ -82,7 +82,11 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 			}
 
 			for _, label := range node.Labels {
-				if err := txn.Set(labelIndexKey(label, node.ID), []byte{}); err != nil {
+				lblKey, err := b.labelIndexKeyString(txn, label, node.ID)
+				if err != nil {
+					return err
+				}
+				if err := txn.Set(lblKey, []byte{}); err != nil {
 					return err
 				}
 			}
@@ -261,7 +265,7 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 
 		// Insert all edges
 		for _, edge := range edges {
-			data, err := encodeEdge(edge)
+			data, err := b.encodeEdgeInTxn(txn, edge)
 			if err != nil {
 				return fmt.Errorf("failed to encode edge: %w", err)
 			}
@@ -270,16 +274,28 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 				return err
 			}
 
-			if err := txn.Set(outgoingIndexKey(edge.StartNode, edge.ID), []byte{}); err != nil {
+			outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
+			if err != nil {
 				return err
 			}
-			if err := txn.Set(incomingIndexKey(edge.EndNode, edge.ID), []byte{}); err != nil {
+			if err := txn.Set(outKey, []byte{}); err != nil {
 				return err
 			}
-			if err := txn.Set(edgeTypeIndexKey(edge.Type, edge.ID), []byte{}); err != nil {
+			inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edge.ID)
+			if err != nil {
 				return err
 			}
-			if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+			if err := txn.Set(inKey, []byte{}); err != nil {
+				return err
+			}
+			typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edge.ID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(typeKey, []byte{}); err != nil {
+				return err
+			}
+			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
 			// Create-only path: primary key IS the current head body.
@@ -317,9 +333,12 @@ func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
 		return 0
 	}
 
+	prefix := b.incomingIndexPrefixString(nodeID)
+	if prefix == nil {
+		return 0
+	}
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
-		prefix := incomingIndexPrefix(nodeID)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
@@ -341,9 +360,12 @@ func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
 		return 0
 	}
 
+	prefix := b.outgoingIndexPrefixString(nodeID)
+	if prefix == nil {
+		return 0
+	}
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
-		prefix := outgoingIndexPrefix(nodeID)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 

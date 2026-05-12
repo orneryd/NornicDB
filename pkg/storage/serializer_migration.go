@@ -84,9 +84,30 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 	stats.SkippedExisting += skipped
 	stats.TotalScanned += scanned
 
-	converted, skipped, scanned, err = migratePrefix(db, prefixEdge, "edge", func(data []byte) (any, error) {
+	// Migration-time edge decoder must handle both legacy (gob/msgpack)
+	// and compact formats. Compact requires the id dictionary's reverse
+	// map to resolve endpoint numIDs — load it once up front.
+	migrationDict := newIDDictionary()
+	if err := migrationDict.loadFromBadger(db); err != nil {
+		return stats, fmt.Errorf("loading id dictionary for migration: %w", err)
+	}
+	edgeDecoder := func(data []byte) (any, error) {
+		if len(data) >= 1 && data[0] == edgeFormatCompactV1 {
+			edge, startNum, endNum, derr := decodeEdgeCompact(data)
+			if derr != nil {
+				return nil, derr
+			}
+			if startID, ok := migrationDict.lookupNodeIDByNum(startNum); ok {
+				edge.StartNode = startID
+			}
+			if endID, ok := migrationDict.lookupNodeIDByNum(endNum); ok {
+				edge.EndNode = endID
+			}
+			return edge, nil
+		}
 		return decodeEdge(data)
-	}, func(v any) ([]byte, error) {
+	}
+	converted, skipped, scanned, err = migratePrefix(db, prefixEdge, "edge", edgeDecoder, func(v any) ([]byte, error) {
 		edge := v.(*Edge)
 		return encodeValue(edge)
 	}, target, opts)

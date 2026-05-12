@@ -53,6 +53,13 @@ func setupTestServer(t *testing.T) (*Server, *auth.Authenticator) {
 	config.Memory.DecayEnabled = false
 	config.Memory.AutoLinksEnabled = false
 	config.Database.AsyncWritesEnabled = false // Disable async writes for predictable test behavior (200 OK vs 202 Accepted)
+	// The server test suite exercises temporal reads (graph/temporal, graph/
+	// diff) that require historical MVCC versions to still be resolvable at
+	// an `as_of` timestamp. The production default is head-only
+	// (MaxVersionsPerKey=0) so an operator opts into history explicitly;
+	// tests opt in here so prior-version fixtures aren't silently erased
+	// by the overwrite-in-place update path.
+	config.Database.MVCCRetentionMaxVersions = 100
 
 	db, err := nornicdb.Open(tmpDir, config)
 	if err != nil {

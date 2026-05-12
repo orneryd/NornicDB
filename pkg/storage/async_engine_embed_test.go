@@ -77,6 +77,7 @@ func TestEmbedThenFindNextWithFlush(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
+	badger.SetEmbeddingsEnabled(true)
 
 	// Create AsyncEngine
 	config := DefaultAsyncEngineConfig()
@@ -139,6 +140,7 @@ func TestProductionScenario(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
+	badger.SetEmbeddingsEnabled(true)
 
 	// Create AsyncEngine like production
 	config := DefaultAsyncEngineConfig()
@@ -210,6 +212,7 @@ func TestFindNodeNeedingEmbedding_SkipsPendingDeleteBeforeFlush(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	defer badger.Close()
+	badger.SetEmbeddingsEnabled(true)
 
 	config := DefaultAsyncEngineConfig()
 	config.FlushInterval = 1 * time.Hour

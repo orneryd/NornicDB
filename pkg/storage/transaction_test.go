@@ -990,17 +990,24 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outgoingIndexPrefix(edge.StartNode))
+		outPrefix := engine.outgoingIndexPrefixString(edge.StartNode)
+		if outPrefix == nil {
+			t.Fatal("outgoing prefix missing for seeded edge")
+		}
+		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix)
 		if err != nil {
 			t.Fatalf("deleteEdgesWithPrefixBuffered failed: %v", err)
 		}
 		if count != 1 || len(ids) != 1 || ids[0] != edge.ID {
 			t.Fatalf("unexpected delete result: count=%d ids=%v", count, ids)
 		}
+		outKey := engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID)
+		inKey := engine.incomingIndexKeyStringLookup(edge.EndNode, edge.ID)
+		typeKey := engine.edgeTypeIndexKeyStringLookup(edge.Type, edge.ID)
 		if !tx.pendingDeletes[string(edgeKey(edge.ID))] ||
-			!tx.pendingDeletes[string(outgoingIndexKey(edge.StartNode, edge.ID))] ||
-			!tx.pendingDeletes[string(incomingIndexKey(edge.EndNode, edge.ID))] ||
-			!tx.pendingDeletes[string(edgeTypeIndexKey(edge.Type, edge.ID))] {
+			outKey == nil || !tx.pendingDeletes[string(outKey)] ||
+			inKey == nil || !tx.pendingDeletes[string(inKey)] ||
+			typeKey == nil || !tx.pendingDeletes[string(typeKey)] {
 			t.Fatal("expected edge and index deletes to be buffered")
 		}
 	})
@@ -1013,19 +1020,35 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		badEdge := EdgeID(prefixTestID("bad-edge"))
 
 		if err := engine.withUpdate(func(txn *badger.Txn) error {
-			if err := txn.Set(outgoingIndexKey(nodeID, missingEdge), []byte{}); err != nil {
+			missingOut, err := engine.outgoingIndexKeyString(txn, nodeID, missingEdge)
+			if err != nil {
 				return err
 			}
-			if err := txn.Set(outgoingIndexKey(nodeID, badEdge), []byte{}); err != nil {
+			if err := txn.Set(missingOut, []byte{}); err != nil {
+				return err
+			}
+			badOut, err := engine.outgoingIndexKeyString(txn, nodeID, badEdge)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(badOut, []byte{}); err != nil {
 				return err
 			}
 			if err := txn.Set(edgeKey(badEdge), []byte("not-an-edge")); err != nil {
 				return err
 			}
-			if err := txn.Set(incomingIndexKey(otherID, badEdge), []byte{}); err != nil {
+			badIn, err := engine.incomingIndexKeyString(txn, otherID, badEdge)
+			if err != nil {
 				return err
 			}
-			return txn.Set(edgeTypeIndexKey("BROKEN", badEdge), []byte{})
+			if err := txn.Set(badIn, []byte{}); err != nil {
+				return err
+			}
+			badType, err := engine.edgeTypeIndexKeyString(txn, "BROKEN", badEdge)
+			if err != nil {
+				return err
+			}
+			return txn.Set(badType, []byte{})
 		}); err != nil {
 			t.Fatalf("seed update failed: %v", err)
 		}
@@ -1036,7 +1059,11 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, _, err = tx.deleteEdgesWithPrefixBuffered(outgoingIndexPrefix(nodeID))
+		outPrefix := engine.outgoingIndexPrefixString(nodeID)
+		if outPrefix == nil {
+			t.Fatal("outgoing prefix missing for seeded node")
+		}
+		_, _, err = tx.deleteEdgesWithPrefixBuffered(outPrefix)
 		if err == nil {
 			t.Fatal("expected corrupt edge payload error")
 		}
@@ -1101,8 +1128,13 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		if count != 1 || len(ids) != 1 || ids[0] != edge.ID {
 			t.Fatalf("unexpected edge cleanup result: count=%d ids=%v", count, ids)
 		}
-		if !tx.pendingDeletes[string(labelIndexKey("Person", nodeID))] ||
-			!tx.pendingDeletes[string(labelIndexKey("Employee", nodeID))] ||
+		personKey := engine.labelIndexKeyStringLookup("Person", nodeID)
+		employeeKey := engine.labelIndexKeyStringLookup("Employee", nodeID)
+		if personKey == nil || employeeKey == nil {
+			t.Fatal("label index numID missing after CreateNode")
+		}
+		if !tx.pendingDeletes[string(personKey)] ||
+			!tx.pendingDeletes[string(employeeKey)] ||
 			!tx.pendingDeletes[string(nodeKey(nodeID))] ||
 			!tx.pendingDeletes[string(pendingEmbedKey(nodeID))] ||
 			!tx.pendingDeletes[string(embeddingKey(nodeID, 0))] {
@@ -1174,8 +1206,12 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		require.Zero(t, count)
 		require.Empty(t, ids)
-		require.True(t, tx.pendingDeletes[string(labelIndexKey("Person", nodeID))])
-		require.True(t, tx.pendingDeletes[string(labelIndexKey("Member", nodeID))])
+		personKey := engine.labelIndexKeyStringLookup("Person", nodeID)
+		memberKey := engine.labelIndexKeyStringLookup("Member", nodeID)
+		require.NotNil(t, personKey)
+		require.NotNil(t, memberKey)
+		require.True(t, tx.pendingDeletes[string(personKey)])
+		require.True(t, tx.pendingDeletes[string(memberKey)])
 		require.True(t, tx.pendingDeletes[string(nodeKey(nodeID))])
 		require.True(t, tx.pendingDeletes[string(pendingEmbedKey(nodeID))])
 	})

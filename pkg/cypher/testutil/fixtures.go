@@ -62,6 +62,18 @@ import (
 //	}
 func SetupTestExecutor(t *testing.T) *cypher.StorageExecutor {
 	t.Helper()
+	return setupTestExecutorTB(t)
+}
+
+// SetupTestExecutorBench is the *testing.B analogue used by benchmarks. Same
+// wiring (in-memory BadgerEngine + NamespacedEngine("test")) so bench results
+// reflect the same executor surface area as the regular test suite.
+func SetupTestExecutorBench(b *testing.B) *cypher.StorageExecutor {
+	b.Helper()
+	return setupTestExecutorTB(b)
+}
+
+func setupTestExecutorTB(tb testing.TB) *cypher.StorageExecutor {
 	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
 	baseStore := storage.NewMemoryEngine()
 	store := storage.NewNamespacedEngine(baseStore, "test")

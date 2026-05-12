@@ -45,8 +45,8 @@ const (
 	prefixPromotionProfile  = byte(0x15) // promoprofile:name -> msgpack(PromotionProfileDef)
 	prefixPromotionPolicy   = byte(0x16) // promopolicy:name -> msgpack(PromotionPolicyDef)
 	prefixIndexTombstone    = byte(0x17) // idxtomb:<original-index-key> -> []byte{} (presence marker)
-	prefixEdgeBetweenIndex = byte(0x18) // edgebetween_set:start:end:type:edgeID -> []byte{} (all exact relationship lookups)
-	prefixEdgeBetweenHead  = byte(0x19) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
+	prefixEdgeBetweenIndex  = byte(0x18) // edgebetween_set:start:end:type:edgeID -> []byte{} (all exact relationship lookups)
+	prefixEdgeBetweenHead   = byte(0x19) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
@@ -150,6 +150,12 @@ type BadgerEngine struct {
 	edgeBetweenIndexBackfillCancel context.CancelFunc
 	edgeBetweenIndexBackfillDone   chan struct{}
 
+	// idDict assigns compact 8-byte numeric IDs to string node/edge IDs
+	// so secondary indexes (edge-between, outgoing/incoming, edge-type,
+	// label, MVCC heads) can encode references with 8 bytes instead of
+	// 40–50-byte UUID strings. See id_dictionary.go for the full layout.
+	idDict *idDictionary
+
 	// Event callbacks for external coordination (search indexes, caches, etc.)
 	// These are fired AFTER storage operations succeed
 	onNodeCreated NodeEventCallback
@@ -165,6 +171,11 @@ type BadgerEngine struct {
 	accumulator   accessIncrementor
 	revealAll     atomic.Bool
 	revealQueryMu sync.RWMutex
+
+	// embeddingsEnabled gates the pending-embed index write on node creates.
+	// When false, new nodes skip the pendingEmbed marker since no embed worker
+	// will consume it — saves one Badger Set per user node on hot-path writes.
+	embeddingsEnabled atomic.Bool
 
 	// log is the structured *slog.Logger for storage subsystem emissions.
 	// Tagged at construction with component=storage, engine=badger.
@@ -661,6 +672,13 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine.labelFirstNodeCache = make(map[string]NodeID, engine.labelFirstCacheMax)
 	engine.namespaceNodeCounts = make(map[string]int64)
 	engine.namespaceEdgeCounts = make(map[string]int64)
+
+	engine.idDict = newIDDictionary()
+	engine.idDict.setFreelistTTL(opts.EngineOptions.IDFreelistTTL)
+	if err := engine.idDict.loadFromBadger(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load id dictionary: %w", err)
+	}
 
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request

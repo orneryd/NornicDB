@@ -16,7 +16,7 @@ import (
 //   - storage_op_duration_bound_get: ≤ 2 allocs/op (pre-bound observer
 //     hot path; production NeverSample default bypasses exemplar emission).
 //   - storage_index_rebuild_inc: ≤ 2 allocs/op (CounterVec.WithLabelValues
-//     + Inc; closed-enum string literals at the call site).
+//   - Inc; closed-enum string literals at the call site).
 //   - storage_bytes_set: ≤ 2 allocs/op (GaugeVec.WithLabelValues + Set,
 //     called every 30s by the sweeper — not a hot path but the bench
 //     pins the budget to catch regressions before they surface in prod).
@@ -55,5 +55,9 @@ func BenchmarkObserve_HotStorage(b *testing.B) {
 
 type benchStorageProbe struct{}
 
-func (benchStorageProbe) NodeCount() int64 { return 0 }
-func (benchStorageProbe) EdgeCount() int64 { return 0 }
+func (benchStorageProbe) NodeCount() int64           { return 0 }
+func (benchStorageProbe) EdgeCount() int64           { return 0 }
+func (benchStorageProbe) IDDictCounterNodes() uint64 { return 0 }
+func (benchStorageProbe) IDDictCounterEdges() uint64 { return 0 }
+func (benchStorageProbe) IDDictFreelistNodes() int64 { return 0 }
+func (benchStorageProbe) IDDictFreelistEdges() int64 { return 0 }

@@ -95,7 +95,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = decodeEdge(val)
+		edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return false, nil
@@ -108,7 +108,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 
 	if suppress && !wasSuppressed {
 		edge.VisibilitySuppressed = true
-		data, err := encodeEdge(edge)
+		data, err := b.encodeEdgeInTxn(txn, edge)
 		if err != nil {
 			return false, err
 		}
@@ -122,7 +122,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	}
 
 	if !suppress && wasSuppressed {
-		data, err := encodeEdge(edge)
+		data, err := b.encodeEdgeInTxn(txn, edge)
 		if err != nil {
 			return false, err
 		}

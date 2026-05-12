@@ -103,10 +103,18 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
-			if err := txn.Set(labelIndexKey("Person", missingID), []byte{}); err != nil {
+			missingKey, err := b.labelIndexKeyString(txn, "Person", missingID)
+			if err != nil {
 				return err
 			}
-			if err := txn.Set(labelIndexKey("Person", corruptID), []byte{}); err != nil {
+			if err := txn.Set(missingKey, []byte{}); err != nil {
+				return err
+			}
+			corruptKey, err := b.labelIndexKeyString(txn, "Person", corruptID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(corruptKey, []byte{}); err != nil {
 				return err
 			}
 			return txn.Set(nodeKey(corruptID), []byte("not-a-node"))
@@ -227,13 +235,25 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 
 		corruptID := EdgeID(prefixTestID("edge-bad"))
 		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
-			if err := txn.Set(outgoingIndexKey(start.ID, corruptID), []byte{}); err != nil {
+			corruptOut, err := b.outgoingIndexKeyString(txn, start.ID, corruptID)
+			if err != nil {
 				return err
 			}
-			if err := txn.Set(incomingIndexKey(end.ID, corruptID), []byte{}); err != nil {
+			if err := txn.Set(corruptOut, []byte{}); err != nil {
 				return err
 			}
-			if err := txn.Set(edgeTypeIndexKey("REL", corruptID), []byte{}); err != nil {
+			corruptIn, err := b.incomingIndexKeyString(txn, end.ID, corruptID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(corruptIn, []byte{}); err != nil {
+				return err
+			}
+			corruptType, err := b.edgeTypeIndexKeyString(txn, "REL", corruptID)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(corruptType, []byte{}); err != nil {
 				return err
 			}
 			return txn.Set(edgeKey(corruptID), []byte("not-an-edge"))

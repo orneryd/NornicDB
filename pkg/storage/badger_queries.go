@@ -2,7 +2,6 @@
 package storage
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,8 +28,12 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeID := extractNodeIDFromLabelIndex(indexKey, len(label))
-			if nodeID == "" {
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizeLabel(label)))
+			if !ok {
+				continue
+			}
+			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+			if !ok || nodeID == "" {
 				continue
 			}
 
@@ -78,17 +81,22 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 
 	err := b.withView(func(txn *badger.Txn) error {
 		if cachedOK && cachedID != "" {
-			_, err := txn.Get(labelIndexKey(label, cachedID))
-			switch err {
-			case nil:
-				cachedValid = true
-				if !visit(cachedID) {
-					return ErrIterationStopped
-				}
-			case badger.ErrKeyNotFound:
+			cachedKey := b.labelIndexKeyStringLookup(label, cachedID)
+			if cachedKey == nil {
 				b.labelCacheInvalidateForNodeLabels([]string{label}, cachedID)
-			default:
-				return err
+			} else {
+				_, err := txn.Get(cachedKey)
+				switch err {
+				case nil:
+					cachedValid = true
+					if !visit(cachedID) {
+						return ErrIterationStopped
+					}
+				case badger.ErrKeyNotFound:
+					b.labelCacheInvalidateForNodeLabels([]string{label}, cachedID)
+				default:
+					return err
+				}
 			}
 		}
 
@@ -100,8 +108,12 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		labelLen := len(normalizeLabel(label))
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeID := extractNodeIDFromLabelIndex(indexKey, labelLen)
-			if nodeID == "" {
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, labelLen)
+			if !ok {
+				continue
+			}
+			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+			if !ok || nodeID == "" {
 				continue
 			}
 			if cachedValid && nodeID == cachedID {
@@ -141,8 +153,12 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeID := extractNodeIDFromLabelIndex(indexKey, len(label))
-			if nodeID == "" {
+			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(normalizeLabel(label)))
+			if !ok {
+				continue
+			}
+			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
+			if !ok || nodeID == "" {
 				continue
 			}
 
@@ -261,10 +277,15 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
+			key := it.Item().Key()
+			var edgeID EdgeID
+			if len(key) > 1 {
+				edgeID = EdgeID(key[1:])
+			}
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = decodeEdge(val)
+				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -309,19 +330,24 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
-		// Collect edge IDs from index
+		// Collect edge IDs from index. Keys now carry an 8-byte edge
+		// numID in the suffix — resolve via the reverse dict.
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		var edgeIDs []EdgeID
 		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
+			key := it.Item().KeyCopy(nil)
 			if checkTombstones && hasIndexTombstone(txn, key) {
 				continue
 			}
-			// Extract edgeID from key: prefix + type + 0x00 + edgeID
-			sepIdx := bytes.LastIndexByte(key, 0x00)
-			if sepIdx >= 0 && sepIdx < len(key)-1 {
-				edgeIDs = append(edgeIDs, EdgeID(key[sepIdx+1:]))
+			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+			if !ok {
+				continue
 			}
+			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+			if !ok {
+				continue
+			}
+			edgeIDs = append(edgeIDs, edgeID)
 		}
 
 		// Batch fetch edges
@@ -335,7 +361,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = decodeEdge(val)
+				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -476,7 +502,11 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 			if id == "" {
 				continue
 			}
-			_, err := txn.Get(labelIndexKey(label, id))
+			key := b.labelIndexKeyStringLookup(label, id)
+			if key == nil {
+				continue
+			}
+			_, err := txn.Get(key)
 			if err == nil {
 				result[id] = true
 				continue
@@ -500,16 +530,23 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
+	prefix := b.outgoingIndexPrefixString(nodeID)
+	if prefix == nil {
+		return nil, nil
+	}
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := outgoingIndexPrefix(nodeID)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
-			edgeID := extractEdgeIDFromIndexKey(it.Item().Key())
-			if edgeID == "" {
+			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
+			if !ok {
+				continue
+			}
+			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+			if !ok {
 				continue
 			}
 
@@ -522,7 +559,7 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = decodeEdge(val)
+				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -551,16 +588,23 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
+	prefix := b.incomingIndexPrefixString(nodeID)
+	if prefix == nil {
+		return nil, nil
+	}
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := incomingIndexPrefix(nodeID)
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.Valid(); it.Next() {
-			edgeID := extractEdgeIDFromIndexKey(it.Item().Key())
-			if edgeID == "" {
+			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
+			if !ok {
+				continue
+			}
+			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+			if !ok {
 				continue
 			}
 
@@ -573,7 +617,7 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = decodeEdge(val)
+				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -659,9 +703,14 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 
 // edgeBetweenFromHeadIndex loads the typed common-case lookup without scanning.
 func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string) (*Edge, error) {
+	sourceNum, sourceOK := b.idDict.lookupNodeNumID(source)
+	targetNum, targetOK := b.idDict.lookupNodeNumID(target)
+	if !sourceOK || !targetOK {
+		return nil, nil // no numID ever allocated — no index entry can exist
+	}
 	var result *Edge
 	err := b.withView(func(txn *badger.Txn) error {
-		headKey := edgeBetweenHeadKey(source, target, edgeType)
+		headKey := edgeBetweenHeadKey(sourceNum, targetNum, edgeType)
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		if checkTombstones && hasIndexTombstone(txn, headKey) {
 			return nil
@@ -680,10 +729,11 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 		}); err != nil {
 			return err
 		}
-		if checkTombstones && hasIndexTombstone(txn, edgeBetweenIndexKey(source, target, edgeType, edgeID)) {
+		edgeNum, edgeOK := b.idDict.lookupEdgeNumID(edgeID)
+		if edgeOK && checkTombstones && hasIndexTombstone(txn, edgeBetweenIndexKey(sourceNum, targetNum, edgeType, edgeNum)) {
 			return nil
 		}
-		edge, err := edgeFromTxn(txn, edgeID)
+		edge, err := b.edgeFromTxn(txn, edgeID)
 		if err != nil {
 			return fmt.Errorf("load edge-between head edge %q: %w", edgeID, err)
 		}
@@ -699,16 +749,27 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 }
 
 // edgesBetweenFromSetIndex scans the exact relationship set index.
+// Keys use 8-byte numeric IDs so we resolve start/end via the id dict
+// before scanning. Each entry's VALUE carries the string edge ID, which
+// saves a reverse-dict lookup for the scan payload.
 func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType string) ([]*Edge, error) {
+	startNum, sOK := b.idDict.lookupNodeNumID(startID)
+	endNum, eOK := b.idDict.lookupNodeNumID(endID)
+	if !sOK || !eOK {
+		return nil, nil
+	}
 	var result []*Edge
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := edgeBetweenIndexPrefix(startID, endID)
+		prefix := edgeBetweenIndexPrefix(startNum, endNum)
 		if edgeType != "" {
-			prefix = typedEdgeBetweenIndexPrefix(startID, endID, edgeType)
+			prefix = typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
 		}
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = prefix
+		opts.PrefetchValues = true
+		it := txn.NewIterator(opts)
 		defer it.Close()
 
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -716,11 +777,17 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
-			edgeID := extractEdgeIDFromEdgeBetweenIndexKey(indexKey)
+			var edgeID EdgeID
+			if err := it.Item().Value(func(val []byte) error {
+				edgeID = EdgeID(append([]byte(nil), val...))
+				return nil
+			}); err != nil {
+				return err
+			}
 			if edgeID == "" {
 				continue
 			}
-			edge, err := edgeFromTxn(txn, edgeID)
+			edge, err := b.edgeFromTxn(txn, edgeID)
 			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
@@ -734,24 +801,31 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 // edgesBetweenFromLegacyOutgoingIndex preserves compatibility with stores that
 // predate the edge-between indexes or missed a self-heal/backfill window.
 func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID, edgeType string) ([]*Edge, error) {
+	prefix := b.outgoingIndexPrefixString(startID)
+	if prefix == nil {
+		return nil, nil
+	}
 	var result []*Edge
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := outgoingIndexPrefix(startID)
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
 		defer it.Close()
 
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			indexKey := it.Item().Key()
+			indexKey := it.Item().KeyCopy(nil)
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
-			edgeID := extractEdgeIDFromIndexKey(indexKey)
-			if edgeID == "" {
+			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(indexKey)
+			if !ok {
 				continue
 			}
-			edge, err := edgeFromTxn(txn, edgeID)
+			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+			if !ok {
+				continue
+			}
+			edge, err := b.edgeFromTxn(txn, edgeID)
 			if err != nil || !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
@@ -773,7 +847,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 			if edge == nil {
 				continue
 			}
-			if err := writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
 		}
@@ -798,7 +872,9 @@ func edgeMatchesBetween(edge *Edge, startID, endID NodeID, edgeType string) bool
 }
 
 // edgeFromTxn loads an edge record while callers iterate a secondary index.
-func edgeFromTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error) {
+// Now a method on BadgerEngine so it can dispatch to the compact-aware
+// decoder via b.decodeEdgeBody.
+func (b *BadgerEngine) edgeFromTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error) {
 	item, err := txn.Get(edgeKey(edgeID))
 	if err != nil {
 		return nil, err
@@ -806,7 +882,7 @@ func edgeFromTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error) {
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = decodeEdge(val)
+		edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return nil, err

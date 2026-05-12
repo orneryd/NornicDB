@@ -40,8 +40,12 @@ import (
 
 type fullEnumStorageProbe struct{}
 
-func (fullEnumStorageProbe) NodeCount() int64 { return 0 }
-func (fullEnumStorageProbe) EdgeCount() int64 { return 0 }
+func (fullEnumStorageProbe) NodeCount() int64           { return 0 }
+func (fullEnumStorageProbe) EdgeCount() int64           { return 0 }
+func (fullEnumStorageProbe) IDDictCounterNodes() uint64 { return 0 }
+func (fullEnumStorageProbe) IDDictCounterEdges() uint64 { return 0 }
+func (fullEnumStorageProbe) IDDictFreelistNodes() int64 { return 0 }
+func (fullEnumStorageProbe) IDDictFreelistEdges() int64 { return 0 }
 
 type fullEnumMVCCProbe struct{}
 

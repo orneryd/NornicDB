@@ -1890,6 +1890,14 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to configure implicit transaction: %w", err)
 	}
+	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
+	// Flush and the async engine's ticker-driven flush coalesce durability
+	// for implicit writes; forcing an Msync per UNWIND batch turned every
+	// batch into a 300µs syscall for no user-visible benefit.
+	if err := tx.SetImplicit(true); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("failed to configure implicit transaction: %w", err)
+	}
 
 	// Optional WAL transaction markers for receipts.
 	var wal *storage.WAL
