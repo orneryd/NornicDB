@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMergeUniqueConstraintNonAuthoritativeCacheFallsBackToScan verifies that
+// TestMergeUniqueConstraintIncompleteCacheFallsBackToScan verifies that
 // MERGE does not trust a missing UNIQUE-cache entry unless that cache has been
-// rebuilt or maintained authoritatively. Commit-time validation already falls
+// completely backfilled or maintained. Commit-time validation already falls
 // back to a label scan in this state; MERGE planning must do the same so it can
 // MATCH the committed node instead of choosing CREATE and failing at commit.
-func TestMergeUniqueConstraintNonAuthoritativeCacheFallsBackToScan(t *testing.T) {
+func TestMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
 	t.Cleanup(func() {
 		_ = baseStore.Close()
@@ -50,11 +50,11 @@ func TestMergeUniqueConstraintNonAuthoritativeCacheFallsBackToScan(t *testing.T)
 	require.EqualValues(t, 1, result.Rows[0][1])
 }
 
-// TestUnwindMergeUniqueConstraintNonAuthoritativeCacheFallsBackToScan covers
+// TestUnwindMergeUniqueConstraintIncompleteCacheFallsBackToScan covers
 // the batched canonical-write path Eshu uses: UNWIND rows into MERGE node
-// upserts. It has the same cache rule as scalar MERGE; a non-authoritative
+// upserts. It has the same cache rule as scalar MERGE; an incomplete
 // missing UNIQUE value must fall back to storage before CREATE is chosen.
-func TestUnwindMergeUniqueConstraintNonAuthoritativeCacheFallsBackToScan(t *testing.T) {
+func TestUnwindMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
 	t.Cleanup(func() {
 		_ = baseStore.Close()

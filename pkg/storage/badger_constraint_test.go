@@ -197,8 +197,8 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", float64(1)); !constrained || !found || got != firstID {
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
-	if got, found, authoritative, constrained := schema.lookupUniqueConstraintValueForValidation("User", "age", float64(1)); !constrained || !authoritative || !found || got != firstID {
-		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, authoritative, constrained, firstID)
+	if got, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation("User", "age", float64(1)); !constrained || !cacheComplete || !found || got != firstID {
+		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, cacheComplete, constrained, firstID)
 	}
 	constraints := schema.GetConstraintsForLabels([]string{"User"})
 	if len(constraints) != 1 {

@@ -2013,7 +2013,7 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 	}
 
 	schema := tx.engine.GetSchemaForNamespace(dbName)
-	if existingNode, found, authoritative, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && authoritative {
+	if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
 		if found && existingNode != node.ID {
 			if _, deleted := tx.deletedNodes[existingNode]; !deleted {
 				return uniqueConstraintViolation(c.Label, prop, value, existingNode)
@@ -2022,8 +2022,8 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 		return nil
 	}
 
-	// If the derived unique-value cache is not known authoritative, fall back to
-	// the label scan. Normal schema creation/reload marks the cache authoritative
+	// If the derived unique-value cache is not complete, fall back to
+	// the label scan. Normal schema creation/reload marks the cache complete
 	// once after rebuilding it from stored nodes, so hot writes avoid this path.
 	return tx.scanForUniqueViolation(dbName, c.Label, prop, value, node.ID)
 }

@@ -56,7 +56,7 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 	for _, uc := range uniqueConstraints {
 		uc.mu.Lock()
 		uc.values = make(map[interface{}]NodeID)
-		uc.valuesAuthoritative = false
+		uc.valuesCacheComplete = false
 		uc.mu.Unlock()
 	}
 
@@ -81,7 +81,7 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 
 	for _, uc := range uniqueConstraints {
 		uc.mu.Lock()
-		uc.valuesAuthoritative = true
+		uc.valuesCacheComplete = true
 		uc.mu.Unlock()
 	}
 	return nil

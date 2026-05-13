@@ -326,11 +326,12 @@ func (sm *SchemaManager) SetKnowledgePolicyChangedHook(hook func()) {
 
 // UniqueConstraint represents a unique constraint on a label and property.
 type UniqueConstraint struct {
-	Name                string
-	Label               string
-	Property            string
-	values              map[interface{}]NodeID // Track unique values
-	valuesAuthoritative bool
+	Name     string
+	Label    string
+	Property string
+	values   map[interface{}]NodeID // Track unique values
+	// valuesCacheComplete is true once the values cache has been rebuilt from storage.
+	valuesCacheComplete bool
 	mu                  sync.RWMutex
 }
 
@@ -653,11 +654,11 @@ func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, val
 }
 
 // LookupUniqueConstraintValueForPlanning returns the node currently registered
-// for a single-property uniqueness constraint value, plus whether the derived
-// value cache is authoritative. Planners may trust absence only when
-// authoritative is true; otherwise they must retain a scan fallback because the
-// cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+// for a single-property uniqueness constraint value, plus whether the values
+// cache has been rebuilt from storage and can be trusted for misses. Planners
+// may trust absence only when cacheComplete is true; otherwise they must retain
+// a scan fallback because the cache may not have been rebuilt from storage yet.
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
 	sm.mu.RLock()
 	key := fmt.Sprintf("%s:%s", label, property)
 	constraint, exists := sm.uniqueConstraints[key]
@@ -676,10 +677,10 @@ func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property 
 	constraint.mu.RLock()
 	defer constraint.mu.RUnlock()
 	nodeID, found := constraint.values[valueKey]
-	return nodeID, found, true, constraint.valuesAuthoritative
+	return nodeID, found, true, constraint.valuesCacheComplete
 }
 
-func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (nodeID NodeID, valueFound bool, cacheComplete bool, constraintExists bool) {
 	sm.mu.RLock()
 	key := fmt.Sprintf("%s:%s", label, property)
 	constraint, exists := sm.uniqueConstraints[key]
@@ -695,7 +696,7 @@ func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, propert
 	constraint.mu.RLock()
 	defer constraint.mu.RUnlock()
 	nodeID, found := constraint.values[valueKey]
-	return nodeID, found, constraint.valuesAuthoritative, true
+	return nodeID, found, constraint.valuesCacheComplete, true
 }
 
 func uniqueConstraintValueKey(value interface{}) (interface{}, bool) {

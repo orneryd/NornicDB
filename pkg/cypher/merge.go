@@ -276,13 +276,13 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 
 		for _, prop := range mergePropertyNamesSorted(props) {
 			val := props[prop]
-			nodeID, valueFound, constraintExists, authoritative := schema.LookupUniqueConstraintValueForPlanning(label, prop, val)
+			nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValueForPlanning(label, prop, val)
 			if !constraintExists {
 				continue
 			}
 			e.markMergeSchemaLookupUsed()
 			if !valueFound {
-				if authoritative {
+				if cacheComplete {
 					schemaLookupUsed = true
 				}
 				continue
@@ -293,7 +293,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 					return n, nil
 				}
 			}
-			if authoritative {
+			if cacheComplete {
 				schemaLookupUsed = true
 			}
 		}
