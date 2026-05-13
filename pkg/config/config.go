@@ -352,10 +352,6 @@ type DatabaseConfig struct {
 	// MVCCLifecycleMaxChainCap bounds pathological MVCC chain growth.
 	MVCCLifecycleMaxChainCap int
 
-	// StorageSerializer selects the storage serialization format ("gob", "msgpack").
-	// Env: NORNICDB_STORAGE_SERIALIZER (default: msgpack)
-	StorageSerializer string
-
 	// PersistSearchIndexes (EXPERIMENTAL) when true saves BM25, vector, and HNSW indexes under DataDir and loads
 	// them on startup so BuildIndexes can skip the full storage iteration. Default: false.
 	// Note: if indexes are incompatible/missing and must be rebuilt, startup can be long for large datasets.
@@ -1132,11 +1128,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	switch strings.ToLower(strings.TrimSpace(c.Database.StorageSerializer)) {
-	case "", "gob", "msgpack":
-	default:
-		return fmt.Errorf("invalid storage serializer: %s", c.Database.StorageSerializer)
-	}
 	if c.Database.MVCCRetentionMaxVersions < 0 {
 		return fmt.Errorf("invalid mvcc retention max versions: %d", c.Database.MVCCRetentionMaxVersions)
 	}
@@ -1264,7 +1255,6 @@ type YAMLConfig struct {
 		MVCCLifecycleCycleInterval        string `yaml:"mvcc_lifecycle_interval"`
 		MVCCLifecycleMaxSnapshotAge       string `yaml:"mvcc_lifecycle_max_snapshot_age"`
 		MVCCLifecycleMaxChainCap          int    `yaml:"mvcc_lifecycle_max_chain_cap"`
-		StorageSerializer                 string `yaml:"storage_serializer"`
 		PersistSearchIndexes              bool   `yaml:"persist_search_indexes"`
 	} `yaml:"database"`
 
@@ -1575,7 +1565,6 @@ func LoadDefaults() *Config {
 	config.Database.MVCCLifecycleCycleInterval = 30 * time.Second
 	config.Database.MVCCLifecycleMaxSnapshotAge = time.Hour
 	config.Database.MVCCLifecycleMaxChainCap = 1000
-	config.Database.StorageSerializer = "msgpack"
 
 	// Server defaults - Bolt
 	config.Server.BoltEnabled = true
@@ -1877,9 +1866,6 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvInt("NORNICDB_MVCC_LIFECYCLE_MAX_CHAIN_CAP", -1); v >= 0 {
 		config.Database.MVCCLifecycleMaxChainCap = v
-	}
-	if v := getEnv("NORNICDB_STORAGE_SERIALIZER", ""); v != "" {
-		config.Database.StorageSerializer = strings.ToLower(v)
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_PERSIST_SEARCH_INDEXES"); ok {
 		config.Database.PersistSearchIndexes = v
@@ -2766,9 +2752,6 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Database.MVCCLifecycleMaxChainCap > 0 {
 		config.Database.MVCCLifecycleMaxChainCap = yamlCfg.Database.MVCCLifecycleMaxChainCap
-	}
-	if yamlCfg.Database.StorageSerializer != "" {
-		config.Database.StorageSerializer = strings.ToLower(yamlCfg.Database.StorageSerializer)
 	}
 	if yamlCfg.Database.PersistSearchIndexes {
 		config.Database.PersistSearchIndexes = true

@@ -368,10 +368,6 @@ type BadgerOptions struct {
 	// Leave empty to disable encryption.
 	EncryptionKey []byte
 
-	// Serializer selects the storage serialization format ("gob", "msgpack").
-	// Empty means default (gob).
-	Serializer StorageSerializer
-
 	// NodeCacheMaxEntries is the maximum number of nodes held in the in-process
 	// hot node cache (used by GetNode). When exceeded, the cache is cleared.
 	// Set to 0 to use the default.
@@ -531,14 +527,7 @@ func NewBadgerEngine(dataDir string) (*BadgerEngine, error) {
 //
 //	Safe for concurrent use from multiple goroutines.
 func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
-	configuredSerializer := opts.Serializer
-	if configuredSerializer == "" {
-		configuredSerializer = StorageSerializerMsgpack
-	}
 	retentionPolicy := normalizeRetentionPolicy(opts.EngineOptions.RetentionPolicy)
-	if _, err := ParseStorageSerializer(string(configuredSerializer)); err != nil {
-		return nil, err
-	}
 	badgerOpts := badger.DefaultOptions(opts.DataDir)
 
 	if opts.InMemory {
@@ -619,29 +608,16 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	detectedSerializer, hasData, err := detectStoredSerializer(db)
-	if err != nil {
+	// Warn (but don't fail) if the data directory still holds legacy gob
+	// bodies. The decoder handles them, but operators should run
+	// MigrateBadgerToMsgpack to upgrade in place.
+	if detected, hasData, derr := detectStoredSerializer(db); derr != nil {
 		db.Close()
-		return nil, fmt.Errorf("detecting storage serializer: %w", err)
-	}
-
-	activeSerializer := configuredSerializer
-	if hasData {
-		activeSerializer = detectedSerializer
-		if detectedSerializer != configuredSerializer {
-			storageLog.Warn("storage serializer mismatch; using detected serializer for this database",
-				"data_dir", opts.DataDir,
-				"configured", string(configuredSerializer),
-				"detected", string(detectedSerializer),
-				"action", "use_detected_for_this_db",
-				"note", "new databases will use configured value",
-			)
-		}
-	}
-
-	if err := SetStorageSerializer(activeSerializer); err != nil {
-		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("detecting storage serializer: %w", derr)
+	} else if hasData && detected == detectedGob {
+		storageLog.Warn("legacy gob-encoded bodies detected; run MigrateBadgerToMsgpack to upgrade in place",
+			"data_dir", opts.DataDir,
+		)
 	}
 
 	engine := &BadgerEngine{

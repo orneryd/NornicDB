@@ -5,7 +5,6 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 func TestSchemaVersion_FreshDatabase(t *testing.T) {
@@ -57,15 +56,10 @@ func writeLegacyNodeBytes(t *testing.T, eng *BadgerEngine, id string, decayScore
 		LastAccessed: lastAccessed,
 		AccessCount:  accessCount,
 	}
-	data, err := msgpack.Marshal(legacy)
+	data, err := encodeValue(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := encodeValue(legacy)
-	if err != nil {
-		encoded = data
-	}
-	_ = encoded
 	eng.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(nodeKey(NodeID(id)), data)
 	})

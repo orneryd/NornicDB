@@ -920,7 +920,6 @@ database:
   encryption_password: "yaml-secret"
   badger_node_cache_max_entries: 321
   badger_edge_type_cache_max_types: 12
-  storage_serializer: "msgpack"
   persist_search_indexes: true
 auth:
   enabled: true
@@ -1075,7 +1074,6 @@ plugins:
 	require.Equal(t, "yaml-secret", cfg.Database.EncryptionPassword)
 	require.Equal(t, 321, cfg.Database.BadgerNodeCacheMaxEntries)
 	require.Equal(t, 12, cfg.Database.BadgerEdgeTypeCacheMaxTypes)
-	require.Equal(t, "gob", cfg.Database.StorageSerializer)
 	require.True(t, cfg.Database.PersistSearchIndexes)
 
 	require.True(t, cfg.Auth.Enabled)
@@ -1874,9 +1872,6 @@ func TestLoadFromEnv_AsyncWriteDefaults(t *testing.T) {
 	if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 50 {
 		t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 50, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
 	}
-	if cfg.Database.StorageSerializer != "msgpack" {
-		t.Errorf("expected StorageSerializer msgpack, got %s", cfg.Database.StorageSerializer)
-	}
 }
 
 // TestLoadFromEnv_AsyncWriteSettings tests async write env var overrides.
@@ -1997,9 +1992,6 @@ func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
 				if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 75 {
 					t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 75, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
 				}
-				if cfg.Database.StorageSerializer != "msgpack" {
-					t.Errorf("expected StorageSerializer msgpack, got %s", cfg.Database.StorageSerializer)
-				}
 			},
 		},
 	}
@@ -2040,8 +2032,5 @@ func TestLoadDefaults_AsyncWriteValues(t *testing.T) {
 	}
 	if cfg.Database.BadgerEdgeTypeCacheMaxTypes != 50 {
 		t.Errorf("expected BadgerEdgeTypeCacheMaxTypes 50 in defaults, got %d", cfg.Database.BadgerEdgeTypeCacheMaxTypes)
-	}
-	if cfg.Database.StorageSerializer != "msgpack" {
-		t.Errorf("expected StorageSerializer msgpack in defaults, got %s", cfg.Database.StorageSerializer)
 	}
 }

@@ -569,13 +569,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			// WithOptions handles nil per D-01a.
 			Logger: config.Logger,
 		}
-		if config.Database.StorageSerializer != "" {
-			serializer, err := storage.ParseStorageSerializer(config.Database.StorageSerializer)
-			if err != nil {
-				return nil, err
-			}
-			badgerOpts.Serializer = serializer
-		}
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"

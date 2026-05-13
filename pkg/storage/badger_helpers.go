@@ -659,7 +659,7 @@ func extractNodeNumIDFromLabelIndex(key []byte, labelLen int) (uint64, bool) {
 // Serialization helpers
 // ============================================================================
 
-// encodeNode serializes a Node using gob (preserves Go types like int64).
+// encodeNode serializes a Node using msgpack.
 // If the node exceeds maxNodeSize, embeddings are stored separately and a flag is set.
 // Returns: (nodeData, embeddingsStoredSeparately, error)
 func encodeNode(n *Node) ([]byte, bool, error) {
@@ -717,7 +717,7 @@ func decodeEmbedding(data []byte) ([]float32, error) {
 	return emb, nil
 }
 
-// decodeNode deserializes a Node from gob and loads embeddings separately if needed.
+// decodeNode deserializes a Node and loads embeddings separately if needed.
 func decodeNode(data []byte) (*Node, error) {
 	var node Node
 	if err := decodeValue(data, &node); err != nil {
@@ -737,7 +737,7 @@ func decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Nod
 	// Check if embeddings are stored separately (struct flag set during encode)
 	if node.EmbeddingsStoredSeparately {
 		// Use chunk_count from EmbedMeta (set by embed queue) to know how many chunks to load
-		// Handle various integer types (gob may decode as different types depending on value size)
+		// Handle various integer types (msgpack may decode as different types depending on value size)
 		var chunkCount int
 		switch v := node.EmbedMeta["chunk_count"].(type) {
 		case int:
@@ -821,10 +821,9 @@ func encodeEdge(e *Edge) ([]byte, error) {
 	return encodeValue(e)
 }
 
-// decodeEdge deserializes an Edge using the active storage serializer.
-// Legacy gob/msgpack fallback — does NOT handle the compact format.
-// On the BadgerEngine read path, prefer engine.decodeEdgeBody which
-// dispatches based on the format byte.
+// decodeEdge deserializes an Edge from a legacy non-compact body.
+// Does NOT handle the compact-V1 format. On the BadgerEngine read path,
+// prefer engine.decodeEdgeBody which dispatches based on the format byte.
 func decodeEdge(data []byte) (*Edge, error) {
 	var edge Edge
 	if err := decodeValue(data, &edge); err != nil {

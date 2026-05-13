@@ -446,7 +446,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Badger in-process cache sizing (hot read paths)
 	dbConfig.Database.BadgerNodeCacheMaxEntries = cfg.Database.BadgerNodeCacheMaxEntries
 	dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = cfg.Database.BadgerEdgeTypeCacheMaxTypes
-	dbConfig.Database.StorageSerializer = cfg.Database.StorageSerializer
 	dbConfig.Database.PersistSearchIndexes = cfg.Database.PersistSearchIndexes
 	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
 	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled

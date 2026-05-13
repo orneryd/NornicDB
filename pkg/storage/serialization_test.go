@@ -1,7 +1,8 @@
 package storage
 
 import (
-	"sync/atomic"
+	"bytes"
+	"encoding/gob"
 	"testing"
 	"time"
 
@@ -9,12 +10,6 @@ import (
 )
 
 func TestStorageSerializerMsgpackRoundTrip(t *testing.T) {
-	prev := currentStorageSerializer()
-	require.NoError(t, SetStorageSerializer(StorageSerializerMsgpack))
-	t.Cleanup(func() {
-		_ = SetStorageSerializer(prev)
-	})
-
 	node := &Node{
 		ID:         NodeID("node-1"),
 		Labels:     []string{"Person"},
@@ -34,204 +29,92 @@ func TestStorageSerializerMsgpackRoundTrip(t *testing.T) {
 }
 
 func TestDecodeNode_LegacyGobFallback(t *testing.T) {
-	prev := currentStorageSerializer()
-	require.NoError(t, SetStorageSerializer(StorageSerializerMsgpack))
-	t.Cleanup(func() {
-		_ = SetStorageSerializer(prev)
-	})
-
 	node := &Node{
 		ID:         NodeID("legacy-node"),
 		Labels:     []string{"Legacy"},
 		Properties: map[string]any{"count": int64(7)},
 	}
 
-	legacyData, err := encodeWithSerializer(StorageSerializerGob, node)
-	require.NoError(t, err)
+	// Synthesize a header-less gob body the way pre-msgpack writers
+	// produced them. The decoder is required to handle these for the
+	// in-place migration tool, even though the engine never emits them.
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(node))
 
-	decoded, err := decodeNode(legacyData)
+	decoded, err := decodeNode(buf.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)
 	require.Equal(t, node.Properties, decoded.Properties)
 }
 
-func TestDetectStoredSerializerMismatchUsesDetected(t *testing.T) {
-	dir := t.TempDir()
-
-	base, err := NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir:    dir,
-		Serializer: StorageSerializerGob,
-	})
+func TestSplitSerializationHeader(t *testing.T) {
+	// Short data — no header.
+	id, payload, ok, err := splitSerializationHeader([]byte("tiny"))
 	require.NoError(t, err)
-	engine := NewNamespacedEngine(base, "test")
-	_, err = engine.CreateNode(&Node{
-		ID:     NodeID("node-1"),
-		Labels: []string{"Person"},
-	})
-	require.NoError(t, err)
-	require.NoError(t, base.Close())
+	require.False(t, ok)
+	require.Zero(t, id)
+	require.Nil(t, payload)
 
-	base2, err := NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir:    dir,
-		Serializer: StorageSerializerMsgpack,
-	})
+	// Wrong magic — no header.
+	id, payload, ok, err = splitSerializationHeader([]byte("plain-gob-data"))
 	require.NoError(t, err)
-	defer base2.Close()
+	require.False(t, ok)
+	require.Zero(t, id)
+	require.Nil(t, payload)
 
-	require.Equal(t, StorageSerializerGob, currentStorageSerializer())
+	badVersion := append([]byte(serializationMagic), byte(99), serializerIDMsgpack)
+	_, _, _, err = splitSerializationHeader(badVersion)
+	require.ErrorContains(t, err, "unsupported serialization version")
 }
 
-func TestStorageSerializer_HelperCoverage(t *testing.T) {
-	t.Run("parse and set serializer validation", func(t *testing.T) {
-		prev := currentStorageSerializer()
-		t.Cleanup(func() {
-			_ = SetStorageSerializer(prev)
-		})
+func TestSerializeEdge_RoundTrip(t *testing.T) {
+	edge := &Edge{
+		ID:        EdgeID("edge-1"),
+		StartNode: NodeID("node-1"),
+		EndNode:   NodeID("node-2"),
+		Type:      "KNOWS",
+		Properties: map[string]any{
+			"weight": int64(3),
+		},
+	}
 
-		parsed, err := ParseStorageSerializer("  MSGPACK ")
-		require.NoError(t, err)
-		require.Equal(t, StorageSerializerMsgpack, parsed)
+	data, err := serializeEdge(edge)
+	require.NoError(t, err)
 
-		require.NoError(t, SetStorageSerializer(StorageSerializerMsgpack))
-		require.Equal(t, StorageSerializerMsgpack, currentStorageSerializer())
+	decoded, err := deserializeEdge(data)
+	require.NoError(t, err)
+	require.Equal(t, edge.ID, decoded.ID)
+	require.Equal(t, edge.Type, decoded.Type)
+	require.Equal(t, edge.Properties, decoded.Properties)
 
-		_, err = ParseStorageSerializer("bogus")
-		require.ErrorContains(t, err, "unsupported storage serializer")
+	_, err = deserializeEdge([]byte("not-a-valid-edge"))
+	require.ErrorContains(t, err, "decoding edge")
 
-		err = SetStorageSerializer(StorageSerializer("bogus"))
-		require.ErrorContains(t, err, "unsupported storage serializer")
-	})
+	_, err = deserializeNode([]byte("not-a-valid-node"))
+	require.ErrorContains(t, err, "decoding node")
+}
 
-	t.Run("current serializer falls back to gob when unset", func(t *testing.T) {
-		prev := activeSerializer
-		activeSerializer = atomic.Value{}
-		t.Cleanup(func() {
-			activeSerializer = prev
-		})
-		require.Equal(t, StorageSerializerGob, currentStorageSerializer())
-	})
+func TestSerializeNode_RejectsUnencodableProperty(t *testing.T) {
+	node := &Node{
+		ID:     "n-bad",
+		Labels: []string{"Bad"},
+		Properties: map[string]any{
+			"bad": make(chan int),
+		},
+	}
+	_, err := serializeNode(node)
+	require.ErrorContains(t, err, "encoding node")
 
-	t.Run("serializer id mappings and invalid ids", func(t *testing.T) {
-		id, err := serializerIDFor(StorageSerializerGob)
-		require.NoError(t, err)
-		require.Equal(t, serializerIDGob, id)
-
-		id, err = serializerIDFor(StorageSerializerMsgpack)
-		require.NoError(t, err)
-		require.Equal(t, serializerIDMsgpack, id)
-
-		_, err = serializerIDFor(StorageSerializer("bad"))
-		require.ErrorContains(t, err, "unsupported storage serializer")
-
-		serializer, err := serializerFromID(serializerIDGob)
-		require.NoError(t, err)
-		require.Equal(t, StorageSerializerGob, serializer)
-
-		serializer, err = serializerFromID(serializerIDMsgpack)
-		require.NoError(t, err)
-		require.Equal(t, StorageSerializerMsgpack, serializer)
-
-		_, err = serializerFromID(99)
-		require.ErrorContains(t, err, "unsupported storage serializer id")
-	})
-
-	t.Run("split header handles version and serializer errors", func(t *testing.T) {
-		serializer, payload, ok, err := splitSerializationHeader([]byte("tiny"))
-		require.NoError(t, err)
-		require.False(t, ok)
-		require.Empty(t, serializer)
-		require.Nil(t, payload)
-
-		serializer, payload, ok, err = splitSerializationHeader([]byte("plain-gob-data"))
-		require.NoError(t, err)
-		require.False(t, ok)
-		require.Empty(t, serializer)
-		require.Nil(t, payload)
-
-		badVersion := append([]byte(serializationMagic), byte(99), serializerIDGob)
-		_, _, _, err = splitSerializationHeader(badVersion)
-		require.ErrorContains(t, err, "unsupported serialization version")
-
-		badID := append([]byte(serializationMagic), serializationVersion, byte(99))
-		_, _, _, err = splitSerializationHeader(badID)
-		require.ErrorContains(t, err, "unsupported storage serializer id")
-	})
-
-	t.Run("encode and decode with serializer validation", func(t *testing.T) {
-		type sample struct {
-			Name string
-			Age  int
-		}
-
-		encoded, err := encodeWithSerializer(StorageSerializerMsgpack, sample{Name: "Alice", Age: 7})
-		require.NoError(t, err)
-
-		var decoded sample
-		require.NoError(t, decodeWithSerializer(StorageSerializerMsgpack, encoded, &decoded))
-		require.Equal(t, sample{Name: "Alice", Age: 7}, decoded)
-
-		_, err = encodeWithSerializer(StorageSerializer("bad"), sample{})
-		require.ErrorContains(t, err, "unsupported storage serializer")
-
-		err = decodeWithSerializer(StorageSerializer("bad"), encoded, &decoded)
-		require.ErrorContains(t, err, "unsupported storage serializer")
-	})
-
-	t.Run("serialize and deserialize edge plus error paths", func(t *testing.T) {
-		prev := currentStorageSerializer()
-		require.NoError(t, SetStorageSerializer(StorageSerializerMsgpack))
-		t.Cleanup(func() {
-			_ = SetStorageSerializer(prev)
-		})
-
-		edge := &Edge{
-			ID:        EdgeID("edge-1"),
-			StartNode: NodeID("node-1"),
-			EndNode:   NodeID("node-2"),
-			Type:      "KNOWS",
-			Properties: map[string]any{
-				"weight": int64(3),
-			},
-		}
-
-		data, err := serializeEdge(edge)
-		require.NoError(t, err)
-
-		decoded, err := deserializeEdge(data)
-		require.NoError(t, err)
-		require.Equal(t, edge.ID, decoded.ID)
-		require.Equal(t, edge.Type, decoded.Type)
-		require.Equal(t, edge.Properties, decoded.Properties)
-
-		_, err = deserializeEdge([]byte("not-a-valid-edge"))
-		require.ErrorContains(t, err, "decoding edge")
-
-		_, err = deserializeNode([]byte("not-a-valid-node"))
-		require.ErrorContains(t, err, "decoding node")
-	})
-
-	t.Run("serialize node and edge return encoding errors for unsupported props", func(t *testing.T) {
-		node := &Node{
-			ID:     "n-bad",
-			Labels: []string{"Bad"},
-			Properties: map[string]any{
-				"bad": make(chan int),
-			},
-		}
-		_, err := serializeNode(node)
-		require.ErrorContains(t, err, "encoding node")
-
-		edge := &Edge{
-			ID:        "e-bad",
-			StartNode: "n1",
-			EndNode:   "n2",
-			Type:      "REL",
-			Properties: map[string]any{
-				"bad": make(chan int),
-			},
-		}
-		_, err = serializeEdge(edge)
-		require.ErrorContains(t, err, "encoding edge")
-	})
+	edge := &Edge{
+		ID:        "e-bad",
+		StartNode: "n1",
+		EndNode:   "n2",
+		Type:      "REL",
+		Properties: map[string]any{
+			"bad": make(chan int),
+		},
+	}
+	_, err = serializeEdge(edge)
+	require.ErrorContains(t, err, "encoding edge")
 }

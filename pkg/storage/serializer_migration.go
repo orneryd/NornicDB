@@ -6,18 +6,21 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// SerializerMigrationOptions controls migration behavior.
+// SerializerMigrationOptions controls the in-place gob → msgpack
+// rewrite. There is no source/target choice: the engine only emits
+// msgpack, and the only thing this tool does is upgrade legacy gob
+// bodies in an existing data directory so they can be read by current
+// code without going through the legacy decode arm forever.
 type SerializerMigrationOptions struct {
 	BatchSize int
 	DryRun    bool
 }
 
-// SerializerMigrationStats reports conversion results.
+// SerializerMigrationStats reports conversion results for the in-place
+// gob → msgpack rewrite.
 type SerializerMigrationStats struct {
 	DataDir             string
-	Source              StorageSerializer
-	Target              StorageSerializer
-	HasData             bool
+	HasLegacyData       bool
 	NodesConverted      int
 	EdgesConverted      int
 	EmbeddingsConverted int
@@ -25,28 +28,28 @@ type SerializerMigrationStats struct {
 	TotalScanned        int
 }
 
-// MigrateBadgerSerializer converts stored data to the target serializer in place.
-// This expects the database to be offline (no running server).
-func MigrateBadgerSerializer(dataDir string, target StorageSerializer, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
+// MigrateBadgerToMsgpack rewrites any legacy gob-encoded node, edge, or
+// embedding bodies in the given data directory as msgpack. The database
+// must be offline (no running server). New writes have always been
+// msgpack since this engine version, so on a fresh database this is a
+// no-op.
+func MigrateBadgerToMsgpack(dataDir string, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
 	db, err := badger.Open(badger.DefaultOptions(dataDir).WithLogger(nil))
 	if err != nil {
-		return SerializerMigrationStats{DataDir: dataDir, Target: target}, fmt.Errorf("open badger: %w", err)
+		return SerializerMigrationStats{DataDir: dataDir}, fmt.Errorf("open badger: %w", err)
 	}
 	defer db.Close()
 
-	return MigrateBadgerSerializerWithDB(db, dataDir, target, opts)
+	return MigrateBadgerToMsgpackWithDB(db, dataDir, opts)
 }
 
-// MigrateBadgerSerializerWithDB converts stored data to the target serializer using an existing DB handle.
-// This is primarily used for tests and offline tooling.
-func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target StorageSerializer, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
-	stats := SerializerMigrationStats{
-		DataDir: dataDir,
-		Target:  target,
-	}
+// MigrateBadgerToMsgpackWithDB is MigrateBadgerToMsgpack against an
+// already-open *badger.DB. Used by tests and offline tooling.
+func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts SerializerMigrationOptions) (SerializerMigrationStats, error) {
+	stats := SerializerMigrationStats{DataDir: dataDir}
 
-	if _, err := ParseStorageSerializer(string(target)); err != nil {
-		return stats, err
+	if db == nil {
+		return stats, fmt.Errorf("nil badger db")
 	}
 
 	if opts.BatchSize <= 0 {
@@ -57,26 +60,17 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 	if err != nil {
 		return stats, err
 	}
-	stats.Source = source
-	stats.HasData = hasData
+	stats.HasLegacyData = hasData && source == detectedGob
 	if !hasData {
 		return stats, nil
 	}
 
-	prev := currentStorageSerializer()
-	if err := SetStorageSerializer(target); err != nil {
-		return stats, err
-	}
-	defer func() {
-		_ = SetStorageSerializer(prev)
-	}()
-
-	converted, skipped, scanned, err := migratePrefix(db, prefixNode, "node", func(data []byte) (any, error) {
+	converted, skipped, scanned, err := migratePrefixToMsgpack(db, prefixNode, "node", func(data []byte) (any, error) {
 		return decodeNode(data)
 	}, func(v any) ([]byte, error) {
 		node := v.(*Node)
 		return encodeValue(node)
-	}, target, opts)
+	}, opts)
 	if err != nil {
 		return stats, err
 	}
@@ -84,9 +78,11 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 	stats.SkippedExisting += skipped
 	stats.TotalScanned += scanned
 
-	// Migration-time edge decoder must handle both legacy (gob/msgpack)
-	// and compact formats. Compact requires the id dictionary's reverse
-	// map to resolve endpoint numIDs — load it once up front.
+	// Edges may be in legacy gob/msgpack form OR in the compact-V1 codec
+	// (which is a separate framing not produced by encodeValue). The
+	// compact codec is already non-gob and needs no rewrite, so we route
+	// it through a decoder that re-emits the same compact body — the
+	// migrate loop's "already in target format" check will then skip it.
 	migrationDict := newIDDictionary()
 	if err := migrationDict.loadFromBadger(db); err != nil {
 		return stats, fmt.Errorf("loading id dictionary for migration: %w", err)
@@ -107,10 +103,10 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 		}
 		return decodeEdge(data)
 	}
-	converted, skipped, scanned, err = migratePrefix(db, prefixEdge, "edge", edgeDecoder, func(v any) ([]byte, error) {
+	converted, skipped, scanned, err = migratePrefixToMsgpack(db, prefixEdge, "edge", edgeDecoder, func(v any) ([]byte, error) {
 		edge := v.(*Edge)
 		return encodeValue(edge)
-	}, target, opts)
+	}, opts)
 	if err != nil {
 		return stats, err
 	}
@@ -118,12 +114,12 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 	stats.SkippedExisting += skipped
 	stats.TotalScanned += scanned
 
-	converted, skipped, scanned, err = migratePrefix(db, prefixEmbedding, "embedding", func(data []byte) (any, error) {
+	converted, skipped, scanned, err = migratePrefixToMsgpack(db, prefixEmbedding, "embedding", func(data []byte) (any, error) {
 		return decodeEmbedding(data)
 	}, func(v any) ([]byte, error) {
 		emb := v.([]float32)
 		return encodeValue(emb)
-	}, target, opts)
+	}, opts)
 	if err != nil {
 		return stats, err
 	}
@@ -134,7 +130,7 @@ func MigrateBadgerSerializerWithDB(db *badger.DB, dataDir string, target Storage
 	return stats, nil
 }
 
-func migratePrefix(db *badger.DB, prefix byte, kind string, decode func([]byte) (any, error), encode func(any) ([]byte, error), target StorageSerializer, opts SerializerMigrationOptions) (int, int, int, error) {
+func migratePrefixToMsgpack(db *badger.DB, prefix byte, kind string, decode func([]byte) (any, error), encode func(any) ([]byte, error), opts SerializerMigrationOptions) (int, int, int, error) {
 	converted := 0
 	skipped := 0
 	scanned := 0
@@ -178,11 +174,17 @@ func migratePrefix(db *badger.DB, prefix byte, kind string, decode func([]byte) 
 			}
 			scanned++
 
-			serializer, _, ok, err := splitSerializationHeader(val)
+			headerID, _, ok, err := splitSerializationHeader(val)
 			if err != nil {
 				return err
 			}
-			if ok && serializer == target {
+			if ok && headerID == serializerIDMsgpack {
+				skipped++
+				continue
+			}
+			// Compact edge bodies aren't framed by encodeValue; their
+			// first byte is edgeFormatCompactV1 and they have no header.
+			if prefix == prefixEdge && len(val) >= 1 && val[0] == edgeFormatCompactV1 {
 				skipped++
 				continue
 			}

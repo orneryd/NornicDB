@@ -45,15 +45,6 @@ func TestValidate_PasswordProviderRequiresPassword(t *testing.T) {
 	}
 }
 
-func TestValidate_InvalidStorageSerializer(t *testing.T) {
-	cfg := LoadDefaults()
-	cfg.Database.StorageSerializer = "protobuf"
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Expected error for invalid storage serializer")
-	}
-}
-
 func TestValidate_NegativeMVCCRetentionMaxVersions(t *testing.T) {
 	cfg := LoadDefaults()
 	cfg.Database.MVCCRetentionMaxVersions = -1

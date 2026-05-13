@@ -438,12 +438,6 @@ func TestBadgerEngine_MVCCStress_ChurnPruneBoundsRetainedChain(t *testing.T) {
 }
 
 func TestMVCCInternalRecordsAlwaysUseMsgpack(t *testing.T) {
-	prev := currentStorageSerializer()
-	require.NoError(t, SetStorageSerializer(StorageSerializerGob))
-	t.Cleanup(func() {
-		_ = SetStorageSerializer(prev)
-	})
-
 	headData, err := encodeMVCCHead(MVCCHead{Version: MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7}, Tombstoned: true, FloorVersion: MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Minute), CommitSequence: 3}})
 	require.NoError(t, err)
 	_, _, ok, err := splitSerializationHeader(headData)

@@ -225,23 +225,6 @@ func TestOpen(t *testing.T) {
 		assert.Nil(t, inferEngine)
 	})
 
-	t.Run("returns error for invalid storage serializer", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Database.StorageSerializer = "invalid-serializer"
-		_, err := Open(t.TempDir(), cfg)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "unsupported storage serializer")
-	})
-
-	t.Run("opens with msgpack storage serializer", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Database.StorageSerializer = "msgpack"
-		db, err := Open(t.TempDir(), cfg)
-		require.NoError(t, err)
-		require.NotNil(t, db)
-		require.NoError(t, db.Close())
-	})
-
 	t.Run("returns error when encryption enabled without password", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Database.EncryptionEnabled = true

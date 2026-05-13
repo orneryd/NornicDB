@@ -1500,14 +1500,8 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("rejects invalid serializer and encryption key", func(t *testing.T) {
+	t.Run("rejects bad encryption key", func(t *testing.T) {
 		_, err := NewBadgerEngineWithOptions(BadgerOptions{
-			InMemory:   true,
-			Serializer: StorageSerializer("bogus"),
-		})
-		require.Error(t, err)
-
-		_, err = NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory:      true,
 			EncryptionKey: []byte("short"),
 		})

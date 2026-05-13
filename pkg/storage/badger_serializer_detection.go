@@ -6,12 +6,28 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-func detectStoredSerializer(db *badger.DB) (StorageSerializer, bool, error) {
+// detectedSerializer is what the in-place migration tool finds in an
+// existing data directory. "gob" is only ever returned for legacy data
+// that pre-dates the msgpack header; current engines never emit it.
+type detectedSerializer byte
+
+const (
+	detectedNone    detectedSerializer = 0
+	detectedGob     detectedSerializer = detectedSerializer(serializerIDGob)
+	detectedMsgpack detectedSerializer = detectedSerializer(serializerIDMsgpack)
+)
+
+// detectStoredSerializer scans the first non-empty body it finds under
+// the node/edge/embedding prefixes and returns which encoding it uses.
+// Returns (detectedNone, false, nil) for an empty database. Used solely
+// by the migration tool — the engine's read path dispatches on the body
+// header itself, not on a global "active serializer".
+func detectStoredSerializer(db *badger.DB) (detectedSerializer, bool, error) {
 	if db == nil {
-		return "", false, fmt.Errorf("nil badger db")
+		return detectedNone, false, fmt.Errorf("nil badger db")
 	}
 
-	var detected StorageSerializer
+	var detected detectedSerializer
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = true
@@ -35,15 +51,15 @@ func detectStoredSerializer(db *badger.DB) (StorageSerializer, bool, error) {
 				if len(val) == 0 {
 					continue
 				}
-				serializer, _, ok, err := splitSerializationHeader(val)
+				headerID, _, ok, err := splitSerializationHeader(val)
 				if err != nil {
 					it.Close()
 					return err
 				}
 				if ok {
-					detected = serializer
+					detected = detectedSerializer(headerID)
 				} else {
-					detected = StorageSerializerGob
+					detected = detectedGob
 				}
 				it.Close()
 				return ErrIterationStopped
@@ -56,10 +72,10 @@ func detectStoredSerializer(db *badger.DB) (StorageSerializer, bool, error) {
 		err = nil
 	}
 	if err != nil {
-		return "", false, err
+		return detectedNone, false, err
 	}
-	if detected == "" {
-		return "", false, nil
+	if detected == detectedNone {
+		return detectedNone, false, nil
 	}
 	return detected, true, nil
 }
