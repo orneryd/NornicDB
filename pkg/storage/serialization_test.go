@@ -11,16 +11,13 @@ import (
 
 func TestStorageSerializerMsgpackRoundTrip(t *testing.T) {
 	node := &Node{
-		ID:         NodeID("node-1"),
+		ID:         NodeID("test:node-1"),
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"age": int64(42), "name": "Alice"},
 		CreatedAt:  time.Unix(1700000000, 0).UTC(),
 	}
 
-	data, _, err := encodeNode(node)
-	require.NoError(t, err)
-
-	decoded, err := decodeNode(data)
+	decoded, err := codecRoundTripNode(t, node)
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)
@@ -28,7 +25,7 @@ func TestStorageSerializerMsgpackRoundTrip(t *testing.T) {
 	require.True(t, decoded.CreatedAt.Equal(node.CreatedAt))
 }
 
-func TestDecodeNode_LegacyGobFallback(t *testing.T) {
+func TestDecodeNodeV1_LegacyGobFallback(t *testing.T) {
 	node := &Node{
 		ID:         NodeID("legacy-node"),
 		Labels:     []string{"Legacy"},
@@ -36,12 +33,12 @@ func TestDecodeNode_LegacyGobFallback(t *testing.T) {
 	}
 
 	// Synthesize a header-less gob body the way pre-msgpack writers
-	// produced them. The decoder is required to handle these for the
-	// in-place migration tool, even though the engine never emits them.
+	// produced them. The migration's V1 decode arm must handle these
+	// even though the engine never emits them.
 	var buf bytes.Buffer
 	require.NoError(t, gob.NewEncoder(&buf).Encode(node))
 
-	decoded, err := decodeNode(buf.Bytes())
+	decoded, err := decodeNodeV1(buf.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)

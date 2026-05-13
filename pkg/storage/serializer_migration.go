@@ -66,7 +66,7 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 	}
 
 	converted, skipped, scanned, err := migratePrefixToMsgpack(db, prefixNode, "node", func(data []byte) (any, error) {
-		return decodeNode(data)
+		return decodeNodeV1(data)
 	}, func(v any) ([]byte, error) {
 		node := v.(*Node)
 		return encodeValue(node)
@@ -89,7 +89,7 @@ func MigrateBadgerToMsgpackWithDB(db *badger.DB, dataDir string, opts Serializer
 	}
 	edgeDecoder := func(data []byte) (any, error) {
 		if len(data) >= 1 && data[0] == edgeFormatCompactV1 {
-			edge, startNum, endNum, derr := decodeEdgeCompact(data)
+			edge, startNum, endNum, derr := decodeEdgeCompactV1(data)
 			if derr != nil {
 				return nil, derr
 			}

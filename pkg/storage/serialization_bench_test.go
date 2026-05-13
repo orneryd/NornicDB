@@ -3,53 +3,101 @@ package storage
 import (
 	"testing"
 	"time"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
+// benchEngine spins up a fresh in-memory engine for codec benchmarks.
+// All benches share this helper so they exercise the V2 codec end-to-
+// end (dictionary allocation included).
+func benchEngine(b *testing.B) *BadgerEngine {
+	b.Helper()
+	eng, err := NewBadgerEngineInMemory()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { eng.Close() })
+	return eng
+}
+
 func BenchmarkSerializeNode(b *testing.B) {
+	eng := benchEngine(b)
 	node := benchmarkNode()
+	ns := namespaceForNodeID(node.ID)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := encodeNode(node); err != nil {
+		err := eng.withUpdate(func(txn *badger.Txn) error {
+			_, _, err := eng.encodeNodeInTxn(txn, ns, node)
+			return err
+		})
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkDeserializeNode(b *testing.B) {
+	eng := benchEngine(b)
 	node := benchmarkNode()
-	data, _, err := encodeNode(node)
-	if err != nil {
+	ns := namespaceForNodeID(node.ID)
+	var data []byte
+	if err := eng.withUpdate(func(txn *badger.Txn) error {
+		var encErr error
+		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
+		if encErr != nil {
+			return encErr
+		}
+		return eng.propKeyDict.flushTxnCounters(txn)
+	}); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := decodeNode(data); err != nil {
+		if _, err := eng.decodeNode(ns, data); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkSerializeEdge(b *testing.B) {
+	eng := benchEngine(b)
 	edge := benchmarkEdge()
+	ns := namespaceForEdgeID(edge.ID)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := encodeEdge(edge); err != nil {
+		err := eng.withUpdate(func(txn *badger.Txn) error {
+			_, err := eng.encodeEdgeInTxn(txn, ns, edge)
+			return err
+		})
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkDeserializeEdge(b *testing.B) {
+	eng := benchEngine(b)
 	edge := benchmarkEdge()
-	data, err := encodeEdge(edge)
-	if err != nil {
+	ns := namespaceForEdgeID(edge.ID)
+	var data []byte
+	if err := eng.withUpdate(func(txn *badger.Txn) error {
+		var encErr error
+		data, encErr = eng.encodeEdgeInTxn(txn, ns, edge)
+		if encErr != nil {
+			return encErr
+		}
+		if err := eng.idDict.flushTxnCounters(txn); err != nil {
+			return err
+		}
+		return eng.propKeyDict.flushTxnCounters(txn)
+	}); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := decodeEdge(data); err != nil {
+		if _, err := eng.decodeEdgeBodyWithID(ns, data, edge.ID); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -82,7 +130,7 @@ func BenchmarkDeserializeEmbedding(b *testing.B) {
 
 func benchmarkNode() *Node {
 	return &Node{
-		ID:     NodeID("node-1"),
+		ID:     NodeID("test:node-1"),
 		Labels: []string{"Person", "User"},
 		Properties: map[string]any{
 			"name":    "Alice",
@@ -102,9 +150,9 @@ func benchmarkNode() *Node {
 
 func benchmarkEdge() *Edge {
 	return &Edge{
-		ID:        EdgeID("edge-1"),
-		StartNode: NodeID("node-1"),
-		EndNode:   NodeID("node-2"),
+		ID:        EdgeID("test:edge-1"),
+		StartNode: NodeID("test:node-1"),
+		EndNode:   NodeID("test:node-2"),
 		Type:      "KNOWS",
 		Properties: map[string]any{
 			"since":  int64(2020),

@@ -204,7 +204,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 				return err
 			}
 
-			node, err := decodeNode(raw)
+			node, err := b.decodeNode(namespace, raw)
 			if err != nil {
 				return fmt.Errorf("schema: rebuild unique values: decode node: %w", err)
 			}

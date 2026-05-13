@@ -48,7 +48,7 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -188,7 +188,7 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -246,7 +246,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			var node *Node
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -285,7 +285,7 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -361,7 +361,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -461,7 +461,7 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, id)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -559,7 +559,7 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -617,7 +617,7 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decodeErr
 			}); err != nil {
 				continue
@@ -882,7 +882,7 @@ func (b *BadgerEngine) edgeFromTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return nil, err

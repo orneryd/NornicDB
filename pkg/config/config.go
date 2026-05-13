@@ -352,6 +352,13 @@ type DatabaseConfig struct {
 	// MVCCLifecycleMaxChainCap bounds pathological MVCC chain growth.
 	MVCCLifecycleMaxChainCap int
 
+	// AllowStorageUpgrade authorizes the engine to advance the on-disk
+	// storage version through migration arms this binary understands.
+	// Without it, opening an out-of-date data directory fails with a
+	// clear error message. The upgrade is one-way; operators should
+	// back up before enabling this. Set via --upgrade-storage on the CLI.
+	AllowStorageUpgrade bool
+
 	// PersistSearchIndexes (EXPERIMENTAL) when true saves BM25, vector, and HNSW indexes under DataDir and loads
 	// them on startup so BuildIndexes can skip the full storage iteration. Default: false.
 	// Note: if indexes are incompatible/missing and must be rebuilt, startup can be long for large datasets.

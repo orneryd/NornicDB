@@ -156,6 +156,19 @@ type BadgerEngine struct {
 	// 40–50-byte UUID strings. See id_dictionary.go for the full layout.
 	idDict *idDictionary
 
+	// propKeyDict tokenizes property-key NAMES (per-namespace) to varint
+	// IDs so node and edge bodies can store keys as 1-2 byte integers
+	// instead of repeating the string in every record. See
+	// property_key_dictionary.go for the full layout.
+	propKeyDict *propertyKeyDictionary
+
+	// storageVersion is the on-disk schema version after migrations have
+	// run during engine open. Written once during NewBadgerEngineWithOptions
+	// and read-only thereafter. The encode path picks codecs deterministically
+	// from this value; the decode path dispatches on per-record format bytes
+	// because old bodies coexist with new ones until rewritten.
+	storageVersion int
+
 	// Event callbacks for external coordination (search indexes, caches, etc.)
 	// These are fired AFTER storage operations succeed
 	onNodeCreated NodeEventCallback
@@ -367,6 +380,13 @@ type BadgerOptions struct {
 	// WARNING: If you lose this key, your data is irrecoverable!
 	// Leave empty to disable encryption.
 	EncryptionKey []byte
+
+	// AllowStorageUpgrade authorizes the engine to advance the on-disk
+	// storage version through whichever migration arms this binary
+	// understands. Without it, a binary that opens a data directory
+	// older than its own version refuses to start. The upgrade is
+	// one-way; operators should back up before passing this flag.
+	AllowStorageUpgrade bool
 
 	// NodeCacheMaxEntries is the maximum number of nodes held in the in-process
 	// hot node cache (used by GetNode). When exceeded, the cache is cleared.
@@ -656,6 +676,12 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load id dictionary: %w", err)
 	}
 
+	engine.propKeyDict = newPropertyKeyDictionary()
+	if err := engine.propKeyDict.loadFromBadger(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
+	}
+
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request
 	if err := engine.initializeCounts(); err != nil {
@@ -663,27 +689,32 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize counts: %w", err)
 	}
 
-	if err := engine.ensureEdgeBetweenIndex(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize edge-between index: %w", err)
-	}
-
-	// Load persisted schema definitions (per namespace) and rebuild derived caches.
+	// Run schema migrations BEFORE starting any background work. The
+	// V1→V2 migration rewrites every node and edge body; if the
+	// edge-between index backfill ran concurrently, Badger's
+	// DropPrefix would block migration writes ("Writes are blocked,
+	// possibly due to DropAll or Close").
 	if err := engine.loadPersistedSchemas(); err != nil {
-		engine.stopEdgeBetweenIndexBackfill()
 		db.Close()
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
 	if err := engine.initializeMVCCSequence(); err != nil {
-		engine.stopEdgeBetweenIndexBackfill()
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
-	if err := engine.RunOnStartMigrations(); err != nil {
+	if err := engine.RunOnStartMigrations(opts.AllowStorageUpgrade); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("on-start migration failed: %w", err)
+		return nil, err
+	}
+
+	// Edge-between index backfill runs only after migrations have
+	// settled the body format. Failure here is non-fatal at open
+	// time — the index self-heals from the outgoing index on read.
+	if err := engine.ensureEdgeBetweenIndex(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize edge-between index: %w", err)
 	}
 
 	return engine, nil

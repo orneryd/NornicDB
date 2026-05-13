@@ -90,7 +90,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err != nil {
 			return err
 		}
-		data, err := b.encodeEdgeInTxn(txn, edge)
+		data, err := b.encodeEdgeInTxn(txn, dbName, edge)
 		if err != nil {
 			return fmt.Errorf("failed to encode edge: %w", err)
 		}
@@ -167,7 +167,7 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 		return item.Value(func(val []byte) error {
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
+			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 			return decodeErr
 		})
 	})
@@ -221,7 +221,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		var existing *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existing, decodeErr = b.decodeEdgeBodyWithID(val, edge.ID)
+			existing, decodeErr = b.decodeEdgeBodyByID(val, edge.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -314,7 +314,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 
 		// Store updated edge
-		data, err := b.encodeEdgeInTxn(txn, edge)
+		data, err := b.encodeEdgeInTxn(txn, dbName, edge)
 		if err != nil {
 			return fmt.Errorf("failed to encode edge: %w", err)
 		}
@@ -415,7 +415,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 		return decodeErr
 	}); err != nil {
 		return err
@@ -498,7 +498,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		var decodeErr error
 		// Extract nodeID from key (skip prefix byte)
 		nodeID := NodeID(key[1:])
-		deletedNode, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+		deletedNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
 		return 0, nil, nil, err

@@ -68,8 +68,10 @@ func TestMigrateBadgerToMsgpack_GobToMsgpack(t *testing.T) {
 	require.Greater(t, stats2.SkippedExisting, 0)
 	require.NoError(t, db.Close())
 
-	// Reopen via the engine and confirm reads still work.
-	base2, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	// Reopen via the engine and confirm reads still work. The data
+	// directory is at V0 (msgpack-headered bodies, no schema version)
+	// so we authorize the upgrade chain to advance it to V2.
+	base2, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
 	require.NoError(t, err)
 	defer base2.Close()
 	engine2 := NewNamespacedEngine(base2, "test")
@@ -166,7 +168,7 @@ func TestDetectStoredSerializer(t *testing.T) {
 		serializer, hasData, err = detectStoredSerializer(msgpackEngine.db)
 		require.NoError(t, err)
 		require.True(t, hasData)
-		require.Equal(t, detectedMsgpack, serializer)
+		require.Equal(t, detectedTokenizedV2, serializer)
 	})
 }
 

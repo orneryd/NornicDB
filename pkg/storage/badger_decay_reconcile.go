@@ -134,7 +134,7 @@ func (b *BadgerEngine) readNodeSuppressionState(nodeID NodeID) (bool, []string, 
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			node, err := decodeNodeWithEmbeddings(txn, val, nodeID)
+			node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
 			if err != nil {
 				return err
 			}
@@ -155,7 +155,7 @@ func (b *BadgerEngine) readEdgeSuppressionState(edgeID EdgeID) (bool, string, er
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			edge, err := b.decodeEdgeBodyWithID(val, edgeID)
+			edge, err := b.decodeEdgeBodyByID(val, edgeID)
 			if err != nil {
 				return err
 			}

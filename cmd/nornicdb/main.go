@@ -80,6 +80,7 @@ Features:
 	serveCmd.Flags().Int("http-port", getEnvInt("NORNICDB_HTTP_PORT", 7474), "HTTP API port")
 	serveCmd.Flags().String("address", getEnvStr("NORNICDB_ADDRESS", "127.0.0.1"), "Bind address (127.0.0.1 for localhost only, 0.0.0.0 for all interfaces)")
 	serveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	serveCmd.Flags().Bool("upgrade-storage", getEnvBool("NORNICDB_UPGRADE_STORAGE", false), "Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.")
 	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "local"), "Embedding provider: local, ollama, openai")
 	serveCmd.Flags().String("embedding-url", getEnvStr("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434"), "Embedding API URL (ollama/openai)")
 	serveCmd.Flags().String("embedding-key", getEnvStr("NORNICDB_EMBEDDING_API_KEY", ""), "Embeddings API Key (openai)")
@@ -182,6 +183,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	httpPort, _ := cmd.Flags().GetInt("http-port")
 	address, _ := cmd.Flags().GetString("address")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
+	upgradeStorage, _ := cmd.Flags().GetBool("upgrade-storage")
 	embeddingProvider, _ := cmd.Flags().GetString("embedding-provider")
 	embeddingURL, _ := cmd.Flags().GetString("embedding-url")
 	embeddingKey, _ := cmd.Flags().GetString("embedding-key")
@@ -447,6 +449,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.Database.BadgerNodeCacheMaxEntries = cfg.Database.BadgerNodeCacheMaxEntries
 	dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = cfg.Database.BadgerEdgeTypeCacheMaxTypes
 	dbConfig.Database.PersistSearchIndexes = cfg.Database.PersistSearchIndexes
+	dbConfig.Database.AllowStorageUpgrade = upgradeStorage
 	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
 	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
 

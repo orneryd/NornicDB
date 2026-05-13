@@ -273,7 +273,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				var decErr error
-				node, decErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			}); err != nil || node == nil {
 				_ = txn.Delete(pendingEmbedKey(nodeID))
@@ -417,7 +417,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decodeErr
 			}); err != nil {
 				// Can't decode - remove stale entry
@@ -454,7 +454,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 			}
 
 			item.Value(func(val []byte) error {
-				node, err := decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				if err != nil {
 					return nil
 				}
@@ -518,7 +518,7 @@ func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
 			var node *Node
 			err := item.Value(func(val []byte) error {
 				var decErr error
-				node, decErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			})
 			if err != nil {
@@ -561,7 +561,7 @@ func (b *BadgerEngine) StreamNodes(ctx context.Context, fn func(node *Node) erro
 				}
 				nodeID := NodeID(key[1:])
 				var decErr error
-				node, decErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			})
 			if err != nil {
@@ -607,7 +607,7 @@ func (b *BadgerEngine) StreamNodesByPrefix(ctx context.Context, prefix string, f
 				}
 				nodeID := NodeID(key[1:])
 				var decErr error
-				node, decErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			})
 			if err != nil {
@@ -653,7 +653,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			var edge *Edge
 			err := item.Value(func(val []byte) error {
 				var decErr error
-				edge, decErr = b.decodeEdgeBodyWithID(val, edgeID)
+				edge, decErr = b.decodeEdgeBodyByID(val, edgeID)
 				return decErr
 			})
 			if err != nil {
@@ -705,7 +705,7 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 				}
 				nodeID := NodeID(key[1:])
 				var decErr error
-				node, decErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			})
 			if err != nil {
@@ -786,7 +786,7 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 			}
 
 			err := item.Value(func(val []byte) error {
-				node, err := decodeNodeWithEmbeddings(txn, val, nodeID)
+				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				if err != nil {
 					return nil // Skip invalid nodes
 				}

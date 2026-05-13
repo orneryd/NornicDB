@@ -46,7 +46,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 	var node *Node
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
 		return false, nil
@@ -59,7 +59,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 
 	if suppress && !wasSuppressed {
 		node.VisibilitySuppressed = true
-		data, _, err := encodeNode(node)
+		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
 		if err != nil {
 			return false, err
 		}
@@ -73,7 +73,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 	}
 
 	if !suppress && wasSuppressed {
-		data, _, err := encodeNode(node)
+		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
 		if err != nil {
 			return false, err
 		}
@@ -95,7 +95,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyWithID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return false, nil
@@ -108,7 +108,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 
 	if suppress && !wasSuppressed {
 		edge.VisibilitySuppressed = true
-		data, err := b.encodeEdgeInTxn(txn, edge)
+		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
 		if err != nil {
 			return false, err
 		}
@@ -122,7 +122,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	}
 
 	if !suppress && wasSuppressed {
-		data, err := b.encodeEdgeInTxn(txn, edge)
+		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
 		if err != nil {
 			return false, err
 		}

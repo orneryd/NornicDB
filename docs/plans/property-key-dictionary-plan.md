@@ -282,6 +282,15 @@ Nine `encodeNode` call sites, three edge encode paths — same as before. Removi
 - Encode + decode an edge with tokenized properties.
 - Tokenized body size is within 75–80% of the equivalent legacy body for a 100-node corpus sharing 8 property keys.
 
+### Coverage requirement
+
+All new files (`property_key_dictionary.go`, `property_codec.go`, `migration_v1_to_v2.go`, the V2 codec arms in `edge_compact.go` and `badger_helpers.go`, the upgrade gate in `migration_runner.go`) must hit **100% line coverage** in the storage test suite. This is mission-critical migration code — silent miscoding loses data. Tests must:
+
+- Cover every conditional branch and every error return.
+- Assert on specific error messages (e.g. `"property key id %d not in dictionary for namespace %q"`), not just `require.Error`. The error contract is part of the API.
+- Exercise deterministic error paths by constructing malformed inputs (truncated bodies, varint overflows, dictionary IDs with no reverse-map entry, mismatched format bytes) rather than relying on incidental failures.
+- For the migration: verify resumability by interrupting between batches and asserting the next run picks up where the prior left off.
+
 ### Cypher property-name semantics tests
 
 - `MATCH (n) RETURN n.unknownField` against a namespace whose dictionary has never seen `unknownField` returns `null`, no error.

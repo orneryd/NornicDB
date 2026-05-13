@@ -142,6 +142,9 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		// rolled back (we don't persist counters for aborted work).
 		tx.engine.idDict.discardTxnCounters(tx.badgerTx)
 	}
+	if tx.badgerTx != nil && tx.engine != nil && tx.engine.propKeyDict != nil {
+		tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx)
+	}
 	if discard && tx.badgerTx != nil {
 		tx.badgerTx.Discard()
 	}
@@ -354,7 +357,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
 	// Serialize node (may store embeddings separately if too large)
-	data, embeddingsSeparate, err := encodeNode(node)
+	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
 		return "", fmt.Errorf("serializing node: %w", err)
 	}
@@ -450,7 +453,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Buffer updated node write
-	nodeBytes, err := serializeNode(node)
+	nodeBytes, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
 		return fmt.Errorf("serializing node: %w", err)
 	}
@@ -567,7 +570,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 			var decodeErr error
 			// Extract nodeID from key (skip prefix byte)
 			nodeIDFromKey := NodeID(key[1:])
-			deletedNode, decodeErr = decodeNodeWithEmbeddings(tx.badgerTx, val, nodeIDFromKey)
+			deletedNode, decodeErr = tx.engine.decodeNodeWithEmbeddings(tx.badgerTx, val, nodeIDFromKey)
 			return decodeErr
 		}); err != nil {
 			return 0, nil, err
@@ -665,7 +668,7 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte) (int64
 			return 0, nil, err
 		}
 
-		edge, err := tx.engine.decodeEdgeBody(edgeBytes)
+		edge, err := tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -774,7 +777,7 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 
 	// Serialize and buffer write. Compact form allocates endpoint
 	// numIDs via the id dictionary — keeps bodies tight.
-	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, edge)
+	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
 		return fmt.Errorf("serializing edge: %w", err)
 	}
@@ -882,7 +885,7 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 			return ErrAlreadyExists
 		}
 
-		edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, edge)
+		edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, namespaceForEdgeID(edge.ID), edge)
 		if err != nil {
 			return fmt.Errorf("serializing edge: %w", err)
 		}
@@ -1019,7 +1022,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	}
 
 	// Serialize and buffer updated edge record.
-	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, edge)
+	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.badgerTx, namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
 		return fmt.Errorf("serializing edge: %w", err)
 	}
@@ -1438,6 +1441,13 @@ func (tx *BadgerTransaction) Commit() error {
 		return fmt.Errorf("flushing id counters: %w", err)
 	}
 
+	// Persist any staged property-key dictionary counters. One Badger
+	// Set per dirty namespace per commit.
+	if err := tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("flushing property key counters: %w", err)
+	}
+
 	if err := tx.refreshTemporalCurrentPointers(temporalTargets); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("refreshing temporal current pointers: %w", err)
@@ -1682,7 +1692,7 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 	}); err != nil {
 		return nil, fmt.Errorf("reading node value: %w", err)
 	}
-	return deserializeNode(nodeBytes)
+	return tx.engine.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
 }
 
 func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
@@ -1702,7 +1712,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 		}); err != nil {
 			return nil, fmt.Errorf("reading edge value: %w", err)
 		}
-		return tx.engine.decodeEdgeBody(edgeBytes)
+		return tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
 	}
 	return tx.engine.GetEdgeVisibleAt(edgeID, tx.readTS)
 }

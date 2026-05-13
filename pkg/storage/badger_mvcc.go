@@ -297,7 +297,7 @@ func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	var node *Node
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		node, decodeErr = decodeNodeWithEmbeddings(txn, val, id)
+		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 		return decodeErr
 	}); err != nil {
 		return fmt.Errorf("archiving node %s: decoding primary: %w", id, err)
@@ -331,7 +331,7 @@ func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 		return decodeErr
 	}); err != nil {
 		return fmt.Errorf("archiving edge %s: decoding primary: %w", id, err)
@@ -763,7 +763,7 @@ func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, 
 			item, getErr := txn.Get(nodeKey(id))
 			if getErr == nil {
 				return item.Value(func(val []byte) error {
-					decoded, decodeErr := decodeNodeWithEmbeddings(txn, val, id)
+					decoded, decodeErr := b.decodeNodeWithEmbeddings(txn, val, id)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -875,7 +875,7 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 			item, getErr := txn.Get(edgeKey(id))
 			if getErr == nil {
 				return item.Value(func(val []byte) error {
-					decoded, decodeErr := b.decodeEdgeBodyWithID(val, id)
+					decoded, decodeErr := b.decodeEdgeBodyByID(val, id)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -990,7 +990,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 				return getErr
 			} else {
 				if err := item.Value(func(val []byte) error {
-					decoded, decodeErr := decodeNodeWithEmbeddings(txn, val, nodeID)
+					decoded, decodeErr := b.decodeNodeWithEmbeddings(txn, val, nodeID)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -1074,7 +1074,7 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 				return getErr
 			} else {
 				if err := item.Value(func(val []byte) error {
-					decoded, decodeErr := b.decodeEdgeBodyWithID(val, edgeID)
+					decoded, decodeErr := b.decodeEdgeBodyByID(val, edgeID)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -1690,7 +1690,7 @@ func (b *BadgerEngine) collectNodeBootstrapBatch(ctx context.Context, start []by
 			var node *Node
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				node, decodeErr = decodeNodeWithEmbeddings(txn, val, id)
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -1775,7 +1775,7 @@ func (b *BadgerEngine) collectEdgeBootstrapBatch(ctx context.Context, start []by
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -1841,7 +1841,7 @@ func (b *BadgerEngine) bootstrapNodeMVCCFromCurrentStateInTxn(txn *badger.Txn) e
 		var node *Node
 		if err := it.Item().Value(func(val []byte) error {
 			var decodeErr error
-			node, decodeErr = decodeNodeWithEmbeddings(txn, val, id)
+			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -1879,7 +1879,7 @@ func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentStateInTxn(txn *badger.Txn) e
 		var edge *Edge
 		if err := it.Item().Value(func(val []byte) error {
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyWithID(val, id)
+			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 			return decodeErr
 		}); err != nil {
 			return err

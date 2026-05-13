@@ -555,6 +555,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			LowMemory:             false,
 			NodeCacheMaxEntries:   config.Database.BadgerNodeCacheMaxEntries,
 			EdgeTypeCacheMaxTypes: config.Database.BadgerEdgeTypeCacheMaxTypes,
+			AllowStorageUpgrade:   config.Database.AllowStorageUpgrade,
 			EngineOptions: storage.EngineOptions{
 				RetentionPolicy: storage.RetentionPolicy{
 					MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,

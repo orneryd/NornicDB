@@ -840,7 +840,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 	t.Run("loads separate embeddings and tolerates missing chunks", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("embedded-node"))
-		data, err := encodeValue(&Node{
+		data, err := buildV2NodeBody(t, engine, &Node{
 			ID:                         nodeID,
 			EmbeddingsStoredSeparately: true,
 			EmbedMeta:                  map[string]any{"chunk_count": int16(3)},
@@ -863,7 +863,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		}))
 
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			node, err := decodeNodeWithEmbeddings(txn, data, nodeID)
+			node, err := engine.decodeNodeWithEmbeddings(txn, data, nodeID)
 			require.NoError(t, err)
 			require.False(t, node.EmbeddingsStoredSeparately)
 			require.Len(t, node.ChunkEmbeddings, 2)
@@ -876,7 +876,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 	t.Run("parses string chunk counts and reports bad chunk payloads", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("embedded-node-str"))
-		data, err := encodeValue(&Node{
+		data, err := buildV2NodeBody(t, engine, &Node{
 			ID:                         nodeID,
 			EmbeddingsStoredSeparately: true,
 			EmbedMeta:                  map[string]any{"chunk_count": "1"},
@@ -888,7 +888,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		}))
 
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			node, err := decodeNodeWithEmbeddings(txn, data, nodeID)
+			node, err := engine.decodeNodeWithEmbeddings(txn, data, nodeID)
 			require.ErrorContains(t, err, "failed to decode embedding chunk 0")
 			require.Nil(t, node)
 			return nil
@@ -915,7 +915,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				engine := createTestBadgerEngine(t)
 				nodeID := NodeID(prefixTestID("embed-meta-" + tc.name))
-				data, err := encodeValue(&Node{
+				data, err := buildV2NodeBody(t, engine, &Node{
 					ID:                         nodeID,
 					EmbeddingsStoredSeparately: true,
 					EmbedMeta:                  map[string]any{"chunk_count": tc.chunkCount},
@@ -933,7 +933,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 				}
 
 				require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-					node, err := decodeNodeWithEmbeddings(txn, data, nodeID)
+					node, err := engine.decodeNodeWithEmbeddings(txn, data, nodeID)
 					require.NoError(t, err)
 					require.NotNil(t, node)
 					if tc.wantChunks == 0 {

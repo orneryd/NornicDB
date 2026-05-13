@@ -163,7 +163,7 @@ func mergeTemporalTargets(targets map[string]temporalRefreshTarget, target tempo
 	targets[temporalTargetMapKey(target)] = target
 }
 
-func loadNodeForTemporalTxn(txn *badger.Txn, nodeID NodeID, withEmbeddings bool) (*Node, error) {
+func (b *BadgerEngine) loadNodeForTemporalTxn(txn *badger.Txn, nodeID NodeID, withEmbeddings bool) (*Node, error) {
 	item, err := txn.Get(nodeKey(nodeID))
 	if err == badger.ErrKeyNotFound {
 		return nil, nil
@@ -175,9 +175,9 @@ func loadNodeForTemporalTxn(txn *badger.Txn, nodeID NodeID, withEmbeddings bool)
 	err = item.Value(func(val []byte) error {
 		var decodeErr error
 		if withEmbeddings {
-			node, decodeErr = decodeNodeWithEmbeddings(txn, val, nodeID)
+			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		} else {
-			node, decodeErr = decodeNode(val)
+			node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
 		}
 		return decodeErr
 	})
@@ -224,7 +224,7 @@ func (b *BadgerEngine) temporalHistoryNodeAsOfInTxn(txn *badger.Txn, target temp
 				continue
 			}
 		}
-		node, err := loadNodeForTemporalTxn(txn, nodeID, withEmbeddings)
+		node, err := b.loadNodeForTemporalTxn(txn, nodeID, withEmbeddings)
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +252,7 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 		if nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
-		node, err := loadNodeForTemporalTxn(txn, nodeID, false)
+		node, err := b.loadNodeForTemporalTxn(txn, nodeID, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -273,7 +273,7 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 		if nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
-		node, err := loadNodeForTemporalTxn(txn, nodeID, false)
+		node, err := b.loadNodeForTemporalTxn(txn, nodeID, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -388,7 +388,7 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 			}); err != nil {
 				return err
 			}
-			currentNode, err := loadNodeForTemporalTxn(txn, currentID, true)
+			currentNode, err := b.loadNodeForTemporalTxn(txn, currentID, true)
 			if err != nil {
 				return err
 			}
@@ -485,7 +485,7 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 				}); err != nil {
 					return err
 				}
-				currentNode, err := loadNodeForTemporalTxn(txn, currentID, false)
+				currentNode, err := b.loadNodeForTemporalTxn(txn, currentID, false)
 				if err != nil {
 					return err
 				}
@@ -594,7 +594,7 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(txn *badger.Txn, node *Node, asO
 			}); err != nil {
 				return err
 			}
-			existingNode, err := loadNodeForTemporalTxn(txn, existingID, false)
+			existingNode, err := b.loadNodeForTemporalTxn(txn, existingID, false)
 			if err != nil {
 				return err
 			}

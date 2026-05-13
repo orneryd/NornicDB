@@ -659,13 +659,20 @@ func extractNodeNumIDFromLabelIndex(key []byte, labelLen int) (uint64, bool) {
 // Serialization helpers
 // ============================================================================
 
-// encodeNode serializes a Node using msgpack.
+// encodeNodeV1 produces the legacy (non-tokenized) node body. Used
+// only by the V1→V2 migration tool to read in-place V1 bodies; the
+// engine's hot path emits V2 exclusively via (b *BadgerEngine).encodeNodeInTxn.
+//
 // If the node exceeds maxNodeSize, embeddings are stored separately and a flag is set.
 // Returns: (nodeData, embeddingsStoredSeparately, error)
-func encodeNode(n *Node) ([]byte, bool, error) {
+func encodeNodeV1(n *Node) ([]byte, bool, error) {
 	if err := validatePropertiesForStorage(n.Properties); err != nil {
 		return nil, false, fmt.Errorf("invalid node properties: %w", err)
 	}
+	return encodeNodeV1Body(n)
+}
+
+func encodeNodeV1Body(n *Node) ([]byte, bool, error) {
 	// First, try encoding with embeddings
 	data, err := encodeValue(n)
 	if err != nil {
@@ -678,15 +685,11 @@ func encodeNode(n *Node) ([]byte, bool, error) {
 	}
 
 	// Node is too large - store embeddings separately
-	// Create a copy without embeddings for encoding
 	nodeCopy := *n
 	chunkCount := len(nodeCopy.ChunkEmbeddings)
-	nodeCopy.ChunkEmbeddings = nil // Remove embeddings for encoding
+	nodeCopy.ChunkEmbeddings = nil
 
-	// Re-encode without embeddings
-	// Set struct flag to indicate embeddings are stored separately
 	nodeCopy.EmbeddingsStoredSeparately = true
-	// Ensure chunk_count is set in EmbedMeta (embed queue sets it, but direct creates might not)
 	if nodeCopy.EmbedMeta == nil {
 		nodeCopy.EmbedMeta = make(map[string]any)
 	}
@@ -694,13 +697,77 @@ func encodeNode(n *Node) ([]byte, bool, error) {
 		nodeCopy.EmbedMeta["chunk_count"] = chunkCount
 	}
 
-	// Final encode with flag
 	data, err = encodeValue(&nodeCopy)
 	if err != nil {
 		return nil, false, err
 	}
 
 	return data, true, nil
+}
+
+// encodeNodeInTxn produces a V2 tokenized node body. Properties are
+// extracted, tokenized via the per-namespace property-key dictionary,
+// and prepended ahead of the standard Node msgpack body (with
+// Properties cleared so the inline copy does not duplicate them).
+//
+// Layout:
+//
+//	[nodeFormatTokenizedV1 = 0x10]
+//	[varint(propsLen)]
+//	[tokenizedPropsBytes]   -- msgpack(map[uint64]any)
+//	[standard Node msgpack body, Properties=nil]
+//
+// Returns: (nodeData, embeddingsStoredSeparately, error). The
+// embeddings-separate logic mirrors V1 — if the encoded body exceeds
+// maxNodeSize, ChunkEmbeddings are dropped from the inline body and
+// persisted under their own keys by the caller.
+func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Node) ([]byte, bool, error) {
+	if err := validatePropertiesForStorage(n.Properties); err != nil {
+		return nil, false, fmt.Errorf("invalid node properties: %w", err)
+	}
+
+	propsBytes, err := b.encodeTokenizedProperties(txn, namespace, n.Properties)
+	if err != nil {
+		return nil, false, err
+	}
+
+	bodyCopy := *n
+	bodyCopy.Properties = nil
+
+	assemble := func(bodyBytes []byte) []byte {
+		out := make([]byte, 0, 1+binary.MaxVarintLen64+len(propsBytes)+len(bodyBytes))
+		out = append(out, nodeFormatTokenizedV1)
+		out = binary.AppendUvarint(out, uint64(len(propsBytes)))
+		out = append(out, propsBytes...)
+		out = append(out, bodyBytes...)
+		return out
+	}
+
+	bodyBytes, err := encodeValue(&bodyCopy)
+	if err != nil {
+		return nil, false, err
+	}
+	data := assemble(bodyBytes)
+
+	if len(data) <= maxNodeSize {
+		return data, false, nil
+	}
+
+	chunkCount := len(bodyCopy.ChunkEmbeddings)
+	bodyCopy.ChunkEmbeddings = nil
+	bodyCopy.EmbeddingsStoredSeparately = true
+	if bodyCopy.EmbedMeta == nil {
+		bodyCopy.EmbedMeta = make(map[string]any)
+	}
+	if _, hasChunkCount := bodyCopy.EmbedMeta["chunk_count"]; !hasChunkCount {
+		bodyCopy.EmbedMeta["chunk_count"] = chunkCount
+	}
+
+	bodyBytes, err = encodeValue(&bodyCopy)
+	if err != nil {
+		return nil, false, err
+	}
+	return assemble(bodyBytes), true, nil
 }
 
 // encodeEmbedding serializes a single embedding chunk.
@@ -717,8 +784,9 @@ func decodeEmbedding(data []byte) ([]float32, error) {
 	return emb, nil
 }
 
-// decodeNode deserializes a Node and loads embeddings separately if needed.
-func decodeNode(data []byte) (*Node, error) {
+// decodeNodeV1 deserializes a legacy V1 node body. Used only by V1→V2
+// migration code; the engine's hot path goes through (b *BadgerEngine).decodeNode.
+func decodeNodeV1(data []byte) (*Node, error) {
 	var node Node
 	if err := decodeValue(data, &node); err != nil {
 		return nil, err
@@ -726,10 +794,80 @@ func decodeNode(data []byte) (*Node, error) {
 	return &node, nil
 }
 
+// namespaceForNodeID extracts the per-namespace bucket from a node ID
+// using the standard "<db>:<id>" prefix convention. Used by decode
+// call sites that already have a NodeID in hand.
+func namespaceForNodeID(id NodeID) string {
+	ns, _, _ := ParseDatabasePrefix(string(id))
+	return ns
+}
+
+// namespaceForEdgeID extracts the per-namespace bucket from an edge ID
+// using the standard "<db>:<id>" prefix convention.
+func namespaceForEdgeID(id EdgeID) string {
+	ns, _, _ := ParseDatabasePrefix(string(id))
+	return ns
+}
+
+// encodeNode is the engine-attached entry point matching the V1 free
+// function's signature. Resolves the namespace from the node's ID and
+// emits a V2 tokenized body. Call sites that have a *badger.Txn in
+// scope should use it.
+func (b *BadgerEngine) encodeNode(txn *badger.Txn, node *Node) ([]byte, bool, error) {
+	namespace := namespaceForNodeID(node.ID)
+	if namespace == "" {
+		return nil, false, fmt.Errorf("encodeNode: node ID %q lacks namespace prefix", node.ID)
+	}
+	return b.encodeNodeInTxn(txn, namespace, node)
+}
+
+// decodeEdgeBodyByID is the engine-attached convenience wrapper that
+// derives the namespace from the edge ID. Replaces the old
+// decodeEdgeBodyWithID(data, id) signature at call sites.
+func (b *BadgerEngine) decodeEdgeBodyByID(data []byte, id EdgeID) (*Edge, error) {
+	return b.decodeEdgeBodyWithID(namespaceForEdgeID(id), data, id)
+}
+
+// decodeNode is the V2 hot-path decoder. Rejects any body that does
+// not start with the V2 format byte — V2 stores have been fully
+// rewritten by the V1→V2 migration, so a non-V2 body indicates
+// corruption or a forgotten upgrade.
+func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) {
+	if len(data) < 1 {
+		return nil, fmt.Errorf("node body empty")
+	}
+	if data[0] != nodeFormatTokenizedV1 {
+		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
+	}
+	rest := data[1:]
+	propsLen, n := binary.Uvarint(rest)
+	if n <= 0 {
+		return nil, fmt.Errorf("node body: malformed properties length varint")
+	}
+	rest = rest[n:]
+	if uint64(len(rest)) < propsLen {
+		return nil, fmt.Errorf("node body: properties payload truncated")
+	}
+	propsBytes := rest[:propsLen]
+	bodyBytes := rest[propsLen:]
+
+	var node Node
+	if err := decodeValue(bodyBytes, &node); err != nil {
+		return nil, err
+	}
+	props, err := b.decodeTokenizedProperties(namespace, propsBytes)
+	if err != nil {
+		return nil, err
+	}
+	node.Properties = props
+	return &node, nil
+}
+
 // decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
 // Works in both View and Update transactions (only reads embeddings).
-func decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Node, error) {
-	node, err := decodeNode(data)
+func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Node, error) {
+	namespace, _, _ := ParseDatabasePrefix(string(nodeID))
+	node, err := b.decodeNode(namespace, data)
 	if err != nil {
 		return nil, err
 	}

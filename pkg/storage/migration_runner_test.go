@@ -13,8 +13,8 @@ func TestSchemaVersion_FreshDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 1 {
-		t.Errorf("expected schema version 1 after init, got %d", v)
+	if v != storageVersionCurrent {
+		t.Errorf("expected schema version %d after init, got %d", storageVersionCurrent, v)
 	}
 }
 
@@ -34,15 +34,15 @@ func TestSchemaVersion_WriteAndRead(t *testing.T) {
 
 func TestRunOnStartMigrations_SkipsAlreadyApplied(t *testing.T) {
 	eng := newTestEngine(t)
-	if err := eng.RunOnStartMigrations(); err != nil {
+	if err := eng.RunOnStartMigrations(true); err != nil {
 		t.Fatal(err)
 	}
 	v, err := eng.readSchemaVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 1 {
-		t.Errorf("expected version 1, got %d", v)
+	if v != storageVersionCurrent {
+		t.Errorf("expected version %d, got %d", storageVersionCurrent, v)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 	lastAccessed := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	writeLegacyNodeBytes(t, eng, "nornic:legacy1", 0.75, lastAccessed, 100)
 
-	if err := eng.RunOnStartMigrations(); err != nil {
+	if err := eng.RunOnStartMigrations(true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,8 +83,8 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 1 {
-		t.Errorf("expected version 1 after migration, got %d", v)
+	if v != storageVersionCurrent {
+		t.Errorf("expected version %d after migration, got %d", storageVersionCurrent, v)
 	}
 
 	meta, err := eng.GetAccessMeta("nornic:legacy1")
@@ -131,7 +131,7 @@ func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
 		t.Fatalf("expected legacy one-byte marker to be treated as version 0, got %d", v)
 	}
 
-	if err := eng.RunOnStartMigrations(); err != nil {
+	if err := eng.RunOnStartMigrations(true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,8 +139,8 @@ func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 1 {
-		t.Fatalf("expected recovered schema version 1 after migrations, got %d", v)
+	if v != storageVersionCurrent {
+		t.Fatalf("expected recovered schema version %d after migrations, got %d", storageVersionCurrent, v)
 	}
 	if edgeBetweenIndexReadyKey[1] == mvccSchemaVersionKey()[1] {
 		t.Fatal("edge-between ready key must not share schema-version subkey")

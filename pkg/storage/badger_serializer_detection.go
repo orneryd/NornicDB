@@ -7,14 +7,23 @@ import (
 )
 
 // detectedSerializer is what the in-place migration tool finds in an
-// existing data directory. "gob" is only ever returned for legacy data
-// that pre-dates the msgpack header; current engines never emit it.
+// existing data directory. Used solely to surface a meaningful error
+// or stat — the engine's read path dispatches on per-record bytes, not
+// on a global serializer pin.
+//
+//	detectedNone    — no node/edge bodies at all (fresh store).
+//	detectedGob     — header-less gob bodies (pre-msgpack era).
+//	detectedMsgpack — msgpack bodies with the standard NDB header,
+//	                  but no V2 tokenization framing yet (i.e. V1).
+//	detectedTokenizedV2 — V2 bodies, leading with nodeFormatTokenizedV1
+//	                  or edgeFormatCompactV2.
 type detectedSerializer byte
 
 const (
-	detectedNone    detectedSerializer = 0
-	detectedGob     detectedSerializer = detectedSerializer(serializerIDGob)
-	detectedMsgpack detectedSerializer = detectedSerializer(serializerIDMsgpack)
+	detectedNone        detectedSerializer = 0
+	detectedGob         detectedSerializer = detectedSerializer(serializerIDGob)
+	detectedMsgpack     detectedSerializer = detectedSerializer(serializerIDMsgpack)
+	detectedTokenizedV2 detectedSerializer = 0xF0
 )
 
 // detectStoredSerializer scans the first non-empty body it finds under
@@ -50,6 +59,12 @@ func detectStoredSerializer(db *badger.DB) (detectedSerializer, bool, error) {
 				}
 				if len(val) == 0 {
 					continue
+				}
+				switch val[0] {
+				case nodeFormatTokenizedV1, edgeFormatCompactV2:
+					detected = detectedTokenizedV2
+					it.Close()
+					return ErrIterationStopped
 				}
 				headerID, _, ok, err := splitSerializationHeader(val)
 				if err != nil {

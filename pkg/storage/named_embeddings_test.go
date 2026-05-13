@@ -105,10 +105,9 @@ func TestNamedEmbeddingsSerialization(t *testing.T) {
 			},
 		}
 
-		data, _, err := encodeNode(original)
-		require.NoError(t, err)
+		original.ID = NodeID("test:" + string(original.ID))
 
-		decoded, err := decodeNode(data)
+		decoded, err := codecRoundTripNode(t, original)
 		require.NoError(t, err)
 
 		require.NotNil(t, decoded.NamedEmbeddings)
@@ -124,10 +123,9 @@ func TestNamedEmbeddingsSerialization(t *testing.T) {
 			NamedEmbeddings: map[string][]float32{},
 		}
 
-		data, _, err := encodeNode(original)
-		require.NoError(t, err)
+		original.ID = NodeID("test:" + string(original.ID))
 
-		decoded, err := decodeNode(data)
+		decoded, err := codecRoundTripNode(t, original)
 		require.NoError(t, err)
 
 		// Empty map should be preserved (not nil)
@@ -140,10 +138,9 @@ func TestNamedEmbeddingsSerialization(t *testing.T) {
 			ID: NodeID("test-nil"),
 		}
 
-		data, _, err := encodeNode(original)
-		require.NoError(t, err)
+		original.ID = NodeID("test:" + string(original.ID))
 
-		decoded, err := decodeNode(data)
+		decoded, err := codecRoundTripNode(t, original)
 		require.NoError(t, err)
 
 		// nil map should remain nil

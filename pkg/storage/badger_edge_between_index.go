@@ -183,7 +183,7 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 					edgeID = EdgeID(key[1:])
 				}
 				if err := item.Value(func(val []byte) error {
-					edge, err := b.decodeEdgeBodyWithID(val, edgeID)
+					edge, err := b.decodeEdgeBodyByID(val, edgeID)
 					if err != nil {
 						return fmt.Errorf("decode edge for edge-between index: %w", err)
 					}

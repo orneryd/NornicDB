@@ -58,7 +58,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 				return err
 			}
 
-			data, embeddingsSeparate, err := encodeNode(node)
+			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 			if err != nil {
 				return fmt.Errorf("failed to encode node: %w", err)
 			}
@@ -265,7 +265,8 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 
 		// Insert all edges
 		for _, edge := range edges {
-			data, err := b.encodeEdgeInTxn(txn, edge)
+			edgeNS, _, _ := ParseDatabasePrefix(string(edge.ID))
+			data, err := b.encodeEdgeInTxn(txn, edgeNS, edge)
 			if err != nil {
 				return fmt.Errorf("failed to encode edge: %w", err)
 			}

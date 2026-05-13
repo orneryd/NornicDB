@@ -265,7 +265,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 			continue
 		}
 
-		existingNode, err := decodeNode(nodeBytes)
+		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
 			continue
 		}
@@ -322,7 +322,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 			continue
 		}
 
-		existingNode, err := decodeNode(nodeBytes)
+		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
 			continue
 		}
@@ -385,7 +385,7 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 			continue
 		}
 
-		existingNode, err := decodeNode(nodeBytes)
+		existingNode, err := b.decodeNode(namespace, nodeBytes)
 		if err != nil {
 			continue
 		}
@@ -639,7 +639,7 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 			continue
 		}
 
-		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -777,7 +777,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			continue
 		}
 
-		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -865,7 +865,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		}); err != nil {
 			continue
 		}
-		existingEdge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}
@@ -968,7 +968,7 @@ func (b *BadgerEngine) readNodeLabelsInTxn(txn *badger.Txn, nodeID NodeID) ([]st
 	}); err != nil {
 		return nil, err
 	}
-	node, err := decodeNode(nodeBytes)
+	node, err := b.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,7 +1040,7 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}); err != nil {
 			continue
 		}
-		edge, err := b.decodeEdgeBodyWithID(edgeBytes, edgeID)
+		edge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
 		if err != nil {
 			continue
 		}

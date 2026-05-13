@@ -64,7 +64,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
-		data, embeddingsSeparate, err := encodeNode(node)
+		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 		if err != nil {
 			return fmt.Errorf("failed to encode node: %w", err)
 		}
@@ -165,7 +165,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 
 		return item.Value(func(val []byte) error {
 			var decodeErr error
-			node, decodeErr = decodeNodeWithEmbeddings(txn, val, id)
+			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
 			return decodeErr
 		})
 	})
@@ -227,7 +227,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
 				return err
 			}
-			data, embeddingsSeparate, err := encodeNode(node)
+			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 			if err != nil {
 				return fmt.Errorf("failed to encode node: %w", err)
 			}
@@ -271,7 +271,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		}
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existingNode, decodeErr = decodeNodeWithEmbeddings(txn, val, node.ID)
+			existingNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, node.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -305,7 +305,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		}
 
 		// Serialize and store updated node (may store embeddings separately if too large)
-		data, embeddingsSeparate, err := encodeNode(node)
+		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 		if err != nil {
 			return fmt.Errorf("failed to encode node: %w", err)
 		}
@@ -456,7 +456,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 		var existing *Node
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existing, decodeErr = decodeNodeWithEmbeddings(txn, val, node.ID)
+			existing, decodeErr = b.decodeNodeWithEmbeddings(txn, val, node.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -474,7 +474,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 		existing.UpdatedAt = time.Now() // Use time from encoding if available, otherwise current time
 
 		// Serialize and store updated node (may store embeddings separately if too large)
-		data, embeddingsSeparate, err := encodeNode(existing)
+		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, namespaceForNodeID(node.ID), existing)
 		if err != nil {
 			return fmt.Errorf("failed to encode node: %w", err)
 		}
