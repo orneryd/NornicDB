@@ -1,25 +1,31 @@
 added a **direct engine latency benchmark** that bypasses Bolt/HTTP entirely.
 
 ### New test
-`/Users/c815719/src/NornicDB/scripts/perf_direct/main.go`
+
+`~/src/NornicDB/scripts/perf_direct/main.go`
 
 ### How to run
+
 Direct Badger (disk writes, no protocol overhead):
+
 ```
 go run ./scripts/perf_direct --clean --iterations=100 --mode=badger
 ```
 
 Async engine (shows cache‑first writes + explicit flush timing):
+
 ```
 go run ./scripts/perf_direct --clean --iterations=100 --mode=async
 ```
 
 If you want worst‑case disk latency (fsync on every write):
+
 ```
 go run ./scripts/perf_direct --clean --iterations=100 --mode=badger --sync-writes
 ```
 
 ### What it measures
+
 - Single node create
 - Batch node create (`BulkCreateNodes`)
 - Node update

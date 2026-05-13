@@ -85,7 +85,7 @@ func profileDiskFixtureConfig(tb testing.TB) (string, string, int) {
 	tb.Helper()
 	dataDir := os.Getenv("NORNICDB_PROFILE_DATA_DIR")
 	if dataDir == "" {
-		dataDir = "/Users/c815719/src/NornicDB/data/test"
+		dataDir = "~/src/NornicDB/data/test"
 	}
 	dbName := os.Getenv("NORNICDB_PROFILE_DB")
 	if dbName == "" {

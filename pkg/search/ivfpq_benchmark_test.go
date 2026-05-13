@@ -33,7 +33,7 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 
 	dataDir := os.Getenv("NORNICDB_IVFPQ_BENCH_DATA_DIR")
 	if dataDir == "" {
-		dataDir = "/Users/c815719/src/NornicDB/data/test-small"
+		dataDir = "~/src/NornicDB/data/test-small"
 	}
 	dbName := os.Getenv("NORNICDB_IVFPQ_BENCH_DB")
 	if dbName == "" {

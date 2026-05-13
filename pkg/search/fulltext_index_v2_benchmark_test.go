@@ -11,7 +11,7 @@ func bm25LegacyDiskPath(tb testing.TB) string {
 	if raw := os.Getenv("NORNICDB_PROFILE_BM25_PATH"); raw != "" {
 		return raw
 	}
-	base := "/Users/c815719/src/NornicDB/data/test"
+	base := "~/src/NornicDB/data/test"
 	if raw := os.Getenv("NORNICDB_PROFILE_DATA_DIR"); raw != "" {
 		base = raw
 	}
