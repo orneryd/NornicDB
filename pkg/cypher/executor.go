@@ -124,6 +124,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -1965,6 +1966,9 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
+		}
+		if info := e.analyzer.Analyze(cypher); info != nil && info.HasMerge {
+			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		return nil, fmt.Errorf("failed to commit implicit transaction: %w", err)
 	}

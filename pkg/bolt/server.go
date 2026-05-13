@@ -144,6 +144,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var boltTxWriteAnalyzer = cypher.NewQueryAnalyzer(256)
+
 // Protocol versions supported
 const (
 	BoltV4_4 = 0x0404 // Bolt 4.4
@@ -1869,9 +1871,7 @@ func mapBoltQueryError(err error) (code, message string) {
 
 func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
 	code, message = mapBoltQueryError(err)
-	if err != nil &&
-		strings.Contains(strings.ToUpper(query), "MERGE") &&
-		nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+	if err != nil && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
 		return nornicerrors.TransientOutdated, message
 	}
 	return code, message
@@ -1889,6 +1889,9 @@ func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
 // body. Non-MERGE transactions keep the ordinary commit-failed code even
 // when the body is a UNIQUE violation.
 func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message string) {
+	if canRetryMergeConflict {
+		err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+	}
 	code, message = mapBoltQueryError(err)
 	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
 		return nornicerrors.TransientOutdated, message
@@ -1903,12 +1906,21 @@ func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
 	if !isWrite {
 		return
 	}
-	upperQuery := strings.ToUpper(query)
-	if strings.Contains(upperQuery, "MERGE") {
+	info := boltTxWriteAnalyzer.Analyze(query)
+	if info != nil && info.HasMerge {
 		s.txHasMerge = true
+	}
+	if info == nil {
+		s.txHasNonMergeWrite = true
 		return
 	}
-	s.txHasNonMergeWrite = true
+	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove || info.HasForeach || info.HasLoadCSV {
+		s.txHasNonMergeWrite = true
+		return
+	}
+	if !info.HasMerge {
+		s.txHasNonMergeWrite = true
+	}
 }
 
 func (s *Session) canRetryMergeCommitConflict() bool {

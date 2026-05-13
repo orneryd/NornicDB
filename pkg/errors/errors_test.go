@@ -4,6 +4,8 @@ import (
 	stderrors "errors"
 	"fmt"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // TestMapTransientTransactionError verifies the protocol-code boundary for
@@ -59,5 +61,28 @@ func TestMapTransientTransactionError(t *testing.T) {
 				t.Fatalf("code = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMarkMergeCommitTimeUniqueConflict(t *testing.T) {
+	uniqueErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	})
+	marked := MarkMergeCommitTimeUniqueConflict(uniqueErr)
+	if !IsMergeCommitTimeUniqueConflict(marked) {
+		t.Fatal("expected unique constraint violation to be marked as merge commit-time conflict")
+	}
+
+	nonUniqueErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintExists,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "missing required property",
+	})
+	if got := MarkMergeCommitTimeUniqueConflict(nonUniqueErr); got != nonUniqueErr {
+		t.Fatal("non-unique constraint violation should not be wrapped")
 	}
 }

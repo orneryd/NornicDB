@@ -2,7 +2,7 @@ package errors
 
 import (
 	stderrors "errors"
-	"strings"
+	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -30,6 +30,10 @@ var (
 	// ErrTransactionDeadlock marks lock-ordering deadlocks that drivers should
 	// retry as Neo4j-compatible transient transaction failures.
 	ErrTransactionDeadlock = stderrors.New("transaction deadlock")
+	// ErrMergeCommitTimeUniqueConflict marks a commit-time UNIQUE violation from
+	// a concurrent MERGE race. Retry-aware clients can safely replay because the
+	// winner's committed node will be observed on the next attempt.
+	ErrMergeCommitTimeUniqueConflict = stderrors.New("merge commit-time unique conflict")
 )
 
 // MapTransientTransactionError maps known transaction failure sentinels to
@@ -52,43 +56,22 @@ func MapTransientTransactionError(err error) (string, bool) {
 	return "", false
 }
 
-// IsMergeCommitTimeUniqueConflict reports whether an error looks like a
-// commit-time UNIQUE constraint violation from a concurrent-MERGE race, as
-// opposed to a user-supplied duplicate-key violation in a CREATE. The
-// distinction matters for protocol-level retry classification: a MERGE race
-// is resolvable by a fresh attempt (the loser observes the peer's now-
-// committed node and matches), while a user duplicate-key in CREATE is not.
-//
-// The classifier matches both pre- and post-v1.0.45 NornicDB wraps:
-//   - older releases: "failed to commit implicit transaction: constraint
-//     violation: Constraint violation (UNIQUE on Label.[prop]): Node with
-//     prop=value already exists (nodeID: ...)"
-//   - newer (explicit-tx commit): "commit failed: constraint violation:
-//     Constraint violation (UNIQUE on Label.[prop]): Node with prop=value
-//     already exists (nodeID: ...)"
-//
-// We classify by message shape because the underlying storage error is a
-// plain fmt.Errorf without a sentinel wrap, and threading a MERGE-shape
-// signal from the cypher executor through the storage layer is a larger
-// design change than this surgical fix. The shape is precise enough that
-// only MERGE/UNIQUE races match it — duplicate-key CREATEs share the
-// same body but originate from a different call site that does not carry
-// the "commit failed"/"failed to commit implicit transaction" prefix.
+// MarkMergeCommitTimeUniqueConflict wraps a UNIQUE constraint violation with a
+// dedicated sentinel when the caller knows it came from a retry-safe MERGE
+// commit race. Non-UNIQUE failures are returned unchanged.
+func MarkMergeCommitTimeUniqueConflict(err error) error {
+	if err == nil || stderrors.Is(err, ErrMergeCommitTimeUniqueConflict) {
+		return err
+	}
+	var violation *storage.ConstraintViolationError
+	if !stderrors.As(err, &violation) || violation == nil || violation.Type != storage.ConstraintUnique {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrMergeCommitTimeUniqueConflict, err)
+}
+
+// IsMergeCommitTimeUniqueConflict reports whether err was explicitly tagged as
+// a retry-safe commit-time UNIQUE violation from a MERGE race.
 func IsMergeCommitTimeUniqueConflict(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "constraint violation") {
-		return false
-	}
-	if !strings.Contains(msg, "UNIQUE on") {
-		return false
-	}
-	if !strings.Contains(msg, "already exists") {
-		return false
-	}
-	return strings.Contains(msg, "failed to commit implicit transaction") ||
-		strings.Contains(msg, "commit failed") ||
-		strings.Contains(msg, "TransactionCommitFailed")
+	return stderrors.Is(err, ErrMergeCommitTimeUniqueConflict)
 }

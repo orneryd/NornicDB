@@ -2240,25 +2240,40 @@ func TestMapBoltQueryError(t *testing.T) {
 }
 
 func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
-	err := fmt.Errorf("failed to commit implicit transaction: constraint violation: Constraint violation (UNIQUE on TerraformResource.[uid]): Node with uid=X already exists (nodeID: nornic:abc)")
+	err := nornicerrors.MarkMergeCommitTimeUniqueConflict(fmt.Errorf("failed to commit implicit transaction: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	}))
+	nonMergeErr := fmt.Errorf("failed to commit implicit transaction: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	})
 
 	tests := []struct {
 		name     string
+		err      error
 		query    string
 		wantCode string
 	}{
 		{
 			name:     "merge conflict is retryable",
+			err:      err,
 			query:    "MERGE (r:TerraformResource {uid: 'X'}) SET r.name = 'x'",
 			wantCode: nornicerrors.TransientOutdated,
 		},
 		{
 			name:     "create duplicate remains hard error",
+			err:      nonMergeErr,
 			query:    "CREATE (r:TerraformResource {uid: 'X'})",
 			wantCode: "Neo.ClientError.Statement.SyntaxError",
 		},
 		{
 			name:     "empty query remains hard error",
+			err:      nonMergeErr,
 			query:    "",
 			wantCode: "Neo.ClientError.Statement.SyntaxError",
 		},
@@ -2266,7 +2281,7 @@ func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			code, _ := mapBoltQueryErrorForQuery(err, tt.query)
+			code, _ := mapBoltQueryErrorForQuery(tt.err, tt.query)
 			if code != tt.wantCode {
 				t.Fatalf("code = %q, want %q", code, tt.wantCode)
 			}
@@ -2275,7 +2290,12 @@ func TestMapBoltQueryErrorForQueryCommitTimeUniqueConflictRequiresMerge(t *testi
 }
 
 func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
-	err := fmt.Errorf("commit failed: constraint violation: Constraint violation (UNIQUE on TerraformResource.[uid]): Node with uid=X already exists (nodeID: nornic:abc)")
+	err := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
+		Type:       storage.ConstraintUnique,
+		Label:      "TerraformResource",
+		Properties: []string{"uid"},
+		Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
+	})
 
 	tests := []struct {
 		name     string
@@ -2314,6 +2334,17 @@ func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.
 	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", true)
 	if session.canRetryMergeCommitConflict() {
 		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
+func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite(
+		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
+		true,
+	)
+	if session.canRetryMergeCommitConflict() {
+		t.Fatal("single statement mixing CREATE and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
 }
 
