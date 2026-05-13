@@ -639,7 +639,6 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 	if existingNode != nil || setIdx > 0 || onCreateIdx > 0 {
 		store.UpdateNode(node)
 		e.notifyNodeMutated(string(node.ID))
-		e.cacheMergeNode(labels, matchProps, node)
 	}
 	e.cacheMergeNode(labels, matchProps, node)
 

@@ -36,6 +36,12 @@ func TestMapTransientTransactionError(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "merge commit-time unique conflict",
+			err:  MarkMergeCommitTimeUniqueConflict(fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "TerraformResource", Properties: []string{"uid"}, Message: "Node with uid=X already exists (nodeID: nornic:abc)"})),
+			want: TransientOutdated,
+			ok:   true,
+		},
+		{
 			name: "ordinary error",
 			err:  stderrors.New("syntax error"),
 			ok:   false,
@@ -74,6 +80,9 @@ func TestMarkMergeCommitTimeUniqueConflict(t *testing.T) {
 	marked := MarkMergeCommitTimeUniqueConflict(uniqueErr)
 	if !IsMergeCommitTimeUniqueConflict(marked) {
 		t.Fatal("expected unique constraint violation to be marked as merge commit-time conflict")
+	}
+	if marked.Error() != uniqueErr.Error() {
+		t.Fatalf("marked error text = %q, want %q", marked.Error(), uniqueErr.Error())
 	}
 
 	nonUniqueErr := fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{

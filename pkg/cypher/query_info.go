@@ -299,6 +299,23 @@ func analyzeQuery(cypher string) *QueryInfo {
 	return info
 }
 
+// IsRetrySafeMergeCommitQuery reports whether a query's write shape is limited
+// to a MERGE commit race that can be retried safely. MERGE may be combined
+// with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND, and RETURN, but side-effecting
+// clauses such as CREATE, DELETE, REMOVE, FOREACH, LOAD CSV, or CALL make the
+// statement non-retryable.
+func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
+	if info == nil || !info.HasMerge {
+		return false
+	}
+	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
+		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
+		info.HasShow || info.HasUnion {
+		return false
+	}
+	return true
+}
+
 // containsKeyword checks if the query contains a keyword as a whole word.
 // It searches all occurrences, not just the first (e.g., "ToDelete" won't
 // block finding "DELETE" later in the query).

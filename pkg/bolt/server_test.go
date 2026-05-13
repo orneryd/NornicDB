@@ -2348,6 +2348,17 @@ func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *test
 	}
 }
 
+func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
+	session := &Session{inTransaction: true}
+	session.recordExplicitTransactionWrite(
+		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
+		true,
+	)
+	if session.canRetryMergeCommitConflict() {
+		t.Fatal("statement mixing CALL and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
+	}
+}
+
 // =============================================================================
 // Tests for isShowDatabasesQuery – case/whitespace normalization
 // =============================================================================

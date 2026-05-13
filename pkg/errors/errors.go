@@ -2,7 +2,6 @@ package errors
 
 import (
 	stderrors "errors"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -36,6 +35,22 @@ var (
 	ErrMergeCommitTimeUniqueConflict = stderrors.New("merge commit-time unique conflict")
 )
 
+type mergeCommitTimeUniqueConflictError struct {
+	err error
+}
+
+func (e *mergeCommitTimeUniqueConflictError) Error() string {
+	return e.err.Error()
+}
+
+func (e *mergeCommitTimeUniqueConflictError) Unwrap() error {
+	return e.err
+}
+
+func (e *mergeCommitTimeUniqueConflictError) Is(target error) bool {
+	return target == ErrMergeCommitTimeUniqueConflict
+}
+
 // MapTransientTransactionError maps known transaction failure sentinels to
 // Neo4j-compatible transient transaction codes. It intentionally classifies by
 // error reference rather than message text so localized or templated messages do
@@ -48,6 +63,7 @@ func MapTransientTransactionError(err error) (string, bool) {
 		return TransientDeadlockDetected, true
 	}
 	if stderrors.Is(err, ErrTransactionConflict) ||
+		stderrors.Is(err, ErrMergeCommitTimeUniqueConflict) ||
 		stderrors.Is(err, ErrMVCCResourcePressure) ||
 		stderrors.Is(err, ErrMVCCSnapshotGracefulCancel) ||
 		stderrors.Is(err, ErrMVCCSnapshotHardExpired) {
@@ -67,7 +83,7 @@ func MarkMergeCommitTimeUniqueConflict(err error) error {
 	if !stderrors.As(err, &violation) || violation == nil || violation.Type != storage.ConstraintUnique {
 		return err
 	}
-	return fmt.Errorf("%w: %w", ErrMergeCommitTimeUniqueConflict, err)
+	return &mergeCommitTimeUniqueConflictError{err: err}
 }
 
 // IsMergeCommitTimeUniqueConflict reports whether err was explicitly tagged as

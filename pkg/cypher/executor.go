@@ -1967,7 +1967,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
 		}
-		if info := e.analyzer.Analyze(cypher); info != nil && info.HasMerge {
+		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		return nil, fmt.Errorf("failed to commit implicit transaction: %w", err)

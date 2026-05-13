@@ -85,6 +85,7 @@ package storage
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -453,26 +454,26 @@ func (s *NodeConfigStore) IsEdgeAllowed(sourceID, targetID, label string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.totalChecks++
+	atomic.AddInt64(&s.totalChecks, 1)
 
 	// Check source config
 	if srcCfg, exists := s.configs[sourceID]; exists {
 		if srcCfg.Disabled {
-			s.totalBlocked++
+			atomic.AddInt64(&s.totalBlocked, 1)
 			return false
 		}
 		if srcCfg.IsDenied(targetID) {
-			s.totalBlocked++
+			atomic.AddInt64(&s.totalBlocked, 1)
 			return false
 		}
 		if !srcCfg.CanAddEdge(true) {
-			s.totalBlocked++
+			atomic.AddInt64(&s.totalBlocked, 1)
 			return false
 		}
 		// Check label-specific config
 		if labelCfg, ok := srcCfg.LabelConfigs[label]; ok {
 			if labelCfg.Disabled {
-				s.totalBlocked++
+				atomic.AddInt64(&s.totalBlocked, 1)
 				return false
 			}
 		}
@@ -481,11 +482,11 @@ func (s *NodeConfigStore) IsEdgeAllowed(sourceID, targetID, label string) bool {
 	// Check target config (incoming edge)
 	if tgtCfg, exists := s.configs[targetID]; exists {
 		if tgtCfg.Disabled {
-			s.totalBlocked++
+			atomic.AddInt64(&s.totalBlocked, 1)
 			return false
 		}
 		if !tgtCfg.CanAddEdge(false) {
-			s.totalBlocked++
+			atomic.AddInt64(&s.totalBlocked, 1)
 			return false
 		}
 	}
@@ -695,8 +696,8 @@ func (s *NodeConfigStore) Stats() NodeConfigStats {
 
 	stats := NodeConfigStats{
 		TotalConfigs: s.totalConfigs,
-		TotalChecks:  s.totalChecks,
-		TotalBlocked: s.totalBlocked,
+		TotalChecks:  atomic.LoadInt64(&s.totalChecks),
+		TotalBlocked: atomic.LoadInt64(&s.totalBlocked),
 	}
 
 	if stats.TotalChecks > 0 {
@@ -719,8 +720,8 @@ func (s *NodeConfigStore) Clear() {
 	defer s.mu.Unlock()
 	s.configs = make(map[string]*NodeConfig)
 	s.totalConfigs = 0
-	s.totalChecks = 0
-	s.totalBlocked = 0
+	atomic.StoreInt64(&s.totalChecks, 0)
+	atomic.StoreInt64(&s.totalBlocked, 0)
 }
 
 // GetAllNodeIDs returns all configured node IDs.

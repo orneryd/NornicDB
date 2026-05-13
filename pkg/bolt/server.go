@@ -1914,11 +1914,7 @@ func (s *Session) recordExplicitTransactionWrite(query string, isWrite bool) {
 		s.txHasNonMergeWrite = true
 		return
 	}
-	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove || info.HasForeach || info.HasLoadCSV {
-		s.txHasNonMergeWrite = true
-		return
-	}
-	if !info.HasMerge {
+	if !cypher.IsRetrySafeMergeCommitQuery(info) {
 		s.txHasNonMergeWrite = true
 	}
 }
