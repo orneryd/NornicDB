@@ -442,6 +442,51 @@ nornicdb decay stats --data-dir ./data
 
 ---
 
+## Optional: Inverted Memory Layer (Consolidation)
+
+The default Memory profile above implements the classic Ebbinghaus forgetting curve — episodes start strong and fade unless reinforced. Roynard's full model also covers the **inverse** dynamic: a memory that is *not* retrieved gains strength as it consolidates, while frequent retrieval (interference) erodes it. This is supported as a first-class profile by giving `halfLifeSeconds` a **negative value** and anchoring on `LAST_ACCESSED`:
+
+```cypher
+CREATE DECAY PROFILE memory_consolidation OPTIONS {
+  halfLifeSeconds: -86400,        -- negative → invert the curve
+  function: 'exponential',
+  scoreFrom: 'LAST_ACCESSED',     -- age = time since last retrieval
+  visibilityThreshold: 0.10,
+  scoreFloor: 0.0
+}
+```
+
+A node bound to this profile scores `0.0` immediately after access (suppressed) and strengthens monotonically toward `1.0` as it sits idle. Pair it with a dampening promotion profile to model interference:
+
+```cypher
+CREATE PROMOTION PROFILE retrieval_interference OPTIONS {
+  multiplier: 0.5,
+  scoreFloor: 0.0,
+  scoreCap: 1.0
+}
+
+CREATE PROMOTION POLICY consolidation_interference
+FOR (n:MemoryEpisode)
+APPLY {
+  ON ACCESS {
+    SET n.accessCount = coalesce(n.accessCount, 0) + 1
+    SET n.lastAccessedAt = timestamp()
+  }
+  WHEN n.accessCount >= 5
+    APPLY PROFILE 'retrieval_interference'
+}
+```
+
+Net behavior — opposite of the default forgetting layer:
+
+- Idle episodes consolidate (score rises toward 1.0).
+- Each retrieval resets the consolidation clock and bumps `accessCount`.
+- Once `accessCount` crosses the interference threshold, the dampener pins the multiplier at `0.5` and frequent retrievals never reach the asymptote.
+
+Use this layer when modeling skills/procedures (which strengthen with rest) instead of episodic recall (which strengthens with rehearsal). The two layers can coexist on different label sets within the same database.
+
+---
+
 ## Related Documentation
 
 - **[Knowledge-Layer Policies](knowledge-layer-policies.md)** — System overview

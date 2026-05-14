@@ -23,7 +23,7 @@ CREATE PROMOTION PROFILE reinforced_tier OPTIONS {
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `multiplier` | `1.0` | Score multiplier (>1.0 boosts, <1.0 dampens) |
+| `multiplier` | `1.0` | Score multiplier. `>1.0` boosts, `1.0` is neutral, `<1.0` dampens. A multiplier of `0.5` halves the decayed score; combined with an inverted decay profile (negative `halfLifeSeconds`) this implements "punish frequent access" semantics where hot nodes are demoted. See [Inverted Decay](decay-profiles.md#inverted-decay-consolidation). |
 | `scoreFloor` | `0.0` | Minimum score after promotion |
 | `scoreCap` | `1.0` | Maximum score after promotion |
 
@@ -58,6 +58,29 @@ APPLY {
 
   WHEN n.accessCount >= 5 AND n.sourceAgreement >= 0.95
     APPLY PROFILE 'canonical_tier'
+}
+```
+
+### Example: Negative Multiplier (Access Dampening)
+
+A multiplier below 1.0 dampens the score for entities that hit a hot-path threshold. Pairs with an inverted decay profile to invert the recency bias: frequently-accessed entries are demoted, idle entries strengthen over time. See the full walkthrough in [Inverted Decay](decay-profiles.md#use-case-negative-promotion-combined-with-inverted-decay).
+
+```cypher
+CREATE PROMOTION PROFILE access_dampener OPTIONS {
+  multiplier: 0.5,
+  scoreFloor: 0.0,
+  scoreCap: 1.0
+}
+
+CREATE PROMOTION POLICY hot_path_dampening
+FOR (n:Memory)
+APPLY {
+  ON ACCESS {
+    SET n.accessCount = coalesce(n.accessCount, 0) + 1
+    SET n.lastAccessedAt = timestamp()
+  }
+  WHEN n.accessCount >= 5
+    APPLY PROFILE 'access_dampener'
 }
 ```
 

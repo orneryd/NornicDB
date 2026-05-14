@@ -365,6 +365,17 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		if err := b.applyTemporalIndexesForNodeChangeInTxn(txn, dbName, schema, existingNode, node); err != nil {
 			return err
 		}
+		// Label changes may rebind the node to a different decay profile (or
+		// none at all). The body we just wrote carries node.VisibilitySuppressed
+		// from the caller; if labels changed we must rescore against the new
+		// label set and rewrite the body so the persisted flag reflects the
+		// rebind. Without this, a node previously suppressed under one binding
+		// stays suppressed forever after rotating to an unbound label.
+		if !labelsEqual(node.Labels, existingNode.Labels) {
+			if err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node); err != nil {
+				return err
+			}
+		}
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)

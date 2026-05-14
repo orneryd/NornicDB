@@ -74,7 +74,11 @@ The decay score at time `t`:
 score(t) = max(scoreFloor, f(t) * promotionMultiplier)
 ```
 
-Where `f(t)` is the decay function applied since the score anchor (creation time or version time).
+Where `f(t)` is the decay function applied since the score anchor (creation, version, custom property, or last-access timestamp).
+
+#### Inverted Curves
+
+A **negative `halfLifeSeconds`** flips the curve in place: `f(t)` becomes `1 - f(t, |halfLife|)`. The score grows from 0 toward the asymptote 1.0 instead of falling. Combined with `scoreFrom: 'LAST_ACCESSED'` this implements Ebbinghaus-Roynard consolidation — idle time strengthens the memory and an access resets it. Combined with a promotion profile whose `multiplier < 1.0` you get the dual of the usual recency-bias caching: **frequently-accessed nodes and edges decay faster**, while **idle entries gain strength over time**. See [Inverted Decay](../user-guides/decay-profiles.md#inverted-decay-consolidation) for the full table and Cypher examples.
 
 ## Configuration
 

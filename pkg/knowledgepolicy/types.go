@@ -17,6 +17,12 @@ const (
 	ScoreFromCreated ScoreFromMode = "CREATED"
 	ScoreFromVersion ScoreFromMode = "VERSION"
 	ScoreFromCustom  ScoreFromMode = "CUSTOM"
+	// ScoreFromLastAccessed anchors the score at AccessMetaEntry.Fixed.
+	// LastAccessedAt. Time-since-last-access is the "age" the decay
+	// function consumes — pairs with DecayFunctionInverseExponential
+	// to implement the Ebbinghaus-Roynard consolidation curve. Falls
+	// back to createdAt when no access has been recorded.
+	ScoreFromLastAccessed ScoreFromMode = "LAST_ACCESSED"
 )
 
 // ScopeType identifies whether a profile/policy targets nodes, edges, or properties.
@@ -29,6 +35,16 @@ const (
 )
 
 // DecayProfileBundle is a reusable parameter bundle (no FOR clause).
+//
+// HalfLifeSeconds carries the inversion signal: a negative value flips
+// the chosen Function in place, so the compiled score becomes
+// `1 - f(age, |halfLife|)` instead of `f(age, halfLife)`. The score
+// then grows from 0 toward 1.0 as age increases, instead of falling
+// toward 0. Combined with ScoreFromLastAccessed this implements the
+// Ebbinghaus-Roynard consolidation curve: idle time strengthens the
+// memory and an access resets the anchor (and thus the score) back
+// to 0. The inversion is purely a curve property and composes with
+// every Function family and every ScoreFrom anchor.
 type DecayProfileBundle struct {
 	Name                string        `json:"name" msgpack:"name"`
 	HalfLifeSeconds     int64         `json:"halfLifeSeconds" msgpack:"halfLifeSeconds"`
@@ -69,6 +85,15 @@ type DecayProfileBinding struct {
 }
 
 // PromotionProfileDef is a reusable promotion parameter bundle.
+//
+// Multiplier > 1.0 boosts the decayed score; Multiplier < 1.0 dampens
+// it (e.g. 0.5 halves the score). A dampening multiplier paired with
+// an inverted DecayProfileBundle (negative HalfLifeSeconds) implements
+// "punish frequent access" semantics: the inverted curve makes idle
+// entries strong, the dampening multiplier knocks down hot-path entries
+// once a WHEN predicate trips, so frequently-accessed nodes/edges decay
+// faster while idle ones gain strength. ScoreFloor and ScoreCap clamp
+// the final score after the multiplier is applied.
 type PromotionProfileDef struct {
 	Name       string    `json:"name" msgpack:"name"`
 	Scope      ScopeType `json:"scope" msgpack:"scope"`
@@ -137,9 +162,10 @@ var ValidDecayFunctions = map[DecayFunction]bool{
 
 // ValidScoreFromModes is the set of valid score-from mode identifiers.
 var ValidScoreFromModes = map[ScoreFromMode]bool{
-	ScoreFromCreated: true,
-	ScoreFromVersion: true,
-	ScoreFromCustom:  true,
+	ScoreFromCreated:      true,
+	ScoreFromVersion:      true,
+	ScoreFromCustom:       true,
+	ScoreFromLastAccessed: true,
 }
 
 // ValidScopeTypes is the set of valid scope type identifiers.

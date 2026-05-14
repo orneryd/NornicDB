@@ -86,6 +86,53 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 	return false, nil
 }
 
+// rescoreSuppressionAfterLabelChangeInTxn re-evaluates a node's decay
+// suppression under its NEW labels and rewrites the persisted body so the
+// VisibilitySuppressed flag tracks the current binding. Called only from
+// the UpdateNode path when labels changed, before writeNodeMVCCHeadInTxn.
+//
+// Cypher SET/REMOVE-label semantics: a node that moves out of a suppressing
+// label binding must become visible on the next read; a node that moves
+// into one must become suppressed. The persisted flag is the only signal
+// the read path's fast-suppress branch consults, so we have to update it
+// explicitly here — without this rebind, the stale flag short-circuits
+// filterNodeByDecay and the rescore never runs.
+//
+// When decay is disabled at the engine level, this is a no-op so the
+// codepath cost stays zero on operators who don't use the feature.
+func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) error {
+	if !b.decayEnabled || node == nil {
+		return nil
+	}
+	wasSuppressed := node.VisibilitySuppressed
+	// filterNodeByDecay short-circuits on a true flag, so clear it
+	// before scoring against the new labels.
+	node.VisibilitySuppressed = false
+	suppressNow := b.filterNodeByDecay(node, DecayScoringTime())
+	node.VisibilitySuppressed = suppressNow
+
+	if suppressNow == wasSuppressed {
+		// No state change — the body the caller is about to commit already
+		// has the correct flag set (we restored it above).
+		return nil
+	}
+
+	data, _, err := b.encodeNodeInTxn(txn, namespace, node)
+	if err != nil {
+		return err
+	}
+	if err := txn.Set(nodeKey(node.ID), data); err != nil {
+		return err
+	}
+
+	if suppressNow {
+		// Newly suppressed — enqueue deindex work.
+		return enqueueWorkItemInTxn(txn, string(node.ID), "NODE")
+	}
+	// Newly visible — drop any tombstones from a prior suppression cycle.
+	return clearTombstonesForEntityInTxn(txn, string(node.ID))
+}
+
 func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, error) {
 	item, err := txn.Get(edgeKey(edgeID))
 	if err != nil {

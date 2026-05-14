@@ -320,6 +320,16 @@ func resolveAnchor(cb *CompiledBinding, createdAt, versionAt int64, accessMeta *
 			return versionAt
 		}
 		return createdAt
+	case ScoreFromLastAccessed:
+		// Time-since-last-access is the "age" the curve consumes. With
+		// an inverse half-life, idle time grows the score; an access
+		// resets the anchor and drops the score back near zero. Falls
+		// back to createdAt when no access has been recorded yet so
+		// fresh entities still produce a deterministic score.
+		if accessMeta != nil && accessMeta.Fixed.LastAccessedAt > 0 {
+			return accessMeta.Fixed.LastAccessedAt
+		}
+		return createdAt
 	case ScoreFromCustom:
 		if accessMeta != nil && cb.ScoreFromProperty != "" {
 			if v, ok := accessMeta.Overflow[cb.ScoreFromProperty]; ok {
@@ -337,17 +347,32 @@ func resolveAnchor(cb *CompiledBinding, createdAt, versionAt int64, accessMeta *
 	}
 }
 
+// computeDecay dispatches on the decay function family. A negative
+// halfLifeNanos inverts the curve in place: the compiled score becomes
+// `1 - f(age, |halfLife|)` instead of `f(age, halfLife)`. This is the
+// Ebbinghaus-Roynard signal — paired with ScoreFromLastAccessed, the
+// score grows with idle time and resets on access, with no new
+// function/type/flag in the schema.
 func computeDecay(fn DecayFunction, ageNanos, halfLifeNanos int64) float64 {
+	inverse := halfLifeNanos < 0
+	if inverse {
+		halfLifeNanos = -halfLifeNanos
+	}
+	var score float64
 	switch fn {
 	case DecayFunctionExponential:
-		return exponentialDecay(ageNanos, halfLifeNanos)
+		score = exponentialDecay(ageNanos, halfLifeNanos)
 	case DecayFunctionLinear:
-		return linearDecay(ageNanos, halfLifeNanos)
+		score = linearDecay(ageNanos, halfLifeNanos)
 	case DecayFunctionStep:
-		return stepDecay(ageNanos, halfLifeNanos)
+		score = stepDecay(ageNanos, halfLifeNanos)
 	default:
-		return 1.0
+		score = 1.0
 	}
+	if inverse {
+		return 1.0 - score
+	}
+	return score
 }
 
 func exponentialDecay(ageNanos, halfLifeNanos int64) float64 {
