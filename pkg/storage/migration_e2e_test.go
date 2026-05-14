@@ -883,8 +883,15 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 				"hp":   int64(500),
 			},
 		}, v3))
-		// Make v3 the current head so GetNodeLatestVisible resolves it.
-		require.NoError(t, eng.UpdateNodeCurrentHead(nodeID, v3, false))
+		// Pin the head to v3 with FloorVersion=v1 so as-of reads
+		// going back to the oldest historical snapshot don't trip
+		// the floor-version-too-old guard. AppendNodeVersion lifts
+		// the head's Version to its arg but leaves the floor at the
+		// CreateNode-time value, which would be ~time.Now() and
+		// reject any read older than that.
+		require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
+			return eng.writeNodeMVCCHeadWithFloorInTxn(txn, nodeID, v3, false, v1)
+		}))
 
 		// Edge: create with FINAL state, then append historical
 		// versions. Same reasoning as the node above — the primary
@@ -916,7 +923,12 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 				"loyalty": "max",
 			},
 		}, ev2))
-		require.NoError(t, eng.UpdateEdgeCurrentHead(edgeID, ev2, false))
+		// Same floor adjustment as the node head — pin the floor
+		// back to the oldest historical version so as-of reads of
+		// ev1 succeed.
+		require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
+			return eng.writeEdgeMVCCHeadWithFloorInTxn(txn, edgeID, ev2, false, ev1)
+		}))
 
 		require.NoError(t, eng.writeSchemaVersion(0))
 		require.NoError(t, eng.Close())
@@ -1002,17 +1014,21 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 	require.NotNil(t, edgeLatest)
 	require.Equal(t, "max", edgeLatest.Properties["loyalty"])
 
-	// Head versions survived the migration so the as-of code paths
-	// see the correct floor/current bookkeeping.
+	// Head versions and floors survived the migration so the as-of
+	// code paths see the correct floor/current bookkeeping.
 	headNode, err := eng.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 	require.Equal(t, 0, headNode.Version.Compare(v3),
 		"head version after migration must equal v3, got %v", headNode.Version)
+	require.Equal(t, 0, headNode.FloorVersion.Compare(v1),
+		"head floor after migration must equal v1, got %v", headNode.FloorVersion)
 	require.False(t, headNode.Tombstoned)
 
 	headEdge, err := eng.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 	require.Equal(t, 0, headEdge.Version.Compare(ev2),
 		"edge head version after migration must equal ev2, got %v", headEdge.Version)
+	require.Equal(t, 0, headEdge.FloorVersion.Compare(ev1),
+		"edge floor after migration must equal ev1, got %v", headEdge.FloorVersion)
 	require.False(t, headEdge.Tombstoned)
 }
