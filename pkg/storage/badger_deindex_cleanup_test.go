@@ -3,6 +3,9 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeindexCleanup_ProcessesPendingItems(t *testing.T) {
@@ -138,4 +141,40 @@ func TestDeindexCleanup_EmptyQueue(t *testing.T) {
 	if n != 0 {
 		t.Errorf("expected 0 on empty queue, got %d", n)
 	}
+}
+
+func TestDeindexCleanupJob_DefaultIntervalAndStartStop(t *testing.T) {
+	eng := newTestEngine(t)
+
+	// Default-interval branch: interval ≤ 0 → 24h.
+	j := NewDeindexCleanupJob(eng, 0)
+	require.Equal(t, 24*time.Hour, j.interval)
+
+	// Explicit interval honored.
+	j2 := NewDeindexCleanupJob(eng, 50*time.Millisecond)
+	j2.Start(context.Background())
+	// Second Start while running is a no-op (cancel != nil branch).
+	j2.Start(context.Background())
+	// Stop must wait for the goroutine to exit; second Stop is a no-op.
+	j2.Stop()
+	j2.Stop()
+}
+
+func TestDeindexCleanupJob_RunOnce_CanceledContext(t *testing.T) {
+	eng := newTestEngine(t)
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, eng.PutDeindexWorkItem(&DeindexWorkItem{
+			WorkItemID:  "wi-cancel-" + string(rune('a'+i)),
+			TargetID:    "nornic:cancel-" + string(rune('a'+i)),
+			TargetScope: "NODE",
+			Status:      "pending",
+		}))
+	}
+
+	j := NewDeindexCleanupJob(eng, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := j.RunOnce(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }
