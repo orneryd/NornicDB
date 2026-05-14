@@ -59,6 +59,33 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 		)
 	}
 
+	// v1.0.x stores wrote secondary indexes (label, outgoing, incoming,
+	// edge-type) keyed by string IDs and 0x00 separators. The numID
+	// rework ahead of v1.1.0 changed those keys to fixed-width 8-byte
+	// numeric IDs from idDict. The migration's body rewrite seeds the
+	// dict, but the on-disk legacy index entries are still string-keyed
+	// — modern reads scan the numID-shaped prefix and find nothing,
+	// which is what makes a freshly-migrated graph look "edgeless" in
+	// the explorer.
+	//
+	// Rebuild MUST run before writeSchemaVersion so a crash mid-rebuild
+	// leaves the store at v1; the migration restarts from scratch on
+	// the next open and re-rebuilds.
+	idxStart := time.Now()
+	idxStats, err := b.rebuildSecondaryIndexesForV2()
+	if err != nil {
+		return fmt.Errorf("rebuilding secondary indexes: %w", err)
+	}
+	if b.log != nil {
+		b.log.Info("v1→v2 secondary index rebuild complete",
+			"label_entries", idxStats.labels,
+			"outgoing_entries", idxStats.outgoing,
+			"incoming_entries", idxStats.incoming,
+			"edge_type_entries", idxStats.edgeTypes,
+			"duration_ms", time.Since(idxStart).Milliseconds(),
+		)
+	}
+
 	if err := b.writeSchemaVersion(storageVersionPropKeyDictV2); err != nil {
 		return fmt.Errorf("writing schema version: %w", err)
 	}
@@ -87,6 +114,244 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 type v1ToV2PassStats struct {
 	scanned   int
 	converted int
+}
+
+// v1ToV2IndexStats counts secondary-index entries written by the
+// post-body rebuild step, broken down by index type. Surfaced to the
+// migration's summary log so operators can sanity-check that the
+// counts match the cardinality of their data.
+type v1ToV2IndexStats struct {
+	labels    int
+	outgoing  int
+	incoming  int
+	edgeTypes int
+}
+
+// rebuildSecondaryIndexesForV2 wipes the legacy string-keyed
+// label/outgoing/incoming/edge-type index prefixes and re-emits them
+// in the numID-keyed shape used by every read path on the modern
+// engine. Runs after v1→v2 body rewrites so the idDict is fully
+// populated for every node and edge.
+//
+// DropPrefix is durable: the prefixes stay empty if a crash hits mid-
+// rebuild, but because writeSchemaVersion has not yet been called the
+// store is still at v1, so the next open re-runs the entire arm
+// including this step from scratch. The intermediate state is
+// "indexes wiped, bodies already at v2"; readers fall through the
+// edge-between repair self-heal path until the rebuild completes.
+func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) {
+	stats := v1ToV2IndexStats{}
+
+	for _, p := range []byte{
+		prefixLabelIndex,
+		prefixOutgoingIndex,
+		prefixIncomingIndex,
+		prefixEdgeTypeIndex,
+	} {
+		if err := b.db.DropPrefix([]byte{p}); err != nil {
+			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
+		}
+	}
+
+	if err := b.rebuildLabelIndexForV2(&stats); err != nil {
+		return stats, err
+	}
+	if err := b.rebuildEdgeIndexesForV2(&stats); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+// rebuildLabelIndexForV2 walks every node body and emits one
+// labelIndexKey per (node, label) pair. Uses cursor-based pagination
+// (not the body-format-byte skip used by the body-rewrite pass) since
+// nodes are already at v2 and we'd loop forever otherwise.
+func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
+	const progressEvery = 25_000
+	const batchSize = migrationV1ToV2BatchSize
+	lastLogged := 0
+	var cursor []byte
+
+	for {
+		var batch []migrationItem
+		err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer it.Close()
+			start := cursor
+			if len(start) == 0 {
+				start = []byte{prefixNode}
+			}
+			batch = batch[:0]
+			for it.Seek(start); it.ValidForPrefix([]byte{prefixNode}); it.Next() {
+				if len(batch) >= batchSize {
+					return nil
+				}
+				item := it.Item()
+				val, vErr := item.ValueCopy(nil)
+				if vErr != nil {
+					return vErr
+				}
+				if len(val) == 0 {
+					continue
+				}
+				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("scan nodes for index rebuild: %w", err)
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		err = b.withUpdate(func(txn *badger.Txn) error {
+			for _, item := range batch {
+				nodeID := NodeID(string(item.key[1:]))
+				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
+				if !ok {
+					return fmt.Errorf("v1→v2 index rebuild: node %q lacks namespace prefix", nodeID)
+				}
+				node, err := b.decodeNode(namespace, item.value)
+				if err != nil {
+					return fmt.Errorf("decode v2 node %q: %w", nodeID, err)
+				}
+				for _, label := range node.Labels {
+					key, err := b.labelIndexKeyString(txn, label, nodeID)
+					if err != nil {
+						return fmt.Errorf("label key for %q/%q: %w", nodeID, label, err)
+					}
+					if err := txn.Set(key, []byte{}); err != nil {
+						return fmt.Errorf("write label index for %q/%q: %w", nodeID, label, err)
+					}
+					stats.labels++
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if b.log != nil && stats.labels-lastLogged >= progressEvery {
+			b.log.Info("v1→v2 index rebuild: labels progress",
+				"label_entries", stats.labels,
+			)
+			lastLogged = stats.labels
+		}
+		// Advance cursor past the last key we just processed.
+		last := batch[len(batch)-1].key
+		cursor = make([]byte, len(last)+1)
+		copy(cursor, last)
+		cursor[len(last)] = 0x00
+		if len(batch) < batchSize {
+			return nil
+		}
+	}
+}
+
+// rebuildEdgeIndexesForV2 walks every edge body and emits outgoing,
+// incoming, and edge-type entries. Cursor-based for the same reason
+// as the label pass.
+func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
+	const progressEvery = 25_000
+	const batchSize = migrationV1ToV2BatchSize
+	lastLogged := 0
+	var cursor []byte
+
+	for {
+		var batch []migrationItem
+		err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer it.Close()
+			start := cursor
+			if len(start) == 0 {
+				start = []byte{prefixEdge}
+			}
+			batch = batch[:0]
+			for it.Seek(start); it.ValidForPrefix([]byte{prefixEdge}); it.Next() {
+				if len(batch) >= batchSize {
+					return nil
+				}
+				item := it.Item()
+				val, vErr := item.ValueCopy(nil)
+				if vErr != nil {
+					return vErr
+				}
+				if len(val) == 0 {
+					// Empty edge bodies aren't decodable; the body-rewrite
+					// pass also skips them. Leave them on disk; index
+					// rebuild has nothing to emit for them.
+					continue
+				}
+				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("scan edges for index rebuild: %w", err)
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		err = b.withUpdate(func(txn *badger.Txn) error {
+			for _, item := range batch {
+				edgeID := EdgeID(string(item.key[1:]))
+				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
+				if err != nil {
+					return fmt.Errorf("decode v2 edge %q: %w", edgeID, err)
+				}
+				outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edgeID)
+				if err != nil {
+					return fmt.Errorf("outgoing key for %q: %w", edgeID, err)
+				}
+				if err := txn.Set(outKey, []byte{}); err != nil {
+					return fmt.Errorf("write outgoing index for %q: %w", edgeID, err)
+				}
+				stats.outgoing++
+
+				inKey, err := b.incomingIndexKeyString(txn, edge.EndNode, edgeID)
+				if err != nil {
+					return fmt.Errorf("incoming key for %q: %w", edgeID, err)
+				}
+				if err := txn.Set(inKey, []byte{}); err != nil {
+					return fmt.Errorf("write incoming index for %q: %w", edgeID, err)
+				}
+				stats.incoming++
+
+				if edge.Type != "" {
+					typeKey, err := b.edgeTypeIndexKeyString(txn, edge.Type, edgeID)
+					if err != nil {
+						return fmt.Errorf("edge-type key for %q: %w", edgeID, err)
+					}
+					if err := txn.Set(typeKey, []byte{}); err != nil {
+						return fmt.Errorf("write edge-type index for %q: %w", edgeID, err)
+					}
+					stats.edgeTypes++
+				}
+			}
+			if err := b.idDict.flushTxnCounters(txn); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if b.log != nil && stats.outgoing-lastLogged >= progressEvery {
+			b.log.Info("v1→v2 index rebuild: edges progress",
+				"outgoing_entries", stats.outgoing,
+				"incoming_entries", stats.incoming,
+				"edge_type_entries", stats.edgeTypes,
+			)
+			lastLogged = stats.outgoing
+		}
+		last := batch[len(batch)-1].key
+		cursor = make([]byte, len(last)+1)
+		copy(cursor, last)
+		cursor[len(last)] = 0x00
+		if len(batch) < batchSize {
+			return nil
+		}
+	}
 }
 
 // compactAfterMigration synchronously compacts the LSM tree and runs

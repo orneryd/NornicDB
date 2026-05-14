@@ -698,21 +698,18 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize counts: %w", err)
 	}
 
-	// Run schema migrations BEFORE starting any background work. The
-	// V1→V2 migration rewrites every node and edge body; if the
-	// edge-between index backfill ran concurrently, Badger's
-	// DropPrefix would block migration writes ("Writes are blocked,
-	// possibly due to DropAll or Close").
-	if err := engine.loadPersistedSchemas(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
-	}
-
 	if err := engine.initializeMVCCSequence(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
+	// Run migrations BEFORE loadPersistedSchemas. The schema loader's
+	// rebuildUniqueConstraintValues phase decodes every node body to
+	// populate per-namespace unique-value caches; it can only succeed
+	// once bodies are in the current (v2) format. Pre-migration this
+	// would fail immediately on the first v0/v1 body with "unexpected
+	// format byte 0xff; expected V2 (0x10)" and the engine would
+	// refuse to open even with --upgrade-storage.
 	if err := engine.RunOnStartMigrations(opts.AllowStorageUpgrade); err != nil {
 		db.Close()
 		return nil, err
@@ -724,7 +721,8 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// originals and v2 rewrites are both on disk so it can collapse
 	// them. Without this, Flatten only sees the untouched v1 SSTs and
 	// reclaims a few percent of disk instead of unwinding the upgrade
-	// bloat.
+	// bloat. reopenForPostMigrationCompaction also re-runs the dict
+	// loaders against the fresh DB handle.
 	if engine.migrationDidRun && !opts.InMemory {
 		newDB, err := engine.reopenForPostMigrationCompaction(badgerOpts)
 		if err != nil {
@@ -733,6 +731,13 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		engine.db = newDB
 		db = newDB
 		engine.compactAfterMigration()
+	}
+
+	// Now bodies are guaranteed v2. Schema load + unique-value rebuild
+	// can decode them.
+	if err := engine.loadPersistedSchemas(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
 	// Edge-between index backfill runs only after migrations have
@@ -752,11 +757,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // DB pointer. Returns the new *badger.DB so the caller can swap it on
 // the engine.
 //
-// The state we restore matches the order of the original open path:
-// id dictionary, property-key dictionary, persisted schemas, MVCC
-// sequence, cached counts. Migrations may have added entries to the
-// dictionaries, so re-loading is correctness-required, not just
-// hygiene.
+// The state we restore is everything that was loaded BEFORE migrations
+// ran in NewBadgerEngineWithOptions: id dictionary, property-key
+// dictionary, MVCC sequence, cached counts. Schema load is intentionally
+// deferred to the caller — it decodes node bodies, so it has to run
+// after migrations + reopen, not from inside this helper.
 func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Options) (*badger.DB, error) {
 	if b.log != nil {
 		b.log.Info("post-migration DB reopen starting")
@@ -776,13 +781,9 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 		newDB.Close()
 		return nil, fmt.Errorf("reload property-key dictionary: %w", err)
 	}
-	// loadPersistedSchemas + initializeMVCCSequence + initializeCounts
-	// all read off b.db, so we have to swap it before calling them.
+	// initializeMVCCSequence + initializeCounts read off b.db, so swap
+	// it before calling them.
 	b.db = newDB
-	if err := b.loadPersistedSchemas(); err != nil {
-		newDB.Close()
-		return nil, fmt.Errorf("reload persisted schemas: %w", err)
-	}
 	if err := b.initializeMVCCSequence(); err != nil {
 		newDB.Close()
 		return nil, fmt.Errorf("reinitialize mvcc sequence: %w", err)

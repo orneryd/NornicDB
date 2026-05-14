@@ -3136,21 +3136,25 @@ struct FirstRunWizard: View {
     }
     
     var welcomeStep: some View {
-        VStack(spacing: 20) {
-            Text("Step 1: Welcome")
-                .font(.headline)
-            
-            VStack(alignment: .leading, spacing: 15) {
-                InfoRow(icon: "bolt.fill", title: "Neo4j Compatible", description: "Drop-in replacement for Neo4j with 3-52x better performance")
-                InfoRow(icon: "cpu.fill", title: "Native Performance", description: "Optimized for Apple Silicon with Metal acceleration")
-                InfoRow(icon: "brain.head.profile", title: "AI-Powered", description: "Built-in embeddings, clustering, and predictions")
-                InfoRow(icon: "shield.fill", title: "Privacy First", description: "Runs entirely on your Mac - your data never leaves")
+        ScrollView {
+            VStack(spacing: 20) {
+                storageUpgradePrompt
+
+                Text("Step 1: Welcome")
+                    .font(.headline)
+
+                VStack(alignment: .leading, spacing: 15) {
+                    InfoRow(icon: "bolt.fill", title: "Neo4j Compatible", description: "Drop-in replacement for Neo4j with 3-52x better performance")
+                    InfoRow(icon: "cpu.fill", title: "Native Performance", description: "Optimized for Apple Silicon with Metal acceleration")
+                    InfoRow(icon: "brain.head.profile", title: "AI-Powered", description: "Built-in embeddings, clustering, and predictions")
+                    InfoRow(icon: "shield.fill", title: "Privacy First", description: "Runs entirely on your Mac - your data never leaves")
+                }
+                .padding()
+
+                Spacer()
             }
             .padding()
-            
-            Spacer()
         }
-        .padding()
     }
     
     var presetStep: some View {
@@ -3415,8 +3419,6 @@ struct FirstRunWizard: View {
     var confirmStep: some View {
         ScrollView {
             VStack(spacing: 20) {
-                storageUpgradePrompt
-
                 Text("Step 4: Review & Start")
                     .font(.headline)
 
@@ -3756,7 +3758,7 @@ struct FirstRunWizard: View {
                     Text("Authorize storage upgrade on first start")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                    Text("Enable this if you're upgrading from an older NornicDB version with existing data in \(config.dataPath). The server will refuse to start with out-of-date storage unless this is set. Storage upgrades are one-way — back up your data first. Harmless if no upgrade is needed.")
+                    Text("Enable this if you're upgrading from an older NornicDB version with existing data in \(config.dataPath). The server will refuse to start with out-of-date storage unless this is set. Storage upgrades are one-way — ⚠️ BACK UP YOUR DATA FIRST! ⚠️ The flag is a no-op if no upgrade is needed.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
