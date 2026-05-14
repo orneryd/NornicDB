@@ -1250,7 +1250,16 @@ class ConfigManager: ObservableObject {
         return min(max(0, embeddingChunkOverlap), maxAllowedOverlap)
     }
     let modelsPath = "/usr/local/var/nornicdb/models"
-    
+    let dataPath = "/usr/local/var/nornicdb/data"
+
+    // One-shot flag: when true, the next plist write injects
+    // NORNICDB_UPGRADE_STORAGE=true so the server boots with the upgrade
+    // arm authorized. Cleared after the upgrade completes so we don't
+    // re-authorize on every restart. The server itself decides whether
+    // an upgrade is actually needed; if nothing is pending, the flag is
+    // a no-op.
+    @Published var upgradeStorageOnNextStart: Bool = false
+
     func isFirstRun() -> Bool {
         return FileManager.default.fileExists(atPath: firstRunPath)
     }
@@ -1672,6 +1681,10 @@ private func launchAgentEnvironmentVariables(config: ConfigManager, homeDir: Str
         envVars["NORNICDB_ENCRYPTION_PASSWORD"] = encryptionPasswordEnv
     }
 
+    if config.upgradeStorageOnNextStart {
+        envVars["NORNICDB_UPGRADE_STORAGE"] = "true"
+    }
+
     return envVars
 }
 
@@ -1737,9 +1750,13 @@ struct SettingsView: View {
     // Progress tracking
     @State private var isSaving: Bool = false
     @State private var saveProgress: String = ""
-    
+
     // Show/hide sensitive fields
     @State private var showEncryptionKey: Bool = false
+
+    // Storage-upgrade restart flow
+    @State private var showStorageUpgradeConfirm: Bool = false
+    @State private var isRunningStorageUpgrade: Bool = false
     
     // Check if there are unsaved changes
     var hasChanges: Bool {
@@ -1843,8 +1860,16 @@ struct SettingsView: View {
         .onAppear {
             captureOriginalValues()
         }
+        .alert("Restart with storage upgrade?", isPresented: $showStorageUpgradeConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Stop & Restart with Upgrade", role: .destructive) {
+                runStorageUpgradeRestart()
+            }
+        } message: {
+            Text("This will stop the running server and restart it with the --upgrade-storage flag. If the on-disk format is older than this build, it will be migrated; otherwise the flag is a no-op. Storage upgrades are one-way — back up \(config.dataPath) before continuing.")
+        }
     }
-    
+
     private func captureOriginalValues() {
         // Reload config from file to ensure we have the latest values
         config.loadConfig()
@@ -2139,15 +2164,17 @@ struct SettingsView: View {
     var serverTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                storageUpgradeMaintenance
+
                 Text("Server Configuration")
                     .font(.headline)
                     .padding(.bottom, 5)
-                
+
                 Text("Configure server network settings.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 10)
-                
+
                 // Port setting
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Bolt Port")
@@ -2573,6 +2600,125 @@ struct SettingsView: View {
         }
     }
     
+    // Always-visible maintenance section on the Server tab. The
+    // installer can't detect whether an upgrade is actually pending
+    // (the server has to start to find out, and it refuses to start
+    // when one is required), so this is a manual operator escape
+    // hatch: stop the LaunchAgent, rewrite the plist with
+    // NORNICDB_UPGRADE_STORAGE=true, reload. If no upgrade is
+    // pending the env var is a no-op and the server starts normally.
+    var storageUpgradeMaintenance: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.orange)
+                Text("Storage upgrade")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Text("If the server fails to start with a storage-upgrade error, use this to restart it with --upgrade-storage. Storage upgrades are one-way — back up \(config.dataPath) before continuing. If no upgrade is needed, this is a no-op.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: {
+                showStorageUpgradeConfirm = true
+            }) {
+                HStack(spacing: 6) {
+                    if isRunningStorageUpgrade {
+                        ProgressView().scaleEffect(0.6)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                    }
+                    Text(isRunningStorageUpgrade ? "Restarting with upgrade…" : "Stop server and restart with storage upgrade")
+                        .fontWeight(.medium)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .disabled(isRunningStorageUpgrade)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange, lineWidth: 2)
+        )
+    }
+
+    private func runStorageUpgradeRestart() {
+        isRunningStorageUpgrade = true
+
+        // Set the one-shot flag and rewrite the plist so launchd picks
+        // up the new env var on the next start. After the upgrade
+        // completes we'll clear the flag and rewrite again so subsequent
+        // restarts don't re-authorize the upgrade arm.
+        config.upgradeStorageOnNextStart = true
+        let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
+        do {
+            try writeLaunchAgentPlist(config: config, to: launchAgentPath)
+        } catch {
+            print("Failed to write LaunchAgent plist: \(error)")
+            isRunningStorageUpgrade = false
+            return
+        }
+
+        // Unload + reload so launchd reads the updated plist.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let unload = Process()
+            unload.launchPath = "/usr/bin/env"
+            unload.arguments = ["launchctl", "unload", launchAgentPath]
+            unload.launch()
+            unload.waitUntilExit()
+
+            Thread.sleep(forTimeInterval: 0.5)
+
+            let load = Process()
+            load.launchPath = "/usr/bin/env"
+            load.arguments = ["launchctl", "load", launchAgentPath]
+            load.launch()
+            load.waitUntilExit()
+
+            // Wait for the server to come back up, then clear the
+            // one-shot flag and rewrite the plist without the env var.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                waitForServerHealthAfterUpgrade(attempts: 20) { success in
+                    if success {
+                        config.upgradeStorageOnNextStart = false
+                        try? writeLaunchAgentPlist(config: config, to: launchAgentPath)
+                    }
+                    isRunningStorageUpgrade = false
+                }
+            }
+        }
+    }
+
+    private func waitForServerHealthAfterUpgrade(attempts: Int, completion: @escaping (Bool) -> Void) {
+        guard attempts > 0 else {
+            completion(false)
+            return
+        }
+        let url = URL(string: "http://localhost:7474/health")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            DispatchQueue.main.async {
+                if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                    completion(true)
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        waitForServerHealthAfterUpgrade(attempts: attempts - 1, completion: completion)
+                    }
+                }
+            }
+        }.resume()
+    }
+
     var startupTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -2930,14 +3076,23 @@ struct FirstRunWizard: View {
                         waitForServerHealth(attempts: 10) { success in
                             if success {
                                 saveProgress = "✅ Server is running!"
-                                
+
+                                // Clear the one-shot upgrade flag so future
+                                // restarts don't re-authorize the upgrade arm,
+                                // and rewrite the plist to drop the env var.
+                                if config.upgradeStorageOnNextStart {
+                                    config.upgradeStorageOnNextStart = false
+                                    let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
+                                    try? writeLaunchAgentPlist(config: config, to: launchAgentPath)
+                                }
+
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                                     isSaving = false
                                     onComplete()
                                 }
                             } else {
                                 saveProgress = "⚠️ Server may still be starting. Check menu bar status."
-                                
+
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                                     isSaving = false
                                     onComplete()
@@ -3260,13 +3415,15 @@ struct FirstRunWizard: View {
     var confirmStep: some View {
         ScrollView {
             VStack(spacing: 20) {
+                storageUpgradePrompt
+
                 Text("Step 4: Review & Start")
                     .font(.headline)
-                
+
                 Text("Here's what will be enabled:")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 VStack(alignment: .leading, spacing: 15) {
                     FeatureSummary(enabled: getPresetFeatures().embeddings, title: "Embeddings", icon: "brain.head.profile")
                     FeatureSummary(enabled: getPresetFeatures().searchRerank, title: "Search Reranking", icon: "line.3.horizontal.decrease.circle.fill")
@@ -3573,6 +3730,50 @@ struct FirstRunWizard: View {
         .overlay(alignment: .bottom) {
             wizardScrollHint
         }
+    }
+
+    // Always-visible review-step banner. The installer can't tell
+    // whether the existing data directory needs an upgrade — the
+    // server has to start to find out, and it refuses to start if
+    // one is required. So we offer the option unconditionally;
+    // toggling it sets ConfigManager.upgradeStorageOnNextStart, which
+    // the next plist write turns into NORNICDB_UPGRADE_STORAGE=true.
+    // Harmless when no upgrade is pending.
+    private var storageUpgradePrompt: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.orange)
+                Text("Existing data directory?")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+
+            Toggle(isOn: $config.upgradeStorageOnNextStart) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Authorize storage upgrade on first start")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Text("Enable this if you're upgrading from an older NornicDB version with existing data in \(config.dataPath). The server will refuse to start with out-of-date storage unless this is set. Storage upgrades are one-way — back up your data first. Harmless if no upgrade is needed.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.checkbox)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange, lineWidth: 2)
+        )
+        .padding(.horizontal)
     }
 
     private var wizardScrollHint: some View {

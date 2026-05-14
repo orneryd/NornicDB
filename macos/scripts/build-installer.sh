@@ -224,7 +224,7 @@ kmeans:
   enabled: false
 
 search_rerank:
-    enabled: false
+  enabled: false
   provider: "local"
   model: "bge-reranker-v2-m3-Q4_K_M.gguf"
 

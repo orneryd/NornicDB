@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
+	"runtime"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -23,48 +26,140 @@ import (
 const migrationV1ToV2BatchSize = 500
 
 func (b *BadgerEngine) migrateV1ToV2() error {
+	overallStart := time.Now()
 	if b.log != nil {
 		b.log.Info("starting v1→v2 storage upgrade",
 			"batch_size", migrationV1ToV2BatchSize,
 		)
 	}
 
-	if err := b.migrateV1ToV2Nodes(); err != nil {
+	nodesStart := time.Now()
+	nodeStats, err := b.migrateV1ToV2Nodes()
+	if err != nil {
 		return fmt.Errorf("rewriting nodes: %w", err)
 	}
-	if err := b.migrateV1ToV2Edges(); err != nil {
+	if b.log != nil {
+		b.log.Info("v1→v2 nodes pass complete",
+			"scanned", nodeStats.scanned,
+			"converted", nodeStats.converted,
+			"duration_ms", time.Since(nodesStart).Milliseconds(),
+		)
+	}
+
+	edgesStart := time.Now()
+	edgeStats, err := b.migrateV1ToV2Edges()
+	if err != nil {
 		return fmt.Errorf("rewriting edges: %w", err)
+	}
+	if b.log != nil {
+		b.log.Info("v1→v2 edges pass complete",
+			"scanned", edgeStats.scanned,
+			"converted", edgeStats.converted,
+			"duration_ms", time.Since(edgesStart).Milliseconds(),
+		)
 	}
 
 	if err := b.writeSchemaVersion(storageVersionPropKeyDictV2); err != nil {
 		return fmt.Errorf("writing schema version: %w", err)
 	}
 
+	// NOTE: post-migration LSM compaction + vlog GC are NOT run here.
+	// At this point most of the v2 bodies still sit in memtables and
+	// haven't been flushed to SSTs, so Flatten would only collapse the
+	// untouched v1 SSTs against themselves and reclaim very little.
+	// The engine open path closes + reopens the DB after migrations,
+	// then runs the compaction — that ordering forces every memtable
+	// out to disk first so Flatten actually has v2 SSTs to merge with
+	// the v1 ones.
+
 	if b.log != nil {
-		b.log.Info("v1→v2 storage upgrade complete")
+		b.log.Info("v1→v2 storage upgrade complete",
+			"nodes_converted", nodeStats.converted,
+			"edges_converted", edgeStats.converted,
+			"duration_ms", time.Since(overallStart).Milliseconds(),
+		)
 	}
 	return nil
 }
 
+// v1ToV2PassStats records the totals of one migration sweep so the
+// caller can roll them into the end-of-migration summary log line.
+type v1ToV2PassStats struct {
+	scanned   int
+	converted int
+}
+
+// compactAfterMigration synchronously compacts the LSM tree and runs
+// value-log GC until it stops finding rewriteable files. Failures are
+// logged but not returned: the migration's data correctness is already
+// committed by writeSchemaVersion, and a failed compaction just leaves
+// the store with stale bytes that the background GC will eventually
+// clean up.
+func (b *BadgerEngine) compactAfterMigration() {
+	if b.db == nil {
+		return
+	}
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
+	if b.log != nil {
+		b.log.Info("post-migration compaction starting", "lsm_workers", workers)
+	}
+	flattenStart := time.Now()
+	if err := b.db.Flatten(workers); err != nil {
+		if b.log != nil {
+			b.log.Warn("post-migration LSM flatten failed", "err", err)
+		}
+	} else if b.log != nil {
+		b.log.Info("post-migration LSM flatten done", "duration_ms", time.Since(flattenStart).Milliseconds())
+	}
+
+	gcStart := time.Now()
+	rewrites := 0
+	for {
+		err := b.db.RunValueLogGC(0.5)
+		if err == nil {
+			rewrites++
+			continue
+		}
+		if errors.Is(err, badger.ErrNoRewrite) {
+			break
+		}
+		if b.log != nil {
+			b.log.Warn("post-migration value-log GC stopped on error", "err", err, "rewrites", rewrites)
+		}
+		break
+	}
+	if b.log != nil {
+		b.log.Info("post-migration value-log GC done",
+			"rewrites", rewrites,
+			"duration_ms", time.Since(gcStart).Milliseconds(),
+		)
+	}
+}
+
 // migrateV1ToV2Nodes walks prefixNode in batches. Each batch opens its
 // own *badger.Txn so it commits atomically and the property-key
-// dictionary's per-txn counter flush runs at the right time.
-func (b *BadgerEngine) migrateV1ToV2Nodes() error {
-	scanned := 0
-	converted := 0
-	skipped := 0
+// dictionary's per-txn counter flush runs at the right time. Returns
+// pass stats so the caller can roll them into a single end-of-pass log
+// line.
+func (b *BadgerEngine) migrateV1ToV2Nodes() (v1ToV2PassStats, error) {
+	stats := v1ToV2PassStats{}
+	const progressEvery = 25_000
+	lastLogged := 0
 
 	for {
 		batch, err := b.collectBatch(prefixNode, migrationV1ToV2BatchSize, nodeFormatTokenizedV1)
 		if err != nil {
-			return err
+			return stats, err
 		}
 		if len(batch) == 0 {
 			break
 		}
 		err = b.withUpdate(func(txn *badger.Txn) error {
 			for _, item := range batch {
-				scanned++
+				stats.scanned++
 				nodeID := NodeID(string(item.key[1:]))
 				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
 				if !ok {
@@ -84,7 +179,7 @@ func (b *BadgerEngine) migrateV1ToV2Nodes() error {
 				if err := txn.Set(append([]byte{prefixNode}, []byte(nodeID)...), newBody); err != nil {
 					return fmt.Errorf("writing v2 node %q: %w", nodeID, err)
 				}
-				converted++
+				stats.converted++
 			}
 			if err := b.propKeyDict.flushTxnCounters(txn); err != nil {
 				return err
@@ -92,34 +187,38 @@ func (b *BadgerEngine) migrateV1ToV2Nodes() error {
 			return nil
 		})
 		if err != nil {
-			return err
+			return stats, err
 		}
-		if b.log != nil {
-			b.log.Info("v1→v2 node batch", "scanned", scanned, "converted", converted, "skipped", skipped)
+		if b.log != nil && stats.converted-lastLogged >= progressEvery {
+			b.log.Info("v1→v2 nodes progress",
+				"scanned", stats.scanned,
+				"converted", stats.converted,
+			)
+			lastLogged = stats.converted
 		}
 		if len(batch) < migrationV1ToV2BatchSize {
 			break
 		}
 	}
-	return nil
+	return stats, nil
 }
 
-func (b *BadgerEngine) migrateV1ToV2Edges() error {
-	scanned := 0
-	converted := 0
-	skipped := 0
+func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
+	stats := v1ToV2PassStats{}
+	const progressEvery = 25_000
+	lastLogged := 0
 
 	for {
 		batch, err := b.collectBatch(prefixEdge, migrationV1ToV2BatchSize, edgeFormatCompactV2)
 		if err != nil {
-			return err
+			return stats, err
 		}
 		if len(batch) == 0 {
 			break
 		}
 		err = b.withUpdate(func(txn *badger.Txn) error {
 			for _, item := range batch {
-				scanned++
+				stats.scanned++
 				edgeID := EdgeID(string(item.key[1:]))
 
 				edge, startNum, endNum, err := decodeEdgeAnyV1(b, txn, item.value, edgeID)
@@ -140,7 +239,7 @@ func (b *BadgerEngine) migrateV1ToV2Edges() error {
 				if err := txn.Set(append([]byte{prefixEdge}, []byte(edgeID)...), newBody); err != nil {
 					return fmt.Errorf("writing v2 edge %q: %w", edgeID, err)
 				}
-				converted++
+				stats.converted++
 			}
 			if err := b.propKeyDict.flushTxnCounters(txn); err != nil {
 				return err
@@ -148,16 +247,20 @@ func (b *BadgerEngine) migrateV1ToV2Edges() error {
 			return nil
 		})
 		if err != nil {
-			return err
+			return stats, err
 		}
-		if b.log != nil {
-			b.log.Info("v1→v2 edge batch", "scanned", scanned, "converted", converted, "skipped", skipped)
+		if b.log != nil && stats.converted-lastLogged >= progressEvery {
+			b.log.Info("v1→v2 edges progress",
+				"scanned", stats.scanned,
+				"converted", stats.converted,
+			)
+			lastLogged = stats.converted
 		}
 		if len(batch) < migrationV1ToV2BatchSize {
 			break
 		}
 	}
-	return nil
+	return stats, nil
 }
 
 // migrationItem holds a key+value pair pulled out of the read txn so

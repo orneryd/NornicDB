@@ -101,7 +101,15 @@ type BadgerEngine struct {
 	db       *badger.DB
 	mu       sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed   bool
-	inMemory bool // True if running in memory-only mode (testing)
+	inMemory bool   // True if running in memory-only mode (testing)
+	dataDir  string // Captured from BadgerOptions.DataDir; used by migration logging.
+
+	// migrationDidRun is set by RunOnStartMigrations when at least one
+	// migration arm rewrote bodies. The engine open path uses it to
+	// decide whether to pay the close+reopen+Flatten cost: most opens
+	// don't migrate, and only an actual migration leaves enough stale
+	// keys behind to make synchronous compaction worthwhile.
+	migrationDidRun bool
 
 	// Per-namespace schema (Neo4j-compatible: each database has its own schema).
 	schemasMu sync.RWMutex
@@ -643,6 +651,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine := &BadgerEngine{
 		db:              db,
 		inMemory:        opts.InMemory,
+		dataDir:         opts.DataDir,
 		schemas:         make(map[string]*SchemaManager),
 		retentionPolicy: retentionPolicy,
 
@@ -709,6 +718,23 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, err
 	}
 
+	// If a migration arm rewrote bodies, the v2 versions of every
+	// node and edge are still in memtables. Closing the DB drains
+	// memtables to SSTs; reopening gives Flatten a tree where the v1
+	// originals and v2 rewrites are both on disk so it can collapse
+	// them. Without this, Flatten only sees the untouched v1 SSTs and
+	// reclaims a few percent of disk instead of unwinding the upgrade
+	// bloat.
+	if engine.migrationDidRun && !opts.InMemory {
+		newDB, err := engine.reopenForPostMigrationCompaction(badgerOpts)
+		if err != nil {
+			return nil, fmt.Errorf("post-migration reopen: %w", err)
+		}
+		engine.db = newDB
+		db = newDB
+		engine.compactAfterMigration()
+	}
+
 	// Edge-between index backfill runs only after migrations have
 	// settled the body format. Failure here is non-fatal at open
 	// time — the index self-heals from the outgoing index on read.
@@ -718,6 +744,57 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	}
 
 	return engine, nil
+}
+
+// reopenForPostMigrationCompaction closes the current Badger handle
+// (forcing memtable flush to SSTs) and opens a fresh one with the same
+// options, then re-loads the in-memory state that depends on the live
+// DB pointer. Returns the new *badger.DB so the caller can swap it on
+// the engine.
+//
+// The state we restore matches the order of the original open path:
+// id dictionary, property-key dictionary, persisted schemas, MVCC
+// sequence, cached counts. Migrations may have added entries to the
+// dictionaries, so re-loading is correctness-required, not just
+// hygiene.
+func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Options) (*badger.DB, error) {
+	if b.log != nil {
+		b.log.Info("post-migration DB reopen starting")
+	}
+	if err := b.db.Close(); err != nil {
+		return nil, fmt.Errorf("close pre-compaction DB: %w", err)
+	}
+	newDB, err := badger.Open(badgerOpts)
+	if err != nil {
+		return nil, fmt.Errorf("reopen DB: %w", err)
+	}
+	if err := b.idDict.loadFromBadger(newDB); err != nil {
+		newDB.Close()
+		return nil, fmt.Errorf("reload id dictionary: %w", err)
+	}
+	if err := b.propKeyDict.loadFromBadger(newDB); err != nil {
+		newDB.Close()
+		return nil, fmt.Errorf("reload property-key dictionary: %w", err)
+	}
+	// loadPersistedSchemas + initializeMVCCSequence + initializeCounts
+	// all read off b.db, so we have to swap it before calling them.
+	b.db = newDB
+	if err := b.loadPersistedSchemas(); err != nil {
+		newDB.Close()
+		return nil, fmt.Errorf("reload persisted schemas: %w", err)
+	}
+	if err := b.initializeMVCCSequence(); err != nil {
+		newDB.Close()
+		return nil, fmt.Errorf("reinitialize mvcc sequence: %w", err)
+	}
+	if err := b.initializeCounts(); err != nil {
+		newDB.Close()
+		return nil, fmt.Errorf("reinitialize counts: %w", err)
+	}
+	if b.log != nil {
+		b.log.Info("post-migration DB reopen complete")
+	}
+	return newDB, nil
 }
 
 // NewBadgerEngineInMemory creates an in-memory BadgerDB for testing.
