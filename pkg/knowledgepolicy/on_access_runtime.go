@@ -449,7 +449,14 @@ func (p *onAccessParser) parseUnary() (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if i, ok := toInt64(value); ok {
+		// Preserve numeric type kind across negation: -5 stays int,
+		// -5.5 stays float. The previous implementation called
+		// toInt64 first, which truncates floats and produced
+		// int64(-5) for the literal -5.5 — divergent from Cypher
+		// semantics where the negation of a float literal is a
+		// float of the same magnitude.
+		if isIntKind(value) {
+			i, _ := toInt64(value)
 			return -i, nil
 		}
 		if f, ok := toFloat64(value); ok {
@@ -591,10 +598,33 @@ func (p *onAccessParser) parseFunction(name string) (interface{}, error) {
 	}
 }
 
+// isIntKind reports whether value's underlying Go type is integer.
+// Distinct from toInt64, which TRUNCATES floats — this is the
+// "preserve type" variant the arithmetic dispatch needs to match
+// Cypher semantics (int op int → int, float op anything → float).
+func isIntKind(value interface{}) bool {
+	switch value.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
+	}
+	return false
+}
+
 func arithmetic(op onAccessTokenType, left, right interface{}) (interface{}, error) {
-	li, lok := toInt64(left)
-	ri, rok := toInt64(right)
-	if lok && rok && op != tokenSlash {
+	// Cypher dispatch: integer arithmetic is preserved when BOTH
+	// operands are already int kinds (and the op is not division —
+	// Cypher division of two integers is also integer per the
+	// 5.x spec, but the language's evaluator here historically
+	// promoted division to float, so we keep that float-division
+	// behavior). A float on either side promotes the whole op to
+	// float, even if the float happens to hold an integer value
+	// (e.g. 2.0). The previous implementation called toInt64 which
+	// silently truncates floats, breaking 1.5 + 2 → 3.5 (it produced
+	// 3) and 1.5 * 2.0 → 3.0 (it produced 2).
+	if isIntKind(left) && isIntKind(right) && op != tokenSlash {
+		li, _ := toInt64(left)
+		ri, _ := toInt64(right)
 		switch op {
 		case tokenPlus:
 			return li + ri, nil
