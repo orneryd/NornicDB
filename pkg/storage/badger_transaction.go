@@ -73,8 +73,20 @@ type BadgerTransaction struct {
 }
 
 func (b *BadgerEngine) currentMVCCReadVersion() MVCCVersion {
+	// Clamp the read timestamp to max(now, last-committed-timestamp).
+	// Without this, a wall-clock that drifted backward between an
+	// earlier allocateMVCCVersion call and this read can let the
+	// returned readTS sit BEFORE a head version that was committed
+	// before this transaction began, which then trips the
+	// "X changed after transaction start" write-conflict guard on
+	// straight-line single-goroutine work.
+	now := time.Now().UTC()
+	highWater := b.mvccHighWaterNanos.Load()
+	if highWater > now.UnixNano() {
+		now = time.Unix(0, highWater).UTC()
+	}
 	return MVCCVersion{
-		CommitTimestamp: time.Now().UTC(),
+		CommitTimestamp: now,
 		CommitSequence:  b.mvccSeq.Load(),
 	}
 }

@@ -144,6 +144,20 @@ type BadgerEngine struct {
 	edgeCount atomic.Int64
 	mvccSeq   atomic.Uint64
 
+	// mvccHighWaterNanos tracks the most recent commit-timestamp the
+	// engine has stamped onto any MVCC version (in nanoseconds since
+	// the Unix epoch). currentMVCCReadVersion clamps tx.readTS to
+	// max(now, high-water) so a transaction that begins after a commit
+	// can never observe a head version with a later timestamp than
+	// the one it'll compare against. Without this, a non-monotonic
+	// wall clock (containerized CI runners under NTP correction, or
+	// Linux clock_gettime() drift across goroutine schedulings) can
+	// briefly let a freshly-committed head's timestamp exceed a
+	// subsequent BeginTransaction's sample, producing spurious
+	// "node X changed after transaction start" conflicts on
+	// straight-line single-goroutine code paths.
+	mvccHighWaterNanos atomic.Int64
+
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
 	lifecycleController       MVCCLifecycleController
@@ -858,6 +872,16 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, commitTime time.Time
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	if err := txn.Set(mvccSequenceKey(), encodedSeq); err != nil {
 		return MVCCVersion{}, err
+	}
+	stampNanos := commitTime.UTC().UnixNano()
+	for {
+		cur := b.mvccHighWaterNanos.Load()
+		if stampNanos <= cur {
+			break
+		}
+		if b.mvccHighWaterNanos.CompareAndSwap(cur, stampNanos) {
+			break
+		}
 	}
 	return MVCCVersion{
 		CommitTimestamp: commitTime.UTC(),
