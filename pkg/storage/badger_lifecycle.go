@@ -252,11 +252,23 @@ func headPrefixToLogicalPrefix(prefix byte) byte {
 	return prefixMVCCEdge
 }
 
+// mvccVersionPrefixForLogicalKey returns the scan prefix that matches
+// every persisted MVCC version key for the given logical entity.
+//
+// Wire layout (post-refactor): [prefix(1)][numID(8)][sortVersion(16)].
+// The logical key IS the [prefix(1)][numID(8)] head — there is no 0x00
+// separator. An earlier draft of this helper appended a 0x00 byte
+// thinking the version key used the legacy variable-length format, but
+// the post-refactor compact layout doesn't, and the spurious 0x00 made
+// the scan match no keys at all (the real version's leading byte is
+// the high bit of the timestamp, never 0x00 for any timestamp the
+// engine has ever written). Tests TestBadgerEngine_IterateMVCC_*
+// regress this.
 func mvccVersionPrefixForLogicalKey(logicalKey []byte) []byte {
 	if len(logicalKey) < 2 {
 		return nil
 	}
-	return append(append([]byte{}, logicalKey...), 0)
+	return append([]byte{}, logicalKey...)
 }
 
 func mvccVersionKeyForLogicalKey(logicalKey []byte, version MVCCVersion) ([]byte, error) {
