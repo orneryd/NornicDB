@@ -2,7 +2,9 @@ package storage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -54,15 +56,15 @@ const (
 // dict writes commit atomically with the body that references them.
 func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace string, props map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
-	scratch := make([]byte, 10)
-	n := putUvarint(scratch, uint64(len(props)))
+	scratch := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(scratch, uint64(len(props)))
 	buf.Write(scratch[:n])
 	for name, val := range props {
 		id, err := b.propKeyDict.resolveOrAllocateInTxn(txn, namespace, name)
 		if err != nil {
 			return nil, fmt.Errorf("allocating property key id for %q: %w", name, err)
 		}
-		n := putUvarint(scratch, id)
+		n := binary.PutUvarint(scratch, id)
 		buf.Write(scratch[:n])
 		valBytes, err := msgpack.Marshal(val)
 		if err != nil {
@@ -107,10 +109,12 @@ func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) 
 		if err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: key %d id varint: %w", i, err)
 		}
-		// Advance the reader past the varint. bytes.Reader.Read is
-		// infallible once we know n bytes are available (verified by
-		// readUvarint succeeding), so we ignore the err return.
-		_, _ = reader.Read(make([]byte, n))
+		// Advance the reader past the varint without an allocation.
+		// readUvarint already verified n bytes are available, so the
+		// seek can't move past EOF.
+		if _, err := reader.Seek(int64(n), io.SeekCurrent); err != nil {
+			return nil, fmt.Errorf("decoding tokenized properties: advance past key %d: %w", i, err)
+		}
 		name, ok := b.propKeyDict.lookup(namespace, id)
 		if !ok {
 			return nil, fmt.Errorf("property key id %d not in dictionary for namespace %q", id, namespace)
@@ -127,45 +131,21 @@ func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) 
 	return out, nil
 }
 
-// putUvarint and readUvarint mirror encoding/binary's helpers but
-// kept package-local to avoid an extra import on hot paths.
-func putUvarint(buf []byte, v uint64) int {
-	i := 0
-	for v >= 0x80 {
-		buf[i] = byte(v) | 0x80
-		v >>= 7
-		i++
-	}
-	buf[i] = byte(v)
-	return i + 1
-}
-
-// readUvarint parses a uvarint-encoded uint64 from buf. Returns the
-// value, the number of bytes consumed, and an error.
-//
-// A uint64 is at most 10 bytes uvarint-encoded (9 × 7 = 63 bits in the
-// low seven bits of the first nine bytes, plus 1 bit in the 10th).
-// We classify failure modes deterministically:
-//
-//   - "varint truncated"  — fewer than 10 bytes seen and every byte
-//     had its continuation bit set.
-//   - "varint overflow"   — 10th byte still has its continuation bit
-//     set, or its value > 1 (would shift bits past the uint64 boundary).
+// readUvarint wraps binary.Uvarint with diagnostic error messages.
+// We keep the wrapper (rather than calling binary.Uvarint directly at
+// each call site) so the truncation/overflow cases can return distinct
+// errors that property-codec callers can wrap with context — the
+// stdlib helper signals both via int return values (0 / negative) and
+// produces no message text, which makes the surrounding error chain
+// less actionable when bodies on disk are corrupt.
 func readUvarint(buf []byte) (uint64, int, error) {
-	var v uint64
-	var s uint
-	for i, b := range buf {
-		if i == 9 {
-			if b >= 0x80 || b > 1 {
-				return 0, 0, fmt.Errorf("varint overflow")
-			}
-			return v | uint64(b)<<s, i + 1, nil
-		}
-		if b < 0x80 {
-			return v | uint64(b)<<s, i + 1, nil
-		}
-		v |= uint64(b&0x7f) << s
-		s += 7
+	v, n := binary.Uvarint(buf)
+	switch {
+	case n > 0:
+		return v, n, nil
+	case n == 0:
+		return 0, 0, fmt.Errorf("varint truncated")
+	default:
+		return 0, 0, fmt.Errorf("varint overflow")
 	}
-	return 0, 0, fmt.Errorf("varint truncated")
 }

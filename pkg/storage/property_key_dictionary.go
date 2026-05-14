@@ -88,9 +88,17 @@ func propKeyCounterKey(namespace string) []byte {
 	return out
 }
 
-// ensureNamespaceLocked must be called under d.mu (write lock). Lazy
-// initializes the per-namespace maps and counter on first use.
-func (d *propertyKeyDictionary) ensureNamespaceLocked(namespace string) {
+// ensureNamespace lazily initializes the per-namespace maps and
+// counter on first use. NOT internally synchronized — callers must
+// either (a) hold d.mu (write lock) when the dict is concurrently
+// reachable, or (b) call only during construction (newPropertyKey-
+// Dictionary + loadFromBadger), before *d is published to any other
+// goroutine. The deliberate fine-grained locking scheme around
+// resolveOrAllocateInTxn keeps the critical section tight and
+// excludes the badger txn.Set I/O from it; do not widen this helper
+// into self-locking, since that would force the caller to drop and
+// re-acquire on every map touch.
+func (d *propertyKeyDictionary) ensureNamespace(namespace string) {
 	if _, ok := d.forward[namespace]; !ok {
 		d.forward[namespace] = make(map[string]uint64)
 		d.reverse[namespace] = make(map[uint64]string)
@@ -118,7 +126,7 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 	d.mu.RUnlock()
 
 	d.mu.Lock()
-	d.ensureNamespaceLocked(namespace)
+	d.ensureNamespace(namespace)
 	if id, ok := d.forward[namespace][name]; ok {
 		d.mu.Unlock()
 		return id, nil
@@ -229,7 +237,7 @@ func (d *propertyKeyDictionary) loadFromBadger(db *badger.DB) error {
 					it.Close()
 					return err
 				}
-				d.ensureNamespaceLocked(namespace)
+				d.ensureNamespace(namespace)
 				d.forward[namespace][name] = id
 				d.reverse[namespace][id] = name
 			}
@@ -260,7 +268,7 @@ func (d *propertyKeyDictionary) loadFromBadger(db *badger.DB) error {
 					it.Close()
 					return err
 				}
-				d.ensureNamespaceLocked(namespace)
+				d.ensureNamespace(namespace)
 				if cur := d.nextID[namespace].Load(); counter > cur {
 					d.nextID[namespace].Store(counter)
 				}

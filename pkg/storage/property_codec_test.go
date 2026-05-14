@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -131,25 +132,23 @@ func TestDecodeTokenizedProperties_EmptyTokenizedMap(t *testing.T) {
 	require.Empty(t, out)
 }
 
-// appendUvarint is a tests-only mirror of putUvarint that grows its
-// input slice. Used by tests that synthesize tokenized payloads to
-// exercise specific decoder branches.
+// appendUvarint grows its input slice with the uvarint encoding of v.
+// Used by tests that synthesize tokenized payloads to exercise
+// specific decoder branches.
 func appendUvarint(buf []byte, v uint64) []byte {
-	for v >= 0x80 {
-		buf = append(buf, byte(v)|0x80)
-		v >>= 7
-	}
-	return append(buf, byte(v))
+	return binary.AppendUvarint(buf, v)
 }
 
-// TestVarintHelpers covers boundary cases on putUvarint and readUvarint
-// that the higher-level codec tests don't otherwise reach.
+// TestVarintHelpers covers boundary cases on readUvarint that the
+// higher-level codec tests don't otherwise reach. Encoding is
+// delegated to encoding/binary; the wrapper only exists to translate
+// binary.Uvarint's int return codes into named errors.
 func TestVarintHelpers(t *testing.T) {
 	t.Run("round-trip across a wide range of values", func(t *testing.T) {
 		cases := []uint64{0, 1, 127, 128, 16383, 16384, 1 << 32, ^uint64(0)}
 		for _, v := range cases {
-			buf := make([]byte, 10)
-			n := putUvarint(buf, v)
+			buf := make([]byte, binary.MaxVarintLen64)
+			n := binary.PutUvarint(buf, v)
 			require.Greater(t, n, 0)
 			got, consumed, err := readUvarint(buf[:n])
 			require.NoError(t, err)
@@ -177,8 +176,8 @@ func TestVarintHelpers(t *testing.T) {
 
 	t.Run("readUvarint accepts max-size 10-byte uint64", func(t *testing.T) {
 		// math.MaxUint64 round-trips through 10 bytes.
-		buf := make([]byte, 10)
-		n := putUvarint(buf, ^uint64(0))
+		buf := make([]byte, binary.MaxVarintLen64)
+		n := binary.PutUvarint(buf, ^uint64(0))
 		require.Equal(t, 10, n)
 		got, consumed, err := readUvarint(buf)
 		require.NoError(t, err)
@@ -188,12 +187,15 @@ func TestVarintHelpers(t *testing.T) {
 
 	t.Run("readUvarint rejects 10th-byte continuation (would need 11th)", func(t *testing.T) {
 		// Nine continuation bytes followed by a 10th byte that ALSO
-		// has its continuation bit set — would need an 11th byte,
-		// overflowing uint64.
+		// has its continuation bit set — would need an 11th byte to
+		// terminate. encoding/binary.Uvarint classifies this as
+		// truncation (it stopped reading at the 10-byte ceiling and
+		// could not finish), not overflow. Either label is honest:
+		// the value can't fit in uint64. Pin the wrapper's behavior.
 		input := []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80}
 		_, _, err := readUvarint(input)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "varint overflow")
+		require.Contains(t, err.Error(), "varint truncated")
 	})
 
 	t.Run("readUvarint rejects 10th byte > 1", func(t *testing.T) {
