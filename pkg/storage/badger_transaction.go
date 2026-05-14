@@ -1788,6 +1788,26 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 	return nil
 }
 
+// snapshotIsolationConflict reports true when the head version was
+// committed STRICTLY AFTER the transaction began, comparing on the
+// monotonic mvccSeq counter rather than on wall-clock timestamps.
+//
+// Why seq-only and not Compare(): MVCCVersion.Compare orders by
+// timestamp first and breaks ties on sequence. Timestamps are wall-
+// clock UnixNano and can be non-monotonic across goroutines on
+// containerized Linux runners under NTP correction, which leaks into
+// the SI conflict check as a false positive: the head was committed
+// SAME-SEQ as our readTS but with a slightly LATER wall timestamp,
+// and Compare> returns true even though no concurrent tx actually
+// wrote between BeginTransaction and Commit. The mvccSeq counter is
+// an atomic uint64 incremented at every allocateMVCCVersion call —
+// it cannot move non-monotonically. A real concurrent commit MUST
+// bump seq past tx.readTS.CommitSequence for it to have written
+// anything. So conflict iff head.CommitSequence > tx.readTS.CommitSequence.
+func (tx *BadgerTransaction) snapshotIsolationConflict(headVersion MVCCVersion) bool {
+	return headVersion.CommitSequence > tx.readTS.CommitSequence
+}
+
 func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == ErrNotFound {
@@ -1796,7 +1816,7 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 	if err != nil {
 		return err
 	}
-	if head.Version.Compare(tx.readTS) > 0 {
+	if tx.snapshotIsolationConflict(head.Version) {
 		return fmt.Errorf("%w: node %s changed after transaction start", ErrConflict, nodeID)
 	}
 	return nil
@@ -1810,8 +1830,8 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 	if err != nil {
 		return err
 	}
-	if head.Version.Compare(tx.readTS) > 0 {
-		return fmt.Errorf("%w: node %s changed after transaction start", ErrConflict, nodeID)
+	if tx.snapshotIsolationConflict(head.Version) {
+		return fmt.Errorf("%w: node %s changed after transaction start (head=%s, readTS=%s)", ErrConflict, nodeID, head.Version, tx.readTS)
 	}
 	return nil
 }
@@ -1824,7 +1844,7 @@ func (tx *BadgerTransaction) checkEdgeCreateConflict(edgeID EdgeID) error {
 	if err != nil {
 		return err
 	}
-	if head.Version.Compare(tx.readTS) > 0 {
+	if tx.snapshotIsolationConflict(head.Version) {
 		return fmt.Errorf("%w: edge %s changed after transaction start", ErrConflict, edgeID)
 	}
 	return nil
@@ -1838,7 +1858,7 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
 	if err != nil {
 		return err
 	}
-	if head.Version.Compare(tx.readTS) > 0 {
+	if tx.snapshotIsolationConflict(head.Version) {
 		return fmt.Errorf("%w: edge %s changed after transaction start", ErrConflict, edgeID)
 	}
 	return nil
@@ -1868,7 +1888,7 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 			return err
 		}
 		if head.Tombstoned {
-			if head.Version.Compare(tx.readTS) > 0 {
+			if tx.snapshotIsolationConflict(head.Version) {
 				return fmt.Errorf("%w: endpoint node %s was deleted after transaction start", ErrConflict, nodeID)
 			}
 			return ErrInvalidEdge
@@ -1908,7 +1928,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 					it.Close()
 					return err
 				}
-				if head.Version.Compare(tx.readTS) > 0 {
+				if tx.snapshotIsolationConflict(head.Version) {
 					it.Close()
 					return fmt.Errorf("%w: node %s has adjacent edge %s changed after transaction start", ErrConflict, nodeID, edgeID)
 				}

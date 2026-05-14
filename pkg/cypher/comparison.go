@@ -270,13 +270,28 @@ func (e *StorageExecutor) evaluateStringOp(node *storage.Node, variable, whereCl
 //	// Returns true if node.Properties["status"] is "active" or "pending"
 func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause string) bool {
 	upperClause := strings.ToUpper(whereClause)
-	inIdx := strings.Index(upperClause, " IN ")
-	if inIdx < 0 {
-		return true
+
+	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
+	// the substring " IN " (which would leave the trailing "NOT" on the
+	// left side and silently fail expression evaluation, dropping every
+	// row from the result). Detect NOT IN first and negate the
+	// membership result.
+	negate := false
+	opOffset := 4 // len(" IN ")
+	splitIdx := strings.Index(upperClause, " NOT IN ")
+	if splitIdx >= 0 {
+		negate = true
+		opOffset = 8 // len(" NOT IN ")
+	} else {
+		splitIdx = strings.Index(upperClause, " IN ")
+		if splitIdx < 0 {
+			return true
+		}
 	}
+	inIdx := splitIdx
 
 	left := strings.TrimSpace(whereClause[:inIdx])
-	right := strings.TrimSpace(whereClause[inIdx+4:])
+	right := strings.TrimSpace(whereClause[inIdx+opOffset:])
 
 	// Keep historical single-node behavior: if this predicate does not reference
 	// the current variable at all, treat it as a pass-through.
@@ -295,7 +310,8 @@ func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause
 	//   'a' IN n.listProp
 	value := e.evaluateExpressionWithContext(left, nodes, nil)
 	if value == nil {
-		// Neo4j semantics: NULL IN list yields NULL -> false in WHERE
+		// Neo4j semantics: NULL IN list yields NULL → false in WHERE,
+		// for both IN and NOT IN (NOT NULL is also NULL → false).
 		return false
 	}
 
@@ -314,12 +330,17 @@ func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause
 		return false
 	}
 
+	matched := false
 	for _, item := range items {
 		if e.compareEqual(value, item) {
-			return true
+			matched = true
+			break
 		}
 	}
-	return false
+	if negate {
+		return !matched
+	}
+	return matched
 }
 
 func toInterfaceSlice(v interface{}) ([]interface{}, bool) {
