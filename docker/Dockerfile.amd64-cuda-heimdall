@@ -20,7 +20,7 @@ ARG CUDA_VERSION=12.6.0
 # =============================================================================
 # Stage 1: UI
 # =============================================================================
-FROM node:25-alpine AS ui
+FROM node:26-alpine AS ui
 WORKDIR /ui
 COPY ui/package*.json ./
 RUN npm ci 2>/dev/null || npm install --legacy-peer-deps

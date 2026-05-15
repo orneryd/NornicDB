@@ -11,7 +11,7 @@
 # =============================================================================
 # Stage 1: UI (skipped in headless mode)
 # =============================================================================
-FROM node:25-alpine AS ui
+FROM node:26-alpine AS ui
 ARG HEADLESS=false
 WORKDIR /ui
 COPY ui/package*.json ./
