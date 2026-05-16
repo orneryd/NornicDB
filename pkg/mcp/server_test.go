@@ -184,7 +184,11 @@ func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 	m.batchTexts = append([]string(nil), texts...)
 	result := make([][]float32, len(texts))
 	for i := range texts {
-		result[i] = make([]float32, 1024)
+		if m.embedding != nil {
+			result[i] = append([]float32(nil), m.embedding...)
+		} else {
+			result[i] = make([]float32, 1024)
+		}
 	}
 	return result, nil
 }
@@ -968,6 +972,110 @@ func TestHandleDiscover_VectorBranchWithManualEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 	discover := result.(DiscoverResult)
 	require.Equal(t, "vector", discover.Method)
+}
+
+// TestHandleDiscover_SimilarityIsCosineNotRRF is a regression test for the bug
+// where `similarity` in the discover response was the outer RRF rank-decay
+// score (~0.0164 at rank 1, 0.0091 at rank 50) instead of the underlying
+// cosine score. The RRF rank score is by construction identical across
+// queries (it only depends on rank position), making `min_similarity`
+// thresholds useless.
+//
+// This test sets up two nodes with controlled embeddings: a "match" node
+// whose embedding equals the query embedding (cosine = 1.0) and a "miss"
+// node whose embedding is orthogonal (cosine = 0.0). It then asserts:
+//
+//  1. The returned `similarity` for the match is approximately 1.0 — i.e.
+//     clearly NOT 0.0164 (which would mean RRF rank-1 score leaked through).
+//  2. The match outranks the miss.
+//  3. A `min_similarity=0.5` threshold drops the orthogonal node — the
+//     threshold semantics only work if `similarity` is in cosine space.
+func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
+	db, err := nornicdb.Open("", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	engine := db.GetStorage()
+
+	matchVec := make([]float32, 1024)
+	matchVec[0] = 1.0 // unit vector along axis 0
+	missVec := make([]float32, 1024)
+	missVec[1] = 1.0 // orthogonal to matchVec
+
+	_, err = engine.CreateNode(&storage.Node{
+		ID:     "match-node",
+		Labels: []string{"Memory"},
+		Properties: map[string]interface{}{
+			"title":   "Match",
+			"content": "cosine-similar to the query",
+		},
+		ChunkEmbeddings: [][]float32{matchVec},
+	})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{
+		ID:     "miss-node",
+		Labels: []string{"Memory"},
+		Properties: map[string]interface{}{
+			"title":   "Miss",
+			"content": "orthogonal to the query",
+		},
+		ChunkEmbeddings: [][]float32{missVec},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.BuildSearchIndexes(context.Background()))
+
+	// Embedder echoes matchVec for every query — query embedding == match-node embedding.
+	embedder := &mockEmbedder{embedding: matchVec}
+	serverCfg := DefaultServerConfig()
+	serverCfg.Embedder = embedder
+	serverCfg.EmbeddingEnabled = true
+	server := NewServer(db, serverCfg)
+
+	result, err := server.handleDiscover(context.Background(), map[string]interface{}{
+		"query": "anything — embedder ignores the text",
+		"limit": 5,
+		"depth": 0,
+	})
+	require.NoError(t, err)
+	discover := result.(DiscoverResult)
+	require.Equal(t, "vector", discover.Method)
+	require.NotEmpty(t, discover.Results, "expected match-node to appear in results")
+
+	// Locate the match-node similarity in the response.
+	var matchSim float64
+	var matchFound bool
+	for _, r := range discover.Results {
+		if r.Title == "Match" {
+			matchSim = r.Similarity
+			matchFound = true
+			break
+		}
+	}
+	require.True(t, matchFound, "match-node not in results")
+
+	// The smoking gun: the RRF rank-1 score is 1/(60+1) ≈ 0.01639. Cosine
+	// of a unit vector with itself is 1.0. Anything in cosine territory
+	// (≥ 0.5) proves we're surfacing the real similarity, not RRF.
+	require.Greater(t, matchSim, 0.5,
+		"match-node similarity should be cosine (~1.0), got %.4f — looks like RRF rank score leaked through", matchSim)
+
+	// And min_similarity threshold semantics: a 0.5 threshold should drop
+	// the orthogonal miss-node. If similarity were the RRF rank score
+	// (≤ 0.0164), this threshold would drop *everything* including the match.
+	thresholded, err := server.handleDiscover(context.Background(), map[string]interface{}{
+		"query":          "anything — embedder ignores the text",
+		"limit":          5,
+		"min_similarity": 0.5,
+		"depth":          0,
+	})
+	require.NoError(t, err)
+	td := thresholded.(DiscoverResult)
+	require.NotEmpty(t, td.Results, "min_similarity=0.5 dropped everything — similarity is not cosine")
+	for _, r := range td.Results {
+		require.GreaterOrEqual(t, r.Similarity, 0.5,
+			"result %q below threshold (sim=%.4f) — min_similarity filter is broken", r.Title, r.Similarity)
+		require.NotEqual(t, "Miss", r.Title, "orthogonal miss-node passed the 0.5 threshold")
+	}
 }
 
 func TestHandleDiscover_StorageError(t *testing.T) {

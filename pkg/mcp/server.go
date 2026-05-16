@@ -913,7 +913,8 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 						title    string
 						preview  string
 						props    map[string]any
-						scoreRRF float64
+						scoreRRF float64 // outer RRF, used for ordering across chunks
+						bestSim  float64 // max cosine similarity observed across chunks
 					}
 					fusedByID := make(map[string]*fused)
 
@@ -944,19 +945,33 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 									preview:  r.ContentPreview,
 									props:    r.Properties,
 									scoreRRF: 0,
+									bestSim:  0,
 								}
 								fusedByID[id] = f
 							}
-							// Outer RRF: 1/(k + rank), rank is 1-based.
+							// Outer RRF: 1/(k + rank), rank is 1-based. Used only for ordering.
 							f.scoreRRF += 1.0 / (outerRRFK + float64(rank+1))
+							// Track the strongest underlying score for this node.
+							// search.SearchResult.Similarity carries the cosine score (or
+							// reranker bi-score when stage-2 rerank is enabled, or BM25
+							// raw score for BM25-only hits); see search.enrichResults.
+							if r.Similarity > f.bestSim {
+								f.bestSim = r.Similarity
+							}
 						}
 					}
 
 					// Build and sort fused list.
 					fusedList := make([]*fused, 0, len(fusedByID))
 					for _, f := range fusedByID {
-						// Apply threshold to fused score.
-						if minScore > 0 && f.scoreRRF < minScore {
+						// Threshold is applied against the actual underlying similarity
+						// (cosine for vector hits; raw BM25 for lexical-only hits) so
+						// callers can use min_similarity meaningfully — e.g. 0.3 ≈
+						// topically related, 0.5 ≈ strong cosine match. Prior behaviour
+						// compared against the outer RRF score, which is rank-derived
+						// (~0.0164 at rank 1 → 0.0091 at rank 50) and made the threshold
+						// useless.
+						if minScore > 0 && f.bestSim < minScore {
 							continue
 						}
 						fusedList = append(fusedList, f)
@@ -981,7 +996,7 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 							Type:           getLabelType(f.labels),
 							Title:          f.title,
 							ContentPreview: f.preview,
-							Similarity:     f.scoreRRF,
+							Similarity:     f.bestSim,
 							Properties:     sanitizePropertiesForLLM(props),
 						}
 						if depth > 1 {
@@ -1009,12 +1024,17 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 				results := make([]SearchResult, 0, len(resp.Results))
 				for _, r := range resp.Results {
 					props := toInterfaceMap(r.Properties)
+					// BM25-only fallback: r.Score is the raw BM25 score (no 0-1
+					// cosine semantics). Surface r.Similarity instead, which the
+					// search service sets to the actual cosine when available and
+					// to the BM25 score in the pure-BM25 path. Keeps min_similarity
+					// thresholds workable across both code paths.
 					res := SearchResult{
 						ID:             normalizeNodeElementID(r.ID),
 						Type:           getLabelType(r.Labels),
 						Title:          r.Title,
 						ContentPreview: r.ContentPreview,
-						Similarity:     r.Score,
+						Similarity:     r.Similarity,
 						Properties:     sanitizePropertiesForLLM(props),
 					}
 					if depth > 1 {

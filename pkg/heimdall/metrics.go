@@ -443,7 +443,8 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 
 			type fused struct {
 				best     *SemanticSearchResult
-				scoreRRF float64
+				scoreRRF float64 // outer RRF used for ordering across chunks
+				bestSim  float64 // strongest underlying similarity across chunks
 			}
 			fusedByID := make(map[string]*fused)
 
@@ -466,12 +467,13 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 					}
 					f := fusedByID[r.ID]
 					if f == nil {
-						f = &fused{best: r}
+						f = &fused{best: r, bestSim: r.Score}
 						fusedByID[r.ID] = f
 					}
-					// Outer RRF: 1/(k + rank), rank is 1-based.
+					// Outer RRF: 1/(k + rank), rank is 1-based. Used for ordering only.
 					f.scoreRRF += 1.0 / (outerRRFK + float64(rank+1))
-					if f.best == nil || r.Score > f.best.Score {
+					if r.Score > f.bestSim {
+						f.bestSim = r.Score
 						f.best = r
 					}
 				}
@@ -498,11 +500,15 @@ func (e *QueryExecutor) Discover(ctx context.Context, query string, nodeTypes []
 					if f.best == nil {
 						continue
 					}
+					// Surface the strongest underlying similarity (cosine when
+					// available), NOT the outer RRF rank-derived score. This
+					// restores meaningful min_similarity threshold semantics
+					// downstream.
 					searchResults = append(searchResults, &SemanticSearchResult{
 						ID:         f.best.ID,
 						Labels:     f.best.Labels,
 						Properties: f.best.Properties,
-						Score:      f.scoreRRF,
+						Score:      f.bestSim,
 					})
 				}
 			}

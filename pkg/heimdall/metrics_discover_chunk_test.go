@@ -123,6 +123,82 @@ func loadLargeDocQuery(t *testing.T) string {
 	return query
 }
 
+// TestQueryExecutor_Discover_SimilarityIsBestScore is a regression test for the
+// scoring bug where the outer RRF rank-decay score (`1/(60+rank)`, capped at
+// ~0.0164 for rank 1) leaked through as `Similarity` instead of the strongest
+// underlying score reported by the searcher. The bug made `min_similarity`
+// thresholds useless across the discover surface.
+//
+// The test stages three candidate hits at different scores per chunk and
+// asserts the executor surfaces the strongest score per node (max across
+// chunks), not the rank-derived RRF value.
+func TestQueryExecutor_Discover_SimilarityIsBestScore(t *testing.T) {
+	emb := &testEmbedder{}
+	searcher := &scoringSearcher{
+		// Two chunks each see the same node "match" at different scores.
+		// Best score = 0.92; the outer-RRF top-rank score would be 1/(60+1) = ~0.0164.
+		batches: [][]*SemanticSearchResult{
+			{
+				{ID: "match", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "match"}, Score: 0.55},
+				{ID: "weak", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "weak"}, Score: 0.20},
+			},
+			{
+				{ID: "match", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "match"}, Score: 0.92},
+			},
+		},
+	}
+	exec := NewQueryExecutorWithSearch(&stubQueryDB{}, searcher, emb, 5*time.Second)
+
+	// Long query forces the multi-chunk fusion path.
+	longQuery := loadLargeDocQuery(t)
+	res, err := exec.Discover(context.Background(), longQuery, nil, 5, 1)
+	require.NoError(t, err)
+	require.Equal(t, "vector", res.Method)
+	require.NotEmpty(t, res.Results)
+
+	var matchSim float64
+	for _, r := range res.Results {
+		if r.Title == "match" {
+			matchSim = r.Similarity
+			break
+		}
+	}
+	require.InDelta(t, 0.92, matchSim, 1e-6,
+		"expected match.Similarity = best raw score across chunks (0.92), got %.6f — looks like RRF rank score leaked through", matchSim)
+}
+
+// scoringSearcher rotates through a list of result batches on each
+// HybridSearch call so tests can stage per-chunk scoring scenarios.
+type scoringSearcher struct {
+	mu      sync.Mutex
+	batches [][]*SemanticSearchResult
+	idx     int
+}
+
+func (s *scoringSearcher) HybridSearch(ctx context.Context, query string, queryEmbedding []float32, labels []string, limit int) ([]*SemanticSearchResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.batches) == 0 {
+		return nil, nil
+	}
+	batch := s.batches[s.idx%len(s.batches)]
+	s.idx++
+	return batch, nil
+}
+
+func (s *scoringSearcher) Search(ctx context.Context, query string, labels []string, limit int) ([]*SemanticSearchResult, error) {
+	return nil, nil
+}
+func (s *scoringSearcher) Neighbors(ctx context.Context, nodeID string) ([]string, error) {
+	return nil, nil
+}
+func (s *scoringSearcher) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge, error) {
+	return nil, nil
+}
+func (s *scoringSearcher) GetNode(ctx context.Context, nodeID string) (*NodeData, error) {
+	return nil, nil
+}
+
 func TestQueryExecutor_Discover_ChunksLongQueriesForVectorSearch(t *testing.T) {
 	emb := &testEmbedder{failIfTokensGreater: 512}
 	searcher := &testSearcher{}
