@@ -701,6 +701,9 @@ func (s *Server) ensureSearchBuildStartedForKnownDatabases() {
 	if s == nil || s.db == nil || s.dbManager == nil {
 		return
 	}
+	if s.db.SearchIndexBuildMode() != nornicConfig.SearchIndexBuildModeStartup {
+		return
+	}
 	for _, info := range s.dbManager.ListDatabases() {
 		if info == nil || info.Name == "" || info.Name == "system" {
 			continue

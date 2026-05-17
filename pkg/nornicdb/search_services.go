@@ -164,6 +164,22 @@ func (db *DB) kmeansNumClusters() int {
 	return 0
 }
 
+// SearchIndexBuildMode reports when BM25, vector, and HNSW search indexes build.
+func (db *DB) SearchIndexBuildMode() featureflags.SearchIndexBuildMode {
+	if db != nil && db.config != nil && db.config.Database.SearchIndexBuildMode != "" {
+		return db.config.Database.SearchIndexBuildMode
+	}
+	return featureflags.SearchIndexBuildModeStartup
+}
+
+func (db *DB) searchIndexBuildDisabled() bool {
+	return db.SearchIndexBuildMode() == featureflags.SearchIndexBuildModeDisabled
+}
+
+func (db *DB) searchIndexBuildAutomatic() bool {
+	return db.SearchIndexBuildMode() == featureflags.SearchIndexBuildModeStartup
+}
+
 func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
@@ -400,6 +416,9 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 	entry, ok := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
 	if !ok || entry == nil || entry.svc == nil {
+		if db.searchIndexBuildDisabled() {
+			return DatabaseSearchStatus{Ready: false, Building: false, Initialized: false, Strategy: "disabled", Phase: "disabled", ETASeconds: -1}
+		}
 		return DatabaseSearchStatus{Ready: false, Building: false, Initialized: false, Strategy: "unknown", Phase: "not_initialized", ETASeconds: -1}
 	}
 	p := entry.svc.GetBuildProgress()
@@ -528,6 +547,9 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 }
 
 func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error {
+	if db.searchIndexBuildDisabled() {
+		return ErrSearchIndexBuildDisabled
+	}
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
@@ -556,6 +578,9 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 // EnsureSearchIndexesBuilt ensures the per-database search indexes are built exactly once.
 // If the service doesn’t exist yet, it is created (using storageEngine if provided).
 func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, storageEngine storage.Engine) (*search.Service, error) {
+	if db.searchIndexBuildDisabled() {
+		return nil, ErrSearchIndexBuildDisabled
+	}
 	svc, err := db.getOrCreateSearchService(dbName, storageEngine)
 	if err != nil {
 		return nil, err
@@ -568,6 +593,9 @@ func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, stora
 
 func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, storageEngine storage.Engine, id storage.NodeID) error {
 	if id == "" {
+		return nil
+	}
+	if db.searchIndexBuildDisabled() {
 		return nil
 	}
 	svc, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
@@ -583,6 +611,9 @@ func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, st
 // EnsureSearchIndexesBuildStarted starts per-database search indexing if not already started
 // and returns immediately without waiting for completion.
 func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine storage.Engine) (*search.Service, error) {
+	if db.searchIndexBuildDisabled() {
+		return nil, ErrSearchIndexBuildDisabled
+	}
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
@@ -636,8 +667,11 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 		return
 	}
 
-	entry.queueIndex(userNode)
 	progress := svc.GetBuildProgress()
+	if !progress.Building && !progress.Ready && !db.searchIndexBuildAutomatic() {
+		return
+	}
+	entry.queueIndex(userNode)
 	if progress.Building || !progress.Ready {
 		ctx := db.buildCtx
 		if ctx == nil {
@@ -665,8 +699,11 @@ func (db *DB) removeNodeFromEvent(nodeID storage.NodeID) {
 		return
 	}
 
-	entry.queueRemove(local)
 	progress := entry.svc.GetBuildProgress()
+	if !progress.Building && !progress.Ready && !db.searchIndexBuildAutomatic() {
+		return
+	}
+	entry.queueRemove(local)
 	if progress.Building || !progress.Ready {
 		ctx := db.buildCtx
 		if ctx == nil {

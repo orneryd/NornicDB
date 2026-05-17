@@ -983,3 +983,81 @@ func TestSearchServices_RemoveEventDuringBuild_IsDeterministicallyReplayed(t *te
 		return svc.EmbeddingCount() == 0
 	}, 5*time.Second, 10*time.Millisecond)
 }
+
+func TestSearchServices_ManualModeSkipsEventTriggeredBuildUntilExplicitStart(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Memory.EmbeddingDimensions = 3
+	cfg.Database.SearchIndexBuildMode = featureflags.SearchIndexBuildModeManual
+	db, err := Open("", cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	tenantStorage := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant_manual")
+	blocking := &blockingIterEngine{
+		Engine:  tenantStorage,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	releaseOnce := sync.Once{}
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(blocking.release) })
+	})
+
+	svc, err := db.GetOrCreateSearchService("tenant_manual", blocking)
+	require.NoError(t, err)
+	_, err = tenantStorage.CreateNode(&storage.Node{
+		ID:              "late",
+		Labels:          []string{"Doc"},
+		Properties:      map[string]any{"content": "late manual"},
+		ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
+	})
+	require.NoError(t, err)
+
+	db.indexNodeFromEvent(&storage.Node{
+		ID:              "tenant_manual:late",
+		Labels:          []string{"Doc"},
+		Properties:      map[string]any{"content": "late manual"},
+		ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
+	})
+
+	select {
+	case <-blocking.entered:
+		t.Fatal("manual mode must not start search index build from mutation events")
+	case <-time.After(350 * time.Millisecond):
+	}
+	require.Equal(t, 0, svc.EmbeddingCount())
+
+	_, err = db.EnsureSearchIndexesBuildStarted("tenant_manual", blocking)
+	require.NoError(t, err)
+	select {
+	case <-blocking.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("explicit manual build did not enter iterator in time")
+	}
+	releaseOnce.Do(func() { close(blocking.release) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, "tenant_manual"))
+	require.Eventually(t, func() bool {
+		return svc.EmbeddingCount() == 1
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestSearchServices_DisabledModeRejectsExplicitBuilds(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Memory.EmbeddingDimensions = 3
+	cfg.Database.SearchIndexBuildMode = featureflags.SearchIndexBuildModeDisabled
+	db, err := Open("", cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.EnsureSearchIndexesBuildStarted("", db.storage)
+	require.ErrorIs(t, err, ErrSearchIndexBuildDisabled)
+
+	_, err = db.EnsureSearchIndexesBuilt(context.Background(), "", db.storage)
+	require.ErrorIs(t, err, ErrSearchIndexBuildDisabled)
+
+	err = db.BuildSearchIndexes(context.Background())
+	require.ErrorIs(t, err, ErrSearchIndexBuildDisabled)
+}

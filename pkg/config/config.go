@@ -150,6 +150,33 @@ type AuthConfig struct {
 	JWTSecret string
 }
 
+// SearchIndexBuildMode controls when BM25, vector, and HNSW search indexes are built.
+type SearchIndexBuildMode string
+
+const (
+	// SearchIndexBuildModeStartup preserves the historical behavior: build or load
+	// search indexes during database startup, then keep them current from mutations.
+	SearchIndexBuildModeStartup SearchIndexBuildMode = "startup"
+	// SearchIndexBuildModeManual skips startup and mutation-triggered initial
+	// builds. Explicit rebuild APIs can still build indexes on demand.
+	SearchIndexBuildModeManual SearchIndexBuildMode = "manual"
+	// SearchIndexBuildModeDisabled prevents search index builds entirely.
+	SearchIndexBuildModeDisabled SearchIndexBuildMode = "disabled"
+)
+
+func normalizeSearchIndexBuildMode(value string) SearchIndexBuildMode {
+	return SearchIndexBuildMode(strings.ToLower(strings.TrimSpace(value)))
+}
+
+func (m SearchIndexBuildMode) isValid() bool {
+	switch m {
+	case SearchIndexBuildModeStartup, SearchIndexBuildModeManual, SearchIndexBuildModeDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
 // DatabaseConfig holds database settings.
 type DatabaseConfig struct {
 	// DataDir is the directory for data storage
@@ -365,6 +392,11 @@ type DatabaseConfig struct {
 	// For example, rebuilding IVF-HNSW for ~1M embeddings can take ~30 minutes on startup (hardware dependent).
 	// Env: NORNICDB_PERSIST_SEARCH_INDEXES
 	PersistSearchIndexes bool
+
+	// SearchIndexBuildMode controls whether search indexes build on startup,
+	// only after explicit rebuild calls, or never. Default: startup.
+	// Env: NORNICDB_SEARCH_INDEX_BUILD_MODE
+	SearchIndexBuildMode SearchIndexBuildMode
 }
 
 // ServerConfig holds server settings.
@@ -1156,6 +1188,12 @@ func (c *Config) Validate() error {
 	if c.EmbeddingWorker.TriggerDebounceDelay < 0 {
 		return fmt.Errorf("invalid embed trigger debounce: %s", c.EmbeddingWorker.TriggerDebounceDelay)
 	}
+	if c.Database.SearchIndexBuildMode == "" {
+		c.Database.SearchIndexBuildMode = SearchIndexBuildModeStartup
+	}
+	if !c.Database.SearchIndexBuildMode.isValid() {
+		return fmt.Errorf("invalid search index build mode: %s", c.Database.SearchIndexBuildMode)
+	}
 
 	return nil
 }
@@ -1263,6 +1301,7 @@ type YAMLConfig struct {
 		MVCCLifecycleMaxSnapshotAge       string `yaml:"mvcc_lifecycle_max_snapshot_age"`
 		MVCCLifecycleMaxChainCap          int    `yaml:"mvcc_lifecycle_max_chain_cap"`
 		PersistSearchIndexes              bool   `yaml:"persist_search_indexes"`
+		SearchIndexBuildMode              string `yaml:"search_index_build_mode"`
 	} `yaml:"database"`
 
 	// Storage alias for database
@@ -1572,6 +1611,7 @@ func LoadDefaults() *Config {
 	config.Database.MVCCLifecycleCycleInterval = 30 * time.Second
 	config.Database.MVCCLifecycleMaxSnapshotAge = time.Hour
 	config.Database.MVCCLifecycleMaxChainCap = 1000
+	config.Database.SearchIndexBuildMode = SearchIndexBuildModeStartup
 
 	// Server defaults - Bolt
 	config.Server.BoltEnabled = true
@@ -1876,6 +1916,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_PERSIST_SEARCH_INDEXES"); ok {
 		config.Database.PersistSearchIndexes = v
+	}
+	if v := getEnv("NORNICDB_SEARCH_INDEX_BUILD_MODE", ""); v != "" {
+		config.Database.SearchIndexBuildMode = normalizeSearchIndexBuildMode(v)
 	}
 
 	// Server settings - Bolt
@@ -2762,6 +2805,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Database.PersistSearchIndexes {
 		config.Database.PersistSearchIndexes = true
+	}
+	if yamlCfg.Database.SearchIndexBuildMode != "" {
+		config.Database.SearchIndexBuildMode = normalizeSearchIndexBuildMode(yamlCfg.Database.SearchIndexBuildMode)
 	}
 
 	// === Authentication ===

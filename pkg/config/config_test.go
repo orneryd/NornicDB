@@ -377,6 +377,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	t.Setenv("NORNICDB_MVCC_LIFECYCLE_MAX_SNAPSHOT_AGE", "2h")
 	t.Setenv("NORNICDB_MVCC_LIFECYCLE_MAX_CHAIN_CAP", "321")
 	t.Setenv("NORNICDB_PERSIST_SEARCH_INDEXES", "true")
+	t.Setenv("NORNICDB_SEARCH_INDEX_BUILD_MODE", " manual ")
 	t.Setenv("NORNICDB_BOLT_ENABLED", "false")
 	t.Setenv("NORNICDB_BOLT_ADDRESS", "127.0.0.1")
 	t.Setenv("NORNICDB_BOLT_SERVER_ANNOUNCEMENT", "Neo4j/5.26.0")
@@ -506,7 +507,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	if cfg.Database.MVCCLifecycleEnabled || cfg.Database.MVCCLifecycleCycleInterval != 45*time.Second || cfg.Database.MVCCLifecycleMaxSnapshotAge != 2*time.Hour || cfg.Database.MVCCLifecycleMaxChainCap != 321 {
 		t.Fatalf("unexpected mvcc lifecycle config: %+v", cfg.Database)
 	}
-	if !cfg.Database.PersistSearchIndexes || !cfg.Database.EncryptionEnabled || cfg.Database.EncryptionPassword != "env-password" {
+	if !cfg.Database.PersistSearchIndexes || cfg.Database.SearchIndexBuildMode != SearchIndexBuildModeManual || !cfg.Database.EncryptionEnabled || cfg.Database.EncryptionPassword != "env-password" {
 		t.Fatalf("unexpected database feature config: %+v", cfg.Database)
 	}
 	if cfg.Server.BoltEnabled || cfg.Server.BoltAddress != "127.0.0.1" || !cfg.Server.BoltTLSEnabled {
@@ -882,6 +883,33 @@ func TestLoadFromFile_MVCCLifecycle(t *testing.T) {
 	require.Equal(t, 90*time.Minute, cfg.Database.MVCCLifecycleMaxSnapshotAge)
 	require.Equal(t, 222, cfg.Database.MVCCLifecycleMaxChainCap)
 	require.Equal(t, 9*time.Second, cfg.EmbeddingWorker.TriggerDebounceDelay)
+}
+
+func TestLoadFromFile_SearchIndexBuildMode(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte("\ndatabase:\n  search_index_build_mode: disabled\n"), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, SearchIndexBuildModeDisabled, cfg.Database.SearchIndexBuildMode)
+}
+
+func TestLoadFromFile_SearchIndexBuildModeEnvPrecedence(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("NORNICDB_SEARCH_INDEX_BUILD_MODE", "manual")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte("\ndatabase:\n  search_index_build_mode: disabled\n"), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, SearchIndexBuildModeManual, cfg.Database.SearchIndexBuildMode)
 }
 
 func TestLoadFromFile_ComprehensiveSectionsAndEnvPrecedence(t *testing.T) {
@@ -1468,6 +1496,15 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "invalid embed trigger debounce",
 		},
+		{
+			name: "invalid search index build mode",
+			modify: func(c *Config) {
+				c.Auth.InitialPassword = "longenoughpassword"
+				c.Database.SearchIndexBuildMode = "sometimes"
+			},
+			wantErr: true,
+			errMsg:  "invalid search index build mode",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1826,6 +1863,7 @@ func clearEnvVars(t *testing.T) {
 		"NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES",
 		"NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES",
 		"NORNICDB_STORAGE_SERIALIZER",
+		"NORNICDB_SEARCH_INDEX_BUILD_MODE",
 		"NORNICDB_HEIMDALL_MCP_ENABLE",
 		"NORNICDB_HEIMDALL_MCP_TOOLS",
 	}

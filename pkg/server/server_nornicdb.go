@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -251,6 +252,10 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	if !s.getResolvedAccess(claims, dbName).Write {
 		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
 			fmt.Sprintf("Write on database '%s' is not allowed.", dbName))
+		return
+	}
+	if s.db.SearchIndexBuildMode() == nornicConfig.SearchIndexBuildModeDisabled {
+		s.writeNeo4jError(w, http.StatusConflict, "Neo.ClientError.General.ForbiddenOnReadOnlyDatabase", nornicdb.ErrSearchIndexBuildDisabled.Error())
 		return
 	}
 

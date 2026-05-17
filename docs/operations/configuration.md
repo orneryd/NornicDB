@@ -390,19 +390,23 @@ By default, BM25 (full-text) and vector (HNSW) search indexes are built in memor
 ```yaml
 database:
   persist_search_indexes: true # EXPERIMENTAL. Default: false. Requires data_dir to be set.
+  search_index_build_mode: startup # startup | manual | disabled. Default: startup.
 ```
 
 **Environment variable:**
 
-| Variable                          | Default | Description                                                                                                                                                                                                                |
-| --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_PERSIST_SEARCH_INDEXES` | `false` | **EXPERIMENTAL.** When `true`, save and load BM25, vector, and HNSW indexes under `DataDir/search/<dbname>/` (e.g. `bm25.gob`, `vectors`, `hnsw`). Has no effect if `NORNICDB_DATA_DIR` (or config `data_dir`) is not set. |
+| Variable                            | Default   | Description                                                                                                                                                                                                                |
+| ----------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NORNICDB_PERSIST_SEARCH_INDEXES`   | `false`   | **EXPERIMENTAL.** When `true`, save and load BM25, vector, and HNSW indexes under `DataDir/search/<dbname>/` (e.g. `bm25.gob`, `vectors`, `hnsw`). Has no effect if `NORNICDB_DATA_DIR` (or config `data_dir`) is not set. |
+| `NORNICDB_SEARCH_INDEX_BUILD_MODE`  | `startup` | Controls automatic search-index construction. `startup` preserves existing behavior, `manual` skips startup and mutation-triggered initial builds but allows explicit rebuild calls, and `disabled` rejects search-index builds. |
 
 **Behavior:**
 
 - Indexes are written under `data_dir/search/<database_name>/` (e.g. `bm25.gob`, `vectors`, `hnsw`).
 - After node index/remove operations, changes are persisted after a short debounce delay (configurable via `NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC`); on graceful shutdown, indexes are flushed to disk.
 - On startup, if both index files exist and are compatible with the current format version, they are loaded and the full storage iteration is skipped; otherwise indexes are rebuilt as usual.
+- With `search_index_build_mode: manual`, startup leaves search indexes not ready until an explicit rebuild/build call runs. Mutation events keep an already-built index current but do not trigger the first build.
+- With `search_index_build_mode: disabled`, BM25, vector, and HNSW index builds are blocked for graph-only deployments.
 - Storage recovery (WAL) runs first; search indexes are built or loaded after storage is consistent.
 
 ### Vector search strategy and HNSW tuning

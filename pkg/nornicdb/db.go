@@ -68,6 +68,10 @@ var (
 	ErrClosed       = errors.New("database is closed")
 	ErrInvalidInput = errors.New("invalid input")
 
+	// ErrSearchIndexBuildDisabled is returned when configuration disables BM25,
+	// vector, and HNSW search index builds.
+	ErrSearchIndexBuildDisabled = errors.New("search index build disabled")
+
 	// ErrQueryEmbeddingDimensionMismatch is returned when the query is embedded
 	// with global embedder dimensions that do not match the database's resolved
 	// embedding dimensions (e.g. per-DB override), which would cause vector
@@ -1222,6 +1226,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			db.startRetentionSweep(db.buildCtx)
 		}
 
+		if mode := db.SearchIndexBuildMode(); mode != nornicConfig.SearchIndexBuildModeStartup {
+			log.Printf("🔍 Search index startup build skipped (mode=%s)", mode)
+			if db.embedQueue != nil {
+				db.embedQueue.StartWorkers()
+			}
+			return
+		}
+
 		// Collect all database names: default plus any from storage namespace listing.
 		dbNames := make(map[string]struct{})
 		dbNames[defaultDBName] = struct{}{}
@@ -1610,6 +1622,9 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
+	}
+	if db.searchIndexBuildDisabled() {
+		return ErrSearchIndexBuildDisabled
 	}
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)

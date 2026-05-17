@@ -27,6 +27,13 @@ func TestDefaults_ConsumerContract(t *testing.T) {
 			got, want,
 		)
 	}
+	if got, want := c.Database.SearchIndexBuildMode, SearchIndexBuildModeStartup; got != want {
+		t.Errorf(
+			"Database.SearchIndexBuildMode default changed: got %v want %v "+
+				"(consumer contract — see consumer-pinned-error-contract-plan.md §2.6)",
+			got, want,
+		)
+	}
 	if got, want := c.Auth.Enabled, false; got != want {
 		t.Errorf(
 			"Auth.Enabled default changed: got %v want %v "+

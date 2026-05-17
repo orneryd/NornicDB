@@ -449,6 +449,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dbConfig.Database.BadgerNodeCacheMaxEntries = cfg.Database.BadgerNodeCacheMaxEntries
 	dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = cfg.Database.BadgerEdgeTypeCacheMaxTypes
 	dbConfig.Database.PersistSearchIndexes = cfg.Database.PersistSearchIndexes
+	dbConfig.Database.SearchIndexBuildMode = cfg.Database.SearchIndexBuildMode
 	dbConfig.Database.AllowStorageUpgrade = upgradeStorage
 	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
 	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
