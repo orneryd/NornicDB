@@ -1,0 +1,48 @@
+pkg/config/config_test.go
+  s_f2f7fbb6f30866::t_86c64cd545bdfe 380,510
+  s_f2f7fbb6f30866::t_13e6b2ce9a46e6 1499-1507,1866
+  s_f2f7fbb6f30866::t_1fd418fa963d37 888-914
+pkg/nornicdb/db.go
+  s_f2f7fbb6f30866::t_6eddc344124e5e 1229-1236,1626-1627
+  s_f2f7fbb6f30866::t_1ea2f95ce030b9 71-74
+cmd/nornicdb/main.go
+  s_f2f7fbb6f30866::t_29780cd2b712f4 452
+pkg/nornicdb/search_services_test.go
+  s_f2f7fbb6f30866::t_b9f2a03da76ec6 986-1063
+pkg/server/server_nornicdb.go
+  s_f2f7fbb6f30866::t_51a2773dab206a 14,257-258
+pkg/server/server.go
+  s_f2f7fbb6f30866::t_7e195938880aa8 704
+  s_f2f7fbb6f30866::t_7e1a6c2dd6051b 705-706
+docs/operations/configuration.md
+  s_f2f7fbb6f30866::t_5e88ecc44c0720 393,398-401,408-409
+docs/operations/environment-variables.md
+  s_f2f7fbb6f30866::t_a2c9cabb8f056a 232
+docs/performance/searching.md
+  s_f2f7fbb6f30866::t_f839d7d36930fb 240
+pkg/config/defaults_consumer_contract_test.go
+  s_f2f7fbb6f30866::t_6ffeb30af1ddd4 30-36
+pkg/nornicdb/search_services.go
+  s_f2f7fbb6f30866::t_c5002ab7b7efa6 419-421
+  s_f2f7fbb6f30866::t_3b2d9a097a3937 167-182,550-552,581-583,598-600,614-616,671-674,703-705
+  s_f2f7fbb6f30866::t_36be2f9f48b0dd 706
+pkg/config/config.go
+  s_f2f7fbb6f30866::t_641fffab35a2bd 153-179,395-399
+  s_f2f7fbb6f30866::t_caf7d1b425130d 1191-1196,1304,1614,1920-1922,2809-2810
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "83044f003f81e83cc2d4dfd07964cce7a4b75470",
+  "prompts": {},
+  "sessions": {
+    "s_f2f7fbb6f30866": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e360b-90eb-7472-bac7-56d488b65f77",
+        "model": "gpt-5.5"
+      },
+      "human_author": "linuxdynasty <1255573+linuxdynasty@users.noreply.github.com>"
+    }
+  }
+}
