@@ -1024,11 +1024,12 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 				results := make([]SearchResult, 0, len(resp.Results))
 				for _, r := range resp.Results {
 					props := toInterfaceMap(r.Properties)
-					// BM25-only fallback: r.Score is the raw BM25 score (no 0-1
-					// cosine semantics). Surface r.Similarity instead, which the
-					// search service sets to the actual cosine when available and
-					// to the BM25 score in the pure-BM25 path. Keeps min_similarity
-					// thresholds workable across both code paths.
+					// BM25-only fallback: r.Score is the outer fused/RRF ranking
+					// score, not the raw backend similarity value. Surface
+					// r.Similarity instead, which the search service sets to the
+					// actual cosine when available and to the BM25 score in the
+					// pure-BM25 path. Keeps min_similarity thresholds workable
+					// across both code paths.
 					res := SearchResult{
 						ID:             normalizeNodeElementID(r.ID),
 						Type:           getLabelType(r.Labels),
