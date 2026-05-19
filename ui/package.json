@@ -29,7 +29,7 @@
     "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
-    "baseline-browser-mapping": "^2.10.29",
+    "baseline-browser-mapping": "^2.10.31",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3"
