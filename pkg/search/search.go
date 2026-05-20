@@ -873,10 +873,15 @@ func (s *Service) MarkReadyDisabled() {
 }
 
 // SetIndexFlags configures whether BM25 and vector search are enabled for
-// this service. Called once at construction time from the per-DB resolver
-// path; subsequent calls (e.g. from runtime admin-API flag flips) tear down
-// the affected index when flipped from true → false. Returns true if either
-// flag changed value, so the caller can decide whether to ResetSearchService.
+// this service. Atomic flag swap only — does not tear down any in-memory
+// or on-disk structures. Runtime teardown on a runtime flag flip lives in
+// the admin API path (server_dbconfig.go) which calls ResetSearchService
+// followed by getOrCreateSearchService, producing a freshly-configured
+// service from scratch.
+//
+// Returns true if either flag changed value, so callers (typically just
+// the construction path in getOrCreateSearchService) can observe whether
+// the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
 	prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
 	prevVec := s.vectorEnabled.Swap(vectorEnabled)
@@ -2737,6 +2742,13 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if skipFulltextRebuild {
 		log.Printf("📇 Search indexes loaded from disk (BM25: %d docs); rebuilding vector index only",
 			s.fulltextIndex.Count())
+	}
+	// When BM25 is disabled, also skip the fulltext side of the iteration
+	// loop. Otherwise the loop still calls extractSearchableText (which walks
+	// every property of every node) and feeds it into the no-op stub —
+	// real CPU cost for results that go to /dev/null.
+	if !bm25On {
+		skipFulltextRebuild = true
 	}
 
 	// Decide whether the on-disk vector store is still valid to resume.

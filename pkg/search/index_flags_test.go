@@ -32,8 +32,10 @@ func TestSetIndexFlags(t *testing.T) {
 }
 
 // TestBuildIndexes_BothDisabled — when both indexes are off, BuildIndexes
-// returns immediately, marks ready, leaves vectorIndex nil, and uses the
-// no-op BM25 stub.
+// returns immediately, marks ready, swaps the BM25 stub in, and the
+// vector flag guard prevents any embedding work. (vectorIndex is left
+// non-nil so the dozens of GetDimensions/Count call sites elsewhere in
+// the build pipeline don't panic; the flag is what disables behaviour.)
 func TestBuildIndexes_BothDisabled(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
 	svc.SetIndexFlags(false, false)
@@ -49,8 +51,10 @@ func TestBuildIndexes_BothDisabled(t *testing.T) {
 	assert.Equal(t, 0, svc.EmbeddingCount())
 }
 
-// TestBuildIndexes_VectorDisabled — vector off only; BM25 still builds. The
-// vectorIndex is nil after warmupVectorPipeline early-returns.
+// TestBuildIndexes_VectorDisabled — vector off only; BM25 still builds.
+// vectorIndex stays allocated (non-nil) but warmupVectorPipeline early-
+// returns and the addVectorLocked guard refuses writes, so the in-memory
+// vector store stays empty.
 func TestBuildIndexes_VectorDisabled(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
 	svc.SetIndexFlags(true, false)

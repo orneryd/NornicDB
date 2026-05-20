@@ -2147,21 +2147,20 @@ func applyEnvVars(config *Config) error {
 		config.Memory.SearchMinSimilarity = getEnvFloat("NORNICDB_SEARCH_MIN_SIMILARITY", 0.5)
 	}
 	// Per-database search index master switches and warming triggers (global
-	// defaults; per-DB overrides via dbconfig.Store always win). When unset,
-	// reproduce today's behaviour: enabled, build at startup.
-	config.Memory.SearchBM25Enabled = true
+	// defaults; per-DB overrides via dbconfig.Store always win). Apply env
+	// overrides ONLY when the corresponding env var is set so values loaded
+	// from YAML (which runs before applyEnvVars) remain intact. The fallback
+	// to (enabled, startup) for callers that never went through LoadDefaults
+	// or LoadFromFile lives in nornicdb.Open()'s defensive defaults.
 	if v := getEnv("NORNICDB_SEARCH_BM25_ENABLED", ""); v != "" {
 		config.Memory.SearchBM25Enabled = v == "true" || v == "1"
 	}
-	config.Memory.SearchBM25Warming = "startup"
 	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_WARMING", ""))); v == "lazy" || v == "startup" {
 		config.Memory.SearchBM25Warming = v
 	}
-	config.Memory.SearchVectorEnabled = true
 	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
 		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
 	}
-	config.Memory.SearchVectorWarming = "startup"
 	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_VECTOR_WARMING", ""))); v == "lazy" || v == "startup" {
 		config.Memory.SearchVectorWarming = v
 	}
