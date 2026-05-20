@@ -2037,14 +2037,26 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	return err
 }
 
+// ErrVectorDisabled signals that the per-DB vector master switch is off
+// and the caller must skip not just the vector store write but every
+// downstream vector-side bookkeeping step (node→vector ID maps, GPU,
+// HNSW, cluster index, etc.). indexNodeLocked branches on this so a
+// vector-disabled service incurs only the flag-check cost per node, not
+// the full vector traversal of every property.
+var ErrVectorDisabled = errors.New("search: vector search disabled for this database")
+
 // addVectorLocked adds a vector to the active store (vectorFileStore if set, else vectorIndex).
 // Caller holds s.indexMu.
+//
+// Returns ErrVectorDisabled (a sentinel that callers MUST detect) when the
+// vector master switch is off — see ErrVectorDisabled docstring.
 func (s *Service) addVectorLocked(id string, vec []float32) error {
-	// Per-DB master switch: when vector search is disabled, drop the vector.
-	// The on-storage embedding property is unchanged (durable in Badger);
-	// we only refuse to populate the in-memory ANN substrate.
+	// Per-DB master switch: when vector search is disabled, refuse the
+	// write AND signal callers to skip all vector-side bookkeeping. The
+	// on-storage embedding property is unchanged (durable in Badger); we
+	// only refuse to populate the in-memory ANN substrate.
 	if !s.vectorEnabled.Load() {
-		return nil
+		return ErrVectorDisabled
 	}
 	var err error
 	if s.vectorFileStore != nil {
@@ -2214,8 +2226,16 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		s.nodeLabels[nodeIDStr] = labelsCopy
 	}
 
+	// Per-DB master switch: when vector is disabled, skip every vector-side
+	// step in this function (NamedEmbeddings, ChunkEmbeddings, property
+	// vectors, plus the file-store ensure that runs when persistence is on).
+	// addVectorLocked returns ErrVectorDisabled in that case, but we also
+	// short-circuit at this top level so we don't even iterate node
+	// properties looking for vector-shaped values.
+	vectorOn := s.vectorEnabled.Load()
+
 	// When building from storage with a vector path, use file-backed store to bound RAM.
-	if skipFulltext && s.persistEnabled.Load() && s.vectorIndexPath != "" {
+	if vectorOn && skipFulltext && s.persistEnabled.Load() && s.vectorIndexPath != "" {
 		s.ensureBuildVectorFileStore()
 	}
 
@@ -2227,7 +2247,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// Embeddings are stored in struct fields (opaque to users), not in properties
 
 	// Index NamedEmbeddings (each named vector gets its own index entry)
-	if len(node.NamedEmbeddings) > 0 {
+	if vectorOn && len(node.NamedEmbeddings) > 0 {
 		for vectorName, embedding := range node.NamedEmbeddings {
 			if len(embedding) == 0 {
 				continue
@@ -2275,7 +2295,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// chunk IDs back to a unique node ID. The "main" embedding is an additional
 	// node-level entry used by some call paths and for compatibility.
 	// Chunk embeddings are stored in struct field (opaque to users), not in properties
-	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+	if vectorOn && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		chunkIDs := make([]string, 0, len(node.ChunkEmbeddings)+1)
 		// Always index a main embedding at the node ID (using first chunk)
 		mainEmbedding := node.ChunkEmbeddings[0]
@@ -2340,7 +2360,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 
 	// Index vector-shaped property values for Cypher compatibility.
 	// These are indexed under IDs: "node-id-prop-{propertyKey}".
-	if node.Properties != nil {
+	if vectorOn && node.Properties != nil {
 		dim := s.vectorIndex.GetDimensions()
 		if s.vectorFileStore != nil {
 			dim = s.vectorFileStore.GetDimensions()

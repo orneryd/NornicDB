@@ -556,20 +556,34 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config = DefaultConfig()
 	}
 	config.Database.DataDir = dataDir
-	// Defensive defaults for the per-DB search index master switches:
-	// callers that construct &Config{...} literals (rather than going
-	// through DefaultConfig / LoadFromEnv) leave these fields at their
-	// zero value (false / ""). That would otherwise silently disable
-	// search for legacy code paths. Distinguish "literal zero" from a
-	// deliberate operator opt-out by inspecting the warming string —
-	// an empty warming means the caller did not touch these fields, in
-	// which case we apply the safe defaults (enabled, eager).
-	if config.Memory.SearchBM25Warming == "" {
+	// Defensive defaults for the per-DB search-index master switches.
+	// Two distinct cases to handle correctly:
+	//
+	//   1. Caller built &Config{...} literally without going through
+	//      DefaultConfig/LoadFromEnv → all four Search* fields are zero
+	//      (false / ""). Naively defaulting both enabled+warming would
+	//      silently disable search for legacy callers; naively defaulting
+	//      only warming would leave enabled=false (the same regression).
+	//      Disambiguator: if EVERY Search* field is at its zero value,
+	//      the caller didn't touch any of them → apply safe defaults.
+	//
+	//   2. Caller deliberately set SearchBM25Enabled=false (or
+	//      SearchVectorEnabled=false) and left the warming string empty.
+	//      Their explicit `false` MUST win. We only fill in an empty
+	//      warming value here, never override an explicit `enabled`.
+	//
+	// Distinguishing the two cases by "are all four fields zero" lets
+	// callers pick whichever mix they want without surprise.
+	allUnset := !config.Memory.SearchBM25Enabled && config.Memory.SearchBM25Warming == "" &&
+		!config.Memory.SearchVectorEnabled && config.Memory.SearchVectorWarming == ""
+	if allUnset {
 		config.Memory.SearchBM25Enabled = true
+		config.Memory.SearchVectorEnabled = true
+	}
+	if config.Memory.SearchBM25Warming == "" {
 		config.Memory.SearchBM25Warming = "startup"
 	}
 	if config.Memory.SearchVectorWarming == "" {
-		config.Memory.SearchVectorEnabled = true
 		config.Memory.SearchVectorWarming = "startup"
 	}
 

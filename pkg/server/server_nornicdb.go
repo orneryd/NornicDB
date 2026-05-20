@@ -381,10 +381,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// "Still building" 503 — kept for completeness but in lazy mode the
-	// handler typically blocks inside Service.Search rather than reaching
-	// this branch. This fires only when an eager build is mid-flight at
-	// the moment of the request.
+	// "Still building" 503 — fires when an EAGER build is mid-flight at
+	// the moment of the request. Lazy databases skip this branch because
+	// LazyTriggerNeeded=true; the handler then falls through to
+	// GetOrCreateSearchService + EnsureWarm which synchronously triggers
+	// the build and blocks until ready. That preserves correctness for
+	// the first lazy request: by the time we reach EmbeddingCount() and
+	// the embedding decision, the in-memory ANN substrate is populated.
 	if !searchStatus.Ready && !searchStatus.LazyTriggerNeeded {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          search.ErrSearchIndexBuilding.Error(),
@@ -406,6 +409,25 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	serviceLookupDur = time.Since(serviceLookupStart)
 	if err != nil {
 		s.writeError(w, http.StatusServiceUnavailable, "search service unavailable", ErrInternalError)
+		return
+	}
+	// Lazy-warm: synchronously trigger and wait for the build BEFORE any
+	// handler-side decisions that depend on search state (EmbeddingCount,
+	// RerankerAvailable, ChunkQueryForDB, etc). Without this, a lazy DB's
+	// first request would observe EmbeddingCount=0, skip query embedding,
+	// and return BM25-only results — even though vector search is enabled
+	// and embeddings exist. EnsureWarm is a fast no-op for already-warm
+	// services, so this is free for the steady-state hot path.
+	if err := searchSvc.EnsureWarm(ctx); err != nil {
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":          "search index warming did not complete: " + err.Error(),
+			"database":       dbName,
+			"bm25_enabled":   searchStatus.BM25Enabled,
+			"vector_enabled": searchStatus.VectorEnabled,
+			"retryable":      true,
+			"http_code":      http.StatusServiceUnavailable,
+			"request_status": "search_index_warming_failed",
+		})
 		return
 	}
 

@@ -18,7 +18,7 @@ Update this list as work lands. Mark a box `[x]` only when the change is merged 
 - [ ] Phase 3.4 (deferred) — Qdrant gRPC bridge per-DB gate; `db.index.vector.queryNodes` WARN log path. Both indexes correctly route to "no results" today; the WARN signal is an ergonomics improvement.
 - [x] Phase 3.5 — Random-order HNSW build path is reused unchanged: when BM25 is disabled, the no-op stub returns an empty seed list, the existing `len(seedNodeIDs) == 0` branch fires.
 - [x] Phase 3.6 — Write-path gating in `IndexNode` (full no-op when both off; per-half no-ops via `disabledBM25Index{}` and `addVectorLocked` guard); existing `pendingFlush` carries writes for lazy mode pre-trigger.
-- [x] Phase 4 — Search handler 503 paths in correct precedence order (`search_disabled_for_database` → `search_index_warming_lazy` → `search_not_ready`); responses carry `bm25_enabled` / `vector_enabled`.
+- [x] Phase 4 — Search handler precedence: `search_disabled_for_database` (permanent 503), then fall-through to GetOrCreateSearchService + Service.EnsureWarm which blocks until the lazy build completes and returns 200. The legacy `search_not_ready` 503 still fires for an eager build mid-flight at request time. Responses carry `bm25_enabled` / `vector_enabled`. Note: lazy mode no longer emits a `search_index_warming_lazy` 503 — implementation evolved to synchronous wait at the Service layer so every read entry point (HTTP, Bolt, GraphQL, gRPC, Cypher procedures) gets the same contract uniformly.
 - [x] Phase 4.1 — Hard rule documented in plan (no probe-mode escape hatch). Operator-facing docs (Phase 10) still pending.
 - [ ] Phase 5 (deferred to follow-up) — yaml `databases:` map loader (`LoadWithYAMLDefaults`). Functional core works via env, CLI, and admin API today; this is ergonomics for declarative deployments.
 - [x] Phase 6 — Admin API: enum validation 400s. Per-DB teardown reuses the existing `ResetSearchService` + `EnsureSearchIndexesBuildStarted` codepath, which now consults the resolver and produces a service with the right index handles. Dedicated `Service.DisableIndex` deferred — `ResetSearchService` covers the contract today.
@@ -29,7 +29,7 @@ Update this list as work lands. Mark a box `[x]` only when the change is merged 
 - [x] 9.1 — Resolver parsing, defaults, validation (`TestResolveSearchFlags_Defaults`, `TestResolveSearchFlags_BoolFallback`, `TestEnumValidation`, `TestIsAllowedKey`).
 - [x] 9.2 — Override matrix table-driven test (`TestResolveSearchFlags_OverrideMatrix`) — eight rows green, including the load-bearing global-off + per-DB-on case.
 - [x] 9.3 — Search service build-skip + lazy-trigger semantics (`pkg/search/index_flags_test.go`): `SetIndexFlags`, `BuildIndexes_BothDisabled`, `BuildIndexes_VectorDisabled`, `BuildIndexes_BM25Disabled`, `IndexNode_BothDisabled`, `MarkReadyDisabled`.
-- [x] 9.4 — Search handler 503 paths (`pkg/server/server_search_flags_test.go`): both-disabled permanent 503; lazy first-query 503 with build kicked off; global-off + per-DB-on override at the handler layer.
+- [x] 9.4 — Search handler paths (`pkg/server/server_search_flags_test.go`): both-disabled permanent 503; lazy first-query blocks in `Service.EnsureWarm` and returns 200; global-off + per-DB-on override at the handler layer.
 - [ ] 9.5 (partial) — Admin API runtime flag flips: PUT enum validation now 400s, but a dedicated test verifying mid-build teardown is deferred. Existing PUT tests still pass.
 - [ ] 9.6 (deferred) — Full E2E with yaml + admin + override-precedence is gated on Phase 5 yaml support landing.
 
@@ -82,7 +82,7 @@ When an index is `enabled=true, warming=lazy`:
 
 - Boot does not enumerate the database for index build. No `EnsureSearchIndexesBuildStarted` for that index, no goroutine, no allocation.
 - Node embeddings are **not iterated** into the in-memory vector index, and BM25 is **not built** from the node corpus, until needed.
-- The **first inbound search query** for that database triggers the build and gets a 503 with `request_status: search_index_warming_lazy`, `retryable: true`. Subsequent queries get the existing `search_index_building` 503 until ready.
+- The **first inbound search query** for that database (HTTP, Bolt, GraphQL, gRPC, Cypher procedure — any caller that goes through `Service.Search` / `Service.VectorSearchCandidates`) **synchronously triggers the build and blocks** until it completes via `Service.EnsureWarm`. The trigger fires at most once per service lifetime via `sync.Once`; concurrent first-readers all wait on the same `warmDone` channel. The build itself runs in the DB's long-lived context (NOT the caller's request ctx) so a request that times out during the wait returns `ctx.Err()` but the build keeps going and the next reader finds the service warm.
 - Once warm, the index behaves identically to a `startup`-warmed index until the process restarts.
 
 When an index is `enabled=true, warming=startup` (today's default):
@@ -161,8 +161,8 @@ The four states and their meaning, expanded:
 | BM25 enabled / warming | Vector enabled / warming | Behaviour at boot | Behaviour on first search |
 |---|---|---|---|
 | on / startup | on / startup | Both indexes build at boot (today) | Either 200 (warm) or 503 `search_index_building` retryable |
-| on / startup | on / lazy    | BM25 builds at boot; vector deferred | Lexical-only result, vector build kicks off in background; second/third query gets vector |
-| on / lazy    | on / lazy    | No build at boot | First query triggers both builds; gets 503 `search_index_warming_lazy`; subsequent queries 503 `search_index_building`; eventually 200 |
+| on / startup | on / lazy    | BM25 builds at boot; vector deferred | First request blocks in `Service.EnsureWarm` until the deferred vector build completes, then returns 200. |
+| on / lazy    | on / lazy    | No build at boot | First request blocks in `Service.EnsureWarm` until the build completes, then returns 200. Concurrent first-readers all wait on the same channel. Caller ctx timeouts surface as `ctx.Err()` but do NOT abort the build. |
 | on / startup | off / —      | BM25 builds; vector load **skipped** | Lexical-only 200 |
 | off / —      | on / startup | Vector loads with random-order HNSW seeding (no BM25 to seed from) | Vector-only 200 |
 | off / —      | off / —      | Nothing built or loaded | 503 `search_disabled_for_database`, `retryable: false` |
@@ -283,29 +283,18 @@ Two implementation notes:
 1. The current `startSearchIndexBuild` is a single goroutine that builds both indexes. Phase 3 splits it into `startBM25Build` and `startVectorBuild` so they can be triggered independently, with shared per-database synchronisation (a `sync.Once`-per-index ensures the first-query trigger from Phase 3.2 doesn't race with a concurrent admin-API flag flip).
 2. The `_pending_embed` marker gate at [`pkg/nornicdb/db.go:960`](../../pkg/nornicdb/db.go) (`be.SetEmbeddingsEnabled`) continues to follow `EmbeddingEnabled` (existing behaviour). It is **independent** of `VectorEnabled` / `VectorWarming` — the marker is about whether the embed worker has consumers, not about whether vectors are loaded for search.
 
-### 3.2 First-query trigger for `warming=lazy`
+### 3.2 First-query trigger for `warming=lazy` — synchronous wait at the Service layer
 
-In [`pkg/server/server_nornicdb.go:355`-ish](../../pkg/server/server_nornicdb.go) `handleSearch`, after the "both disabled → 503" check and **before** the existing `searchStatus.Ready` check at line 367:
+The trigger lives on `search.Service`, not on the HTTP handler. Every read path that funnels through `Service.Search` or `Service.VectorSearchCandidates` (HTTP `/nornicdb/search`, Bolt search, GraphQL search resolver, gRPC bridge, `db.index.vector.queryNodes` Cypher procedure, internal callers) inherits the lazy-warm contract automatically.
 
-```go
-status := s.db.GetDatabaseSearchStatus(dbName)
-if status.LazyTriggerNeeded {
-    // Idempotent — sync.Once-per-index guards against concurrent first-query races.
-    s.db.EnsureSearchIndexesBuildStarted(dbName, storageEngine)
-    s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-        "error":          "search index is warming on first request",
-        "database":       dbName,
-        "retryable":      true,
-        "http_code":      http.StatusServiceUnavailable,
-        "request_status": "search_index_warming_lazy",
-    })
-    return
-}
-```
+`Service.SetLazyWarming(lazy bool, fn WarmFunc)` registers a callback (wired by `getOrCreateSearchService` at construction time) that drives the actual build in `db.buildCtx`. `Service.EnsureWarm(ctx)`:
 
-`LazyTriggerNeeded` is true when at least one of the resolved-as-enabled indexes is `warming=lazy` and has not yet started building. After it triggers once, subsequent calls fall through to the existing `searchStatus.Ready` 503 path (`request_status: search_index_building`) until ready, then 200.
+1. Returns immediately if `warmingLazy=false` or `IsReady()=true` (steady-state hot path).
+2. Otherwise fires the WarmFunc exactly once via `sync.Once`, in a goroutine. The build runs in the OWNER's long-lived ctx (`db.buildCtx`), not the caller's request ctx.
+3. Blocks the caller on a `warmDone` channel until the build completes.
+4. Returns `ctx.Err()` if the caller's ctx is cancelled during the wait — but does NOT abort the build, so a subsequent reader finds the service warm.
 
-A separate `request_status` for the lazy-trigger case lets clients distinguish "I just woke this DB up" from "this DB is mid-build for some other reason" in their retry/backoff logic and in metrics dashboards.
+`Service.Search` and `Service.VectorSearchCandidates` call `EnsureWarm(ctx)` at entry. The HTTP handler also calls it explicitly **after** `GetOrCreateSearchService` and **before** any handler-side decisions that depend on search state (`EmbeddingCount()`, `RerankerAvailable()`), so the first lazy request returns 200 with the same shape as an eager DB rather than a transient 503.
 
 ### 3.3 BM25 build skip
 
@@ -372,22 +361,21 @@ if !resolved.BM25Enabled && !resolved.VectorEnabled {
     return
 }
 
-// 2. Lazy trigger → kick off build, return retryable 503.
+// 2. Existing "still building" path — only fires for an eager build
+//    mid-flight; lazy databases skip this branch (LazyTriggerNeeded=true).
 status := s.db.GetDatabaseSearchStatus(dbName)
-if status.LazyTriggerNeeded {
-    s.db.EnsureSearchIndexesBuildStarted(dbName, storageEngine)
-    s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-        "error":          "search index is warming on first request",
-        "database":       dbName,
-        "retryable":      true,
-        "http_code":      http.StatusServiceUnavailable,
-        "request_status": "search_index_warming_lazy",
-    })
+if !status.Ready && !status.LazyTriggerNeeded {
+    s.writeJSON(w, http.StatusServiceUnavailable, /* search_not_ready */)
     return
 }
 
-// 3. Existing "still building" path — retryable.
-if !status.Ready { /* existing logic */ }
+// 3. Lazy fall-through. After GetOrCreateSearchService, the handler
+//    calls Service.EnsureWarm(ctx) which fires the build (once) and
+//    blocks until ready. By the time we reach EmbeddingCount() and
+//    the embedding decision, the in-memory ANN substrate is populated
+//    so the response shape matches what an eager DB would return.
+//    Bolt/GraphQL/gRPC and Cypher procedures inherit this for free —
+//    Service.Search calls EnsureWarm at entry too.
 ```
 
 The 200 response includes `bm25_enabled` and `vector_enabled` so clients can see what produced the result set.

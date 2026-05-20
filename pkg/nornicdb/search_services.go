@@ -471,8 +471,9 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 	}
 	p := entry.svc.GetBuildProgress()
 	// The lazy-trigger signal flips on once the service is created but the
-	// build hasn't started. After ForceSearchIndexBuild fires, building=true
-	// and lazyTrigger flips off until restart.
+	// build hasn't started. After Service.EnsureWarm fires the WarmFunc on
+	// the first inbound read, building=true and lazyTrigger flips off
+	// until restart.
 	lazyNeeded := !p.Ready && !p.Building &&
 		((bm25On && bm25Warming == "lazy") || (vectorOn && vectorWarming == "lazy")) &&
 		!(bm25On == false && vectorOn == false)
@@ -651,8 +652,10 @@ func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, stora
 	}
 	if (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy") {
 		// All enabled indexes are configured warming=lazy — defer the
-		// build to the first inbound search query (handler will call
-		// ForceSearchIndexBuild).
+		// build. The first inbound read path goes through Service.Search
+		// (or VectorSearchCandidates) which calls Service.EnsureWarm,
+		// which fires the WarmFunc registered in getOrCreateSearchService
+		// to drive the synchronous build.
 		return svc, nil
 	}
 	if err := db.ensureSearchIndexesBuilt(ctx, dbName); err != nil {
@@ -678,8 +681,8 @@ func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, st
 // EnsureSearchIndexesBuildStarted starts per-database search indexing if not already started
 // and returns immediately without waiting for completion. Honours the per-DB
 // warming triggers: when both BM25 and vector are configured warming=lazy, the
-// build is deferred until ForceSearchIndexBuild is called (e.g., from the
-// search handler on first inbound query).
+// build is deferred until the first inbound read fires the WarmFunc through
+// Service.EnsureWarm.
 func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
@@ -695,10 +698,12 @@ func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine stora
 		return svc, nil
 	}
 	// Lazy-warming check: if both indexes are configured warming=lazy, defer
-	// the boot-time build. The search handler triggers the build on the first
-	// inbound query via ForceSearchIndexBuild. If at least one index is
-	// startup-warmed, start the build now (the disabled / lazy index simply
-	// doesn't materialize during BuildIndexes).
+	// the boot-time build. The first inbound read path (Service.Search,
+	// VectorSearchCandidates, or any handler that calls Service.EnsureWarm
+	// directly) drives the build through the WarmFunc registered in
+	// getOrCreateSearchService. If at least one index is startup-warmed,
+	// start the build now (the disabled / lazy index simply doesn't
+	// materialize during BuildIndexes).
 	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
 	bothOff := !bm25On && !vectorOn
 	bothLazy := (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy")
@@ -718,31 +723,6 @@ func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine stora
 	}
 	db.startSearchIndexBuild(entry, ctx)
 	return svc, nil
-}
-
-// ForceSearchIndexBuild triggers a build for the given database irrespective
-// of the warming setting. Used by the search handler on the first inbound
-// query against a database whose indexes are configured warming=lazy.
-// Idempotent: if a build is already running or finished, this is a no-op.
-func (db *DB) ForceSearchIndexBuild(dbName string, storageEngine storage.Engine) error {
-	if dbName == "" {
-		dbName = db.defaultDatabaseName()
-	}
-	if _, err := db.getOrCreateSearchService(dbName, storageEngine); err != nil {
-		return err
-	}
-	db.searchServicesMu.RLock()
-	entry := db.searchServices[dbName]
-	db.searchServicesMu.RUnlock()
-	if entry == nil {
-		return nil
-	}
-	ctx := db.buildCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	db.startSearchIndexBuild(entry, ctx)
-	return nil
 }
 
 func (db *DB) indexNodeFromEvent(node *storage.Node) {
