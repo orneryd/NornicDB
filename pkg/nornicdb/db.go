@@ -556,6 +556,22 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config = DefaultConfig()
 	}
 	config.Database.DataDir = dataDir
+	// Defensive defaults for the per-DB search index master switches:
+	// callers that construct &Config{...} literals (rather than going
+	// through DefaultConfig / LoadFromEnv) leave these fields at their
+	// zero value (false / ""). That would otherwise silently disable
+	// search for legacy code paths. Distinguish "literal zero" from a
+	// deliberate operator opt-out by inspecting the warming string —
+	// an empty warming means the caller did not touch these fields, in
+	// which case we apply the safe defaults (enabled, eager).
+	if config.Memory.SearchBM25Warming == "" {
+		config.Memory.SearchBM25Enabled = true
+		config.Memory.SearchBM25Warming = "startup"
+	}
+	if config.Memory.SearchVectorWarming == "" {
+		config.Memory.SearchVectorEnabled = true
+		config.Memory.SearchVectorWarming = "startup"
+	}
 
 	db := &DB{
 		config: config,

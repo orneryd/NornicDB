@@ -52,9 +52,15 @@ func TestHandleSearch_BothDisabled_503(t *testing.T) {
 	assert.Equal(t, false, body["vector_enabled"])
 }
 
-// TestHandleSearch_BothLazy_FirstQueryTriggers503 — first request against a
-// lazy database returns 503 search_index_warming_lazy with retryable=true.
-func TestHandleSearch_BothLazy_FirstQueryTriggers503(t *testing.T) {
+// TestHandleSearch_BothLazy_FirstQueryWaitsAndReturns200 — the user-stated
+// contract: a lazy database's first inbound search request blocks
+// synchronously inside Service.Search.EnsureWarm until the build completes,
+// then returns 200. No transient 503 response is emitted for the lazy state.
+//
+// This is what makes the lazy-warm uniform across HTTP, Bolt, GraphQL, and
+// gRPC entry points: the trigger lives on Service.Search, not on the HTTP
+// handler.
+func TestHandleSearch_BothLazy_FirstQueryWaitsAndReturns200(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
 
@@ -73,21 +79,15 @@ func TestHandleSearch_BothLazy_FirstQueryTriggers503(t *testing.T) {
 		"database": dbName,
 	}, "Bearer "+token)
 
-	require.Equal(t, http.StatusServiceUnavailable, resp.Code, resp.Body.String())
+	// Service.Search.EnsureWarm blocks until the build finishes, so the
+	// first-request response is the search result (200) — not a 503.
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 
-	var body map[string]interface{}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	assert.Equal(t, "search_index_warming_lazy", body["request_status"])
-	assert.Equal(t, true, body["retryable"])
-	assert.Equal(t, true, body["bm25_enabled"])
-	assert.Equal(t, true, body["vector_enabled"])
-
-	// After the lazy trigger fires, the next request hits the existing
-	// "still building" or 200 path — which means LazyTriggerNeeded flips off.
-	require.Eventually(t, func() bool {
-		st := server.db.GetDatabaseSearchStatus(dbName)
-		return !st.LazyTriggerNeeded
-	}, 5*time.Second, 50*time.Millisecond, "lazy trigger should clear after ForceSearchIndexBuild")
+	// After the synchronous warm, status reports ready and lazy trigger
+	// has cleared; subsequent reads are warm.
+	st = server.db.GetDatabaseSearchStatus(dbName)
+	assert.True(t, st.Ready, "service must be ready after the first request returned")
+	assert.False(t, st.LazyTriggerNeeded, "lazy trigger should clear once the warm fires")
 }
 
 // TestHandleSearch_GlobalOffPerDBOn_OverrideWins — confirm the load-bearing

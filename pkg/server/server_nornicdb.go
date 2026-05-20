@@ -362,9 +362,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-DB master switches: short-circuit before any build/embedding work.
+	// Per-DB master switches: only the "both off" case short-circuits the
+	// handler — that's a configuration result, not a transient state.
+	// Lazy-warming readers fall through to Service.Search which calls
+	// EnsureWarm() and blocks until the build completes; that path is
+	// shared by every search entry point (Bolt, GraphQL, gRPC, Cypher
+	// procedures), not just HTTP.
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
-	// Both indexes off → permanent 503, not retryable.
 	if !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          "search is disabled for this database",
@@ -377,28 +381,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Lazy trigger: at least one enabled index is configured warming=lazy and
-	// hasn't started building. Kick off the build and 503 with a distinct
-	// request_status so clients distinguish "I just woke this DB up" from
-	// "this DB is mid-build for some other reason".
-	if searchStatus.LazyTriggerNeeded {
-		if err := s.db.ForceSearchIndexBuild(dbName, storageEngine); err != nil {
-			s.log.Warn("search: lazy trigger failed", "db", dbName, "error", err)
-		}
-		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"error":          "search index is warming on first request",
-			"database":       dbName,
-			"bm25_enabled":   searchStatus.BM25Enabled,
-			"vector_enabled": searchStatus.VectorEnabled,
-			"search_status":  searchStatus,
-			"retryable":      true,
-			"http_code":      http.StatusServiceUnavailable,
-			"request_status": "search_index_warming_lazy",
-		})
-		return
-	}
-	// Existing "still building" 503 path. Search readiness is a startup concern.
-	if !searchStatus.Ready {
+	// "Still building" 503 — kept for completeness but in lazy mode the
+	// handler typically blocks inside Service.Search rather than reaching
+	// this branch. This fires only when an eager build is mid-flight at
+	// the moment of the request.
+	if !searchStatus.Ready && !searchStatus.LazyTriggerNeeded {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          search.ErrSearchIndexBuilding.Error(),
 			"database":       dbName,

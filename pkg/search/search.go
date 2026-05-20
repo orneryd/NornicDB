@@ -551,6 +551,24 @@ type Service struct {
 	bm25Enabled   atomic.Bool
 	vectorEnabled atomic.Bool
 
+	// Lazy-warming state. When warmingLazy=true, the boot orchestrator skips
+	// the eager build for this database; the FIRST read path (Search,
+	// VectorSearchCandidates, db.index.vector.queryNodes, Bolt search,
+	// GraphQL search resolver, gRPC) calls EnsureWarm which fires lazyTrigger
+	// exactly once via warmOnce. Subsequent readers wait on warmDone (which
+	// is closed when the triggered build completes — success or failure).
+	//
+	// The trigger fires the build in the owner's long-lived context (via
+	// the WarmFunc callback the DB wires at construction time), NOT the
+	// caller's request context. Caller ctx only governs the wait — a
+	// timed-out request returns ctx.Err() but the build continues so the
+	// next request finds the service warm.
+	warmingLazy  atomic.Bool
+	warmOnce     sync.Once
+	warmDone     chan struct{}
+	warmFunc     atomic.Value // WarmFunc; called by EnsureWarm to request a build
+	warmInFlight atomic.Bool
+
 	// Debounced persist: after IndexNode/RemoveNode we schedule a write to disk after an idle delay.
 	persistMu        sync.Mutex
 	persistRunMu     sync.Mutex
@@ -752,8 +770,88 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 	// consulting per-DB config).
 	svc.bm25Enabled.Store(true)
 	svc.vectorEnabled.Store(true)
+	svc.warmDone = make(chan struct{})
 	log.Printf("📇 Search: BM25 engine selected: %s", selectedBM25Engine)
 	return svc
+}
+
+// WarmFunc is the callback that EnsureWarm fires to request a synchronous
+// build in the owner's long-lived context. The DB wires this at service
+// creation time so the build is rooted in db.buildCtx (cancelled on DB
+// close), independent of any caller's request context. Implementations
+// MUST be idempotent — EnsureWarm uses sync.Once to fire it at most once
+// per service lifetime, but the implementation is also free to be a no-op
+// for already-warmed services as a defensive guard.
+type WarmFunc func()
+
+// SetLazyWarming marks this service as lazy-warmed and stores the WarmFunc
+// callback that EnsureWarm uses to request the actual build. Call from
+// the DB's getOrCreateSearchService when the resolved warming setting is
+// "lazy" for the database. When called with lazy=false, the warm state is
+// cleared (subsequent EnsureWarm calls become no-ops).
+func (s *Service) SetLazyWarming(lazy bool, fn WarmFunc) {
+	s.warmingLazy.Store(lazy)
+	if fn != nil {
+		s.warmFunc.Store(fn)
+	}
+}
+
+// EnsureWarm triggers the lazy build (exactly once) and waits for it to
+// finish. Safe to call from every read path — it's a fast no-op once the
+// service is warm.
+//
+// Synchronization contract:
+//   - Trigger fires at most once per service lifetime, in the OWNER'S
+//     long-lived context (NOT the caller's). A caller whose ctx times out
+//     while waiting returns ctx.Err() but the build continues so the next
+//     reader finds the service warm.
+//   - Concurrent first-readers wait on the same channel; only one fires
+//     the trigger.
+//   - When warmingLazy=false (eager) or the service is already ready,
+//     EnsureWarm returns immediately.
+func (s *Service) EnsureWarm(ctx context.Context) error {
+	if !s.warmingLazy.Load() || s.IsReady() {
+		return nil
+	}
+	s.warmOnce.Do(func() {
+		// Run the trigger in a goroutine so it doesn't block on the
+		// caller; the build completes regardless of whether the caller
+		// is still waiting.
+		fn, _ := s.warmFunc.Load().(WarmFunc)
+		if fn == nil {
+			// No trigger wired — close immediately so waiters return.
+			// IsReady() is still false but at least we don't deadlock.
+			log.Printf("⚠️  Search: lazy trigger requested but WarmFunc is nil — closing warm channel")
+			close(s.warmDone)
+			return
+		}
+		s.warmInFlight.Store(true)
+		go func() {
+			defer s.warmInFlight.Store(false)
+			defer close(s.warmDone)
+			fn()
+		}()
+	})
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-s.warmDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// MarkWarmDone signals waiters that the lazy-triggered build has finished.
+// Used by callers that drive the build externally (e.g. the DB owner that
+// wired the WarmFunc) so they can clear the lazy state once the service is
+// ready. Idempotent.
+func (s *Service) MarkWarmDone() {
+	// warmDone may already be closed (if EnsureWarm fired and the
+	// goroutine returned). Use a recover'd close to stay idempotent.
+	defer func() { _ = recover() }()
+	close(s.warmDone)
 }
 
 // MarkReadyDisabled marks the service ready without doing any build work.
@@ -3140,6 +3238,14 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		_ = start
 	}()
 
+	// Lazy-warming: when the service is configured warming=lazy and hasn't
+	// built yet, fire the build now (the owner's long-lived ctx, not the
+	// caller's) and block until it completes. This makes lazy-warm uniform
+	// across every read entry point (HTTP, Bolt, GraphQL, gRPC, Cypher
+	// procedures) — none of them need to know about the lazy setting.
+	if err := s.EnsureWarm(ctx); err != nil {
+		return nil, err
+	}
 	if s.buildAttempted.Load() && !s.IsReady() {
 		return nil, ErrSearchIndexBuilding
 	}
@@ -3364,6 +3470,9 @@ type SearchCandidate struct {
 // This method uses the unified vector search pipeline (CandidateGen + ExactScore)
 // with automatic strategy selection (brute-force for small N, HNSW for large N).
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	if err := s.EnsureWarm(ctx); err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = DefaultSearchOptions()
 	}

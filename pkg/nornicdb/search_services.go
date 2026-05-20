@@ -262,7 +262,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.SetDefaultMinSimilarity(minSim)
 	// Per-DB master switches: pull from the resolver and seed the service.
 	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.
-	bm25On, vectorOn, _, _ := db.resolveSearchFlags(dbName)
+	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
 	svc.SetIndexFlags(bm25On, vectorOn)
 	// When both indexes are disabled, mark ready immediately so any
 	// concurrent indexNodeFromEvent / pendingFlush goroutine that races
@@ -273,6 +273,31 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// a real BuildIndexes run before the gate could land.
 	if !bm25On && !vectorOn {
 		svc.MarkReadyDisabled()
+	} else if (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy") {
+		// All enabled indexes are warming=lazy: install the WarmFunc so any
+		// inbound read path (Service.Search, VectorSearchCandidates,
+		// db.index.vector.queryNodes, Bolt search, GraphQL search resolver,
+		// gRPC) triggers the build synchronously on first read, regardless
+		// of which entry point the caller used. The trigger itself runs in
+		// db.buildCtx (long-lived) so a caller whose request ctx times out
+		// during the wait does NOT abort the build — the next reader will
+		// find the service warm.
+		warmDBName := dbName
+		svc.SetLazyWarming(true, search.WarmFunc(func() {
+			ctx := db.buildCtx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			log.Printf("🔍 Search lazy-warm trigger fired for db %s", warmDBName)
+			// Use the lowercase variant which does NOT re-check the lazy
+			// gate (EnsureSearchIndexesBuilt would defer right back). The
+			// service entry is already in db.searchServices because the
+			// outer getOrCreateSearchService call inserted it before
+			// SetLazyWarming ran.
+			if err := db.ensureSearchIndexesBuilt(ctx, warmDBName); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+				log.Printf("⚠️  Search lazy-warm build failed for db %s: %v", warmDBName, err)
+			}
+		}))
 	}
 	persistSearchIndexesEnabled := db.config != nil && db.config.Database.DataDir != "" && db.config.Database.PersistSearchIndexes
 	svc.SetPersistenceEnabled(persistSearchIndexesEnabled)
