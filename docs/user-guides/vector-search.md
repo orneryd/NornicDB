@@ -553,11 +553,34 @@ curl http://localhost:8080/health
 
 ---
 
+## Disabling vector search per database
+
+`NORNICDB_SEARCH_VECTOR_ENABLED=false` (per-DB or global) prevents NornicDB from building or serving any vector index for that database. Set when:
+
+- Memory pressure: durably stored embeddings still take RAM when iterated into the in-memory ANN substrate at boot. Disabling skips that load entirely.
+- Exports-only deployments: NornicDB generates embeddings but a downstream system (Qdrant, Weaviate, custom pipeline) owns the index.
+- Lexical-only search: only fulltext search makes sense for the workload.
+
+When vector is disabled:
+
+- `POST /nornicdb/search` returns BM25-only 200 responses with `vector_enabled: false` in the body. If BM25 is also disabled, responses are 503 `search_disabled_for_database` (not retryable).
+- `db.index.vector.queryNodes` Cypher procedure returns zero rows with a `WARN` log.
+- The Qdrant gRPC bridge surfaces a structured error to external clients.
+
+See **[Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control)** for the full configuration matrix and yaml examples.
+
+## Lazy warming
+
+`NORNICDB_SEARCH_VECTOR_WARMING=lazy` defers the vector index build until the first inbound search query for that database. The first request **blocks synchronously** while the build runs (any `Service.Search` caller — HTTP, Bolt, GraphQL, gRPC, Cypher procedures — gets the same behavior). Subsequent requests are warm. Useful for multi-tenant deployments where most databases are idle at any moment.
+
+Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [Low Memory Mode → Caveat: health checks](../operations/low-memory-mode.md#caveat-health-checks).
+
 ## Related Docs
 
 - [K-Means Clustering](../advanced/k-means-clustering/README.md) - GPU/CPU IVF candidate generator
 - [Functions Index](../api-reference/cypher-functions/README.md) - Vector similarity functions
 - [Search Implementation](../performance/searching.md) - Hybrid search internals
+- [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) — control BM25 and vector indexes per database
 
 ---
 

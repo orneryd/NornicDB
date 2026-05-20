@@ -516,6 +516,38 @@ paths:
                   $ref: "#/components/schemas/SearchResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "503":
+          description: |
+            Search is unavailable for this database. Distinguish the cases via `request_status`:
+
+            - `search_disabled_for_database` — both BM25 and vector are disabled for the database (per-DB master switches). Permanent; `retryable: false`. Clients should not retry.
+            - `search_not_ready` — an eager build is mid-flight at the moment of the request. `retryable: true`. Clients should back off and retry.
+
+            Lazy-warmed databases (`*_warming=lazy`) do NOT emit a 503 on the first request — `Service.EnsureWarm` blocks the handler synchronously until the build completes, then returns 200 with the same shape as an eager database.
+
+            Health checks must NOT target this endpoint for `warming=lazy` or any `*_enabled=false` database — every probe would either trigger a build or stream `search_disabled_for_database` 503s. Use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  database:
+                    type: string
+                  bm25_enabled:
+                    type: boolean
+                  vector_enabled:
+                    type: boolean
+                  retryable:
+                    type: boolean
+                  http_code:
+                    type: integer
+                  request_status:
+                    type: string
+                    enum:
+                      - search_disabled_for_database
+                      - search_not_ready
 
   /nornicdb/similar:
     post:

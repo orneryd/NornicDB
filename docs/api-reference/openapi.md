@@ -90,7 +90,7 @@ To authenticate in Swagger UI:
 - `POST /db/{database}/tx/commit` - Execute Cypher query
 
 ### Search & Embeddings
-- `POST /nornicdb/search` - Hybrid search
+- `POST /nornicdb/search` - Hybrid search. 200 responses include `bm25_enabled` and `vector_enabled` so clients can see which path produced the result set. 503 with `request_status: search_disabled_for_database` (`retryable: false`) when both indexes are disabled for the target database; 503 with `request_status: search_not_ready` (`retryable: true`) when an eager build is mid-flight. Lazy-warmed databases block the request synchronously inside `Service.EnsureWarm` and return 200 — no transient lazy 503 is emitted.
 - `POST /nornicdb/similar` - Vector similarity search
 - `GET /nornicdb/decay` - Memory decay statistics
 - Embedding management endpoints

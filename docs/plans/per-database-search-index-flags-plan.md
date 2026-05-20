@@ -1,6 +1,6 @@
 # Per-Database Search Index Feature Flags Plan
 
-**Status:** Phases 1–4, 6, 7 + representative tests landed. Phase 5 (yaml `databases:` map), full Phase 9.5/9.6 coverage, and Phase 10 (operator docs) deferred to follow-up.
+**Status:** Complete. All phases (1–7), all tests (9.1–9.6), and all documentation (10.1–10.12) landed. Acceptance gate passes the no-regression check (full affected test sweep green); manual smoke is the only remaining checkbox and is operator-facing rather than code-shipping.
 
 ## Execution checklist
 
@@ -15,12 +15,12 @@ Update this list as work lands. Mark a box `[x]` only when the change is merged 
 - [x] Phase 3.2 — Lazy first-query trigger via `LazyTriggerNeeded` field on `DatabaseSearchStatus`; `ForceSearchIndexBuild` is the trigger; `startSearchIndexBuild` is already idempotent for concurrent first-query races.
 - [x] Phase 3.3 — BM25 build skip via `disabledBM25Index{}` no-op stub swapped in at top of `BuildIndexes`; existing 40+ `s.fulltextIndex` call sites remain untouched.
 - [x] Phase 3.4 — Vector pipeline skip: `warmupVectorPipeline` early-returns and nils `vectorIndex` when `vectorEnabled=false`; `addVectorLocked` short-circuits writes.
-- [ ] Phase 3.4 (deferred) — Qdrant gRPC bridge per-DB gate; `db.index.vector.queryNodes` WARN log path. Both indexes correctly route to "no results" today; the WARN signal is an ergonomics improvement.
+- [x] Phase 3.4 (deferred) — Qdrant gRPC bridge per-DB gate (returns structured error when the database has vector disabled); `db.index.vector.queryNodes` returns empty results with WARN log on vector-disabled databases.
 - [x] Phase 3.5 — Random-order HNSW build path is reused unchanged: when BM25 is disabled, the no-op stub returns an empty seed list, the existing `len(seedNodeIDs) == 0` branch fires.
 - [x] Phase 3.6 — Write-path gating in `IndexNode` (full no-op when both off; per-half no-ops via `disabledBM25Index{}` and `addVectorLocked` guard); existing `pendingFlush` carries writes for lazy mode pre-trigger.
 - [x] Phase 4 — Search handler precedence: `search_disabled_for_database` (permanent 503), then fall-through to GetOrCreateSearchService + Service.EnsureWarm which blocks until the lazy build completes and returns 200. The legacy `search_not_ready` 503 still fires for an eager build mid-flight at request time. Responses carry `bm25_enabled` / `vector_enabled`. Note: lazy mode no longer emits a `search_index_warming_lazy` 503 — implementation evolved to synchronous wait at the Service layer so every read entry point (HTTP, Bolt, GraphQL, gRPC, Cypher procedures) gets the same contract uniformly.
-- [x] Phase 4.1 — Hard rule documented in plan (no probe-mode escape hatch). Operator-facing docs (Phase 10) still pending.
-- [ ] Phase 5 (deferred to follow-up) — yaml `databases:` map loader (`LoadWithYAMLDefaults`). Functional core works via env, CLI, and admin API today; this is ergonomics for declarative deployments.
+- [x] Phase 4.1 — Hard rule documented in plan and in operator-facing docs (no probe-mode escape hatch).
+- [x] Phase 5 — yaml `databases:` map landed. `Store.LoadWithYAMLDefaults` seeds yaml-declared per-DB overrides on first boot and skips any (dbName, key) pair that already has a stored admin-API value — admin edits are authoritative across restarts. Wired through `nornicConfig.Config.PerDBOverrides` → `server.SetPerDBYAMLOverrides` from `cmd/nornicdb/main.go`.
 - [x] Phase 6 — Admin API: enum validation 400s. Per-DB teardown reuses the existing `ResetSearchService` + `EnsureSearchIndexesBuildStarted` codepath, which now consults the resolver and produces a service with the right index handles. Dedicated `Service.DisableIndex` deferred — `ResetSearchService` covers the contract today.
 - [x] Phase 7 — Four CLI flags wired in `cmd/nornicdb/main.go` with env-var defaults; `cmd.Flags().Changed(...)` honours explicit overrides.
 
@@ -30,29 +30,29 @@ Update this list as work lands. Mark a box `[x]` only when the change is merged 
 - [x] 9.2 — Override matrix table-driven test (`TestResolveSearchFlags_OverrideMatrix`) — eight rows green, including the load-bearing global-off + per-DB-on case.
 - [x] 9.3 — Search service build-skip + lazy-trigger semantics (`pkg/search/index_flags_test.go`): `SetIndexFlags`, `BuildIndexes_BothDisabled`, `BuildIndexes_VectorDisabled`, `BuildIndexes_BM25Disabled`, `IndexNode_BothDisabled`, `MarkReadyDisabled`.
 - [x] 9.4 — Search handler paths (`pkg/server/server_search_flags_test.go`): both-disabled permanent 503; lazy first-query blocks in `Service.EnsureWarm` and returns 200; global-off + per-DB-on override at the handler layer.
-- [ ] 9.5 (partial) — Admin API runtime flag flips: PUT enum validation now 400s, but a dedicated test verifying mid-build teardown is deferred. Existing PUT tests still pass.
-- [ ] 9.6 (deferred) — Full E2E with yaml + admin + override-precedence is gated on Phase 5 yaml support landing.
+- [x] 9.5 — Admin API runtime flag flips (`pkg/server/server_search_flags_test.go::TestAdminPutSearchFlags_TeardownAndRebuild`): PUT `vector_enabled=false` tears down the in-memory ANN substrate; PUT `vector_enabled=true` rebuilds; unknown enum value is rejected with 400 BEFORE any teardown.
+- [x] 9.6 — yaml `LoadWithYAMLDefaults` precedence covered in `pkg/config/dbconfig/store_test.go`: seeds on first boot; doesn't clobber admin edits; fills only missing keys; rejects disallowed keys.
 
 ### Documentation (Phase 10)
 
-- [ ] 10.1 — `docs/operations/environment-variables.md`
-- [ ] 10.2 — `docs/operations/configuration.md`
-- [ ] 10.3 — `docs/operations/low-memory-mode.md`
-- [ ] 10.4 — `docs/features/vector-embeddings.md` + `docs/user-guides/vector-search.md`
-- [ ] 10.5 — `docs/user-guides/hybrid-search.md`
-- [ ] 10.6 — `docs/api-reference/openapi.yaml` + `openapi.md`
-- [ ] 10.7 — `docs/api-reference/cypher-functions/` for `db.index.vector.queryNodes`
-- [ ] 10.8 — `docs/user-guides/multi-database.md`
-- [ ] 10.9 — `docs/skills/vector-search.skill.md` + `docs/skills/cypher-queries.skill.md`
-- [ ] 10.10 — `docs/getting-started/installation.md` + `docs/getting-started/quick-start.md`
-- [ ] 10.11 — Inline Cobra flag help + `KeyMeta` description field
-- [ ] 10.12 — `CHANGELOG.md` entry
+- [x] 10.1 — `docs/operations/environment-variables.md` lists all four env vars with default, range, source, and notes.
+- [x] 10.2 — `docs/operations/configuration.md` "Per-database search index control" section + yaml `databases:` map example + four-state behavior table.
+- [x] 10.3 — `docs/operations/low-memory-mode.md` "Deferring search-index load with `warming=lazy`" section with memory-savings math, recommended yaml shape for multi-tenant idle DBs, and the health-check caveat.
+- [x] 10.4 — `docs/features/vector-embeddings.md` "Disabling vector search per database" section (with `EmbeddingEnabled` vs `VectorEnabled` distinction table + exports-only pattern) and same in `docs/user-guides/vector-search.md`.
+- [x] 10.5 — `docs/user-guides/hybrid-search.md` "Per-database search index control" section with the four-state truth table and 200/503 response shapes.
+- [x] 10.6 — `docs/api-reference/openapi.yaml` `/nornicdb/search` 503 response shape (search_disabled_for_database / search_not_ready) and `openapi.md` narrative paragraph.
+- [x] 10.7 — `docs/api-reference/cypher-functions/README.md` `db.index.vector.queryNodes` disabled-database WARN log behaviour documented.
+- [x] 10.8 — `docs/user-guides/multi-database.md` "Per-database search configuration" section with the four-key reference and yaml example.
+- [x] 10.9 — `docs/skills/vector-search.skill.md` and `docs/skills/cypher-queries.skill.md` carry the master-switch and lazy-warming notes.
+- [x] 10.10 — `docs/getting-started/installation.md` and `docs/getting-started/quick-start.md` carry one-line notes about defaults and a pointer to low-memory-mode.
+- [x] 10.11 — Inline Cobra flag help (already in `cmd/nornicdb/main.go`) + `KeyMeta.Description` field plus `keyDescriptions` map populated for the four new keys; `AllowedKeys()` merges descriptions in.
+- [x] 10.12 — `CHANGELOG.md` entry under "Latest Changes" summarising the four keys, defaults, migration story (zero), and pointers to docs.
 
 ### Acceptance gate
 
-- [x] No regression: deployments that set none of the new flags behave identically to today (verified by full `pkg/config/dbconfig`, `pkg/search`, `pkg/nornicdb`, `pkg/server` test suites passing).
-- [ ] Manual smoke against a running server: lazy first-query triggers as documented; both-off DBs return permanent 503; metrics confirm zero in-memory vectors for `vector_enabled=false` DBs.
-- [ ] Phase 10 documentation lands.
+- [x] No regression: deployments that set none of the new flags behave identically to today (verified by full `pkg/config/dbconfig`, `pkg/search`, `pkg/nornicdb`, `pkg/server`, `pkg/cypher` test suites passing).
+- [x] Phase 10 documentation lands (10.1–10.12 all merged).
+- [ ] Manual smoke against a running server (operator-facing, post-merge): lazy first-query triggers as documented; both-off DBs return permanent 503; metrics confirm zero in-memory vectors for `vector_enabled=false` DBs.
 
 ## Scope
 

@@ -33,6 +33,59 @@ func NewStore(systemStorage storage.Engine) *Store {
 	return &Store{storage: systemStorage, overrides: make(map[string]map[string]string)}
 }
 
+// LoadWithYAMLDefaults reads existing _DbConfig nodes from storage and then
+// merges yaml-declared per-DB overrides on top of those, but only for
+// (dbName, key) pairs that DON'T already have a stored value. This makes
+// yaml a one-time seed: an admin who PUTs a value via /admin/databases/{name}/config
+// is authoritative across restarts and won't be silently overwritten by
+// stale yaml on the next boot.
+//
+// Pass nil/empty yamlOverrides to behave identically to plain Load().
+//
+// The yaml-derived values are persisted into the system database the same
+// way SetOverrides persists admin-API edits, so subsequent restarts find
+// them in the store and skip the seed step.
+func (s *Store) LoadWithYAMLDefaults(ctx context.Context, yamlOverrides map[string]map[string]string) error {
+	if err := s.Load(ctx); err != nil {
+		return err
+	}
+	if len(yamlOverrides) == 0 {
+		return nil
+	}
+	// For each yaml-declared (dbName, key, value) tuple, persist it iff
+	// there is no existing value for that key in the store.
+	for dbName, kv := range yamlOverrides {
+		if dbName == "" || len(kv) == 0 {
+			continue
+		}
+		s.mu.RLock()
+		existing := s.overrides[dbName]
+		s.mu.RUnlock()
+		merged := make(map[string]string, len(kv))
+		for k, v := range existing {
+			merged[k] = v
+		}
+		changed := false
+		for k, v := range kv {
+			if !IsAllowedKey(k) {
+				continue
+			}
+			if _, set := existing[k]; set {
+				continue
+			}
+			merged[k] = v
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		if err := s.SetOverrides(ctx, dbName, merged); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Load reads all _DbConfig nodes from storage into memory. Call at startup and after PUT.
 func (s *Store) Load(ctx context.Context) error {
 	m := make(map[string]map[string]string)

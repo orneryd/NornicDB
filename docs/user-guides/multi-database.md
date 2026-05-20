@@ -858,7 +858,58 @@ No `Authorization` header on incoming request
 - Routing rule customization is currently limited compared to full custom planner policies.
 - Cross-shard relationship semantics depend on explicit query patterns and available IDs.
 
+## Per-database search configuration
+
+Each database can have its BM25 fulltext and vector ANN indexes independently enabled, disabled, eagerly built, or lazily warmed. Per-database overrides always win over the global default in **both directions** — an override of `true` turns on a globally-disabled index, an override of `false` turns off a globally-enabled one.
+
+Four keys control this:
+
+| Key                              | Type    | Default   |
+| -------------------------------- | ------- | --------- |
+| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    |
+| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` |
+| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    |
+| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` |
+
+Resolution order (highest → lowest precedence):
+
+1. Per-database override stored via `PUT /admin/databases/{name}/config` (admin API edits are authoritative).
+2. yaml `databases:` map seed (read once on first boot if no admin edit exists for that key).
+3. Global default (env var, CLI flag, or yaml `memory:` block).
+
+Example yaml configuration:
+
+```yaml
+memory:
+  search_bm25_enabled:   true
+  search_bm25_warming:   startup
+  search_vector_enabled: true
+  search_vector_warming: startup
+
+databases:
+  hot_app_db: {}                                       # default startup, both enabled
+
+  analytics:
+    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+
+  audit_logs:
+    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false"            # search disabled
+
+  exports_only:
+    NORNICDB_SEARCH_BM25_ENABLED:   "true"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false"            # write embeddings; never load in-process
+
+  multi_tenant_archive:
+    NORNICDB_SEARCH_BM25_WARMING:   "lazy"
+    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"             # cold; absorb cost on first query
+```
+
+See [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) for the full configuration reference.
+
 ## See Also
 
 - [Configuration Guide](../operations/configuration.md) - Configuration options for multi-database
 - [Multi-Database Architecture](../architecture/multi-db-architecture.md) - Design notes for the multi-database surface (composite, aliases, per-DB limits)
+- [Hybrid Search](hybrid-search.md) — search response shapes including per-DB flag fields

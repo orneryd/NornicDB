@@ -140,3 +140,80 @@ func TestHandleSearch_GlobalOffPerDBOn_OverrideWins(t *testing.T) {
 		}
 	}, 10*time.Second, 100*time.Millisecond)
 }
+
+// TestAdminPutSearchFlags_TeardownAndRebuild — verifies the runtime flag-flip
+// teardown contract documented in the plan (Phase 6 / 9.5):
+//
+//   - PUT vector_enabled=false on a previously-enabled database tears down
+//     the in-memory ANN substrate (ResetSearchService + getOrCreateSearchService
+//     produce a freshly-configured service whose vectorEnabled=false).
+//   - PUT vector_enabled=true on the same database rebuilds the index from
+//     durable storage. The next read sees a populated, ready service.
+//   - PUT with an unknown enum value is rejected with 400 BEFORE any
+//     teardown happens (validator runs before SetOverrides).
+func TestAdminPutSearchFlags_TeardownAndRebuild(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := getAuthToken(t, authenticator, "admin")
+
+	const dbName = "search_flag_flip"
+	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+
+	// 1. Initial state: defaults — both indexes enabled.
+	resp := makeRequest(t, server, http.MethodGet, "/admin/databases/"+dbName+"/config",
+		nil, "Bearer "+token)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	// 2. Flip vector to false.
+	resp = makeRequest(t, server, http.MethodPut, "/admin/databases/"+dbName+"/config",
+		map[string]any{
+			"overrides": map[string]string{
+				"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+			},
+		}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, true, body["rebuildTriggered"])
+
+	// After teardown: the service has vector disabled.
+	require.Eventually(t, func() bool {
+		svc, err := server.db.GetOrCreateSearchService(dbName, nil)
+		if err != nil || svc == nil {
+			return false
+		}
+		return !svc.VectorEnabled() && svc.BM25Enabled()
+	}, 5*time.Second, 50*time.Millisecond, "service must reflect vector_enabled=false after PUT")
+
+	// 3. Flip vector back to true. The service rebuilds with both indexes on.
+	resp = makeRequest(t, server, http.MethodPut, "/admin/databases/"+dbName+"/config",
+		map[string]any{
+			"overrides": map[string]string{
+				"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+			},
+		}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	require.Eventually(t, func() bool {
+		svc, err := server.db.GetOrCreateSearchService(dbName, nil)
+		if err != nil || svc == nil {
+			return false
+		}
+		return svc.VectorEnabled() && svc.BM25Enabled()
+	}, 5*time.Second, 50*time.Millisecond, "service must reflect vector_enabled=true after re-flip")
+
+	// 4. Unknown enum value rejected with 400 BEFORE teardown.
+	resp = makeRequest(t, server, http.MethodPut, "/admin/databases/"+dbName+"/config",
+		map[string]any{
+			"overrides": map[string]string{
+				"NORNICDB_SEARCH_VECTOR_WARMING": "asap", // not in enum:startup,lazy
+			},
+		}, "Bearer "+token)
+	require.Equal(t, http.StatusBadRequest, resp.Code, resp.Body.String())
+
+	// Service state is unchanged — the rejected PUT must not have torn down
+	// the existing service.
+	svc, err := server.db.GetOrCreateSearchService(dbName, nil)
+	require.NoError(t, err)
+	assert.True(t, svc.VectorEnabled(), "rejected PUT must not have torn down the service")
+	assert.True(t, svc.BM25Enabled())
+}

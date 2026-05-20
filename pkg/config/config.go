@@ -132,6 +132,13 @@ type Config struct {
 	// yaml:"-" / json:"-" because it is a runtime-only handle that must
 	// not appear in YAML/JSON config payloads.
 	Logger *slog.Logger `yaml:"-" json:"-"`
+
+	// PerDBOverrides carries the yaml-declared `databases:` map (loaded
+	// from LoadFromFile). The server applies these to dbconfig.Store at
+	// boot ONLY when the store has no row for that (dbName, key) pair
+	// yet — admin API edits remain authoritative across restarts.
+	// Empty/nil for callers that didn't go through LoadFromFile.
+	PerDBOverrides map[string]map[string]string `yaml:"-" json:"-"`
 }
 
 // AuthConfig holds authentication settings.
@@ -1514,6 +1521,24 @@ type YAMLConfig struct {
 		Dir         string `yaml:"dir"`          // APOC plugins directory
 		HeimdallDir string `yaml:"heimdall_dir"` // Heimdall plugins directory
 	} `yaml:"plugins"`
+
+	// Databases is a per-database override map (keyed by database name).
+	// Each entry is a free-form string→string map of dbconfig keys (e.g.
+	// NORNICDB_SEARCH_BM25_ENABLED) → values. Loaded into dbconfig.Store
+	// at first boot ONLY when the store has no row for that (dbName, key)
+	// pair yet — admin API edits made later are authoritative across
+	// restarts. See pkg/config/dbconfig/store.go LoadWithYAMLDefaults.
+	//
+	// Example:
+	//
+	//   databases:
+	//     analytics:
+	//       NORNICDB_SEARCH_BM25_ENABLED: "false"
+	//       NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+	//     audit_logs:
+	//       NORNICDB_SEARCH_BM25_ENABLED: "false"
+	//       NORNICDB_SEARCH_VECTOR_ENABLED: "false"
+	Databases map[string]map[string]string `yaml:"databases"`
 }
 
 // LoadDefaults returns a Config with all built-in safe defaults.
@@ -3303,6 +3328,25 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Plugins.HeimdallDir != "" {
 		config.Server.HeimdallPluginsDir = yamlCfg.Plugins.HeimdallDir
+	}
+
+	// === Per-database overrides (databases: map) ===
+	// Carried on Config so the server can apply them to dbconfig.Store
+	// at boot. We deliberately don't merge them into per-DB resolved
+	// state here — the store is the source of truth, yaml is a one-time
+	// seed when the store has no prior entry for that (dbName, key).
+	if len(yamlCfg.Databases) > 0 {
+		config.PerDBOverrides = make(map[string]map[string]string, len(yamlCfg.Databases))
+		for dbName, kv := range yamlCfg.Databases {
+			if dbName == "" || len(kv) == 0 {
+				continue
+			}
+			cp := make(map[string]string, len(kv))
+			for k, v := range kv {
+				cp[k] = v
+			}
+			config.PerDBOverrides[dbName] = cp
+		}
 	}
 
 	// Step 3: Apply environment variable overrides (higher priority than config file)

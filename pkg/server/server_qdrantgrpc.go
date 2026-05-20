@@ -84,7 +84,20 @@ func (s *Server) startQdrantGRPC() error {
 	}
 
 	searchProvider := func(database string, store storage.Engine) (*search.Service, error) {
-		return s.db.GetOrCreateSearchService(database, store)
+		svc, err := s.db.GetOrCreateSearchService(database, store)
+		if err != nil {
+			return nil, err
+		}
+		// Per-DB master switch: the Qdrant gRPC bridge serves vector
+		// queries; if the database has vector search disabled, surface a
+		// deterministic error rather than handing back a service whose
+		// ANN substrate isn't populated. External Qdrant clients see
+		// the same "off" semantics they'd get against a database that
+		// simply has no vectors.
+		if !svc.VectorEnabled() {
+			return nil, fmt.Errorf("qdrant grpc: vector search is disabled for database %q (set NORNICDB_SEARCH_VECTOR_ENABLED=true or per-DB override to enable)", database)
+		}
+		return svc, nil
 	}
 
 	grpcServer, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, baseStorage, searchProvider, s.auth)

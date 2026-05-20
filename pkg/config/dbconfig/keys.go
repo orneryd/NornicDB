@@ -9,12 +9,58 @@ type KeyMeta struct {
 	Key      string `json:"key"`
 	Type     string `json:"type"`     // "string", "number", "boolean", "duration"
 	Category string `json:"category"` // "Embeddings", "Search", "HNSW", etc.
+	// Description is optional. Surfaced as field-level help in the per-DB
+	// config UI when present. Looked up via KeyDescription(key).
+	Description string `json:"description,omitempty"`
 }
 
-// AllowedKeys returns the list of allowed per-DB config keys and their metadata.
+// keyDescriptions provides optional per-key help text. Lives in a separate
+// map so callers can populate descriptions for new keys without rewriting
+// every existing AllowedKeys() literal.
+var keyDescriptions = map[string]string{
+	"NORNICDB_SEARCH_BM25_ENABLED":   "Master switch for BM25 fulltext search on this database. When false, no BM25 build runs and search returns no fulltext results. Default: true.",
+	"NORNICDB_SEARCH_BM25_WARMING":   "When BM25 is enabled, choose `startup` (build at boot, today's default) or `lazy` (defer the build until the first inbound search query). Lazy reduces boot RSS for idle databases at the cost of first-query latency.",
+	"NORNICDB_SEARCH_VECTOR_ENABLED": "Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant pass-through). When false, node embeddings are NOT iterated into the in-memory ANN substrate. The strongest available memory-pressure lever. Default: true.",
+	"NORNICDB_SEARCH_VECTOR_WARMING": "When vector search is enabled, choose `startup` or `lazy`. See NORNICDB_SEARCH_BM25_WARMING.",
+}
+
+// KeyDescription returns the operator-facing help text for a key, or the
+// empty string when none is registered. Stable for callers (UI/help) to
+// consume; returning "" lets callers skip rendering the description line.
+func KeyDescription(key string) string {
+	return keyDescriptions[key]
+}
+
+// keyTuple is the internal positional 3-field shape of an allow-list entry.
+// Kept as a separate type so existing 3-field literals in allowedKeysRaw
+// don't have to learn about the new Description field on KeyMeta — that
+// field is merged in by AllowedKeys() from keyDescriptions.
+type keyTuple struct {
+	key      string
+	typ      string
+	category string
+}
+
+// AllowedKeys returns the list of allowed per-DB config keys and their metadata,
+// with Description populated from the keyDescriptions map for keys that have one.
 // Used by API validation and by GET /admin/databases/config/keys.
 func AllowedKeys() []KeyMeta {
-	return []KeyMeta{
+	raw := allowedKeysRaw()
+	keys := make([]KeyMeta, len(raw))
+	for i, t := range raw {
+		keys[i] = KeyMeta{Key: t.key, Type: t.typ, Category: t.category}
+		if d, ok := keyDescriptions[t.key]; ok {
+			keys[i].Description = d
+		}
+	}
+	return keys
+}
+
+// allowedKeysRaw returns the 3-field raw key list. Kept as positional
+// literals so adding Description to KeyMeta didn't force every entry to
+// be rewritten.
+func allowedKeysRaw() []keyTuple {
+	return []keyTuple{
 		// Embeddings
 		{"NORNICDB_EMBEDDING_ENABLED", "boolean", "Embeddings"},
 		{"NORNICDB_EMBEDDING_PROVIDER", "string", "Embeddings"},

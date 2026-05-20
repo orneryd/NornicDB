@@ -196,7 +196,54 @@ Use the same query and options for repeated calls to benefit from the cache (e.g
 | RRF Fusion    | 100 candidates | ~27µs  |
 | Index Build   | 38K nodes      | ~5.4s  |
 
+## Per-database search index control
+
+Each database has two orthogonal master switches and two warming triggers. The default is `enabled=true, warming=startup` for both BM25 and vector — today's behaviour. Per-DB overrides via `PUT /admin/databases/{name}/config` always win over the global default.
+
+| BM25         | Vector       | First search request                                                                |
+| ------------ | ------------ | ----------------------------------------------------------------------------------- |
+| on / startup | on / startup | Hybrid (this guide's default).                                                      |
+| on / startup | on / lazy    | Synchronous wait while vector warms; first response includes vector results.        |
+| on / lazy    | on / lazy    | Synchronous wait while both warm; first response is fully ranked.                    |
+| on / startup | off / —      | Lexical-only 200, response carries `vector_enabled: false`.                         |
+| off / —      | on / startup | Vector-only 200 (HNSW falls back to random insertion order; recall slightly lower). |
+| off / —      | off / —      | 503 `search_disabled_for_database`, `retryable: false` — permanent.                |
+
+Search response shapes:
+
+```jsonc
+// 200 — both indexes serving
+{
+  "results": [...],
+  "bm25_enabled": true,
+  "vector_enabled": true
+}
+
+// 200 — vector disabled
+{
+  "results": [...],   // BM25-only
+  "bm25_enabled": true,
+  "vector_enabled": false
+}
+
+// 503 — both disabled (permanent)
+{
+  "error": "search is disabled for this database",
+  "request_status": "search_disabled_for_database",
+  "retryable": false,
+  "bm25_enabled": false,
+  "vector_enabled": false
+}
+```
+
+The `bm25_enabled` and `vector_enabled` fields are present on every 200 response so clients can see which path produced the result set.
+
+When BM25 is disabled but vector is enabled, the HNSW build falls back to **random insertion order** (no BM25 lexical seed). This regresses ANN recall slightly compared to the BM25-seeded build. Operators choosing this combination are doing so deliberately for memory or storage reasons; it's a documented tradeoff.
+
+See **[Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control)** for yaml examples and the full configuration matrix.
+
 ## Related Guides
 
 - [Vector Search](vector-search.md) — dedicated vector search guide with Cypher index examples
 - [Data Import/Export](data-import-export.md) — importing data for search indexing
+- [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) — full flag reference

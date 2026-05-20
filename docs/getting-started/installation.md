@@ -377,6 +377,10 @@ See **[Cursor Chat Mode Guide](../ai-agents/chat-modes.md)** for detailed usage.
 - **[Cypher Queries](../user-guides/cypher-queries.md)** - Master Neo4j queries
 - **[API Reference](../api-reference/README.md)** - Complete API docs
 
+## Search index defaults
+
+Out of the box, NornicDB builds both BM25 fulltext and vector ANN indexes for every database at startup — the same behaviour as previous releases. If you're running multi-tenant deployments or memory-constrained environments, see **[Low Memory Mode → Deferring search-index load with `warming=lazy`](../operations/low-memory-mode.md#deferring-search-index-load-with-warminglazy)** for per-database controls that can defer or skip index builds.
+
 ## Troubleshooting
 
 ### Port Already in Use

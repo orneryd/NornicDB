@@ -698,6 +698,20 @@ type Server struct {
 	privilegesStore       *auth.PrivilegesStore       // per-DB read/write (Phase 4) when auth enabled
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
+	// perDBYAMLOverrides carries the `databases:` map from nornicdb.yaml,
+	// passed through by the binary at construction time. Seeded into
+	// dbConfigStore on first boot via LoadWithYAMLDefaults; subsequent
+	// admin API edits are authoritative across restarts.
+	perDBYAMLOverrides map[string]map[string]string
+}
+
+// SetPerDBYAMLOverrides supplies the yaml-declared per-database override map
+// (loaded from nornicdb.yaml's `databases:` section). Must be called before
+// the system database is opened so the seeded values land before any
+// per-DB resolver consults the store. Safe to call with nil — equivalent
+// to "no yaml overrides".
+func (s *Server) SetPerDBYAMLOverrides(overrides map[string]map[string]string) {
+	s.perDBYAMLOverrides = overrides
 }
 
 // ensureSearchBuildStartedForKnownDatabases reconciles search-service startup for
@@ -1640,7 +1654,12 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			s.roleEntitlementsStore = roleEntitlementsStore
 		}
 		dbConfigStore := dbconfig.NewStore(systemStorage)
-		if loadErr := dbConfigStore.Load(ctx); loadErr != nil {
+		// Seed yaml-declared per-DB overrides on first boot. After the
+		// first successful seed, admin-API edits are authoritative across
+		// restarts (LoadWithYAMLDefaults skips keys already in the store).
+		// Falls back to plain Load when no yaml overrides are present.
+		yamlOverrides := s.perDBYAMLOverrides
+		if loadErr := dbConfigStore.LoadWithYAMLDefaults(ctx, yamlOverrides); loadErr != nil {
 			s.log.Warn("failed to load per-DB config store", "subsystem", "dbconfig", "error", loadErr)
 		} else {
 			s.dbConfigStore = dbConfigStore

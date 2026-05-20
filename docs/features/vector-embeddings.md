@@ -328,8 +328,47 @@ result, _ := db.ExecuteCypher(ctx, `
 3. Use embedding cache
 4. Consider local GGUF models
 
+## Disabling vector search per database
+
+The per-database flag `NORNICDB_SEARCH_VECTOR_ENABLED` (default `true`) is the **strongest** memory-pressure lever — it prevents the in-memory ANN substrate from being populated at all, even when embeddings exist on disk.
+
+### Distinct from `NORNICDB_EMBEDDING_ENABLED`
+
+| Flag                              | Stops the embed worker? | Loads existing embeddings into RAM? | Vector queries work?   |
+| --------------------------------- | :---------------------: | :---------------------------------: | :--------------------: |
+| `NORNICDB_EMBEDDING_ENABLED=true`  | no                     | yes                                  | yes                    |
+| `NORNICDB_EMBEDDING_ENABLED=false` | yes                    | **yes** (user-set vectors stay live)| yes                    |
+| `NORNICDB_SEARCH_VECTOR_ENABLED=false` | no              | **no**                               | no (returns no results)|
+
+`EMBEDDING_ENABLED=false` only stops automatic generation. User-set vectors written via `SET n.embedding = [...]`, `WITH EMBEDDING`, or external import are still durable in Badger and still iterated into the in-memory ANN substrate by today's search service. `SEARCH_VECTOR_ENABLED=false` is the stronger guarantee: those durable vectors are NOT iterated into RAM and no ANN strategy serves vector queries.
+
+### Exports-only pattern
+
+A common combination for downstream systems like Qdrant or Weaviate that keep their own vector indexes:
+
+```yaml
+memory:
+  search_vector_enabled: false  # don't load embeddings into NornicDB's ANN substrate
+embedding:
+  enabled: true                  # do generate them
+```
+
+NornicDB writes the embeddings to durable Badger storage; an external pipeline (e.g. CDC into Qdrant) consumes them. NornicDB itself never builds HNSW / IVF / GPU brute-force structures and `db.index.vector.queryNodes` returns empty results with a WARN log.
+
+### `db.index.vector.queryNodes` against a vector-disabled database
+
+Returns zero rows and emits a `WARN` log line:
+
+```
+db.index.vector.queryNodes called against vector-disabled database — returning empty result
+  subsystem=vector_search index_name=<index>
+```
+
+The query does **not** error — composite queries that gracefully handle empty vector results continue to succeed. Operators see the misconfiguration in logs.
+
 ## See Also
 
 - **[Vector Search](../user-guides/vector-search.md)** - Search guide
 - **[Hybrid Search](../user-guides/hybrid-search.md)** - RRF fusion
 - **[GPU Acceleration](gpu-acceleration.md)** - Speed up embeddings
+- **[Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control)** — control BM25 and vector indexes per database

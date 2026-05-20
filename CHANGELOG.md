@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - See `docs/latest-untagged.md` for the full untagged changelog with rationale and file cites.
 
+### Added
+
+- **Per-database search index master switches and warming triggers.** Four new keys configure BM25 fulltext and vector ANN behavior independently per database:
+  - `NORNICDB_SEARCH_BM25_ENABLED` (boolean, default `true`) — master switch for BM25 fulltext search.
+  - `NORNICDB_SEARCH_BM25_WARMING` (enum: `startup`|`lazy`, default `startup`) — eager build at boot or deferred until first query.
+  - `NORNICDB_SEARCH_VECTOR_ENABLED` (boolean, default `true`) — master switch for every vector search strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant pass-through). When false, node embeddings are NOT iterated into the in-memory ANN substrate — the strongest available memory-pressure lever.
+  - `NORNICDB_SEARCH_VECTOR_WARMING` (enum: `startup`|`lazy`, default `startup`).
+
+  Defaults reproduce today's behaviour; existing deployments need no change. Configurable via env, CLI flags (`--search-bm25-enabled`, etc.), `nornicdb.yaml` global `memory:` block, and yaml `databases:` map for per-database overrides. Runtime overrides via `PUT /admin/databases/{name}/config` always win over global defaults in **both directions** (per-DB `true` enables a globally-disabled index; per-DB `false` disables a globally-enabled one). Lazy-warming is a synchronous-wait contract: the first inbound search request from any entry point (HTTP, Bolt, GraphQL, gRPC, Cypher procedures) blocks inside `Service.EnsureWarm` until the build completes; concurrent first-readers all wait on the same `sync.Once`. The build runs in the DB's long-lived context so a request that times out during the wait does NOT abort the build.
+
+  Migration: zero. Documented in [`docs/operations/configuration.md#per-database-search-index-control`](docs/operations/configuration.md), [`docs/operations/low-memory-mode.md`](docs/operations/low-memory-mode.md), [`docs/user-guides/hybrid-search.md`](docs/user-guides/hybrid-search.md), and the openapi spec. See `docs/plans/per-database-search-index-flags-plan.md` for design context.
+
+- **`db.index.vector.queryNodes` returns empty results with WARN log on vector-disabled databases** instead of erroring. Composite Cypher pipelines that gracefully handle empty vector results continue to succeed; operators see the misconfiguration in `subsystem=vector_search` log lines.
+
+- **Qdrant gRPC bridge honors the per-DB vector master switch.** External Qdrant clients querying a database with `NORNICDB_SEARCH_VECTOR_ENABLED=false` see a deterministic structured error rather than a service whose ANN substrate isn't populated.
+
 ## [v1.1.1] - 2026-05-19
 
 Patch release focused on multi-tenant MVCC isolation, MERGE concurrency correctness, and a discoverable consumer-facing documentation surface (skills, migration scripts, unified Bolt error shape). No on-disk format changes; existing `v1.1.0` databases upgrade transparently.

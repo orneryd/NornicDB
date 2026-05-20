@@ -124,3 +124,112 @@ func TestStore_SetOverrides_UpdateAndTrimmedDbName(t *testing.T) {
 	assert.Equal(t, first.CreatedAt, second.CreatedAt)
 	assert.Equal(t, map[string]string{"K": "v2"}, store.GetOverrides("mydb"))
 }
+
+// TestLoadWithYAMLDefaults_SeedsOnFirstBoot — yaml-declared per-DB overrides
+// land in the store on first boot when no row exists for that database.
+func TestLoadWithYAMLDefaults_SeedsOnFirstBoot(t *testing.T) {
+	ctx := context.Background()
+	eng := storage.NewMemoryEngine()
+	defer eng.Close()
+	store := NewStore(eng)
+
+	yamlOverrides := map[string]map[string]string{
+		"analytics": {
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",
+		},
+	}
+	require.NoError(t, store.LoadWithYAMLDefaults(ctx, yamlOverrides))
+
+	got := store.GetOverrides("analytics")
+	require.NotNil(t, got)
+	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
+	assert.Equal(t, "lazy", got["NORNICDB_SEARCH_VECTOR_WARMING"])
+
+	// Reload — values must persist across "restart".
+	store2 := NewStore(eng)
+	require.NoError(t, store2.Load(ctx))
+	got2 := store2.GetOverrides("analytics")
+	require.NotNil(t, got2)
+	assert.Equal(t, "false", got2["NORNICDB_SEARCH_BM25_ENABLED"])
+}
+
+// TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits — once an admin has set
+// a value via SetOverrides, a subsequent LoadWithYAMLDefaults call (e.g. on
+// the next boot) MUST NOT overwrite it. Yaml is a one-time seed; admin
+// edits are authoritative across restarts.
+func TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits(t *testing.T) {
+	ctx := context.Background()
+	eng := storage.NewMemoryEngine()
+	defer eng.Close()
+
+	// Boot 1: yaml seeds initial values.
+	store1 := NewStore(eng)
+	require.NoError(t, store1.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {"NORNICDB_SEARCH_BM25_ENABLED": "false"},
+	}))
+	got := store1.GetOverrides("analytics")
+	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
+
+	// Admin flips the flag back via the admin API.
+	require.NoError(t, store1.SetOverrides(ctx, "analytics", map[string]string{
+		"NORNICDB_SEARCH_BM25_ENABLED": "true",
+	}))
+
+	// Boot 2: same yaml. Admin's true must survive.
+	store2 := NewStore(eng)
+	require.NoError(t, store2.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {"NORNICDB_SEARCH_BM25_ENABLED": "false"},
+	}))
+	got2 := store2.GetOverrides("analytics")
+	assert.Equal(t, "true", got2["NORNICDB_SEARCH_BM25_ENABLED"],
+		"admin-API edit must survive subsequent yaml-default load")
+}
+
+// TestLoadWithYAMLDefaults_FillsMissingKeysOnly — yaml can supply a key the
+// admin has never set, even when other keys for the same DB are stored.
+func TestLoadWithYAMLDefaults_FillsMissingKeysOnly(t *testing.T) {
+	ctx := context.Background()
+	eng := storage.NewMemoryEngine()
+	defer eng.Close()
+	store := NewStore(eng)
+
+	// Admin pre-set the BM25 flag.
+	require.NoError(t, store.SetOverrides(ctx, "analytics", map[string]string{
+		"NORNICDB_SEARCH_BM25_ENABLED": "true",
+	}))
+
+	// Yaml introduces a NEW key.
+	require.NoError(t, store.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false", // already set, must not clobber
+			"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",  // new, gets seeded
+		},
+	}))
+
+	got := store.GetOverrides("analytics")
+	assert.Equal(t, "true", got["NORNICDB_SEARCH_BM25_ENABLED"], "admin's value preserved")
+	assert.Equal(t, "lazy", got["NORNICDB_SEARCH_VECTOR_WARMING"], "yaml fills missing key")
+}
+
+// TestLoadWithYAMLDefaults_RejectsDisallowedKeys — the seed path applies
+// the same allow-list as the admin API; yaml typos don't get persisted.
+func TestLoadWithYAMLDefaults_RejectsDisallowedKeys(t *testing.T) {
+	ctx := context.Background()
+	eng := storage.NewMemoryEngine()
+	defer eng.Close()
+	store := NewStore(eng)
+
+	require.NoError(t, store.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {
+			"NORNICDB_NOT_A_REAL_KEY":      "anything",
+			"NORNICDB_SEARCH_BM25_ENABLED": "false",
+		},
+	}))
+
+	got := store.GetOverrides("analytics")
+	require.NotNil(t, got)
+	_, present := got["NORNICDB_NOT_A_REAL_KEY"]
+	assert.False(t, present, "disallowed key must not have been persisted")
+	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
+}

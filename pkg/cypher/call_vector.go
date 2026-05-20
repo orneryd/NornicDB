@@ -177,6 +177,18 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 		e.searchService = svc
 	}
 
+	// Per-DB master switch: when vector search is disabled for this database,
+	// queryNodes must NOT silently fail or build an in-memory index. Return
+	// an empty result with a WARN log so operators can spot the misconfig.
+	// The on-storage embedding properties are unchanged (durable in Badger);
+	// this only refuses to serve a vector-query reply.
+	if !svc.VectorEnabled() {
+		e.logger().Warn("db.index.vector.queryNodes called against vector-disabled database — returning empty result",
+			"subsystem", "vector_search",
+			"index_name", indexName)
+		return result, nil
+	}
+
 	hits, err := svc.VectorQueryNodes(ctx, queryVector, search.VectorQuerySpec{
 		IndexName:  indexName,
 		Label:      targetLabel,

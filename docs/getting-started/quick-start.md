@@ -255,6 +255,8 @@ docker run -d \
 - **[API Documentation](../api-reference/README.md)** - REST and compatibility reference
 - **[Performance Tuning](../performance/README.md)** - Optimize your setup
 
+> Search defaults: BM25 fulltext and vector ANN indexes are both **enabled** and built **at startup** for every database — today's behaviour. Multi-tenant or memory-constrained deployments can defer index builds with `--search-bm25-warming=lazy` / `--search-vector-warming=lazy` or disable indexes entirely per-database. See [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control).
+
 ---
 
 **Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**  

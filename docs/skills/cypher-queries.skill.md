@@ -601,6 +601,18 @@ The executor recognizes these specialized routes by name. If your query maps to 
 
 For the full hot-path catalog and rationale, see [`docs/performance/hot-path-query-cookbook.md`](../performance/hot-path-query-cookbook.md).
 
+## Per-database search index master switches
+
+Search-related Cypher (`db.index.vector.queryNodes`, `db.index.fulltext.queryNodes`, hybrid search via `/nornicdb/search`) can be disabled or lazy-warmed per database. Behaviour callers must handle:
+
+- Vector disabled: `db.index.vector.queryNodes` returns **zero rows** with a WARN log. The query does not error. Cypher pipelines that gracefully handle empty vector results continue to succeed.
+- Both disabled: `POST /nornicdb/search` returns 503 `search_disabled_for_database`, `retryable: false` — clients must NOT retry.
+- `warming=lazy`: first inbound search blocks synchronously while the build runs (any entry point, not just HTTP). Concurrent first-readers wait on the same build. Subsequent queries are warm.
+
+For reachability/liveness probing of a database, do NOT issue `CALL db.index.vector.queryNodes` or `POST /nornicdb/search` against a `lazy` or `*_enabled=false` database — use `GET /nornicdb/health` or `GET /admin/databases/{name}/config` instead.
+
+See [docs/operations/configuration.md#per-database-search-index-control](../operations/configuration.md#per-database-search-index-control).
+
 ## See also
 - [`nornicdb-vector-search`](vector-search.skill.md) — vector and full-text index DDL and queries.
 - [`nornicdb-rag-procedures`](rag-procedures.skill.md) — `db.retrieve`, `db.rerank`, `db.infer` for end-to-end RAG.

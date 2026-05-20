@@ -372,6 +372,51 @@ environment:
   # WAL will auto-compact every 5 minutes
 ```
 
+## Deferring search-index load with `warming=lazy`
+
+`NORNICDB_LOW_MEMORY` controls Badger cache sizes and embedder loading. The orthogonal lever for **search index load** is the per-database warming setting:
+
+- `NORNICDB_SEARCH_BM25_WARMING=lazy` — defer BM25 build until first inbound search query for that database.
+- `NORNICDB_SEARCH_VECTOR_WARMING=lazy` — defer vector index load (HNSW + IVF + brute-force substrate) until first inbound search query.
+- `NORNICDB_SEARCH_BM25_ENABLED=false` / `NORNICDB_SEARCH_VECTOR_ENABLED=false` — strongest available memory-pressure lever; the indexes are never built and node embeddings are never iterated into RAM.
+
+These can be set globally (env / CLI / yaml) **and** overridden per-database via `PUT /admin/databases/{name}/config`. Per-DB overrides win over global defaults in both directions.
+
+### Memory savings from `warming=lazy`
+
+Boot RSS is reduced by approximately:
+
+- **Vector**: `vectors_per_db × dim × 4 bytes` per lazy database (e.g. 100K vectors × 1024 dim × 4 bytes = ~400MB per DB never loaded at boot).
+- **BM25**: typically smaller — depends on corpus size and tokenization; 10-50MB per medium DB.
+- **HNSW graph**: roughly `M × 4 × vectors` bytes (M=16 default → ~64 bytes/vector connection state) on top of the vector data.
+
+### First-query latency tradeoff
+
+The first inbound search query against a lazy database **blocks synchronously while the build runs**. For a multi-million-vector database that's seconds; for a tens-of-thousands DB that's milliseconds. Concurrent first-readers all wait on the same build (only one trigger fires). Once warm, subsequent queries pay no extra cost — the index behaves identically to a `startup`-warmed index until the process restarts.
+
+### Recommended yaml shape for multi-tenant idle DBs
+
+```yaml
+# Boot only the hot database eagerly; everything else warms on demand.
+memory:
+  search_bm25_warming:   startup
+  search_vector_warming: lazy
+
+databases:
+  active_tenant_a: {}                                     # default startup
+  active_tenant_b: {}                                     # default startup
+  archive_2024:
+    NORNICDB_SEARCH_BM25_WARMING:   "lazy"
+    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+  audit_logs:
+    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false"
+```
+
+### Caveat: health checks
+
+Health/liveness probes must NOT target `/nornicdb/search` for any `warming=lazy` or `*_enabled=false` database. A probe against a lazy DB triggers the synchronous build on every probe; against a disabled DB it streams `503 search_disabled_for_database` responses that look like real failures in monitoring. Use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) for liveness signals.
+
 ## Best Practices
 
 ### Do ✅

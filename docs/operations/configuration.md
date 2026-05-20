@@ -169,6 +169,58 @@ Instance-level configuration (env, config file) is the **default** for every dat
 - **Search pipeline and query embedding:** The search pipeline must embed the **query** using the same effective config (and thus dimensions) as the **index** for that database to avoid vector dimension mismatches. The HTTP search handler uses per-database resolved config when embedding the query: it validates that the global embedder's output dimensions match the database's resolved embedding dimensions. If they differ (e.g. you set a per-DB override for embedding dimensions that does not match the global embedder), the API returns `400 Bad Request` with a clear message instead of returning empty vector results. Align global embedding dimensions with per-DB overrides, or leave per-DB embedding dimensions unset so they match global.
 - **Remote embedding providers (OpenAI, Ollama) per database:** You can set per-DB overrides for `NORNICDB_EMBEDDING_PROVIDER`, `NORNICDB_EMBEDDING_MODEL`, `NORNICDB_EMBEDDING_API_URL`, `NORNICDB_EMBEDDING_API_KEY`, and `NORNICDB_EMBEDDING_DIMENSIONS` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` (or another provider that requires a key), the **resolved** API key for that database (global default or per-DB override) is used. Ensure the effective API key is set and valid for any database that uses a provider requiring it. Ollama typically does not require an API key; per-DB URL and model work without change.
 
+### Per-database search index control
+
+Two orthogonal axes per index, four keys total. Per-DB overrides always win over the global default in **both directions**: an override of `true` turns on a globally-disabled index, an override of `false` turns off a globally-enabled one.
+
+| Key                              | Type    | Default   | Meaning                                                                                                                                                                                                                                       |
+| -------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                     |
+| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                                |
+| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever.   |
+| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                       |
+
+Behavior summary (all combinations supported):
+
+| BM25         | Vector       | First search request                                                            |
+| ------------ | ------------ | ------------------------------------------------------------------------------- |
+| on / startup | on / startup | Hybrid (today's default).                                                       |
+| on / startup | on / lazy    | Synchronous wait while vector warms; first response includes vector results.    |
+| on / lazy    | on / lazy    | Synchronous wait while both warm; first response is fully ranked.                |
+| on / startup | off / —      | Lexical-only 200.                                                               |
+| off / —      | on / startup | Vector-only 200 (HNSW falls back to random insertion order).                    |
+| off / —      | off / —      | 503 `search_disabled_for_database`, `retryable: false` — permanent.            |
+
+Configure via:
+
+- `nornicdb.yaml`: top-level `databases:` map keyed by database name (see the [yaml schema example](#yaml-databases-map)).
+- Env vars at boot: act as global defaults.
+- CLI: `--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve` set global defaults.
+- Admin API: `PUT /admin/databases/{name}/config` accepts these as per-DB overrides at runtime; flipping `enabled=true→false` triggers an immediate teardown of the affected index.
+
+Health checks **must not** target `/nornicdb/search` for `warming=lazy` or any `*_enabled=false` database — use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead. Probing search on a lazy DB triggers the build on every probe; probing a disabled DB streams 503s that look like real failures in monitoring.
+
+#### yaml databases: map
+
+```yaml
+databases:
+  hot_app_db: {}                # both indexes default (enabled, startup)
+
+  analytics:
+    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+
+  audit_logs:
+    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false"
+
+  exports_only:
+    NORNICDB_SEARCH_BM25_ENABLED:   "true"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false"  # write embeddings; never load in-process
+```
+
+The yaml `databases:` map is read into `dbconfig.Store` **only on first boot** for each `(dbName, key)` pair. Once an admin has PUT a value via `/admin/databases/{name}/config`, that value is authoritative across restarts and yaml changes for the same key are ignored. Operators who want yaml to win again can either delete the `_DbConfig` node from the system database or PUT the desired value back via the admin API.
+
 ### Server Settings
 
 ```yaml

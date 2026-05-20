@@ -685,6 +685,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("creating server: %w", err)
 	}
+	// Pass the yaml-declared `databases:` map through so the server can
+	// seed dbconfig.Store on first boot before any per-DB resolver fires.
+	if cfg != nil && len(cfg.PerDBOverrides) > 0 {
+		httpServer.SetPerDBYAMLOverrides(cfg.PerDBOverrides)
+	}
 
 	// HTTP server START is deferred until AFTER observability.New runs
 	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02

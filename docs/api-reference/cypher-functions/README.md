@@ -503,6 +503,27 @@ LIMIT 10
 
 ---
 
+## `db.index.vector.queryNodes` — disabled-database behaviour
+
+When the procedure is called against a database whose `NORNICDB_SEARCH_VECTOR_ENABLED` is `false` (per-DB or global, with the per-DB override winning):
+
+- The procedure returns **zero rows** — the same shape as a query against an empty index.
+- A `WARN`-level log line is emitted with `subsystem=vector_search` and the `index_name`:
+  ```
+  db.index.vector.queryNodes called against vector-disabled database — returning empty result
+  ```
+- The Cypher query as a whole **does not error** — composite queries that gracefully handle empty vector results continue to succeed. This makes the procedure safe to call from query plans that may target either vector-enabled or vector-disabled databases.
+
+To switch behaviour, flip the master switch via:
+
+```bash
+curl -X PUT http://localhost:7474/admin/databases/<db>/config \
+  -H "Content-Type: application/json" \
+  -d '{"overrides": {"NORNICDB_SEARCH_VECTOR_ENABLED": "true"}}'
+```
+
+See [Per-Database Search Index Flags](../../operations/configuration.md#per-database-search-index-control).
+
 ## References & Further Reading
 
 ### Memory Models
