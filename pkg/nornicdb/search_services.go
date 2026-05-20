@@ -137,6 +137,14 @@ type DatabaseSearchStatus struct {
 	TotalNodes      int64   `json:"total_nodes,omitempty"`
 	RateNodesPerSec float64 `json:"rate_nodes_per_sec,omitempty"`
 	ETASeconds      int64   `json:"eta_seconds,omitempty"`
+	// BM25Enabled / VectorEnabled mirror the resolved per-DB master switches.
+	// Search handler uses these to decide between 200-with-empty-half,
+	// 503 search_disabled_for_database (both off), and the lazy-trigger 503.
+	BM25Enabled   bool `json:"bm25_enabled"`
+	VectorEnabled bool `json:"vector_enabled"`
+	// LazyTriggerNeeded is true when at least one resolved-as-enabled index
+	// is configured warming=lazy and has not yet started building.
+	LazyTriggerNeeded bool `json:"lazy_trigger_needed,omitempty"`
 }
 
 func splitQualifiedID(id string) (dbName string, local string, ok bool) {
@@ -252,6 +260,20 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	svc := search.NewServiceWithDimensionsAndBM25Engine(storageEngine, dims, bm25Engine)
 	svc.SetDefaultMinSimilarity(minSim)
+	// Per-DB master switches: pull from the resolver and seed the service.
+	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.
+	bm25On, vectorOn, _, _ := db.resolveSearchFlags(dbName)
+	svc.SetIndexFlags(bm25On, vectorOn)
+	// When both indexes are disabled, mark ready immediately so any
+	// concurrent indexNodeFromEvent / pendingFlush goroutine that races
+	// the boot orchestrator does NOT call startSearchIndexBuild — its
+	// GetBuildProgress.Ready check will see true and skip the build.
+	// Without this, a write event firing between getOrCreateSearchService
+	// and EnsureSearchIndexesBuilt's MarkReadyDisabled call would trigger
+	// a real BuildIndexes run before the gate could land.
+	if !bm25On && !vectorOn {
+		svc.MarkReadyDisabled()
+	}
 	persistSearchIndexesEnabled := db.config != nil && db.config.Database.DataDir != "" && db.config.Database.PersistSearchIndexes
 	svc.SetPersistenceEnabled(persistSearchIndexesEnabled)
 
@@ -396,23 +418,52 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
+	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
 	db.searchServicesMu.RLock()
 	entry, ok := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
 	if !ok || entry == nil || entry.svc == nil {
-		return DatabaseSearchStatus{Ready: false, Building: false, Initialized: false, Strategy: "unknown", Phase: "not_initialized", ETASeconds: -1}
+		// Service not yet created. If both indexes are enabled+startup, the
+		// boot loop will have already created the entry, so a missing entry
+		// here typically means deferred (lazy) or disabled. Compute the
+		// LazyTriggerNeeded signal so the search handler can fire the trigger.
+		lazyNeeded := false
+		bothOff := !bm25On && !vectorOn
+		if !bothOff {
+			lazyNeeded = (bm25On && bm25Warming == "lazy") || (vectorOn && vectorWarming == "lazy")
+		}
+		return DatabaseSearchStatus{
+			Ready:             false,
+			Building:          false,
+			Initialized:       false,
+			Strategy:          "unknown",
+			Phase:             "not_initialized",
+			ETASeconds:        -1,
+			BM25Enabled:       bm25On,
+			VectorEnabled:     vectorOn,
+			LazyTriggerNeeded: lazyNeeded,
+		}
 	}
 	p := entry.svc.GetBuildProgress()
+	// The lazy-trigger signal flips on once the service is created but the
+	// build hasn't started. After ForceSearchIndexBuild fires, building=true
+	// and lazyTrigger flips off until restart.
+	lazyNeeded := !p.Ready && !p.Building &&
+		((bm25On && bm25Warming == "lazy") || (vectorOn && vectorWarming == "lazy")) &&
+		!(bm25On == false && vectorOn == false)
 	return DatabaseSearchStatus{
-		Ready:           p.Ready,
-		Building:        p.Building,
-		Initialized:     true,
-		Strategy:        entry.svc.CurrentStrategy(),
-		Phase:           p.Phase,
-		ProcessedNodes:  p.ProcessedNodes,
-		TotalNodes:      p.TotalNodes,
-		RateNodesPerSec: p.RateNodesPerSec,
-		ETASeconds:      p.ETASeconds,
+		Ready:             p.Ready,
+		Building:          p.Building,
+		Initialized:       true,
+		Strategy:          entry.svc.CurrentStrategy(),
+		Phase:             p.Phase,
+		ProcessedNodes:    p.ProcessedNodes,
+		TotalNodes:        p.TotalNodes,
+		RateNodesPerSec:   p.RateNodesPerSec,
+		ETASeconds:        p.ETASeconds,
+		BM25Enabled:       bm25On,
+		VectorEnabled:     vectorOn,
+		LazyTriggerNeeded: lazyNeeded,
 	}
 }
 
@@ -555,10 +606,29 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 
 // EnsureSearchIndexesBuilt ensures the per-database search indexes are built exactly once.
 // If the service doesn’t exist yet, it is created (using storageEngine if provided).
+// Honours the per-DB master switches: when both are off, the service is marked
+// ready (no-op stub for BM25, vector flag guard) and no build runs. When both
+// are warming=lazy, the build is deferred to the first inbound search query.
 func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	svc, err := db.getOrCreateSearchService(dbName, storageEngine)
 	if err != nil {
 		return nil, err
+	}
+	if dbName == "" {
+		dbName = db.defaultDatabaseName()
+	}
+	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
+	if !bm25On && !vectorOn {
+		// Both indexes off — mark ready (handler returns 503
+		// search_disabled_for_database upstream) and skip the build.
+		svc.MarkReadyDisabled()
+		return svc, nil
+	}
+	if (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy") {
+		// All enabled indexes are configured warming=lazy — defer the
+		// build to the first inbound search query (handler will call
+		// ForceSearchIndexBuild).
+		return svc, nil
 	}
 	if err := db.ensureSearchIndexesBuilt(ctx, dbName); err != nil {
 		return svc, err
@@ -581,7 +651,10 @@ func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, st
 }
 
 // EnsureSearchIndexesBuildStarted starts per-database search indexing if not already started
-// and returns immediately without waiting for completion.
+// and returns immediately without waiting for completion. Honours the per-DB
+// warming triggers: when both BM25 and vector are configured warming=lazy, the
+// build is deferred until ForceSearchIndexBuild is called (e.g., from the
+// search handler on first inbound query).
 func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
@@ -596,12 +669,55 @@ func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine stora
 	if entry == nil {
 		return svc, nil
 	}
+	// Lazy-warming check: if both indexes are configured warming=lazy, defer
+	// the boot-time build. The search handler triggers the build on the first
+	// inbound query via ForceSearchIndexBuild. If at least one index is
+	// startup-warmed, start the build now (the disabled / lazy index simply
+	// doesn't materialize during BuildIndexes).
+	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
+	bothOff := !bm25On && !vectorOn
+	bothLazy := (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy")
+	if bothOff {
+		// Mark service "ready" (handler short-circuits to 503 anyway) so
+		// status probes don't report perpetual building.
+		svc.MarkReadyDisabled()
+		return svc, nil
+	}
+	if bothLazy {
+		// Defer the build to first-query trigger.
+		return svc, nil
+	}
 	ctx := db.buildCtx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	db.startSearchIndexBuild(entry, ctx)
 	return svc, nil
+}
+
+// ForceSearchIndexBuild triggers a build for the given database irrespective
+// of the warming setting. Used by the search handler on the first inbound
+// query against a database whose indexes are configured warming=lazy.
+// Idempotent: if a build is already running or finished, this is a no-op.
+func (db *DB) ForceSearchIndexBuild(dbName string, storageEngine storage.Engine) error {
+	if dbName == "" {
+		dbName = db.defaultDatabaseName()
+	}
+	if _, err := db.getOrCreateSearchService(dbName, storageEngine); err != nil {
+		return err
+	}
+	db.searchServicesMu.RLock()
+	entry := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if entry == nil {
+		return nil
+	}
+	ctx := db.buildCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db.startSearchIndexBuild(entry, ctx)
+	return nil
 }
 
 func (db *DB) indexNodeFromEvent(node *storage.Node) {

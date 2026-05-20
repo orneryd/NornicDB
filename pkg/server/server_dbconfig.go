@@ -210,9 +210,14 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if body.Overrides == nil {
 		body.Overrides = make(map[string]string)
 	}
-	for key := range body.Overrides {
+	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "disallowed or unknown key: "+key)
+			return
+		}
+		if ok, allowed := dbconfig.IsValidEnumValue(key, value); !ok {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest",
+				"invalid value for "+key+": got "+value+" (allowed: "+allowed+")")
 			return
 		}
 	}

@@ -498,6 +498,25 @@ type MemoryConfig struct {
 	// Default: 0.0 (let RRF ranking handle relevance filtering)
 	// Env: NORNICDB_SEARCH_MIN_SIMILARITY
 	SearchMinSimilarity float64
+	// SearchBM25Enabled is the global default for whether BM25 fulltext search
+	// is enabled. Per-database overrides via dbconfig.Store always win.
+	// Env: NORNICDB_SEARCH_BM25_ENABLED (default: true)
+	SearchBM25Enabled bool
+	// SearchBM25Warming is the global default trigger for BM25 build:
+	// "startup" builds at boot (today's behaviour) or "lazy" defers to the
+	// first inbound search query for the database.
+	// Env: NORNICDB_SEARCH_BM25_WARMING (default: startup)
+	SearchBM25Warming string
+	// SearchVectorEnabled is the global default for whether vector search is
+	// enabled. When false, no ANN strategy (HNSW, IVF-HNSW, brute-force, GPU,
+	// Metal, Qdrant pass-through) is built or queryable for that database;
+	// node embeddings are not iterated into RAM. Per-database overrides win.
+	// Env: NORNICDB_SEARCH_VECTOR_ENABLED (default: true)
+	SearchVectorEnabled bool
+	// SearchVectorWarming is the global default trigger for vector index build:
+	// "startup" or "lazy". See SearchBM25Warming.
+	// Env: NORNICDB_SEARCH_VECTOR_WARMING (default: startup)
+	SearchVectorWarming string
 	// ModelsDir is the directory containing local GGUF models
 	// Env: NORNICDB_MODELS_DIR (default: ./models)
 	ModelsDir string
@@ -1297,6 +1316,16 @@ type YAMLConfig struct {
 		MinSimilarity float64 `yaml:"min_similarity"`
 	} `yaml:"embedding"`
 
+	// Per-database search index master switches and warming triggers
+	// (global defaults; per-DB overrides via dbconfig.Store always win).
+	// `enabled`: bool, default true. `warming`: "startup"|"lazy", default startup.
+	Search struct {
+		BM25Enabled   *bool  `yaml:"bm25_enabled"`
+		BM25Warming   string `yaml:"bm25_warming"`
+		VectorEnabled *bool  `yaml:"vector_enabled"`
+		VectorWarming string `yaml:"vector_warming"`
+	} `yaml:"search"`
+
 	// Memory/Decay configuration
 	Memory struct {
 		DecayEnabled                 bool    `yaml:"decay_enabled"`
@@ -1602,7 +1631,13 @@ func LoadDefaults() *Config {
 	config.Memory.DecayInterval = 2 * time.Second
 	config.Memory.AccessFlushBufferSize = 10000
 	config.Memory.VisibilityThreshold = 0.05
-	config.Memory.EmbeddingEnabled = false    // Disabled by default - opt-in feature
+	config.Memory.EmbeddingEnabled = false // Disabled by default - opt-in feature
+	// Per-DB search index master switches: defaults reproduce today's behaviour
+	// (both indexes enabled, both built eagerly at startup).
+	config.Memory.SearchBM25Enabled = true
+	config.Memory.SearchBM25Warming = "startup"
+	config.Memory.SearchVectorEnabled = true
+	config.Memory.SearchVectorWarming = "startup"
 	config.Memory.EmbeddingProvider = "local" // Use local GGUF models by default
 	config.Memory.EmbeddingModel = "bge-m3"
 	config.Memory.EmbeddingAPIURL = "http://localhost:11434"
@@ -2110,6 +2145,25 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnv("NORNICDB_SEARCH_MIN_SIMILARITY", ""); v != "" {
 		config.Memory.SearchMinSimilarity = getEnvFloat("NORNICDB_SEARCH_MIN_SIMILARITY", 0.5)
+	}
+	// Per-database search index master switches and warming triggers (global
+	// defaults; per-DB overrides via dbconfig.Store always win). When unset,
+	// reproduce today's behaviour: enabled, build at startup.
+	config.Memory.SearchBM25Enabled = true
+	if v := getEnv("NORNICDB_SEARCH_BM25_ENABLED", ""); v != "" {
+		config.Memory.SearchBM25Enabled = v == "true" || v == "1"
+	}
+	config.Memory.SearchBM25Warming = "startup"
+	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_WARMING", ""))); v == "lazy" || v == "startup" {
+		config.Memory.SearchBM25Warming = v
+	}
+	config.Memory.SearchVectorEnabled = true
+	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
+		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
+	}
+	config.Memory.SearchVectorWarming = "startup"
+	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_VECTOR_WARMING", ""))); v == "lazy" || v == "startup" {
+		config.Memory.SearchVectorWarming = v
 	}
 	if v := getEnv("NORNICDB_MODELS_DIR", ""); v != "" {
 		config.Memory.ModelsDir = v
@@ -2813,6 +2867,20 @@ func LoadFromFile(configPath string) (*Config, error) {
 		yamlCfg.Auth.JWTSecret != "[stored-in-keychain]" &&
 		!strings.Contains(yamlCfg.Auth.JWTSecret, "stored-in-keychain") {
 		config.Auth.JWTSecret = yamlCfg.Auth.JWTSecret
+	}
+
+	// === Per-DB search index master switches and warming triggers ===
+	if yamlCfg.Search.BM25Enabled != nil {
+		config.Memory.SearchBM25Enabled = *yamlCfg.Search.BM25Enabled
+	}
+	if v := strings.TrimSpace(strings.ToLower(yamlCfg.Search.BM25Warming)); v == "lazy" || v == "startup" {
+		config.Memory.SearchBM25Warming = v
+	}
+	if yamlCfg.Search.VectorEnabled != nil {
+		config.Memory.SearchVectorEnabled = *yamlCfg.Search.VectorEnabled
+	}
+	if v := strings.TrimSpace(strings.ToLower(yamlCfg.Search.VectorWarming)); v == "lazy" || v == "startup" {
+		config.Memory.SearchVectorWarming = v
 	}
 
 	// === Embedding Settings ===

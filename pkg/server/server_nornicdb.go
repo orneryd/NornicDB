@@ -362,13 +362,48 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Do not warm/build search on first request. Search readiness is a startup concern.
-	// If not ready yet, return 503 immediately (before query embedding work).
+	// Per-DB master switches: short-circuit before any build/embedding work.
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
+	// Both indexes off → permanent 503, not retryable.
+	if !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":          "search is disabled for this database",
+			"database":       dbName,
+			"bm25_enabled":   false,
+			"vector_enabled": false,
+			"retryable":      false,
+			"http_code":      http.StatusServiceUnavailable,
+			"request_status": "search_disabled_for_database",
+		})
+		return
+	}
+	// Lazy trigger: at least one enabled index is configured warming=lazy and
+	// hasn't started building. Kick off the build and 503 with a distinct
+	// request_status so clients distinguish "I just woke this DB up" from
+	// "this DB is mid-build for some other reason".
+	if searchStatus.LazyTriggerNeeded {
+		if err := s.db.ForceSearchIndexBuild(dbName, storageEngine); err != nil {
+			s.log.Warn("search: lazy trigger failed", "db", dbName, "error", err)
+		}
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":          "search index is warming on first request",
+			"database":       dbName,
+			"bm25_enabled":   searchStatus.BM25Enabled,
+			"vector_enabled": searchStatus.VectorEnabled,
+			"search_status":  searchStatus,
+			"retryable":      true,
+			"http_code":      http.StatusServiceUnavailable,
+			"request_status": "search_index_warming_lazy",
+		})
+		return
+	}
+	// Existing "still building" 503 path. Search readiness is a startup concern.
 	if !searchStatus.Ready {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          search.ErrSearchIndexBuilding.Error(),
 			"database":       dbName,
+			"bm25_enabled":   searchStatus.BM25Enabled,
+			"vector_enabled": searchStatus.VectorEnabled,
 			"search_status":  searchStatus,
 			"retryable":      true,
 			"http_code":      http.StatusServiceUnavailable,

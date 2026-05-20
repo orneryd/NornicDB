@@ -1653,6 +1653,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 				return r.EmbeddingDimensions, r.SearchMinSimilarity, r.BM25Engine
 			})
+			db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
+				overrides := dbConfigStore.GetOverrides(dbName)
+				r := dbconfig.Resolve(globalConfig, overrides)
+				if r == nil {
+					return true, true, "startup", "startup"
+				}
+				return r.BM25Enabled, r.VectorEnabled, r.BM25Warming, r.VectorWarming
+			})
 			// Per-DB embedder registry: resolve embed config per database for EmbedQueryForDB.
 			db.SetEmbedConfigForDB(func(dbName string) (*embed.Config, error) {
 				overrides := dbConfigStore.GetOverrides(dbName)

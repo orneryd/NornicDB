@@ -212,6 +212,12 @@ type DB struct {
 	dbConfigResolverMu sync.RWMutex
 	dbConfigResolver   DbConfigResolver
 
+	// Per-database search index master switches + warming triggers. When the
+	// resolver is unset, every database defaults to (true, true, startup,
+	// startup) — today's behaviour. Server wires this from dbconfig.Resolve.
+	dbSearchFlagsResolverMu sync.RWMutex
+	dbSearchFlagsResolver   DbSearchFlagsResolver
+
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
@@ -238,6 +244,16 @@ type DB struct {
 // When set, getOrCreateSearchService uses these instead of the global db.config values.
 // Return ("", 0, 0) values to use global defaults for that DB.
 type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string)
+
+// DbSearchFlagsResolver returns the per-database search index master switches
+// and warming triggers. Defaults reproduce today's behaviour: bm25Enabled=true,
+// vectorEnabled=true, both warming="startup".
+//
+// When set, getOrCreateSearchService and the boot orchestrator consult it to
+// decide whether to build, lazy-defer, or skip each index per database.
+//
+// Returning an empty `bm25Warming` or `vectorWarming` is treated as "startup".
+type DbSearchFlagsResolver func(dbName string) (bm25Enabled, vectorEnabled bool, bm25Warming, vectorWarming string)
 
 // embedConfigKey returns a stable key for the embedder registry from an embed config.
 func embedConfigKey(cfg *embed.Config) string {
@@ -1235,9 +1251,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 		// Build search indexes (BM25 + vector) for each database in parallel so a large
 		// database warmup doesn't block smaller databases from becoming ready.
+		// Track three outcomes so the summary log is accurate:
+		//   - built:    indexes were actually constructed
+		//   - skipped:  both flags off → no build ran (no_build)
+		//   - deferred: warming=lazy → build deferred to first query
 		type buildResult struct {
-			dbName string
-			err    error
+			dbName  string
+			err     error
+			outcome string // "built" | "skipped" | "deferred"
 		}
 		results := make(chan buildResult, len(dbNames))
 		var buildWg sync.WaitGroup
@@ -1253,16 +1274,27 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if dbName == defaultDBName {
 					storageEngine = db.storage
 				}
-				log.Printf("🔍 Building BM25 + vector indexes for database %s...", dbName)
+				bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)
+				outcome := "built"
+				switch {
+				case !bm25On && !vectorOn:
+					log.Printf("🔍 Search disabled for database %s — skipping BM25 + vector index build", dbName)
+					outcome = "skipped"
+				case (!bm25On || bm25Warming == "lazy") && (!vectorOn || vectorWarming == "lazy"):
+					log.Printf("🔍 Search warming=lazy for database %s — deferring BM25 + vector index build to first query", dbName)
+					outcome = "deferred"
+				default:
+					log.Printf("🔍 Building BM25 + vector indexes for database %s (bm25=%v vector=%v)...", dbName, bm25On, vectorOn)
+				}
 				_, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
-				results <- buildResult{dbName: dbName, err: err}
+				results <- buildResult{dbName: dbName, err: err, outcome: outcome}
 			}(dbName)
 		}
 		go func() {
 			buildWg.Wait()
 			close(results)
 		}()
-		var built, failed int
+		var built, skipped, deferred, failed int
 		for res := range results {
 			if res.err != nil {
 				if ctx.Err() != nil {
@@ -1273,15 +1305,40 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				failed++
 				continue
 			}
-			built++
-			if len(dbNames) > 1 {
-				log.Printf("✅ BM25 + vector indexes built for db %s", res.dbName)
+			switch res.outcome {
+			case "skipped":
+				skipped++
+				if len(dbNames) > 1 {
+					log.Printf("✅ Search disabled for db %s — no build ran", res.dbName)
+				}
+			case "deferred":
+				deferred++
+				if len(dbNames) > 1 {
+					log.Printf("✅ Search warming=lazy for db %s — build deferred to first query", res.dbName)
+				}
+			default:
+				built++
+				if len(dbNames) > 1 {
+					log.Printf("✅ BM25 + vector indexes built for db %s", res.dbName)
+				}
 			}
 		}
-		if built > 0 && len(dbNames) == 1 {
+		// Summary line. Only print "indexes ready" when at least one DB actually
+		// built; otherwise the line would be misleading (the user explicitly
+		// disabled or deferred all of them).
+		switch {
+		case len(dbNames) == 1 && built == 1:
 			log.Printf("✅ BM25 + vector search indexes ready (default database)")
-		} else if built > 0 {
+		case built > 0 && (skipped+deferred) > 0:
+			log.Printf("✅ Search lifecycle: %d built, %d skipped (disabled), %d deferred (lazy)", built, skipped, deferred)
+		case built > 0:
 			log.Printf("✅ BM25 + vector search indexes ready for %d database(s)", built)
+		case skipped > 0 && deferred == 0:
+			log.Printf("ℹ️  Search disabled for all %d database(s) — no indexes built", skipped)
+		case deferred > 0 && skipped == 0:
+			log.Printf("ℹ️  Search warming=lazy for all %d database(s) — indexes deferred to first query", deferred)
+		case skipped+deferred > 0:
+			log.Printf("ℹ️  Search lifecycle: %d skipped (disabled), %d deferred (lazy) — no indexes built", skipped, deferred)
 		}
 		if failed > 0 {
 			log.Printf("⚠️  Search index build failed for %d database(s)", failed)
@@ -1933,6 +1990,63 @@ func (db *DB) SetDbConfigResolver(resolver DbConfigResolver) {
 	db.dbConfigResolverMu.Lock()
 	defer db.dbConfigResolverMu.Unlock()
 	db.dbConfigResolver = resolver
+}
+
+// SetDbSearchFlagsResolver sets an optional resolver for per-database search
+// index master switches and warming triggers. When set, the boot orchestrator
+// and getOrCreateSearchService consult it to decide whether to build, lazy-
+// defer, or skip each index per database. Call with nil to use global defaults
+// (today's behaviour).
+func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
+	db.dbSearchFlagsResolverMu.Lock()
+	defer db.dbSearchFlagsResolverMu.Unlock()
+	db.dbSearchFlagsResolver = resolver
+}
+
+// resolveSearchFlags returns the per-database search index master switches
+// and warming triggers. Resolution order:
+//  1. The DbSearchFlagsResolver (server-wired, sees per-DB overrides).
+//  2. Fallback to db.config.Memory.Search* (the global defaults set via
+//     yaml/env/CLI). This branch is what the bench script and any direct
+//     consumer of DefaultConfig + Open() relies on — it ensures that
+//     `--search-bm25-enabled=false` on the CLI actually disables BM25
+//     for the default database WITHOUT requiring the per-DB resolver
+//     from pkg/server to be wired up.
+//  3. Final fallback: (true, true, startup, startup) — today's behaviour.
+//
+// Warming values normalised to "startup" or "lazy" — anything else (empty,
+// typo) is treated as "startup".
+func (db *DB) resolveSearchFlags(dbName string) (bm25Enabled, vectorEnabled bool, bm25Warming, vectorWarming string) {
+	db.dbSearchFlagsResolverMu.RLock()
+	resolver := db.dbSearchFlagsResolver
+	db.dbSearchFlagsResolverMu.RUnlock()
+	if resolver != nil {
+		bm25Enabled, vectorEnabled, bm25Warming, vectorWarming = resolver(dbName)
+		if bm25Warming != "lazy" {
+			bm25Warming = "startup"
+		}
+		if vectorWarming != "lazy" {
+			vectorWarming = "startup"
+		}
+		return
+	}
+	// Resolver not wired — consult global config defaults. This is the
+	// path the bench script + any DefaultConfig-based caller hits.
+	bm25Enabled = true
+	vectorEnabled = true
+	bm25Warming = "startup"
+	vectorWarming = "startup"
+	if db.config != nil {
+		bm25Enabled = db.config.Memory.SearchBM25Enabled
+		vectorEnabled = db.config.Memory.SearchVectorEnabled
+		if w := db.config.Memory.SearchBM25Warming; w == "lazy" {
+			bm25Warming = "lazy"
+		}
+		if w := db.config.Memory.SearchVectorWarming; w == "lazy" {
+			vectorWarming = "lazy"
+		}
+	}
+	return
 }
 
 // VectorIndexDimensions returns the actual dimensions of the search service's vector index.

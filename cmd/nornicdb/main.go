@@ -89,6 +89,13 @@ Features:
 	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), "Embedding cache size (0=disabled, default 10000)")
 	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), "GPU layers for local provider: -1=auto, 0=CPU only")
 	serveCmd.Flags().Bool("embedding-enabled", getEnvBool("NORNICDB_EMBEDDING_ENABLED", false), "Enable embedding generation (semantic search). Default is off unless enabled via config/env.")
+	// Per-database search index master switches and warming triggers (global
+	// defaults; per-DB overrides via /admin/databases/{name}/config always win).
+	// Defaults reproduce today's behaviour: both indexes enabled, both built at startup.
+	serveCmd.Flags().Bool("search-bm25-enabled", getEnvBool("NORNICDB_SEARCH_BM25_ENABLED", true), "Enable BM25 fulltext search (default: true). Per-DB override via /admin/databases/{name}/config wins.")
+	serveCmd.Flags().String("search-bm25-warming", getEnvStr("NORNICDB_SEARCH_BM25_WARMING", "startup"), "BM25 build trigger: startup (build at boot) or lazy (defer to first inbound search query). Default: startup.")
+	serveCmd.Flags().Bool("search-vector-enabled", getEnvBool("NORNICDB_SEARCH_VECTOR_ENABLED", true), "Enable vector (ANN) search across all strategies (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, no node embeddings load into RAM. Per-DB override wins.")
+	serveCmd.Flags().String("search-vector-warming", getEnvStr("NORNICDB_SEARCH_VECTOR_WARMING", "startup"), "Vector build trigger: startup or lazy. Default: startup.")
 	serveCmd.Flags().String("gpu-backend", getEnvStr("NORNICDB_GPU_BACKEND", ""), "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)")
 	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
 	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
@@ -311,6 +318,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Allow explicit CLI override for embedding cache.
 	if cmd.Flags().Changed("embedding-cache") {
 		cfg.Memory.EmbeddingCacheSize = embeddingCache
+	}
+	// Per-DB search index master switches: CLI flag overrides yaml/env-loaded
+	// defaults so operators can flip them at boot without editing yaml.
+	if cmd.Flags().Changed("search-bm25-enabled") {
+		v, _ := cmd.Flags().GetBool("search-bm25-enabled")
+		cfg.Memory.SearchBM25Enabled = v
+	}
+	if cmd.Flags().Changed("search-bm25-warming") {
+		v, _ := cmd.Flags().GetString("search-bm25-warming")
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "lazy":
+			cfg.Memory.SearchBM25Warming = "lazy"
+		default:
+			cfg.Memory.SearchBM25Warming = "startup"
+		}
+	}
+	if cmd.Flags().Changed("search-vector-enabled") {
+		v, _ := cmd.Flags().GetBool("search-vector-enabled")
+		cfg.Memory.SearchVectorEnabled = v
+	}
+	if cmd.Flags().Changed("search-vector-warming") {
+		v, _ := cmd.Flags().GetString("search-vector-warming")
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "lazy":
+			cfg.Memory.SearchVectorWarming = "lazy"
+		default:
+			cfg.Memory.SearchVectorWarming = "startup"
+		}
 	}
 
 	// Override with CLI flags if provided

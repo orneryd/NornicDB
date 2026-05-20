@@ -185,6 +185,27 @@ func newBM25Index(engine string) (bm25Index, string) {
 	}
 }
 
+// disabledBM25Index is a zero-cost no-op bm25Index used when BM25 is disabled
+// for a database. Every method is safe to call from the existing BuildIndexes
+// and IndexNode code paths; reads return empty, writes are dropped, Count()
+// returns 0 so the "skip rebuild if already loaded" path treats us as empty.
+// Save/Load are no-ops so persistence checkpointing doesn't blow up.
+type disabledBM25Index struct{}
+
+func (disabledBM25Index) Index(string, string)                   {}
+func (disabledBM25Index) Remove(string)                          {}
+func (disabledBM25Index) Search(string, int) []indexResult       { return nil }
+func (disabledBM25Index) PhraseSearch(string, int) []indexResult { return nil }
+func (disabledBM25Index) GetDocument(string) (string, bool)      { return "", false }
+func (disabledBM25Index) LexicalSeedDocIDs(int, int) []string    { return nil }
+func (disabledBM25Index) Clear()                                 {}
+func (disabledBM25Index) Count() int                             { return 0 }
+func (disabledBM25Index) Save(string) error                      { return nil }
+func (disabledBM25Index) SaveNoCopy(string) error                { return nil }
+func (disabledBM25Index) Load(string) error                      { return nil }
+func (disabledBM25Index) IsDirty() bool                          { return false }
+func (disabledBM25Index) IndexBatch([]FulltextBatchEntry)        {}
+
 var searchablePropertiesSet = func() map[string]struct{} {
 	out := make(map[string]struct{}, len(SearchableProperties))
 	for _, p := range SearchableProperties {
@@ -521,6 +542,15 @@ type Service struct {
 	vectorIndexPath   string
 	hnswIndexPath     string
 
+	// Per-database master switches (default: both true). Set via SetIndexFlags.
+	// When bm25Enabled=false, BuildIndexes skips the BM25 load path and IndexNode
+	// is a no-op for fulltext mutations. When vectorEnabled=false, BuildIndexes
+	// skips the entire vector iteration + ANN build (no node embeddings are
+	// loaded into RAM, no HNSW/IVF-HNSW/GPU brute), and IndexNode is a no-op
+	// for vector mutations.
+	bm25Enabled   atomic.Bool
+	vectorEnabled atomic.Bool
+
 	// Debounced persist: after IndexNode/RemoveNode we schedule a write to disk after an idle delay.
 	persistMu        sync.Mutex
 	persistRunMu     sync.Mutex
@@ -717,8 +747,58 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 	svc.persistEnabled.Store(false)
 	svc.buildPhase.Store("idle")
 	svc.buildPhaseUnix.Store(time.Now().Unix())
+	// Index master switches default to enabled — disabling is opt-in via
+	// SetIndexFlags from the caller (typically getOrCreateSearchService after
+	// consulting per-DB config).
+	svc.bm25Enabled.Store(true)
+	svc.vectorEnabled.Store(true)
 	log.Printf("📇 Search: BM25 engine selected: %s", selectedBM25Engine)
 	return svc
+}
+
+// MarkReadyDisabled marks the service ready without doing any build work.
+// Used when both BM25 and vector are disabled for this database — readiness
+// probes (e.g. searchStatus.Ready) should report "ready" so callers don't
+// perpetually see "building"; the search handler still 503s with
+// search_disabled_for_database upstream of the readiness check.
+//
+// Note: vectorIndex is left as the empty VectorIndex from construction so
+// the dozens of `s.vectorIndex.GetDimensions()` and similar calls don't
+// panic. The flag guards in addVectorLocked, IndexNode, and the search
+// path are what actually disable behaviour. Replacing fulltextIndex with
+// the no-op stub is safe because the bm25Index interface is small and all
+// call sites go through it.
+func (s *Service) MarkReadyDisabled() {
+	s.fulltextIndex = disabledBM25Index{}
+	s.setBuildPhase("ready")
+	s.ready.Store(true)
+}
+
+// SetIndexFlags configures whether BM25 and vector search are enabled for
+// this service. Called once at construction time from the per-DB resolver
+// path; subsequent calls (e.g. from runtime admin-API flag flips) tear down
+// the affected index when flipped from true → false. Returns true if either
+// flag changed value, so the caller can decide whether to ResetSearchService.
+func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
+	prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
+	prevVec := s.vectorEnabled.Swap(vectorEnabled)
+	return prevBM25 != bm25Enabled || prevVec != vectorEnabled
+}
+
+// BM25Enabled reports whether BM25 search is enabled for this service.
+func (s *Service) BM25Enabled() bool { return s.bm25Enabled.Load() }
+
+// VectorEnabled reports whether vector search is enabled for this service.
+func (s *Service) VectorEnabled() bool { return s.vectorEnabled.Load() }
+
+// FulltextDocCount returns the number of documents in the BM25 fulltext
+// index. Used by tests and observability to confirm whether writes are
+// actually landing in BM25 or being short-circuited by the disabled flag.
+func (s *Service) FulltextDocCount() int {
+	if s.fulltextIndex == nil {
+		return 0
+	}
+	return s.fulltextIndex.Count()
 }
 
 // IsReady reports whether the search indexes are fully built and ready to serve queries.
@@ -1824,6 +1904,16 @@ func (s *Service) ClearVectorIndex() {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	// Per-DB master switches: when both indexes are off, IndexNode is a full
+	// no-op — the database has no search and never will until a flag flip
+	// triggers ResetSearchService. When one is off, indexNodeLocked still
+	// runs, but the BM25 stub or the vector nil guards drop the corresponding
+	// half. This keeps the write path silent and cheap when search is off.
+	bm25On := s.bm25Enabled.Load()
+	vecOn := s.vectorEnabled.Load()
+	if !bm25On && !vecOn {
+		return nil
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -1833,7 +1923,10 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
 
 	s.indexMu.Lock()
-	err := s.indexNodeLocked(node, false)
+	// skipFulltext piggybacks the bm25-disabled signal so the inner code
+	// paths that read `skipFulltext` (already exercised by checkpoint rewrites)
+	// also drop fulltext mutations when BM25 is disabled.
+	err := s.indexNodeLocked(node, !bm25On)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -1844,6 +1937,12 @@ func (s *Service) IndexNode(node *storage.Node) error {
 // addVectorLocked adds a vector to the active store (vectorFileStore if set, else vectorIndex).
 // Caller holds s.indexMu.
 func (s *Service) addVectorLocked(id string, vec []float32) error {
+	// Per-DB master switch: when vector search is disabled, drop the vector.
+	// The on-storage embedding property is unchanged (durable in Badger);
+	// we only refuse to populate the in-memory ANN substrate.
+	if !s.vectorEnabled.Load() {
+		return nil
+	}
 	var err error
 	if s.vectorFileStore != nil {
 		if s.resumeVectorBuild && s.vectorFileStore.Has(id) {
@@ -2312,6 +2411,21 @@ type NodeIterator interface {
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.buildAttempted.Store(true)
+	// Per-DB master switches: when both indexes are disabled, mark ready
+	// (search handler returns 503 search_disabled_for_database upstream)
+	// and return BEFORE we touch s.ready/s.buildInProgress — otherwise a
+	// concurrent reader (indexNodeFromEvent / pendingFlush goroutine)
+	// observing s.ready=false would call startSearchIndexBuild and recurse.
+	// Check the flag first; the disabled path is the cheapest possible.
+	bm25On := s.bm25Enabled.Load()
+	vecOn := s.vectorEnabled.Load()
+	if !bm25On && !vecOn {
+		log.Printf("📇 Search: both BM25 and vector disabled — skipping index build")
+		s.fulltextIndex = disabledBM25Index{}
+		s.setBuildPhase("ready")
+		s.ready.Store(true)
+		return nil
+	}
 	s.ready.Store(false)
 	s.buildInProgress.Store(true)
 	s.buildStartedUnix.Store(time.Now().Unix())
@@ -2324,6 +2438,15 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			s.setBuildPhase("idle")
 		}
 	}()
+
+	// When BM25 alone is disabled, swap in the no-op stub so the existing
+	// BuildIndexes code paths don't materialize anything fulltext-side.
+	// When vector alone is disabled, warmupVectorPipeline short-circuits
+	// and the iteration loop's vector-side adds become no-ops in IndexNode.
+	if !bm25On {
+		log.Printf("📇 Search: BM25 disabled — skipping fulltext build")
+		s.fulltextIndex = disabledBM25Index{}
+	}
 	if sec := envutil.GetInt("NORNICDB_SEARCH_BUILD_PROGRESS_LOG_SEC", 15); sec > 0 {
 		interval := time.Duration(sec) * time.Second
 		ticker := time.NewTicker(interval)
@@ -2869,6 +2992,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 func (s *Service) warmupVectorPipeline(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if !s.vectorEnabled.Load() {
+		log.Printf("🔍 Vector search disabled — skipping ANN warmup")
+		return
 	}
 	n := s.EmbeddingCount()
 	if n == 0 {

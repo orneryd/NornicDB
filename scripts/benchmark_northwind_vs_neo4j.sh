@@ -30,6 +30,14 @@
 #   NEO4J_DATA_DIR          Neo4j data dir (default /opt/homebrew/var/neo4j/data)
 #   NEO4J_PASSWORD          Neo4j password (default "testpass123")
 #   REPORT_DIR              Parent dir for timestamped reports (default scripts/benchmark_reports)
+#   GRAPH_ONLY=1            (default 1) Disable BM25 fulltext + vector ANN index
+#                           build/maintenance for the NornicDB run via the per-DB
+#                           --search-bm25-enabled=false / --search-vector-enabled=false
+#                           startup flags. The Northwind benchmark performs no
+#                           text or vector search, so leaving these on costs
+#                           seed-time CPU on every IndexNode/IndexBatch call
+#                           without affecting query results. Set GRAPH_ONLY=0 to
+#                           include search index build cost in the comparison.
 
 set -euo pipefail
 
@@ -53,6 +61,7 @@ NEO4J_HOME="${NEO4J_HOME:-/opt/homebrew/opt/neo4j}"
 NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-/opt/homebrew/var/neo4j/data}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-testpass123}"
 REPORT_PARENT="${REPORT_DIR:-${SCRIPT_DIR}/benchmark_reports}"
+GRAPH_ONLY="${GRAPH_ONLY:-1}"
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 REPORT_DIR="${REPORT_PARENT}/${TIMESTAMP}"
@@ -105,6 +114,11 @@ log "config: iterations=${ITERATIONS} warmup=${WARMUP}"
 log "config: categories=${CATEGORIES} suppliers=${SUPPLIERS} customers=${CUSTOMERS}"
 log "config: products=${PRODUCTS} orders=${ORDERS} order_lines=${ORDER_LINES_MIN}..${ORDER_LINES_MAX} seed=${SEED}"
 log "config: report_dir=${REPORT_DIR}"
+if [[ "${GRAPH_ONLY}" == "1" ]]; then
+  log "config: GRAPH_ONLY=1 — NornicDB will run with BM25 + vector indexes disabled (graph-only mode)"
+else
+  log "config: GRAPH_ONLY=0 — NornicDB will run with BM25 + vector indexes enabled (default mode)"
+fi
 
 if [[ $EUID -ne 0 ]]; then
   log "priming sudo for powermetrics (single prompt up front)…"
@@ -256,13 +270,28 @@ run_nornic() {
   VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/nornicdb.vmstat.log")
   local t0=$(date +%s.%N)
 
-  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT})"
+  # Optional graph-only mode: disable BM25 + vector index build at startup.
+  # The Northwind benchmark performs zero text or vector search, so these
+  # indexes are pure overhead on every node/edge insert. Toggle via GRAPH_ONLY
+  # (default 1); set GRAPH_ONLY=0 to include the index-build cost.
+  local nornic_extra_flags=()
+  if [[ "${GRAPH_ONLY}" == "1" ]]; then
+    nornic_extra_flags=(
+      --search-bm25-enabled=false
+      --search-vector-enabled=false
+    )
+  fi
+
+  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY}"
+  # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
+  # array expansion. macOS ships bash 3.2 which is strict here.
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
     "${NORNIC_BIN}" serve \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
       --data-dir "${NORNIC_DATA_DIR}" \
       --no-auth \
+      ${nornic_extra_flags[@]+"${nornic_extra_flags[@]}"} \
       >"${REPORT_DIR}/nornicdb.stdout.log" 2>"${REPORT_DIR}/nornicdb.stderr.log" &
   NORNIC_PID=$!
 

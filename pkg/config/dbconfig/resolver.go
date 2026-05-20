@@ -18,17 +18,40 @@ type ResolvedDbConfig struct {
 	SearchMinSimilarity float64
 	// BM25Engine selects fulltext engine implementation ("v1" or "v2").
 	BM25Engine string
+	// BM25Enabled controls whether BM25 fulltext search is built and queryable
+	// for this database. Per-DB override wins over the global default.
+	BM25Enabled bool
+	// BM25Warming is "startup" (build at boot) or "lazy" (build on first query).
+	// Ignored when BM25Enabled=false; preserved across flips so a future
+	// re-enable honours the operator's intended trigger.
+	BM25Warming string
+	// VectorEnabled controls whether ANY vector search strategy (HNSW,
+	// IVF-HNSW, brute-force, GPU brute-force, Metal, Qdrant pass-through) is
+	// built and queryable for this database. When false, node embeddings are
+	// not iterated into RAM. Per-DB override wins over the global default.
+	VectorEnabled bool
+	// VectorWarming is "startup" or "lazy". See BM25Warming.
+	VectorWarming string
 	// Effective is the full effective value for every allowed key (string form for API).
 	Effective map[string]string
 }
 
 // Resolve merges global config with per-DB overrides and returns the resolved config.
 // Overrides are applied on top of global; omitted keys use global default.
+//
+// Per-DB overrides always win over the global default, in both directions: an
+// override of `true` turns on a globally-disabled index; an override of `false`
+// turns off a globally-enabled one. This is load-bearing for the multi-tenant
+// story (one DB needs search, the rest don't).
 func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConfig {
 	r := &ResolvedDbConfig{
 		EmbeddingDimensions: global.Memory.EmbeddingDimensions,
 		SearchMinSimilarity: global.Memory.SearchMinSimilarity,
 		BM25Engine:          normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")),
+		BM25Enabled:         global.Memory.SearchBM25Enabled,
+		BM25Warming:         normalizeWarming(global.Memory.SearchBM25Warming),
+		VectorEnabled:       global.Memory.SearchVectorEnabled,
+		VectorWarming:       normalizeWarming(global.Memory.SearchVectorWarming),
 		Effective:           make(map[string]string),
 	}
 	if r.EmbeddingDimensions <= 0 {
@@ -44,6 +67,32 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		r.Effective[k] = v
 	}
 	return r
+}
+
+// normalizeWarming returns "startup" or "lazy"; anything else (including empty)
+// falls back to "startup" so deployments without the new keys keep today's
+// behaviour.
+func normalizeWarming(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "lazy":
+		return "lazy"
+	default:
+		return "startup"
+	}
+}
+
+// parseBoolFallback returns the parsed value when the string is a recognised
+// bool literal (true/false/1/0, case-insensitive); otherwise returns fallback.
+// Typos can't silently flip a boolean — the caller's existing value wins.
+func parseBoolFallback(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func effectiveFromGlobal(c *config.Config, m map[string]string) {
@@ -69,6 +118,10 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	// Search
 	m["NORNICDB_SEARCH_MIN_SIMILARITY"] = strconv.FormatFloat(c.Memory.SearchMinSimilarity, 'f', -1, 64)
 	m["NORNICDB_SEARCH_BM25_ENGINE"] = normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE"))
+	m["NORNICDB_SEARCH_BM25_ENABLED"] = boolStr(c.Memory.SearchBM25Enabled)
+	m["NORNICDB_SEARCH_BM25_WARMING"] = normalizeWarming(c.Memory.SearchBM25Warming)
+	m["NORNICDB_SEARCH_VECTOR_ENABLED"] = boolStr(c.Memory.SearchVectorEnabled)
+	m["NORNICDB_SEARCH_VECTOR_WARMING"] = normalizeWarming(c.Memory.SearchVectorWarming)
 	m["NORNICDB_SEARCH_RERANK_ENABLED"] = boolStr(c.Features.SearchRerankEnabled)
 	m["NORNICDB_SEARCH_RERANK_PROVIDER"] = c.Features.SearchRerankProvider
 	m["NORNICDB_SEARCH_RERANK_MODEL"] = c.Features.SearchRerankModel
@@ -151,6 +204,20 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 	}
 	if key == "NORNICDB_SEARCH_BM25_ENGINE" {
 		r.BM25Engine = normalizeBM25Engine(value)
+	}
+	switch key {
+	case "NORNICDB_SEARCH_BM25_ENABLED":
+		r.BM25Enabled = parseBoolFallback(value, r.BM25Enabled)
+	case "NORNICDB_SEARCH_BM25_WARMING":
+		if ok, _ := IsValidEnumValue(key, value); ok {
+			r.BM25Warming = normalizeWarming(value)
+		}
+	case "NORNICDB_SEARCH_VECTOR_ENABLED":
+		r.VectorEnabled = parseBoolFallback(value, r.VectorEnabled)
+	case "NORNICDB_SEARCH_VECTOR_WARMING":
+		if ok, _ := IsValidEnumValue(key, value); ok {
+			r.VectorWarming = normalizeWarming(value)
+		}
 	}
 }
 
