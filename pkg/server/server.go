@@ -337,6 +337,13 @@ type Config struct {
 	// Address to bind to (default: "127.0.0.1" - localhost only for security)
 	// Set to "0.0.0.0" to listen on all interfaces (required for Docker/external access)
 	Address string
+	// PerDBYAMLOverrides carries the `databases:` map parsed from
+	// nornicdb.yaml. Server.New consumes it during system-DB load to seed
+	// dbconfig.Store on first boot via LoadWithYAMLDefaults — admin-API
+	// edits remain authoritative across restarts. Must be set BEFORE
+	// server.New runs; the post-construction setter is gone because the
+	// store load happens inside New and won't see late assignments.
+	PerDBYAMLOverrides map[string]map[string]string
 	// Port to listen on (default: 7474)
 	Port int
 	// ReadTimeout for requests
@@ -705,15 +712,6 @@ type Server struct {
 	perDBYAMLOverrides map[string]map[string]string
 }
 
-// SetPerDBYAMLOverrides supplies the yaml-declared per-database override map
-// (loaded from nornicdb.yaml's `databases:` section). Must be called before
-// the system database is opened so the seeded values land before any
-// per-DB resolver consults the store. Safe to call with nil — equivalent
-// to "no yaml overrides".
-func (s *Server) SetPerDBYAMLOverrides(overrides map[string]map[string]string) {
-	s.perDBYAMLOverrides = overrides
-}
-
 // ensureSearchBuildStartedForKnownDatabases reconciles search-service startup for
 // databases known to DatabaseManager, including metadata-only empty databases.
 // It is safe to call repeatedly; per-db build start is idempotent.
@@ -1063,16 +1061,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	s := &Server{
-		config:         config,
-		db:             db,
-		dbManager:      dbManager,
-		auth:           authenticator,
-		log:            config.Logger.With("component", "server"),
-		mcpServer:      mcpServer,
-		graphqlHandler: graphql.NewHandler(db, dbManager),
-		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
-		searchServices: make(map[string]*search.Service),
-		executors:      make(map[string]*cypher.StorageExecutor),
+		config:             config,
+		db:                 db,
+		dbManager:          dbManager,
+		auth:               authenticator,
+		log:                config.Logger.With("component", "server"),
+		mcpServer:          mcpServer,
+		graphqlHandler:     graphql.NewHandler(db, dbManager),
+		basicAuthCache:     auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
+		searchServices:     make(map[string]*search.Service),
+		executors:          make(map[string]*cypher.StorageExecutor),
+		perDBYAMLOverrides: config.PerDBYAMLOverrides,
 	}
 	// Foreground-first policy: while tx requests are active, background embed work yields.
 	s.db.SetEmbedQueueShouldYield(func() bool {

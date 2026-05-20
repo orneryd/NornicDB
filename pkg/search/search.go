@@ -566,6 +566,7 @@ type Service struct {
 	warmingLazy  atomic.Bool
 	warmOnce     sync.Once
 	warmDone     chan struct{}
+	warmDoneOnce sync.Once    // guards every close(s.warmDone) site
 	warmFunc     atomic.Value // WarmFunc; called by EnsureWarm to request a build
 	warmInFlight atomic.Bool
 
@@ -822,13 +823,13 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 			// No trigger wired — close immediately so waiters return.
 			// IsReady() is still false but at least we don't deadlock.
 			log.Printf("⚠️  Search: lazy trigger requested but WarmFunc is nil — closing warm channel")
-			close(s.warmDone)
+			s.closeWarmDone()
 			return
 		}
 		s.warmInFlight.Store(true)
 		go func() {
 			defer s.warmInFlight.Store(false)
-			defer close(s.warmDone)
+			defer s.closeWarmDone()
 			fn()
 		}()
 	})
@@ -846,12 +847,18 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 // MarkWarmDone signals waiters that the lazy-triggered build has finished.
 // Used by callers that drive the build externally (e.g. the DB owner that
 // wired the WarmFunc) so they can clear the lazy state once the service is
-// ready. Idempotent.
+// ready. Idempotent — safe to interleave with EnsureWarm's goroutine close.
 func (s *Service) MarkWarmDone() {
-	// warmDone may already be closed (if EnsureWarm fired and the
-	// goroutine returned). Use a recover'd close to stay idempotent.
-	defer func() { _ = recover() }()
-	close(s.warmDone)
+	s.closeWarmDone()
+}
+
+// closeWarmDone closes s.warmDone exactly once across all paths
+// (EnsureWarm's goroutine, the nil-WarmFunc fallback, and MarkWarmDone).
+// Without this guard, two paths racing to close would panic.
+func (s *Service) closeWarmDone() {
+	s.warmDoneOnce.Do(func() {
+		close(s.warmDone)
+	})
 }
 
 // MarkReadyDisabled marks the service ready without doing any build work.

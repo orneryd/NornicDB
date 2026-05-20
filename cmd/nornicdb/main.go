@@ -681,14 +681,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		server.SetUIAssets(ui.Assets)
 	}
 
+	// Pass the yaml-declared `databases:` map through Config so server.New
+	// seeds dbconfig.Store during construction. Threading via Config (rather
+	// than a post-construction setter) is load-bearing: New() opens the
+	// system database and runs LoadWithYAMLDefaults before returning, so the
+	// overrides MUST be visible to the constructor.
+	if cfg != nil && len(cfg.PerDBOverrides) > 0 {
+		serverConfig.PerDBYAMLOverrides = cfg.PerDBOverrides
+	}
+
 	httpServer, err := server.New(db, authenticator, serverConfig)
 	if err != nil {
 		return fmt.Errorf("creating server: %w", err)
-	}
-	// Pass the yaml-declared `databases:` map through so the server can
-	// seed dbconfig.Store on first boot before any per-DB resolver fires.
-	if cfg != nil && len(cfg.PerDBOverrides) > 0 {
-		httpServer.SetPerDBYAMLOverrides(cfg.PerDBOverrides)
 	}
 
 	// HTTP server START is deferred until AFTER observability.New runs
