@@ -85,7 +85,7 @@ func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createSt
 	store := e.getStorage(ctx)
 
 	// Parse node pattern to get variable name and properties
-	nodePattern := e.parseNodePattern(pattern)
+	nodePattern := e.parseNodePattern(ctx, pattern)
 	if nodePattern.variable == "" {
 		return nil, "", fmt.Errorf("CREATE node must have a variable name")
 	}
@@ -188,7 +188,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 			relType = strings.TrimSpace(afterColon[:braceIdx])
 			// Extract properties
 			propsStr := afterColon[braceIdx:]
-			props = e.parseProperties(propsStr)
+			props = e.parseProperties(ctx, propsStr)
 		} else {
 			relType = strings.TrimSpace(afterColon)
 		}
@@ -350,7 +350,7 @@ func (e *StorageExecutor) executeMatchWithPipelineToRows(ctx context.Context, ma
 	if !strings.HasPrefix(matchPattern, "(") {
 		matchPattern = "(" + matchPattern + ")"
 	}
-	nodeInfo := e.parseNodePattern(matchPattern)
+	nodeInfo := e.parseNodePattern(ctx, matchPattern)
 	if nodeInfo.variable == "" {
 		return nil, fmt.Errorf("MATCH pattern must have a variable")
 	}
@@ -402,7 +402,7 @@ func (e *StorageExecutor) executeMatchWithPipelineToRows(ctx context.Context, ma
 	if whereClause != "" {
 		var filtered []*storage.Node
 		for _, n := range nodes {
-			if e.evaluateWhere(n, nodeInfo.variable, whereClause) {
+			if e.evaluateWhere(ctx, n, nodeInfo.variable, whereClause) {
 				filtered = append(filtered, n)
 			}
 		}

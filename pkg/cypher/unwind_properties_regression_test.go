@@ -530,13 +530,14 @@ func TestParseValue_MapLiterals(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
-	val := exec.parseValue("{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")
+	val := exec.parseValue(ctx, "{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected plain map literal to parse as map, got %T", val)
 	}
 
-	val = exec.parseValue("{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")
+	val = exec.parseValue(ctx, "{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected backticked map literal to parse as map, got %T", val)
 	}

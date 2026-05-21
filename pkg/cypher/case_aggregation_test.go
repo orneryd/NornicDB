@@ -222,8 +222,9 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluateCaseExpression(tt.expr, nodes, nil)
-			assert.Equal(t, tt.expected, result, "evaluateCaseExpression(%q)", tt.expr)
+			ctx := context.Background()
+			result := exec.evaluateCaseExpression(ctx, tt.expr, nodes, nil)
+			assert.Equal(t, tt.expected, result, "evaluateCaseExpression(ctx, %q)", tt.expr)
 		})
 	}
 }
@@ -277,8 +278,9 @@ func TestEvaluateConditionContains(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluateCondition(tt.condition, nodes, nil)
-			assert.Equal(t, tt.expected, result, "evaluateCondition(%q)", tt.condition)
+			ctx := context.Background()
+			result := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
+			assert.Equal(t, tt.expected, result, "evaluateCondition(ctx, %q)", tt.condition)
 		})
 	}
 }
@@ -408,7 +410,7 @@ func TestCaseConditionEvaluation(t *testing.T) {
 
 		// Test evaluateExpression directly (this is what resolveReturnItem calls)
 		expr := "CASE WHEN n.issues CONTAINS 'tú' THEN 'found' ELSE 'not found' END"
-		directResult := exec.evaluateExpression(expr, "n", testNode)
+		directResult := exec.evaluateExpression(ctx, expr, "n", testNode)
 		t.Logf("Direct evaluateExpression result: %v", directResult)
 		assert.Equal(t, "found", directResult, "Direct evaluateExpression should work")
 
@@ -491,7 +493,8 @@ func TestEvaluateCondition_OperatorAndPredicateMatrix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := exec.evaluateCondition(tt.condition, nodes, nil)
+		ctx := context.Background()
+		got := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
 		assert.Equal(t, tt.expected, got, "condition=%q", tt.condition)
 	}
 }

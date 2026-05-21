@@ -10,6 +10,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -146,7 +147,7 @@ func parseWhenClause(section string, isSimple bool) (caseWhenClause, error) {
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
-func (e *StorageExecutor) evaluateCaseExpression(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	ce, err := parseCaseExpression(expr)
 	if err != nil {
 		// Return nil if parsing fails
@@ -155,34 +156,34 @@ func (e *StorageExecutor) evaluateCaseExpression(expr string, nodes map[string]*
 
 	if ce.isSimple {
 		// Simple CASE: evaluate test expression once
-		testValue := e.evaluateExpressionWithContext(ce.testExpression, nodes, rels)
+		testValue := e.evaluateExpressionWithContext(ctx, ce.testExpression, nodes, rels)
 
 		// Check each WHEN clause
 		for _, clause := range ce.whenClauses {
-			whenValue := e.evaluateExpressionWithContext(clause.value, nodes, rels)
+			whenValue := e.evaluateExpressionWithContext(ctx, clause.value, nodes, rels)
 			if compareValues(testValue, whenValue) {
-				return e.evaluateExpressionWithContext(clause.result, nodes, rels)
+				return e.evaluateExpressionWithContext(ctx, clause.result, nodes, rels)
 			}
 		}
 	} else {
 		// Searched CASE: evaluate each WHEN condition
 		for _, clause := range ce.whenClauses {
-			conditionResult := e.evaluateCondition(clause.condition, nodes, rels)
+			conditionResult := e.evaluateCondition(ctx, clause.condition, nodes, rels)
 			if isTruthy(conditionResult) {
-				return e.evaluateExpressionWithContext(clause.result, nodes, rels)
+				return e.evaluateExpressionWithContext(ctx, clause.result, nodes, rels)
 			}
 		}
 	}
 
 	// No WHEN matched, return ELSE result or NULL
 	if ce.elseResult != "" {
-		return e.evaluateExpressionWithContext(ce.elseResult, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, ce.elseResult, nodes, rels)
 	}
 	return nil
 }
 
 // evaluateCondition evaluates a boolean condition expression.
-func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
 	condition = strings.TrimSpace(condition)
 	upper := strings.ToUpper(condition)
 
@@ -192,7 +193,7 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	if andIdx > 0 {
 		left := strings.TrimSpace(condition[:andIdx])
 		right := strings.TrimSpace(condition[andIdx+5:])
-		return e.evaluateCondition(left, nodes, rels) && e.evaluateCondition(right, nodes, rels)
+		return e.evaluateCondition(ctx, left, nodes, rels) && e.evaluateCondition(ctx, right, nodes, rels)
 	}
 
 	// Handle OR - split and evaluate both sides
@@ -200,13 +201,13 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	if orIdx > 0 {
 		left := strings.TrimSpace(condition[:orIdx])
 		right := strings.TrimSpace(condition[orIdx+4:])
-		return e.evaluateCondition(left, nodes, rels) || e.evaluateCondition(right, nodes, rels)
+		return e.evaluateCondition(ctx, left, nodes, rels) || e.evaluateCondition(ctx, right, nodes, rels)
 	}
 
 	// Handle NOT prefix
 	if strings.HasPrefix(upper, "NOT ") {
 		inner := strings.TrimSpace(condition[4:])
-		return !e.evaluateCondition(inner, nodes, rels)
+		return !e.evaluateCondition(ctx, inner, nodes, rels)
 	}
 
 	// Handle comparison operators: <, >, <=, >=, =, <>
@@ -214,8 +215,8 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 		if strings.Contains(condition, op) {
 			parts := strings.SplitN(condition, op, 2)
 			if len(parts) == 2 {
-				left := e.evaluateExpressionWithContext(strings.TrimSpace(parts[0]), nodes, rels)
-				right := e.evaluateExpressionWithContext(strings.TrimSpace(parts[1]), nodes, rels)
+				left := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(parts[0]), nodes, rels)
+				right := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(parts[1]), nodes, rels)
 				return compareWithOperator(left, right, op)
 			}
 		}
@@ -224,12 +225,12 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	// Handle IS NULL / IS NOT NULL
 	if strings.HasSuffix(upper, " IS NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-8])
-		val := e.evaluateExpressionWithContext(expr, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 		return val == nil
 	}
 	if strings.HasSuffix(upper, " IS NOT NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-12])
-		val := e.evaluateExpressionWithContext(expr, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 		return val != nil
 	}
 
@@ -238,8 +239,8 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	if containsIdx > 0 {
 		left := strings.TrimSpace(condition[:containsIdx])
 		right := strings.TrimSpace(condition[containsIdx+10:])
-		leftVal := e.evaluateExpressionWithContext(left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(right, nodes, rels)
+		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
 		leftStr, lok := leftVal.(string)
 		rightStr, rok := rightVal.(string)
 		if lok && rok {
@@ -250,8 +251,8 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	if idx := findTopLevelKeyword(condition, " STARTS WITH "); idx > 0 {
 		left := strings.TrimSpace(condition[:idx])
 		right := strings.TrimSpace(condition[idx+13:])
-		leftVal := e.evaluateExpressionWithContext(left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(right, nodes, rels)
+		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
 		leftStr, lok := leftVal.(string)
 		rightStr, rok := rightVal.(string)
 		if lok && rok {
@@ -262,8 +263,8 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	if idx := findTopLevelKeyword(condition, " ENDS WITH "); idx > 0 {
 		left := strings.TrimSpace(condition[:idx])
 		right := strings.TrimSpace(condition[idx+11:])
-		leftVal := e.evaluateExpressionWithContext(left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(right, nodes, rels)
+		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
+		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
 		leftStr, lok := leftVal.(string)
 		rightStr, rok := rightVal.(string)
 		if lok && rok {
@@ -290,7 +291,7 @@ func (e *StorageExecutor) evaluateCondition(condition string, nodes map[string]*
 	}
 
 	// Otherwise evaluate as expression and check truthiness
-	result := e.evaluateExpressionWithContext(condition, nodes, rels)
+	result := e.evaluateExpressionWithContext(ctx, condition, nodes, rels)
 	return isTruthy(result)
 }
 

@@ -909,11 +909,11 @@ RETURN count(t) AS c
 	nodeT, _ := store.GetNode("tr-list-1")
 	require.NotNil(t, nodeO)
 	require.NotNil(t, nodeT)
-	require.True(t, exec.evaluateBindingWhere(binding{
+	require.True(t, exec.evaluateBindingWhere(ctx, binding{
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = $language AND t.isReviewed = false AND o.pagePath STARTS WITH $pagePath", map[string]interface{}{"language": "es", "pagePath": "/benefits"}))
-	require.True(t, exec.evaluateBindingWhere(binding{
+	require.True(t, exec.evaluateBindingWhere(ctx, binding{
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'", nil))
@@ -935,7 +935,7 @@ RETURN count(t) AS c
 	require.NotNil(t, bindings[0]["o"], "chained match must bind o variable")
 	require.NotNil(t, bindings[0]["t"], "chained match must preserve t variable")
 	rawWhere := strings.TrimSpace(normalized[whereIdx+5 : returnIdx])
-	filteredBindings := exec.filterBindingsByWhere(bindings, rawWhere, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
+	filteredBindings := exec.filterBindingsByWhere(ctx, bindings, rawWhere, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	require.NotEmpty(t, filteredBindings, "combined where predicate should keep matching binding")
 	directCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	directRes, directErr := exec.executeMultiMatch(directCtx, normalized)

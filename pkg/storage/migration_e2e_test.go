@@ -119,7 +119,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 				"age":         int64(34),
 				"weight_kg":   72.5,
 				"active":      true,
-				"tags":        []any{"founder", "platform"},
+				"tags":        []string{"founder", "platform"},
 				"join_year":   int64(2018),
 				"description": "early hire, full-stack",
 			},

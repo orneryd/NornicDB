@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,14 +9,14 @@ import (
 )
 
 // evaluateStringConcatWithContext handles string concatenation with + operator.
-func (e *StorageExecutor) evaluateStringConcatWithContext(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) string {
+func (e *StorageExecutor) evaluateStringConcatWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) string {
 	var result strings.Builder
 
 	// Split by + but respect quotes and parentheses
 	parts := e.splitByPlus(expr)
 
 	for _, part := range parts {
-		val := e.evaluateExpressionWithContext(part, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, part, nodes, rels)
 		result.WriteString(fmt.Sprintf("%v", val))
 	}
 
@@ -25,7 +26,7 @@ func (e *StorageExecutor) evaluateStringConcatWithContext(expr string, nodes map
 // tryCallPluginFunction attempts to call a function from the plugin system.
 // Returns the result and true if the function was handled, or nil and false if not found.
 // This is GENERIC - works for any plugin function (not specific to any plugin).
-func (e *StorageExecutor) tryCallPluginFunction(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
 	// Plugin lookup must be configured
 	if PluginFunctionLookup == nil {
 		return nil, false
@@ -52,7 +53,7 @@ func (e *StorageExecutor) tryCallPluginFunction(expr string, nodes map[string]*s
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {
-		evalArgs = append(evalArgs, e.evaluateExpressionWithContext(arg, nodes, rels))
+		evalArgs = append(evalArgs, e.evaluateExpressionWithContext(ctx, arg, nodes, rels))
 	}
 
 	// Call the plugin function
@@ -190,12 +191,12 @@ func callPluginHandler(handler interface{}, args []interface{}) (interface{}, er
 
 // evaluateMapLiteral parses and evaluates a map literal like { key: value, ... }
 // where values can be expressions that reference variables in context.
-func (e *StorageExecutor) evaluateMapLiteral(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) map[string]interface{} {
-	return e.evaluateMapLiteralFull(expr, nodes, rels, nil, nil, nil, 0)
+func (e *StorageExecutor) evaluateMapLiteral(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) map[string]interface{} {
+	return e.evaluateMapLiteralFull(ctx, expr, nodes, rels, nil, nil, nil, 0)
 }
 
 // evaluateMapLiteralFull parses and evaluates a map literal with full path context
-func (e *StorageExecutor) evaluateMapLiteralFull(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
+func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	expr = strings.TrimSpace(expr)
@@ -229,7 +230,7 @@ func (e *StorageExecutor) evaluateMapLiteralFull(expr string, nodes map[string]*
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Evaluate the value expression in context with full path info
-		value := e.evaluateExpressionWithContextFull(valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		value := e.evaluateExpressionWithContextFull(ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		result[key] = value
 	}
 

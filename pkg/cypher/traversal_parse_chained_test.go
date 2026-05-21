@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,9 +11,10 @@ import (
 func TestParseTraversalPattern_Chained_NorthwindSupplierCategory(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
 	pattern := "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)"
-	m := exec.parseTraversalPattern(pattern)
+	m := exec.parseTraversalPattern(ctx, pattern)
 	require.NotNil(t, m)
 	require.True(t, m.IsChained, "expected chained pattern")
 	require.Len(t, m.Segments, 2)

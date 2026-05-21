@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
@@ -19,11 +20,12 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 	}
 	params := map[string]interface{}{"keys": []interface{}{"k1", "k2", "k3", "k4"}}
 	whereClause := "o.joinKey IN $keys AND t.joinKey = o.joinKey AND o.status IS NOT NULL AND t.status IS NOT NULL"
+	ctx := context.Background()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(bindings, whereClause, params)
+		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, params)
 	}
 }
 
@@ -36,10 +38,10 @@ func BenchmarkFilterBindingsByWhere_GenericFallback(b *testing.B) {
 		})
 	}
 	whereClause := "size(n.name) > 0"
-
+	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(bindings, whereClause, nil)
+		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)
 	}
 }

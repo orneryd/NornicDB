@@ -481,7 +481,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	// Parse single node pattern
-	nodePattern := e.parseNodePattern(matchPart)
+	nodePattern := e.parseNodePattern(ctx, matchPart)
 
 	// FAST PATH: For simple node count queries like "MATCH (n) RETURN count(n)" or "MATCH (n:Label) RETURN count(n)"
 	// Use O(1) NodeCount() instead of loading all nodes into memory.
@@ -597,7 +597,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		// Rewrite coalesce-wrapped predicates to OR-expanded form for index visibility.
 		// e.g. coalesce(t.isReviewed, false) = false → (t.isReviewed = false OR t.isReviewed IS NULL)
 		wherePart = tryRewriteNullNormalizedPredicate(wherePart)
-		if candidates, used, idxErr := e.tryCollectNodesFromIDEquality(nodePattern, wherePart); idxErr == nil && used {
+		if candidates, used, idxErr := e.tryCollectNodesFromIDEquality(ctx, nodePattern, wherePart); idxErr == nil && used {
 			nodes = candidates
 			usedPropertyIndex = true
 		}
@@ -607,7 +607,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 		// Parameterized id/elementId equality: elementId(n) = $param, id(n) = $param
 		if !usedPropertyIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromIDEqualityParam(nodePattern, inWherePart, getParamsFromContext(ctx)); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, inWherePart, getParamsFromContext(ctx)); idxErr == nil && used {
 				nodes = candidates
 				usedPropertyIndex = true
 			}
@@ -626,7 +626,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		}
 		// OR-equality rewrite: a.prop1 = $x OR a.prop2 = $x → two index lookups + DISTINCT
 		if !usedPropertyIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexOrEquality(nodePattern, inWherePart, getParamsFromContext(ctx)); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, inWherePart, getParamsFromContext(ctx)); idxErr == nil && used {
 				nodes = candidates
 				usedPropertyIndex = true
 			}
@@ -638,7 +638,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		if !usedPropertyIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(nodePattern, wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedPropertyIndex = true
 			}
@@ -652,7 +652,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		if !usedPropertyIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(nodePattern, wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedPropertyIndex = true
 			}
@@ -668,7 +668,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		// post-filter. This avoids full label scan + sort for common pagination patterns
 		// like ORDER BY createdAt DESC LIMIT 30.
 		if !usedPropertyIndex && !usedIndexTopK && !hasAggregation && hasOrderBy && limit > 0 && orderExprEarly != "" {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexOrderLimit(
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx,
 				nodePattern, wherePart, orderExprEarly, skip+limit,
 			); idxErr == nil && used {
 				nodes = candidates
@@ -680,7 +680,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		if !usedPropertyIndex && streamingLimit > 0 && !hasOrderBy && !hasAggregation {
 			if _, ok := e.buildBoundInFastFilter(nodePattern.variable, wherePart); ok {
 				streamingWhereApplied = true
-			} else if _, ok := e.getCompiledSimpleWhere(nodePattern.variable, wherePart); ok {
+			} else if _, ok := e.getCompiledSimpleWhere(ctx, nodePattern.variable, wherePart); ok {
 				streamingWhereApplied = true
 			}
 		}
@@ -708,12 +708,12 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 
 	// Apply WHERE filter if present
 	if whereIdx > 0 && !streamingWhereApplied {
-		nodes = e.filterNodes(nodes, nodePattern.variable, strings.TrimSpace(wherePart))
+		nodes = e.filterNodes(ctx, nodes, nodePattern.variable, strings.TrimSpace(wherePart))
 	}
 
 	// Handle aggregation queries
 	if hasAggregation {
-		aggResult, err := e.executeAggregation(nodes, nodePattern.variable, returnItems, result)
+		aggResult, err := e.executeAggregation(ctx, nodes, nodePattern.variable, returnItems, result)
 		if err != nil {
 			return nil, err
 		}
@@ -836,7 +836,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 				}
 				row[j] = collected
 			} else {
-				row[j] = e.resolveReturnItem(item, nodePattern.variable, node)
+				row[j] = e.resolveReturnItem(ctx, item, nodePattern.variable, node)
 			}
 		}
 

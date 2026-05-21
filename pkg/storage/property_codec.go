@@ -8,6 +8,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
+	"github.com/vmihailenco/msgpack/v5/msgpcode"
 )
 
 // Storage version constants. The current binary writes only V2 bodies
@@ -119,8 +120,8 @@ func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) 
 		if !ok {
 			return nil, fmt.Errorf("property key id %d not in dictionary for namespace %q", id, namespace)
 		}
-		var val any
-		if err := dec.Decode(&val); err != nil {
+		val, err := decodeStrictTypedValue(dec)
+		if err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, err)
 		}
 		out[name] = val
@@ -129,6 +130,202 @@ func (b *BadgerEngine) decodeTokenizedProperties(namespace string, data []byte) 
 		return nil, fmt.Errorf("decoding tokenized properties: %d trailing bytes", reader.Len())
 	}
 	return out, nil
+}
+
+// decodeStrictTypedValue decodes one msgpack-encoded property value
+// while preserving the on-disk type tags. The default `dec.Decode(&any)`
+// path widens every msgpack array into []interface{} regardless of
+// element homogeneity — even though the values were written as
+// []float64 (or []int64 / []string) and the on-disk msgpack tags
+// reflect that — which forces every read site downstream to type-coerce
+// and silently changes the shape callers wrote.
+//
+// We instead inspect the msgpack header byte for arrays and decode each
+// element into a strict-typed slice (homogeneous arrays only). Mixed
+// arrays still fall back to []interface{} so we don't lose information.
+//
+// Maps inside properties are handled the same way: every value gets
+// recursed through this function so a deeply-nested []float64 stays
+// []float64.
+func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
+	code, err := dec.PeekCode()
+	if err != nil {
+		return nil, err
+	}
+	if msgpcode.IsFixedArray(code) || code == msgpcode.Array16 || code == msgpcode.Array32 {
+		return decodeStrictTypedArray(dec)
+	}
+	if msgpcode.IsFixedMap(code) || code == msgpcode.Map16 || code == msgpcode.Map32 {
+		return decodeStrictTypedMap(dec)
+	}
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// decodeStrictTypedArray decodes a msgpack array. If every element is
+// the same kind (float, int, string, bool) we return a strictly-typed
+// slice. Mixed-type arrays come back as []interface{}.
+func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
+	n, err := dec.DecodeArrayLen()
+	if err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return []interface{}{}, nil
+	}
+	// Decode the first element to learn the homogeneous kind candidate.
+	first, err := decodeStrictTypedValue(dec)
+	if err != nil {
+		return nil, err
+	}
+	switch first.(type) {
+	case float64:
+		out := make([]float64, n)
+		out[0] = first.(float64)
+		for i := 1; i < n; i++ {
+			next, err := decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			f, ok := next.(float64)
+			if !ok {
+				// Mixed array. Rebuild as []interface{}, keeping previously
+				// decoded values, and decode the remainder loosely.
+				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			}
+			out[i] = f
+		}
+		return out, nil
+	case int64:
+		out := make([]int64, n)
+		out[0] = first.(int64)
+		for i := 1; i < n; i++ {
+			next, err := decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			v, ok := next.(int64)
+			if !ok {
+				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			}
+			out[i] = v
+		}
+		return out, nil
+	case uint64:
+		out := make([]uint64, n)
+		out[0] = first.(uint64)
+		for i := 1; i < n; i++ {
+			next, err := decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			v, ok := next.(uint64)
+			if !ok {
+				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			}
+			out[i] = v
+		}
+		return out, nil
+	case string:
+		out := make([]string, n)
+		out[0] = first.(string)
+		for i := 1; i < n; i++ {
+			next, err := decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			s, ok := next.(string)
+			if !ok {
+				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			}
+			out[i] = s
+		}
+		return out, nil
+	case bool:
+		out := make([]bool, n)
+		out[0] = first.(bool)
+		for i := 1; i < n; i++ {
+			next, err := decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			b, ok := next.(bool)
+			if !ok {
+				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			}
+			out[i] = b
+		}
+		return out, nil
+	}
+	// First element was a complex type (map, nested array). Fall back to
+	// loose decoding for the rest — there's no useful homogeneous slice
+	// type for these.
+	out := make([]interface{}, n)
+	out[0] = first
+	for i := 1; i < n; i++ {
+		next, err := decodeStrictTypedValue(dec)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = next
+	}
+	return out, nil
+}
+
+// decodeStrictTypedMap decodes a msgpack map keyed by strings, recursing
+// through decodeStrictTypedValue for each value so nested arrays keep
+// their strict type.
+func decodeStrictTypedMap(dec *msgpack.Decoder) (any, error) {
+	n, err := dec.DecodeMapLen()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, n)
+	for i := 0; i < n; i++ {
+		k, err := dec.DecodeString()
+		if err != nil {
+			return nil, err
+		}
+		v, err := decodeStrictTypedValue(dec)
+		if err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// finishMixedArray builds out an []interface{} when a homogeneous-kind
+// candidate failed mid-stream. `prefix` is the typed slice we already
+// committed (converted to []interface{}), `current` is the element that
+// broke homogeneity, and the decoder still has totalLen-len(prefix)-1
+// elements to read.
+func finishMixedArray(dec *msgpack.Decoder, prefix []interface{}, current any, totalLen int) (any, error) {
+	out := make([]interface{}, 0, totalLen)
+	out = append(out, prefix...)
+	out = append(out, current)
+	for i := len(out); i < totalLen; i++ {
+		next, err := decodeStrictTypedValue(dec)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, next)
+	}
+	return out, nil
+}
+
+// sliceToAny boxes a typed slice into []interface{}. Used by
+// finishMixedArray when a homogeneity violation forces us to widen
+// already-decoded elements.
+func sliceToAny[T any](xs []T) []interface{} {
+	out := make([]interface{}, len(xs))
+	for i, v := range xs {
+		out[i] = v
+	}
+	return out
 }
 
 // readUvarint wraps binary.Uvarint with diagnostic error messages.

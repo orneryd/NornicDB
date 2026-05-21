@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,10 +14,11 @@ func TestRevealDispatcher_InReturn(t *testing.T) {
 	node := makeNode("nornic:ep_reveal", []string{"MemoryEpisode"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
 	// reveal(n) should pass through — the fn.Register builtin evaluates reveal(n) → n.
 	// Here we only verify the dispatcher does NOT intercept "reveal" as a decay function.
-	v, handled := exec.evaluateKnowledgePolicyFunction("reveal(n)", "reveal(n)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "reveal(n)", "reveal(n)", nodes, rels)
 	if handled {
 		t.Errorf("reveal(n) should NOT be handled by knowledgepolicy dispatcher, got %v", v)
 	}
@@ -28,8 +30,9 @@ func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction("decayScore(n)", "decayscore(n)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "decayscore(n)", nodes, rels)
 	if !handled {
 		t.Error("decayScore(n) should be handled by knowledgepolicy dispatcher")
 	}
@@ -44,8 +47,9 @@ func TestRevealDispatcher_DecayWithScoreNamedIdentifierHandled(t *testing.T) {
 	node := makeNode("nornic:score-node", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"scoreNode": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction("decay(scoreNode)", "decay(scorenode)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decay(scoreNode)", "decay(scorenode)", nodes, rels)
 	if !handled {
 		t.Fatal("decay(scoreNode) should be handled by knowledgepolicy dispatcher")
 	}
@@ -60,8 +64,9 @@ func TestRevealDispatcher_PolicyHandled(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction("policy(n)", "policy(n)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "policy(n)", "policy(n)", nodes, rels)
 	if !handled {
 		t.Error("policy(n) should be handled by knowledgepolicy dispatcher")
 	}

@@ -276,7 +276,7 @@ func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, 
 	}
 
 	if strings.HasPrefix(rawArg, "{") && strings.HasSuffix(rawArg, "}") {
-		return e.parseMapLiteral(rawArg), nil
+		return e.parseMapLiteral(ctx, rawArg), nil
 	}
 	if strings.HasPrefix(rawArg, "$") {
 		name := strings.TrimPrefix(rawArg, "$")

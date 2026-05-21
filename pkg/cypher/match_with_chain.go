@@ -166,7 +166,7 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		whereClause = strings.TrimSpace(trimmed[whereIdx+5:])
 	}
 
-	pattern := e.parseNodePattern(patternPart)
+	pattern := e.parseNodePattern(ctx, patternPart)
 	if pattern.variable == "" {
 		return nil, "", fmt.Errorf("invalid MATCH pattern: missing variable in %q", clause)
 	}
@@ -185,7 +185,7 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		nodes = e.filterNodesByProperties(nodes, pattern.properties)
 	}
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(nodes, whereClause, pattern.variable)
+		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)
 	}
 	return nodes, pattern.variable, nil
 }

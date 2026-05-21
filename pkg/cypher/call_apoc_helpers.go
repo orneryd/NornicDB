@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -49,7 +50,7 @@ func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
 
 // parseApocCypherRunArgs parses the arguments for apoc.cypher.run/runMany.
 // Expected format: 'query string', {params} or 'query string', null
-func (e *StorageExecutor) parseApocCypherRunArgs(argsStr string) (string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseApocCypherRunArgs(ctx context.Context, argsStr string) (string, map[string]interface{}, error) {
 	// Find the first quoted string (the query)
 	query := ""
 	params := make(map[string]interface{})
@@ -99,7 +100,7 @@ func (e *StorageExecutor) parseApocCypherRunArgs(argsStr string) (string, map[st
 			mapEnd := e.findMatchingBrace(remaining, 0)
 			if mapEnd > 0 {
 				mapStr := remaining[:mapEnd+1]
-				params = e.parseMapLiteral(mapStr)
+				params = e.parseMapLiteral(ctx, mapStr)
 			}
 		}
 	}
@@ -109,7 +110,7 @@ func (e *StorageExecutor) parseApocCypherRunArgs(argsStr string) (string, map[st
 
 // parseApocPeriodicIterateArgs parses arguments for apoc.periodic.iterate.
 // Expected format: 'iterateQuery', 'actionQuery', {config}
-func (e *StorageExecutor) parseApocPeriodicIterateArgs(argsStr string) (string, string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseApocPeriodicIterateArgs(ctx context.Context, argsStr string) (string, string, map[string]interface{}, error) {
 	config := make(map[string]interface{})
 
 	// Parse first query string
@@ -139,7 +140,7 @@ func (e *StorageExecutor) parseApocPeriodicIterateArgs(argsStr string) (string, 
 			mapEnd := e.findMatchingBrace(remaining, 0)
 			if mapEnd > 0 {
 				mapStr := remaining[:mapEnd+1]
-				config = e.parseMapLiteral(mapStr)
+				config = e.parseMapLiteral(ctx, mapStr)
 			}
 		}
 	}
@@ -208,7 +209,7 @@ func (e *StorageExecutor) findMatchingBrace(s string, startIdx int) int {
 }
 
 // parseMapLiteral parses a Cypher map literal like {key: value, key2: value2}.
-func (e *StorageExecutor) parseMapLiteral(s string) map[string]interface{} {
+func (e *StorageExecutor) parseMapLiteral(ctx context.Context, s string) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	s = strings.TrimSpace(s)
@@ -233,7 +234,7 @@ func (e *StorageExecutor) parseMapLiteral(s string) map[string]interface{} {
 		value := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Parse value
-		result[key] = e.parseValue(value)
+		result[key] = e.parseValue(ctx, value)
 	}
 
 	return result

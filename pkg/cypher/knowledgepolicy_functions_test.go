@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -83,8 +84,9 @@ func TestDecayScore_DecayedNode(t *testing.T) {
 	node := makeNode("nornic:old_episode", []string{"MemoryEpisode"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecayScore("decayScore(n)", nodes, rels)
+	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -100,8 +102,9 @@ func TestDecayScore_RecentNode(t *testing.T) {
 	node := makeNode("nornic:recent_episode", []string{"MemoryEpisode"}, 5*time.Minute)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecayScore("decayScore(n)", nodes, rels)
+	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -117,8 +120,9 @@ func TestDecayScore_NoDecayFact(t *testing.T) {
 	node := makeNode("nornic:old_fact", []string{"KnowledgeFact"}, 8760*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecayScore("decayScore(n)", nodes, rels)
+	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -134,8 +138,9 @@ func TestDecayScore_UnmatchedLabel(t *testing.T) {
 	node := makeNode("nornic:custom", []string{"CustomLabel"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecayScore("decayScore(n)", nodes, rels)
+	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -151,8 +156,9 @@ func TestDecay_ReturnsMap(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecay("decay(n)", nodes, rels)
+	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -175,8 +181,9 @@ func TestDecay_NoDecayReason(t *testing.T) {
 	node := makeNode("nornic:fact", []string{"KnowledgeFact"}, 8760*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecay("decay(n)", nodes, rels)
+	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -199,8 +206,9 @@ func TestDecay_UsesResolvedFunctionAndFloor(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecay("decay(n)", nodes, rels)
+	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -223,9 +231,10 @@ func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 	node := makeNode("nornic:ep2", []string{"MemoryEpisode"}, 4*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	dsResult := exec.evalDecayScore("decayScore(n)", nodes, rels)
-	dResult := exec.evalDecay("decay(n)", nodes, rels)
+	dsResult := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	dResult := exec.evalDecay(ctx, "decay(n)", nodes, rels)
 
 	dsScore, _ := dsResult.(float64)
 	dMap, _ := dResult.(map[string]interface{})
@@ -254,8 +263,9 @@ func TestPolicy_WithAccessMeta(t *testing.T) {
 	node := makeNode("nornic:tracked", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalPolicy("policy(n)", nodes, rels)
+	result := exec.evalPolicy(ctx, "policy(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -278,8 +288,9 @@ func TestPolicy_NoAccessMeta(t *testing.T) {
 	node := makeNode("nornic:untracked", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalPolicy("policy(n)", nodes, rels)
+	result := exec.evalPolicy(ctx, "policy(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -304,8 +315,9 @@ func TestDecayScore_UnknownOptionKey(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecayScore("decayScore(n, {badKey: 'x'})", nodes, rels)
+	result := exec.evalDecayScore(ctx, "decayScore(n, {badKey: 'x'})", nodes, rels)
 	if result != nil {
 		t.Errorf("expected nil for unknown option key, got %v", result)
 	}

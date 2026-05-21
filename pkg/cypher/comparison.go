@@ -50,6 +50,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -210,9 +211,9 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 //
 // # Example
 //
-//	evaluateStringOp(node, "n", "n.name CONTAINS 'Smith'", "CONTAINS")
+//	evaluateStringOp(ctx, node, "n", "n.name CONTAINS 'Smith'", "CONTAINS")
 //	// Returns true if node.Properties["name"] contains "Smith"
-func (e *StorageExecutor) evaluateStringOp(node *storage.Node, variable, whereClause, op string) bool {
+func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.Node, variable, whereClause, op string) bool {
 	upperClause := strings.ToUpper(whereClause)
 	opIdx := strings.Index(upperClause, " "+op+" ")
 	if opIdx < 0 {
@@ -229,13 +230,13 @@ func (e *StorageExecutor) evaluateStringOp(node *storage.Node, variable, whereCl
 	}
 
 	// Evaluate left/right expressions to support functions like toLower()/toUpper()
-	actualVal := e.evaluateExpression(left, variable, node)
+	actualVal := e.evaluateExpression(ctx, left, variable, node)
 	if actualVal == nil {
 		return false
 	}
-	expectedVal := e.evaluateExpression(right, variable, node)
+	expectedVal := e.evaluateExpression(ctx, right, variable, node)
 	if expectedVal == nil {
-		expectedVal = e.parseValue(right)
+		expectedVal = e.parseValue(ctx, right)
 	}
 
 	actualStr := fmt.Sprintf("%v", actualVal)
@@ -268,7 +269,7 @@ func (e *StorageExecutor) evaluateStringOp(node *storage.Node, variable, whereCl
 //
 //	evaluateInOp(node, "n", "n.status IN ['active', 'pending']")
 //	// Returns true if node.Properties["status"] is "active" or "pending"
-func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateInOp(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	upperClause := strings.ToUpper(whereClause)
 
 	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
@@ -308,7 +309,7 @@ func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause
 	// Evaluate both sides as expressions so we support both:
 	//   n.prop IN ['a', 'b']
 	//   'a' IN n.listProp
-	value := e.evaluateExpressionWithContext(left, nodes, nil)
+	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
 	if value == nil {
 		// Neo4j semantics: NULL IN list yields NULL → false in WHERE,
 		// for both IN and NOT IN (NOT NULL is also NULL → false).
@@ -323,7 +324,7 @@ func (e *StorageExecutor) evaluateInOp(node *storage.Node, variable, whereClause
 		}
 	}
 	if listVal == nil {
-		listVal = e.evaluateExpressionWithContext(right, nodes, nil)
+		listVal = e.evaluateExpressionWithContext(ctx, right, nodes, nil)
 	}
 	items, ok := toInterfaceSlice(listVal)
 	if !ok {
@@ -411,9 +412,9 @@ func isIdentRune(r rune) bool {
 //
 // # Example
 //
-//	evaluateIsNull(node, "n", "n.email IS NOT NULL", true)
+//	evaluateIsNull(ctx, node, "n", "n.email IS NOT NULL", true)
 //	// Returns true if node.Properties["email"] exists and is not nil
-func (e *StorageExecutor) evaluateIsNull(node *storage.Node, variable, whereClause string, expectNotNull bool) bool {
+func (e *StorageExecutor) evaluateIsNull(ctx context.Context, node *storage.Node, variable, whereClause string, expectNotNull bool) bool {
 	upperClause := strings.ToUpper(whereClause)
 	var propExpr string
 
@@ -450,7 +451,7 @@ func (e *StorageExecutor) evaluateIsNull(node *storage.Node, variable, whereClau
 		//   null IS NOT NULL -> false
 		//   'x' IS NOT NULL  -> true
 		//   1 IS NULL        -> false
-		val := e.parseValue(valExpr)
+		val := e.parseValue(ctx, valExpr)
 		if expectNotNull {
 			return val != nil
 		}

@@ -2175,43 +2175,45 @@ func TestResolveReturnItem_AdditionalBranches(t *testing.T) {
 		Properties: map[string]interface{}{"id": "prop-id", "name": "alice", "age": int64(30), "embedding": []float32{0.1, 0.2}},
 	}
 
+	ctx := context.Background()
+
 	// Wildcard and direct variable branches.
-	assert.Equal(t, node, exec.resolveReturnItem(returnItem{expr: "*"}, "p", node))
-	assert.Equal(t, node, exec.resolveReturnItem(returnItem{expr: "p"}, "p", node))
+	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "*"}, "p", node))
+	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "p"}, "p", node))
 
 	// Collect subquery placeholder branch.
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
 
 	// CASE/function/IS NULL/arithmetic evaluation branches.
-	assert.Equal(t, "adult", exec.resolveReturnItem(returnItem{expr: "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END"}, "p", node))
-	assert.Equal(t, "30", exec.resolveReturnItem(returnItem{expr: "toString(p.age)"}, "p", node))
-	assert.Equal(t, true, exec.resolveReturnItem(returnItem{expr: "p.missing IS NULL"}, "p", node))
-	assert.Equal(t, int64(31), exec.resolveReturnItem(returnItem{expr: "p.age + 1"}, "p", node))
+	assert.Equal(t, "adult", exec.resolveReturnItem(ctx, returnItem{expr: "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END"}, "p", node))
+	assert.Equal(t, "30", exec.resolveReturnItem(ctx, returnItem{expr: "toString(p.age)"}, "p", node))
+	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.missing IS NULL"}, "p", node))
+	assert.Equal(t, int64(31), exec.resolveReturnItem(ctx, returnItem{expr: "p.age + 1"}, "p", node))
 
 	// Property-access branches.
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "q.age"}, "p", node))             // var mismatch
-	assert.Equal(t, "prop-id", exec.resolveReturnItem(returnItem{expr: "p.id"}, "p", node)) // id from property
-	assert.Equal(t, []float32{0.1, 0.2}, exec.resolveReturnItem(returnItem{expr: "p.embedding"}, "p", node))
-	assert.Equal(t, "alice", exec.resolveReturnItem(returnItem{expr: "p.name"}, "p", node))
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "p.unknown"}, "p", node))
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "q.age"}, "p", node))             // var mismatch
+	assert.Equal(t, "prop-id", exec.resolveReturnItem(ctx, returnItem{expr: "p.id"}, "p", node)) // id from property
+	assert.Equal(t, []float32{0.1, 0.2}, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", node))
+	assert.Equal(t, "alice", exec.resolveReturnItem(ctx, returnItem{expr: "p.name"}, "p", node))
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.unknown"}, "p", node))
 
 	// embedding is a regular property — no special routing from ChunkEmbeddings/EmbedMeta.
 	noEmbedding := &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "p.embedding"}, "p", noEmbedding))
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", noEmbedding))
 	withChunkOnly := &storage.Node{ID: "n3", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}, Properties: map[string]interface{}{}}
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "p.embedding"}, "p", withChunkOnly)) // not in Properties
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withChunkOnly)) // not in Properties
 	withEmbProp := &storage.Node{ID: "n3b", Labels: []string{"Person"}, Properties: map[string]interface{}{"embedding": []float32{0.3, 0.4}}}
-	assert.Equal(t, []float32{0.3, 0.4}, exec.resolveReturnItem(returnItem{expr: "p.embedding"}, "p", withEmbProp))
+	assert.Equal(t, []float32{0.3, 0.4}, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withEmbProp))
 	withMeta := &storage.Node{ID: "n4", Labels: []string{"Person"}, EmbedMeta: map[string]interface{}{"has_embedding": true}}
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "p.embedding"}, "p", withMeta)) // not in Properties
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withMeta)) // not in Properties
 
 	// has_embedding branches (from EmbedMeta).
-	assert.Equal(t, true, exec.resolveReturnItem(returnItem{expr: "p.has_embedding"}, "p", withMeta))
-	assert.Equal(t, true, exec.resolveReturnItem(returnItem{expr: "p.has_embedding"}, "p", &storage.Node{ID: "n5", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}}))
-	assert.Equal(t, false, exec.resolveReturnItem(returnItem{expr: "p.has_embedding"}, "p", noEmbedding))
+	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", withMeta))
+	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", &storage.Node{ID: "n5", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}}))
+	assert.Equal(t, false, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", noEmbedding))
 
 	// Fallback unresolved expression branch.
-	assert.Nil(t, exec.resolveReturnItem(returnItem{expr: "unknownExpressionToken"}, "p", node))
+	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "unknownExpressionToken"}, "p", node))
 }
 
 func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
@@ -2371,7 +2373,8 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 		{initialNode: f2, relatedNode: nil},
 	}
 
-	res, err := exec.processWithAggregation(
+	ctx := context.Background()
+	res, err := exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2386,7 +2389,7 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 	assert.NotEmpty(t, res.Rows[0][3])          // collect distinct
 
 	// Branch with no aggregation WITH: fall back to RETURN clause parsing.
-	res, err = exec.processWithAggregation(
+	res, err = exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2398,7 +2401,7 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "a", res.Rows[0][0])
 
 	// RETURN clause is mandatory after WITH.
-	_, err = exec.processWithAggregation(
+	_, err = exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2409,7 +2412,7 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "RETURN clause required")
 
 	// Additional aggregate expression branches with computed aliases from first WITH.
-	res, err = exec.processWithAggregation(
+	res, err = exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2427,7 +2430,7 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 	assert.Nil(t, res.Rows[0][6])
 
 	// SUM over non-numeric values must fail (openCypher-compatible type checking).
-	_, err = exec.processWithAggregation(
+	_, err = exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2438,7 +2441,7 @@ func TestProcessWithAggregation_AdditionalBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "SUM() requires numeric values")
 
 	// N-term SUM arithmetic (SUM + SUM + SUM - SUM) is supported.
-	res, err = exec.processWithAggregation(
+	res, err = exec.processWithAggregation(ctx,
 		rows,
 		"f",
 		"c",
@@ -2461,12 +2464,12 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
 
-	err := exec.processCreateNode("(a:Person {name:'alice'})", nodeVars, result, store)
+	err := exec.processCreateNode(ctx, "(a:Person {name:'alice'})", nodeVars, result, store)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "a")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	err = exec.processCreateRelationship("(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result, store)
+	err = exec.processCreateRelationship(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result, store)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "b")
 	require.Contains(t, edgeVars, "r")
@@ -2474,7 +2477,7 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
 
 	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	err = exec.processCreateRelationship("(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result, store)
+	err = exec.processCreateRelationship(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result, store)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "c")
 	require.Contains(t, edgeVars, "rb")
@@ -2482,12 +2485,12 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
 
 	// Invalid relationship shape.
-	err = exec.processCreateRelationship("(a)-[:BROKEN](b)", nodeVars, edgeVars, result, store)
+	err = exec.processCreateRelationship(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid relationship pattern")
 
 	// Missing variable in context must error deterministically.
-	err = exec.processCreateRelationship("(missing)-[:REL]->(a)", nodeVars, edgeVars, result, store)
+	err = exec.processCreateRelationship(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to resolve source node")
 
@@ -2530,15 +2533,16 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 
 func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
 
-	require.NoError(t, exec.validateCreatePatternPropertyMap("(n:Person {name:'ok'})"))
-	require.NoError(t, exec.validateCreatePatternPropertyMap("(n:Person)"))
+	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'ok'})"))
+	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person)"))
 
-	err := exec.validateCreatePatternPropertyMap("(n:Person {name:'x'")
+	err := exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'x'")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid property map syntax")
 
-	err = exec.validateCreatePatternPropertyMap("(n:Person {name})")
+	err = exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid property map syntax")
 
@@ -2560,16 +2564,16 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.Contains(t, nodes[0], "(a:A")
 	assert.Contains(t, nodes[1], "(b:B")
 
-	relType, relProps := exec.parseRelationshipTypeAndProps("r:KNOWS {since: 2021, note: 'x'}")
+	relType, relProps := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}")
 	assert.Equal(t, "KNOWS", relType)
 	assert.Equal(t, int64(2021), relProps["since"])
 	assert.Equal(t, "x", relProps["note"])
 
-	relType, relProps = exec.parseRelationshipTypeAndProps("r")
+	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, "r")
 	assert.Equal(t, "RELATED_TO", relType)
 	assert.Empty(t, relProps)
 
-	relType, relProps = exec.parseRelationshipTypeAndProps(":")
+	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, ":")
 	assert.Equal(t, "RELATED_TO", relType)
 	assert.Empty(t, relProps)
 
@@ -2609,25 +2613,26 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 
 	nodeVars := map[string]*storage.Node{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
+	ctx := context.Background()
 
-	_, err := exec.resolveOrCreateNode("missingVar", nodeVars, result, store)
+	_, err := exec.resolveOrCreateNode(ctx, "missingVar", nodeVars, result, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 
-	n, err := exec.resolveOrCreateNode("x:Node {id:'x1'}", nodeVars, result, store)
+	n, err := exec.resolveOrCreateNode(ctx, "x:Node {id:'x1'}", nodeVars, result, store)
 	require.NoError(t, err)
 	require.NotNil(t, n)
 	require.Contains(t, nodeVars, "x")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
 	// Existing variable returns same node without creating a new one.
-	same, err := exec.resolveOrCreateNode("x:Node {id:'different'}", nodeVars, result, store)
+	same, err := exec.resolveOrCreateNode(ctx, "x:Node {id:'different'}", nodeVars, result, store)
 	require.NoError(t, err)
 	assert.Equal(t, n.ID, same.ID)
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
 	// Inline node without variable is created but not added to nodeVars.
-	inline, err := exec.resolveOrCreateNode(":Leaf {k:1}", nodeVars, result, store)
+	inline, err := exec.resolveOrCreateNode(ctx, ":Leaf {k:1}", nodeVars, result, store)
 	require.NoError(t, err)
 	require.NotNil(t, inline)
 	assert.Equal(t, 2, result.Stats.NodesCreated)
@@ -2639,7 +2644,6 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	keys := getKeys(nodeVars)
 	assert.Contains(t, keys, "x")
 
-	ctx := context.Background()
 	res, err := exec.executeMultipleCreates(ctx, "CREATE (a:Person {name:'a'}) WITH a CREATE (b:Person {name:'b'}) CREATE (a)-[r:KNOWS]->(b) RETURN a.name AS aname, b.name AS bname, type(r) AS rt")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -149,7 +150,9 @@ func TestParseTraversalPatternStateMachine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.parseTraversalPatternStateMachine(tt.pattern)
+			ctx := context.Background()
+
+			result := exec.parseTraversalPatternStateMachine(ctx, tt.pattern)
 
 			if tt.expectNil {
 				assert.Nil(t, result)
@@ -313,7 +316,7 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 		EndNode:   "end-1",
 	}
 
-	ctx := PathContext{
+	pathContext := PathContext{
 		nodes: map[string]*storage.Node{
 			"e": startNode,
 			"i": endNode,
@@ -377,7 +380,9 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluateWhereOnPath(tt.whereClause, ctx)
+			ctx := context.Background()
+
+			result := exec.evaluateWhereOnPath(ctx, tt.whereClause, pathContext)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -429,24 +434,25 @@ func TestFilterPathsByWhere(t *testing.T) {
 		EndNode:      nodePatternInfo{variable: "i", labels: []string{"IssueType"}},
 		Relationship: RelationshipPattern{Variable: "r", Types: []string{"HAS_ISSUE"}},
 	}
+	ctx := context.Background()
 
 	t.Run("filter by end node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(paths, matches, "i.name = 'Informal Register (tú)'")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "i.name = 'Informal Register (tú)'")
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("filter by start node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(paths, matches, "e.score < 90")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score < 90")
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("no filter", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(paths, matches, "")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "")
 		assert.Len(t, filtered, 2)
 	})
 
 	t.Run("filter all out", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(paths, matches, "e.score > 100")
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score > 100")
 		assert.Len(t, filtered, 0)
 	})
 }

@@ -40,7 +40,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, cypher string) 
 	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
 
 	// Parse the first argument (the query string)
-	innerQuery, params, err := e.parseApocCypherRunArgs(argsStr)
+	innerQuery, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse apoc.cypher.run arguments: %w", err)
 	}
@@ -99,7 +99,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, cypher stri
 	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
 
 	// Parse the first argument (the multi-statement string)
-	statements, params, err := e.parseApocCypherRunArgs(argsStr)
+	statements, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse apoc.cypher.runMany arguments: %w", err)
 	}

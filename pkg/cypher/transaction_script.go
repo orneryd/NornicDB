@@ -132,7 +132,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	rollbackRequired := false
 	for _, row := range callResult.Rows {
 		nodes, rels := buildRowGraphContext(callResult.Columns, row)
-		shouldRollback, err := e.evaluateConditionExpression(conditionExpr, nodes, rels)
+		shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
 		if err != nil {
 			_, _ = e.handleRollback()
 			return nil, err
@@ -146,7 +146,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return e.handleRollback()
 	}
 
-	projected, err := e.projectTransactionReturn(callResult, returnExpr)
+	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
 	if err != nil {
 		_, _ = e.handleRollback()
 		return nil, err
@@ -158,7 +158,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	return projected, nil
 }
 
-func (e *StorageExecutor) projectTransactionReturn(input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
 	items := e.parseReturnItems(returnExpr)
 	if len(items) == 0 {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -179,7 +179,7 @@ func (e *StorageExecutor) projectTransactionReturn(input *ExecuteResult, returnE
 		rowMap := buildRowValueMap(input.Columns, inRow)
 		outRow := make([]interface{}, 0, len(items))
 		for _, item := range items {
-			v := e.evaluateExpressionWithContext(item.expr, nodes, rels)
+			v := e.evaluateExpressionWithContext(ctx, item.expr, nodes, rels)
 			if v == nil {
 				if direct, ok := rowMap[item.expr]; ok {
 					v = direct
@@ -220,8 +220,8 @@ func buildRowValueMap(cols []string, row []interface{}) map[string]interface{} {
 	return out
 }
 
-func (e *StorageExecutor) evaluateConditionExpression(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
-	v := e.evaluateExpressionWithContext(expr, nodes, rels)
+func (e *StorageExecutor) evaluateConditionExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
+	v := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 	switch b := v.(type) {
 	case bool:
 		return b, nil

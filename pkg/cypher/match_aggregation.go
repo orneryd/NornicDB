@@ -1,13 +1,14 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAggregation(ctx context.Context, nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
 	// Use pre-compiled case-insensitive regex patterns for aggregation functions
 
 	// Pre-compute upper-case expressions ONCE for all subsequent use
@@ -52,7 +53,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 
 	// If no grouping columns OR no nodes, return single aggregated row (old behavior)
 	if !hasGrouping || len(nodes) == 0 {
-		return e.executeAggregationSingleGroup(nodes, variable, items, result)
+		return e.executeAggregationSingleGroup(ctx, nodes, variable, items, result)
 	}
 
 	// Group nodes by the non-aggregated column values
@@ -68,7 +69,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 				if ci.propName != "" {
 					val = node.Properties[ci.propName]
 				} else {
-					val = e.resolveReturnItem(items[i], variable, node)
+					val = e.resolveReturnItem(ctx, items[i], variable, node)
 				}
 				keyParts = append(keyParts, val)
 			}
@@ -275,7 +276,7 @@ func (e *StorageExecutor) executeAggregation(nodes []*storage.Node, variable str
 }
 
 // executeAggregationSingleGroup handles aggregation without grouping (original behavior)
-func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAggregationSingleGroup(ctx context.Context, nodes []*storage.Node, variable string, items []returnItem, result *ExecuteResult) (*ExecuteResult, error) {
 	row := make([]interface{}, len(items))
 
 	// Pre-compute upper-case expressions ONCE to avoid repeated ToUpper calls in loop
@@ -320,7 +321,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 				count := int64(0)
 				for _, node := range nodes {
 					nodeMap := map[string]*storage.Node{variable: node}
-					result := e.evaluateCaseExpression(inner, nodeMap, nil)
+					result := e.evaluateCaseExpression(ctx, inner, nodeMap, nil)
 					// count() only counts non-NULL values
 					if result != nil {
 						count++
@@ -375,13 +376,13 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 				sum := float64(0)
 				for _, node := range nodes {
 					nodeMap := map[string]*storage.Node{variable: node}
-					val := e.evaluateCaseExpression(inner, nodeMap, nil)
+					val := e.evaluateCaseExpression(ctx, inner, nodeMap, nil)
 					if num, ok := toFloat64(val); ok {
 						sum += num
 					}
 				}
 				row[i] = sum
-			} else if num, ok := toFloat64(e.parseValue(inner)); ok {
+			} else if num, ok := toFloat64(e.parseValue(ctx, inner)); ok {
 				// SUM(literal) like SUM(1)
 				row[i] = num * float64(len(nodes))
 			} else {
@@ -511,7 +512,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 					nodeCtx := map[string]*storage.Node{variable: node}
 					// Add connected node if this is a relationship traversal result
 					// The variable from the matched row should be accessible
-					val := e.evaluateExpressionWithContext(inner, nodeCtx, nil)
+					val := e.evaluateExpressionWithContext(ctx, inner, nodeCtx, nil)
 					if val != nil {
 						key := fmt.Sprintf("%v", val)
 						if !seen[key] {
@@ -555,7 +556,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 				// General expression (e.g., map literal): COLLECT({ key: value })
 				for _, node := range nodes {
 					nodeCtx := map[string]*storage.Node{variable: node}
-					val := e.evaluateExpressionWithContext(inner, nodeCtx, nil)
+					val := e.evaluateExpressionWithContext(ctx, inner, nodeCtx, nil)
 					if val != nil {
 						collected = append(collected, val)
 					}
@@ -574,7 +575,7 @@ func (e *StorageExecutor) executeAggregationSingleGroup(nodes []*storage.Node, v
 		default:
 			// Non-aggregate in aggregation query - return first value
 			if len(nodes) > 0 {
-				row[i] = e.resolveReturnItem(item, variable, nodes[0])
+				row[i] = e.resolveReturnItem(ctx, item, variable, nodes[0])
 			} else {
 				row[i] = nil
 			}

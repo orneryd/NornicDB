@@ -2412,7 +2412,7 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 			{"bob", float64(0.8)},
 		},
 	}
-	agg, err := exec.processCallSubqueryReturn(innerForAgg, "RETURN count(*) AS c")
+	agg, err := exec.processCallSubqueryReturn(ctx, innerForAgg, "RETURN count(*) AS c")
 	require.NoError(t, err)
 	require.Equal(t, []string{"c"}, agg.Columns)
 	require.Len(t, agg.Rows, 1)
@@ -2557,13 +2557,13 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		},
 		Stats: &QueryStats{},
 	}
-	retRes, err := exec.processCallSubqueryReturn(inner, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
+	retRes, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "age"}, retRes.Columns)
 	require.Len(t, retRes.Rows, 1)
 	assert.Equal(t, "b", retRes.Rows[0][0])
 
-	aggRes, err := exec.processCallSubqueryReturn(inner, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
+	aggRes, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(3), aggRes.Rows[0][0])
@@ -3572,11 +3572,11 @@ func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	require.NotNil(t, alice)
 
 	// Empty/malformed clauses intentionally default to true to avoid false negatives.
-	assert.True(t, exec.evaluateExistsSubquery(alice, "p", "name = 'x'"))
-	assert.True(t, exec.evaluateNotExistsSubquery(alice, "p", "name = 'x'"))
+	assert.True(t, exec.evaluateExistsSubquery(ctx, alice, "p", "name = 'x'"))
+	assert.True(t, exec.evaluateNotExistsSubquery(ctx, alice, "p", "name = 'x'"))
 
-	assert.True(t, exec.evaluateExistsSubquery(alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateNotExistsSubquery(alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	assert.True(t, exec.evaluateExistsSubquery(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	assert.False(t, exec.evaluateNotExistsSubquery(ctx, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
 }
 
 func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {

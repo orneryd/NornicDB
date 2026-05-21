@@ -37,11 +37,15 @@ RETURN rel.resolved_id AS resolved_id,
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "resolved-1", result.Rows[0][0])
 	require.Equal(t, int64(2), result.Rows[0][1])
-	require.Equal(t, []interface{}{"A", "B"}, result.Rows[0][2])
+	// Caller wrote []string{"A","B"}; the SET-RETURN must preserve the
+	// declared shape end-to-end (no widening to []interface{}). The same
+	// strict shape comes back from the MATCH-RETURN re-read below, which
+	// is why the result.Rows / verify.Rows equality below holds.
+	require.Equal(t, []string{"A", "B"}, result.Rows[0][2])
 	require.Equal(t, map[string]interface{}{
 		"resolved_id":    "resolved-1",
 		"evidence_count": int64(2),
-		"evidence_kinds": []interface{}{"A", "B"},
+		"evidence_kinds": []string{"A", "B"},
 	}, result.Rows[0][3])
 
 	verify, err := exec.Execute(ctx, `

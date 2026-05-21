@@ -847,7 +847,7 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailVariableLengthMaxLengthPlan(tail)
+	plan, ok := e.parseCallTailVariableLengthMaxLengthPlan(ctx, tail)
 	if !ok {
 		return nil, false, nil
 	}
@@ -925,7 +925,7 @@ func (e *StorageExecutor) tryExecuteCallTailBranchingPathCountFastPath(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailBranchingPathCountPlan(tail)
+	plan, ok := e.parseCallTailBranchingPathCountPlan(ctx, tail)
 	if !ok {
 		return nil, false, nil
 	}
@@ -968,7 +968,7 @@ func (e *StorageExecutor) tryExecuteCallTailFrontierReachableFastPath(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailFrontierReachablePlan(tail)
+	plan, ok := e.parseCallTailFrontierReachablePlan(ctx, tail)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1010,7 +1010,7 @@ func (e *StorageExecutor) tryExecuteCallTailConstrainedMaxDepthFastPath(
 	tail string,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailConstrainedMaxDepthPlan(tail)
+	plan, ok := e.parseCallTailConstrainedMaxDepthPlan(ctx, tail)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1073,7 +1073,7 @@ type callTailVariableLengthMaxLengthPlan struct {
 	skip           int
 }
 
-func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(tail string) (*callTailVariableLengthMaxLengthPlan, bool) {
+func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(ctx context.Context, tail string) (*callTailVariableLengthMaxLengthPlan, bool) {
 	trimmed := strings.TrimSpace(tail)
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "MATCH ") {
@@ -1109,7 +1109,7 @@ func (e *StorageExecutor) parseCallTailVariableLengthMaxLengthPlan(tail string) 
 		return nil, false
 	}
 
-	match := e.parseTraversalPattern(pattern)
+	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil || match.IsChained {
 		return nil, false
 	}
@@ -1232,7 +1232,7 @@ func (p *callTailConstrainedMaxDepthPlan) resultColumns() []string {
 	return cols
 }
 
-func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(tail string) (*callTailBranchingPathCountPlan, bool) {
+func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(ctx context.Context, tail string) (*callTailBranchingPathCountPlan, bool) {
 	normalized := normalizeCallTailShape(tail)
 	firstWithIdx := findKeywordIndexInContext(normalized, "WITH")
 	if firstWithIdx == -1 {
@@ -1266,7 +1266,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(tail string) (*cal
 	if !ok {
 		return nil, false
 	}
-	match := e.parseTraversalPattern(pattern)
+	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil || match.StartNode.variable == "" {
 		return nil, false
 	}
@@ -1318,7 +1318,7 @@ func (e *StorageExecutor) parseCallTailBranchingPathCountPlan(tail string) (*cal
 	}, true
 }
 
-func (e *StorageExecutor) parseCallTailFrontierReachablePlan(tail string) (*callTailFrontierReachablePlan, bool) {
+func (e *StorageExecutor) parseCallTailFrontierReachablePlan(ctx context.Context, tail string) (*callTailFrontierReachablePlan, bool) {
 	normalized := normalizeCallTailShape(tail)
 	firstWithIdx := findKeywordIndexInContext(normalized, "WITH")
 	if firstWithIdx == -1 || !strings.HasPrefix(strings.ToUpper(normalized), "MATCH ") {
@@ -1338,7 +1338,7 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(tail string) (*call
 	}
 	secondWith := strings.TrimSpace(afterSecondWith[:returnIdx])
 	returnOptions := splitCallTailReturnOptionsRaw(strings.TrimSpace(afterSecondWith[returnIdx+len("RETURN"):]))
-	match := e.parseTraversalPattern(matchPart)
+	match := e.parseTraversalPattern(ctx, matchPart)
 	if match == nil || match.StartNode.variable == "" {
 		return nil, false
 	}
@@ -1369,7 +1369,7 @@ func (e *StorageExecutor) parseCallTailFrontierReachablePlan(tail string) (*call
 	return &callTailFrontierReachablePlan{match: match, nodeVar: match.StartNode.variable, nearestAlias: nearestAlias, reachableAlias: reachableAlias, returnItems: returnItems, limitToken: returnOptions.limitRaw}, true
 }
 
-func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(tail string) (*callTailConstrainedMaxDepthPlan, bool) {
+func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(ctx context.Context, tail string) (*callTailConstrainedMaxDepthPlan, bool) {
 	normalized := normalizeCallTailShape(tail)
 	if !strings.HasPrefix(strings.ToUpper(normalized), "MATCH ") {
 		return nil, false
@@ -1390,7 +1390,7 @@ func (e *StorageExecutor) parseCallTailConstrainedMaxDepthPlan(tail string) (*ca
 	if !ok {
 		return nil, false
 	}
-	match := e.parseTraversalPattern(pattern)
+	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil || match.StartNode.variable == "" {
 		return nil, false
 	}
@@ -2211,7 +2211,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 
 // applyYieldFilter applies YIELD clause filtering to procedure results.
 // This handles column selection, aliasing, and WHERE filtering.
-func (e *StorageExecutor) applyYieldFilter(result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
 	if yield == nil {
 		return result, nil
 	}
@@ -2223,16 +2223,16 @@ func (e *StorageExecutor) applyYieldFilter(result *ExecuteResult, yield *yieldCl
 	if yield.where != "" {
 		filteredRows := make([][]interface{}, 0)
 		for _, row := range result.Rows {
-			// Create a context with the row values mapped to column names
-			ctx := make(map[string]interface{})
+			// Create a yield-context with the row values mapped to column names
+			yieldCtx := make(map[string]interface{})
 			for i, col := range result.Columns {
 				if i < len(row) {
-					ctx[col] = row[i]
+					yieldCtx[col] = row[i]
 				}
 			}
 
 			// Evaluate the WHERE condition
-			passes, err := e.evaluateYieldWhere(yield.where, ctx)
+			passes, err := e.evaluateYieldWhere(ctx, yield.where, yieldCtx)
 			if err != nil {
 				// If evaluation fails, include the row (conservative)
 				passes = true
@@ -2284,7 +2284,7 @@ func (e *StorageExecutor) applyYieldFilter(result *ExecuteResult, yield *yieldCl
 	// Example: YIELD node, score RETURN node.id as id, node.type, score
 	if yield.hasReturn && yield.returnExpr != "" {
 		var err error
-		result, err = e.applyReturnToYieldResult(result, yield.returnExpr)
+		result, err = e.applyReturnToYieldResult(ctx, result, yield.returnExpr)
 		if err != nil {
 			return nil, err
 		}
@@ -2312,7 +2312,7 @@ func (e *StorageExecutor) applyYieldFilter(result *ExecuteResult, yield *yieldCl
 
 // applyReturnToYieldResult transforms procedure results based on a RETURN clause.
 // This handles property access (node.id), aliasing (AS), and expression evaluation.
-func (e *StorageExecutor) applyReturnToYieldResult(result *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyReturnToYieldResult(ctx context.Context, result *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
 	// Parse RETURN items
 	returnItems := splitReturnExpressions(returnExpr)
 	if len(returnItems) == 0 {
@@ -2359,18 +2359,18 @@ func (e *StorageExecutor) applyReturnToYieldResult(result *ExecuteResult, return
 	// Transform each row
 	newRows := make([][]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		// Build context with current row values
-		ctx := make(map[string]interface{})
+		// Build yield-context with current row values
+		yieldCtx := make(map[string]interface{})
 		for i, col := range result.Columns {
 			if i < len(row) {
-				ctx[col] = row[i]
+				yieldCtx[col] = row[i]
 			}
 		}
 
 		// Evaluate each return expression
 		newRow := make([]interface{}, len(items))
 		for i, item := range items {
-			newRow[i] = e.evaluateReturnExprInContext(item.expr, ctx)
+			newRow[i] = e.evaluateReturnExprInContext(ctx, item.expr, yieldCtx)
 		}
 		newRows = append(newRows, newRow)
 	}
@@ -2384,7 +2384,7 @@ func (e *StorageExecutor) applyReturnToYieldResult(result *ExecuteResult, return
 
 // evaluateReturnExprInContext evaluates a RETURN expression in the context of yielded values.
 // Handles: direct references (score), property access (node.id), and functions.
-func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateReturnExprInContext(ctx context.Context, expr string, yieldCtx map[string]interface{}) interface{} {
 	expr = strings.TrimSpace(expr)
 
 	// Literal handling
@@ -2410,14 +2410,14 @@ func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[strin
 	}
 
 	// Direct reference to a yielded value
-	if val, ok := ctx[expr]; ok {
+	if val, ok := yieldCtx[expr]; ok {
 		return val
 	}
 
 	// Build nodes and rels maps from context for function evaluation
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
-	for key, val := range ctx {
+	for key, val := range yieldCtx {
 		if node, ok := val.(*storage.Node); ok && node != nil {
 			nodes[key] = node
 		}
@@ -2428,7 +2428,7 @@ func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[strin
 
 	// Handle function calls (e.g., id(a), elementId(a), labels(a))
 	if strings.Contains(expr, "(") {
-		return e.evaluateExpressionWithContext(expr, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 	}
 
 	// Property access: node.property
@@ -2438,7 +2438,7 @@ func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[strin
 			varName := strings.TrimSpace(parts[0])
 			propName := strings.TrimSpace(parts[1])
 
-			if val, ok := ctx[varName]; ok {
+			if val, ok := yieldCtx[varName]; ok {
 				// Handle *storage.Node (Neo4j compatible)
 				if node, ok := val.(*storage.Node); ok && node != nil {
 					// Handle special "id" property
@@ -2476,7 +2476,7 @@ func (e *StorageExecutor) evaluateReturnExprInContext(expr string, ctx map[strin
 }
 
 // evaluateYieldWhere evaluates a WHERE condition in the context of YIELD variables.
-func (e *StorageExecutor) evaluateYieldWhere(whereExpr string, ctx map[string]interface{}) (bool, error) {
+func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr string, yieldCtx map[string]interface{}) (bool, error) {
 	// Simple evaluation for common patterns
 	whereExpr = strings.TrimSpace(whereExpr)
 	if whereExpr == "" {
@@ -2489,7 +2489,7 @@ func (e *StorageExecutor) evaluateYieldWhere(whereExpr string, ctx map[string]in
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
 
-	for name, val := range ctx {
+	for name, val := range yieldCtx {
 		// Preserve real graph entities.
 		if nodeVal, ok := val.(*storage.Node); ok && nodeVal != nil {
 			nodes[name] = nodeVal
@@ -2519,12 +2519,12 @@ func (e *StorageExecutor) evaluateYieldWhere(whereExpr string, ctx map[string]in
 				},
 			}
 			// Also add the scalar value directly to enable direct comparisons like "score > 0.5"
-			ctx[name] = val
+			yieldCtx[name] = val
 		}
 	}
 
 	// Try to evaluate using the expression evaluator with context
-	result := e.evaluateExpressionWithContext(whereExpr, nodes, rels)
+	result := e.evaluateExpressionWithContext(ctx, whereExpr, nodes, rels)
 
 	// Convert result to boolean
 	switch v := result.(type) {
@@ -2567,7 +2567,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 			return nil, err
 		}
 		if yield != nil {
-			result, err = e.applyYieldFilter(result, yield)
+			result, err = e.applyYieldFilter(ctx, result, yield)
 			if err != nil {
 				return nil, err
 			}
@@ -2592,7 +2592,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	case strings.Contains(upper, "APOC.PATH.SUBGRAPHNODES"):
 		result, err = e.callApocPathSubgraphNodes(callCypher)
 	case strings.Contains(upper, "APOC.PATH.EXPAND"):
-		result, err = e.callApocPathExpand(callCypher)
+		result, err = e.callApocPathExpand(ctx, callCypher)
 	case strings.Contains(upper, "APOC.PATH.SPANNINGTREE"):
 		result, err = e.callApocPathSpanningTree(callCypher)
 	// APOC Graph Algorithms
@@ -2676,17 +2676,17 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callDbPropertyKeys()
 	// Neo4j GDS Link Prediction Procedures (topological)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.ADAMICADAR.STREAM"):
-		result, err = e.callGdsLinkPredictionAdamicAdar(callCypher)
+		result, err = e.callGdsLinkPredictionAdamicAdar(ctx, callCypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.COMMONNEIGHBORS.STREAM"):
-		result, err = e.callGdsLinkPredictionCommonNeighbors(callCypher)
+		result, err = e.callGdsLinkPredictionCommonNeighbors(ctx, callCypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.RESOURCEALLOCATION.STREAM"):
-		result, err = e.callGdsLinkPredictionResourceAllocation(callCypher)
+		result, err = e.callGdsLinkPredictionResourceAllocation(ctx, callCypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.PREFERENTIALATTACHMENT.STREAM"):
-		result, err = e.callGdsLinkPredictionPreferentialAttachment(callCypher)
+		result, err = e.callGdsLinkPredictionPreferentialAttachment(ctx, callCypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.JACCARD.STREAM"):
-		result, err = e.callGdsLinkPredictionJaccard(callCypher)
+		result, err = e.callGdsLinkPredictionJaccard(ctx, callCypher)
 	case strings.Contains(upper, "GDS.LINKPREDICTION.PREDICT.STREAM"):
-		result, err = e.callGdsLinkPredictionPredict(callCypher)
+		result, err = e.callGdsLinkPredictionPredict(ctx, callCypher)
 	// GDS Graph Management and FastRP
 	case strings.Contains(upper, "GDS.VERSION"):
 		result, err = e.callGdsVersion()
@@ -2755,7 +2755,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 		result, err = e.callDbTemporalAsOf(ctx, callCypher)
 	// Transaction metadata (Neo4j tx.setMetaData)
 	case strings.Contains(upper, "TX.SETMETADATA"):
-		result, err = e.callTxSetMetadata(callCypher)
+		result, err = e.callTxSetMetadata(ctx, callCypher)
 	// Index management procedures
 	case strings.Contains(upper, "DB.AWAITINDEXES"):
 		result, err = e.callDbAwaitIndexes(callCypher)
@@ -2806,7 +2806,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 
 	// Apply YIELD clause filtering (WHERE, column selection, aliasing)
 	if yield != nil {
-		result, err = e.applyYieldFilter(result, yield)
+		result, err = e.applyYieldFilter(ctx, result, yield)
 		if err != nil {
 			return nil, err
 		}

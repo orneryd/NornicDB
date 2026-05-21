@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -39,7 +40,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(expr string
 		}
 		if allWrapped && depth == 0 {
 			// Strip outer parentheses and re-evaluate
-			return e.evaluateExpressionWithContext(expr[1:len(expr)-1], nodes, rels)
+			return e.evaluateExpressionWithContext(ctx, expr[1:len(expr)-1], nodes, rels)
 		}
 	}
 
@@ -93,7 +94,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(expr string
 			// Check for slice notation [..N] or [N..M] or [N..]
 			if strings.Contains(indexExpr, "..") {
 				// This is a slice, not an index
-				baseVal := e.evaluateExpressionWithContext(baseExpr, nodes, rels)
+				baseVal := e.evaluateExpressionWithContext(ctx, baseExpr, nodes, rels)
 				if list, ok := baseVal.([]interface{}); ok {
 					parts := strings.SplitN(indexExpr, "..", 2)
 					startIdx := int64(0)
@@ -129,13 +130,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(expr string
 			}
 
 			// Single index access [N]
-			baseVal := e.evaluateExpressionWithContext(baseExpr, nodes, rels)
+			baseVal := e.evaluateExpressionWithContext(ctx, baseExpr, nodes, rels)
 			if baseVal == nil {
 				return nil
 			}
 
 			// Evaluate the index
-			index := e.evaluateExpressionWithContext(indexExpr, nodes, rels)
+			index := e.evaluateExpressionWithContext(ctx, indexExpr, nodes, rels)
 			var idx int64
 			switch v := index.(type) {
 			case int64:
@@ -184,14 +185,14 @@ skipArrayIndexing:
 	// Map Literals - handle { key: value, ... } patterns
 	// ========================================
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		return e.evaluateMapLiteralFull(expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		return e.evaluateMapLiteralFull(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// ========================================
 	// CASE Expressions (must be checked first)
 	// ========================================
 	if isCaseExpression(expr) {
-		return e.evaluateCaseExpression(expr, nodes, rels)
+		return e.evaluateCaseExpression(ctx, expr, nodes, rels)
 	}
 
 	lowerExpr := strings.ToLower(expr)
@@ -205,7 +206,7 @@ skipArrayIndexing:
 			Nodes: nodes,
 			Rels:  rels,
 			Eval: func(argExpr string) (interface{}, error) {
-				return e.evaluateExpressionWithContextFull(argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
+				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
 			},
 			Now: time.Now,
 		}
@@ -252,7 +253,7 @@ skipArrayIndexing:
 			}
 		}
 
-		innerVal := e.evaluateExpressionWithContextFull(inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		switch v := innerVal.(type) {
 		case string:
 			return int64(len(v))
@@ -280,7 +281,7 @@ skipArrayIndexing:
 	// head(list) - return first element
 	if matchFuncStartAndSuffix(expr, "head") {
 		inner := extractFuncArgs(expr, "head")
-		innerVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		innerVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
 			return list[0]
 		}
@@ -290,7 +291,7 @@ skipArrayIndexing:
 	// last(list) - return last element
 	if matchFuncStartAndSuffix(expr, "last") {
 		inner := extractFuncArgs(expr, "last")
-		innerVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		innerVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
 			return list[len(list)-1]
 		}
@@ -300,7 +301,7 @@ skipArrayIndexing:
 	// tail(list) - return list without first element
 	if matchFuncStartAndSuffix(expr, "tail") {
 		inner := extractFuncArgs(expr, "tail")
-		innerVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		innerVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if list, ok := innerVal.([]interface{}); ok && len(list) > 1 {
 			return list[1:]
 		}
@@ -310,7 +311,7 @@ skipArrayIndexing:
 	// reverse(list) - return reversed list
 	if matchFuncStartAndSuffix(expr, "reverse") {
 		inner := extractFuncArgs(expr, "reverse")
-		innerVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		innerVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if list, ok := innerVal.([]interface{}); ok {
 			result := make([]interface{}, len(list))
 			for i, v := range list {
@@ -362,7 +363,7 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "slice")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
 			startIdx, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
 			if list, ok := listVal.([]interface{}); ok {
 				endIdx := int64(len(list))
@@ -395,8 +396,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "indexof")
 		args := e.splitFunctionArgs(inner)
 		if len(args) == 2 {
-			listVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
-			searchVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
+			searchVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			if list, ok := listVal.([]interface{}); ok {
 				for i, item := range list {
 					if e.compareEqual(item, searchVal) {
@@ -443,7 +444,7 @@ skipArrayIndexing:
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			if node, ok := nodes[strings.TrimSpace(args[0])]; ok {
-				labelsVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+				labelsVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 				if labels, ok := labelsVal.([]interface{}); ok {
 					for _, reqLabel := range labels {
 						labelStr, _ := reqLabel.(string)
@@ -472,7 +473,7 @@ skipArrayIndexing:
 	// apoc.map.fromPairs(list) - create map from [[key, value], ...] pairs
 	if matchFuncStartAndSuffix(expr, "apoc.map.frompairs") {
 		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		pairsVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		pairsVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if pairs, ok := pairsVal.([]interface{}); ok {
 			result := make(map[string]interface{})
 			for _, pair := range pairs {
@@ -492,8 +493,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "apoc.map.merge")
 		args := e.splitFunctionArgs(inner)
 		if len(args) == 2 {
-			map1 := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
-			map2 := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			map1 := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
+			map2 := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			m1, ok1 := map1.(map[string]interface{})
 			m2, ok2 := map2.(map[string]interface{})
 			if ok1 && ok2 {
@@ -515,8 +516,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "apoc.map.removekey")
 		args := e.splitFunctionArgs(inner)
 		if len(args) == 2 {
-			mapVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
-			keyVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			mapVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
+			keyVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			if m, ok := mapVal.(map[string]interface{}); ok {
 				if key, ok := keyVal.(string); ok {
 					result := make(map[string]interface{})
@@ -537,9 +538,9 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "apoc.map.setkey")
 		args := e.splitFunctionArgs(inner)
 		if len(args) == 3 {
-			mapVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
-			keyVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
-			value := e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels)
+			mapVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
+			keyVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[2]), nodes, rels)
 			if m, ok := mapVal.(map[string]interface{}); ok {
 				if key, ok := keyVal.(string); ok {
 					result := make(map[string]interface{})
@@ -559,12 +560,12 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "apoc.map.clean")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 1 {
-			mapVal := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
+			mapVal := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
 			var keysToRemove []string
 			var valuesToRemove []interface{}
 
 			if len(args) >= 2 {
-				if keys, ok := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels).([]interface{}); ok {
+				if keys, ok := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels).([]interface{}); ok {
 					for _, k := range keys {
 						if ks, ok := k.(string); ok {
 							keysToRemove = append(keysToRemove, ks)
@@ -573,7 +574,7 @@ skipArrayIndexing:
 				}
 			}
 			if len(args) >= 3 {
-				if vals, ok := e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels).([]interface{}); ok {
+				if vals, ok := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[2]), nodes, rels).([]interface{}); ok {
 					valuesToRemove = vals
 				}
 			}
@@ -616,14 +617,14 @@ skipArrayIndexing:
 	// toString(value)
 	if matchFuncStartAndSuffix(expr, "tostring") {
 		inner := extractFuncArgs(expr, "tostring")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return fmt.Sprintf("%v", val)
 	}
 
 	// toInteger(value)
 	if matchFuncStartAndSuffix(expr, "tointeger") {
 		inner := extractFuncArgs(expr, "tointeger")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case int64:
 			return v
@@ -642,7 +643,7 @@ skipArrayIndexing:
 	// toInt(value) - alias for toInteger
 	if matchFuncStartAndSuffix(expr, "toint") {
 		inner := extractFuncArgs(expr, "toint")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case int64:
 			return v
@@ -661,7 +662,7 @@ skipArrayIndexing:
 	// toFloat(value)
 	if matchFuncStartAndSuffix(expr, "tofloat") {
 		inner := extractFuncArgs(expr, "tofloat")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case float64:
 			return v
@@ -682,7 +683,7 @@ skipArrayIndexing:
 	// toBoolean(value)
 	if matchFuncStartAndSuffix(expr, "toboolean") {
 		inner := extractFuncArgs(expr, "toboolean")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case bool:
 			return v
@@ -699,7 +700,7 @@ skipArrayIndexing:
 	// toIntegerOrNull(value)
 	if matchFuncStartAndSuffix(expr, "tointegerornull") {
 		inner := extractFuncArgs(expr, "tointegerornull")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case int64:
 			return v
@@ -718,7 +719,7 @@ skipArrayIndexing:
 	// toFloatOrNull(value)
 	if matchFuncStartAndSuffix(expr, "tofloatornull") {
 		inner := extractFuncArgs(expr, "tofloatornull")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case float64:
 			return v
@@ -739,7 +740,7 @@ skipArrayIndexing:
 	// toBooleanOrNull(value)
 	if matchFuncStartAndSuffix(expr, "tobooleanornull") {
 		inner := extractFuncArgs(expr, "tobooleanornull")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case bool:
 			return v
@@ -758,7 +759,7 @@ skipArrayIndexing:
 	// toStringOrNull(value) - same as toString but explicit null handling
 	if matchFuncStartAndSuffix(expr, "tostringornull") {
 		inner := extractFuncArgs(expr, "tostringornull")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if val == nil {
 			return nil
 		}
@@ -772,7 +773,7 @@ skipArrayIndexing:
 	// toIntegerList(list)
 	if matchFuncStartAndSuffix(expr, "tointegerlist") {
 		inner := extractFuncArgs(expr, "tointegerlist")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		list, ok := val.([]interface{})
 		if !ok {
 			return nil
@@ -802,7 +803,7 @@ skipArrayIndexing:
 	// toFloatList(list)
 	if matchFuncStartAndSuffix(expr, "tofloatlist") {
 		inner := extractFuncArgs(expr, "tofloatlist")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		list, ok := val.([]interface{})
 		if !ok {
 			return nil
@@ -834,7 +835,7 @@ skipArrayIndexing:
 	// toBooleanList(list)
 	if matchFuncStartAndSuffix(expr, "tobooleanlist") {
 		inner := extractFuncArgs(expr, "tobooleanlist")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		list, ok := val.([]interface{})
 		if !ok {
 			return nil
@@ -863,7 +864,7 @@ skipArrayIndexing:
 	// toStringList(list)
 	if matchFuncStartAndSuffix(expr, "tostringlist") {
 		inner := extractFuncArgs(expr, "tostringlist")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		list, ok := val.([]interface{})
 		if !ok {
 			return nil
@@ -886,7 +887,7 @@ skipArrayIndexing:
 	// valueType(value) - returns the type of a value as a string
 	if matchFuncStartAndSuffix(expr, "valuetype") {
 		inner := extractFuncArgs(expr, "valuetype")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch val.(type) {
 		case nil:
 			return "NULL"
@@ -914,31 +915,31 @@ skipArrayIndexing:
 	// sum(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "sum") {
 		inner := extractFuncArgs(expr, "sum")
-		return e.evaluateExpressionWithContext(inner, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 	}
 
 	// avg(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "avg") {
 		inner := extractFuncArgs(expr, "avg")
-		return e.evaluateExpressionWithContext(inner, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 	}
 
 	// min(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "min") {
 		inner := extractFuncArgs(expr, "min")
-		return e.evaluateExpressionWithContext(inner, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 	}
 
 	// max(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "max") {
 		inner := extractFuncArgs(expr, "max")
-		return e.evaluateExpressionWithContext(inner, nodes, rels)
+		return e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 	}
 
 	// collect(expr) - in single row context, returns single-element list
 	if matchFuncStartAndSuffix(expr, "collect") {
 		inner := extractFuncArgs(expr, "collect")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if val == nil {
 			return []interface{}{}
 		}
@@ -948,7 +949,7 @@ skipArrayIndexing:
 	// lower(string) - alias for toLower
 	if matchFuncStartAndSuffix(expr, "lower") {
 		inner := extractFuncArgs(expr, "lower")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			return strings.ToLower(str)
 		}
@@ -958,7 +959,7 @@ skipArrayIndexing:
 	// upper(string) - alias for toUpper
 	if matchFuncStartAndSuffix(expr, "upper") {
 		inner := extractFuncArgs(expr, "upper")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			return strings.ToUpper(str)
 		}
@@ -968,7 +969,7 @@ skipArrayIndexing:
 	// trim(string) / ltrim(string) / rtrim(string)
 	if matchFuncStartAndSuffix(expr, "trim") {
 		inner := extractFuncArgs(expr, "trim")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			return strings.TrimSpace(str)
 		}
@@ -976,7 +977,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "ltrim") {
 		inner := extractFuncArgs(expr, "ltrim")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			return strings.TrimLeft(str, " \t\n\r")
 		}
@@ -984,7 +985,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "rtrim") {
 		inner := extractFuncArgs(expr, "rtrim")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			return strings.TrimRight(str, " \t\n\r")
 		}
@@ -996,9 +997,9 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "replace")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 3 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
-			search := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels))
-			repl := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
+			search := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
+			repl := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[2]), nodes, rels))
 			return strings.ReplaceAll(str, search, repl)
 		}
 		return nil
@@ -1009,8 +1010,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "split")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
-			delim := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
+			delim := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
 			parts := strings.Split(str, delim)
 			result := make([]interface{}, len(parts))
 			for i, p := range parts {
@@ -1026,7 +1027,7 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "substring")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			start, _ := strconv.Atoi(strings.TrimSpace(args[1]))
 			length := len(str) - start
 			if len(args) >= 3 {
@@ -1049,7 +1050,7 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "left")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
 			if n > len(str) {
 				n = len(str)
@@ -1064,7 +1065,7 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "right")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
 			if n > len(str) {
 				n = len(str)
@@ -1079,14 +1080,14 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "lpad")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			length, err := strconv.Atoi(strings.TrimSpace(args[1]))
 			if err != nil {
 				return nil
 			}
 			padStr := " " // default pad character is space
 			if len(args) >= 3 {
-				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels))
+				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[2]), nodes, rels))
 				// Remove quotes if present
 				padStr = strings.Trim(padStr, "'\"")
 			}
@@ -1109,14 +1110,14 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "rpad")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			length, err := strconv.Atoi(strings.TrimSpace(args[1]))
 			if err != nil {
 				return nil
 			}
 			padStr := " " // default pad character is space
 			if len(args) >= 3 {
-				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[2]), nodes, rels))
+				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[2]), nodes, rels))
 				// Remove quotes if present
 				padStr = strings.Trim(padStr, "'\"")
 			}
@@ -1139,14 +1140,14 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "format")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 1 {
-			template := fmt.Sprintf("%v", e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels))
+			template := fmt.Sprintf("%v", e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels))
 			// Remove quotes from template
 			template = strings.Trim(template, "'\"")
 
 			// Evaluate remaining arguments
 			formatArgs := make([]interface{}, 0, len(args)-1)
 			for i := 1; i < len(args); i++ {
-				val := e.evaluateExpressionWithContext(strings.TrimSpace(args[i]), nodes, rels)
+				val := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[i]), nodes, rels)
 				formatArgs = append(formatArgs, val)
 			}
 
@@ -1174,7 +1175,7 @@ skipArrayIndexing:
 			return time.Now().Format(time.RFC3339)
 		}
 		// Try to parse argument as ISO 8601 string
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			// Try parsing various formats
@@ -1205,7 +1206,7 @@ skipArrayIndexing:
 			return time.Now().Format("2006-01-02")
 		}
 		// Try to parse argument
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1229,7 +1230,7 @@ skipArrayIndexing:
 			return time.Now().Format("15:04:05")
 		}
 		// Try to parse argument
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			// Try parsing various time formats
@@ -1250,7 +1251,7 @@ skipArrayIndexing:
 	// date.year(date), date.month(date), date.day(date) - extract components
 	if matchFuncStartAndSuffix(expr, "date.year") {
 		inner := extractFuncArgs(expr, "date.year")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1261,7 +1262,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "date.month") {
 		inner := extractFuncArgs(expr, "date.month")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1272,7 +1273,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "date.day") {
 		inner := extractFuncArgs(expr, "date.day")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1285,7 +1286,7 @@ skipArrayIndexing:
 	// date.week(date) - ISO week number (1-53)
 	if matchFuncStartAndSuffix(expr, "date.week") {
 		inner := extractFuncArgs(expr, "date.week")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1299,7 +1300,7 @@ skipArrayIndexing:
 	// date.quarter(date) - quarter of year (1-4)
 	if matchFuncStartAndSuffix(expr, "date.quarter") {
 		inner := extractFuncArgs(expr, "date.quarter")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1312,7 +1313,7 @@ skipArrayIndexing:
 	// date.dayOfWeek(date) - day of week (1=Monday, 7=Sunday, ISO 8601)
 	if matchFuncStartAndSuffix(expr, "date.dayofweek") {
 		inner := extractFuncArgs(expr, "date.dayofweek")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1329,7 +1330,7 @@ skipArrayIndexing:
 	// date.dayOfYear(date) - day of year (1-366)
 	if matchFuncStartAndSuffix(expr, "date.dayofyear") {
 		inner := extractFuncArgs(expr, "date.dayofyear")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1342,7 +1343,7 @@ skipArrayIndexing:
 	// date.ordinalDay(date) - same as dayOfYear
 	if matchFuncStartAndSuffix(expr, "date.ordinalday") {
 		inner := extractFuncArgs(expr, "date.ordinalday")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1355,7 +1356,7 @@ skipArrayIndexing:
 	// date.weekYear(date) - ISO week year (may differ from calendar year at year boundaries)
 	if matchFuncStartAndSuffix(expr, "date.weekyear") {
 		inner := extractFuncArgs(expr, "date.weekyear")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1372,7 +1373,7 @@ skipArrayIndexing:
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			val := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -1406,7 +1407,7 @@ skipArrayIndexing:
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			val := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				t := parseDateTime(str)
@@ -1446,7 +1447,7 @@ skipArrayIndexing:
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			val := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				if t, err := time.Parse("15:04:05", str); err == nil {
@@ -1467,7 +1468,7 @@ skipArrayIndexing:
 	// datetime.hour(datetime), datetime.minute(datetime), datetime.second(datetime)
 	if matchFuncStartAndSuffix(expr, "datetime.hour") {
 		inner := extractFuncArgs(expr, "datetime.hour")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1479,7 +1480,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "datetime.minute") {
 		inner := extractFuncArgs(expr, "datetime.minute")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1491,7 +1492,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "datetime.second") {
 		inner := extractFuncArgs(expr, "datetime.second")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1505,7 +1506,7 @@ skipArrayIndexing:
 	// datetime.year(datetime), datetime.month(datetime), datetime.day(datetime)
 	if matchFuncStartAndSuffix(expr, "datetime.year") {
 		inner := extractFuncArgs(expr, "datetime.year")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1517,7 +1518,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "datetime.month") {
 		inner := extractFuncArgs(expr, "datetime.month")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1529,7 +1530,7 @@ skipArrayIndexing:
 	}
 	if matchFuncStartAndSuffix(expr, "datetime.day") {
 		inner := extractFuncArgs(expr, "datetime.day")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			t := parseDateTime(str)
@@ -1543,7 +1544,7 @@ skipArrayIndexing:
 	// duration.inMonths(duration) - convert duration to months
 	if matchFuncStartAndSuffix(expr, "duration.inmonths") {
 		inner := extractFuncArgs(expr, "duration.inmonths")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.Years*12 + d.Months
 		}
@@ -1554,7 +1555,7 @@ skipArrayIndexing:
 	// Returns a CypherDuration struct that can be used in arithmetic
 	if isFunctionCall(expr, "duration") {
 		inner := strings.TrimSpace(expr[9 : len(expr)-1])
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
 			return parseDuration(str)
@@ -1571,8 +1572,8 @@ skipArrayIndexing:
 		inner := extractFuncArgs(expr, "duration.between")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			d1 := e.evaluateExpressionWithContext(strings.TrimSpace(args[0]), nodes, rels)
-			d2 := e.evaluateExpressionWithContext(strings.TrimSpace(args[1]), nodes, rels)
+			d1 := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels)
+			d2 := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels)
 			return durationBetween(d1, d2)
 		}
 		return nil
@@ -1581,7 +1582,7 @@ skipArrayIndexing:
 	// duration.inDays(duration) - convert duration to days
 	if matchFuncStartAndSuffix(expr, "duration.indays") {
 		inner := extractFuncArgs(expr, "duration.indays")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.TotalDays()
 		}
@@ -1591,7 +1592,7 @@ skipArrayIndexing:
 	// duration.inSeconds(duration) - convert duration to seconds
 	if matchFuncStartAndSuffix(expr, "duration.inseconds") {
 		inner := extractFuncArgs(expr, "duration.inseconds")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.TotalSeconds()
 		}
@@ -1605,7 +1606,7 @@ skipArrayIndexing:
 	// abs(number)
 	if matchFuncStartAndSuffix(expr, "abs") {
 		inner := extractFuncArgs(expr, "abs")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := val.(type) {
 		case int64:
 			if v < 0 {
@@ -1624,7 +1625,7 @@ skipArrayIndexing:
 	// ceil(number)
 	if matchFuncStartAndSuffix(expr, "ceil") {
 		inner := extractFuncArgs(expr, "ceil")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.999999999)
 		}
@@ -1634,7 +1635,7 @@ skipArrayIndexing:
 	// floor(number)
 	if matchFuncStartAndSuffix(expr, "floor") {
 		inner := extractFuncArgs(expr, "floor")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if f, ok := toFloat64(val); ok {
 			return int64(f)
 		}
@@ -1644,7 +1645,7 @@ skipArrayIndexing:
 	// round(number)
 	if matchFuncStartAndSuffix(expr, "round") {
 		inner := extractFuncArgs(expr, "round")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.5)
 		}
@@ -1654,7 +1655,7 @@ skipArrayIndexing:
 	// sign(number)
 	if matchFuncStartAndSuffix(expr, "sign") {
 		inner := extractFuncArgs(expr, "sign")
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if f, ok := toFloat64(val); ok {
 			if f > 0 {
 				return int64(1)
@@ -1688,7 +1689,7 @@ skipArrayIndexing:
 	// Try plugin functions for any namespaced function call (contains dots)
 	// This is GENERIC - works for any plugin, not just a specific one
 	if strings.Contains(lowerExpr, ".") && looksLikeFunctionCall(lowerExpr) {
-		if result, handled := e.tryCallPluginFunction(expr, nodes, rels); handled {
+		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels); handled {
 			return result
 		}
 	}
@@ -1704,8 +1705,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			sepVal := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			sepVal := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			sep := ""
 			if s, ok := sepVal.(string); ok {
 				sep = strings.Trim(s, "'\"")
@@ -1728,49 +1729,49 @@ skipArrayIndexing:
 	// apoc.coll.flatten(list) - Flatten nested lists into a single list
 	if isFunctionCall(expr, "apoc.coll.flatten") {
 		inner := strings.TrimSpace(expr[19 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return flattenList(listVal)
 	}
 
 	// apoc.coll.toSet(list) - Remove duplicates from list
 	if isFunctionCall(expr, "apoc.coll.toset") {
 		inner := strings.TrimSpace(expr[16 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return toSet(listVal)
 	}
 
 	// apoc.coll.sum(list) - Sum numeric values in list
 	if isFunctionCall(expr, "apoc.coll.sum") {
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollSum(listVal)
 	}
 
 	// apoc.coll.avg(list) - Average of numeric values in list
 	if isFunctionCall(expr, "apoc.coll.avg") {
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollAvg(listVal)
 	}
 
 	// apoc.coll.min(list) - Minimum value in list
 	if isFunctionCall(expr, "apoc.coll.min") {
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollMin(listVal)
 	}
 
 	// apoc.coll.max(list) - Maximum value in list
 	if isFunctionCall(expr, "apoc.coll.max") {
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollMax(listVal)
 	}
 
 	// apoc.coll.sort(list) - Sort list in ascending order
 	if isFunctionCall(expr, "apoc.coll.sort") {
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollSort(listVal)
 	}
 
@@ -1779,7 +1780,7 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[20 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
 			propName := strings.Trim(args[1], "'\"")
 			return apocCollSortNodes(listVal, propName)
 		}
@@ -1789,7 +1790,7 @@ skipArrayIndexing:
 	// apoc.coll.reverse(list) - Reverse a list
 	if isFunctionCall(expr, "apoc.coll.reverse") {
 		inner := strings.TrimSpace(expr[18 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollReverse(listVal)
 	}
 
@@ -1798,8 +1799,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[16 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollUnion(list1, list2)
 		}
 		return nil
@@ -1810,8 +1811,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[19 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollUnionAll(list1, list2)
 		}
 		return nil
@@ -1822,8 +1823,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[23 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollIntersection(list1, list2)
 		}
 		return nil
@@ -1834,8 +1835,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[20 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollSubtract(list1, list2)
 		}
 		return nil
@@ -1846,8 +1847,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[20 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			value := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollContains(listVal, value)
 		}
 		return false
@@ -1858,8 +1859,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[22 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollContainsAll(list1, list2)
 		}
 		return false
@@ -1870,8 +1871,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[22 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollContainsAny(list1, list2)
 		}
 		return false
@@ -1882,8 +1883,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[18 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			value := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollIndexOf(listVal, value)
 		}
 		return int64(-1)
@@ -1894,8 +1895,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[16 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			value := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollSplit(listVal, value)
 		}
 		return nil
@@ -1906,8 +1907,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[20 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			sizeVal := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			sizeVal := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollPartition(listVal, sizeVal)
 		}
 		return nil
@@ -1916,7 +1917,7 @@ skipArrayIndexing:
 	// apoc.coll.pairs(list) - Create pairs from consecutive elements [[a,b], [b,c], ...]
 	if isFunctionCall(expr, "apoc.coll.pairs") {
 		inner := strings.TrimSpace(expr[16 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollPairs(listVal)
 	}
 
@@ -1925,8 +1926,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[14 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			list1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			list2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			list1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			list2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollZip(list1, list2)
 		}
 		return nil
@@ -1935,7 +1936,7 @@ skipArrayIndexing:
 	// apoc.coll.frequencies(list) - Count frequency of each element
 	if isFunctionCall(expr, "apoc.coll.frequencies") {
 		inner := strings.TrimSpace(expr[22 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return apocCollFrequencies(listVal)
 	}
 
@@ -1944,8 +1945,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[22 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			value := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return apocCollOccurrences(listVal, value)
 		}
 		return int64(0)
@@ -1954,7 +1955,7 @@ skipArrayIndexing:
 	// apoc.convert.toJson(value) - Convert value to JSON string
 	if isFunctionCall(expr, "apoc.convert.tojson") {
 		inner := strings.TrimSpace(expr[20 : len(expr)-1])
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		jsonBytes, err := json.Marshal(val)
 		if err != nil {
 			return nil
@@ -1965,7 +1966,7 @@ skipArrayIndexing:
 	// apoc.convert.fromJsonMap(json) - Parse JSON string to map
 	if isFunctionCall(expr, "apoc.convert.fromjsonmap") {
 		inner := strings.TrimSpace(expr[24 : len(expr)-1])
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		jsonStr, ok := val.(string)
 		if !ok {
 			return nil
@@ -1981,7 +1982,7 @@ skipArrayIndexing:
 	// apoc.convert.fromJsonList(json) - Parse JSON string to list
 	if isFunctionCall(expr, "apoc.convert.fromjsonlist") {
 		inner := strings.TrimSpace(expr[25 : len(expr)-1])
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		jsonStr, ok := val.(string)
 		if !ok {
 			return nil
@@ -1997,7 +1998,7 @@ skipArrayIndexing:
 	// apoc.meta.type(value) - Get the Cypher type name of a value
 	if isFunctionCall(expr, "apoc.meta.type") {
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
-		val := e.evaluateExpressionWithContext(inner, nodes, rels)
+		val := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return getCypherType(val)
 	}
 
@@ -2006,8 +2007,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[17 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			val := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			typeVal := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			val := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			typeVal := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			typeName, ok := typeVal.(string)
 			if !ok {
 				return false
@@ -2024,8 +2025,8 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[15 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			map1 := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			map2 := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			map1 := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			map2 := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return mergeMaps(map1, map2)
 		}
 		return nil
@@ -2034,7 +2035,7 @@ skipArrayIndexing:
 	// apoc.map.fromPairs(list) - Create map from list of [key, value] pairs
 	if isFunctionCall(expr, "apoc.map.frompairs") {
 		inner := strings.TrimSpace(expr[19 : len(expr)-1])
-		listVal := e.evaluateExpressionWithContext(inner, nodes, rels)
+		listVal := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return fromPairs(listVal)
 	}
 
@@ -2043,17 +2044,17 @@ skipArrayIndexing:
 		inner := strings.TrimSpace(expr[19 : len(expr)-1])
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
-			keys := e.evaluateExpressionWithContext(args[0], nodes, rels)
-			values := e.evaluateExpressionWithContext(args[1], nodes, rels)
+			keys := e.evaluateExpressionWithContext(ctx, args[0], nodes, rels)
+			values := e.evaluateExpressionWithContext(ctx, args[1], nodes, rels)
 			return fromLists(keys, values)
 		}
 		return nil
 	}
 
-	if v, ok := e.evaluateKnowledgePolicyFunction(expr, lowerExpr, nodes, rels); ok {
+	if v, ok := e.evaluateKnowledgePolicyFunction(ctx, expr, lowerExpr, nodes, rels); ok {
 		return v
 	}
 
 	// Fall through to remaining evaluation logic.
-	return e.evaluateExpressionWithContextFullMath(expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullMath(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }

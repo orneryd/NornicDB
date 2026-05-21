@@ -42,6 +42,7 @@
 package cypher
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"strconv"
@@ -68,7 +69,7 @@ import (
 //	applySetToNode(node, "n", "n.name = 'Alice', n.age = 30")
 //	// node.Properties["name"] = "Alice"
 //	// node.Properties["age"] = int64(30)
-func (e *StorageExecutor) applySetToNode(node *storage.Node, varName string, setClause string) {
+func (e *StorageExecutor) applySetToNode(ctx context.Context, node *storage.Node, varName string, setClause string) {
 	// Split SET clause into individual assignments, respecting parentheses and quotes
 	assignments := e.splitSetAssignments(setClause)
 
@@ -80,7 +81,7 @@ func (e *StorageExecutor) applySetToNode(node *storage.Node, varName string, set
 			left := strings.TrimSpace(assignment[:plusEqIdx])
 			right := strings.TrimSpace(assignment[plusEqIdx+2:])
 			if left == varName {
-				e.applySetMapMergeToNode(node, varName, right, map[string]*storage.Node{varName: node}, nil)
+				e.applySetMapMergeToNode(ctx, node, varName, right, map[string]*storage.Node{varName: node}, nil)
 			}
 			continue
 		}
@@ -97,10 +98,19 @@ func (e *StorageExecutor) applySetToNode(node *storage.Node, varName string, set
 		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
 		propValue := strings.TrimSpace(assignment[eqIdx+1:])
 
+		// Direct $param resolution preserves declared types end-to-end.
+		// substituteParams's type-preserving short-circuit leaves "$name"
+		// here as a literal; without this branch the generic expression
+		// evaluator only returns the unresolved string.
+		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
+			setNodeProperty(node, propName, normalizePropValue(v))
+			continue
+		}
+
 		// Evaluate with variable context first so expressions like
 		// "n.count + 1" are computed instead of stored as raw text.
 		evalNodes := map[string]*storage.Node{varName: node}
-		evaluated := e.evaluateExpressionWithContext(propValue, evalNodes, nil)
+		evaluated := e.evaluateExpressionWithContext(ctx, propValue, evalNodes, nil)
 
 		// Fallback to SET-specific evaluator when generic expression evaluation
 		// leaves the expression unresolved.
@@ -115,18 +125,30 @@ func (e *StorageExecutor) applySetToNode(node *storage.Node, varName string, set
 	}
 }
 
-func (e *StorageExecutor) applySetMapMergeToNode(node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) {
+func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) {
 	if node == nil {
 		return
 	}
-	evaluated := e.evaluateExpressionWithContext(rightExpr, nodes, rels)
+	// Direct $param resolution: the right-hand side of `SET n += $props`
+	// is the typed map the caller passed in. Skipping the
+	// expression-evaluator path keeps map[string]any from widening to
+	// map[string]interface{} with []interface{} value slices.
+	if m, ok := resolveDirectParamRef(ctx, rightExpr); ok {
+		if props, ok := toStringAnyMap(m); ok {
+			for k, v := range props {
+				setNodeProperty(node, k, normalizePropValue(v))
+			}
+			return
+		}
+	}
+	evaluated := e.evaluateExpressionWithContext(ctx, rightExpr, nodes, rels)
 
 	// Fallback for unresolved inline literals.
 	if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(rightExpr) {
-		evaluated = e.parseValue(strings.TrimSpace(rightExpr))
+		evaluated = e.parseValue(ctx, strings.TrimSpace(rightExpr))
 	}
 	if evaluated == nil {
-		evaluated = e.parseValue(strings.TrimSpace(rightExpr))
+		evaluated = e.parseValue(ctx, strings.TrimSpace(rightExpr))
 	}
 
 	if m, ok := toStringAnyMap(evaluated); ok {

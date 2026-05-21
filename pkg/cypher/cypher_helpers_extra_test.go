@@ -377,8 +377,9 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 	assert.Equal(t, "fallback", co2)
 	assert.Nil(t, exec.evaluateCoalesceInContext("COALESCE(", nodes, nil, nil))
 
-	assert.True(t, exec.nodeMatchesWhereClause(nodes["n"], "n.age >= 40", "n"))
-	assert.False(t, exec.nodeMatchesWhereClause(nodes["n"], "n.age < 40", "n"))
+	ctx := context.Background()
+	assert.True(t, exec.nodeMatchesWhereClause(ctx, nodes["n"], "n.age >= 40", "n"))
+	assert.False(t, exec.nodeMatchesWhereClause(ctx, nodes["n"], "n.age < 40", "n"))
 
 	input := &ExecuteResult{
 		Columns: []string{"x", "n"},
@@ -386,14 +387,14 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 			{int64(7), nodes["n"]},
 		},
 	}
-	out, err := exec.projectTransactionReturn(input, "x AS val, n.name AS name")
+	out, err := exec.projectTransactionReturn(ctx, input, "x AS val, n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, []string{"val", "name"}, out.Columns)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(7), out.Rows[0][0])
 	require.Equal(t, "alice", out.Rows[0][1])
 
-	empty, err := exec.projectTransactionReturn(input, "")
+	empty, err := exec.projectTransactionReturn(ctx, input, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"*"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)
@@ -461,9 +462,10 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 			},
 		},
 	}
+	ctx := context.Background()
 
 	eval := func(expr string) interface{} {
-		return exec.evaluateExpressionWithContextFullOperators(expr, strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
+		return exec.evaluateExpressionWithContextFullOperators(ctx, expr, strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
 	}
 
 	assert.Equal(t, false, eval("NOT true"))
@@ -495,33 +497,34 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 
 func TestCypherHelpers_CallTxSetMetadata_SyntaxBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
 
 	// No active transaction.
-	_, err := exec.callTxSetMetadata("CALL tx.setMetaData({app:'x'})")
+	_, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires an active transaction")
 
 	// Active tx with unsupported tx implementation.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata("CALL tx.setMetaData({app:'x'})")
+	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction type not supported")
 
 	// Invalid syntax / missing payload branches.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata("CALL tx.meta({app:'x'})")
+	_, err = exec.callTxSetMetadata(ctx, "CALL tx.meta({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid tx.setMetaData syntax")
 
-	_, err = exec.callTxSetMetadata("CALL tx.setMetaData")
+	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing parentheses")
 
-	_, err = exec.callTxSetMetadata("CALL tx.setMetaData()")
+	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData()")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a metadata object")
 
-	_, err = exec.callTxSetMetadata("CALL tx.setMetaData({})")
+	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one key-value pair")
 }
@@ -695,7 +698,7 @@ func TestCypherHelpers_CartesianMatchAndAggregation(t *testing.T) {
 		{"a": {ID: "a3", Properties: map[string]interface{}{"name": "y"}}},
 	}
 	groupRes := &ExecuteResult{Columns: []string{"name", "cnt"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	_, err = exec.executeCartesianAggregation(allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
+	_, err = exec.executeCartesianAggregation(ctx, allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
 	require.NoError(t, err)
 	require.Len(t, groupRes.Rows, 2)
 }
@@ -738,7 +741,8 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NotEmpty(t, r.Rows)
 
 	// Cover traverseGraphParallel directly with explicit worker config.
-	match := exec.parseTraversalPattern("(a:A)-[r:KNOWS]->(b:B)")
+	ctx := context.Background()
+	match := exec.parseTraversalPattern(ctx, "(a:A)-[r:KNOWS]->(b:B)")
 	require.NotNil(t, match)
 	startNodes, err := eng.GetNodesByLabel("A")
 	require.NoError(t, err)
@@ -758,7 +762,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 		startNode: nodePatternInfo{variable: "s"},
 		endNode:   nodePatternInfo{variable: "e"},
 	}
-	assert.Equal(t, "start", exec.evaluatePathExpression("s.name", path, q))
+	assert.Equal(t, "start", exec.evaluatePathExpression(ctx, "s.name", path, q))
 
 	// Sanity to ensure shortest path helper still identifies syntax.
 	assert.True(t, isShortestPathQuery("MATCH p=shortestPath((a)-[*]->(b)) RETURN p"))
@@ -1489,16 +1493,17 @@ func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 		"name":  "alice",
 		"age":   int64(30),
 	}
+	ctx := context.Background()
 
-	assert.True(t, exec.evaluateWhereOnComputedRow("score >= 9 AND age = 30", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("name = 'alice' OR age < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("age <> 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("age != 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("score > 9", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("score < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("age <= 30", values))
-	assert.False(t, exec.evaluateWhereOnComputedRow("score > 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow("unsupported-clause", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score >= 9 AND age = 30", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "name = 'alice' OR age < 10", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <> 99", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age != 99", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score > 9", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score < 10", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <= 30", values))
+	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "score > 99", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "unsupported-clause", values))
 }
 
 func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
@@ -1513,29 +1518,29 @@ func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
 			"tags": []interface{}{"a", "b"},
 		},
 	}
-
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "(n.age = 30)"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age = 30 AND n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age = 99 OR n.name = 'alice'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "NOT n.age = 99"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.bio CONTAINS 'hello'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.name STARTS WITH 'ali'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.name ENDS WITH 'ice'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "'a' IN n.tags"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.name IS NOT NULL"))
-	assert.False(t, exec.evaluateInnerWhere(node, "n", "n.missing IS NOT NULL"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.missing IS NULL"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "id(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "elementId(n) = 'n-123'"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age >= 30"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age <= 30"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age > 29"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.age < 31"))
-	assert.True(t, exec.evaluateInnerWhere(node, "n", "n.name =~ 'a.*'"))
-	assert.False(t, exec.evaluateInnerWhere(node, "n", "n.age = 99"))
-	assert.False(t, exec.evaluateInnerWhere(node, "n", "x.age = 30")) // wrong variable branch
-	assert.True(t, exec.evaluateInnerWhere(node, "n", ""))            // empty where clause includes
-	assert.False(t, exec.evaluateInnerWhere(node, "n", "MALFORMED"))  // malformed non-empty clause excludes
+	ctx := context.Background()
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "(n.age = 30)"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "NOT n.age = 99"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "'a' IN n.tags"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name IS NOT NULL"))
+	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NOT NULL"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.missing IS NULL"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "id(n) = 'n-123'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age >= 30"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age <= 30"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age > 29"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age < 31"))
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", "n.name =~ 'a.*'"))
+	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "n.age = 99"))
+	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
+	assert.True(t, exec.evaluateInnerWhere(ctx, node, "n", ""))            // empty where clause includes
+	assert.False(t, exec.evaluateInnerWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
 }
 
 func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {
@@ -1584,16 +1589,17 @@ func TestCypherHelpers_FindNodeByVariableInMatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// ID pattern branch.
-	n := exec.findNodeByVariableInMatch("MATCH (a:Person {id: 'id-node'}) RETURN a", "a")
+	ctx := context.Background()
+	n := exec.findNodeByVariableInMatch(ctx, "MATCH (a:Person {id: 'id-node'}) RETURN a", "a")
 	require.NotNil(t, n)
 	assert.Equal(t, storage.NodeID("id-node"), n.ID)
 
 	// Non-id pattern branch currently does not resolve a node from MATCH text.
-	n = exec.findNodeByVariableInMatch("MATCH (a:Person) RETURN a", "a")
+	n = exec.findNodeByVariableInMatch(ctx, "MATCH (a:Person) RETURN a", "a")
 	assert.Nil(t, n)
 
 	// No match branch.
-	n = exec.findNodeByVariableInMatch("MATCH (x:Thing) RETURN x", "a")
+	n = exec.findNodeByVariableInMatch(ctx, "MATCH (x:Thing) RETURN x", "a")
 	assert.Nil(t, n)
 }
 
@@ -1735,14 +1741,15 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 	}
 	rels := map[string]*storage.Edge{}
 
+	ctx := context.Background()
 	// map-literal parser should normalize quoted/backticked keys and evaluate known values.
-	out := exec.evaluateMapLiteralFull("{`k1`: n.name, 'k2': 3, \"k3\": true, badPair}", nodes, rels, nil, nil, nil, 0)
+	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true, badPair}", nodes, rels, nil, nil, nil, 0)
 	assert.Equal(t, "alice", out["k1"])
 	assert.Equal(t, int64(3), out["k2"])
 	assert.Equal(t, true, out["k3"])
 
 	// Non-map shapes return deterministic empty map.
-	assert.Empty(t, exec.evaluateMapLiteralFull("not-a-map", nodes, rels, nil, nil, nil, 0))
+	assert.Empty(t, exec.evaluateMapLiteralFull(ctx, "not-a-map", nodes, rels, nil, nil, nil, 0))
 }
 
 func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
@@ -1954,10 +1961,11 @@ func TestCypherHelpers_MatchRowsHelpers_Branches(t *testing.T) {
 	assert.Equal(t, -2.0, exec.evaluateSumArithmetic("-2", nodes, "n"))
 	assert.Equal(t, 0.0, exec.evaluateSumArithmetic("SUM(n.missing)", nodes, "n"))
 
+	ctx := context.Background()
 	// filterNodesByWhereClause branches.
-	all := exec.filterNodesByWhereClause(nodes, "", "n")
+	all := exec.filterNodesByWhereClause(ctx, nodes, "", "n")
 	require.Len(t, all, 2)
-	filtered := exec.filterNodesByWhereClause(nodes, "n.a >= 3", "n")
+	filtered := exec.filterNodesByWhereClause(ctx, nodes, "n.a >= 3", "n")
 	require.Len(t, filtered, 1)
 	assert.Equal(t, storage.NodeID("n1"), filtered[0].ID)
 }
@@ -2167,26 +2175,27 @@ func TestCypherHelpers_CallEvaluationHelpers(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, 0.9, exec.evaluateReturnExprInContext("score", ctxVals))
-	assert.Equal(t, "alice", exec.evaluateReturnExprInContext("n.name", ctxVals))
-	assert.Equal(t, "user-1", exec.evaluateReturnExprInContext("n.id", ctxVals))
-	assert.Equal(t, "bob", exec.evaluateReturnExprInContext("m.name", ctxVals))
-	assert.Equal(t, "NYC", exec.evaluateReturnExprInContext("m.city", ctxVals))
-	assert.Nil(t, exec.evaluateReturnExprInContext("missing.field", ctxVals))
+	ctx := context.Background()
+	assert.Equal(t, 0.9, exec.evaluateReturnExprInContext(ctx, "score", ctxVals))
+	assert.Equal(t, "alice", exec.evaluateReturnExprInContext(ctx, "n.name", ctxVals))
+	assert.Equal(t, "user-1", exec.evaluateReturnExprInContext(ctx, "n.id", ctxVals))
+	assert.Equal(t, "bob", exec.evaluateReturnExprInContext(ctx, "m.name", ctxVals))
+	assert.Equal(t, "NYC", exec.evaluateReturnExprInContext(ctx, "m.city", ctxVals))
+	assert.Nil(t, exec.evaluateReturnExprInContext(ctx, "missing.field", ctxVals))
 
-	ok, err := exec.evaluateYieldWhere("", map[string]interface{}{"x": 1})
+	ok, err := exec.evaluateYieldWhere(ctx, "", map[string]interface{}{"x": 1})
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	ok, err = exec.evaluateYieldWhere("n.value > 0", map[string]interface{}{"n": map[string]interface{}{"value": int64(2)}})
+	ok, err = exec.evaluateYieldWhere(ctx, "n.value > 0", map[string]interface{}{"n": map[string]interface{}{"value": int64(2)}})
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	ok, err = exec.evaluateYieldWhere("x.value > 1", map[string]interface{}{"x": int64(0)})
+	ok, err = exec.evaluateYieldWhere(ctx, "x.value > 1", map[string]interface{}{"x": int64(0)})
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	ok, err = exec.evaluateYieldWhere("1 + 1", map[string]interface{}{})
+	ok, err = exec.evaluateYieldWhere(ctx, "1 + 1", map[string]interface{}{})
 	require.Error(t, err)
 	assert.False(t, ok)
 }
@@ -2826,13 +2835,14 @@ func TestCypherHelpers_EvaluateWhereAsBooleanBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(21), "name": "alice"}}
 
-	assert.True(t, exec.evaluateWhereAsBoolean("n.age >= 21", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean("n.missing", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean("1", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean("0", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean("1.5", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean("0.0", "n", node))
-	assert.True(t, exec.evaluateWhereAsBoolean("'x'", "n", node))
+	ctx := context.Background()
+	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "n.age >= 21", "n", node))
+	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "n.missing", "n", node))
+	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "1", "n", node))
+	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "0", "n", node))
+	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "1.5", "n", node))
+	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "0.0", "n", node))
+	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "'x'", "n", node))
 }
 
 func TestCypherHelpers_ComparisonHelpers_Branches(t *testing.T) {
@@ -2863,24 +2873,25 @@ func TestCypherHelpers_ComparisonHelpers_Branches(t *testing.T) {
 	_, ok = toInterfaceSlice(123)
 	assert.False(t, ok)
 
+	ctx := context.Background()
 	// Variable mismatch keeps historical pass-through semantics.
-	assert.True(t, exec.evaluateIsNull(node, "n", "other.name IS NULL", false))
-	assert.True(t, exec.evaluateIsNull(node, "n", "other.name IS NOT NULL", true))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "other.name IS NULL", false))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "other.name IS NOT NULL", true))
 
 	// Standard property null checks.
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.nick IS NULL", false))
-	assert.False(t, exec.evaluateIsNull(node, "n", "n.nick IS NOT NULL", true))
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.name IS NOT NULL", true))
-	assert.False(t, exec.evaluateIsNull(node, "n", "n.missing IS NOT NULL", true))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.nick IS NULL", false))
+	assert.False(t, exec.evaluateIsNull(ctx, node, "n", "n.nick IS NOT NULL", true))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.name IS NOT NULL", true))
+	assert.False(t, exec.evaluateIsNull(ctx, node, "n", "n.missing IS NOT NULL", true))
 
 	// EmbedMeta-backed properties.
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.source IS NOT NULL", true))
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.nullable_meta IS NULL", false))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.source IS NOT NULL", true))
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.nullable_meta IS NULL", false))
 
 	// embedding is a regular property — no special routing.
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.embedding IS NULL", false)) // not in Properties
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.embedding IS NULL", false)) // not in Properties
 	node.Properties["embedding"] = []float32{0.1, 0.2}
-	assert.True(t, exec.evaluateIsNull(node, "n", "n.embedding IS NOT NULL", true)) // now in Properties
+	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.embedding IS NOT NULL", true)) // now in Properties
 }
 
 func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
@@ -3069,7 +3080,9 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		skip:       1,
 		limit:      1,
 	}
-	filtered, err := exec.applyYieldFilter(baseResult, yield)
+
+	ctx := context.Background()
+	filtered, err := exec.applyYieldFilter(ctx, baseResult, yield)
 	require.NoError(t, err)
 	require.Len(t, filtered.Rows, 1)
 	assert.Equal(t, []string{"id", "score"}, filtered.Columns)
@@ -3090,13 +3103,14 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		},
 		where: "score.value > 0.5",
 	}
-	whereFiltered, err := exec.applyYieldFilter(whereResult, yieldWhere)
+
+	whereFiltered, err := exec.applyYieldFilter(ctx, whereResult, yieldWhere)
 	require.NoError(t, err)
 	// Current evaluator semantics: map-valued YIELD WHERE does not resolve to true here.
 	require.Empty(t, whereFiltered.Rows)
 
 	// Unknown column should be rejected.
-	_, err = exec.applyYieldFilter(&ExecuteResult{
+	_, err = exec.applyYieldFilter(ctx, &ExecuteResult{
 		Columns: []string{"a"},
 		Rows:    [][]interface{}{{int64(1)}},
 	}, &yieldClause{

@@ -159,8 +159,8 @@ import (
 //   - O(n * avg_degree²) where n = number of nodes
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
-func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +266,8 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(cypher string) (*Execu
 //   - O(n * avg_degree) where n = number of nodes
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
-func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +283,8 @@ func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(cypher string) (*
 }
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
-func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -300,8 +300,8 @@ func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(cypher string)
 }
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
-func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -317,8 +317,8 @@ func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(cypher str
 }
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
-func (e *StorageExecutor) callGdsLinkPredictionJaccard(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -337,8 +337,8 @@ func (e *StorageExecutor) callGdsLinkPredictionJaccard(cypher string) (*ExecuteR
 //
 // This is a NornicDB extension that combines topological and semantic signals,
 // but follows Neo4j GDS naming conventions for compatibility.
-func (e *StorageExecutor) callGdsLinkPredictionPredict(cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +399,7 @@ type linkPredictionConfig struct {
 //
 // If nodeVars is provided, expressions like id(n) will be evaluated using the bound variables.
 // If nodeVars is nil, id(n) will be treated as a literal string (backward compatibility).
-func (e *StorageExecutor) parseLinkPredictionConfig(cypher string, nodeVars map[string]*storage.Node) (*linkPredictionConfig, error) {
+func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher string, nodeVars map[string]*storage.Node) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
 		TopK:           10,            // Default
 		Algorithm:      "adamic_adar", // Default
@@ -452,7 +452,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(cypher string, nodeVars map[
 			if strings.Contains(value, "id(") {
 				// Try to evaluate id(n) expression if nodeVars is provided
 				if nodeVars != nil {
-					evaluated := e.evaluateExpressionWithContext(value, nodeVars, make(map[string]*storage.Edge))
+					evaluated := e.evaluateExpressionWithContext(ctx, value, nodeVars, make(map[string]*storage.Edge))
 					if evaluated != nil {
 						// Convert evaluated result to string (node ID)
 						if nodeID, ok := evaluated.(string); ok && nodeID != "" {

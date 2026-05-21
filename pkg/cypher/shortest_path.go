@@ -24,7 +24,7 @@ import (
 const bfsCancelCheckMask = 0xFF
 
 // parseShortestPathQuery parses queries with shortestPath() or allShortestPaths()
-func (e *StorageExecutor) parseShortestPathQuery(cypher string) (*ShortestPathQuery, error) {
+func (e *StorageExecutor) parseShortestPathQuery(ctx context.Context, cypher string) (*ShortestPathQuery, error) {
 	query := &ShortestPathQuery{
 		// shortestPath terminates when the BFS frontier is exhausted, so the
 		// only reason to cap depth is to bound worst-case work. Using the
@@ -42,7 +42,7 @@ func (e *StorageExecutor) parseShortestPathQuery(cypher string) (*ShortestPathQu
 	if pattern == "" {
 		return nil, fmt.Errorf("invalid shortestPath syntax")
 	}
-	match := e.parseTraversalPattern(pattern)
+	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil {
 		return nil, fmt.Errorf("invalid path pattern: %s", pattern)
 	}
@@ -68,13 +68,13 @@ func (e *StorageExecutor) parseShortestPathQuery(cypher string) (*ShortestPathQu
 	}
 
 	// Resolve variable bindings from the preceding MATCH clause, if present.
-	e.resolveShortestPathVariables(query, match.StartNode.variable, match.EndNode.variable, extractPreviousMatchClause(cypher, funcIdx))
+	e.resolveShortestPathVariables(ctx, query, match.StartNode.variable, match.EndNode.variable, extractPreviousMatchClause(cypher, funcIdx))
 
 	return query, nil
 }
 
 // resolveShortestPathVariables resolves variable references from the MATCH clause
-func (e *StorageExecutor) resolveShortestPathVariables(query *ShortestPathQuery, startVar, endVar, matchClause string) {
+func (e *StorageExecutor) resolveShortestPathVariables(ctx context.Context, query *ShortestPathQuery, startVar, endVar, matchClause string) {
 	if strings.TrimSpace(matchClause) == "" {
 		return
 	}
@@ -85,7 +85,7 @@ func (e *StorageExecutor) resolveShortestPathVariables(query *ShortestPathQuery,
 
 	varBindings := make(map[string]nodePatternInfo)
 	for _, np := range nodePatterns {
-		info := e.parseNodePattern(np)
+		info := e.parseNodePattern(ctx, np)
 		if info.variable != "" {
 			varBindings[info.variable] = info
 		}
@@ -335,7 +335,7 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 					row[i] = e.pathToValue(path, item.expr, query.pathVariable)
 				} else {
 					// Try to evaluate as expression
-					row[i] = e.evaluatePathExpression(item.expr, path, query)
+					row[i] = e.evaluatePathExpression(ctx, item.expr, path, query)
 				}
 			}
 
@@ -557,7 +557,7 @@ func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
 }
 
 // evaluatePathExpression evaluates an expression in the context of a path
-func (e *StorageExecutor) evaluatePathExpression(expr string, path PathResult, query *ShortestPathQuery) interface{} {
+func (e *StorageExecutor) evaluatePathExpression(ctx context.Context, expr string, path PathResult, query *ShortestPathQuery) interface{} {
 	// Build context from path
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
@@ -569,7 +569,7 @@ func (e *StorageExecutor) evaluatePathExpression(expr string, path PathResult, q
 		nodes[query.endNode.variable] = path.Nodes[len(path.Nodes)-1]
 	}
 
-	return e.evaluateExpressionWithContext(expr, nodes, rels)
+	return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 }
 
 // isShortestPathQuery checks if a query uses shortestPath or allShortestPaths

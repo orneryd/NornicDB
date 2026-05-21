@@ -11,7 +11,10 @@
 //   - Large Result Set: Any traversal with LIMIT > 100
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // QueryPattern identifies optimizable query structures
 type QueryPattern int
@@ -73,7 +76,7 @@ type PatternInfo struct {
 }
 
 // DetectQueryPattern analyzes a Cypher query and returns pattern info
-func DetectQueryPattern(query string) PatternInfo {
+func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	info := PatternInfo{
 		Pattern: PatternGeneric,
 	}
@@ -93,7 +96,7 @@ func DetectQueryPattern(query string) PatternInfo {
 	}
 
 	// Check for mutual relationship pattern: (a)-[:T]->(b)-[:T]->(a)
-	if info.Pattern == PatternGeneric && detectMutualRelationship(query, &info) {
+	if info.Pattern == PatternGeneric && detectMutualRelationship(ctx, query, &info) {
 		return info
 	}
 
@@ -113,10 +116,10 @@ func DetectQueryPattern(query string) PatternInfo {
 			!strings.Contains(upperQuery, "COLLECT(") {
 			matchClause := extractMatchClause(query)
 			if countRelationshipPatterns(matchClause) == 1 {
-				if detectIncomingCountAgg(query, &info) {
+				if detectIncomingCountAgg(ctx, query, &info) {
 					return info
 				}
-				if detectOutgoingCountAgg(query, &info) {
+				if detectOutgoingCountAgg(ctx, query, &info) {
 					return info
 				}
 			}
@@ -191,7 +194,7 @@ func countRelationshipPatterns(s string) int {
 }
 
 // detectMutualRelationship checks for (a)-[:T]->(b)-[:T]->(a) pattern
-func detectMutualRelationship(query string, info *PatternInfo) bool {
+func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
 	matchClause := extractMatchClause(query)
 	matchClause = strings.TrimSpace(matchClause)
 	if matchClause == "" {
@@ -202,7 +205,7 @@ func detectMutualRelationship(query string, info *PatternInfo) bool {
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(matchClause)
+	match := exec.parseTraversalPattern(ctx, matchClause)
 	if match == nil || !match.IsChained || len(match.Segments) != 2 {
 		return false
 	}
@@ -235,8 +238,8 @@ func detectMutualRelationship(query string, info *PatternInfo) bool {
 }
 
 // detectIncomingCountAgg checks for (x)<-[:T]-(y) ... count(y) pattern
-func detectIncomingCountAgg(query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(extractMatchClause(query), true)
+func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), true)
 	if !ok {
 		return false
 	}
@@ -262,8 +265,8 @@ func detectIncomingCountAgg(query string, info *PatternInfo) bool {
 }
 
 // detectOutgoingCountAgg checks for (x)-[:T]->(y) ... count(y) pattern
-func detectOutgoingCountAgg(query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(extractMatchClause(query), false)
+func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), false)
 	if !ok {
 		return false
 	}
@@ -333,7 +336,7 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
 }
 
-func parseDirectionalCountPattern(matchClause string, incoming bool) (string, string, string, string, bool) {
+func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
 	matchClause = strings.TrimSpace(matchClause)
 	if matchClause == "" {
 		return "", "", "", "", false
@@ -346,7 +349,7 @@ func parseDirectionalCountPattern(matchClause string, incoming bool) (string, st
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(matchClause)
+	match := exec.parseTraversalPattern(ctx, matchClause)
 	if match == nil || match.IsChained {
 		return "", "", "", "", false
 	}

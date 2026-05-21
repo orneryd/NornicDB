@@ -171,17 +171,27 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 		wantDims = search.DefaultVectorDimensions
 	}
 
+	// Per-DB master switch: when vector search is disabled for this database,
+	// queryNodes must NOT silently fail and must NOT build an in-memory
+	// index. Honour the wired-in service's flag *before* any replacement —
+	// if we honoured it after, a dimension-driven replacement would
+	// instantiate a fresh Service whose default flags are both ON, silently
+	// bypassing the operator's disable.
+	if e.searchService != nil && !e.searchService.VectorEnabled() {
+		e.logger().Warn("db.index.vector.queryNodes called against vector-disabled database — returning empty result",
+			"subsystem", "vector_search",
+			"index_name", indexName)
+		return result, nil
+	}
+
 	svc := e.searchService
 	if svc == nil || svc.VectorIndexDimensions() != wantDims {
 		svc = search.NewServiceWithDimensions(e.storage, wantDims)
 		e.searchService = svc
 	}
 
-	// Per-DB master switch: when vector search is disabled for this database,
-	// queryNodes must NOT silently fail or build an in-memory index. Return
-	// an empty result with a WARN log so operators can spot the misconfig.
-	// The on-storage embedding properties are unchanged (durable in Badger);
-	// this only refuses to serve a vector-query reply.
+	// Belt-and-braces: if anyone else flipped the flag on the (possibly
+	// freshly-created) service since we entered this function, still bail.
 	if !svc.VectorEnabled() {
 		e.logger().Warn("db.index.vector.queryNodes called against vector-disabled database — returning empty result",
 			"subsystem", "vector_search",
@@ -273,7 +283,7 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher str
 		}
 		text = s
 	} else {
-		value := e.parseValue(arg)
+		value := e.parseValue(ctx, arg)
 		s, ok := value.(string)
 		if !ok {
 			return nil, fmt.Errorf("db.index.vector.embed requires STRING text")

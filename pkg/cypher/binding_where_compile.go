@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -10,14 +11,14 @@ type bindingWherePredicate func(binding, map[string]interface{}) bool
 
 var compiledBindingWhereCache sync.Map // map[string]bindingWherePredicate
 
-func (e *StorageExecutor) getCompiledBindingWhere(whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
 	if cached, ok := compiledBindingWhereCache.Load(key); ok {
 		if predicate, ok := cached.(bindingWherePredicate); ok {
 			return predicate
 		}
 	}
-	predicate := e.compileBindingWhere(key)
+	predicate := e.compileBindingWhere(ctx, key)
 	compiledBindingWhereCache.Store(key, predicate)
 	return predicate
 }
@@ -30,28 +31,28 @@ func normalizeBindingWhereClause(whereClause string) string {
 	return clause
 }
 
-func (e *StorageExecutor) compileBindingWhere(whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return func(binding, map[string]interface{}) bool { return true }
 	}
 
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left := e.getCompiledBindingWhere(clause[:andIdx])
-		right := e.getCompiledBindingWhere(clause[andIdx+5:])
+		left := e.getCompiledBindingWhere(ctx, clause[:andIdx])
+		right := e.getCompiledBindingWhere(ctx, clause[andIdx+5:])
 		return func(b binding, params map[string]interface{}) bool {
 			return left(b, params) && right(b, params)
 		}
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left := e.getCompiledBindingWhere(clause[:orIdx])
-		right := e.getCompiledBindingWhere(clause[orIdx+4:])
+		left := e.getCompiledBindingWhere(ctx, clause[:orIdx])
+		right := e.getCompiledBindingWhere(ctx, clause[orIdx+4:])
 		return func(b binding, params map[string]interface{}) bool {
 			return left(b, params) || right(b, params)
 		}
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		inner := e.getCompiledBindingWhere(clause[4:])
+		inner := e.getCompiledBindingWhere(ctx, clause[4:])
 		return func(b binding, params map[string]interface{}) bool {
 			return !inner(b, params)
 		}
@@ -85,7 +86,7 @@ func (e *StorageExecutor) compileBindingWhere(whereClause string) bindingWherePr
 	}
 
 	return func(b binding, params map[string]interface{}) bool {
-		return e.evaluateBindingWhereGeneric(b, clause, params)
+		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)
 	}
 }
 
@@ -387,7 +388,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateBindingWhereGeneric(b binding, whereClause string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return true
@@ -400,15 +401,15 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(b binding, whereClause str
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(clause[:andIdx])
 		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateBindingWhere(b, left, params) && e.evaluateBindingWhere(b, right, params)
+		return e.evaluateBindingWhere(ctx, b, left, params) && e.evaluateBindingWhere(ctx, b, right, params)
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(clause[:orIdx])
 		right := strings.TrimSpace(clause[orIdx+4:])
-		return e.evaluateBindingWhere(b, left, params) || e.evaluateBindingWhere(b, right, params)
+		return e.evaluateBindingWhere(ctx, b, left, params) || e.evaluateBindingWhere(ctx, b, right, params)
 	}
 	if strings.HasPrefix(upper, "NOT ") {
-		return !e.evaluateBindingWhere(b, clause[4:], params)
+		return !e.evaluateBindingWhere(ctx, b, clause[4:], params)
 	}
 
 	for _, pred := range []string{" STARTS WITH ", " ENDS WITH ", " CONTAINS "} {
@@ -420,7 +421,7 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(b binding, whereClause str
 				propName := left[dotIdx+1:]
 				if node := b[varName]; node != nil {
 					actual, _ := node.Properties[propName].(string)
-					expectedRaw := e.resolveBindingFallbackValue(right, b, params)
+					expectedRaw := e.resolveBindingFallbackValue(ctx, right, b, params)
 					expected, _ := expectedRaw.(string)
 					switch strings.TrimSpace(strings.ToUpper(pred)) {
 					case "STARTS WITH":
@@ -465,7 +466,7 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(b binding, whereClause str
 
 				if node := b[varName]; node != nil {
 					actualVal := node.Properties[propName]
-					expectedVal := e.resolveBindingFallbackValue(right, b, params)
+					expectedVal := e.resolveBindingFallbackValue(ctx, right, b, params)
 
 					switch op {
 					case "=":
@@ -497,18 +498,18 @@ func (e *StorageExecutor) evaluateBindingWhereGeneric(b binding, whereClause str
 		}
 	}
 
-	return e.evaluateBindingExpressionAsBoolean(b, clause, params)
+	return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValue(expr string, b binding, params map[string]interface{}) interface{} {
-	value, ok := e.resolveBindingFallbackValueWithOk(expr, b, params)
+func (e *StorageExecutor) resolveBindingFallbackValue(ctx context.Context, expr string, b binding, params map[string]interface{}) interface{} {
+	value, ok := e.resolveBindingFallbackValueWithOk(ctx, expr, b, params)
 	if !ok {
 		return nil
 	}
 	return value
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValueWithOk(expr string, b binding, params map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context, expr string, b binding, params map[string]interface{}) (interface{}, bool) {
 	resolver, ok := e.compileBindingValueResolver(expr)
 	if ok {
 		return resolver(b, params)
@@ -518,12 +519,12 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(expr string, b bindi
 			return value, true
 		}
 	}
-	return e.evaluateExpressionWithContext(e.substituteParams(expr, params), b, nil), true
+	return e.evaluateExpressionWithContext(ctx, e.substituteParams(expr, params), b, nil), true
 }
 
-func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(b binding, expr string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	resolved := e.substituteParams(expr, params)
-	result := e.evaluateExpressionWithContext(resolved, b, nil)
+	result := e.evaluateExpressionWithContext(ctx, resolved, b, nil)
 	if boolResult, ok := result.(bool); ok {
 		return boolResult
 	}

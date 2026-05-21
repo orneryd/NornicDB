@@ -22,7 +22,7 @@ const deleteStreamingBatchSize = 500
 // ========================================
 
 // executeMatch handles MATCH queries.
-func (e *StorageExecutor) parseMergePattern(pattern string) (string, []string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
 	pattern = strings.TrimSpace(pattern)
 	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
 		return "", nil, nil, fmt.Errorf("invalid pattern: %s", pattern)
@@ -42,7 +42,7 @@ func (e *StorageExecutor) parseMergePattern(pattern string) (string, []string, m
 		propsEnd := strings.LastIndex(pattern, "}")
 		if propsEnd > propsStart {
 			propsStr := pattern[propsStart+1 : propsEnd]
-			props = e.parseProperties(propsStr)
+			props = e.parseProperties(ctx, propsStr)
 		}
 	}
 
@@ -324,7 +324,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 	store := e.getStorage(ctx)
 
-	candidates, ok, err := e.collectDeleteWithLimitCandidates(baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
+	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
 	if err != nil {
 		return nil, true, err
 	}
@@ -359,7 +359,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	return result, true, nil
 }
 
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	matchIdx := findKeywordIndex(baseMatch, "MATCH")
 	if matchIdx < 0 {
 		return nil, false, nil
@@ -371,7 +371,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(baseMatch, deleteVar 
 		patternPart = strings.TrimSpace(baseMatch[matchIdx+5 : whereIdx])
 		wherePart = strings.TrimSpace(baseMatch[whereIdx+5:])
 	}
-	nodePat := e.parseNodePattern(patternPart)
+	nodePat := e.parseNodePattern(ctx, patternPart)
 	if strings.TrimSpace(nodePat.variable) != deleteVar {
 		return nil, false, nil
 	}
@@ -391,13 +391,13 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(baseMatch, deleteVar 
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -904,7 +904,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			mapVarName := ""
 			paramMapUsed := false
 			if strings.HasPrefix(right, "{") {
-				parsedProps, err := e.parseSetMergeMapLiteralStrict(right)
+				parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse properties in SET +=: %w", err)
 				}
@@ -1106,7 +1106,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				}
 				return normalizePropValue(paramValue), nil
 			}
-			return e.evaluateExpressionWithContext(right, buildEvalNodes(row), buildEvalEdges(row)), nil
+			return e.evaluateExpressionWithContext(ctx, right, buildEvalNodes(row), buildEvalEdges(row)), nil
 		}
 
 		// Extract variable and property (or whole-variable map replacement)
@@ -1310,11 +1310,11 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					}
 					if variable != "" {
 						if node, ok := varMap[variable]; ok {
-							aggRow[j] = e.resolveReturnItem(item, variable, node)
+							aggRow[j] = e.resolveReturnItem(ctx, item, variable, node)
 							continue
 						}
 					}
-					aggRow[j] = e.evaluateExpressionWithContext(item.expr, varMap, make(map[string]*storage.Edge))
+					aggRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, make(map[string]*storage.Edge))
 				}
 			}
 			result.Rows = [][]interface{}{aggRow}
@@ -1343,19 +1343,19 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				varName := extractVariableNameFromReturnItem(item.expr)
 				if varName != "" {
 					if node, ok := varMap[varName]; ok {
-						newRow[j] = e.resolveReturnItem(item, varName, node)
+						newRow[j] = e.resolveReturnItem(ctx, item, varName, node)
 						continue
 					}
 				}
 				// Fallback: try to resolve with the first variable (for backward compatibility)
 				if variable != "" {
 					if node, ok := varMap[variable]; ok {
-						newRow[j] = e.resolveReturnItem(item, variable, node)
+						newRow[j] = e.resolveReturnItem(ctx, item, variable, node)
 						continue
 					}
 				}
 				// If no variable matches, try to evaluate expression with all variables
-				newRow[j] = e.evaluateExpressionWithContext(item.expr, varMap, make(map[string]*storage.Edge))
+				newRow[j] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, make(map[string]*storage.Edge))
 			}
 			result.Rows = append(result.Rows, newRow)
 		}
@@ -1540,7 +1540,7 @@ func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailing
 							break
 						}
 					}
-					newRow[i] = e.evaluateExpressionWithContext(expr, nodeVars, make(map[string]*storage.Edge))
+					newRow[i] = e.evaluateExpressionWithContext(ctx, expr, nodeVars, make(map[string]*storage.Edge))
 				default:
 					if idx, ok := colIndex[expr]; ok && idx < len(row) {
 						newRow[i] = row[idx]
@@ -1550,7 +1550,7 @@ func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailing
 						newRow[i] = node
 						break
 					}
-					newRow[i] = e.evaluateExpressionWithContext(expr, nodeVars, make(map[string]*storage.Edge))
+					newRow[i] = e.evaluateExpressionWithContext(ctx, expr, nodeVars, make(map[string]*storage.Edge))
 				}
 			}
 			result.Rows = append(result.Rows, newRow)
@@ -1572,7 +1572,7 @@ func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwind
 			}
 		}
 	}
-	return e.evaluateExpressionWithContext(expr, nodeVars, nil)
+	return e.evaluateExpressionWithContext(ctx, expr, nodeVars, nil)
 }
 
 // executeSetTrailingWithReturn handles MATCH ... SET ... WITH ... RETURN by
@@ -1655,7 +1655,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 		for _, wi := range parsedWith {
 			val, resolved := resolveSetTrailingValue(wi.expr, row, colIndex, nodeScope)
 			if !resolved {
-				val = e.evaluateExpressionWithContext(wi.expr, nodeScope, nil)
+				val = e.evaluateExpressionWithContext(ctx, wi.expr, nodeScope, nil)
 			}
 			rowScope[wi.alias] = val
 			if node, ok := val.(*storage.Node); ok && node != nil {
@@ -1683,7 +1683,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 					continue
 				}
 			}
-			out[i] = e.evaluateExpressionWithContext(expr, nodeScope, nil)
+			out[i] = e.evaluateExpressionWithContext(ctx, expr, nodeScope, nil)
 		}
 		result.Rows = append(result.Rows, out)
 	}
@@ -1840,7 +1840,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 
 	if strings.HasPrefix(right, "{") {
 		// Inline properties: {key: value, ...}
-		parsedProps, err := e.parseSetMergeMapLiteralStrict(right)
+		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse properties in SET +=: %w", err)
 		}
@@ -1950,7 +1950,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 		for _, storageNode := range updatedNodes {
 			newRow := make([]interface{}, len(returnItems))
 			for j, item := range returnItems {
-				newRow[j] = e.resolveReturnItem(item, variable, storageNode)
+				newRow[j] = e.resolveReturnItem(ctx, item, variable, storageNode)
 			}
 			result.Rows = append(result.Rows, newRow)
 		}
@@ -2137,7 +2137,7 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 				}
 				resultRow := make([]interface{}, len(returnItems))
 				for i, item := range returnItems {
-					resultRow[i] = e.resolveReturnItem(item, "n", node)
+					resultRow[i] = e.resolveReturnItem(ctx, item, "n", node)
 				}
 				result.Rows = append(result.Rows, resultRow)
 			}
@@ -2466,7 +2466,7 @@ func (e *StorageExecutor) idCounter() int64 {
 
 // evaluateExistsSubquery checks if an EXISTS { } subquery returns any matches
 // Syntax: EXISTS { MATCH (node)<-[:TYPE]-(other) }
-func (e *StorageExecutor) evaluateExistsSubquery(node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateExistsSubquery(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	// Extract the subquery from EXISTS { ... }
 	subquery := e.extractSubquery(whereClause, "EXISTS")
 	if subquery == "" {
@@ -2474,11 +2474,11 @@ func (e *StorageExecutor) evaluateExistsSubquery(node *storage.Node, variable, w
 	}
 
 	// Execute the subquery with the current node as context
-	return e.checkSubqueryMatch(node, variable, subquery)
+	return e.checkSubqueryMatch(ctx, node, variable, subquery)
 }
 
 // evaluateNotExistsSubquery checks if a NOT EXISTS { } subquery returns no matches
-func (e *StorageExecutor) evaluateNotExistsSubquery(node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateNotExistsSubquery(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	// Extract the subquery from NOT EXISTS { ... }
 	subquery := e.extractSubquery(whereClause, "NOT EXISTS")
 	if subquery == "" {
@@ -2486,7 +2486,7 @@ func (e *StorageExecutor) evaluateNotExistsSubquery(node *storage.Node, variable
 	}
 
 	// Return true if no matches found
-	return !e.checkSubqueryMatch(node, variable, subquery)
+	return !e.checkSubqueryMatch(ctx, node, variable, subquery)
 }
 
 // extractSubquery extracts the MATCH pattern from EXISTS { MATCH ... } or NOT EXISTS { MATCH ... }
@@ -2688,7 +2688,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 }
 
 // checkSubqueryMatch checks if the subquery matches for a given node
-func (e *StorageExecutor) checkSubqueryMatch(node *storage.Node, variable, subquery string) bool {
+func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.Node, variable, subquery string) bool {
 	// Parse the MATCH pattern from the subquery
 	// Format: MATCH (var)<-[:TYPE]-(other) WHERE ...
 	upperSub := strings.ToUpper(subquery)
@@ -2748,7 +2748,7 @@ func (e *StorageExecutor) checkSubqueryMatch(node *storage.Node, variable, subqu
 				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
 				if innerWhere != "" && targetVar != "" {
 					sourceNode, err := e.storage.GetNode(edge.StartNode)
-					if err != nil || !e.evaluateInnerWhere(sourceNode, targetVar, innerWhere) {
+					if err != nil || !e.evaluateInnerWhere(ctx, sourceNode, targetVar, innerWhere) {
 						continue
 					}
 				} else if innerWhere != "" && targetVar == "" {
@@ -2769,7 +2769,7 @@ func (e *StorageExecutor) checkSubqueryMatch(node *storage.Node, variable, subqu
 				// Only evaluate WHERE if we have a target variable (otherwise we can't match properties)
 				if innerWhere != "" && targetVar != "" {
 					targetNode, err := e.storage.GetNode(edge.EndNode)
-					if err != nil || !e.evaluateInnerWhere(targetNode, targetVar, innerWhere) {
+					if err != nil || !e.evaluateInnerWhere(ctx, targetNode, targetVar, innerWhere) {
 						continue
 					}
 				} else if innerWhere != "" && targetVar == "" {
@@ -3013,7 +3013,7 @@ func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) strin
 
 // evaluateInnerWhere evaluates an inner WHERE clause against a node
 // Handles nested EXISTS subqueries and property comparisons
-func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateInnerWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	whereClause = strings.TrimSpace(whereClause)
 	upperWhere := strings.ToUpper(whereClause)
 
@@ -3035,7 +3035,7 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 			}
 		}
 		if isOuterParen {
-			return e.evaluateInnerWhere(node, variable, whereClause[1:len(whereClause)-1])
+			return e.evaluateInnerWhere(ctx, node, variable, whereClause[1:len(whereClause)-1])
 		}
 	}
 
@@ -3043,22 +3043,22 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(whereClause[:andIdx])
 		right := strings.TrimSpace(whereClause[andIdx+5:])
-		return e.evaluateInnerWhere(node, variable, left) && e.evaluateInnerWhere(node, variable, right)
+		return e.evaluateInnerWhere(ctx, node, variable, left) && e.evaluateInnerWhere(ctx, node, variable, right)
 	}
 
 	if orIdx := findTopLevelKeyword(whereClause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(whereClause[:orIdx])
 		right := strings.TrimSpace(whereClause[orIdx+4:])
-		return e.evaluateInnerWhere(node, variable, left) || e.evaluateInnerWhere(node, variable, right)
+		return e.evaluateInnerWhere(ctx, node, variable, left) || e.evaluateInnerWhere(ctx, node, variable, right)
 	}
 
 	// Check for nested EXISTS subquery
 	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
 		// Check for NOT EXISTS first
 		if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-			return e.evaluateNotExistsSubquery(node, variable, whereClause)
+			return e.evaluateNotExistsSubquery(ctx, node, variable, whereClause)
 		}
-		return e.evaluateExistsSubquery(node, variable, whereClause)
+		return e.evaluateExistsSubquery(ctx, node, variable, whereClause)
 	}
 
 	// Check for nested COUNT subquery
@@ -3069,29 +3069,29 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 	// Handle NOT prefix
 	if strings.HasPrefix(upperWhere, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
-		return !e.evaluateInnerWhere(node, variable, inner)
+		return !e.evaluateInnerWhere(ctx, node, variable, inner)
 	}
 
 	// Handle string operators
 	if strings.Contains(upperWhere, " CONTAINS ") {
-		return e.evaluateStringOp(node, variable, whereClause, "CONTAINS")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "CONTAINS")
 	}
 	if strings.Contains(upperWhere, " STARTS WITH ") {
-		return e.evaluateStringOp(node, variable, whereClause, "STARTS WITH")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "STARTS WITH")
 	}
 	if strings.Contains(upperWhere, " ENDS WITH ") {
-		return e.evaluateStringOp(node, variable, whereClause, "ENDS WITH")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "ENDS WITH")
 	}
 	if strings.Contains(upperWhere, " IN ") {
-		return e.evaluateInOp(node, variable, whereClause)
+		return e.evaluateInOp(ctx, node, variable, whereClause)
 	}
 
 	// Handle IS NULL / IS NOT NULL
 	if strings.Contains(upperWhere, " IS NULL") {
-		return e.evaluateIsNull(node, variable, whereClause, false)
+		return e.evaluateIsNull(ctx, node, variable, whereClause, false)
 	}
 	if strings.Contains(upperWhere, " IS NOT NULL") {
-		return e.evaluateIsNull(node, variable, whereClause, true)
+		return e.evaluateIsNull(ctx, node, variable, whereClause, true)
 	}
 
 	// Determine operator and split accordingly
@@ -3132,7 +3132,7 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 		idVar := strings.TrimSpace(left[3 : len(left)-1])
 		if idVar == variable {
 			// Compare node ID with expected value
-			expectedVal := e.parseValue(right)
+			expectedVal := e.parseValue(ctx, right)
 			actualId := string(node.ID)
 
 			// Support both string and integer comparisons for Bolt protocol compatibility
@@ -3168,7 +3168,7 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 		idVar := strings.TrimSpace(left[10 : len(left)-1])
 		if idVar == variable {
 			// Compare node ID with expected value
-			expectedVal := e.parseValue(right)
+			expectedVal := e.parseValue(ctx, right)
 			actualId := string(node.ID)
 			switch op {
 			case "=":
@@ -3201,7 +3201,7 @@ func (e *StorageExecutor) evaluateInnerWhere(node *storage.Node, variable, where
 	}
 
 	// Parse the expected value from right side
-	expectedVal := e.parseValue(right)
+	expectedVal := e.parseValue(ctx, right)
 
 	// Perform comparison based on operator
 	switch op {

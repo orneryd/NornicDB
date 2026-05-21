@@ -74,10 +74,12 @@ func TestParseLinkPredictionConfig(t *testing.T) {
 					},
 				}
 			}
-			config, err := executor.parseLinkPredictionConfig(tt.cypher, nodeVars)
+			ctx := context.Background()
+
+			config, err := executor.parseLinkPredictionConfig(ctx, tt.cypher, nodeVars)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseLinkPredictionConfig() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseLinkPredictionConfig(ctx, ) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -96,8 +98,10 @@ func TestParseLinkPredictionConfig(t *testing.T) {
 func TestParseLinkPredictionConfig_AdditionalBranches(t *testing.T) {
 	executor := &StorageExecutor{storage: newTestMemoryEngine(t)}
 
+	ctx := context.Background()
+
 	// id(var) with missing variable in provided context should error clearly.
-	_, err := executor.parseLinkPredictionConfig(
+	_, err := executor.parseLinkPredictionConfig(ctx,
 		`CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(missing), topK: 10})`,
 		map[string]*storage.Node{"n": {ID: "node-1"}},
 	)
@@ -106,7 +110,7 @@ func TestParseLinkPredictionConfig_AdditionalBranches(t *testing.T) {
 	}
 
 	// id(var) with nil nodeVars falls back to literal variable name.
-	cfg, err := executor.parseLinkPredictionConfig(
+	cfg, err := executor.parseLinkPredictionConfig(ctx,
 		`CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(seed), topK: bad, algorithm: 'jaccard', topologyWeight: 0.7, semanticWeight: 0.3, minThreshold: 0.2})`,
 		nil,
 	)
@@ -139,8 +143,10 @@ func TestGdsLinkPredictionAdamicAdar(t *testing.T) {
 		storage: engine,
 	}
 
+	ctx := context.Background()
+
 	cypher := `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'alice', topK: 5})`
-	result, err := executor.callGdsLinkPredictionAdamicAdar(cypher)
+	result, err := executor.callGdsLinkPredictionAdamicAdar(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionAdamicAdar() error = %v", err)
@@ -191,8 +197,10 @@ func TestGdsLinkPredictionCommonNeighbors(t *testing.T) {
 		storage: engine,
 	}
 
+	ctx := context.Background()
+
 	cypher := `CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: 'alice', topK: 5})`
-	result, err := executor.callGdsLinkPredictionCommonNeighbors(cypher)
+	result, err := executor.callGdsLinkPredictionCommonNeighbors(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionCommonNeighbors() error = %v", err)
@@ -214,8 +222,9 @@ func TestGdsLinkPredictionResourceAllocation(t *testing.T) {
 		storage: engine,
 	}
 
+	ctx := context.Background()
 	cypher := `CALL gds.linkPrediction.resourceAllocation.stream({sourceNode: 'alice', topK: 5})`
-	result, err := executor.callGdsLinkPredictionResourceAllocation(cypher)
+	result, err := executor.callGdsLinkPredictionResourceAllocation(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionResourceAllocation() error = %v", err)
@@ -237,8 +246,9 @@ func TestGdsLinkPredictionPreferentialAttachment(t *testing.T) {
 		storage: engine,
 	}
 
+	ctx := context.Background()
 	cypher := `CALL gds.linkPrediction.preferentialAttachment.stream({sourceNode: 'alice', topK: 5})`
-	result, err := executor.callGdsLinkPredictionPreferentialAttachment(cypher)
+	result, err := executor.callGdsLinkPredictionPreferentialAttachment(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionPreferentialAttachment() error = %v", err)
@@ -260,8 +270,9 @@ func TestGdsLinkPredictionJaccard(t *testing.T) {
 		storage: engine,
 	}
 
+	ctx := context.Background()
 	cypher := `CALL gds.linkPrediction.jaccard.stream({sourceNode: 'alice', topK: 5})`
-	result, err := executor.callGdsLinkPredictionJaccard(cypher)
+	result, err := executor.callGdsLinkPredictionJaccard(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionJaccard() error = %v", err)
@@ -301,7 +312,8 @@ func TestGdsLinkPredictionPredict(t *testing.T) {
 		semanticWeight: 0.4
 	})`
 
-	result, err := executor.callGdsLinkPredictionPredict(cypher)
+	ctx := context.Background()
+	result, err := executor.callGdsLinkPredictionPredict(ctx, cypher)
 
 	if err != nil {
 		t.Fatalf("callGdsLinkPredictionPredict() error = %v", err)

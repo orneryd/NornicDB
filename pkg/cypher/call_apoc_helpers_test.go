@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,36 +45,38 @@ func TestApocHelpers_FindMatchingBrace(t *testing.T) {
 
 func TestApocHelpers_ParseApocCypherRunArgs(t *testing.T) {
 	e := &StorageExecutor{}
-	q, p, err := e.parseApocCypherRunArgs("'MATCH (n) RETURN n', {limit: 10, enabled: true}")
+	ctx := context.Background()
+	q, p, err := e.parseApocCypherRunArgs(ctx, "'MATCH (n) RETURN n', {limit: 10, enabled: true}")
 	require.NoError(t, err)
 	assert.Equal(t, "MATCH (n) RETURN n", q)
 	assert.Equal(t, int64(10), p["limit"])
 	assert.Equal(t, true, p["enabled"])
 
-	q, p, err = e.parseApocCypherRunArgs("'RETURN 1', NULL")
+	q, p, err = e.parseApocCypherRunArgs(ctx, "'RETURN 1', NULL")
 	require.NoError(t, err)
 	assert.Equal(t, "RETURN 1", q)
 	assert.Empty(t, p)
 
-	_, _, err = e.parseApocCypherRunArgs("no-quote")
+	_, _, err = e.parseApocCypherRunArgs(ctx, "no-quote")
 	assert.Error(t, err)
-	_, _, err = e.parseApocCypherRunArgs("'unclosed")
+	_, _, err = e.parseApocCypherRunArgs(ctx, "'unclosed")
 	assert.Error(t, err)
 }
 
 func TestApocHelpers_ParseApocPeriodicIterateArgs(t *testing.T) {
 	e := &StorageExecutor{}
-	it, act, cfg, err := e.parseApocPeriodicIterateArgs("'MATCH (n) RETURN n', 'SET n.x=1', {batchSize: 1000, parallel: true}")
+	ctx := context.Background()
+	it, act, cfg, err := e.parseApocPeriodicIterateArgs(ctx, "'MATCH (n) RETURN n', 'SET n.x=1', {batchSize: 1000, parallel: true}")
 	require.NoError(t, err)
 	assert.Equal(t, "MATCH (n) RETURN n", it)
 	assert.Equal(t, "SET n.x=1", act)
 	assert.Equal(t, int64(1000), cfg["batchSize"])
 	assert.Equal(t, true, cfg["parallel"])
 
-	_, _, _, err = e.parseApocPeriodicIterateArgs("'MATCH (n)', 'SET n.x=1'")
+	_, _, _, err = e.parseApocPeriodicIterateArgs(ctx, "'MATCH (n)', 'SET n.x=1'")
 	require.NoError(t, err)
 
-	_, _, _, err = e.parseApocPeriodicIterateArgs("'MATCH (n)' 'SET n.x=1'")
+	_, _, _, err = e.parseApocPeriodicIterateArgs(ctx, "'MATCH (n)' 'SET n.x=1'")
 	assert.Error(t, err)
 }
 

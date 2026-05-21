@@ -78,9 +78,9 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 }
 
 // nodeMatchesWhereClause checks if a node matches a simple WHERE clause
-func (e *StorageExecutor) nodeMatchesWhereClause(node *storage.Node, whereClause string, varName string) bool {
+func (e *StorageExecutor) nodeMatchesWhereClause(ctx context.Context, node *storage.Node, whereClause string, varName string) bool {
 	// Use the standard WHERE evaluation with node and variable name
-	return e.evaluateWhere(node, varName, whereClause)
+	return e.evaluateWhere(ctx, node, varName, whereClause)
 }
 
 // evaluateSumArithmetic handles expressions like SUM(n.a) + SUM(n.b)
@@ -172,7 +172,7 @@ func splitArithmeticExpression(expr string) []string {
 
 // evaluateWithWhereCondition evaluates a WHERE condition against computed WITH values.
 // This is for filtering after WITH aggregation (like SQL HAVING).
-func (e *StorageExecutor) evaluateWithWhereCondition(whereClause string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	upperClause := strings.ToUpper(whereClause)
 
 	// Handle IS NULL / IS NOT NULL
@@ -198,11 +198,11 @@ func (e *StorageExecutor) evaluateWithWhereCondition(whereClause string, values 
 
 			leftVal, exists := values[left]
 			if !exists {
-				leftVal = e.parseValue(left)
+				leftVal = e.parseValue(ctx, left)
 			}
 			rightVal, exists := values[right]
 			if !exists {
-				rightVal = e.parseValue(right)
+				rightVal = e.parseValue(ctx, right)
 			}
 
 			switch op {
@@ -227,13 +227,13 @@ func (e *StorageExecutor) evaluateWithWhereCondition(whereClause string, values 
 
 // filterNodesByWhereClause filters nodes based on a WHERE clause condition.
 // Uses evaluateWhere for consistent condition evaluation.
-func (e *StorageExecutor) filterNodesByWhereClause(nodes []*storage.Node, whereClause, variable string) []*storage.Node {
+func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause, variable string) []*storage.Node {
 	if whereClause == "" {
 		return nodes
 	}
 
 	filterFn := func(node *storage.Node) bool {
-		return e.evaluateWhere(node, variable, whereClause)
+		return e.evaluateWhere(ctx, node, variable, whereClause)
 	}
 
 	return parallelFilterNodes(nodes, filterFn)
@@ -574,7 +574,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	}
 
 	// Parse node pattern
-	nodePattern := e.parseNodePattern(nodePatternPart)
+	nodePattern := e.parseNodePattern(ctx, nodePatternPart)
 
 	// Get matching nodes
 	var nodes []*storage.Node
@@ -596,7 +596,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 
 	// Apply WHERE clause filter if present
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(nodes, whereClause, nodePattern.variable)
+		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, nodePattern.variable)
 	}
 
 	// Parse UNWIND clause: UNWIND expr AS variable

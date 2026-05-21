@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 //	MATCH (n[:Label]) WHERE elementId(n) = <element-id>
 //
 // via a direct node lookup instead of scanning all nodes.
-func (e *StorageExecutor) tryCollectNodesFromIDEquality(nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return nil, false, nil
@@ -68,7 +69,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(nodePattern nodePatternI
 		return nil, false, nil
 	}
 
-	rawVal := e.parseValue(right)
+	rawVal := e.parseValue(ctx, right)
 	idValue, ok := rawVal.(string)
 	if !ok || strings.TrimSpace(idValue) == "" {
 		return []*storage.Node{}, true, nil
@@ -120,6 +121,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(nodePattern nodePatternI
 // The parameter-aware variant is critical for app workloads that always pass
 // IDs as parameters (e.g., attach/read-by-id paths).
 func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -242,6 +244,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 // ID-equality predicates; otherwise it returns (nil, false, nil) to avoid unsafe
 // pruning.
 func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -252,10 +255,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	}
 
 	// 1) Simple clause (literal or param).
-	if nodes, used, err := e.tryCollectNodesFromIDEquality(nodePattern, clause); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, clause); used || err != nil {
 		return nodes, used, err
 	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, clause, params); used || err != nil {
 		return nodes, used, err
 	}
 
@@ -266,10 +269,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromIDEquality(nodePattern, term); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, term); used || err != nil {
 				return nodes, used, err
 			}
-			if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(nodePattern, term, params); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, term, params); used || err != nil {
 				return nodes, used, err
 			}
 		}
@@ -286,12 +289,12 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 				return nil, false, nil
 			}
 
-			nodes, used, err := e.tryCollectNodesFromIDEquality(nodePattern, term)
+			nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, term)
 			if err != nil {
 				return nil, true, err
 			}
 			if !used {
-				nodes, used, err = e.tryCollectNodesFromIDEqualityParam(nodePattern, term, params)
+				nodes, used, err = e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, term, params)
 				if err != nil {
 					return nil, true, err
 				}
@@ -326,8 +329,8 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 //
 // It returns (nodes, true, nil) when index planning was used (including empty matches),
 // and (nil, false, nil) when the predicate is not eligible for index lookup.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	property, value, ok := e.parseSimpleIndexedEquality(nodePattern.variable, whereClause)
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
 	}
@@ -434,10 +437,11 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 //
 //	<var>.<prop> IN ['a', 'b', ...]
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
-	property, listValues, ok := e.parseSimpleIndexedInLiteral(nodePattern.variable, whereClause)
+	property, listValues, ok := e.parseSimpleIndexedInLiteral(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
 	}
@@ -588,6 +592,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 // results with deduplication. This removes a major source of slow scans for
 // dual-key lookup workloads.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -607,8 +612,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	}
 
 	// Try to parse each branch as a simple indexed equality predicate.
-	lprop, lval, lok := e.parseSimpleIndexedEquality(nodePattern.variable, left)
-	rprop, rval, rok := e.parseSimpleIndexedEquality(nodePattern.variable, right)
+	lprop, lval, lok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, left)
+	rprop, rval, rok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, right)
 	if !lok || !rok {
 		return nil, false, nil
 	}
@@ -784,6 +789,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDInParam(
 // a candidate window and the remaining keys are applied with the in-memory
 // top-K comparator.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
@@ -836,7 +842,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 			continue
 		}
 		// Apply WHERE filter if present.
-		if hasWhere && !e.evaluateWhere(node, nodePattern.variable, whereClause) {
+		if hasWhere && !e.evaluateWhere(ctx, node, nodePattern.variable, whereClause) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -1036,7 +1042,7 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 	return out
 }
 
-func (e *StorageExecutor) parseSimpleIndexedEquality(variable, whereClause string) (property string, value interface{}, ok bool) {
+func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable, whereClause string) (property string, value interface{}, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1069,11 +1075,11 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(variable, whereClause strin
 
 	prop, isLeftVarProp := parseVariableProperty(left, variable)
 	if isLeftVarProp {
-		return prop, e.parseValue(right), true
+		return prop, e.parseValue(ctx, right), true
 	}
 	prop, isRightVarProp := parseVariableProperty(right, variable)
 	if isRightVarProp {
-		return prop, e.parseValue(left), true
+		return prop, e.parseValue(ctx, left), true
 	}
 	return "", nil, false
 }
@@ -1135,7 +1141,7 @@ func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string
 	return parsedProp, out, true
 }
 
-func (e *StorageExecutor) parseSimpleIndexedInLiteral(variable, whereClause string) (property string, values []interface{}, ok bool) {
+func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, variable, whereClause string) (property string, values []interface{}, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1167,7 +1173,7 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(variable, whereClause stri
 	if !strings.HasPrefix(right, "[") || !strings.HasSuffix(right, "]") {
 		return "", nil, false
 	}
-	rawList := e.parseValue(right)
+	rawList := e.parseValue(ctx, right)
 	list := coerceInterfaceList(rawList)
 	if len(list) == 0 {
 		return parsedProp, []interface{}{}, true

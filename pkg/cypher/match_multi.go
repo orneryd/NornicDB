@@ -38,7 +38,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 		nodePatternPart = matchPart
 	}
 
-	nodePattern := e.parseNodePattern(nodePatternPart)
+	nodePattern := e.parseNodePattern(ctx, nodePatternPart)
 
 	// Get matching nodes
 	var nodes []*storage.Node
@@ -58,7 +58,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	}
 
 	if matchWhere != "" {
-		nodes = e.filterNodesByWhereClause(nodes, matchWhere, nodePattern.variable)
+		nodes = e.filterNodesByWhereClause(ctx, nodes, matchWhere, nodePattern.variable)
 	}
 
 	// Step 2: Process first WITH clause - compute filteredLabels for each node
@@ -98,7 +98,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 				propName := expr[len(nodePattern.variable)+1:]
 				values[alias] = node.Properties[propName]
 			} else {
-				values[alias] = e.evaluateExpressionWithContext(expr, nodeMap, nil)
+				values[alias] = e.evaluateExpressionWithContext(ctx, expr, nodeMap, nil)
 			}
 		}
 
@@ -363,7 +363,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 	// Apply WHERE filter if present
 	if whereClause != "" {
-		bindings = e.filterBindingsByWhere(bindings, whereClause, getParamsFromContext(ctx))
+		bindings = e.filterBindingsByWhere(ctx, bindings, whereClause, getParamsFromContext(ctx))
 	}
 
 	// Build result from bindings
@@ -401,7 +401,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 			keyParts := make([]interface{}, 0)
 			for i, item := range returnItems {
 				if !isAggFlags[i] {
-					val := e.resolveBindingItem(item, b)
+					val := e.resolveBindingItem(ctx, item, b)
 					keyParts = append(keyParts, val)
 				}
 			}
@@ -434,7 +434,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 					} else {
 						count := int64(0)
 						for _, b := range groupBindings {
-							val := e.resolveBindingItem(returnItem{expr: inner}, b)
+							val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 							if val != nil {
 								count++
 							}
@@ -445,7 +445,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "sum"):
 					sum := float64(0)
 					for _, b := range groupBindings {
-						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 						if num, ok := toFloat64(val); ok {
 							sum += num
 						}
@@ -456,7 +456,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 					sum := float64(0)
 					count := 0
 					for _, b := range groupBindings {
-						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 						if num, ok := toFloat64(val); ok {
 							sum += num
 							count++
@@ -471,7 +471,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "min"):
 					var minVal interface{}
 					for _, b := range groupBindings {
-						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
 							minVal = val
 						}
@@ -481,7 +481,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "max"):
 					var maxVal interface{}
 					for _, b := range groupBindings {
-						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
 							maxVal = val
 						}
@@ -491,7 +491,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "collect"):
 					var collected []interface{}
 					for _, b := range groupBindings {
-						val := e.resolveBindingItem(returnItem{expr: inner}, b)
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
 						collected = append(collected, val)
 					}
 					row[i] = collected
@@ -504,7 +504,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		for _, b := range bindings {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
-				row[i] = e.resolveBindingItem(item, b)
+				row[i] = e.resolveBindingItem(ctx, item, b)
 			}
 			result.Rows = append(result.Rows, row)
 		}
@@ -619,7 +619,7 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 
 	// Check for relationship pattern
 	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
-		matches := e.parseTraversalPattern(pattern)
+		matches := e.parseTraversalPattern(ctx, pattern)
 		if matches == nil {
 			return bindings
 		}
@@ -640,7 +640,7 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 		}
 	} else {
 		// Simple node pattern
-		nodePattern := e.parseNodePattern(pattern)
+		nodePattern := e.parseNodePattern(ctx, pattern)
 		var nodes []*storage.Node
 		if len(nodePattern.labels) > 0 {
 			nodes, _ = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
@@ -669,7 +669,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	for _, existing := range existingBindings {
 		// Check for relationship pattern
 		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
-			matches := e.parseTraversalPattern(pattern)
+			matches := e.parseTraversalPattern(ctx, pattern)
 			if matches == nil {
 				continue
 			}
@@ -707,7 +707,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern := e.parseNodePattern(pattern)
+			nodePattern := e.parseNodePattern(ctx, pattern)
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
@@ -742,8 +742,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 }
 
 // filterBindingsByWhere filters bindings based on WHERE clause
-func (e *StorageExecutor) filterBindingsByWhere(bindings []binding, whereClause string, params map[string]interface{}) []binding {
-	compiled := e.getCompiledBindingWhere(whereClause)
+func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
+	compiled := e.getCompiledBindingWhere(ctx, whereClause)
 	var result []binding
 
 	for _, b := range bindings {
@@ -756,11 +756,19 @@ func (e *StorageExecutor) filterBindingsByWhere(bindings []binding, whereClause 
 }
 
 // evaluateBindingWhere evaluates WHERE clause against a binding
-func (e *StorageExecutor) evaluateBindingWhere(b binding, whereClause string, params map[string]interface{}) bool {
-	return e.evaluateBindingWhereGeneric(b, whereClause, params)
+func (e *StorageExecutor) evaluateBindingWhere(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
+	// Thread the explicit params map onto ctx so the recursive expression
+	// evaluator can resolve $param refs to their typed values via
+	// resolveDirectParamRef. Without this, the evaluator only sees what's
+	// already in ctx — and callers (tests, internal binding compiles) often
+	// provide params as an explicit argument instead of via ctx.
+	if params != nil {
+		ctx = withParams(ctx, params)
+	}
+	return e.evaluateBindingWhereGeneric(ctx, b, whereClause, params)
 }
 
-func (e *StorageExecutor) resolveWhereValue(raw string, params map[string]interface{}) interface{} {
+func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, params map[string]interface{}) interface{} {
 	s := strings.TrimSpace(raw)
 	if strings.HasPrefix(s, "$") {
 		name := strings.TrimSpace(strings.TrimPrefix(s, "$"))
@@ -770,19 +778,19 @@ func (e *StorageExecutor) resolveWhereValue(raw string, params map[string]interf
 			}
 		}
 	}
-	return e.parseValue(s)
+	return e.parseValue(ctx, s)
 }
 
 // resolveBindingItem resolves a return item against a binding
-func (e *StorageExecutor) resolveBindingItem(item returnItem, b binding) interface{} {
+func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding) interface{} {
 	expr := strings.TrimSpace(item.expr)
 	if expr == "" {
 		return nil
 	}
-	return e.resolveBindingExpr(expr, b)
+	return e.resolveBindingExpr(ctx, expr, b)
 }
 
-func (e *StorageExecutor) resolveBindingExpr(expr string, b binding) interface{} {
+func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -806,7 +814,7 @@ func (e *StorageExecutor) resolveBindingExpr(expr string, b binding) interface{}
 	if strings.HasPrefix(expr, "'") || strings.HasPrefix(expr, "\"") ||
 		strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false") ||
 		strings.EqualFold(expr, "null") || isNumericLiteral(expr) {
-		return e.parseValue(expr)
+		return e.parseValue(ctx, expr)
 	}
 
 	// Property access: var.prop
@@ -828,7 +836,7 @@ func (e *StorageExecutor) resolveBindingExpr(expr string, b binding) interface{}
 	}
 
 	// Fallback to the common expression evaluator used in other MATCH/RETURN paths.
-	if val := e.evaluateExpressionWithContext(expr, b, nil); val != nil {
+	if val := e.evaluateExpressionWithContext(ctx, expr, b, nil); val != nil {
 		return val
 	}
 
@@ -913,7 +921,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 		if strings.TrimSpace(whereClause) != "" {
 			if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {
 				whereFilter = fastIN
-			} else if compiled, ok := e.getCompiledSimpleWhere(whereVariable, whereClause); ok {
+			} else if compiled, ok := e.getCompiledSimpleWhere(ctx, whereVariable, whereClause); ok {
 				whereFilter = compiled
 			}
 		}
@@ -1050,7 +1058,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 			continue
 		}
 
-		nodeInfo := e.parseNodePattern(pattern)
+		nodeInfo := e.parseNodePattern(ctx, pattern)
 
 		var nodes []*storage.Node
 		var err error
@@ -1094,7 +1102,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 	if whereClause != "" {
 		var filtered []map[string]*storage.Node
 		for _, match := range allMatches {
-			if e.evaluateWhereForContext(whereClause, match) {
+			if e.evaluateWhereForContext(ctx, whereClause, match) {
 				filtered = append(filtered, match)
 			}
 		}
@@ -1103,14 +1111,14 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 
 	// Handle aggregation queries
 	if hasAggregation {
-		return e.executeCartesianAggregation(allMatches, returnItems, result)
+		return e.executeCartesianAggregation(ctx, allMatches, returnItems, result)
 	}
 
 	// Build result rows from cartesian product
 	for _, match := range allMatches {
 		row := make([]interface{}, len(returnItems))
 		for i, item := range returnItems {
-			row[i] = e.evaluateExpressionWithContext(item.expr, match, nil)
+			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, match, nil)
 		}
 		result.Rows = append(result.Rows, row)
 	}
@@ -1581,6 +1589,7 @@ func filterNodesByNullConstraint(nodes []*storage.Node, prop string, expectNotNu
 
 // executeCartesianAggregation handles aggregation over cartesian product results
 func (e *StorageExecutor) executeCartesianAggregation(
+	ctx context.Context,
 	allMatches []map[string]*storage.Node,
 	returnItems []returnItem,
 	result *ExecuteResult,
@@ -1612,13 +1621,13 @@ func (e *StorageExecutor) executeCartesianAggregation(
 				inner := item.expr[8 : len(item.expr)-1]
 				collected := make([]interface{}, 0, len(allMatches))
 				for _, match := range allMatches {
-					val := e.evaluateExpressionWithContext(inner, match, nil)
+					val := e.evaluateExpressionWithContext(ctx, inner, match, nil)
 					collected = append(collected, val)
 				}
 				row[i] = collected
 			default:
 				if len(allMatches) > 0 {
-					row[i] = e.evaluateExpressionWithContext(item.expr, allMatches[0], nil)
+					row[i] = e.evaluateExpressionWithContext(ctx, item.expr, allMatches[0], nil)
 				}
 			}
 		}
@@ -1640,7 +1649,7 @@ func (e *StorageExecutor) executeCartesianAggregation(
 				!strings.HasPrefix(upper, "MIN(") &&
 				!strings.HasPrefix(upper, "MAX(") &&
 				!strings.HasPrefix(upper, "COLLECT(") {
-				val := e.evaluateExpressionWithContext(item.expr, match, nil)
+				val := e.evaluateExpressionWithContext(ctx, item.expr, match, nil)
 				keyParts = append(keyParts, val)
 			}
 		}
@@ -1678,13 +1687,13 @@ func (e *StorageExecutor) executeCartesianAggregation(
 				inner := item.expr[8 : len(item.expr)-1]
 				collected := make([]interface{}, 0, len(groupMatches))
 				for _, match := range groupMatches {
-					val := e.evaluateExpressionWithContext(inner, match, nil)
+					val := e.evaluateExpressionWithContext(ctx, inner, match, nil)
 					collected = append(collected, val)
 				}
 				row[i] = collected
 			default:
 				if len(groupMatches) > 0 {
-					row[i] = e.evaluateExpressionWithContext(item.expr, groupMatches[0], nil)
+					row[i] = e.evaluateExpressionWithContext(ctx, item.expr, groupMatches[0], nil)
 				}
 			}
 		}
@@ -1695,13 +1704,13 @@ func (e *StorageExecutor) executeCartesianAggregation(
 }
 
 // evaluateWhereForContext evaluates a WHERE clause against a node context
-func (e *StorageExecutor) evaluateWhereForContext(whereClause string, nodes map[string]*storage.Node) bool {
+func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return true
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		return !e.evaluateWhereForContext(strings.TrimSpace(clause[4:]), nodes)
+		return !e.evaluateWhereForContext(ctx, strings.TrimSpace(clause[4:]), nodes)
 	}
 
 	// Handle top-level conjunction/disjunction explicitly so each side can use
@@ -1709,12 +1718,12 @@ func (e *StorageExecutor) evaluateWhereForContext(whereClause string, nodes map[
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(clause[:andIdx])
 		right := strings.TrimSpace(clause[andIdx+5:])
-		return e.evaluateWhereForContext(left, nodes) && e.evaluateWhereForContext(right, nodes)
+		return e.evaluateWhereForContext(ctx, left, nodes) && e.evaluateWhereForContext(ctx, right, nodes)
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
 		left := strings.TrimSpace(clause[:orIdx])
 		right := strings.TrimSpace(clause[orIdx+4:])
-		return e.evaluateWhereForContext(left, nodes) || e.evaluateWhereForContext(right, nodes)
+		return e.evaluateWhereForContext(ctx, left, nodes) || e.evaluateWhereForContext(ctx, right, nodes)
 	}
 
 	// If this clause references exactly one bound variable, route through
@@ -1735,7 +1744,7 @@ func (e *StorageExecutor) evaluateWhereForContext(whereClause string, nodes map[
 	}
 	if referenced != "" && referenced != "__multi__" {
 		if node := nodes[referenced]; node != nil {
-			return e.evaluateWhere(node, referenced, clause)
+			return e.evaluateWhere(ctx, node, referenced, clause)
 		}
 	}
 
@@ -1779,7 +1788,7 @@ func (e *StorageExecutor) evaluateWhereForContext(whereClause string, nodes map[
 	}
 
 	// Fallback: parse/evaluate as expression with full node context.
-	result := e.evaluateExpressionWithContext(clause, nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, clause, nodes, nil)
 	if b, ok := result.(bool); ok {
 		return b
 	}

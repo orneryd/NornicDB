@@ -5,6 +5,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"reflect"
@@ -45,8 +46,10 @@ func TestFunctionId(t *testing.T) {
 	e := setupTestExecutor(t)
 	node := createTestNode(t, e, "node-1", []string{"Person"}, map[string]interface{}{"name": "Alice"})
 
+	ctx := context.Background()
+
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext("id(n)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "id(n)", nodes, nil)
 
 	if result != "node-1" {
 		t.Errorf("id(n) = %v, want node-1", result)
@@ -58,7 +61,9 @@ func TestFunctionElementId(t *testing.T) {
 	node := createTestNode(t, e, "node-1", []string{"Person"}, map[string]interface{}{"name": "Alice"})
 
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext("elementId(n)", nodes, nil)
+	ctx := context.Background()
+
+	result := e.evaluateExpressionWithContext(ctx, "elementId(n)", nodes, nil)
 
 	expected := "4:nornicdb:node-1"
 	if result != expected {
@@ -71,7 +76,9 @@ func TestFunctionLabels(t *testing.T) {
 	node := createTestNode(t, e, "node-1", []string{"Person", "Employee"}, nil)
 
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext("labels(n)", nodes, nil)
+	ctx := context.Background()
+
+	result := e.evaluateExpressionWithContext(ctx, "labels(n)", nodes, nil)
 
 	labels, ok := result.([]interface{})
 	if !ok {
@@ -90,7 +97,9 @@ func TestFunctionType(t *testing.T) {
 		Type: "KNOWS",
 	}
 	rels := map[string]*storage.Edge{"r": rel}
-	result := e.evaluateExpressionWithContext("type(r)", nil, rels)
+	ctx := context.Background()
+
+	result := e.evaluateExpressionWithContext(ctx, "type(r)", nil, rels)
 
 	if result != "KNOWS" {
 		t.Errorf("type(r) = %v, want KNOWS", result)
@@ -105,7 +114,9 @@ func TestFunctionKeys(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext("keys(n)", nodes, nil)
+	ctx := context.Background()
+
+	result := e.evaluateExpressionWithContext(ctx, "keys(n)", nodes, nil)
 
 	keys, ok := result.([]interface{})
 	if !ok {
@@ -124,7 +135,9 @@ func TestFunctionProperties(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext("properties(n)", nodes, nil)
+	ctx := context.Background()
+
+	result := e.evaluateExpressionWithContext(ctx, "properties(n)", nodes, nil)
 
 	props, ok := result.(map[string]interface{})
 	if !ok {
@@ -150,7 +163,9 @@ func TestFunctionCoalesce(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -176,7 +191,9 @@ func TestFunctionExists(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -221,7 +238,9 @@ func TestStringFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -239,8 +258,10 @@ func TestSplitFunction(t *testing.T) {
 	})
 	nodes := map[string]*storage.Node{"n": node}
 
+	ctx := context.Background()
+
 	// Test with node properties
-	result := e.evaluateExpressionWithContext("split(n.data, n.sep)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "split(n.data, n.sep)", nodes, nil)
 	list, ok := result.([]interface{})
 	if !ok {
 		t.Fatalf("split should return list, got %T", result)
@@ -263,7 +284,9 @@ func TestCharLengthFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -275,31 +298,31 @@ func TestFunctionEvaluator_ArrayIndexSliceAndMapLiteral(t *testing.T) {
 	e := setupTestExecutor(t)
 	node := createTestNode(t, e, "node-eval-1", []string{"Person", "Employee"}, map[string]interface{}{"nums": []interface{}{int64(10), int64(20), int64(30)}})
 	nodes := map[string]*storage.Node{"n": node}
-
+	ctx := context.Background()
 	// Array/string indexing paths
-	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext("labels(n)[0]", nodes, nil))
-	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext("labels(n)[-1]", nodes, nil))
-	assertEqual(t, "'abc'[1]", "b", e.evaluateExpressionWithContext("'abc'[1]", nodes, nil))
+	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(ctx, "labels(n)[0]", nodes, nil))
+	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(ctx, "labels(n)[-1]", nodes, nil))
+	assertEqual(t, "'abc'[1]", "b", e.evaluateExpressionWithContext(ctx, "'abc'[1]", nodes, nil))
 
 	// Slice notation paths
-	s1 := e.evaluateExpressionWithContext("labels(n)[..1]", nodes, nil)
+	s1 := e.evaluateExpressionWithContext(ctx, "labels(n)[..1]", nodes, nil)
 	list1, ok := s1.([]interface{})
 	if !ok || len(list1) != 1 || list1[0] != "Person" {
 		t.Fatalf("labels(n)[..1] = %v, want [Person]", s1)
 	}
 
-	s2 := e.evaluateExpressionWithContext("labels(n)[1..]", nodes, nil)
+	s2 := e.evaluateExpressionWithContext(ctx, "labels(n)[1..]", nodes, nil)
 	list2, ok := s2.([]interface{})
 	if !ok || len(list2) != 1 || list2[0] != "Employee" {
 		t.Fatalf("labels(n)[1..] = %v, want [Employee]", s2)
 	}
 
 	// IN list must not be treated as indexing
-	assertEqual(t, "1 IN [1,2,3]", true, e.evaluateExpressionWithContext("1 IN [1,2,3]", nil, nil))
+	assertEqual(t, "1 IN [1,2,3]", true, e.evaluateExpressionWithContext(ctx, "1 IN [1,2,3]", nil, nil))
 
 	// Parenthesized expression and map literal
-	assertEqual(t, "(1 + 2)", int64(3), e.evaluateExpressionWithContext("(1 + 2)", nil, nil))
-	m := e.evaluateExpressionWithContext("{x: 1, y: 'z'}", nil, nil)
+	assertEqual(t, "(1 + 2)", int64(3), e.evaluateExpressionWithContext(ctx, "(1 + 2)", nil, nil))
+	m := e.evaluateExpressionWithContext(ctx, "{x: 1, y: 'z'}", nil, nil)
 	mm, ok := m.(map[string]interface{})
 	if !ok {
 		t.Fatalf("map literal should return map, got %T", m)
@@ -328,29 +351,30 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{"r": rel}
+	ctx := context.Background()
 
-	assertEqual(t, "type({type:'KNOWS'})", "KNOWS", e.evaluateExpressionWithContext("type({type:'KNOWS'})", nodes, rels))
-	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext("exists(n.missing)", nodes, rels))
-	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext("head([])", nodes, rels))
-	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext("last([])", nodes, rels))
-	assertEqual(t, "reverse('stressed')", "desserts", e.evaluateExpressionWithContext("reverse('stressed')", nodes, rels))
-	assertEqual(t, "indexOf([1,2,3], 9)", int64(-1), e.evaluateExpressionWithContext("indexOf([1,2,3], 9)", nodes, rels))
-	assertEqual(t, "hasLabels(n, ['Person', 'Employee'])", true, e.evaluateExpressionWithContext("hasLabels(n, ['Person', 'Employee'])", nodes, rels))
-	assertEqual(t, "hasLabels(n, ['Person', 'Missing'])", false, e.evaluateExpressionWithContext("hasLabels(n, ['Person', 'Missing'])", nodes, rels))
+	assertEqual(t, "type({type:'KNOWS'})", "KNOWS", e.evaluateExpressionWithContext(ctx, "type({type:'KNOWS'})", nodes, rels))
+	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext(ctx, "exists(n.missing)", nodes, rels))
+	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext(ctx, "head([])", nodes, rels))
+	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext(ctx, "last([])", nodes, rels))
+	assertEqual(t, "reverse('stressed')", "desserts", e.evaluateExpressionWithContext(ctx, "reverse('stressed')", nodes, rels))
+	assertEqual(t, "indexOf([1,2,3], 9)", int64(-1), e.evaluateExpressionWithContext(ctx, "indexOf([1,2,3], 9)", nodes, rels))
+	assertEqual(t, "hasLabels(n, ['Person', 'Employee'])", true, e.evaluateExpressionWithContext(ctx, "hasLabels(n, ['Person', 'Employee'])", nodes, rels))
+	assertEqual(t, "hasLabels(n, ['Person', 'Missing'])", false, e.evaluateExpressionWithContext(ctx, "hasLabels(n, ['Person', 'Missing'])", nodes, rels))
 
-	tail := e.evaluateExpressionWithContext("tail([1])", nodes, rels)
+	tail := e.evaluateExpressionWithContext(ctx, "tail([1])", nodes, rels)
 	tailList, ok := tail.([]interface{})
 	if !ok || len(tailList) != 0 {
 		t.Fatalf("tail([1]) = %v, want []", tail)
 	}
 
-	sliced := e.evaluateExpressionWithContext("slice([1, 2, 3, 4], -3, -1)", nodes, rels)
+	sliced := e.evaluateExpressionWithContext(ctx, "slice([1, 2, 3, 4], -3, -1)", nodes, rels)
 	sliceList, ok := sliced.([]interface{})
 	if !ok || len(sliceList) != 2 || sliceList[0] != int64(2) || sliceList[1] != int64(3) {
 		t.Fatalf("slice([1,2,3,4], -3, -1) = %v, want [2,3]", sliced)
 	}
 
-	gotLength := e.evaluateExpressionWithContextFullFunctions(
+	gotLength := e.evaluateExpressionWithContextFullFunctions(ctx,
 		"length(p)",
 		nodes,
 		rels,
@@ -361,7 +385,7 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 	)
 	assertEqual(t, "length(p)", int64(4), gotLength)
 
-	gotFallbackLength := e.evaluateExpressionWithContextFullFunctions("length(route)", nodes, rels, nil, nil, nil, 6)
+	gotFallbackLength := e.evaluateExpressionWithContextFullFunctions(ctx, "length(route)", nodes, rels, nil, nil, nil, 6)
 	assertEqual(t, "length(route)", int64(6), gotFallbackLength)
 }
 
@@ -380,26 +404,27 @@ func TestListFunctions(t *testing.T) {
 	e := setupTestExecutor(t)
 
 	// Test head
-	result := e.evaluateExpressionWithContext("head([1, 2, 3])", nil, nil)
+	ctx := context.Background()
+	result := e.evaluateExpressionWithContext(ctx, "head([1, 2, 3])", nil, nil)
 	if result != int64(1) {
 		t.Errorf("head([1,2,3]) = %v, want 1", result)
 	}
 
 	// Test last
-	result = e.evaluateExpressionWithContext("last([1, 2, 3])", nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, "last([1, 2, 3])", nil, nil)
 	if result != int64(3) {
 		t.Errorf("last([1,2,3]) = %v, want 3", result)
 	}
 
 	// Test tail
-	tail := e.evaluateExpressionWithContext("tail([1, 2, 3])", nil, nil)
+	tail := e.evaluateExpressionWithContext(ctx, "tail([1, 2, 3])", nil, nil)
 	tailList, ok := tail.([]interface{})
 	if !ok || len(tailList) != 2 {
 		t.Errorf("tail([1,2,3]) = %v, want [2,3]", tail)
 	}
 
 	// Test reverse
-	rev := e.evaluateExpressionWithContext("reverse([1, 2, 3])", nil, nil)
+	rev := e.evaluateExpressionWithContext(ctx, "reverse([1, 2, 3])", nil, nil)
 	revList, ok := rev.([]interface{})
 	if !ok || len(revList) != 3 {
 		t.Errorf("reverse([1,2,3]) failed")
@@ -420,7 +445,9 @@ func TestRangeFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			list, ok := result.([]interface{})
 			if !ok {
 				t.Fatalf("%s should return list", tt.expr)
@@ -447,7 +474,9 @@ func TestSizeFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -483,7 +512,9 @@ func TestMathFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 
 			if tt.delta > 0 {
 				resultF, ok := result.(float64)
@@ -524,7 +555,9 @@ func TestTrigFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -559,7 +592,9 @@ func TestHyperbolicFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -591,7 +626,9 @@ func TestPowerFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -605,16 +642,17 @@ func TestPowerFunction(t *testing.T) {
 
 func TestMathConstants(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Test pi()
-	pi := e.evaluateExpressionWithContext("pi()", nil, nil)
+	pi := e.evaluateExpressionWithContext(ctx, "pi()", nil, nil)
 	piF, ok := pi.(float64)
 	if !ok || math.Abs(piF-math.Pi) > 0.0001 {
 		t.Errorf("pi() = %v, want %v", pi, math.Pi)
 	}
 
 	// Test e()
-	eVal := e.evaluateExpressionWithContext("e()", nil, nil)
+	eVal := e.evaluateExpressionWithContext(ctx, "e()", nil, nil)
 	eF, ok := eVal.(float64)
 	if !ok || math.Abs(eF-math.E) > 0.0001 {
 		t.Errorf("e() = %v, want %v", eVal, math.E)
@@ -623,9 +661,10 @@ func TestMathConstants(t *testing.T) {
 
 func TestRandomFunctions(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Test rand() returns value between 0 and 1
-	result := e.evaluateExpressionWithContext("rand()", nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, "rand()", nil, nil)
 	randF, ok := result.(float64)
 	if !ok {
 		t.Fatalf("rand() should return float64")
@@ -635,7 +674,7 @@ func TestRandomFunctions(t *testing.T) {
 	}
 
 	// Test randomUUID() returns a string
-	uuid := e.evaluateExpressionWithContext("randomUUID()", nil, nil)
+	uuid := e.evaluateExpressionWithContext(ctx, "randomUUID()", nil, nil)
 	uuidStr, ok := uuid.(string)
 	if !ok {
 		t.Fatalf("randomUUID() should return string")
@@ -667,7 +706,9 @@ func TestTypeConversionFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -697,7 +738,9 @@ func TestNullCheckFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -711,27 +754,28 @@ func TestNullCheckFunctions(t *testing.T) {
 
 func TestTimestampFunctions(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Test timestamp() returns a value
-	ts := e.evaluateExpressionWithContext("timestamp()", nil, nil)
+	ts := e.evaluateExpressionWithContext(ctx, "timestamp()", nil, nil)
 	if ts == nil {
 		t.Error("timestamp() should return a value")
 	}
 
 	// Test datetime() returns a value
-	dt := e.evaluateExpressionWithContext("datetime()", nil, nil)
+	dt := e.evaluateExpressionWithContext(ctx, "datetime()", nil, nil)
 	if dt == nil {
 		t.Error("datetime() should return a value")
 	}
 
 	// Test date()
-	d := e.evaluateExpressionWithContext("date()", nil, nil)
+	d := e.evaluateExpressionWithContext(ctx, "date()", nil, nil)
 	if d == nil {
 		t.Error("date() should return a value")
 	}
 
 	// Test time()
-	tm := e.evaluateExpressionWithContext("time()", nil, nil)
+	tm := e.evaluateExpressionWithContext(ctx, "time()", nil, nil)
 	if tm == nil {
 		t.Error("time() should return a value")
 	}
@@ -759,21 +803,22 @@ func TestRelationshipFunctions(t *testing.T) {
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2}
 	rels := map[string]*storage.Edge{"r": rel}
+	ctx := context.Background()
 
 	// Test startNode
-	result := e.evaluateExpressionWithContext("startNode(r)", nodes, rels)
+	result := e.evaluateExpressionWithContext(ctx, "startNode(r)", nodes, rels)
 	if result == nil {
 		t.Error("startNode(r) should return a value")
 	}
 
 	// Test endNode
-	result = e.evaluateExpressionWithContext("endNode(r)", nodes, rels)
+	result = e.evaluateExpressionWithContext(ctx, "endNode(r)", nodes, rels)
 	if result == nil {
 		t.Error("endNode(r) should return a value")
 	}
 
 	// Test type(r)
-	result = e.evaluateExpressionWithContext("type(r)", nodes, rels)
+	result = e.evaluateExpressionWithContext(ctx, "type(r)", nodes, rels)
 	if result != "KNOWS" {
 		t.Errorf("type(r) = %v, want KNOWS", result)
 	}
@@ -795,15 +840,16 @@ func TestVectorSimilarityFunctions(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2}
+	ctx := context.Background()
 
 	// Test cosine similarity of identical vectors = 1
-	result := e.evaluateExpressionWithContext("vector.similarity.cosine(a.vec, b.vec)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "vector.similarity.cosine(a.vec, b.vec)", nodes, nil)
 	if result == nil {
 		t.Error("vector.similarity.cosine should return a value")
 	}
 
 	// Test euclidean similarity
-	result = e.evaluateExpressionWithContext("vector.similarity.euclidean(a.vec, b.vec)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "vector.similarity.euclidean(a.vec, b.vec)", nodes, nil)
 	if result == nil {
 		t.Error("vector.similarity.euclidean should return a value")
 	}
@@ -815,9 +861,10 @@ func TestVectorSimilarityFunctions(t *testing.T) {
 
 func TestSpatialFunctions(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Test point function
-	result := e.evaluateExpressionWithContext("point({x: 1.0, y: 2.0})", nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, "point({x: 1.0, y: 2.0})", nil, nil)
 	pointMap, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("point() should return map, got %T", result)
@@ -835,7 +882,7 @@ func TestSpatialFunctions(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2}
-	dist := e.evaluateExpressionWithContext("distance(a.loc, b.loc)", nodes, nil)
+	dist := e.evaluateExpressionWithContext(ctx, "distance(a.loc, b.loc)", nodes, nil)
 	distF, ok := dist.(float64)
 	if !ok {
 		t.Fatalf("distance() should return float64, got %T", dist)
@@ -852,9 +899,10 @@ func TestSpatialFunctions(t *testing.T) {
 
 func TestReduceFunction(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// reduce(acc = 0, x IN [1,2,3] | acc + x) should return 6
-	result := e.evaluateExpressionWithContext("reduce(acc = 0, x IN [1, 2, 3] | acc + x)", nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, "reduce(acc = 0, x IN [1, 2, 3] | acc + x)", nil, nil)
 	if result == nil {
 		t.Error("reduce should return a value")
 	}
@@ -888,7 +936,9 @@ func TestFunctionPropertyAccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -918,7 +968,9 @@ func TestLiterals(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -938,8 +990,9 @@ func TestStringConcatenation(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext("n.firstName + ' ' + n.lastName", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "n.firstName + ' ' + n.lastName", nodes, nil)
 	if result != "John Doe" {
 		t.Errorf("concatenation = %v, want 'John Doe'", result)
 	}
@@ -951,10 +1004,11 @@ func TestStringConcatenation(t *testing.T) {
 
 func TestCountFunction(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// count(*) in expression context should NOT be evaluated here
-	// Aggregation functions must be handled by executeAggregation() or executeMatchWithRelationships()
-	result := e.evaluateExpressionWithContext("count(*)", nil, nil)
+	// Aggregation functions must be handled by executeAggregation(ctx, ) or executeMatchWithRelationships()
+	result := e.evaluateExpressionWithContext(ctx, "count(*)", nil, nil)
 	if result != nil {
 		t.Errorf("count(*) in expression context should return nil, got %v", result)
 	}
@@ -962,7 +1016,7 @@ func TestCountFunction(t *testing.T) {
 	// count(n) also should NOT be evaluated in expression context
 	node := createTestNode(t, e, "node-1", []string{"Person"}, nil)
 	nodes := map[string]*storage.Node{"n": node}
-	result = e.evaluateExpressionWithContext("count(n)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "count(n)", nodes, nil)
 	if result != nil {
 		t.Errorf("count(n) in expression context should return nil, got %v", result)
 	}
@@ -1003,7 +1057,9 @@ func TestOrNullVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -1024,9 +1080,10 @@ func TestListConversionFunctions(t *testing.T) {
 		"stringList": []interface{}{int64(1), int64(2), int64(3)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// toIntegerList
-	result := e.evaluateExpressionWithContext("toIntegerList(n.intList)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.intList)", nodes, nil)
 	if intList, ok := result.([]interface{}); ok {
 		if len(intList) != 3 {
 			t.Errorf("toIntegerList should return 3 elements, got %d", len(intList))
@@ -1039,7 +1096,7 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toFloatList
-	result = e.evaluateExpressionWithContext("toFloatList(n.floatList)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "toFloatList(n.floatList)", nodes, nil)
 	if floatList, ok := result.([]interface{}); ok {
 		if len(floatList) != 3 {
 			t.Errorf("toFloatList should return 3 elements")
@@ -1047,7 +1104,7 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toBooleanList
-	result = e.evaluateExpressionWithContext("toBooleanList(n.boolList)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "toBooleanList(n.boolList)", nodes, nil)
 	if boolList, ok := result.([]interface{}); ok {
 		if len(boolList) != 3 {
 			t.Errorf("toBooleanList should return 3 elements")
@@ -1058,7 +1115,7 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toStringList
-	result = e.evaluateExpressionWithContext("toStringList(n.stringList)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "toStringList(n.stringList)", nodes, nil)
 	if stringList, ok := result.([]interface{}); ok {
 		if len(stringList) != 3 {
 			t.Errorf("toStringList should return 3 elements")
@@ -1090,7 +1147,9 @@ func TestValueTypeFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1112,7 +1171,9 @@ func TestAggregationInExpressionContext(t *testing.T) {
 
 	for _, expr := range tests {
 		t.Run(expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, expr, nodes, nil)
 			if result != int64(42) {
 				t.Errorf("%s = %v, want 42", expr, result)
 			}
@@ -1120,7 +1181,8 @@ func TestAggregationInExpressionContext(t *testing.T) {
 	}
 
 	// collect returns a list
-	result := e.evaluateExpressionWithContext("collect(n.val)", nodes, nil)
+	ctx := context.Background()
+	result := e.evaluateExpressionWithContext(ctx, "collect(n.val)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 1 || list[0] != int64(42) {
 			t.Errorf("collect(n.val) = %v, want [42]", list)
@@ -1145,9 +1207,10 @@ func TestListPredicateFunctions(t *testing.T) {
 		"empty": []interface{}{},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// none() on empty list should return true
-	result := e.evaluateExpressionWithContext("none(x IN n.empty WHERE true)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "none(x IN n.empty WHERE true)", nodes, nil)
 	if result != true {
 		t.Errorf("none(x IN empty list) = %v, want true", result)
 	}
@@ -1159,13 +1222,13 @@ func TestListPredicateFunctions(t *testing.T) {
 	nodes2 := map[string]*storage.Node{"n": node2}
 
 	// all() should not crash even if predicate evaluation is limited
-	_ = e.evaluateExpressionWithContext("all(x IN n.nums WHERE x = x)", nodes2, nil)
+	_ = e.evaluateExpressionWithContext(ctx, "all(x IN n.nums WHERE x = x)", nodes2, nil)
 
 	// any() should not crash
-	_ = e.evaluateExpressionWithContext("any(x IN n.nums WHERE x = x)", nodes2, nil)
+	_ = e.evaluateExpressionWithContext(ctx, "any(x IN n.nums WHERE x = x)", nodes2, nil)
 
 	// single() should not crash
-	_ = e.evaluateExpressionWithContext("single(x IN n.nums WHERE x = x)", nodes2, nil)
+	_ = e.evaluateExpressionWithContext(ctx, "single(x IN n.nums WHERE x = x)", nodes2, nil)
 }
 
 // ========================================
@@ -1178,9 +1241,10 @@ func TestFilterAndExtractFunctions(t *testing.T) {
 		"nums": []interface{}{int64(1), int64(2), int64(3), int64(4), int64(5)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// Test extract() - transforms each element
-	result := e.evaluateExpressionWithContext("extract(x IN n.nums | x)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "extract(x IN n.nums | x)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 5 {
 			t.Errorf("extract should return 5 elements, got %d", len(list))
@@ -1190,7 +1254,7 @@ func TestFilterAndExtractFunctions(t *testing.T) {
 	}
 
 	// Test filter() - returns a list (predicate evaluation limited)
-	result = e.evaluateExpressionWithContext("filter(x IN n.nums WHERE true)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "filter(x IN n.nums WHERE true)", nodes, nil)
 	_, ok := result.([]interface{})
 	if !ok {
 		t.Errorf("filter should return list, got %T", result)
@@ -1212,15 +1276,16 @@ func TestWithinBBoxFunction(t *testing.T) {
 		"ur":      map[string]interface{}{"x": float64(10), "y": float64(10)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// Point inside bbox
-	result := e.evaluateExpressionWithContext("withinBBox(n.inside, n.ll, n.ur)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "withinBBox(n.inside, n.ll, n.ur)", nodes, nil)
 	if result != true {
 		t.Errorf("withinBBox(inside) = %v, want true", result)
 	}
 
 	// Point outside bbox
-	result = e.evaluateExpressionWithContext("withinBBox(n.outside, n.ll, n.ur)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "withinBBox(n.outside, n.ll, n.ur)", nodes, nil)
 	if result != false {
 		t.Errorf("withinBBox(outside) = %v, want false", result)
 	}
@@ -1232,13 +1297,15 @@ func TestWithinBBoxFunction(t *testing.T) {
 
 func TestListComprehension(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
+
 	node := createTestNode(t, e, "node-1", []string{"Test"}, map[string]interface{}{
 		"nums": []interface{}{int64(1), int64(2), int64(3)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
 
 	// [x IN list | x] - identity transformation
-	result := e.evaluateExpressionWithContext("[x IN n.nums | x]", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "[x IN n.nums | x]", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 3 {
 			t.Errorf("list comprehension should return 3 elements, got %d", len(list))
@@ -1256,9 +1323,10 @@ func TestSliceFunction(t *testing.T) {
 		"list": []interface{}{int64(1), int64(2), int64(3), int64(4), int64(5)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// slice(list, 1, 3)
-	result := e.evaluateExpressionWithContext("slice(n.list, 1, 3)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "slice(n.list, 1, 3)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 2 {
 			t.Errorf("slice(list, 1, 3) should return 2 elements, got %d", len(list))
@@ -1268,7 +1336,7 @@ func TestSliceFunction(t *testing.T) {
 	}
 
 	// slice(list, 2) - to end
-	result = e.evaluateExpressionWithContext("slice(n.list, 2)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "slice(n.list, 2)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 3 {
 			t.Errorf("slice(list, 2) should return 3 elements, got %d", len(list))
@@ -1286,15 +1354,16 @@ func TestIndexOfFunction(t *testing.T) {
 		"list": []interface{}{"a", "b", "c", "d"},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// Found
-	result := e.evaluateExpressionWithContext("indexOf(n.list, 'b')", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "indexOf(n.list, 'b')", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("indexOf(list, 'b') = %v, want 1", result)
 	}
 
 	// Not found
-	result = e.evaluateExpressionWithContext("indexOf(n.list, 'z')", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "indexOf(n.list, 'z')", nodes, nil)
 	if result != int64(-1) {
 		t.Errorf("indexOf(list, 'z') = %v, want -1", result)
 	}
@@ -1317,27 +1386,28 @@ func TestDegreeFunctions(t *testing.T) {
 	e.storage.CreateEdge(&storage.Edge{ID: "e2", Type: "KNOWS", StartNode: node3.ID, EndNode: node1.ID})
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2, "c": node3}
+	ctx := context.Background()
 
 	// Alice has 1 outgoing, 1 incoming = degree 2
-	result := e.evaluateExpressionWithContext("degree(a)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "degree(a)", nodes, nil)
 	if result != int64(2) {
 		t.Errorf("degree(a) = %v, want 2", result)
 	}
 
 	// Alice has 1 outgoing
-	result = e.evaluateExpressionWithContext("outDegree(a)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "outDegree(a)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("outDegree(a) = %v, want 1", result)
 	}
 
 	// Alice has 1 incoming
-	result = e.evaluateExpressionWithContext("inDegree(a)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "inDegree(a)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("inDegree(a) = %v, want 1", result)
 	}
 
 	// Bob has 0 outgoing, 1 incoming
-	result = e.evaluateExpressionWithContext("degree(b)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "degree(b)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("degree(b) = %v, want 1", result)
 	}
@@ -1354,15 +1424,16 @@ func TestHasLabelsFunction(t *testing.T) {
 		"wrongLabels":    []interface{}{"Person", "Director"},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// Has all labels (using property with list)
-	result := e.evaluateExpressionWithContext("hasLabels(n, n.requiredLabels)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "hasLabels(n, n.requiredLabels)", nodes, nil)
 	if result != true {
 		t.Errorf("hasLabels with matching labels = %v, want true", result)
 	}
 
 	// Missing a label
-	result = e.evaluateExpressionWithContext("hasLabels(n, n.wrongLabels)", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "hasLabels(n, n.wrongLabels)", nodes, nil)
 	if result != false {
 		t.Errorf("hasLabels with missing label = %v, want false", result)
 	}
@@ -1374,6 +1445,7 @@ func TestHasLabelsFunction(t *testing.T) {
 
 func TestHaversineDistance(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Test distance with lat/lon coordinates
 	node1 := createTestNode(t, e, "node-1", []string{"City"}, map[string]interface{}{
@@ -1384,7 +1456,7 @@ func TestHaversineDistance(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"nyc": node1, "la": node2}
-	dist := e.evaluateExpressionWithContext("distance(nyc.loc, la.loc)", nodes, nil)
+	dist := e.evaluateExpressionWithContext(ctx, "distance(nyc.loc, la.loc)", nodes, nil)
 
 	if dist == nil {
 		t.Fatal("haversine distance should return a value")
@@ -1407,27 +1479,28 @@ func TestHaversineDistance(t *testing.T) {
 
 func TestCaseWhenExpression(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// Simple CASE expression
-	result := e.evaluateExpressionWithContext("CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END", nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, "CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END", nil, nil)
 	if result != "one" {
 		t.Errorf("CASE 1 WHEN 1 = %v, want 'one'", result)
 	}
 
 	// Searched CASE expression
-	result = e.evaluateExpressionWithContext("CASE WHEN true THEN 'yes' ELSE 'no' END", nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, "CASE WHEN true THEN 'yes' ELSE 'no' END", nil, nil)
 	if result != "yes" {
 		t.Errorf("CASE WHEN true = %v, want 'yes'", result)
 	}
 
 	// CASE with ELSE
-	result = e.evaluateExpressionWithContext("CASE 3 WHEN 1 THEN 'one' ELSE 'other' END", nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, "CASE 3 WHEN 1 THEN 'one' ELSE 'other' END", nil, nil)
 	if result != "other" {
 		t.Errorf("CASE 3 WHEN 1 = %v, want 'other'", result)
 	}
 
 	// CASE without matching WHEN (no ELSE)
-	result = e.evaluateExpressionWithContext("CASE 5 WHEN 1 THEN 'one' END", nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, "CASE 5 WHEN 1 THEN 'one' END", nil, nil)
 	if result != nil {
 		t.Errorf("CASE without match = %v, want nil", result)
 	}
@@ -1435,6 +1508,7 @@ func TestCaseWhenExpression(t *testing.T) {
 
 func TestCaseWhenWithNode(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 	node := createTestNode(t, e, "node-1", []string{"Person"}, map[string]interface{}{
 		"status": "active",
 		"score":  int64(85),
@@ -1442,7 +1516,7 @@ func TestCaseWhenWithNode(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 
 	// CASE with property
-	result := e.evaluateExpressionWithContext("CASE n.status WHEN 'active' THEN 'online' ELSE 'offline' END", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "CASE n.status WHEN 'active' THEN 'online' ELSE 'offline' END", nodes, nil)
 	if result != "online" {
 		t.Errorf("CASE n.status = %v, want 'online'", result)
 	}
@@ -1485,7 +1559,8 @@ func TestLogicalOperators(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1535,7 +1610,8 @@ func TestComparisonOperators(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1577,7 +1653,8 @@ func TestArithmeticOperators(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -1592,15 +1669,16 @@ func TestArithmeticWithProperties(t *testing.T) {
 		"b": int64(3),
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// n.a * n.b
-	result := e.evaluateExpressionWithContext("n.a * n.b", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "n.a * n.b", nodes, nil)
 	if result != int64(30) {
 		t.Errorf("n.a * n.b = %v, want 30", result)
 	}
 
 	// n.a - n.b
-	result = e.evaluateExpressionWithContext("n.a - n.b", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "n.a - n.b", nodes, nil)
 	if result != int64(7) {
 		t.Errorf("n.a - n.b = %v, want 7", result)
 	}
@@ -1617,15 +1695,16 @@ func TestCombinedExpressions(t *testing.T) {
 		"active": true,
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
 	// Comparison with property
-	result := e.evaluateExpressionWithContext("n.age > 18", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "n.age > 18", nodes, nil)
 	if result != true {
 		t.Errorf("n.age > 18 = %v, want true", result)
 	}
 
 	// Multiple conditions with AND
-	result = e.evaluateExpressionWithContext("n.age > 18 AND n.active = true", nodes, nil)
+	result = e.evaluateExpressionWithContext(ctx, "n.age > 18 AND n.active = true", nodes, nil)
 	if result != true {
 		t.Errorf("n.age > 18 AND n.active = %v, want true", result)
 	}
@@ -1656,7 +1735,9 @@ func TestIsNullPredicates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1698,7 +1779,8 @@ func TestStringPredicates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1732,7 +1814,9 @@ func TestInOperatorExpression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1765,7 +1849,9 @@ func TestBetweenOperator(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			result := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1784,8 +1870,9 @@ func TestApocMapMerge(t *testing.T) {
 		"map2": map[string]interface{}{"b": int64(3), "c": int64(4)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext("apoc.map.merge(n.map1, n.map2)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "apoc.map.merge(n.map1, n.map2)", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		// map2's "b" should override map1's "b"
 		if m["a"] != int64(1) {
@@ -1808,8 +1895,9 @@ func TestApocMapSetKey(t *testing.T) {
 		"myMap": map[string]interface{}{"a": int64(1)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext("apoc.map.setKey(n.myMap, 'b', 2)", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "apoc.map.setKey(n.myMap, 'b', 2)", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		if m["a"] != int64(1) {
 			t.Errorf("map should still have a=1, got %v", m["a"])
@@ -1829,8 +1917,9 @@ func TestApocMapRemoveKey(t *testing.T) {
 		"myMap": map[string]interface{}{"a": int64(1), "b": int64(2), "c": int64(3)},
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext("apoc.map.removeKey(n.myMap, 'b')", nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, "apoc.map.removeKey(n.myMap, 'b')", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		if _, exists := m["b"]; exists {
 			t.Errorf("map should not have key 'b' after removeKey")
@@ -1874,7 +1963,9 @@ func TestFunctionAdditionalMathAndStringCoverage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			got := e.evaluateExpressionWithContext(tt.expr, nodes, nil)
+			ctx := context.Background()
+
+			got := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
 			if got != tt.want {
 				t.Errorf("%s = %v, want %v", tt.expr, got, tt.want)
 			}
@@ -1884,9 +1975,10 @@ func TestFunctionAdditionalMathAndStringCoverage(t *testing.T) {
 
 func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 	e := setupTestExecutor(t)
+	ctx := context.Background()
 
 	// linestring / polygon literals
-	line := e.evaluateExpressionWithContext("lineString([point({x:0,y:0}), point({x:1,y:1})])", nil, nil)
+	line := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nil, nil)
 	lineMap, ok := line.(map[string]interface{})
 	if !ok {
 		t.Fatalf("lineString should return map, got %T", line)
@@ -1895,7 +1987,7 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 		t.Fatalf("lineString type = %v, want linestring", lineMap["type"])
 	}
 
-	poly := e.evaluateExpressionWithContext("polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nil, nil)
+	poly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nil, nil)
 	polyMap, ok := poly.(map[string]interface{})
 	if !ok {
 		t.Fatalf("polygon should return map, got %T", poly)
@@ -1905,10 +1997,10 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 	}
 
 	// insufficient points branches
-	if v := e.evaluateExpressionWithContext("lineString([point({x:0,y:0})])", nil, nil); v != nil {
+	if v := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0})])", nil, nil); v != nil {
 		t.Fatalf("lineString with <2 points should be nil, got %v", v)
 	}
-	if v := e.evaluateExpressionWithContext("polygon([point({x:0,y:0}), point({x:1,y:1})])", nil, nil); v != nil {
+	if v := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:1})])", nil, nil); v != nil {
 		t.Fatalf("polygon with <3 points should be nil, got %v", v)
 	}
 
@@ -1925,17 +2017,17 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 		Relationships: pathEdges,
 		Length:        1,
 	}
-	gotNodes := e.evaluateExpressionWithContextFull("nodes(p)", nil, nil, map[string]*PathResult{"p": path}, nil, nil, 0)
+	gotNodes := e.evaluateExpressionWithContextFull(ctx, "nodes(p)", nil, nil, map[string]*PathResult{"p": path}, nil, nil, 0)
 	if arr, ok := gotNodes.([]interface{}); !ok || len(arr) != 2 {
 		t.Fatalf("nodes(p) expected 2 entries, got %T %#v", gotNodes, gotNodes)
 	}
 
 	// fallback via allPathNodes/allPathEdges
-	gotNodesFallback := e.evaluateExpressionWithContextFull("nodes(p)", nil, nil, nil, nil, pathNodes, 0)
+	gotNodesFallback := e.evaluateExpressionWithContextFull(ctx, "nodes(p)", nil, nil, nil, nil, pathNodes, 0)
 	if arr, ok := gotNodesFallback.([]interface{}); !ok || len(arr) != 2 {
 		t.Fatalf("nodes(p) fallback expected 2 entries, got %T %#v", gotNodesFallback, gotNodesFallback)
 	}
-	gotRelsFallback := e.evaluateExpressionWithContextFull("relationships(p)", nil, nil, nil, pathEdges, nil, 0)
+	gotRelsFallback := e.evaluateExpressionWithContextFull(ctx, "relationships(p)", nil, nil, nil, pathEdges, nil, 0)
 	if arr, ok := gotRelsFallback.([]interface{}); !ok || len(arr) != 1 {
 		t.Fatalf("relationships(p) fallback expected 1 entry, got %T %#v", gotRelsFallback, gotRelsFallback)
 	}
@@ -1959,35 +2051,36 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 	}
 
 	nodes := map[string]*storage.Node{"a": a, "b": b}
+	ctx := context.Background()
 
 	// list/map helpers in evaluateExpressionWithContextFullFunctions.
-	assertEqual(t, "indexOf([10,20,30], 20)", int64(1), e.evaluateExpressionWithContext("indexOf([10,20,30], 20)", nodes, nil))
-	gotRange := e.evaluateExpressionWithContext("range(1,3)", nodes, nil)
+	assertEqual(t, "indexOf([10,20,30], 20)", int64(1), e.evaluateExpressionWithContext(ctx, "indexOf([10,20,30], 20)", nodes, nil))
+	gotRange := e.evaluateExpressionWithContext(ctx, "range(1,3)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, gotRange) {
 		t.Fatalf("range(1,3) = %#v, want [1 2 3]", gotRange)
 	}
-	gotRangeNeg := e.evaluateExpressionWithContext("range(5,1,-2)", nodes, nil)
+	gotRangeNeg := e.evaluateExpressionWithContext(ctx, "range(5,1,-2)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{int64(5), int64(3), int64(1)}, gotRangeNeg) {
 		t.Fatalf("range(5,1,-2) = %#v, want [5 3 1]", gotRangeNeg)
 	}
-	gotRangeZero := e.evaluateExpressionWithContext("range(1,3,0)", nodes, nil)
+	gotRangeZero := e.evaluateExpressionWithContext(ctx, "range(1,3,0)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, gotRangeZero) {
 		t.Fatalf("range(1,3,0) = %#v, want [1 2 3]", gotRangeZero)
 	}
-	gotSliceEmpty := e.evaluateExpressionWithContext("slice([1,2,3], 2, 1)", nodes, nil)
+	gotSliceEmpty := e.evaluateExpressionWithContext(ctx, "slice([1,2,3], 2, 1)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{}, gotSliceEmpty) {
 		t.Fatalf("slice([1,2,3],2,1) = %#v, want []", gotSliceEmpty)
 	}
-	gotSliceNonList := e.evaluateExpressionWithContext("slice('not-list', 0, 1)", nodes, nil)
+	gotSliceNonList := e.evaluateExpressionWithContext(ctx, "slice('not-list', 0, 1)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{}, gotSliceNonList) {
 		t.Fatalf("slice('not-list',0,1) = %#v, want []", gotSliceNonList)
 	}
-	assertEqual(t, "inDegree(missing)", int64(0), e.evaluateExpressionWithContext("inDegree(missing)", nodes, nil))
-	assertEqual(t, "outDegree(missing)", int64(0), e.evaluateExpressionWithContext("outDegree(missing)", nodes, nil))
-	assertEqual(t, "hasLabels(a, 'bad')", false, e.evaluateExpressionWithContext("hasLabels(a, 'bad')", nodes, nil))
-	assertEqual(t, "hasLabels(missing, ['Person'])", false, e.evaluateExpressionWithContext("hasLabels(missing, ['Person'])", nodes, nil))
+	assertEqual(t, "inDegree(missing)", int64(0), e.evaluateExpressionWithContext(ctx, "inDegree(missing)", nodes, nil))
+	assertEqual(t, "outDegree(missing)", int64(0), e.evaluateExpressionWithContext(ctx, "outDegree(missing)", nodes, nil))
+	assertEqual(t, "hasLabels(a, 'bad')", false, e.evaluateExpressionWithContext(ctx, "hasLabels(a, 'bad')", nodes, nil))
+	assertEqual(t, "hasLabels(missing, ['Person'])", false, e.evaluateExpressionWithContext(ctx, "hasLabels(missing, ['Person'])", nodes, nil))
 
-	fromPairs := e.evaluateExpressionWithContext("apoc.map.fromPairs([['a',1],['b',2]])", nodes, nil)
+	fromPairs := e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs([['a',1],['b',2]])", nodes, nil)
 	fromPairsMap, ok := fromPairs.(map[string]interface{})
 	if !ok {
 		t.Fatalf("fromPairs result type = %T, want map[string]interface{}", fromPairs)
@@ -1996,7 +2089,7 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		t.Fatalf("unexpected fromPairs result: %#v", fromPairsMap)
 	}
 
-	clean := e.evaluateExpressionWithContext("apoc.map.clean(a.cleanMap, ['b'], [null])", nodes, nil)
+	clean := e.evaluateExpressionWithContext(ctx, "apoc.map.clean(a.cleanMap, ['b'], [null])", nodes, nil)
 	cleanMap, ok := clean.(map[string]interface{})
 	if !ok {
 		t.Fatalf("clean result type = %T, want map[string]interface{}", clean)
@@ -2013,15 +2106,16 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		t.Fatalf("clean map should not contain key c: %#v", cleanMap)
 	}
 
-	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext("apoc.map.fromPairs('bad')", nodes, nil)) {
+	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs('bad')", nodes, nil)) {
 		t.Fatalf("apoc.map.fromPairs('bad') should return empty map")
 	}
-	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext("apoc.map.clean('bad')", nodes, nil)) {
+	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(ctx, "apoc.map.clean('bad')", nodes, nil)) {
 		t.Fatalf("apoc.map.clean('bad') should return empty map")
 	}
 }
 
 func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
+	ctx := context.Background()
 	e := setupTestExecutor(t)
 	a := createTestNode(t, e, "m-a", []string{"T"}, map[string]interface{}{"name": "a"})
 	b := createTestNode(t, e, "m-b", []string{"T"}, map[string]interface{}{"name": "b"})
@@ -2048,30 +2142,30 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 		"reduce(acc 0, x IN [1,2] | acc + x)", // malformed reduce syntax
 	}
 	for _, expr := range nilExprs {
-		if got := e.evaluateExpressionWithContext(expr, nodes, rels); got != nil {
+		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, rels); got != nil {
 			t.Fatalf("%s should be nil, got %T %#v", expr, got, got)
 		}
 	}
 
-	if got := e.evaluateExpressionWithContext("isNaN('x')", nodes, rels); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "isNaN('x')", nodes, rels); got != false {
 		t.Fatalf("isNaN('x') = %#v, want false", got)
 	}
-	if got := e.evaluateExpressionWithContext("isEmpty(123)", nodes, rels); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != false {
 		t.Fatalf("isEmpty(123) = %#v, want false", got)
 	}
-	if got := e.evaluateExpressionWithContext("isEmpty(NULL)", nodes, rels); got != true {
+	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(NULL)", nodes, rels); got != true {
 		t.Fatalf("isEmpty(NULL) = %#v, want true", got)
 	}
 
-	if got := e.evaluateExpressionWithContext("coth(0)", nodes, rels); !math.IsNaN(got.(float64)) {
+	if got := e.evaluateExpressionWithContext(ctx, "coth(0)", nodes, rels); !math.IsNaN(got.(float64)) {
 		t.Fatalf("coth(0) should be NaN, got %#v", got)
 	}
 
 	// nodes()/relationships() empty fallback branches.
-	if got := e.evaluateExpressionWithContext("nodes(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "nodes(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("nodes(missingPath) = %#v, want []", got)
 	}
-	if got := e.evaluateExpressionWithContext("relationships(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "relationships(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("relationships(missingPath) = %#v, want []", got)
 	}
 }
@@ -2092,7 +2186,9 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	}
 
 	eval := func(expr string, allEdges []*storage.Edge, allNodes []*storage.Node, pathLen int) interface{} {
-		return e.evaluateExpressionWithContextFullMath(
+		ctx := context.Background()
+
+		return e.evaluateExpressionWithContextFullMath(ctx,
 			expr,
 			strings.ToLower(expr),
 			nodes,
@@ -2266,15 +2362,16 @@ func TestFunctionEvaluator_KalmanAdditionalBranches(t *testing.T) {
 	e := setupTestExecutor(t)
 	n := createTestNode(t, e, "kal-n", []string{"Kalman"}, map[string]interface{}{})
 	nodes := map[string]*storage.Node{"n": n}
+	ctx := context.Background()
 
-	state := e.evaluateExpressionWithContext("kalman.init()", nodes, nil)
+	state := e.evaluateExpressionWithContext(ctx, "kalman.init()", nodes, nil)
 	stateStr, ok := state.(string)
 	if !ok || stateStr == "" {
 		t.Fatalf("kalman.init() should return non-empty state string, got %#v", state)
 	}
 	n.Properties["state"] = stateStr
 
-	processed := e.evaluateExpressionWithContext("kalman.process(10, n.state)", nodes, nil)
+	processed := e.evaluateExpressionWithContext(ctx, "kalman.process(10, n.state)", nodes, nil)
 	processedMap, ok := processed.(map[string]interface{})
 	if !ok || processedMap["state"] == nil || processedMap["value"] == nil {
 		t.Fatalf("kalman.process should return state/value map, got %#v", processed)
@@ -2283,36 +2380,36 @@ func TestFunctionEvaluator_KalmanAdditionalBranches(t *testing.T) {
 		n.Properties["state"] = gotState
 	}
 
-	if got := e.evaluateExpressionWithContext("kalman.predict(n.state, 2)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.predict(n.state, 2)", nodes, nil); got == nil {
 		t.Fatalf("kalman.predict should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext("kalman.state(n.state)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.state(n.state)", nodes, nil); got == nil {
 		t.Fatalf("kalman.state should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext("kalman.reset(n.state)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.reset(n.state)", nodes, nil); got == nil {
 		t.Fatalf("kalman.reset should not be nil")
 	}
 
-	vstate := e.evaluateExpressionWithContext("kalman.velocity.init()", nodes, nil)
+	vstate := e.evaluateExpressionWithContext(ctx, "kalman.velocity.init()", nodes, nil)
 	vstateStr, ok := vstate.(string)
 	if !ok || vstateStr == "" {
 		t.Fatalf("kalman.velocity.init() should return state string, got %#v", vstate)
 	}
 	n.Properties["vstate"] = vstateStr
-	if got := e.evaluateExpressionWithContext("kalman.velocity.process(5, n.vstate)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.velocity.process(5, n.vstate)", nodes, nil); got == nil {
 		t.Fatalf("kalman.velocity.process should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext("kalman.velocity.predict(n.vstate, 3)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.velocity.predict(n.vstate, 3)", nodes, nil); got == nil {
 		t.Fatalf("kalman.velocity.predict should not be nil")
 	}
 
-	astate := e.evaluateExpressionWithContext("kalman.adaptive.init()", nodes, nil)
+	astate := e.evaluateExpressionWithContext(ctx, "kalman.adaptive.init()", nodes, nil)
 	astateStr, ok := astate.(string)
 	if !ok || astateStr == "" {
 		t.Fatalf("kalman.adaptive.init() should return state string, got %#v", astate)
 	}
 	n.Properties["astate"] = astateStr
-	if got := e.evaluateExpressionWithContext("kalman.adaptive.process(5, n.astate)", nodes, nil); got == nil {
+	if got := e.evaluateExpressionWithContext(ctx, "kalman.adaptive.process(5, n.astate)", nodes, nil); got == nil {
 		t.Fatalf("kalman.adaptive.process should not be nil")
 	}
 }
@@ -2325,24 +2422,25 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 		"text":   "hello",
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	assertEqual(t, "n.arrAny[1]", int64(8), e.evaluateExpressionWithContext("n.arrAny[1]", nodes, nil))
-	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext("n.arrAny[-1]", nodes, nil))
-	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext("n.arrStr[0]", nodes, nil))
-	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext("n.arrStr[-1]", nodes, nil))
-	assertEqual(t, "n.text[1]", "e", e.evaluateExpressionWithContext("n.text[1]", nodes, nil))
-	assertEqual(t, "n.text[-1]", "o", e.evaluateExpressionWithContext("n.text[-1]", nodes, nil))
+	assertEqual(t, "n.arrAny[1]", int64(8), e.evaluateExpressionWithContext(ctx, "n.arrAny[1]", nodes, nil))
+	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(ctx, "n.arrAny[-1]", nodes, nil))
+	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(ctx, "n.arrStr[0]", nodes, nil))
+	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(ctx, "n.arrStr[-1]", nodes, nil))
+	assertEqual(t, "n.text[1]", "e", e.evaluateExpressionWithContext(ctx, "n.text[1]", nodes, nil))
+	assertEqual(t, "n.text[-1]", "o", e.evaluateExpressionWithContext(ctx, "n.text[-1]", nodes, nil))
 
-	if got := e.evaluateExpressionWithContext("n.arrAny[99]", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[99]", nodes, nil); got != nil {
 		t.Fatalf("n.arrAny[99] should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("1 IN [1,2,3]", nodes, nil); got != true {
+	if got := e.evaluateExpressionWithContext(ctx, "1 IN [1,2,3]", nodes, nil); got != true {
 		t.Fatalf("1 IN [1,2,3] should be true, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("n.arrAny[..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(7), int64(8)}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(7), int64(8)}, got) {
 		t.Fatalf("n.arrAny[..2] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("n.arrAny[1..]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(8), int64(9)}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[1..]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(8), int64(9)}, got) {
 		t.Fatalf("n.arrAny[1..] unexpected: %#v", got)
 	}
 }
@@ -2357,160 +2455,161 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 		"text":   "xy",
 	})
 	nodes := map[string]*storage.Node{"n": node}
+	ctx := context.Background()
 
-	if got := e.evaluateExpressionWithContextFullFunctions("", nodes, nil, nil, nil, nil, 0); got != nil {
+	if got := e.evaluateExpressionWithContextFullFunctions(ctx, "", nodes, nil, nil, nil, nil, 0); got != nil {
 		t.Fatalf("empty expr should return nil, got %#v", got)
 	}
 
 	// Additional array-indexing/slicing branches.
-	if got := e.evaluateExpressionWithContext("n.arrAny[-3..-1]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(2), int64(3)}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[-3..-1]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(2), int64(3)}, got) {
 		t.Fatalf("n.arrAny[-3..-1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("n.arrAny[-99..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2)}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[-99..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2)}, got) {
 		t.Fatalf("n.arrAny[-99..2] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("n.arrAny[3..1]", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[3..1]", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("n.arrAny[3..1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("'abc'[..1]", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "'abc'[..1]", nodes, nil); got != nil {
 		t.Fatalf("'abc'[..1] should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("n.arrAny['2']", nodes, nil); got != int64(3) {
+	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny['2']", nodes, nil); got != int64(3) {
 		t.Fatalf("n.arrAny['2'] unexpected: %#v", got)
 	}
 
 	// Scalar conversions.
-	if got := e.evaluateExpressionWithContext("toInteger(2.9)", nodes, nil); got != int64(2) {
+	if got := e.evaluateExpressionWithContext(ctx, "toInteger(2.9)", nodes, nil); got != int64(2) {
 		t.Fatalf("toInteger(2.9) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toInteger('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toInteger('bad')", nodes, nil); got != nil {
 		t.Fatalf("toInteger('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toInt(3)", nodes, nil); got != int64(3) {
+	if got := e.evaluateExpressionWithContext(ctx, "toInt(3)", nodes, nil); got != int64(3) {
 		t.Fatalf("toInt(3) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toInt('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toInt('bad')", nodes, nil); got != nil {
 		t.Fatalf("toInt('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloat(2)", nodes, nil); got != float64(2) {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloat(2)", nodes, nil); got != float64(2) {
 		t.Fatalf("toFloat(2) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloat('3.5')", nodes, nil); got != float64(3.5) {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloat('3.5')", nodes, nil); got != float64(3.5) {
 		t.Fatalf("toFloat('3.5') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloat('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloat('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloat('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBoolean('TRUE')", nodes, nil); got != true {
+	if got := e.evaluateExpressionWithContext(ctx, "toBoolean('TRUE')", nodes, nil); got != true {
 		t.Fatalf("toBoolean('TRUE') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBoolean(1)", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toBoolean(1)", nodes, nil); got != nil {
 		t.Fatalf("toBoolean(1) should be nil, got %#v", got)
 	}
 
 	// OrNull conversion variants.
-	if got := e.evaluateExpressionWithContext("toIntegerOrNull('7')", nodes, nil); got != int64(7) {
+	if got := e.evaluateExpressionWithContext(ctx, "toIntegerOrNull('7')", nodes, nil); got != int64(7) {
 		t.Fatalf("toIntegerOrNull('7') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toIntegerOrNull('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toIntegerOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toIntegerOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloatOrNull('2.25')", nodes, nil); got != float64(2.25) {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloatOrNull('2.25')", nodes, nil); got != float64(2.25) {
 		t.Fatalf("toFloatOrNull('2.25') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloatOrNull('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloatOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloatOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBooleanOrNull('false')", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "toBooleanOrNull('false')", nodes, nil); got != false {
 		t.Fatalf("toBooleanOrNull('false') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBooleanOrNull('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toBooleanOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toBooleanOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toStringOrNull(null)", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toStringOrNull(null)", nodes, nil); got != nil {
 		t.Fatalf("toStringOrNull(null) should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toStringOrNull(12)", nodes, nil); got != "12" {
+	if got := e.evaluateExpressionWithContext(ctx, "toStringOrNull(12)", nodes, nil); got != "12" {
 		t.Fatalf("toStringOrNull(12) = %#v", got)
 	}
 
 	// List conversion functions.
-	if got := e.evaluateExpressionWithContext("toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, nil, nil}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, nil, nil}, got) {
 		t.Fatalf("toIntegerList(n.mixed) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toIntegerList('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toIntegerList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloatList(n.mixedF)", nodes, nil); !reflect.DeepEqual([]interface{}{float64(1.25), float64(2), float64(3.5), nil, nil}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloatList(n.mixedF)", nodes, nil); !reflect.DeepEqual([]interface{}{float64(1.25), float64(2), float64(3.5), nil, nil}, got) {
 		t.Fatalf("toFloatList(n.mixedF) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toFloatList('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toFloatList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloatList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, nil}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, nil}, got) {
 		t.Fatalf("toBooleanList(n.mixedB) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toBooleanList('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toBooleanList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toStringList([1, null, true])", nodes, nil); !reflect.DeepEqual([]interface{}{"1", nil, "true"}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "toStringList([1, null, true])", nodes, nil); !reflect.DeepEqual([]interface{}{"1", nil, "true"}, got) {
 		t.Fatalf("toStringList([1, null, true]) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("toStringList('bad')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "toStringList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toStringList('bad') should be nil, got %#v", got)
 	}
 
 	// Utility + aggregate-in-expression branches.
-	if got := e.evaluateExpressionWithContext("valueType({k: 1})", nodes, nil); got != "MAP" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType({k: 1})", nodes, nil); got != "MAP" {
 		t.Fatalf("valueType({k:1}) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("valueType([1])", nodes, nil); got != "LIST" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType([1])", nodes, nil); got != "LIST" {
 		t.Fatalf("valueType([1]) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("valueType(n)", nodes, nil); got != "ANY" {
+	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "ANY" {
 		t.Fatalf("valueType(n) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
+	if got := e.evaluateExpressionWithContext(ctx, "collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("collect(null) unexpected: %#v", got)
 	}
 
 	// String helper nil/fallback branches.
 	for _, expr := range []string{"lower(1)", "upper(1)", "trim(1)", "ltrim(1)", "rtrim(1)"} {
-		if got := e.evaluateExpressionWithContext(expr, nodes, nil); got != nil {
+		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, nil); got != nil {
 			t.Fatalf("%s should be nil, got %#v", expr, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext("replace('abc', 'a')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "replace('abc', 'a')", nodes, nil); got != nil {
 		t.Fatalf("replace with missing arg should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("split('a')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "split('a')", nodes, nil); got != nil {
 		t.Fatalf("split with missing delimiter should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("substring('abc', 99, 2)", nodes, nil); got != "" {
+	if got := e.evaluateExpressionWithContext(ctx, "substring('abc', 99, 2)", nodes, nil); got != "" {
 		t.Fatalf("substring start >= len should be empty, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("substring('abc')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "substring('abc')", nodes, nil); got != nil {
 		t.Fatalf("substring with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("left('abc', 99)", nodes, nil); got != "abc" {
+	if got := e.evaluateExpressionWithContext(ctx, "left('abc', 99)", nodes, nil); got != "abc" {
 		t.Fatalf("left('abc',99) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("left('abc')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "left('abc')", nodes, nil); got != nil {
 		t.Fatalf("left with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("right('abc', 99)", nodes, nil); got != "abc" {
+	if got := e.evaluateExpressionWithContext(ctx, "right('abc', 99)", nodes, nil); got != "abc" {
 		t.Fatalf("right('abc',99) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("right('abc')", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "right('abc')", nodes, nil); got != nil {
 		t.Fatalf("right with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("lpad('x', bad)", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "lpad('x', bad)", nodes, nil); got != nil {
 		t.Fatalf("lpad invalid length should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("rpad('x', bad)", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "rpad('x', bad)", nodes, nil); got != nil {
 		t.Fatalf("rpad invalid length should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("format()", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "format()", nodes, nil); got != nil {
 		t.Fatalf("format() should be nil, got %#v", got)
 	}
 }
@@ -2554,43 +2653,44 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 		"polygon([point({x:0,y:0}), point({x:1,y:1})])",
 		"lineString([point({x:0,y:0})])",
 	}
+	ctx := context.Background()
 	for _, expr := range nilExprs {
-		if got := e.evaluateExpressionWithContext(expr, nodes, nil); got != nil {
+		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, nil); got != nil {
 			t.Fatalf("%s should be nil, got %#v", expr, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext("point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != false {
 		t.Fatalf("point.withinBBox invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("point.withinDistance('bad', point({x:0,y:0}), 1)", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "point.withinDistance('bad', point({x:0,y:0}), 1)", nodes, nil); got != false {
 		t.Fatalf("point.withinDistance invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("point.intersects(point({x:1,y:1}), 'bad')", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "point.intersects(point({x:1,y:1}), 'bad')", nodes, nil); got != false {
 		t.Fatalf("point.intersects invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("point.contains('bad', point({x:1,y:1}))", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "point.contains('bad', point({x:1,y:1}))", nodes, nil); got != false {
 		t.Fatalf("point.contains invalid input should be false, got %#v", got)
 	}
 
-	if got := e.evaluateExpressionWithContext("isNaN('bad')", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "isNaN('bad')", nodes, nil); got != false {
 		t.Fatalf("isNaN('bad') should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("all(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "all(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
 		t.Fatalf("all invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("any(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "any(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
 		t.Fatalf("any invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("none(x IN 'bad' WHERE x > 0)", nodes, nil); got != true {
+	if got := e.evaluateExpressionWithContext(ctx, "none(x IN 'bad' WHERE x > 0)", nodes, nil); got != true {
 		t.Fatalf("none invalid input should be true, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("single(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
+	if got := e.evaluateExpressionWithContext(ctx, "single(x IN 'bad' WHERE x > 0)", nodes, nil); got != false {
 		t.Fatalf("single invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
+	if got := e.evaluateExpressionWithContext(ctx, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("filter invalid input should return empty list, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
+	if got := e.evaluateExpressionWithContext(ctx, "extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("extract invalid input should return empty list, got %#v", got)
 	}
 }
@@ -2606,80 +2706,81 @@ func TestFunctionEval_APOCCollectionsConvertMetaAndMapBranches(t *testing.T) {
 			},
 		},
 	}
+	ctx := context.Background()
 
-	got := e.evaluateExpressionWithContext("apoc.coll.pairs([1,2,3])", nodes, nil)
+	got := e.evaluateExpressionWithContext(ctx, "apoc.coll.pairs([1,2,3])", nodes, nil)
 	pairs, ok := got.([]interface{})
 	if !ok || len(pairs) != 3 {
 		t.Fatalf("apoc.coll.pairs returned %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext("apoc.coll.zip([1,2], ['a','b'])", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.coll.zip([1,2], ['a','b'])", nodes, nil)
 	zipped, ok := got.([]interface{})
 	if !ok || len(zipped) != 2 {
 		t.Fatalf("apoc.coll.zip returned %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext("apoc.coll.frequencies(['a','a','b'])", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.coll.frequencies(['a','a','b'])", nodes, nil)
 	freq, ok := got.(map[string]interface{})
 	if !ok || freq["a"] != int64(2) || freq["b"] != int64(1) {
 		t.Fatalf("apoc.coll.frequencies returned %#v", got)
 	}
 
-	if occ := e.evaluateExpressionWithContext("apoc.coll.occurrences([1,2,2,3],2)", nodes, nil); occ != int64(2) {
+	if occ := e.evaluateExpressionWithContext(ctx, "apoc.coll.occurrences([1,2,2,3],2)", nodes, nil); occ != int64(2) {
 		t.Fatalf("apoc.coll.occurrences returned %#v", occ)
 	}
-	if idx := e.evaluateExpressionWithContext("apoc.coll.indexOf([1,2,3],2)", nodes, nil); idx != int64(1) {
+	if idx := e.evaluateExpressionWithContext(ctx, "apoc.coll.indexOf([1,2,3],2)", nodes, nil); idx != int64(1) {
 		t.Fatalf("apoc.coll.indexOf returned %#v", idx)
 	}
-	if split := e.evaluateExpressionWithContext("apoc.coll.split([1,2,3,2,4],2)", nodes, nil); split == nil {
+	if split := e.evaluateExpressionWithContext(ctx, "apoc.coll.split([1,2,3,2,4],2)", nodes, nil); split == nil {
 		t.Fatal("apoc.coll.split should return non-nil")
 	}
-	if part := e.evaluateExpressionWithContext("apoc.coll.partition([1,2,3,4],2)", nodes, nil); part == nil {
+	if part := e.evaluateExpressionWithContext(ctx, "apoc.coll.partition([1,2,3,4],2)", nodes, nil); part == nil {
 		t.Fatal("apoc.coll.partition should return non-nil")
 	}
 
-	got = e.evaluateExpressionWithContext("apoc.convert.toJson({a: 1, b: 'x'})", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.convert.toJson({a: 1, b: 'x'})", nodes, nil)
 	if s, ok := got.(string); !ok || !strings.Contains(s, "\"a\":1") {
 		t.Fatalf("apoc.convert.toJson returned %#v", got)
 	}
 
-	if bad := e.evaluateExpressionWithContext("apoc.convert.fromJsonMap(42)", nodes, nil); bad != nil {
+	if bad := e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap(42)", nodes, nil); bad != nil {
 		t.Fatalf("apoc.convert.fromJsonMap(non-string) should be nil, got %#v", bad)
 	}
-	if bad := e.evaluateExpressionWithContext("apoc.convert.fromJsonList(42)", nodes, nil); bad != nil {
+	if bad := e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonList(42)", nodes, nil); bad != nil {
 		t.Fatalf("apoc.convert.fromJsonList(non-string) should be nil, got %#v", bad)
 	}
 
-	if typ := e.evaluateExpressionWithContext("apoc.meta.type(42)", nodes, nil); typ != "INTEGER" {
+	if typ := e.evaluateExpressionWithContext(ctx, "apoc.meta.type(42)", nodes, nil); typ != "INTEGER" {
 		t.Fatalf("apoc.meta.type returned %#v", typ)
 	}
-	if isType := e.evaluateExpressionWithContext("apoc.meta.isType(42,'INTEGER')", nodes, nil); isType != true {
+	if isType := e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(42,'INTEGER')", nodes, nil); isType != true {
 		t.Fatalf("apoc.meta.isType should be true, got %#v", isType)
 	}
-	if isType := e.evaluateExpressionWithContext("apoc.meta.isType(42,123)", nodes, nil); isType != false {
+	if isType := e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(42,123)", nodes, nil); isType != false {
 		t.Fatalf("apoc.meta.isType(non-string type) should be false, got %#v", isType)
 	}
 
-	got = e.evaluateExpressionWithContext("apoc.map.merge({a:1}, {b:2})", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.map.merge({a:1}, {b:2})", nodes, nil)
 	merged, ok := got.(map[string]interface{})
 	if !ok || merged["a"] != int64(1) || merged["b"] != int64(2) {
 		t.Fatalf("apoc.map.merge returned %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("apoc.map.merge({a:1})", nodes, nil); !reflect.DeepEqual(got, map[string]interface{}{}) {
+	if got := e.evaluateExpressionWithContext(ctx, "apoc.map.merge({a:1})", nodes, nil); !reflect.DeepEqual(got, map[string]interface{}{}) {
 		t.Fatalf("apoc.map.merge missing arg should be empty map, got %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext("apoc.map.fromPairs(n.pairs)", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs(n.pairs)", nodes, nil)
 	fromPairsMap, ok := got.(map[string]interface{})
 	if !ok || fmt.Sprint(fromPairsMap["k1"]) != "1" || fromPairsMap["k2"] != "v2" {
 		t.Fatalf("apoc.map.fromPairs returned %#v", got)
 	}
-	got = e.evaluateExpressionWithContext("apoc.map.fromLists(['x','y'], [10,20])", nodes, nil)
+	got = e.evaluateExpressionWithContext(ctx, "apoc.map.fromLists(['x','y'], [10,20])", nodes, nil)
 	fromListsMap, ok := got.(map[string]interface{})
 	if !ok || fmt.Sprint(fromListsMap["x"]) != "10" || fmt.Sprint(fromListsMap["y"]) != "20" {
 		t.Fatalf("apoc.map.fromLists returned %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext("apoc.map.fromLists(['x'])", nodes, nil); got != nil {
+	if got := e.evaluateExpressionWithContext(ctx, "apoc.map.fromLists(['x'])", nodes, nil); got != nil {
 		t.Fatalf("apoc.map.fromLists missing args should be nil, got %#v", got)
 	}
 }
@@ -2703,64 +2804,64 @@ func TestFunctionEval_SpatialGeometryAndKalmanAdditionalBranches(t *testing.T) {
 			},
 		},
 	}
-
-	if d := e.evaluateExpressionWithContext("point.distance(point({x:0,y:0}), point({x:3,y:4}))", nodes, nil); d != float64(5) {
+	ctx := context.Background()
+	if d := e.evaluateExpressionWithContext(ctx, "point.distance(point({x:0,y:0}), point({x:3,y:4}))", nodes, nil); d != float64(5) {
 		t.Fatalf("point.distance cartesian returned %#v", d)
 	}
-	if d := e.evaluateExpressionWithContext("point.distance(point({latitude:0,longitude:0}), point({latitude:0,longitude:1}))", nodes, nil); d == nil {
+	if d := e.evaluateExpressionWithContext(ctx, "point.distance(point({latitude:0,longitude:0}), point({latitude:0,longitude:1}))", nodes, nil); d == nil {
 		t.Fatal("point.distance lat/lon should not be nil")
 	}
 
-	if ok := e.evaluateExpressionWithContext("point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2}))", nodes, nil); ok != true {
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2}))", nodes, nil); ok != true {
 		t.Fatalf("point.withinBBox cartesian returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext("point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))", nodes, nil); ok != true {
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))", nodes, nil); ok != true {
 		t.Fatalf("point.withinBBox lat/lon returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext("point.withinBBox(1,2,3)", nodes, nil); ok != false {
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(1,2,3)", nodes, nil); ok != false {
 		t.Fatalf("point.withinBBox invalid args should be false, got %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext("point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)", nodes, nil); ok != true {
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)", nodes, nil); ok != true {
 		t.Fatalf("point.withinDistance returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext("point.withinDistance(point({x:1,y:1}), point({x:0,y:0}))", nodes, nil); ok != false {
+	if ok := e.evaluateExpressionWithContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}))", nodes, nil); ok != false {
 		t.Fatalf("point.withinDistance missing arg should be false, got %#v", ok)
 	}
 
-	poly := e.evaluateExpressionWithContext("polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nodes, nil)
+	poly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nodes, nil)
 	if poly == nil {
 		t.Fatal("polygon literal should not be nil")
 	}
-	if badPoly := e.evaluateExpressionWithContext("polygon([point({x:0,y:0}), point({x:1,y:0})])", nodes, nil); badPoly != nil {
+	if badPoly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:0})])", nodes, nil); badPoly != nil {
 		t.Fatalf("polygon with <3 points should be nil, got %#v", badPoly)
 	}
-	if polyVar := e.evaluateExpressionWithContext("polygon(n.polyPts)", nodes, nil); polyVar == nil {
+	if polyVar := e.evaluateExpressionWithContext(ctx, "polygon(n.polyPts)", nodes, nil); polyVar == nil {
 		t.Fatal("polygon(variable points) should not be nil")
 	}
 
-	if line := e.evaluateExpressionWithContext("lineString([point({x:0,y:0}), point({x:1,y:1})])", nodes, nil); line == nil {
+	if line := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nodes, nil); line == nil {
 		t.Fatal("lineString literal should not be nil")
 	}
-	if lineVar := e.evaluateExpressionWithContext("lineString(n.linePts)", nodes, nil); lineVar == nil {
+	if lineVar := e.evaluateExpressionWithContext(ctx, "lineString(n.linePts)", nodes, nil); lineVar == nil {
 		t.Fatal("lineString(variable points) should not be nil")
 	}
-	if badLine := e.evaluateExpressionWithContext("lineString([point({x:0,y:0})])", nodes, nil); badLine != nil {
+	if badLine := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0})])", nodes, nil); badLine != nil {
 		t.Fatalf("lineString with <2 points should be nil, got %#v", badLine)
 	}
 
-	if hit := e.evaluateExpressionWithContext("point.intersects(point({x:0.5,y:0.5}), polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})]))", nodes, nil); hit != true {
+	if hit := e.evaluateExpressionWithContext(ctx, "point.intersects(point({x:0.5,y:0.5}), polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})]))", nodes, nil); hit != true {
 		t.Fatalf("point.intersects should be true, got %#v", hit)
 	}
 
-	state := e.evaluateExpressionWithContext("kalman.velocity.init(10, 2)", nodes, nil)
+	state := e.evaluateExpressionWithContext(ctx, "kalman.velocity.init(10, 2)", nodes, nil)
 	stateJSON, ok := state.(string)
 	if !ok || stateJSON == "" {
 		t.Fatalf("kalman.velocity.init returned %#v", state)
 	}
-	if p := e.evaluateExpressionWithContext("kalman.velocity.process(12, '"+stateJSON+"')", nodes, nil); p == nil {
+	if p := e.evaluateExpressionWithContext(ctx, "kalman.velocity.process(12, '"+stateJSON+"')", nodes, nil); p == nil {
 		t.Fatal("kalman.velocity.process should not be nil")
 	}
-	if p := e.evaluateExpressionWithContext("kalman.velocity.predict('"+stateJSON+"', 3)", nodes, nil); p == nil {
+	if p := e.evaluateExpressionWithContext(ctx, "kalman.velocity.predict('"+stateJSON+"', 3)", nodes, nil); p == nil {
 		t.Fatal("kalman.velocity.predict should not be nil")
 	}
 }

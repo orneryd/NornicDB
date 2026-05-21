@@ -2,7 +2,7 @@
 //
 // These executors implement specialized algorithms that are significantly faster
 // than generic traversal for certain query patterns. Each executor is designed
-// for a specific pattern detected by DetectQueryPattern().
+// for a specific pattern detected by DetectQueryPattern(ctx, ).
 //
 // Performance characteristics:
 //   - MutualRelationship: O(E) instead of O(N * D²)

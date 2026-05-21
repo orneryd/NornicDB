@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -23,8 +24,8 @@ func TestDecayScore_DisabledReturns1(t *testing.T) {
 	node := makeNode("nornic:old_episode", []string{"MemoryEpisode"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
-
-	result := exec.evalDecayScore("decayScore(n)", nodes, rels)
+	ctx := context.Background()
+	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -40,8 +41,9 @@ func TestDecay_DisabledAppliesFalse(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalDecay("decay(n)", nodes, rels)
+	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -64,8 +66,9 @@ func TestPolicy_DisabledEmptyMeta(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 2*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	result := exec.evalPolicy("policy(n)", nodes, rels)
+	result := exec.evalPolicy(ctx, "policy(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -84,14 +87,15 @@ func TestDecayMismatchLoggedOnce(t *testing.T) {
 	node := makeNode("nornic:ep", []string{"MemoryEpisode"}, 720*time.Hour)
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
+	ctx := context.Background()
 
-	exec.evalDecayScore("decayScore(n)", nodes, rels)
+	exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("expected decayMismatchLogged=true after first call")
 	}
 
 	exec.decayMismatchLogged = false
-	exec.evalDecayScore("decayScore(n)", nodes, rels)
+	exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("flag should be set again after reset")
 	}

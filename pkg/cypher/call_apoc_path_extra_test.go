@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,8 +24,9 @@ func TestApocPathExtra_ParseApocPathExpandParams(t *testing.T) {
 	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "n1"}})
 	require.NoError(t, err)
 
+	ctx := context.Background()
 	cypher := "MATCH (n:Person {id: 'n1'}) CALL apoc.path.expand(n, '>KNOWS', '+Person|-Blocked', 1, 3) YIELD path RETURN path"
-	params := exec.parseApocPathExpandParams(cypher)
+	params := exec.parseApocPathExpandParams(ctx, cypher)
 
 	require.NotNil(t, params.startNode)
 	assert.Equal(t, storage.NodeID("n1"), params.startNode.ID)
@@ -38,7 +40,8 @@ func TestApocPathExtra_ParseApocPathExpandParams(t *testing.T) {
 
 func TestApocPathExtra_ParseApocPathExpandParams_Defaults(t *testing.T) {
 	exec, _ := setupApocPathExecutor(t)
-	params := exec.parseApocPathExpandParams("RETURN 1")
+	ctx := context.Background()
+	params := exec.parseApocPathExpandParams(ctx, "RETURN 1")
 	assert.Nil(t, params.startNode)
 	assert.Equal(t, 1, params.minLevel)
 	assert.Equal(t, 1, params.maxLevel)
@@ -49,12 +52,12 @@ func TestApocPathExtra_FindNodeByVariableInMatch(t *testing.T) {
 	exec, eng := setupApocPathExecutor(t)
 	_, err := eng.CreateNode(&storage.Node{ID: "v1", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "v1", "name": "alice"}})
 	require.NoError(t, err)
-
-	n := exec.findNodeByVariableInMatch("MATCH (p:Person {id: 'v1'}) RETURN p", "p")
+	ctx := context.Background()
+	n := exec.findNodeByVariableInMatch(ctx, "MATCH (p:Person {id: 'v1'}) RETURN p", "p")
 	require.NotNil(t, n)
 	assert.Equal(t, storage.NodeID("v1"), n.ID)
 
-	assert.Nil(t, exec.findNodeByVariableInMatch("MATCH (x:Other {id:'x1'}) RETURN x", "p"))
+	assert.Nil(t, exec.findNodeByVariableInMatch(ctx, "MATCH (x:Other {id:'x1'}) RETURN x", "p"))
 }
 
 func TestApocPathExtra_BFSPathTraversal(t *testing.T) {
@@ -90,15 +93,15 @@ func TestApocPathExtra_CallApocPathExpand(t *testing.T) {
 	_, err = eng.CreateNode(&storage.Node{ID: "t1", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "t1"}})
 	require.NoError(t, err)
 	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "st", StartNode: "s1", EndNode: "t1", Type: "KNOWS", Properties: map[string]interface{}{}}))
-
-	res, err := exec.callApocPathExpand("MATCH (n:Person {id: 's1'}) CALL apoc.path.expand(n, '>KNOWS', '+Person', 1, 2) YIELD path RETURN path")
+	ctx := context.Background()
+	res, err := exec.callApocPathExpand(ctx, "MATCH (n:Person {id: 's1'}) CALL apoc.path.expand(n, '>KNOWS', '+Person', 1, 2) YIELD path RETURN path")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, []string{"path"}, res.Columns)
 	assert.NotEmpty(t, res.Rows)
 
 	// No start node branch should return empty rows with no error.
-	emptyRes, err := exec.callApocPathExpand("RETURN 1")
+	emptyRes, err := exec.callApocPathExpand(ctx, "RETURN 1")
 	require.NoError(t, err)
 	require.NotNil(t, emptyRes)
 	assert.Equal(t, []string{"path"}, emptyRes.Columns)

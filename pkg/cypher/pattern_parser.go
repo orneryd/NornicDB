@@ -48,6 +48,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 )
@@ -82,12 +83,12 @@ func containsReservedKeyword(s string) bool {
 //
 // # Example
 //
-//	parseNodePattern("(n:Person {name: 'Alice'})")
+//	parseNodePattern(ctx, "(n:Person {name: 'Alice'})")
 //	// Returns: {variable: "n", labels: ["Person"], properties: {"name": "Alice"}}
 //
-//	parseNodePattern("(:Employee)")
+//	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
-func (e *StorageExecutor) parseNodePattern(pattern string) nodePatternInfo {
+func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
 	info := nodePatternInfo{
 		labels:     []string{},
 		properties: make(map[string]interface{}),
@@ -104,7 +105,7 @@ func (e *StorageExecutor) parseNodePattern(pattern string) nodePatternInfo {
 	if braceIdx >= 0 {
 		propsStr := pattern[braceIdx:]
 		pattern = pattern[:braceIdx]
-		info.properties = e.parseProperties(propsStr)
+		info.properties = e.parseProperties(ctx, propsStr)
 	}
 
 	// Parse variable:Label:Label2
@@ -138,7 +139,7 @@ func (e *StorageExecutor) parseNodePattern(pattern string) nodePatternInfo {
 //
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
-func (e *StorageExecutor) parseProperties(propsStr string) map[string]interface{} {
+func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
 	props := make(map[string]interface{})
 
 	// Remove outer braces
@@ -165,7 +166,7 @@ func (e *StorageExecutor) parseProperties(propsStr string) map[string]interface{
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Parse the value
-		props[key] = e.parsePropertyValue(valueStr)
+		props[key] = e.parsePropertyValue(ctx, valueStr)
 	}
 
 	return props
@@ -282,11 +283,20 @@ func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 //	parsePropertyValue("30")       // int64(30)
 //	parsePropertyValue("true")     // true
 //	parsePropertyValue("[1, 2]")   // []interface{}{int64(1), int64(2)}
-func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
+func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) interface{} {
 	valueStr = strings.TrimSpace(valueStr)
 
 	if valueStr == "" {
 		return nil
+	}
+
+	// Handle $param references directly so the typed value (e.g. []string,
+	// []float64) survives intact. Without this, the param-skip in
+	// substituteParams leaves "$name" as literal text here and the
+	// remaining branches would either misparse it or fall through to the
+	// invalid-value catch-all.
+	if v, ok := resolveDirectParamRef(ctx, valueStr); ok {
+		return normalizePropValue(v)
 	}
 
 	// Handle null
@@ -325,18 +335,18 @@ func (e *StorageExecutor) parsePropertyValue(valueStr string) interface{} {
 
 	// Handle arrays
 	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
-		return e.parseArrayValue(valueStr)
+		return e.parseArrayValue(ctx, valueStr)
 	}
 
 	// Handle nested maps (rare in properties, but possible)
 	if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
-		return e.parseProperties(valueStr)
+		return e.parseProperties(ctx, valueStr)
 	}
 
 	// Handle function calls like kalman.init(), toUpper('test'), etc.
 	// A function call has the pattern: name(...) or name.sub.name(...)
 	if looksLikeFunctionCall(valueStr) {
-		result := e.evaluateExpressionWithContext(valueStr, nil, nil)
+		result := e.evaluateExpressionWithContext(ctx, valueStr, nil, nil)
 		// Only use the result if evaluation succeeded (not returned as original string)
 		if result != nil && result != valueStr {
 			return result
@@ -373,7 +383,7 @@ type invalidPropertyValue struct {
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
-func (e *StorageExecutor) parseArrayValue(arrayStr string) []interface{} {
+func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
 	// Remove brackets
 	inner := strings.TrimSpace(arrayStr[1 : len(arrayStr)-1])
 	if inner == "" {
@@ -385,7 +395,7 @@ func (e *StorageExecutor) parseArrayValue(arrayStr string) []interface{} {
 	result := make([]interface{}, len(elements))
 
 	for i, elem := range elements {
-		result[i] = e.parsePropertyValue(strings.TrimSpace(elem))
+		result[i] = e.parsePropertyValue(ctx, strings.TrimSpace(elem))
 	}
 
 	return result

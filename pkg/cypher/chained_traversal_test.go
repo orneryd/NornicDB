@@ -187,7 +187,8 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 
 	t.Run("three-node chain with variables", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -217,7 +218,8 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 
 	t.Run("four-node chain", func(t *testing.T) {
 		pattern := "(a)-[:R1]->(b)-[:R2]->(c)-[:R3]->(d)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -231,7 +233,8 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 
 	t.Run("chain with relationship variables", func(t *testing.T) {
 		pattern := "(a)-[r1:REL1]->(b)-[r2:REL2]->(c)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -241,7 +244,8 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 
 	t.Run("chain with properties", func(t *testing.T) {
 		pattern := "(p:Person {name: 'Test'})<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -256,10 +260,11 @@ func TestTraverseChainedGraph(t *testing.T) {
 
 	t.Run("three-node chain returns correct paths", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.traverseGraph(ctx, match)
 
 		// Should find 3 paths: Person1->POC1->Area1, Person2->POC2->Area1, Person3->POC3->Area2
 		assert.Len(t, paths, 3)
@@ -274,10 +279,11 @@ func TestTraverseChainedGraph(t *testing.T) {
 	t.Run("filtered chain returns correct subset", func(t *testing.T) {
 		// Only get paths to Area1
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area {name: 'Area1'})"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.traverseGraph(ctx, match)
 
 		// Should find 2 paths: Person1->POC1->Area1, Person2->POC2->Area1
 		assert.Len(t, paths, 2)
@@ -286,10 +292,11 @@ func TestTraverseChainedGraph(t *testing.T) {
 	t.Run("non-matching chain returns empty", func(t *testing.T) {
 		// Use a non-existent relationship type
 		pattern := "(p:Person)<-[:NONEXISTENT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.traverseGraph(ctx, match)
 		assert.Len(t, paths, 0)
 	})
 }
@@ -301,47 +308,49 @@ func TestBuildPathContextChained(t *testing.T) {
 
 	t.Run("maps all three nodes", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
 		paths := exec.traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
 		// Build context for first path
-		ctx := exec.buildPathContext(paths[0], match)
+		pathCtx := exec.buildPathContext(paths[0], match)
 
 		// All three node variables should be mapped
-		assert.NotNil(t, ctx.nodes["p"], "start node 'p' should be mapped")
-		assert.NotNil(t, ctx.nodes["poc"], "intermediate node 'poc' should be mapped")
-		assert.NotNil(t, ctx.nodes["a"], "end node 'a' should be mapped")
+		assert.NotNil(t, pathCtx.nodes["p"], "start node 'p' should be mapped")
+		assert.NotNil(t, pathCtx.nodes["poc"], "intermediate node 'poc' should be mapped")
+		assert.NotNil(t, pathCtx.nodes["a"], "end node 'a' should be mapped")
 
 		// Verify the nodes are correct types
-		pNode := ctx.nodes["p"]
+		pNode := pathCtx.nodes["p"]
 		assert.Contains(t, pNode.Labels, "Person")
 
-		pocNode := ctx.nodes["poc"]
+		pocNode := pathCtx.nodes["poc"]
 		assert.Contains(t, pocNode.Labels, "POC")
 
-		aNode := ctx.nodes["a"]
+		aNode := pathCtx.nodes["a"]
 		assert.Contains(t, aNode.Labels, "Area")
 	})
 
 	t.Run("maps relationships with variables", func(t *testing.T) {
 		pattern := "(p:Person)<-[r1:HAS_CONTACT]-(poc:POC)-[r2:BELONGS_TO]->(a:Area)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
 		paths := exec.traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
-		ctx := exec.buildPathContext(paths[0], match)
+		pathCtx := exec.buildPathContext(paths[0], match)
 
 		// Both relationship variables should be mapped
-		assert.NotNil(t, ctx.rels["r1"], "relationship 'r1' should be mapped")
-		assert.NotNil(t, ctx.rels["r2"], "relationship 'r2' should be mapped")
+		assert.NotNil(t, pathCtx.rels["r1"], "relationship 'r1' should be mapped")
+		assert.NotNil(t, pathCtx.rels["r2"], "relationship 'r2' should be mapped")
 
-		assert.Equal(t, "HAS_CONTACT", ctx.rels["r1"].Type)
-		assert.Equal(t, "BELONGS_TO", ctx.rels["r2"].Type)
+		assert.Equal(t, "HAS_CONTACT", pathCtx.rels["r1"].Type)
+		assert.Equal(t, "BELONGS_TO", pathCtx.rels["r2"].Type)
 	})
 }
 
@@ -514,7 +523,8 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 
 	t.Run("empty graph returns no paths", func(t *testing.T) {
 		pattern := "(a)-[:R1]->(b)-[:R2]->(c)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
 		paths := exec.traverseGraph(context.Background(), match)
@@ -523,7 +533,8 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 
 	t.Run("pattern with quoted property containing special chars", func(t *testing.T) {
 		pattern := `(p:Person {name: "Test (User)"})<-[:HAS_CONTACT]-(poc)-[:BELONGS_TO]->(a)`
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -532,7 +543,8 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 
 	t.Run("pattern with no labels on intermediate nodes", func(t *testing.T) {
 		pattern := "(a:Start)<-[:R1]-(b)-[:R2]->(c:End)"
-		match := exec.parseTraversalPattern(pattern)
+		ctx := context.Background()
+		match := exec.parseTraversalPattern(ctx, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -621,7 +633,8 @@ func BenchmarkChainedTraversal(b *testing.B) {
 	setupChainedBenchmarkData(b, exec)
 
 	pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-	match := exec.parseTraversalPattern(pattern)
+	ctx := context.Background()
+	match := exec.parseTraversalPattern(ctx, pattern)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

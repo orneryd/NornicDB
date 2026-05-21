@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -10,18 +11,18 @@ import (
 
 var compiledSimpleWhereCache sync.Map // map[string]func(*storage.Node) bool
 
-func (e *StorageExecutor) filterNodes(nodes []*storage.Node, variable, whereClause string) []*storage.Node {
+func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
 	if fastIN, ok := e.buildBoundInFastFilter(variable, whereClause); ok {
 		return parallelFilterNodes(nodes, fastIN)
 	}
 
-	if compiled, ok := e.getCompiledSimpleWhere(variable, whereClause); ok {
+	if compiled, ok := e.getCompiledSimpleWhere(ctx, variable, whereClause); ok {
 		return parallelFilterNodes(nodes, compiled)
 	}
 
 	// Create filter function for parallel execution
 	filterFn := func(node *storage.Node) bool {
-		return e.evaluateWhere(node, variable, whereClause)
+		return e.evaluateWhere(ctx, node, variable, whereClause)
 	}
 
 	// Use parallel filtering for large datasets
@@ -83,21 +84,21 @@ func (e *StorageExecutor) buildBoundInFastFilter(variable, whereClause string) (
 	}, true
 }
 
-func (e *StorageExecutor) getCompiledSimpleWhere(variable, whereClause string) (func(*storage.Node) bool, bool) {
+func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
 	key := variable + "\x00" + strings.TrimSpace(whereClause)
 	if cached, ok := compiledSimpleWhereCache.Load(key); ok {
 		if fn, okFn := cached.(func(*storage.Node) bool); okFn {
 			return fn, true
 		}
 	}
-	fn, ok := e.compileSimpleWhere(variable, whereClause)
+	fn, ok := e.compileSimpleWhere(ctx, variable, whereClause)
 	if ok {
 		compiledSimpleWhereCache.Store(key, fn)
 	}
 	return fn, ok
 }
 
-func (e *StorageExecutor) compileSimpleWhere(variable, whereClause string) (func(*storage.Node) bool, bool) {
+func (e *StorageExecutor) compileSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
 	whereClause = strings.TrimSpace(whereClause)
 
 	// Keep this fast path strict to avoid semantic drift.
@@ -132,7 +133,7 @@ func (e *StorageExecutor) compileSimpleWhere(variable, whereClause string) (func
 				if isValidIdentifier(right) && len(e.fabricRecordBindings) > 0 {
 					listVal = e.fabricRecordBindings[right]
 				} else {
-					listVal = e.parseValue(right)
+					listVal = e.parseValue(ctx, right)
 				}
 				if items, ok := toInterfaceSlice(listVal); ok {
 					comparableSet, nonComparable := buildComparableMembershipIndex(items)
@@ -209,7 +210,7 @@ func (e *StorageExecutor) compileSimpleWhere(variable, whereClause string) (func
 		if prop == "" || strings.ContainsAny(prop, " \t\r\n") {
 			return nil, false
 		}
-		expected := e.parseValue(right)
+		expected := e.parseValue(ctx, right)
 		return func(node *storage.Node) bool {
 			actual, exists := getProp(node, prop)
 			if !exists {
@@ -236,7 +237,7 @@ func (e *StorageExecutor) compileSimpleWhere(variable, whereClause string) (func
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	whereClause = strings.TrimSpace(whereClause)
 
 	// Handle parenthesized expressions - strip outer parens and recurse
@@ -257,7 +258,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 			}
 		}
 		if isOuterParen {
-			return e.evaluateWhere(node, variable, whereClause[1:len(whereClause)-1])
+			return e.evaluateWhere(ctx, node, variable, whereClause[1:len(whereClause)-1])
 		}
 	}
 
@@ -266,7 +267,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 	if andIdx := findTopLevelKeyword(whereClause, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(whereClause[:andIdx])
 		right := strings.TrimSpace(whereClause[andIdx+5:])
-		return e.evaluateWhere(node, variable, left) && e.evaluateWhere(node, variable, right)
+		return e.evaluateWhere(ctx, node, variable, left) && e.evaluateWhere(ctx, node, variable, right)
 	}
 
 	// Handle OR at top level only.
@@ -281,18 +282,18 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 		if isConstantTrueEquality(left) || isConstantTrueEquality(right) {
 			return true
 		}
-		return e.evaluateWhere(node, variable, left) || e.evaluateWhere(node, variable, right)
+		return e.evaluateWhere(ctx, node, variable, left) || e.evaluateWhere(ctx, node, variable, right)
 	}
 
 	// Handle NOT EXISTS { } subquery FIRST (before other NOT handling)
 	// Uses regex for whitespace-flexible matching
 	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
-		return e.evaluateNotExistsSubquery(node, variable, whereClause)
+		return e.evaluateNotExistsSubquery(ctx, node, variable, whereClause)
 	}
 
 	// Handle EXISTS { } subquery (whitespace-flexible)
 	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
-		return e.evaluateExistsSubquery(node, variable, whereClause)
+		return e.evaluateExistsSubquery(ctx, node, variable, whereClause)
 	}
 
 	// Handle COUNT { } subquery with comparison (whitespace-flexible)
@@ -303,7 +304,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 	// Handle NOT prefix
 	if hasPrefixFold(whereClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
-		return !e.evaluateWhere(node, variable, inner)
+		return !e.evaluateWhere(ctx, node, variable, inner)
 	}
 
 	// Handle label check: n:Label or variable:Label
@@ -328,22 +329,22 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 
 	// Handle string operators (case-insensitive check)
 	if containsFold(whereClause, " CONTAINS ") {
-		return e.evaluateStringOp(node, variable, whereClause, "CONTAINS")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "CONTAINS")
 	}
 	if containsFold(whereClause, " STARTS WITH ") {
-		return e.evaluateStringOp(node, variable, whereClause, "STARTS WITH")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "STARTS WITH")
 	}
 	if containsFold(whereClause, " ENDS WITH ") {
-		return e.evaluateStringOp(node, variable, whereClause, "ENDS WITH")
+		return e.evaluateStringOp(ctx, node, variable, whereClause, "ENDS WITH")
 	}
 	if containsFold(whereClause, " IN ") {
-		return e.evaluateInOp(node, variable, whereClause)
+		return e.evaluateInOp(ctx, node, variable, whereClause)
 	}
 	if containsFold(whereClause, " IS NULL") {
-		return e.evaluateIsNull(node, variable, whereClause, false)
+		return e.evaluateIsNull(ctx, node, variable, whereClause, false)
 	}
 	if containsFold(whereClause, " IS NOT NULL") {
-		return e.evaluateIsNull(node, variable, whereClause, true)
+		return e.evaluateIsNull(ctx, node, variable, whereClause, true)
 	}
 
 	// Handle relationship patterns like (n)-[:TYPE]->() that may appear as "n)-[:TYPE]->()"
@@ -377,7 +378,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 
 	if op == "" {
 		// No comparison operator - may be a boolean expression (e.g. exists(n.prop))
-		return e.evaluateWhereAsBoolean(whereClause, variable, node)
+		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
 	}
 
 	left := strings.TrimSpace(whereClause[:opIdx])
@@ -389,7 +390,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 		idVar := strings.TrimSpace(left[3 : len(left)-1])
 		if idVar == variable {
 			// Normalize expected value once to raw internal ID for comparison.
-			expectedVal := normalizeNodeIDValue(e.parseValue(right))
+			expectedVal := normalizeNodeIDValue(e.parseValue(ctx, right))
 			actualId := string(node.ID)
 			switch op {
 			case "=":
@@ -409,7 +410,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 		idVar := strings.TrimSpace(left[10 : len(left)-1])
 		if idVar == variable {
 			// Normalize expected value once to raw internal ID for comparison.
-			expectedVal := normalizeNodeIDValue(e.parseValue(right))
+			expectedVal := normalizeNodeIDValue(e.parseValue(ctx, right))
 			actualId := string(node.ID)
 			switch op {
 			case "=":
@@ -426,7 +427,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 	// Extract property from left side (e.g., "n.name")
 	if !strings.HasPrefix(left, variable+".") {
 		// Left is not variable.prop (e.g. size(n.content), id(n)) - evaluate full expression
-		return e.evaluateWhereAsBoolean(whereClause, variable, node)
+		return e.evaluateWhereAsBoolean(ctx, whereClause, variable, node)
 	}
 
 	propName := left[len(variable)+1:]
@@ -459,7 +460,7 @@ func (e *StorageExecutor) evaluateWhere(node *storage.Node, variable, whereClaus
 		}
 	}
 	if expectedVal == nil {
-		expectedVal = e.parseValue(right)
+		expectedVal = e.parseValue(ctx, right)
 	}
 
 	// Perform comparison based on operator
@@ -533,9 +534,9 @@ func normalizeNodeIDValue(v interface{}) interface{} {
 // evaluateWhereAsBoolean evaluates a WHERE expression (e.g. size(n.content) > 10000, exists(n.prop))
 // using the expression evaluator and returns a boolean. Used when evaluateWhere does not handle
 // the condition as id(), elementId(), or variable.property.
-func (e *StorageExecutor) evaluateWhereAsBoolean(whereClause, variable string, node *storage.Node) bool {
+func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClause, variable string, node *storage.Node) bool {
 	nodes := map[string]*storage.Node{variable: node}
-	result := e.evaluateExpressionWithContext(whereClause, nodes, nil)
+	result := e.evaluateExpressionWithContext(ctx, whereClause, nodes, nil)
 	switch v := result.(type) {
 	case bool:
 		return v
@@ -554,16 +555,16 @@ func (e *StorageExecutor) evaluateWhereAsBoolean(whereClause, variable string, n
 }
 
 // parseValue extracts the actual value from a Cypher literal
-func (e *StorageExecutor) parseValue(s string) interface{} {
+func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} {
 	s = strings.TrimSpace(s)
 
 	// Handle arrays: [0.1, 0.2, 0.3]
 	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		return e.parseArrayValue(s)
+		return e.parseArrayValue(ctx, s)
 	}
 	// Handle map literals: {key: value}
 	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
-		return e.parseProperties(s)
+		return e.parseProperties(ctx, s)
 	}
 
 	// Handle quoted strings with escape sequence support
@@ -629,7 +630,7 @@ func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 	return dst
 }
 
-func (e *StorageExecutor) resolveReturnItem(item returnItem, variable string, node *storage.Node) interface{} {
+func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
 	expr := item.expr
 
 	// Handle wildcard - return the whole node (Neo4j compatible: return *storage.Node)
@@ -650,24 +651,24 @@ func (e *StorageExecutor) resolveReturnItem(item returnItem, variable string, no
 	// Check for CASE expression FIRST (before property access check)
 	// CASE expressions contain dots (like p.age) but should not be treated as property access
 	if isCaseExpression(expr) {
-		return e.evaluateExpression(expr, variable, node)
+		return e.evaluateExpression(ctx, expr, variable, node)
 	}
 
 	// Check for function calls - these should be evaluated, not treated as property access
 	// e.g., coalesce(p.nickname, p.name), toString(p.age), etc.
 	if strings.Contains(expr, "(") {
-		return e.evaluateExpression(expr, variable, node)
+		return e.evaluateExpression(ctx, expr, variable, node)
 	}
 
 	// Check for IS NULL / IS NOT NULL - these need full evaluation
 	upperExpr := strings.ToUpper(expr)
 	if strings.Contains(upperExpr, " IS NULL") || strings.Contains(upperExpr, " IS NOT NULL") {
-		return e.evaluateExpression(expr, variable, node)
+		return e.evaluateExpression(ctx, expr, variable, node)
 	}
 
 	// Check for arithmetic operators - need full evaluation
 	if strings.ContainsAny(expr, "+-*/%") {
-		return e.evaluateExpression(expr, variable, node)
+		return e.evaluateExpression(ctx, expr, variable, node)
 	}
 
 	// Handle property access: variable.property
@@ -712,7 +713,7 @@ func (e *StorageExecutor) resolveReturnItem(item returnItem, variable string, no
 
 	// Use the comprehensive expression evaluator for all expressions
 	// This supports: id(n), labels(n), keys(n), properties(n), literals, etc.
-	result := e.evaluateExpression(expr, variable, node)
+	result := e.evaluateExpression(ctx, expr, variable, node)
 
 	// If the result is just the expression string unchanged, return nil
 	// (expression wasn't recognized/evaluated)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -8,7 +9,7 @@ import (
 // parseSetMergeMapLiteralStrict parses an inline map literal used by SET +=.
 // Unlike permissive property parsing helpers, this enforces Cypher semantics:
 // malformed maps must return an error instead of becoming an empty map/no-op.
-func (e *StorageExecutor) parseSetMergeMapLiteralStrict(s string) (map[string]interface{}, error) {
+func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s string) (map[string]interface{}, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
 		return nil, fmt.Errorf("map literal must be enclosed in { ... }")
@@ -41,7 +42,7 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(s string) (map[string]in
 			return nil, fmt.Errorf("empty map value for key %q", key)
 		}
 
-		props[key] = e.parseValue(value)
+		props[key] = e.parseValue(ctx, value)
 	}
 
 	return props, nil

@@ -2506,6 +2506,69 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	return nil
 }
 
+// CountPropertyVectorEntries reports the number of nodes that currently
+// have a tracked vector entry for the given property key. Exposed for
+// teardown / observability tests that need to assert DROP INDEX really
+// purged the per-property bookkeeping.
+func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
+	if s == nil || propertyKey == "" {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, props := range s.nodePropVector {
+		if _, ok := props[propertyKey]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+// RemovePropertyVectorIndex tears down all in-memory vector entries that
+// were indexed under the given property key (i.e. every "<nodeID>-prop-<key>"
+// entry). Used by Cypher DROP INDEX so the in-memory index actually goes
+// away — without this, a re-CREATE of the same index leaves orphaned
+// vectors in vectorIndex, HNSW, and the cluster index that still get scored
+// against future queries.
+//
+// Safe to call when the property was never indexed: it walks the
+// nodePropVector map and is a no-op if no nodes recorded an entry for
+// propertyKey. Callers are expected to also call DropIndex on the schema
+// to remove the named-index entry that points at this property.
+func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
+	if s == nil || propertyKey == "" {
+		return
+	}
+	if !s.buildInProgress.Load() {
+		defer s.schedulePersist()
+		if s.resultCache != nil {
+			s.resultCache.Invalidate()
+		}
+	}
+	allowLiveHNSW := s.allowLiveHNSWUpdatesLocked()
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	for nodeID, props := range s.nodePropVector {
+		propID, ok := props[propertyKey]
+		if !ok {
+			continue
+		}
+		s.removeVectorLocked(propID)
+		if s.gpuEmbeddingIndex != nil {
+			_ = s.gpuEmbeddingIndex.Remove(propID)
+		}
+		s.hnswRemoveLive(propID, allowLiveHNSW)
+		if s.clusterIndex != nil {
+			s.clusterIndex.Remove(propID)
+		}
+		delete(props, propertyKey)
+		if len(props) == 0 {
+			delete(s.nodePropVector, nodeID)
+		}
+	}
+}
+
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
 // that no longer exists in storage (orphaned embedding). If err is storage.ErrNotFound,
 // it logs once per node ID (when seenOrphans is provided), removes all embeddings for

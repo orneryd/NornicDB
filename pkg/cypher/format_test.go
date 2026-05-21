@@ -2,6 +2,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -52,7 +53,9 @@ func TestFormatFunction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluateExpressionWithContext(tt.expr, nil, nil)
+			ctx := context.Background()
+
+			result := exec.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
 			if str, ok := result.(string); ok {
 				if str != tt.expected {
 					t.Errorf("format() = %q, want %q", str, tt.expected)
@@ -71,7 +74,8 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	t.Run("format with no args", func(t *testing.T) {
-		result := exec.evaluateExpressionWithContext(`format('No placeholders')`, nil, nil)
+		ctx := context.Background()
+		result := exec.evaluateExpressionWithContext(ctx, `format('No placeholders')`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "No placeholders" {
 				t.Errorf("format() = %q, want %q", str, "No placeholders")
@@ -82,7 +86,9 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 	})
 
 	t.Run("format with quoted template", func(t *testing.T) {
-		result := exec.evaluateExpressionWithContext(`format("User: %s", "Alice")`, nil, nil)
+		ctx := context.Background()
+
+		result := exec.evaluateExpressionWithContext(ctx, `format("User: %s", "Alice")`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "User: Alice" {
 				t.Errorf("format() = %q, want %q", str, "User: Alice")
@@ -93,7 +99,9 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 	})
 
 	t.Run("format with percent literal", func(t *testing.T) {
-		result := exec.evaluateExpressionWithContext(`format('100%% complete')`, nil, nil)
+		ctx := context.Background()
+
+		result := exec.evaluateExpressionWithContext(ctx, `format('100%% complete')`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "100% complete" {
 				t.Errorf("format() = %q, want %q", str, "100% complete")

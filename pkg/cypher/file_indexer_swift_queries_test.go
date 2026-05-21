@@ -306,12 +306,14 @@ func TestReduceExpressionWithAliasListContext(t *testing.T) {
 			},
 		},
 	}
-	combined := exec.evaluateExpressionWithContext("file_tags + ['hello']", nodes, map[string]*storage.Edge{})
+	ctx := context.Background()
+
+	combined := exec.evaluateExpressionWithContext(ctx, "file_tags + ['hello']", nodes, map[string]*storage.Edge{})
 	combinedList, ok := combined.([]interface{})
 	require.True(t, ok, "expected combined list expression to evaluate to list, got %T (%v)", combined, combined)
 	assert.ElementsMatch(t, []interface{}{"existing", "hello"}, combinedList)
 
-	got := exec.evaluateExpressionWithContext(expr, nodes, map[string]*storage.Edge{})
+	got := exec.evaluateExpressionWithContext(ctx, expr, nodes, map[string]*storage.Edge{})
 	list, ok := got.([]interface{})
 	require.True(t, ok, "expected reduce expression to evaluate to list, got %T (%v)", got, got)
 	assert.ElementsMatch(t, []interface{}{"existing", "hello"}, list)
@@ -330,7 +332,7 @@ func TestReduceExpressionWithAliasListContext(t *testing.T) {
 			},
 		},
 	}
-	cond := exec.evaluateExpressionWithContext("t IN acc", condNodes, map[string]*storage.Edge{})
+	cond := exec.evaluateExpressionWithContext(ctx, "t IN acc", condNodes, map[string]*storage.Edge{})
 	condBool, ok := cond.(bool)
 	require.True(t, ok, "expected boolean for IN condition, got %T (%v)", cond, cond)
 	assert.False(t, condBool)

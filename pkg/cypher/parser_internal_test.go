@@ -183,7 +183,9 @@ func TestPatternParserHelpers(t *testing.T) {
 	})
 
 	t.Run("parseProperties handles nested values and malformed pairs", func(t *testing.T) {
-		props := exec.parseProperties(`{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", invalid, title: toUpper('friend')}`)
+		ctx := context.Background()
+
+		props := exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", invalid, title: toUpper('friend')}`)
 		assert.Equal(t, "Alice", props["name"])
 		assert.Equal(t, int64(30), props["age"])
 		assert.Equal(t, true, props["active"])
@@ -193,34 +195,36 @@ func TestPatternParserHelpers(t *testing.T) {
 		assert.Equal(t, "FRIEND", props["title"])
 		_, exists := props["invalid"]
 		assert.False(t, exists)
-		assert.Empty(t, exec.parseProperties(" { } "))
+		assert.Empty(t, exec.parseProperties(ctx, " { } "))
 	})
 
 	t.Run("parsePropertyValue covers literals functions and invalid values", func(t *testing.T) {
-		assert.Nil(t, exec.parsePropertyValue(""))
-		assert.Nil(t, exec.parsePropertyValue("null"))
-		assert.Equal(t, "it's", exec.parsePropertyValue("'it''s'"))
-		assert.Equal(t, `a "quote"`, exec.parsePropertyValue(`"a \"quote\""`))
-		assert.Equal(t, true, exec.parsePropertyValue("true"))
-		assert.Equal(t, int64(42), exec.parsePropertyValue("42"))
-		assert.Equal(t, 3.5, exec.parsePropertyValue("3.5"))
-		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, exec.parsePropertyValue(`[1, {x: 2}, ['a', 'b']]`))
-		assert.Equal(t, map[string]interface{}{"nested": "ok"}, exec.parsePropertyValue(`{nested: 'ok'}`))
-		assert.Equal(t, "HELLO", exec.parsePropertyValue(`toUpper('hello')`))
+		ctx := context.Background()
+		assert.Nil(t, exec.parsePropertyValue(ctx, ""))
+		assert.Nil(t, exec.parsePropertyValue(ctx, "null"))
+		assert.Equal(t, "it's", exec.parsePropertyValue(ctx, "'it''s'"))
+		assert.Equal(t, `a "quote"`, exec.parsePropertyValue(ctx, `"a \"quote\""`))
+		assert.Equal(t, true, exec.parsePropertyValue(ctx, "true"))
+		assert.Equal(t, int64(42), exec.parsePropertyValue(ctx, "42"))
+		assert.Equal(t, 3.5, exec.parsePropertyValue(ctx, "3.5"))
+		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, exec.parsePropertyValue(ctx, `[1, {x: 2}, ['a', 'b']]`))
+		assert.Equal(t, map[string]interface{}{"nested": "ok"}, exec.parsePropertyValue(ctx, `{nested: 'ok'}`))
+		assert.Equal(t, "HELLO", exec.parsePropertyValue(ctx, `toUpper('hello')`))
 
-		invalid := exec.parsePropertyValue("foo:bar")
+		invalid := exec.parsePropertyValue(ctx, "foo:bar")
 		typed, ok := invalid.(invalidPropertyValue)
 		require.True(t, ok)
 		assert.Equal(t, "foo:bar", typed.raw)
 	})
 
 	t.Run("parseNodePattern extracts variable labels and properties", func(t *testing.T) {
-		info := exec.parseNodePattern(`(n:Person:Employee {name: 'Alice', score: 3})`)
+		ctx := context.Background()
+		info := exec.parseNodePattern(ctx, `(n:Person:Employee {name: 'Alice', score: 3})`)
 		assert.Equal(t, "n", info.variable)
 		assert.Equal(t, []string{"Person", "Employee"}, info.labels)
 		assert.Equal(t, map[string]interface{}{"name": "Alice", "score": int64(3)}, info.properties)
 
-		info = exec.parseNodePattern(`(:OnlyLabel)`)
+		info = exec.parseNodePattern(ctx, `(:OnlyLabel)`)
 		assert.Equal(t, "", info.variable)
 		assert.Equal(t, []string{"OnlyLabel"}, info.labels)
 		assert.Empty(t, info.properties)

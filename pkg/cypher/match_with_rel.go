@@ -103,7 +103,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	}
 
 	// Parse the traversal pattern
-	matches := e.parseTraversalPattern(patternForParsing)
+	matches := e.parseTraversalPattern(ctx, patternForParsing)
 	if matches == nil {
 		return result, fmt.Errorf("invalid traversal pattern: %s", patternForParsing)
 	}
@@ -234,7 +234,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 
 	// Apply pre-WITH WHERE clause filter if present
 	if preWithWhere != "" {
-		paths = e.filterPathsByWhere(paths, matches, preWithWhere)
+		paths = e.filterPathsByWhere(ctx, paths, matches, preWithWhere)
 	}
 
 	// Parse WITH items
@@ -312,7 +312,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			keyValues := make(map[string]interface{})
 
 			for i, ge := range groupByExprs {
-				val := e.evaluateExpressionWithPathContext(ge.expr, pathCtx)
+				val := e.evaluateExpressionWithPathContext(ctx, ge.expr, pathCtx)
 				keyParts[i] = fmt.Sprintf("%v", val)
 				keyValues[ge.alias] = val
 			}
@@ -343,7 +343,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					seen := make(map[string]bool)
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(distinctInner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, distinctInner, pCtx)
 						if val != nil {
 							seen[fmt.Sprintf("%v", val)] = true
 						}
@@ -357,7 +357,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 						count := int64(0)
 						for _, p := range groupPaths {
 							pCtx := e.buildPathContext(p, matches)
-							val := e.evaluateExpressionWithPathContext(inner, pCtx)
+							val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 							if val != nil {
 								count++
 							}
@@ -371,7 +371,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					hasFloat := false
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(inner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 						switch v := val.(type) {
 						case int64:
 							sumInt += v
@@ -400,7 +400,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					count := 0
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(inner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 						if num, ok := toFloat64(val); ok {
 							sum += num
 							count++
@@ -416,7 +416,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					var minVal interface{}
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(inner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
 							minVal = val
 						}
@@ -427,7 +427,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					var maxVal interface{}
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(inner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
 							maxVal = val
 						}
@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					var collected []interface{}
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(distinctInner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, distinctInner, pCtx)
 						key := fmt.Sprintf("%v", val)
 						if !seen[key] {
 							seen[key] = true
@@ -454,7 +454,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 					var collected []interface{}
 					for _, p := range groupPaths {
 						pCtx := e.buildPathContext(p, matches)
-						val := e.evaluateExpressionWithPathContext(inner, pCtx)
+						val := e.evaluateExpressionWithPathContext(ctx, inner, pCtx)
 						collected = append(collected, val)
 					}
 					values[ae.alias] = collected
@@ -470,7 +470,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 			values := make(map[string]interface{})
 
 			for _, wi := range parsedWithItems {
-				values[wi.alias] = e.evaluateExpressionWithPathContext(wi.expr, pathCtx)
+				values[wi.alias] = e.evaluateExpressionWithPathContext(ctx, wi.expr, pathCtx)
 			}
 
 			computedRows = append(computedRows, computedRow{values: values})
@@ -481,7 +481,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	if postWithWhere != "" {
 		var filtered []computedRow
 		for _, row := range computedRows {
-			if e.evaluateWhereOnComputedRow(postWithWhere, row.values) {
+			if e.evaluateWhereOnComputedRow(ctx, postWithWhere, row.values) {
 				filtered = append(filtered, row)
 			}
 		}
@@ -682,21 +682,21 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 }
 
 // evaluateWhereOnComputedRow evaluates a WHERE condition on computed values
-func (e *StorageExecutor) evaluateWhereOnComputedRow(whereClause string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	whereClause = strings.TrimSpace(whereClause)
 
 	// Handle AND
 	if idx := strings.Index(strings.ToUpper(whereClause), " AND "); idx > 0 {
 		left := whereClause[:idx]
 		right := whereClause[idx+5:]
-		return e.evaluateWhereOnComputedRow(left, values) && e.evaluateWhereOnComputedRow(right, values)
+		return e.evaluateWhereOnComputedRow(ctx, left, values) && e.evaluateWhereOnComputedRow(ctx, right, values)
 	}
 
 	// Handle OR
 	if idx := strings.Index(strings.ToUpper(whereClause), " OR "); idx > 0 {
 		left := whereClause[:idx]
 		right := whereClause[idx+4:]
-		return e.evaluateWhereOnComputedRow(left, values) || e.evaluateWhereOnComputedRow(right, values)
+		return e.evaluateWhereOnComputedRow(ctx, left, values) || e.evaluateWhereOnComputedRow(ctx, right, values)
 	}
 
 	// Handle comparison operators
@@ -706,7 +706,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(whereClause string, values 
 			right := strings.TrimSpace(whereClause[idx+len(op):])
 
 			leftVal := e.evaluateExpressionFromValues(left, values)
-			rightVal := e.parseValue(right)
+			rightVal := e.parseValue(ctx, right)
 
 			switch op {
 			case "=":

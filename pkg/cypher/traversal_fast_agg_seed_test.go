@@ -66,7 +66,7 @@ func TestFastAgg_WithCypherSeed_ProductsPerCategoryQueryShape(t *testing.T) {
 		require.NoError(t, err, q)
 	}
 
-	matches := exec.parseTraversalPattern("(c:Category)<-[:PART_OF]-(p:Product)")
+	matches := exec.parseTraversalPattern(ctx, "(c:Category)<-[:PART_OF]-(p:Product)")
 	require.NotNil(t, matches)
 
 	returnItems := exec.parseReturnItems("c.categoryName, count(p) as productCount")

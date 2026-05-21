@@ -79,7 +79,7 @@ type RelationshipPattern struct {
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
-func (e *StorageExecutor) parseRelationshipPattern(pattern string) *RelationshipPattern {
+func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
 	result := &RelationshipPattern{
 		Direction:  "both",
 		MinHops:    1,
@@ -150,7 +150,7 @@ func (e *StorageExecutor) parseRelationshipPattern(pattern string) *Relationship
 
 			// Check for properties
 			if propsIdx := strings.Index(typesPart, "{"); propsIdx >= 0 {
-				result.Properties = e.parseProperties(typesPart[propsIdx:])
+				result.Properties = e.parseProperties(ctx, typesPart[propsIdx:])
 				typesPart = typesPart[:propsIdx]
 			}
 
@@ -192,7 +192,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 	}
 
 	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
-	matches := e.parseTraversalPattern(pattern)
+	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil {
 		return result, fmt.Errorf("invalid traversal pattern: %s", pattern)
 	}
@@ -254,7 +254,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 		// MATCH (o)-[:R]->(t) WHERE elementId(o) = '...'
 		// This avoids traversing from all start nodes for single-node lookups.
 		if matches.StartNode.variable != "" {
-			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(matches.StartNode, whereClause, nil); idxErr == nil && used {
+			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(ctx, matches.StartNode, whereClause, nil); idxErr == nil && used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
 			}
@@ -262,7 +262,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 
 		// Prefer indexed start-node pruning for simple property predicates.
 		if matches.StartNode.variable != "" && len(optimizedStartNodes) == 0 {
-			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(matches.StartNode, whereClause); idxErr == nil && used {
+			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, matches.StartNode, whereClause); idxErr == nil && used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
 			}
@@ -301,14 +301,14 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 		}
 		// Still need to apply WHERE clause filter (in case there are other conditions)
 		if whereClause != "" {
-			paths = e.filterPathsByWhere(paths, matches, whereClause)
+			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
 		}
 	} else {
 		// Normal traversal from all matching nodes
 		paths = e.traverseGraph(ctx, matches)
 		// Apply WHERE clause filter if present
 		if whereClause != "" {
-			paths = e.filterPathsByWhere(paths, matches, whereClause)
+			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
 		}
 	}
 
@@ -357,27 +357,27 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 					row[i] = int64(len(paths))
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(paths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(paths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathAvg(ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(paths, matches, extractFuncInner(item.expr), false)
+					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(paths, matches, extractFuncInner(item.expr), true)
+					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && strings.Contains(upperExpr, "DISTINCT"):
-					row[i] = e.aggregatePathCollect(paths, matches, item.expr, true)
+					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(paths, matches, item.expr, false)
+					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, false)
 
 				default:
 					if len(paths) > 0 {
 						context := e.buildPathContext(paths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(item.expr, context)
+						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
 					} else {
 						row[i] = nil
 					}
@@ -398,7 +398,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 			// Build group key from non-aggregation columns
 			for i, item := range returnItems {
 				if !isAggFlags[i] { // Use pre-computed flag
-					val := e.evaluateExpressionWithPathContext(item.expr, context)
+					val := e.evaluateExpressionWithPathContext(ctx, item.expr, context)
 					keyParts = append(keyParts, val)
 				}
 			}
@@ -431,27 +431,27 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 					row[i] = int64(len(groupPaths))
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(groupPaths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(groupPaths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathAvg(ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(groupPaths, matches, extractFuncInner(item.expr), false)
+					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(groupPaths, matches, extractFuncInner(item.expr), true)
+					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && strings.Contains(upperExpr, "DISTINCT"):
-					row[i] = e.aggregatePathCollect(groupPaths, matches, item.expr, true)
+					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(groupPaths, matches, item.expr, false)
+					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, false)
 
 				default:
 					if len(groupPaths) > 0 {
 						context := e.buildPathContext(groupPaths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(item.expr, context)
+						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
 					} else {
 						row[i] = nil
 					}
@@ -463,12 +463,12 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 	}
 
 	// Build result rows (non-aggregation)
-	e.appendTraversalRows(result, paths, matches, returnItems, earlyLimit)
+	e.appendTraversalRows(ctx, result, paths, matches, returnItems, earlyLimit)
 
 	return result, nil
 }
 
-func (e *StorageExecutor) appendTraversalRows(result *ExecuteResult, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) {
+func (e *StorageExecutor) appendTraversalRows(ctx context.Context, result *ExecuteResult, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) {
 	for _, path := range paths {
 		if rowLimit >= 0 && len(result.Rows) >= rowLimit {
 			break
@@ -480,7 +480,7 @@ func (e *StorageExecutor) appendTraversalRows(result *ExecuteResult, paths []Pat
 			if isLengthPathExpr(item.expr) {
 				row[i] = int64(context.pathLength)
 			} else {
-				row[i] = e.evaluateExpressionWithPathContext(item.expr, context)
+				row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
 			}
 		}
 		result.Rows = append(result.Rows, row)
@@ -492,7 +492,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return nil, false, nil
 	}
 
-	matches := e.parseTraversalPattern(pattern)
+	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil || matches.IsChained {
 		return nil, false, nil
 	}
@@ -514,7 +514,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 	}
 
 	seedLimit := topKSeedLimit(limit)
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(matches.EndNode, seedWhere, orderExpr, seedLimit)
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
 	if err != nil {
 		return nil, true, err
 	}
@@ -550,12 +550,12 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
 		for _, reversedPath := range reversedPaths {
 			path := reversePathResult(reversedPath)
-			if whereClause != "" && !e.evaluateWhereOnPath(whereClause, e.buildPathContext(path, matches)) {
+			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
 				continue
 			}
 			paths = append(paths, path)
 			if len(paths) >= limit {
-				e.appendTraversalRows(result, paths, matches, returnItems, limit)
+				e.appendTraversalRows(ctx, result, paths, matches, returnItems, limit)
 				e.markTraversalEndSeedTopKUsed()
 				return result, true, nil
 			}
@@ -566,7 +566,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return nil, false, nil
 	}
 
-	e.appendTraversalRows(result, paths, matches, returnItems, limit)
+	e.appendTraversalRows(ctx, result, paths, matches, returnItems, limit)
 	e.markTraversalEndSeedTopKUsed()
 	return result, true, nil
 }
@@ -665,7 +665,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 		return nil, false, nil
 	}
 
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
 	if err != nil || !used {
 		return nil, used, err
 	}
@@ -684,7 +684,7 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 		return nil, false, nil
 	}
 
-	matches := e.parseTraversalPattern(pattern)
+	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil || matches.IsChained == false && strings.TrimSpace(matches.StartNode.variable) == "" {
 		return nil, false, nil
 	}
@@ -719,7 +719,7 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 	}
 
 	// Equality predicate pushdown.
-	if prop, value, ok := e.parseSimpleIndexedEquality(nodePattern.variable, whereClause); ok {
+	if prop, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause); ok {
 		// Safety guard: this fallback scan-pruning path only applies literal equality.
 		// Parameterized predicates (e.g. n.id = $id) are handled elsewhere after
 		// parameter substitution. Applying compareEqual on raw "$param" here would
@@ -843,7 +843,7 @@ func isLengthPathExpr(expr string) bool {
 	return matchFuncStartAndSuffix(expr, "length") && strings.Contains(strings.ToLower(expr), "path")
 }
 
-func (e *StorageExecutor) aggregatePathSum(paths []PathResult, matches *TraversalMatch, inner string) interface{} {
+func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
 	var sumInt int64
 	sumFloat := 0.0
 	hasFloat := false
@@ -851,7 +851,7 @@ func (e *StorageExecutor) aggregatePathSum(paths []PathResult, matches *Traversa
 
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(inner, context)
+		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
 		if val == nil {
 			continue
 		}
@@ -880,12 +880,12 @@ func (e *StorageExecutor) aggregatePathSum(paths []PathResult, matches *Traversa
 	return sumInt
 }
 
-func (e *StorageExecutor) aggregatePathAvg(paths []PathResult, matches *TraversalMatch, inner string) interface{} {
+func (e *StorageExecutor) aggregatePathAvg(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
 	sum := 0.0
 	count := 0
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(inner, context)
+		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
 		if f, ok := toFloat64(val); ok {
 			sum += f
 			count++
@@ -897,12 +897,12 @@ func (e *StorageExecutor) aggregatePathAvg(paths []PathResult, matches *Traversa
 	return sum / float64(count)
 }
 
-func (e *StorageExecutor) aggregatePathMinMax(paths []PathResult, matches *TraversalMatch, inner string, wantMax bool) interface{} {
+func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string, wantMax bool) interface{} {
 	var best interface{}
 	hasBest := false
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(inner, context)
+		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
 		if val == nil {
 			continue
 		}
@@ -927,7 +927,7 @@ func (e *StorageExecutor) aggregatePathMinMax(paths []PathResult, matches *Trave
 	return best
 }
 
-func (e *StorageExecutor) aggregatePathCollect(paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
+func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
 	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
 	if distinct {
 		inner = trimDistinctPrefix(inner)
@@ -938,7 +938,7 @@ func (e *StorageExecutor) aggregatePathCollect(paths []PathResult, matches *Trav
 		seen := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			val := e.evaluateExpressionWithPathContext(inner, context)
+			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
 			if val == nil {
 				continue
 			}
@@ -952,7 +952,7 @@ func (e *StorageExecutor) aggregatePathCollect(paths []PathResult, matches *Trav
 	} else {
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			collected = append(collected, e.evaluateExpressionWithPathContext(inner, context))
+			collected = append(collected, e.evaluateExpressionWithPathContext(ctx, inner, context))
 		}
 	}
 	if suffix == "" {
@@ -995,12 +995,12 @@ type TraversalSegment struct {
 // parseTraversalPattern parses (a:Label)-[r:TYPE]->(b:Label) style patterns
 // Also handles chained patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 // Uses a state machine instead of regex to properly handle parentheses in property values
-func (e *StorageExecutor) parseTraversalPattern(pattern string) *TraversalMatch {
+func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
 	// First check if this is a chained pattern (has multiple relationship segments)
 	if e.isChainedPattern(pattern) {
-		return e.parseChainedTraversalPattern(pattern)
+		return e.parseChainedTraversalPattern(ctx, pattern)
 	}
-	return e.parseTraversalPatternStateMachine(pattern)
+	return e.parseTraversalPatternStateMachine(ctx, pattern)
 }
 
 // isChainedPattern checks if a pattern has multiple relationship segments
@@ -1019,7 +1019,7 @@ func (e *StorageExecutor) isChainedPattern(pattern string) bool {
 }
 
 // parseChainedTraversalPattern parses multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
-func (e *StorageExecutor) parseChainedTraversalPattern(pattern string) *TraversalMatch {
+func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
 	result := &TraversalMatch{
 		IsChained:         true,
 		Segments:          []TraversalSegment{},
@@ -1147,7 +1147,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(pattern string) *Traversa
 	var allNodes []nodePatternInfo
 	for _, part := range parts {
 		nodeStr := strings.Trim(part.nodeStr, "()")
-		allNodes = append(allNodes, e.parseNodePatternFromString(nodeStr))
+		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, nodeStr))
 	}
 
 	// Build segments
@@ -1160,7 +1160,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(pattern string) *Traversa
 		segment := TraversalSegment{
 			FromNode:     allNodes[i],
 			ToNode:       allNodes[i+1],
-			Relationship: *e.parseRelationshipPattern(relStr),
+			Relationship: *e.parseRelationshipPattern(ctx, relStr),
 		}
 		result.Segments = append(result.Segments, segment)
 	}
@@ -1188,7 +1188,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(pattern string) *Traversa
 
 // parseTraversalPatternStateMachine parses patterns with a state machine
 // to properly handle parentheses and special characters inside quoted property values.
-func (e *StorageExecutor) parseTraversalPatternStateMachine(pattern string) *TraversalMatch {
+func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
 	// Find the boundaries of (startNode), -[rel]->, and (endNode)
 	// respecting quotes and nested parentheses
 
@@ -1236,9 +1236,9 @@ func (e *StorageExecutor) parseTraversalPatternStateMachine(pattern string) *Tra
 	endNodeStr := pattern[endStart+1 : endEnd]
 
 	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(startNodeStr),
-		Relationship: *e.parseRelationshipPattern(relStr),
-		EndNode:      e.parseNodePatternFromString(endNodeStr),
+		StartNode:    e.parseNodePatternFromString(ctx, startNodeStr),
+		Relationship: *e.parseRelationshipPattern(ctx, relStr),
+		EndNode:      e.parseNodePatternFromString(ctx, endNodeStr),
 	}
 }
 
@@ -1320,7 +1320,7 @@ func findMatchingParen(s string, startIdx int) int {
 }
 
 // parseNodePatternFromString parses n:Label {props} from a string
-func (e *StorageExecutor) parseNodePatternFromString(s string) nodePatternInfo {
+func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) nodePatternInfo {
 	info := nodePatternInfo{
 		properties: make(map[string]interface{}),
 	}
@@ -1329,7 +1329,7 @@ func (e *StorageExecutor) parseNodePatternFromString(s string) nodePatternInfo {
 
 	// Check for properties
 	if propsIdx := strings.Index(s, "{"); propsIdx >= 0 {
-		info.properties = e.parseProperties(s[propsIdx:])
+		info.properties = e.parseProperties(ctx, s[propsIdx:])
 		s = s[:propsIdx]
 	}
 
@@ -2137,7 +2137,7 @@ func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 
 // filterPathsByWhere filters paths based on a WHERE clause condition.
 // This evaluates conditions like "i.name = 'value'" against each path's context.
-func (e *StorageExecutor) filterPathsByWhere(paths []PathResult, matches *TraversalMatch, whereClause string) []PathResult {
+func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string) []PathResult {
 	if whereClause == "" {
 		return paths
 	}
@@ -2145,7 +2145,7 @@ func (e *StorageExecutor) filterPathsByWhere(paths []PathResult, matches *Traver
 	var filtered []PathResult
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		if e.evaluateWhereOnPath(whereClause, context) {
+		if e.evaluateWhereOnPath(ctx, whereClause, context) {
 			filtered = append(filtered, path)
 		}
 	}
@@ -2154,7 +2154,7 @@ func (e *StorageExecutor) filterPathsByWhere(paths []PathResult, matches *Traver
 
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
-func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathContext) bool {
+func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
 	whereClause = strings.TrimSpace(whereClause)
 	upperClause := strings.ToUpper(whereClause)
 
@@ -2176,7 +2176,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 			}
 		}
 		if isOuterParen {
-			return e.evaluateWhereOnPath(whereClause[1:len(whereClause)-1], context)
+			return e.evaluateWhereOnPath(ctx, whereClause[1:len(whereClause)-1], pathCtx)
 		}
 	}
 
@@ -2184,26 +2184,26 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 	if idx := strings.Index(upperClause, " AND "); idx > 0 {
 		left := strings.TrimSpace(whereClause[:idx])
 		right := strings.TrimSpace(whereClause[idx+5:])
-		return e.evaluateWhereOnPath(left, context) && e.evaluateWhereOnPath(right, context)
+		return e.evaluateWhereOnPath(ctx, left, pathCtx) && e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
 
 	// Handle OR conditions
 	if idx := strings.Index(upperClause, " OR "); idx > 0 {
 		left := strings.TrimSpace(whereClause[:idx])
 		right := strings.TrimSpace(whereClause[idx+4:])
-		return e.evaluateWhereOnPath(left, context) || e.evaluateWhereOnPath(right, context)
+		return e.evaluateWhereOnPath(ctx, left, pathCtx) || e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
 
 	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")
 	if strings.HasPrefix(upperClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
-		return !e.evaluateWhereOnPath(inner, context)
+		return !e.evaluateWhereOnPath(ctx, inner, pathCtx)
 	}
 
 	// Handle relationship patterns (n)-[:TYPE]->() or (n)<-[:TYPE]-() before operator check
 	hasRelPattern := (strings.Contains(whereClause, "-[") && (strings.Contains(whereClause, "]->") || strings.Contains(whereClause, "<-")))
-	if hasRelPattern && context.nodes != nil {
-		for variable, node := range context.nodes {
+	if hasRelPattern && pathCtx.nodes != nil {
+		for variable, node := range pathCtx.nodes {
 			if node == nil {
 				continue
 			}
@@ -2227,7 +2227,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 			leftExpr := strings.TrimSpace(whereClause[:idx])
 			rightExpr := strings.TrimSpace(whereClause[idx+len(op):])
 
-			leftVal := e.evaluateExpressionWithPathContext(leftExpr, context)
+			leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
 			rightVal := e.evaluatePathValue(rightExpr)
 
 			return e.compareValues(leftVal, rightVal, op)
@@ -2239,7 +2239,7 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 		leftExpr := strings.TrimSpace(whereClause[:idx])
 		rightExpr := strings.TrimSpace(whereClause[idx+10:])
 
-		leftVal := e.evaluateExpressionWithPathContext(leftExpr, context)
+		leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
 		rightVal := e.evaluatePathValue(rightExpr)
 
 		leftStr, lok := leftVal.(string)
@@ -2253,12 +2253,12 @@ func (e *StorageExecutor) evaluateWhereOnPath(whereClause string, context PathCo
 	// Handle IS NULL / IS NOT NULL
 	if strings.HasSuffix(upperClause, " IS NOT NULL") {
 		expr := strings.TrimSpace(whereClause[:len(whereClause)-12])
-		val := e.evaluateExpressionWithPathContext(expr, context)
+		val := e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
 		return val != nil
 	}
 	if strings.HasSuffix(upperClause, " IS NULL") {
 		expr := strings.TrimSpace(whereClause[:len(whereClause)-8])
-		val := e.evaluateExpressionWithPathContext(expr, context)
+		val := e.evaluateExpressionWithPathContext(ctx, expr, pathCtx)
 		return val == nil
 	}
 

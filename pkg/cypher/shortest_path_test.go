@@ -321,12 +321,12 @@ func TestShortestPathQueryParsingAndExecutionHelpers(t *testing.T) {
 	_, err = exec.Execute(ctx, `MATCH (b:Node {id: 'B'}), (c:Node {id: 'C'}) CREATE (b)-[:TO]->(c)`, nil)
 	require.NoError(t, err)
 
-	_, err = exec.parseShortestPathQuery("MATCH (n) RETURN n")
+	_, err = exec.parseShortestPathQuery(ctx, "MATCH (n) RETURN n")
 	require.Error(t, err)
-	_, err = exec.parseShortestPathQuery("MATCH p = shortestPath((a)-[:TO*]-(b) RETURN p")
+	_, err = exec.parseShortestPathQuery(ctx, "MATCH p = shortestPath((a)-[:TO*]-(b) RETURN p")
 	require.Error(t, err)
 
-	parsed, err := exec.parseShortestPathQuery(`
+	parsed, err := exec.parseShortestPathQuery(ctx, `
 		MATCH (start:Node {id: 'A'}), (end:Node {id: 'C'})
 		MATCH p = shortestPath((start)-[:TO*..4]->(end))
 		WHERE length(p) > 0
@@ -393,7 +393,7 @@ func TestShortestPathSingleMatchRegression(t *testing.T) {
 
 	assert.Equal(t, "", extractPreviousMatchClause(query, strings.Index(query, "shortestPath")))
 
-	parsed, err := exec.parseShortestPathQuery(query)
+	parsed, err := exec.parseShortestPathQuery(ctx, query)
 	require.NoError(t, err)
 	assert.Equal(t, "p", parsed.pathVariable)
 	assert.Equal(t, 3, parsed.maxHops)

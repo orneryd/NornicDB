@@ -827,11 +827,14 @@ func TestMultiLineSetWithArray(t *testing.T) {
 
 	node := nodes[0]
 
-	// Check embedding was stored as a regular property (no special routing)
+	// Check embedding was stored as a regular property (no special routing).
+	// Cypher list literals of homogeneous numerics round-trip through
+	// storage as []float64 — the property codec narrows arrays whose
+	// elements are all the same kind so callers see deterministic types.
 	embProp, hasEmb := node.Properties["embedding"]
 	require.True(t, hasEmb, "embedding property should exist in Properties")
-	embSlice, ok := embProp.([]interface{})
-	require.True(t, ok, "embedding should be stored as []interface{}")
+	embSlice, ok := embProp.([]float64)
+	require.True(t, ok, "embedding should round-trip as []float64 (got %T)", embProp)
 	assert.Len(t, embSlice, 4, "Embedding should have 4 dimensions")
 
 	// Check embedding metadata was set via Cypher (all stored as regular properties)

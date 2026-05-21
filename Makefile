@@ -881,9 +881,14 @@ lint-cardinality:
 
 test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
+	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./... 2>&1 | Select-String -Pattern '^(FAIL|ok|---\s+FAIL)'; exit $$LASTEXITCODE"
 else
-	go test -timeout 30m ./...
+	# pipefail propagates `go test`'s real exit through the grep filter,
+	# so a test failure still fails the make target even though grep
+	# strips most of the noise. `go test ./...` always emits at least one
+	# `ok` or `FAIL` line per package, so grep never returns 1 in
+	# practice — pipefail's status is `go test`'s status.
+	@bash -c 'set -o pipefail; go test -timeout 30m ./... 2>&1 | grep -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
 endif
 
 install-hooks:

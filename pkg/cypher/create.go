@@ -65,11 +65,11 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		if nodePatternStr == "" {
 			continue
 		}
-		if err := e.validateCreatePatternPropertyMap(nodePatternStr); err != nil {
+		if err := e.validateCreatePatternPropertyMap(ctx, nodePatternStr); err != nil {
 			return nil, err
 		}
 
-		nodePattern := e.parseNodePattern(nodePatternStr)
+		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 
 		// Check for empty label (e.g., "n:" or ":") - only check before properties
 		patternBeforeProps := nodePatternStr
@@ -145,8 +145,8 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			}
 
 			// Parse node patterns first to get variable names for lookup
-			sourcePattern := e.parseNodePattern("(" + sourceContent + ")")
-			targetPattern := e.parseNodePattern("(" + targetContent + ")")
+			sourcePattern := e.parseNodePattern(ctx, "("+sourceContent+")")
+			targetPattern := e.parseNodePattern(ctx, "("+targetContent+")")
 
 			// Determine source node - either lookup by variable or create inline
 			var sourceNode *storage.Node
@@ -207,7 +207,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			}
 
 			// Parse relationship type and properties
-			relType, relProps := e.parseRelationshipTypeAndProps(relStr)
+			relType, relProps := e.parseRelationshipTypeAndProps(ctx, relStr)
 
 			// Extract relationship variable if present (e.g., "r:TYPE" -> "r").
 			relVar := ""
@@ -323,7 +323,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 						continue
 					}
 					// Functions over relationships (id(r), type(r), properties(r), ...)
-					row[i] = e.evaluateExpressionWithContext(item.expr, createdNodes, createdEdges)
+					row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
 					continue
 				}
 			}
@@ -338,7 +338,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			varName := extractVariableNameFromReturnItem(item.expr)
 			if varName != "" {
 				if node, ok := createdNodes[varName]; ok {
-					row[i] = e.resolveReturnItem(item, varName, node)
+					row[i] = e.resolveReturnItem(ctx, item, varName, node)
 					continue
 				}
 			}
@@ -346,7 +346,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 			// Fallback: keep previous prefix-based behavior.
 			for variable, node := range createdNodes {
 				if strings.HasPrefix(item.expr, variable) || item.expr == variable {
-					row[i] = e.resolveReturnItem(item, variable, node)
+					row[i] = e.resolveReturnItem(ctx, item, variable, node)
 					break
 				}
 			}
@@ -357,7 +357,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 	return result, nil
 }
 
-func (e *StorageExecutor) validateCreatePatternPropertyMap(pattern string) error {
+func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, pattern string) error {
 	propsStart := strings.Index(pattern, "{")
 	if propsStart < 0 {
 		return nil
@@ -367,7 +367,7 @@ func (e *StorageExecutor) validateCreatePatternPropertyMap(pattern string) error
 		return fmt.Errorf("invalid property map syntax in pattern: %s", pattern)
 	}
 	propsLiteral := strings.TrimSpace(pattern[propsStart : propsEnd+1])
-	if _, err := e.parseSetMergeMapLiteralStrict(propsLiteral); err != nil {
+	if _, err := e.parseSetMergeMapLiteralStrict(ctx, propsLiteral); err != nil {
 		return fmt.Errorf("invalid property map syntax in pattern: %w", err)
 	}
 	return nil
@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			continue
 		}
 
-		nodePattern := e.parseNodePattern(nodePatternStr)
+		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 
 		// Create the node
 		node := &storage.Node{
@@ -484,8 +484,8 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			}
 
 			// Parse node patterns first to get variable names for lookup
-			sourcePattern := e.parseNodePattern("(" + sourceContent + ")")
-			targetPattern := e.parseNodePattern("(" + targetContent + ")")
+			sourcePattern := e.parseNodePattern(ctx, "("+sourceContent+")")
+			targetPattern := e.parseNodePattern(ctx, "("+targetContent+")")
 
 			// Determine source node - either lookup by variable or create inline
 			var sourceNode *storage.Node
@@ -544,7 +544,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			}
 
 			// Parse relationship type and properties
-			relType, relProps := e.parseRelationshipTypeAndProps(relStr)
+			relType, relProps := e.parseRelationshipTypeAndProps(ctx, relStr)
 
 			// Extract relationship variable if present (e.g., "r:TYPE" -> "r")
 			relVar := ""
@@ -610,7 +610,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			for variable, node := range createdNodes {
 				// Fast path: direct variable/property prefix match.
 				if strings.HasPrefix(item.expr, variable) || item.expr == variable {
-					row[i] = e.resolveReturnItem(item, variable, node)
+					row[i] = e.resolveReturnItem(ctx, item, variable, node)
 					break
 				}
 			}
@@ -620,7 +620,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			if row[i] == nil {
 				if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
 					if node, ok := createdNodes[varName]; ok {
-						row[i] = e.resolveReturnItem(item, varName, node)
+						row[i] = e.resolveReturnItem(ctx, item, varName, node)
 					}
 				}
 			}
@@ -953,7 +953,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 
 // parseRelationshipTypeAndProps parses "r:TYPE {props}" or ":TYPE {props}" or just "r" (variable only)
 // Returns the type and properties map
-func (e *StorageExecutor) parseRelationshipTypeAndProps(relStr string) (string, map[string]interface{}) {
+func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}) {
 	relStr = strings.TrimSpace(relStr)
 	relType := "RELATED_TO"
 	var relProps map[string]interface{}
@@ -986,7 +986,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(relStr string) (string, 
 			}
 		}
 		if propsEnd > propsStart {
-			relProps = e.parseProperties(relStr[propsStart : propsEnd+1])
+			relProps = e.parseProperties(ctx, relStr[propsStart:propsEnd+1])
 		}
 		relStr = strings.TrimSpace(relStr[:propsStart])
 	}
@@ -1386,7 +1386,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 		// CREATE rel" pattern (e.g. MATCH (a), (b) WHERE elementId(a) = $x
 		// AND elementId(b) = $y CREATE (a)-[:REL]->(b)).
 		if len(allNodeVars) == 0 && len(allEdgeVars) == 0 {
-			if combo, ok := e.tryResolveMatchNodesByIDFromWhere(nonEmptyMatchClauses, getParamsFromContext(ctx)); ok {
+			if combo, ok := e.tryResolveMatchNodesByIDFromWhere(ctx, nonEmptyMatchClauses, getParamsFromContext(ctx)); ok {
 				allCombinations = []map[string]*storage.Node{combo}
 				hadMatchPatterns = true
 			}
@@ -1451,7 +1451,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					continue
 				}
 
-				nodeInfo := e.parseNodePattern(pattern)
+				nodeInfo := e.parseNodePattern(ctx, pattern)
 				if nodeInfo.variable == "" {
 					continue
 				}
@@ -1532,7 +1532,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				if applyWherePerNode {
 					var filtered []*storage.Node
 					for _, node := range matchingNodes {
-						if e.evaluateWhere(node, nodeInfo.variable, whereForClause) {
+						if e.evaluateWhere(ctx, node, nodeInfo.variable, whereForClause) {
 							filtered = append(filtered, node)
 						}
 					}
@@ -1619,7 +1619,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			for _, combination := range allCombinations {
 				keep := true
 				if remainingWhere != "" {
-					keep = e.evaluateWhereForContext(remainingWhere, combination)
+					keep = e.evaluateWhereForContext(ctx, remainingWhere, combination)
 				}
 				if keep && len(relChecks) > 0 {
 					for _, rc := range relChecks {
@@ -1736,7 +1736,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 		// PASS 1: Create all nodes first
 		for _, np := range allNodePatterns {
-			err := e.processCreateNode(np, combinedNodeVars, result, store)
+			err := e.processCreateNode(ctx, np, combinedNodeVars, result, store)
 			if err != nil {
 				return nil, err
 			}
@@ -1744,7 +1744,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 
 		// PASS 2: Create all relationships (now nodes are available)
 		for _, rp := range allRelPatterns {
-			err := e.processCreateRelationship(rp, combinedNodeVars, edgeVars, result, store)
+			err := e.processCreateRelationship(ctx, rp, combinedNodeVars, edgeVars, result, store)
 			if err != nil {
 				return nil, err
 			}
@@ -1808,7 +1808,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				leftSide := strings.TrimSpace(assignment[:eqIdx])
 				rightSide := strings.TrimSpace(assignment[eqIdx+1:])
 				dotIdx := strings.Index(leftSide, ".")
-				value := e.parseValue(rightSide)
+				value := e.parseValue(ctx, rightSide)
 				if strings.HasPrefix(rightSide, "$") {
 					paramName := strings.TrimSpace(rightSide[1:])
 					if paramName == "" {
@@ -1953,7 +1953,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				}
 				var cnt int64
 				for _, combination := range allCombinations {
-					if e.evaluateExpressionWithContext(inner, combination, edgeVars) != nil {
+					if e.evaluateExpressionWithContext(ctx, inner, combination, edgeVars) != nil {
 						cnt++
 					}
 				}
@@ -1987,7 +1987,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			for varName, node := range nodeVars {
 				// Check if expression starts with variable (property access) or contains it (function calls)
 				if strings.HasPrefix(item.expr, varName) || strings.Contains(item.expr, "("+varName+")") || strings.Contains(item.expr, "("+varName+" ") {
-					row[i] = e.resolveReturnItem(item, varName, node)
+					row[i] = e.resolveReturnItem(ctx, item, varName, node)
 					found = true
 					break
 				}
@@ -1995,7 +1995,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 			if !found {
 				// Expression doesn't match any variable - might be a literal or complex expression
 				// Try to evaluate it with empty context (will return nil if can't evaluate)
-				row[i] = e.evaluateExpressionWithContext(item.expr, nodeVars, edgeVars)
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeVars, edgeVars)
 			}
 		}
 		result.Rows = [][]interface{}{row}
@@ -2005,8 +2005,8 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 }
 
 // processCreateNode creates a new node and adds it to the nodeVars map
-func (e *StorageExecutor) processCreateNode(pattern string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) error {
-	nodeInfo := e.parseNodePattern(pattern)
+func (e *StorageExecutor) processCreateNode(ctx context.Context, pattern string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) error {
+	nodeInfo := e.parseNodePattern(ctx, pattern)
 
 	// Create the node
 	node := &storage.Node{
@@ -2036,7 +2036,7 @@ func (e *StorageExecutor) processCreateNode(pattern string, nodeVars map[string]
 }
 
 // processCreateRelationship creates a relationship between nodes in nodeVars
-func (e *StorageExecutor) processCreateRelationship(pattern string, nodeVars map[string]*storage.Node, edgeVars map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) error {
+func (e *StorageExecutor) processCreateRelationship(ctx context.Context, pattern string, nodeVars map[string]*storage.Node, edgeVars map[string]*storage.Edge, result *ExecuteResult, store storage.Engine) error {
 	// Parse the relationship pattern: (a)-[r:TYPE {props}]->(b)
 	// Supports both simple variable refs and inline node definitions
 	// Uses pre-compiled patterns from regex_patterns.go for performance
@@ -2069,19 +2069,19 @@ func (e *StorageExecutor) processCreateRelationship(pattern string, nodeVars map
 	// Parse relationship properties if present
 	var relProps map[string]interface{}
 	if relPropsStr != "" {
-		relProps = e.parseProperties(relPropsStr)
+		relProps = e.parseProperties(ctx, relPropsStr)
 	} else {
 		relProps = make(map[string]interface{})
 	}
 
 	// Resolve source node - could be a variable reference or inline node definition
-	sourceNode, err := e.resolveOrCreateNode(sourceContent, nodeVars, result, store)
+	sourceNode, err := e.resolveOrCreateNode(ctx, sourceContent, nodeVars, result, store)
 	if err != nil {
 		return fmt.Errorf("failed to resolve source node: %w", err)
 	}
 
 	// Resolve target node - could be a variable reference or inline node definition
-	targetNode, err := e.resolveOrCreateNode(targetContent, nodeVars, result, store)
+	targetNode, err := e.resolveOrCreateNode(ctx, targetContent, nodeVars, result, store)
 	if err != nil {
 		return fmt.Errorf("failed to resolve target node: %w", err)
 	}
@@ -2120,7 +2120,7 @@ func (e *StorageExecutor) processCreateRelationship(pattern string, nodeVars map
 // Supports:
 //   - Simple variable: "p" -> looks up in nodeVars
 //   - Inline definition: "c:Company {name: 'Acme'}" -> creates node and adds to nodeVars
-func (e *StorageExecutor) resolveOrCreateNode(content string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) (*storage.Node, error) {
+func (e *StorageExecutor) resolveOrCreateNode(ctx context.Context, content string, nodeVars map[string]*storage.Node, result *ExecuteResult, store storage.Engine) (*storage.Node, error) {
 	content = strings.TrimSpace(content)
 
 	// Check if this is a simple variable reference (just alphanumeric)
@@ -2133,7 +2133,7 @@ func (e *StorageExecutor) resolveOrCreateNode(content string, nodeVars map[strin
 	}
 
 	// Parse as inline node definition: "varName:Label {props}" or ":Label {props}" or "varName:Label"
-	nodeInfo := e.parseNodePattern("(" + content + ")")
+	nodeInfo := e.parseNodePattern(ctx, "("+content+")")
 
 	// Check if we already have this variable
 	if nodeInfo.variable != "" {
@@ -2407,7 +2407,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 
 		// Parse variable.property
 		dotIdx := strings.Index(leftSide, ".")
-		value := e.parseValue(rightSide)
+		value := e.parseValue(ctx, rightSide)
 		if strings.HasPrefix(rightSide, "$") {
 			paramName := strings.TrimSpace(rightSide[1:])
 			if paramName == "" {
@@ -2492,7 +2492,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			// Prefer variable extracted from the return expression (handles elementId(n), n.prop, etc.)
 			if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
 				if node, ok := createdNodes[varName]; ok {
-					row[i] = e.resolveReturnItem(item, varName, node)
+					row[i] = e.resolveReturnItem(ctx, item, varName, node)
 					continue
 				}
 				if edge, ok := createdEdges[varName]; ok {
@@ -2515,7 +2515,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			}
 
 			// Evaluate expression with full context (e.g., elementId(n), type(r))
-			row[i] = e.evaluateExpressionWithContext(item.expr, createdNodes, createdEdges)
+			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, createdNodes, createdEdges)
 		}
 
 		result.Rows = [][]interface{}{row}
@@ -2568,7 +2568,7 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 		props = propsMap
 	} else if strings.HasPrefix(propsStr, "{") {
 		// Inline map literal: {key: value, ...}
-		parsedProps, err := e.parseSetMergeMapLiteralStrict(propsStr)
+		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, propsStr)
 		if err != nil {
 			return fmt.Errorf("failed to parse properties in SET +=: %w", err)
 		}
@@ -2761,7 +2761,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				} else {
 					result.Columns = append(result.Columns, item.expr)
 				}
-				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, edgeContext)
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, edgeContext)
 			}
 			result.Rows = append(result.Rows, row)
 		}
@@ -3077,6 +3077,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 // combination map. Otherwise it returns (nil, false) and the caller falls
 // through to the generic label-scan path.
 func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
+	ctx context.Context,
 	matchClauses []string,
 	params map[string]interface{},
 ) (map[string]*storage.Node, bool) {
@@ -3112,7 +3113,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 			if containsOutsideStrings(p, "->") || containsOutsideStrings(p, "<-") || containsOutsideStrings(p, "-[") {
 				return nil, false
 			}
-			info := e.parseNodePattern(p)
+			info := e.parseNodePattern(ctx, p)
 			if info.variable == "" {
 				continue
 			}

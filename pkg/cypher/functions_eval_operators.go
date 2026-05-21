@@ -1,12 +1,14 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
+	ctx context.Context,
 	expr string,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
@@ -22,7 +24,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// NOT expr
 	if strings.HasPrefix(lowerExpr, "not ") {
 		inner := strings.TrimSpace(expr[4:])
-		result := e.evaluateExpressionWithContext(inner, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		if b, ok := result.(bool); ok {
 			return !b
 		}
@@ -33,7 +35,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " BETWEEN ") {
 		betweenParts := e.splitByOperator(expr, " BETWEEN ")
 		if len(betweenParts) == 2 {
-			value := e.evaluateExpressionWithContext(betweenParts[0], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, betweenParts[0], nodes, rels)
 			// For BETWEEN, we need to split by AND but only in the range part
 			rangeParts := strings.SplitN(strings.ToUpper(betweenParts[1]), " AND ", 2)
 			if len(rangeParts) == 2 {
@@ -41,8 +43,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 				andIdx := strings.Index(strings.ToUpper(betweenParts[1]), " AND ")
 				minPart := strings.TrimSpace(betweenParts[1][:andIdx])
 				maxPart := strings.TrimSpace(betweenParts[1][andIdx+5:])
-				minVal := e.evaluateExpressionWithContext(minPart, nodes, rels)
-				maxVal := e.evaluateExpressionWithContext(maxPart, nodes, rels)
+				minVal := e.evaluateExpressionWithContext(ctx, minPart, nodes, rels)
+				maxVal := e.evaluateExpressionWithContext(ctx, maxPart, nodes, rels)
 				return (e.compareGreater(value, minVal) || e.compareEqual(value, minVal)) &&
 					(e.compareLess(value, maxVal) || e.compareEqual(value, maxVal))
 			}
@@ -51,28 +53,28 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 
 	// AND operator
 	if e.hasLogicalOperator(expr, " AND ") {
-		return e.evaluateLogicalAnd(expr, nodes, rels)
+		return e.evaluateLogicalAnd(ctx, expr, nodes, rels)
 	}
 
 	// OR operator
 	if e.hasLogicalOperator(expr, " OR ") {
-		return e.evaluateLogicalOr(expr, nodes, rels)
+		return e.evaluateLogicalOr(ctx, expr, nodes, rels)
 	}
 
 	// XOR operator
 	if e.hasLogicalOperator(expr, " XOR ") {
-		return e.evaluateLogicalXor(expr, nodes, rels)
+		return e.evaluateLogicalXor(ctx, expr, nodes, rels)
 	}
 
 	// Comparison operators (=, <>, <, >, <=, >=)
 	if e.hasComparisonOperator(expr) {
-		return e.evaluateComparisonExpr(expr, nodes, rels)
+		return e.evaluateComparisonExpr(ctx, expr, nodes, rels)
 	}
 
 	// Arithmetic operators (*, /, %, -, +)
 	// NOTE: Arithmetic is checked BEFORE string concatenation to support date/duration arithmetic
 	if e.hasArithmeticOperator(expr) {
-		result := e.evaluateArithmeticExpr(expr, nodes, rels)
+		result := e.evaluateArithmeticExpr(ctx, expr, nodes, rels)
 		if result != nil {
 			return result
 		}
@@ -85,13 +87,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// Only check for concatenation if + is outside of string literals
 	// This is a fallback when arithmetic didn't apply (e.g., string + string)
 	if e.hasConcatOperator(expr) {
-		return e.evaluateStringConcatWithContext(expr, nodes, rels)
+		return e.evaluateStringConcatWithContext(ctx, expr, nodes, rels)
 	}
 
 	// Unary minus
 	if strings.HasPrefix(expr, "-") && len(expr) > 1 {
 		inner := strings.TrimSpace(expr[1:])
-		result := e.evaluateExpressionWithContext(inner, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		switch v := result.(type) {
 		case int64:
 			return -v
@@ -107,12 +109,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 	if strings.HasSuffix(lowerExpr, " is null") {
 		inner := strings.TrimSpace(expr[:len(expr)-8])
-		result := e.evaluateExpressionWithContext(inner, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return result == nil
 	}
 	if strings.HasSuffix(lowerExpr, " is not null") {
 		inner := strings.TrimSpace(expr[:len(expr)-12])
-		result := e.evaluateExpressionWithContext(inner, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, inner, nodes, rels)
 		return result != nil
 	}
 
@@ -122,8 +124,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " STARTS WITH ") {
 		parts := e.splitByOperator(expr, " STARTS WITH ")
 		if len(parts) == 2 {
-			left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 			leftStr, ok1 := left.(string)
 			rightStr, ok2 := right.(string)
 			if ok1 && ok2 {
@@ -135,8 +137,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " ENDS WITH ") {
 		parts := e.splitByOperator(expr, " ENDS WITH ")
 		if len(parts) == 2 {
-			left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 			leftStr, ok1 := left.(string)
 			rightStr, ok2 := right.(string)
 			if ok1 && ok2 {
@@ -148,8 +150,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " CONTAINS ") {
 		parts := e.splitByOperator(expr, " CONTAINS ")
 		if len(parts) == 2 {
-			left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 			leftStr, ok1 := left.(string)
 			rightStr, ok2 := right.(string)
 			if ok1 && ok2 {
@@ -166,8 +168,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " NOT IN ") {
 		parts := e.splitByOperator(expr, " NOT IN ")
 		if len(parts) == 2 {
-			value := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			listVal := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 
 			// Convert to []interface{} if needed
 			var list []interface{}
@@ -201,8 +203,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if e.hasStringPredicate(expr, " IN ") {
 		parts := e.splitByOperator(expr, " IN ")
 		if len(parts) == 2 {
-			value := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			listVal := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			value := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			listVal := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 
 			// Convert to []interface{} if needed
 			var list []interface{}
@@ -236,5 +238,5 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 
 	// ========================================
 
-	return e.evaluateExpressionWithContextFullPropsLiterals(expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }

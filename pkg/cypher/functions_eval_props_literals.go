@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 )
 
 func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
+	ctx context.Context,
 	expr string,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
@@ -148,12 +150,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 
 	// Array literal [a, b, c]
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		return e.parseArrayValue(expr)
+		return e.parseArrayValue(ctx, expr)
 	}
 
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		return e.parseProperties(expr)
+		return e.parseProperties(ctx, expr)
 	}
 
 	// Check if this looks like a variable reference (identifier pattern)

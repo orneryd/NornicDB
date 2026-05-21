@@ -731,8 +731,9 @@ func TestHandleRecall_WithDB(t *testing.T) {
 	exec := db.GetCypherExecutor()
 	require.NotNil(t, exec)
 
-	ctx := context.Background()
 	createNode := func(label, title, content, createdAt string, tags []string) string {
+		ctx := context.Background()
+
 		result, err := exec.Execute(ctx,
 			"CREATE (n:"+label+" {title: $title, content: $content, created_at: $createdAt, tags: $tags}) RETURN elementId(n) AS id",
 			map[string]interface{}{
@@ -754,6 +755,8 @@ func TestHandleRecall_WithDB(t *testing.T) {
 	server := NewServer(db, nil)
 
 	t.Run("recalls node by id from database", func(t *testing.T) {
+		ctx := context.Background()
+
 		result, err := server.handleRecall(ctx, map[string]interface{}{"id": targetID})
 		require.NoError(t, err)
 
@@ -767,11 +770,15 @@ func TestHandleRecall_WithDB(t *testing.T) {
 	})
 
 	t.Run("returns error when requested id does not exist", func(t *testing.T) {
+		ctx := context.Background()
+
 		_, err := server.handleRecall(ctx, map[string]interface{}{"id": "missing"})
 		require.ErrorContains(t, err, "node not found")
 	})
 
 	t.Run("filters recalled nodes by type", func(t *testing.T) {
+		ctx := context.Background()
+
 		result, err := server.handleRecall(ctx, map[string]interface{}{
 			"type":  []interface{}{"Memory"},
 			"limit": 5,
@@ -787,6 +794,8 @@ func TestHandleRecall_WithDB(t *testing.T) {
 	})
 
 	t.Run("filters recalled nodes by tags", func(t *testing.T) {
+		ctx := context.Background()
+
 		result, err := server.handleRecall(ctx, map[string]interface{}{
 			"tags":  []interface{}{"alpha"},
 			"limit": 5,
@@ -800,6 +809,8 @@ func TestHandleRecall_WithDB(t *testing.T) {
 	})
 
 	t.Run("filters recalled nodes by since timestamp", func(t *testing.T) {
+		ctx := context.Background()
+
 		result, err := server.handleRecall(ctx, map[string]interface{}{
 			"since": "2026-01-01T00:00:00Z",
 			"limit": 5,

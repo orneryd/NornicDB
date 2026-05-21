@@ -109,7 +109,9 @@ func TestParseRelationshipPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.pattern, func(t *testing.T) {
-			result := exec.parseRelationshipPattern(tt.pattern)
+			ctx := context.Background()
+
+			result := exec.parseRelationshipPattern(ctx, tt.pattern)
 
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
@@ -164,7 +166,8 @@ func TestParseTraversalPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.pattern, func(t *testing.T) {
-			result := exec.parseTraversalPattern(tt.pattern)
+			ctx := context.Background()
+			result := exec.parseTraversalPattern(ctx, tt.pattern)
 			if result == nil {
 				t.Fatal("parseTraversalPattern returned nil")
 			}
@@ -347,7 +350,9 @@ func TestVariableLengthPaths(t *testing.T) {
 	setupTraversalTestData(t, exec)
 
 	// Parse a variable length pattern
-	pattern := exec.parseRelationshipPattern("-[*1..2:KNOWS]->")
+	ctx := context.Background()
+
+	pattern := exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->")
 
 	if pattern.MinHops != 1 {
 		t.Errorf("MinHops = %d, want 1", pattern.MinHops)
@@ -377,21 +382,22 @@ func TestDegreeFunctionsWithTraversal(t *testing.T) {
 	if bob == nil {
 		t.Fatal("Could not find Bob node")
 	}
+	ctx := context.Background()
 
 	// Bob has: 1 incoming (from Alice), 2 outgoing (to Carol, to Dave)
 	nodes := map[string]*storage.Node{"n": bob}
 
-	inDegree := exec.evaluateExpressionWithContext("inDegree(n)", nodes, nil)
+	inDegree := exec.evaluateExpressionWithContext(ctx, "inDegree(n)", nodes, nil)
 	if inDegree != int64(1) {
 		t.Errorf("inDegree(bob) = %v, want 1", inDegree)
 	}
 
-	outDegree := exec.evaluateExpressionWithContext("outDegree(n)", nodes, nil)
+	outDegree := exec.evaluateExpressionWithContext(ctx, "outDegree(n)", nodes, nil)
 	if outDegree != int64(2) {
 		t.Errorf("outDegree(bob) = %v, want 2", outDegree)
 	}
 
-	totalDegree := exec.evaluateExpressionWithContext("degree(n)", nodes, nil)
+	totalDegree := exec.evaluateExpressionWithContext(ctx, "degree(n)", nodes, nil)
 	if totalDegree != int64(3) {
 		t.Errorf("degree(bob) = %v, want 3", totalDegree)
 	}

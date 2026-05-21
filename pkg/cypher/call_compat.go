@@ -799,7 +799,7 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 // Requires an active transaction (BEGIN ... COMMIT). If no transaction is active,
 // returns an error. Metadata is stored with the transaction and can be used for
 // logging, debugging, or audit trails.
-func (e *StorageExecutor) callTxSetMetadata(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Check if there's an active transaction
 	if e.txContext == nil || !e.txContext.active {
 		return nil, fmt.Errorf("tx.setMetaData() requires an active transaction. Use BEGIN TRANSACTION first")
@@ -827,7 +827,7 @@ func (e *StorageExecutor) callTxSetMetadata(cypher string) (*ExecuteResult, erro
 	}
 
 	// Parse the metadata object
-	metadata := e.parseProperties(argsStr)
+	metadata := e.parseProperties(ctx, argsStr)
 	if len(metadata) == 0 {
 		return nil, fmt.Errorf("tx.setMetaData requires at least one key-value pair")
 	}

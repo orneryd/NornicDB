@@ -440,7 +440,7 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 			if params := getParamsFromContext(ctx); params != nil {
 				spCypher = e.substituteParams(spCypher, params)
 			}
-			query, err := e.parseShortestPathQuery(spCypher)
+			query, err := e.parseShortestPathQuery(ctx, spCypher)
 			if err != nil {
 				return nil, err
 			}

@@ -3402,7 +3402,7 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("expected node in row[0][0], got %#v", aliceRes.Rows[0][0])
 	}
 
-	outPattern := e.parseOptionalRelPattern("(a)-[r:KNOWS]->(b:Person {name:'bob'})")
+	outPattern := e.parseOptionalRelPattern(ctx, "(a)-[r:KNOWS]->(b:Person {name:'bob'})")
 	outRelated := e.findRelatedNodes(alice, outPattern)
 	if len(outRelated) != 1 {
 		t.Fatalf("outgoing related len = %d, want 1", len(outRelated))
@@ -3411,7 +3411,7 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("unexpected outgoing related node: %#v", outRelated[0].node.Properties)
 	}
 
-	inPattern := e.parseOptionalRelPattern("(a)<-[r:KNOWS]-(b:Person)")
+	inPattern := e.parseOptionalRelPattern(ctx, "(a)<-[r:KNOWS]-(b:Person)")
 	inRelated := e.findRelatedNodes(alice, inPattern)
 	if len(inRelated) != 0 {
 		t.Fatalf("incoming related len = %d, want 0", len(inRelated))

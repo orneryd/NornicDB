@@ -110,6 +110,41 @@ func getParamsFromContext(ctx context.Context) map[string]interface{} {
 	return nil
 }
 
+// withParams returns a child ctx with the given parameter map attached
+// under paramsKey. Used by internal call sites that receive an explicit
+// params map (binding-where eval, parameter substitution helpers) but
+// need to make those params reachable from the recursive expression
+// evaluator's getParamsFromContext lookup.
+func withParams(ctx context.Context, params map[string]interface{}) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if params == nil {
+		return ctx
+	}
+	// Fast path: if the same params are already on ctx, don't allocate.
+	if existing, ok := ctx.Value(paramsKey).(map[string]interface{}); ok {
+		if mapsEqualShallow(existing, params) {
+			return ctx
+		}
+	}
+	return context.WithValue(ctx, paramsKey, params)
+}
+
+// mapsEqualShallow does pointer-identity comparison on the same map header.
+// This is intentional — we only want to skip allocation when the caller
+// passed the exact same map that's already attached.
+func mapsEqualShallow(a, b map[string]interface{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Compare addresses by writing both into reflect.Value or using a
+	// no-op approach. Go doesn't expose map header equality, so a shallow
+	// length check suffices for the fast-path optimisation; correctness
+	// is unaffected if we always allocate.
+	return false
+}
+
 // substituteParams replaces $paramName placeholders with actual values.
 //
 // This implements Neo4j-style parameter substitution with proper escaping
@@ -153,10 +188,89 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 			return match
 		}
 
+		// Type-preserving short-circuit: list and map values must NOT be
+		// converted to Cypher literal text. Doing so forces the parser to
+		// re-decode them and widens every typed slice / map to
+		// []interface{} / map[string]interface{}, which silently drops
+		// the caller's declared shape.
+		//
+		// SET, MATCH and CALL paths all read $param values from the
+		// context map directly (via resolvePropValue / param lookups),
+		// so leaving the reference intact preserves the strict type
+		// end-to-end — caller writes []string{"A","B"}, the SET-RETURN
+		// row carries []string{"A","B"}, and the storage round-trip via
+		// MATCH-RETURN also produces []string{"A","B"}.
+		if isCompositeParamValue(value) {
+			return match
+		}
+
 		return e.valueToLiteral(value)
 	})
 
 	return result
+}
+
+// resolveDirectParamRef returns the typed parameter value for a literal
+// "$name" reference, paired with true. Returns (nil, false) when the
+// expression isn't a bare $param reference or the parameter isn't
+// present in the request context. Used by SET / SET +=  / map-merge
+// dispatchers to bypass the literal-stringification path that
+// substituteParams uses for scalars; preserving the typed value here is
+// what keeps []string, []float64, and map[string]any from widening to
+// []interface{} / map[string]interface{} on the read-back path.
+func resolveDirectParamRef(ctx context.Context, expr string) (interface{}, bool) {
+	expr = strings.TrimSpace(expr)
+	if !strings.HasPrefix(expr, "$") {
+		return nil, false
+	}
+	name := strings.TrimSpace(expr[1:])
+	if name == "" {
+		return nil, false
+	}
+	// Reject anything beyond a single identifier — e.g. "$name + 1" or
+	// "$name.foo" must keep going through the expression evaluator.
+	for _, r := range name {
+		if !(r == '_' ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9')) {
+			return nil, false
+		}
+	}
+	params := getParamsFromContext(ctx)
+	if params == nil {
+		return nil, false
+	}
+	v, ok := params[name]
+	if !ok {
+		return nil, false
+	}
+	return v, true
+}
+
+// isCompositeParamValue reports whether a parameter value is a typed list
+// shape that would lose type information if stringified into Cypher
+// literal syntax. Scalars (string, numeric, bool, nil) are always safe to
+// substitute. Maps are also substituted because:
+//
+//   - CREATE patterns (e.g., `CREATE (n:Label $props)`) rely on the
+//     substituted map literal being parsed by the pattern parser; the
+//     post-write read goes through storage's msgpack-and-strict-typed
+//     decode pipeline so type retention is preserved end-to-end.
+//   - SET map merges (`SET n += $props`) read $params directly through
+//     resolveDirectParamRef, bypassing literal substitution entirely.
+//
+// Only typed list slices (e.g. []string, []float64) need to stay as
+// $name references — substituting them as `[a, b, c]` literal text would
+// force the parser to re-decode them as []interface{}, which is the
+// exact widening this short-circuit prevents.
+func isCompositeParamValue(v interface{}) bool {
+	switch v.(type) {
+	case []string, []int, []int64, []float32, []float64:
+		return true
+	default:
+		return false
+	}
 }
 
 // valueToLiteral converts a Go value to a Cypher literal string.

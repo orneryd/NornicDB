@@ -186,7 +186,7 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerBuiltInProcedure("tx.setMetaData", "tx.setMetaData(metadata :: MAP)", "Sets transaction metadata", ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callTxSetMetadata(cypher)
+				return e.callTxSetMetadata(ctx, cypher)
 			})
 
 		registerBuiltInProcedure("nornicdb.version", "nornicdb.version() :: (version :: STRING, build :: STRING, edition :: STRING)", "Returns NornicDB version", ProcedureModeRead, 0, 0, false,
@@ -262,7 +262,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("apoc.path.expand", "apoc.path.expand(startNode :: NODE, relationshipFilter :: STRING, labelFilter :: STRING, minLevel :: INTEGER, maxLevel :: INTEGER) :: (path :: PATH)", "Expands paths from a start node", ProcedureModeRead, 1, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocPathExpand(cypher)
+				return e.callApocPathExpand(ctx, cypher)
 			})
 		registerBuiltInProcedure("apoc.path.spanningTree", "apoc.path.spanningTree(startNode :: NODE, config :: MAP) :: (path :: PATH)", "Returns spanning tree paths", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -319,27 +319,27 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.linkPrediction.adamicAdar.stream", "gds.linkPrediction.adamicAdar.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", "Runs Adamic-Adar link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionAdamicAdar(cypher)
+				return e.callGdsLinkPredictionAdamicAdar(ctx, cypher)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.commonNeighbors.stream", "gds.linkPrediction.commonNeighbors.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", "Runs common neighbors link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionCommonNeighbors(cypher)
+				return e.callGdsLinkPredictionCommonNeighbors(ctx, cypher)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.resourceAllocation.stream", "gds.linkPrediction.resourceAllocation.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", "Runs resource-allocation link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionResourceAllocation(cypher)
+				return e.callGdsLinkPredictionResourceAllocation(ctx, cypher)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.preferentialAttachment.stream", "gds.linkPrediction.preferentialAttachment.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", "Runs preferential attachment link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionPreferentialAttachment(cypher)
+				return e.callGdsLinkPredictionPreferentialAttachment(ctx, cypher)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.jaccard.stream", "gds.linkPrediction.jaccard.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", "Runs Jaccard link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionJaccard(cypher)
+				return e.callGdsLinkPredictionJaccard(ctx, cypher)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.predict.stream", "gds.linkPrediction.predict.stream(graphName :: STRING, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, probability :: FLOAT)", "Runs model-based link prediction", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLinkPredictionPredict(cypher)
+				return e.callGdsLinkPredictionPredict(ctx, cypher)
 			})
 
 		registerBuiltInProcedure("apoc.algo.dijkstra", "apoc.algo.dijkstra(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, weightPropertyName :: STRING) :: (path :: PATH, weight :: FLOAT)", "Runs weighted shortest path", ProcedureModeRead, 4, 5, false,

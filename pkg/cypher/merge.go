@@ -520,7 +520,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 
 	// Parse the pattern to extract labels and properties for matching
 	// Note: Parameters ($param) should already be substituted by substituteParams()
-	varName, labels, matchProps, err := e.parseMergePattern(mergePattern)
+	varName, labels, matchProps, err := e.parseMergePattern(ctx, mergePattern)
 
 	// If pattern contains unsubstituted params (like $path), handle gracefully
 	if strings.Contains(mergePattern, "$") {
@@ -575,7 +575,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 				}
 			}
 			setClause := strings.TrimSpace(cypher[onMatchIdx+13 : setEnd])
-			e.applySetToNode(node, varName, setClause)
+			e.applySetToNode(ctx, node, varName, setClause)
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
 		}
@@ -618,7 +618,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 					}
 				}
 				setClause := strings.TrimSpace(cypher[onCreateIdx+13 : setEnd])
-				e.applySetToNode(node, varName, setClause)
+				e.applySetToNode(ctx, node, varName, setClause)
 			}
 		}
 	}
@@ -632,7 +632,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd]) // +3 to skip "SET"
-		e.applySetToNode(node, varName, setClause)
+		e.applySetToNode(ctx, node, varName, setClause)
 	}
 
 	// Persist updates
@@ -645,7 +645,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 	// Handle RETURN clause
 	if returnIdx > 0 {
 		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClause(returnClause, varName, node)
+		columns, values := e.parseReturnClause(ctx, returnClause, varName, node)
 		result.Columns = columns
 		if len(values) > 0 {
 			result.Rows = append(result.Rows, values)
@@ -905,7 +905,7 @@ func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClaus
 	}, len(nodePatterns))
 
 	for i, np := range nodePatterns {
-		nodeInfo := e.parseNodePattern(np)
+		nodeInfo := e.parseNodePattern(ctx, np)
 
 		var candidates []*storage.Node
 		// Single-pattern WHERE fast-path: reduce candidates via property index lookup
@@ -949,7 +949,7 @@ func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClaus
 		wherePart := strings.TrimSpace(matchClause[whereIdx+len("WHERE"):])
 		var filtered []map[string]*storage.Node
 		for _, nodeMap := range allMatches {
-			if e.evaluateWhereForNodeMap(nodeMap, wherePart) {
+			if e.evaluateWhereForNodeMap(ctx, nodeMap, wherePart) {
 				filtered = append(filtered, nodeMap)
 			}
 		}
@@ -959,7 +959,7 @@ func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClaus
 	return allMatches, relMatches, nil
 }
 
-func (e *StorageExecutor) evaluateWhereForNodeMap(nodeMap map[string]*storage.Node, wherePart string) bool {
+func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap map[string]*storage.Node, wherePart string) bool {
 	wherePart = strings.Join(strings.Fields(strings.TrimSpace(wherePart)), " ")
 	if wherePart == "" {
 		return true
@@ -967,16 +967,16 @@ func (e *StorageExecutor) evaluateWhereForNodeMap(nodeMap map[string]*storage.No
 	if andIdx := findTopLevelKeyword(wherePart, " AND "); andIdx > 0 {
 		left := strings.TrimSpace(wherePart[:andIdx])
 		right := strings.TrimSpace(wherePart[andIdx+5:])
-		return e.evaluateWhereForNodeMap(nodeMap, left) && e.evaluateWhereForNodeMap(nodeMap, right)
+		return e.evaluateWhereForNodeMap(ctx, nodeMap, left) && e.evaluateWhereForNodeMap(ctx, nodeMap, right)
 	}
-	if handled, ok := e.evaluateSimpleWhereClauseForNodeMap(nodeMap, wherePart); handled {
+	if handled, ok := e.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, wherePart); handled {
 		return ok
 	}
 	for varName, node := range nodeMap {
 		if node == nil {
 			continue
 		}
-		if !e.evaluateWhere(node, varName, wherePart) {
+		if !e.evaluateWhere(ctx, node, varName, wherePart) {
 			lowerWhere := strings.ToLower(wherePart)
 			refsVar := strings.Contains(wherePart, varName+".") ||
 				strings.Contains(wherePart, varName+" ") ||
@@ -1173,7 +1173,7 @@ func parseWhereLiteral(token string) (interface{}, bool) {
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(nodeMap map[string]*storage.Node, clause string) (bool, bool) {
+func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(ctx context.Context, nodeMap map[string]*storage.Node, clause string) (bool, bool) {
 	clause = strings.TrimSpace(clause)
 	if clause == "" {
 		return true, true
@@ -1186,7 +1186,7 @@ func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(nodeMap map[string
 		if !lok {
 			return false, false
 		}
-		rv := e.evaluateExpressionWithContext(right, nodeMap, make(map[string]*storage.Edge))
+		rv := e.evaluateExpressionWithContext(ctx, right, nodeMap, make(map[string]*storage.Edge))
 		items, ok := normalizeWhereList(rv)
 		if !ok {
 			return true, false
@@ -1211,10 +1211,10 @@ func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(nodeMap map[string
 		case lok && rok:
 			return true, e.compareEqual(lv, rv)
 		case lok:
-			rvExpr := e.evaluateExpressionWithContext(right, nodeMap, make(map[string]*storage.Edge))
+			rvExpr := e.evaluateExpressionWithContext(ctx, right, nodeMap, make(map[string]*storage.Edge))
 			return true, e.compareEqual(lv, rvExpr)
 		case rok:
-			lvExpr := e.evaluateExpressionWithContext(left, nodeMap, make(map[string]*storage.Edge))
+			lvExpr := e.evaluateExpressionWithContext(ctx, left, nodeMap, make(map[string]*storage.Edge))
 			return true, e.compareEqual(lvExpr, rv)
 		default:
 			return false, false
@@ -1563,13 +1563,13 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	}
 
 	// Parse node pattern
-	varName, labels, matchProps, err := e.parseMergePattern(mergePattern)
+	varName, labels, matchProps, err := e.parseMergePattern(ctx, mergePattern)
 	if err != nil || varName == "" {
 		varName = e.extractVarName(mergePattern)
 		labels = e.extractLabels(mergePattern)
 		matchProps = make(map[string]interface{})
 	}
-	matchProps = e.resolveMergePropsWithContext(matchProps, nodeContext, relContext)
+	matchProps = e.resolveMergePropsWithContext(ctx, matchProps, nodeContext, relContext)
 
 	// Try to find existing node
 	var existingNode *storage.Node
@@ -1592,7 +1592,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				}
 			}
 			setClause := strings.TrimSpace(cypher[onMatchIdx+13 : setEnd])
-			e.applySetToNodeWithContext(node, varName, setClause, nodeContext, relContext)
+			e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
 		}
@@ -1634,7 +1634,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 					}
 				}
 				setClause := strings.TrimSpace(cypher[onCreateIdx+13 : setEnd])
-				e.applySetToNodeWithContext(node, varName, setClause, nodeContext, relContext)
+				e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
 			}
 		}
 	}
@@ -1653,7 +1653,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 		}
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
-		e.applySetToNodeWithContext(node, varName, setClause, nodeContext, relContext)
+		e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
 	}
 
 	// Save updates
@@ -1682,7 +1682,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	// Handle RETURN clause
 	if returnIdx > 0 {
 		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClauseWithContext(returnClause, nodeContext, relContext)
+		columns, values := e.parseReturnClauseWithContext(ctx, returnClause, nodeContext, relContext)
 		result.Columns = columns
 		if len(values) > 0 {
 			result.Rows = append(result.Rows, values)
@@ -1692,7 +1692,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	return result, nil
 }
 
-func (e *StorageExecutor) resolveMergePropsWithContext(props map[string]interface{}, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) map[string]interface{} {
+func (e *StorageExecutor) resolveMergePropsWithContext(ctx context.Context, props map[string]interface{}, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) map[string]interface{} {
 	if len(props) == 0 {
 		return props
 	}
@@ -1720,7 +1720,7 @@ func (e *StorageExecutor) resolveMergePropsWithContext(props map[string]interfac
 				continue
 			}
 		}
-		evaluated := e.evaluateExpressionWithContext(expr, nodeContext, relContext)
+		evaluated := e.evaluateExpressionWithContext(ctx, expr, nodeContext, relContext)
 		resolved[k] = evaluated
 	}
 	return resolved
@@ -1777,7 +1777,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if propsStart > 0 {
 		propsEnd := strings.LastIndex(relPart, "}")
 		if propsEnd > propsStart {
-			relProps = e.parseProperties(relPart[propsStart : propsEnd+1])
+			relProps = e.parseProperties(ctx, relPart[propsStart:propsEnd+1])
 		}
 		relPart = relPart[:propsStart]
 	}
@@ -1842,7 +1842,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			setEnd = returnIdx
 		}
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
-		if propertiesSet := e.applySetToRelationshipWithContext(edge, relVar, setClause, nodeContext, relContext); propertiesSet > 0 {
+		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, relVar, setClause, nodeContext, relContext); propertiesSet > 0 {
 			if err := store.UpdateEdge(edge); err != nil {
 				return nil, fmt.Errorf("failed to update edge property: %w", err)
 			}
@@ -1853,7 +1853,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// Handle RETURN
 	if returnIdx > 0 {
 		returnClause := strings.TrimSpace(cypher[returnIdx+6:])
-		columns, values := e.parseReturnClauseWithContext(returnClause, nodeContext, relContext)
+		columns, values := e.parseReturnClauseWithContext(ctx, returnClause, nodeContext, relContext)
 		result.Columns = columns
 		if len(values) > 0 {
 			result.Rows = append(result.Rows, values)
@@ -1863,7 +1863,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	return result, nil
 }
 
-func (e *StorageExecutor) applySetToRelationshipWithContext(edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) int {
+func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) int {
 	if edge == nil || varName == "" {
 		return 0
 	}
@@ -1887,12 +1887,12 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(edge *storage.Edge, 
 			if left != varName {
 				continue
 			}
-			evaluated := e.evaluateExpressionWithContext(right, nodeContext, fullRelContext)
+			evaluated := e.evaluateExpressionWithContext(ctx, right, nodeContext, fullRelContext)
 			if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(right) {
-				evaluated = e.parseValue(strings.TrimSpace(right))
+				evaluated = e.parseValue(ctx, strings.TrimSpace(right))
 			}
 			if evaluated == nil {
-				evaluated = e.parseValue(strings.TrimSpace(right))
+				evaluated = e.parseValue(ctx, strings.TrimSpace(right))
 			}
 			if props, ok := toStringAnyMap(evaluated); ok {
 				if edge.Properties == nil {
@@ -1921,14 +1921,24 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(edge *storage.Edge, 
 		if edge.Properties == nil {
 			edge.Properties = make(map[string]interface{})
 		}
-		edge.Properties[propName] = e.evaluateSetExpressionWithContext(propValue, nodeContext, fullRelContext)
+		// Direct $param resolution preserves declared types (e.g. []string,
+		// []float64) end-to-end. Without this branch, substituteParams's
+		// type-preserving short-circuit leaves the literal text "$name"
+		// here, and the generic expression evaluator would only return
+		// the unresolved string.
+		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
+			edge.Properties[propName] = normalizePropValue(v)
+			propertiesSet++
+			continue
+		}
+		edge.Properties[propName] = e.evaluateSetExpressionWithContext(ctx, propValue, nodeContext, fullRelContext)
 		propertiesSet++
 	}
 	return propertiesSet
 }
 
 // applySetToNodeWithContext applies SET clauses with access to matched context.
-func (e *StorageExecutor) applySetToNodeWithContext(node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) {
+func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -1948,7 +1958,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(node *storage.Node, varName 
 			left := strings.TrimSpace(assignment[:plusEqIdx])
 			right := strings.TrimSpace(assignment[plusEqIdx+2:])
 			if left == varName {
-				e.applySetMapMergeToNode(node, varName, right, fullContext, relContext)
+				e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext)
 			}
 			continue
 		}
@@ -1965,18 +1975,26 @@ func (e *StorageExecutor) applySetToNodeWithContext(node *storage.Node, varName 
 		propName := strings.TrimSpace(assignment[len(varName)+1 : eqIdx])
 		propValue := strings.TrimSpace(assignment[eqIdx+1:])
 
+		// Direct $param resolution preserves declared types end-to-end.
+		// Without it, substituteParams's type-preserving short-circuit
+		// leaves "$name" as a literal and the generic evaluator returns
+		// the unresolved string.
+		if v, ok := resolveDirectParamRef(ctx, propValue); ok {
+			setNodeProperty(node, propName, normalizePropValue(v))
+			continue
+		}
 		// Evaluate expression with full context
-		setNodeProperty(node, propName, e.evaluateSetExpressionWithContext(propValue, fullContext, relContext))
+		setNodeProperty(node, propName, e.evaluateSetExpressionWithContext(ctx, propValue, fullContext, relContext))
 	}
 }
 
 // evaluateSetExpressionWithContext evaluates SET clause expressions with context.
-func (e *StorageExecutor) evaluateSetExpressionWithContext(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
-	return e.evaluateExpressionWithContext(expr, nodes, rels)
+func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+	return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 }
 
 // parseReturnClauseWithContext parses RETURN with context from MATCH.
-func (e *StorageExecutor) parseReturnClauseWithContext(returnClause string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) ([]string, []interface{}) {
+func (e *StorageExecutor) parseReturnClauseWithContext(ctx context.Context, returnClause string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) ([]string, []interface{}) {
 	// Handle RETURN *
 	if strings.TrimSpace(returnClause) == "*" {
 		var columns []string
@@ -2009,7 +2027,7 @@ func (e *StorageExecutor) parseReturnClauseWithContext(returnClause string, node
 			alias = e.expressionToAlias(expr)
 		}
 
-		value := e.evaluateExpressionWithContext(expr, nodes, rels)
+		value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 		columns = append(columns, alias)
 		values = append(values, value)
 	}
@@ -2019,7 +2037,7 @@ func (e *StorageExecutor) parseReturnClauseWithContext(returnClause string, node
 
 // parseReturnClause parses RETURN expressions and evaluates them against a node.
 // Supports: n.prop, n.prop AS alias, id(n), *, literal values
-func (e *StorageExecutor) parseReturnClause(returnClause string, varName string, node *storage.Node) ([]string, []interface{}) {
+func (e *StorageExecutor) parseReturnClause(ctx context.Context, returnClause string, varName string, node *storage.Node) ([]string, []interface{}) {
 	// Handle RETURN *
 	if strings.TrimSpace(returnClause) == "*" {
 		return []string{varName}, []interface{}{node}
@@ -2050,7 +2068,7 @@ func (e *StorageExecutor) parseReturnClause(returnClause string, varName string,
 		}
 
 		// Evaluate expression
-		value := e.evaluateExpression(expr, varName, node)
+		value := e.evaluateExpression(ctx, expr, varName, node)
 		columns = append(columns, alias)
 		values = append(values, value)
 	}
@@ -2231,7 +2249,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 				} else {
 					result.Columns = append(result.Columns, item.expr)
 				}
-				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, relContext)
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, relContext)
 			}
 			result.Rows = append(result.Rows, row)
 		} else {
@@ -2247,7 +2265,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 			segmentRelCtx := relContext
 			segmentScalarCtx := scalarContext
 
-			remaining, newNodeCtx, newRelCtx, newScalarCtx := e.applyWithProjection(segment, segmentNodeCtx, segmentRelCtx, segmentScalarCtx)
+			remaining, newNodeCtx, newRelCtx, newScalarCtx := e.applyWithProjection(ctx, segment, segmentNodeCtx, segmentRelCtx, segmentScalarCtx)
 			segmentNodeCtx = newNodeCtx
 			segmentRelCtx = newRelCtx
 			segmentScalarCtx = newScalarCtx
@@ -2352,7 +2370,7 @@ func collapseConsecutiveDuplicateWithClauses(cypher string) string {
 // The input segment is the text between "WITH" and the next "WITH"/"RETURN",
 // i.e. it starts with a projection list (e.g., "e") followed by the next clause.
 // It returns the remaining clause block plus filtered contexts.
-func (e *StorageExecutor) applyWithProjection(segment string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge, scalarCtx map[string]interface{}) (remaining string, newNodeCtx map[string]*storage.Node, newRelCtx map[string]*storage.Edge, newScalarCtx map[string]interface{}) {
+func (e *StorageExecutor) applyWithProjection(ctx context.Context, segment string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge, scalarCtx map[string]interface{}) (remaining string, newNodeCtx map[string]*storage.Node, newRelCtx map[string]*storage.Edge, newScalarCtx map[string]interface{}) {
 	segment = strings.TrimSpace(segment)
 	if segment == "" {
 		return "", nodeCtx, relCtx, scalarCtx
@@ -2413,7 +2431,7 @@ func (e *StorageExecutor) applyWithProjection(segment string, nodeCtx map[string
 			}
 		}
 		if item.alias != "" {
-			if value := e.evaluateExpressionWithContext(expr, nodeCtx, relCtx); value != nil {
+			if value := e.evaluateExpressionWithContext(ctx, expr, nodeCtx, relCtx); value != nil {
 				if literal, ok := value.(string); ok && literal == expr {
 					continue
 				}
@@ -2589,7 +2607,7 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 	pattern := strings.TrimSpace(segment[mergeIdx+5 : patternEnd])
 
 	// Parse the pattern
-	varName, labels, props, err := e.parseMergePattern(pattern)
+	varName, labels, props, err := e.parseMergePattern(ctx, pattern)
 	if err != nil {
 		return nil, "", err
 	}
@@ -2618,7 +2636,7 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 			}
 			setClause := strings.TrimSpace(segment[onMatchIdx+12 : setEnd])
 			beforeProps := cloneNodePropertiesMap(node.Properties)
-			e.applySetToNode(node, varName, setClause)
+			e.applySetToNode(ctx, node, varName, setClause)
 			if !reflect.DeepEqual(beforeProps, node.Properties) {
 				store.UpdateNode(node)
 				e.notifyNodeMutated(string(node.ID))
@@ -2665,7 +2683,7 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 				}
 				setClause := strings.TrimSpace(segment[onCreateIdx+13 : setEnd])
 				beforeProps := cloneNodePropertiesMap(node.Properties)
-				e.applySetToNode(node, varName, setClause)
+				e.applySetToNode(ctx, node, varName, setClause)
 				if !reflect.DeepEqual(beforeProps, node.Properties) {
 					store.UpdateNode(node)
 					e.notifyNodeMutated(string(node.ID))
@@ -2685,7 +2703,7 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 		}
 		setClause := strings.TrimSpace(segment[setIdx+3 : setEnd])
 		beforeProps := cloneNodePropertiesMap(node.Properties)
-		e.applySetToNode(node, varName, setClause)
+		e.applySetToNode(ctx, node, varName, setClause)
 		if !reflect.DeepEqual(beforeProps, node.Properties) {
 			store.UpdateNode(node)
 			e.notifyNodeMutated(string(node.ID))
@@ -2751,7 +2769,7 @@ func (e *StorageExecutor) executeMatchSegment(ctx context.Context, segment strin
 	pattern := strings.TrimSpace(segment[matchIdx+5 : patternEnd])
 
 	// Parse the node pattern
-	nodePattern := e.parseNodePattern(pattern)
+	nodePattern := e.parseNodePattern(ctx, pattern)
 	if nodePattern.variable == "" && len(nodePattern.labels) == 0 {
 		return nil, "", fmt.Errorf("could not parse node pattern: %s", pattern)
 	}
@@ -2988,7 +3006,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 			if chainBroken {
 				continue
 			}
-			newNodeCtx, newRelCtx, newScalarCtx := e.projectWithContext(strings.TrimSpace(segment[4:]), nodeContext, relContext, scalarContext)
+			newNodeCtx, newRelCtx, newScalarCtx := e.projectWithContext(ctx, strings.TrimSpace(segment[4:]), nodeContext, relContext, scalarContext)
 			nodeContext = newNodeCtx
 			relContext = newRelCtx
 			scalarContext = newScalarCtx
@@ -2998,7 +3016,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 				continue
 			}
 			whereClause := strings.TrimSpace(segment[5:])
-			if !e.evaluateWhereForMergeContext(whereClause, nodeContext, relContext) {
+			if !e.evaluateWhereForMergeContext(ctx, whereClause, nodeContext, relContext) {
 				chainBroken = true
 			}
 		} else if strings.HasPrefix(upperSeg, "FOREACH") {
@@ -3032,7 +3050,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 				} else {
 					result.Columns = append(result.Columns, item.expr)
 				}
-				row[i] = e.evaluateExpressionWithContext(item.expr, nodeContext, relContext)
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeContext, relContext)
 			}
 			result.Rows = append(result.Rows, row)
 		}
@@ -3192,7 +3210,7 @@ func isOptionalMatchModifier(cypher string, matchPos int) bool {
 	return strings.HasSuffix(strings.ToUpper(prefix), "OPTIONAL")
 }
 
-func (e *StorageExecutor) projectWithContext(withClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge, scalarCtx map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, map[string]interface{}) {
+func (e *StorageExecutor) projectWithContext(ctx context.Context, withClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge, scalarCtx map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, map[string]interface{}) {
 	withClause = strings.TrimSpace(withClause)
 	if withClause == "" {
 		return nodeCtx, relCtx, scalarCtx
@@ -3219,7 +3237,7 @@ func (e *StorageExecutor) projectWithContext(withClause string, nodeCtx map[stri
 		if alias == "" {
 			continue
 		}
-		val := e.evaluateExpressionWithContext(expr, nodeCtx, relCtx)
+		val := e.evaluateExpressionWithContext(ctx, expr, nodeCtx, relCtx)
 		switch v := val.(type) {
 		case *storage.Node:
 			newNodeCtx[alias] = v
@@ -3250,16 +3268,16 @@ func (e *StorageExecutor) projectWithContext(withClause string, nodeCtx map[stri
 	return newNodeCtx, newRelCtx, newScalarCtx
 }
 
-func (e *StorageExecutor) evaluateWhereForMergeContext(whereClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge) bool {
+func (e *StorageExecutor) evaluateWhereForMergeContext(ctx context.Context, whereClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge) bool {
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause == "" {
 		return true
 	}
 
-	if v, ok := e.evaluateExpressionWithContext(whereClause, nodeCtx, relCtx).(bool); ok {
+	if v, ok := e.evaluateExpressionWithContext(ctx, whereClause, nodeCtx, relCtx).(bool); ok {
 		return v
 	}
-	return e.evaluateWhereForContext(whereClause, nodeCtx)
+	return e.evaluateWhereForContext(ctx, whereClause, nodeCtx)
 }
 
 // parseMergePattern parses a MERGE pattern like "(n:Label {prop: value})"

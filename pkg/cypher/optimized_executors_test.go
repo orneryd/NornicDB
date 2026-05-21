@@ -162,7 +162,9 @@ func TestDetectQueryPattern_MutualRelationship(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := DetectQueryPattern(tt.query)
+			ctx := context.Background()
+
+			info := DetectQueryPattern(ctx, tt.query)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -212,7 +214,9 @@ func TestDetectQueryPattern_IncomingCountAgg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := DetectQueryPattern(tt.query)
+			ctx := context.Background()
+
+			info := DetectQueryPattern(ctx, tt.query)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -249,7 +253,9 @@ func TestDetectQueryPattern_OutgoingCountAgg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := DetectQueryPattern(tt.query)
+			ctx := context.Background()
+
+			info := DetectQueryPattern(ctx, tt.query)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -373,7 +379,9 @@ func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := DetectQueryPattern(tt.query)
+			ctx := context.Background()
+
+			info := DetectQueryPattern(ctx, tt.query)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -425,7 +433,9 @@ func TestDetectQueryPattern_LargeResultSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := DetectQueryPattern(tt.query)
+			ctx := context.Background()
+
+			info := DetectQueryPattern(ctx, tt.query)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -489,7 +499,7 @@ func TestOptimizedMutualRelationship(t *testing.T) {
 	query := "MATCH (a:Person)-[:FOLLOWS]->(b:Person)-[:FOLLOWS]->(a) RETURN a.name, b.name"
 
 	// Detect pattern
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 	assert.Equal(t, PatternMutualRelationship, info.Pattern)
 	assert.Equal(t, "FOLLOWS", info.RelType)
 
@@ -520,7 +530,7 @@ func TestOptimizedMutualRelationshipWithLimit(t *testing.T) {
 
 	query := "MATCH (a:Person)-[:FOLLOWS]->(b:Person)-[:FOLLOWS]->(a) RETURN a.name, b.name LIMIT 1"
 
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	require.True(t, ok)
 	require.NotNil(t, result)
@@ -535,7 +545,7 @@ func TestOptimizedIncomingCount(t *testing.T) {
 
 	query := "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) as followers ORDER BY followers DESC LIMIT 10"
 
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 	assert.Equal(t, PatternIncomingCountAgg, info.Pattern)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
@@ -559,7 +569,7 @@ func TestOptimizedOutgoingCount(t *testing.T) {
 
 	query := "MATCH (p:Person)-[:FOLLOWS]->(following:Person) RETURN p.name, count(following) as following"
 
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 	assert.Equal(t, PatternOutgoingCountAgg, info.Pattern)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
@@ -576,7 +586,7 @@ func TestOptimizedEdgePropertyAgg(t *testing.T) {
 
 	query := "MATCH (c:Customer)-[r:REVIEWED]->(p:Product) RETURN p.name, avg(r.rating) as avgRating, count(r) as reviewCount ORDER BY avgRating DESC LIMIT 10"
 
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 	assert.Equal(t, PatternEdgePropertyAgg, info.Pattern)
 	assert.Equal(t, "rating", info.AggProperty)
 
@@ -660,7 +670,7 @@ func TestOptimized_EmptyDatabase(t *testing.T) {
 
 	// Mutual relationship on empty DB
 	query := "MATCH (a)-[:FOLLOWS]->(b)-[:FOLLOWS]->(a) RETURN a, b"
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	if ok {
@@ -674,7 +684,7 @@ func TestOptimized_NoMatchingRelType(t *testing.T) {
 
 	// Query for relationship type that doesn't exist
 	query := "MATCH (a)-[:NONEXISTENT]->(b)-[:NONEXISTENT]->(a) RETURN a, b"
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	if ok {
@@ -689,7 +699,7 @@ func TestOptimized_ZeroLimit(t *testing.T) {
 	// LIMIT 0 is detected but falls through to generic execution
 	// since 0 is not > 100 (large result set threshold)
 	query := "MATCH (p:Person)<-[:FOLLOWS]-(f) RETURN p.name, count(f) LIMIT 0"
-	info := DetectQueryPattern(query)
+	info := DetectQueryPattern(ctx, query)
 
 	// Verify pattern is detected correctly
 	assert.Equal(t, PatternIncomingCountAgg, info.Pattern)

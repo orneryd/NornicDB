@@ -39,7 +39,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher st
 
 	// Parse arguments: (iterateQuery, actionQuery, config)
 	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	iterateQuery, actionQuery, config, err := e.parseApocPeriodicIterateArgs(argsStr)
+	iterateQuery, actionQuery, config, err := e.parseApocPeriodicIterateArgs(ctx, argsStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse apoc.periodic.iterate arguments: %w", err)
 	}
@@ -170,7 +170,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, cypher str
 
 	// Parse arguments
 	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	statement, params, err := e.parseApocCypherRunArgs(argsStr)
+	statement, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse apoc.periodic.commit arguments: %w", err)
 	}

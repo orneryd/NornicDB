@@ -1197,11 +1197,34 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		return nil, fmt.Errorf("invalid DROP INDEX syntax: index name required")
 	}
 
+	// Look up the schema entry BEFORE dropping it so we can also tear down
+	// any in-memory index data the schema entry was the only handle for.
+	// Vector indexes carry their declared (label, property) — when the user
+	// drops one we must also delete every "<nodeID>-prop-<property>" vector
+	// from the search service, otherwise a recreate-from-scratch of the same
+	// index inherits orphaned vectors that still match queries.
+	var droppedVectorIndex *storage.VectorIndex
+	if schema := e.storage.GetSchema(); schema != nil {
+		if vi, ok := schema.GetVectorIndex(name); ok && vi != nil {
+			copyVI := *vi
+			droppedVectorIndex = &copyVI
+		}
+	}
+
 	if err := e.storage.GetSchema().DropIndex(name); err != nil {
 		if ifExists && strings.Contains(err.Error(), "does not exist") {
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
 		return nil, err
+	}
+
+	// Tear down the matching in-memory vector data after the schema entry
+	// is gone so concurrent reads can't see a half-dropped index.
+	if droppedVectorIndex != nil {
+		if e.searchService != nil && droppedVectorIndex.Property != "" {
+			e.searchService.RemovePropertyVectorIndex(droppedVectorIndex.Property)
+		}
+		e.unregisterVectorSpace(name)
 	}
 
 	// Invalidate query cache — cached SHOW INDEXES results are now stale.
@@ -1713,12 +1736,19 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 		}
 	}
 
-	// Add vector index
+	// Add vector index. The schema entry is recorded regardless of the
+	// vector master switch so SHOW INDEXES still reflects operator intent
+	// and DROP INDEX has something to remove. The actual in-memory vector
+	// space is only registered when vector search is enabled — otherwise
+	// the operator explicitly turned vector indexing off and we must not
+	// allocate or warm any vector backend on their behalf.
 	if err := e.storage.GetSchema().AddVectorIndex(indexName, label, property, dimensions, similarityFunc); err != nil {
 		return nil, err
 	}
 
-	e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+	if e.searchService == nil || e.searchService.VectorEnabled() {
+		e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
+	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

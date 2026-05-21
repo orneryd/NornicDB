@@ -460,12 +460,13 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 
 	nodeCtx := map[string]*storage.Node{"a": a, "b": b}
 	relCtx := map[string]*storage.Edge{"r": {ID: "e-ab", StartNode: a.ID, EndNode: b.ID, Type: "KNOWS"}}
+	ctx := context.Background()
 
-	cols, vals := e.parseReturnClauseWithContext("*", nodeCtx, relCtx)
+	cols, vals := e.parseReturnClauseWithContext(ctx, "*", nodeCtx, relCtx)
 	require.Len(t, cols, 2)
 	require.Len(t, vals, 2)
 
-	cols, vals = e.parseReturnClauseWithContext("a.name AS name, id(a) AS aid", nodeCtx, relCtx)
+	cols, vals = e.parseReturnClauseWithContext(ctx, "a.name AS name, id(a) AS aid", nodeCtx, relCtx)
 	require.Equal(t, []string{"name", "aid"}, cols)
 	require.Len(t, vals, 2)
 	require.Equal(t, "alice", vals[0])
@@ -908,27 +909,28 @@ func TestApplyWithProjection_Branches(t *testing.T) {
 	nodeCtx := map[string]*storage.Node{"n": n}
 	relCtx := map[string]*storage.Edge{"r": r}
 	scalarCtx := map[string]interface{}{"answer": int64(42)}
+	ctx := context.Background()
 
-	remaining, keptNodes, keptRels, keptScalars := exec.applyWithProjection("* MATCH (n) RETURN n", nodeCtx, relCtx, scalarCtx)
+	remaining, keptNodes, keptRels, keptScalars := exec.applyWithProjection(ctx, "* MATCH (n) RETURN n", nodeCtx, relCtx, scalarCtx)
 	assert.Equal(t, "MATCH (n) RETURN n", remaining)
 	assert.Equal(t, nodeCtx, keptNodes)
 	assert.Equal(t, relCtx, keptRels)
 	assert.Equal(t, scalarCtx, keptScalars)
 
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection("n RETURN n", nodeCtx, relCtx, scalarCtx)
+	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "n RETURN n", nodeCtx, relCtx, scalarCtx)
 	assert.Equal(t, "RETURN n", remaining)
 	require.Contains(t, keptNodes, "n")
 	assert.Empty(t, keptRels)
 	assert.Empty(t, keptScalars)
 
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection("answer AS projected RETURN projected", nodeCtx, relCtx, scalarCtx)
+	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "answer AS projected RETURN projected", nodeCtx, relCtx, scalarCtx)
 	assert.Equal(t, "RETURN projected", remaining)
 	assert.Empty(t, keptNodes)
 	assert.Empty(t, keptRels)
 	assert.Equal(t, map[string]interface{}{"projected": int64(42)}, keptScalars)
 
 	// Non-matching projection drops context keys not explicitly projected.
-	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection("n + 1", nodeCtx, relCtx, scalarCtx)
+	remaining, keptNodes, keptRels, keptScalars = exec.applyWithProjection(ctx, "n + 1", nodeCtx, relCtx, scalarCtx)
 	assert.Equal(t, "", remaining)
 	assert.Empty(t, keptNodes)
 	assert.Empty(t, keptRels)
@@ -1056,8 +1058,9 @@ MERGE (c)-[:TOUCHED]->(ck)
 }
 
 func TestProjectWithContext_PreservesScalarAliases(t *testing.T) {
+	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	nodes, rels, scalars := exec.projectWithContext(
+	nodes, rels, scalars := exec.projectWithContext(ctx,
 		`'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`,
 		map[string]*storage.Node{},
 		map[string]*storage.Edge{},

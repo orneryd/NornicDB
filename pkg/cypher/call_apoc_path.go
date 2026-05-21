@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -377,14 +378,14 @@ func isTerminateNode(node *storage.Node, terminateLabels []string) bool {
 //
 // Returns paths (sequences of nodes and relationships) from the start node.
 // Unlike subgraphNodes which returns just nodes, expand returns complete paths.
-func (e *StorageExecutor) callApocPathExpand(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callApocPathExpand(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"path"},
 		Rows:    [][]interface{}{},
 	}
 
 	// Parse parameters: (startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
-	params := e.parseApocPathExpandParams(cypher)
+	params := e.parseApocPathExpandParams(ctx, cypher)
 	if params.startNode == nil {
 		// No start node found, return empty result
 		return result, nil
@@ -428,7 +429,7 @@ type apocPathExpandParams struct {
 
 // parseApocPathExpandParams parses positional parameters from apoc.path.expand call
 // Syntax: CALL apoc.path.expand(startNode, relationshipFilter, labelFilter, minLevel, maxLevel)
-func (e *StorageExecutor) parseApocPathExpandParams(cypher string) apocPathExpandParams {
+func (e *StorageExecutor) parseApocPathExpandParams(ctx context.Context, cypher string) apocPathExpandParams {
 	params := apocPathExpandParams{
 		minLevel:  1,
 		maxLevel:  1,
@@ -485,7 +486,7 @@ func (e *StorageExecutor) parseApocPathExpandParams(cypher string) apocPathExpan
 			// If no ID found, try to find node by variable name from MATCH clause
 			// Look for pattern: MATCH (varName:Label {id: 'value'})
 			varName := strings.Trim(firstParam, "'\"")
-			if node := e.findNodeByVariableInMatch(cypher, varName); node != nil {
+			if node := e.findNodeByVariableInMatch(ctx, cypher, varName); node != nil {
 				params.startNode = node
 			}
 		}
@@ -527,7 +528,7 @@ func (e *StorageExecutor) parseApocPathExpandParams(cypher string) apocPathExpan
 }
 
 // findNodeByVariableInMatch finds a node by variable name from a MATCH clause
-func (e *StorageExecutor) findNodeByVariableInMatch(cypher, varName string) *storage.Node {
+func (e *StorageExecutor) findNodeByVariableInMatch(ctx context.Context, cypher, varName string) *storage.Node {
 	// Look for MATCH clause with this variable
 	// Pattern: MATCH (varName:Label {id: 'value'}) or MATCH (varName:Label {prop: 'value'})
 	matchPattern := regexp.MustCompile(`(?i)MATCH\s*\(` + regexp.QuoteMeta(varName) + `[^)]*\)`)
@@ -547,7 +548,7 @@ func (e *StorageExecutor) findNodeByVariableInMatch(cypher, varName string) *sto
 	}
 
 	// Try to find node by parsing the pattern
-	nodeInfo := e.parseNodePattern(nodePattern)
+	nodeInfo := e.parseNodePattern(ctx, nodePattern)
 	if len(nodeInfo.labels) > 0 {
 		candidates, _ := e.storage.GetNodesByLabel(nodeInfo.labels[0])
 		for _, node := range candidates {

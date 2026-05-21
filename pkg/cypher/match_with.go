@@ -56,7 +56,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	}
 
 	// Parse node pattern
-	nodePattern := e.parseNodePattern(nodePatternPart)
+	nodePattern := e.parseNodePattern(ctx, nodePatternPart)
 
 	// Get matching nodes
 	var nodes []*storage.Node
@@ -78,7 +78,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 
 	// Apply WHERE clause filter if present
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(nodes, whereClause, nodePattern.variable)
+		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, nodePattern.variable)
 	}
 
 	// Extract WITH clause expressions
@@ -225,7 +225,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 				} else if ge.expr == nodePattern.variable {
 					val = node
 				} else {
-					val = e.evaluateExpressionWithContext(ge.expr, nodeMap, nil)
+					val = e.evaluateExpressionWithContext(ctx, ge.expr, nodeMap, nil)
 				}
 				keyParts[i] = fmt.Sprintf("%v", val)
 				keyValues[ge.alias] = val
@@ -264,7 +264,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						} else if distinctInner == nodePattern.variable {
 							val = string(n.ID)
 						} else {
-							val = e.evaluateExpressionWithContext(distinctInner, nodeMap, nil)
+							val = e.evaluateExpressionWithContext(ctx, distinctInner, nodeMap, nil)
 						}
 						if val != nil {
 							seen[fmt.Sprintf("%v", val)] = true
@@ -287,7 +287,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 								count++ // Node itself is not null
 								continue
 							} else {
-								val = e.evaluateExpressionWithContext(inner, nodeMap, nil)
+								val = e.evaluateExpressionWithContext(ctx, inner, nodeMap, nil)
 							}
 							if val != nil {
 								count++
@@ -307,7 +307,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 							propName := inner[len(nodePattern.variable)+1:]
 							val = n.Properties[propName]
 						} else {
-							val = e.evaluateExpressionWithContext(inner, nodeMap, nil)
+							val = e.evaluateExpressionWithContext(ctx, inner, nodeMap, nil)
 						}
 						switch v := val.(type) {
 						case int64:
@@ -345,7 +345,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						} else if distinctInner == nodePattern.variable {
 							val = string(n.ID)
 						} else {
-							val = e.evaluateExpressionWithContext(distinctInner, nodeMap, nil)
+							val = e.evaluateExpressionWithContext(ctx, distinctInner, nodeMap, nil)
 						}
 						key := fmt.Sprintf("%v", val)
 						if !seen[key] {
@@ -366,7 +366,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						} else if inner == nodePattern.variable {
 							val = n
 						} else {
-							val = e.evaluateExpressionWithContext(inner, nodeMap, nil)
+							val = e.evaluateExpressionWithContext(ctx, inner, nodeMap, nil)
 						}
 						collected = append(collected, val)
 					}
@@ -385,7 +385,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 			for _, wi := range parsedWithItems {
 				// Check if this is a CASE expression
 				if isCaseExpression(wi.expr) {
-					values[wi.alias] = e.evaluateCaseExpression(wi.expr, nodeMap, nil)
+					values[wi.alias] = e.evaluateCaseExpression(ctx, wi.expr, nodeMap, nil)
 				} else if strings.HasPrefix(wi.expr, nodePattern.variable+".") {
 					// Property access
 					propName := wi.expr[len(nodePattern.variable)+1:]
@@ -395,7 +395,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 					values[wi.alias] = node
 				} else {
 					// Try to evaluate as expression
-					values[wi.alias] = e.evaluateExpressionWithContext(wi.expr, nodeMap, nil)
+					values[wi.alias] = e.evaluateExpressionWithContext(ctx, wi.expr, nodeMap, nil)
 				}
 			}
 
@@ -408,7 +408,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		var filteredRows []computedRow
 		for _, cr := range computedRows {
 			// Evaluate the WHERE condition against the computed values
-			if e.evaluateWithWhereCondition(postWithWhere, cr.values) {
+			if e.evaluateWithWhereCondition(ctx, postWithWhere, cr.values) {
 				filteredRows = append(filteredRows, cr)
 			}
 		}
@@ -652,7 +652,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 
 					// Try to evaluate with nodes in context
 					if len(nodeMap) > 0 {
-						evalResult := e.evaluateExpressionWithContext(item.expr, nodeMap, nil)
+						evalResult := e.evaluateExpressionWithContext(ctx, item.expr, nodeMap, nil)
 						if evalResult != nil {
 							if strResult, ok := evalResult.(string); !ok || strResult != item.expr {
 								row[i] = evalResult
@@ -691,7 +691,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						}
 					}
 					if hasSubstitution {
-						row[i] = e.evaluateExpressionWithContext(expr, nodeMap, nil)
+						row[i] = e.evaluateExpressionWithContext(ctx, expr, nodeMap, nil)
 					}
 				}
 			}
@@ -804,7 +804,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	}
 
 	// Parse node pattern
-	nodePattern := e.parseNodePattern(nodePatternPart)
+	nodePattern := e.parseNodePattern(ctx, nodePatternPart)
 
 	// Get matching nodes (index-backed when possible)
 	nodes, err := e.collectOptionalMatchInitialNodes(ctx, nodePattern, matchWhereClause, matchPartRaw, params)
@@ -867,7 +867,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 				values[alias] = node.Properties[propName]
 			} else {
 				// Try to evaluate as numeric or expression
-				values[alias] = e.evaluateExpressionWithContext(expr, nodeMap, nil)
+				values[alias] = e.evaluateExpressionWithContext(ctx, expr, nodeMap, nil)
 			}
 		}
 
@@ -878,7 +878,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	if postWithWhere != "" {
 		var filteredRows []computedRow
 		for _, cr := range computedRows {
-			if e.evaluateWithWhereCondition(postWithWhere, cr.values) {
+			if e.evaluateWithWhereCondition(ctx, postWithWhere, cr.values) {
 				filteredRows = append(filteredRows, cr)
 			}
 		}
@@ -897,7 +897,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	}
 
 	// Parse OPTIONAL MATCH relationship pattern
-	relPattern := e.parseOptionalRelPattern(optMatchPattern)
+	relPattern := e.parseOptionalRelPattern(ctx, optMatchPattern)
 
 	// Build result with left outer join semantics
 	type joinedRow struct {
@@ -944,7 +944,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 				// Apply optional WHERE filter on related node
 				if optMatchWhereClause != "" {
 					// Simple property filter
-					if related.node != nil && !e.nodeMatchesWhereClause(related.node, optMatchWhereClause, relPattern.targetVar) {
+					if related.node != nil && !e.nodeMatchesWhereClause(ctx, related.node, optMatchWhereClause, relPattern.targetVar) {
 						continue
 					}
 				}
@@ -1026,7 +1026,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 
 			// Handle CASE expressions
 			if isCaseExpression(expr) {
-				row[i] = e.evaluateCaseExpression(expr, nodeMap, edgeMap)
+				row[i] = e.evaluateCaseExpression(ctx, expr, nodeMap, edgeMap)
 				continue
 			}
 
@@ -1070,7 +1070,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 			}
 
 			// Try expression evaluation
-			row[i] = e.evaluateExpressionWithContext(expr, nodeMap, edgeMap)
+			row[i] = e.evaluateExpressionWithContext(ctx, expr, nodeMap, edgeMap)
 		}
 
 		result.Rows = append(result.Rows, row)

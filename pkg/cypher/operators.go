@@ -61,6 +61,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -143,14 +144,14 @@ func (e *StorageExecutor) hasLogicalOperator(expr, op string) bool {
 //
 //	evaluateLogicalAnd("a = 1 AND b = 2", nodes, rels)  // true if both conditions match
 //	evaluateLogicalAnd("true AND false", nodes, rels)  // false
-func (e *StorageExecutor) evaluateLogicalAnd(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateLogicalAnd(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	parts := e.splitByOperator(expr, " AND ")
 	if len(parts) < 2 {
 		return nil
 	}
 
 	for _, part := range parts {
-		result := e.evaluateExpressionWithContext(part, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, part, nodes, rels)
 		if result != true {
 			return false
 		}
@@ -179,14 +180,14 @@ func (e *StorageExecutor) evaluateLogicalAnd(expr string, nodes map[string]*stor
 //
 //	evaluateLogicalOr("a = 1 OR b = 2", nodes, rels)  // true if either condition matches
 //	evaluateLogicalOr("false OR true", nodes, rels)  // true
-func (e *StorageExecutor) evaluateLogicalOr(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateLogicalOr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	parts := e.splitByOperator(expr, " OR ")
 	if len(parts) < 2 {
 		return nil
 	}
 
 	for _, part := range parts {
-		result := e.evaluateExpressionWithContext(part, nodes, rels)
+		result := e.evaluateExpressionWithContext(ctx, part, nodes, rels)
 		if result == true {
 			return true
 		}
@@ -215,14 +216,14 @@ func (e *StorageExecutor) evaluateLogicalOr(expr string, nodes map[string]*stora
 //	evaluateLogicalXor("true XOR false", nodes, rels)  // true
 //	evaluateLogicalXor("true XOR true", nodes, rels)   // false
 //	evaluateLogicalXor("false XOR false", nodes, rels) // false
-func (e *StorageExecutor) evaluateLogicalXor(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateLogicalXor(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	parts := e.splitByOperator(expr, " XOR ")
 	if len(parts) != 2 {
 		return nil
 	}
 
-	left := e.evaluateExpressionWithContext(parts[0], nodes, rels) == true
-	right := e.evaluateExpressionWithContext(parts[1], nodes, rels) == true
+	left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels) == true
+	right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels) == true
 	return left != right
 }
 
@@ -346,7 +347,7 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 //	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
 //	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
 //	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
-func (e *StorageExecutor) evaluateComparisonExpr(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	// Try operators in order of specificity
 	ops := []struct {
 		op   string
@@ -365,8 +366,8 @@ func (e *StorageExecutor) evaluateComparisonExpr(expr string, nodes map[string]*
 	for _, op := range ops {
 		parts := e.splitByOperator(expr, op.op)
 		if len(parts) == 2 {
-			left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-			right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+			left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+			right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 			return op.eval(left, right)
 		}
 	}
@@ -433,52 +434,52 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("5 + 3", nodes, rels)             // int64(8)
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
-func (e *StorageExecutor) evaluateArithmeticExpr(expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	// Handle + operator (date + duration, or numeric addition)
 	// Try with spaces first, then without
 	if parts := e.splitByOperator(expr, " + "); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.add(left, right)
 	}
 	if parts := e.splitByOperator(expr, "+"); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.add(left, right)
 	}
 
 	// Handle * operator
 	if parts := e.splitByOperator(expr, "*"); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.multiply(left, right)
 	}
 
 	// Handle / operator
 	if parts := e.splitByOperator(expr, "/"); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.divide(left, right)
 	}
 
 	// Handle % operator
 	if parts := e.splitByOperator(expr, "%"); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.modulo(left, right)
 	}
 
 	// Handle - operator (binary subtraction, not unary minus)
 	// Try with spaces first, then without (but be careful with unary minus)
 	if parts := e.splitByOperator(expr, " - "); len(parts) == 2 {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		return e.subtract(left, right)
 	}
 	// For - without spaces, only split if both sides would be valid expressions
 	if parts := e.splitByOperator(expr, "-"); len(parts) == 2 && parts[0] != "" {
-		left := e.evaluateExpressionWithContext(parts[0], nodes, rels)
-		right := e.evaluateExpressionWithContext(parts[1], nodes, rels)
+		left := e.evaluateExpressionWithContext(ctx, parts[0], nodes, rels)
+		right := e.evaluateExpressionWithContext(ctx, parts[1], nodes, rels)
 		if left != nil && right != nil {
 			return e.subtract(left, right)
 		}

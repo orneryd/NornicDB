@@ -144,42 +144,49 @@ func TestParseSetMergeMapLiteralStrict_Branches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	t.Run("missing braces", func(t *testing.T) {
-		_, err := exec.parseSetMergeMapLiteralStrict("a:1")
+		ctx := context.Background()
+		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "a:1")
 		require.Error(t, err)
 	})
 
 	t.Run("empty map", func(t *testing.T) {
-		props, err := exec.parseSetMergeMapLiteralStrict("{}")
+		ctx := context.Background()
+		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{}")
 		require.NoError(t, err)
 		require.Empty(t, props)
 	})
 
 	t.Run("trailing comma entry", func(t *testing.T) {
-		_, err := exec.parseSetMergeMapLiteralStrict("{a: 1,}")
+		ctx := context.Background()
+		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a: 1,}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "empty map entry")
 	})
 
 	t.Run("missing colon", func(t *testing.T) {
-		_, err := exec.parseSetMergeMapLiteralStrict("{a}")
+		ctx := context.Background()
+		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("empty key", func(t *testing.T) {
-		_, err := exec.parseSetMergeMapLiteralStrict("{: 1}")
+		ctx := context.Background()
+		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{: 1}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("empty value", func(t *testing.T) {
-		_, err := exec.parseSetMergeMapLiteralStrict("{a: }")
+		ctx := context.Background()
+		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a: }")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("quoted key and nested value", func(t *testing.T) {
-		props, err := exec.parseSetMergeMapLiteralStrict("{'a': 1, b: {x: 2}, c: [1,2]}")
+		ctx := context.Background()
+		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{'a': 1, b: {x: 2}, c: [1,2]}")
 		require.NoError(t, err)
 		assert.EqualValues(t, int64(1), props["a"])
 		assert.NotNil(t, props["b"])

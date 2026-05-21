@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,23 +12,24 @@ import (
 // evaluateKnowledgePolicyFunction dispatches decayScore(), decay(), and policy()
 // calls. Returns (result, true) if the expression was handled, (nil, false) otherwise.
 func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
+	ctx context.Context,
 	expr string,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
 ) (interface{}, bool) {
 	if matchFuncStartAndSuffix(expr, "decayScore") || matchFuncStartAndSuffix(expr, "decayscore") {
-		return e.evalDecayScore(expr, nodes, rels), true
+		return e.evalDecayScore(ctx, expr, nodes, rels), true
 	}
 	if matchFuncStartAndSuffix(expr, "decay") {
 		inner := extractFuncArgs(expr, "decay")
 		if inner == "" {
 			return nil, false
 		}
-		return e.evalDecay(expr, nodes, rels), true
+		return e.evalDecay(ctx, expr, nodes, rels), true
 	}
 	if matchFuncStartAndSuffix(expr, "policy") {
-		return e.evalPolicy(expr, nodes, rels), true
+		return e.evalPolicy(ctx, expr, nodes, rels), true
 	}
 	return nil, false
 }
@@ -87,6 +89,7 @@ func (e *StorageExecutor) logDecayMismatchOnce() {
 
 // evalDecayScore implements decayScore(entity) and decayScore(entity, {property: "key"}).
 func (e *StorageExecutor) evalDecayScore(
+	ctx context.Context,
 	expr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -128,7 +131,7 @@ func (e *StorageExecutor) evalDecayScore(
 	var property string
 	if len(args) >= 2 {
 		var err error
-		property, err = validateDecayOptions(args[1], nodes, rels, e)
+		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
 		if err != nil {
 			return nil
 		}
@@ -152,6 +155,7 @@ func (e *StorageExecutor) evalDecayScore(
 
 // evalDecay implements decay(entity) and decay(entity, {property: "key"}).
 func (e *StorageExecutor) evalDecay(
+	ctx context.Context,
 	expr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -190,7 +194,7 @@ func (e *StorageExecutor) evalDecay(
 	var property string
 	if len(args) >= 2 {
 		var err error
-		property, err = validateDecayOptions(args[1], nodes, rels, e)
+		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
 		if err != nil {
 			return nil
 		}
@@ -213,6 +217,7 @@ func (e *StorageExecutor) evalDecay(
 
 // evalPolicy implements policy(entity) returning AccessMeta as a map.
 func (e *StorageExecutor) evalPolicy(
+	ctx context.Context,
 	expr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -300,12 +305,13 @@ func minimalPolicyMap(entityID string) map[string]interface{} {
 // validateDecayOptions parses the second argument to decayScore/decay as a
 // map literal and extracts the "property" key. Returns an error for unknown keys.
 func validateDecayOptions(
+	ctx context.Context,
 	optExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
 	e *StorageExecutor,
 ) (string, error) {
-	val := e.evaluateExpressionWithContext(optExpr, nodes, rels)
+	val := e.evaluateExpressionWithContext(ctx, optExpr, nodes, rels)
 	m, ok := val.(map[string]interface{})
 	if !ok {
 		return "", fmt.Errorf("decayScore/decay options must be a map, got %T", val)

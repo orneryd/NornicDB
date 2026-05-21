@@ -1045,7 +1045,9 @@ func TestParseReturnClauseBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols, vals := exec.parseReturnClause(tt.returnClause, tt.varName, node)
+			ctx := context.Background()
+
+			cols, vals := exec.parseReturnClause(ctx, tt.returnClause, tt.varName, node)
 			assert.Equal(t, tt.expectedCols, cols)
 			assert.True(t, tt.expectedValFunc(vals), "Value validation failed for %v", vals)
 		})
@@ -1159,7 +1161,8 @@ func TestEvaluateExpression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.evaluateExpression(tt.expr, tt.varName, node)
+			ctx := context.Background()
+			result := exec.evaluateExpression(ctx, tt.expr, tt.varName, node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -2056,7 +2059,9 @@ func TestProcessCallSubqueryReturn_OrderByOnNewline(t *testing.T) {
 		},
 	}
 
-	out, err := exec.processCallSubqueryReturn(inner, "RETURN textKey128, texts\nORDER BY textKey128")
+	ctx := context.Background()
+
+	out, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN textKey128, texts\nORDER BY textKey128")
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Len(t, out.Columns, 2)
@@ -2186,12 +2191,12 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 		"a": &storage.Node{ID: "p1", Properties: map[string]interface{}{"age": int64(30)}},
 		"b": &storage.Node{ID: "p2", Properties: map[string]interface{}{"age": int64(40)}},
 	}
-	assert.True(t, exec.evaluateBindingWhere(b, "a <> b AND a.age < b.age", nil))
-	assert.True(t, exec.evaluateBindingWhere(b, "NOT a.age > b.age", nil))
-	assert.False(t, exec.evaluateBindingWhere(b, "a.age > b.age OR a = b", nil))
-	assert.False(t, exec.evaluateBindingWhere(b, "a.name", nil))
-	assert.True(t, exec.evaluateWhereForContext("a.age < b.age", map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
-	assert.False(t, exec.evaluateWhereForContext("a.name", map[string]*storage.Node{"a": b["a"]}))
+	assert.True(t, exec.evaluateBindingWhere(ctx, b, "a <> b AND a.age < b.age", nil))
+	assert.True(t, exec.evaluateBindingWhere(ctx, b, "NOT a.age > b.age", nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.age > b.age OR a = b", nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.name", nil))
+	assert.True(t, exec.evaluateWhereForContext(ctx, "a.age < b.age", map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
+	assert.False(t, exec.evaluateWhereForContext(ctx, "a.name", map[string]*storage.Node{"a": b["a"]}))
 	assert.False(t, isSystemNode(nil))
 	assert.True(t, isSystemNode(&storage.Node{Labels: []string{"_meta"}}))
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))

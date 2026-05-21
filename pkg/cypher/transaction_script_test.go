@@ -214,7 +214,7 @@ func TestTransactionScript_AdditionalBranches(t *testing.T) {
 	require.Error(t, err)
 
 	// evaluateConditionExpression non-boolean branch.
-	ok, err := exec.evaluateConditionExpression("'x'", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	ok, err := exec.evaluateConditionExpression(ctx, "'x'", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 	assert.False(t, ok)
 }
@@ -448,9 +448,10 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
 	// Empty return expression should not error and should produce deterministic output.
-	out, err := exec.projectTransactionReturn(&ExecuteResult{
+	out, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
 		Columns: []string{"x"},
 		Rows:    [][]interface{}{{1}},
 	}, "")
@@ -459,7 +460,7 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	require.NotEmpty(t, out.Columns)
 
 	// evaluateConditionExpression nil branch.
-	ok, err := exec.evaluateConditionExpression("", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	ok, err := exec.evaluateConditionExpression(ctx, "", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -504,7 +505,7 @@ CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen C
 	assert.NotNil(t, caseCommitRes.Rows[0][1])
 
 	// projectTransactionReturn: direct row map fallback (non-expression column alias).
-	projected, err := exec.projectTransactionReturn(&ExecuteResult{
+	projected, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
 		Columns: []string{"plain"},
 		Rows:    [][]interface{}{{int64(7)}},
 	}, "plain AS p")

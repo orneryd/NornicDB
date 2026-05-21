@@ -61,7 +61,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 	}
 
 	// Parse node pattern to get variable name
-	nodePattern := e.parseNodePattern(patternOnly)
+	nodePattern := e.parseNodePattern(ctx, patternOnly)
 	if nodePattern.variable == "" {
 		return nil, fmt.Errorf("could not parse node pattern: %s", patternOnly)
 	}
@@ -96,7 +96,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		if whereClause != "" {
 			var filtered []*storage.Node
 			for _, node := range nodes {
-				if e.evaluateWhere(node, nodePattern.variable, whereClause) {
+				if e.evaluateWhere(ctx, node, nodePattern.variable, whereClause) {
 					filtered = append(filtered, node)
 				}
 			}
@@ -337,7 +337,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	nodePatternStr = strings.TrimSpace(matchPart[:patternEnd])
 
 	// Parse node pattern to get variable name
-	nodePattern := e.parseNodePattern(nodePatternStr)
+	nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 	if nodePattern.variable == "" {
 		return nil, fmt.Errorf("could not parse node pattern: %s", nodePatternStr)
 	}
@@ -534,14 +534,14 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 					seedCols := []string{nodePattern.variable}
 					seedRow := []interface{}{seedNode}
 					if branch.isPureReturn {
-						if fastRes, ok, ferr := e.tryExecuteCorrelatedReturnProjectionPreChecked(seedRow, seedCols, branch.withVars, branch.innerBody, true); ok || ferr != nil {
+						if fastRes, ok, ferr := e.tryExecuteCorrelatedReturnProjectionPreChecked(ctx, seedRow, seedCols, branch.withVars, branch.innerBody, true); ok || ferr != nil {
 							if ferr != nil {
 								return nil, ferr
 							}
 							branchResult = fastRes
 						}
 					} else {
-						fastRes, ok, ferr := e.tryExecuteCorrelatedReturnProjection(seedRow, seedCols, branch.withVars, branch.innerBody)
+						fastRes, ok, ferr := e.tryExecuteCorrelatedReturnProjection(ctx, seedRow, seedCols, branch.withVars, branch.innerBody)
 						if !(ok || ferr != nil) {
 							// no-op
 						} else {
@@ -984,13 +984,13 @@ func isCallSubqueryPureReturn(innerBody string) bool {
 		findKeywordIndex(trimmed, "UNION") < 0
 }
 
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
-	return e.tryExecuteCorrelatedReturnProjectionPreChecked(seedRow, seedCols, withVars, innerBody, false)
+func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
+	return e.tryExecuteCorrelatedReturnProjectionPreChecked(ctx, seedRow, seedCols, withVars, innerBody, false)
 }
 
 // tryExecuteCorrelatedReturnProjectionPreChecked is the same as tryExecuteCorrelatedReturnProjection
 // but accepts a precomputed isPureReturn flag to skip redundant keyword scanning.
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
 	if !isPureReturn {
 		// Caller didn't precompute — do the check now.
 		if !isCallSubqueryPureReturn(innerBody) {
@@ -1018,7 +1018,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(seedRow
 		Columns: cols,
 		Rows:    [][]interface{}{row},
 	}
-	res, err := e.processCallSubqueryReturn(seedOnly, trimmed)
+	res, err := e.processCallSubqueryReturn(ctx, seedOnly, trimmed)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1109,11 +1109,11 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			matchBody = strings.TrimSpace(matchBody[:whereIdx])
 		}
 
-		np := e.parseNodePattern(matchBody)
+		np := e.parseNodePattern(ctx, matchBody)
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
-				if nodes, ok, err := e.tryCollectNodesFromIDEquality(np, whereClause); ok || err != nil {
+				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
 					return nodes, err
 				}
 				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
@@ -1129,7 +1129,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 					}
 				}
 				// Indexed equality path.
-				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(np, whereClause); ok || err != nil {
+				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, np, whereClause); ok || err != nil {
 					return nodes, err
 				}
 			}
@@ -1191,7 +1191,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		!strings.Contains(trimmedOuter, "-[") &&
 		!strings.Contains(trimmedOuter, "--") {
 		matchBody := strings.TrimSpace(trimmedOuter[len("MATCH"):])
-		np := e.parseNodePattern(matchBody)
+		np := e.parseNodePattern(ctx, matchBody)
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
 			var nodes []*storage.Node
 			var err error
@@ -1792,7 +1792,7 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 
 	// Handle RETURN clause
 	if strings.HasPrefix(upperAfter, "RETURN ") {
-		return e.processCallSubqueryReturn(innerResult, afterCall)
+		return e.processCallSubqueryReturn(ctx, innerResult, afterCall)
 	}
 
 	// Handle ORDER BY (without RETURN means use inner result's columns)
@@ -2934,7 +2934,7 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 }
 
 // processCallSubqueryReturn processes the RETURN clause after CALL {}
-func (e *StorageExecutor) processCallSubqueryReturn(innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
+func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
 	// Parse RETURN expressions
 	returnIdx := findKeywordIndex(afterCall, "RETURN")
 	if returnIdx == -1 {
@@ -3150,11 +3150,11 @@ func (e *StorageExecutor) processCallSubqueryReturn(innerResult *ExecuteResult, 
 	}
 	newRows := make([][]interface{}, 0, len(innerResult.Rows))
 	for _, row := range innerResult.Rows {
-		// Build expression context once per row for computed projections.
-		ctx := make(map[string]interface{}, len(innerResult.Columns))
+		// Build expression yield-context once per row for computed projections.
+		yieldCtx := make(map[string]interface{}, len(innerResult.Columns))
 		for i, col := range innerResult.Columns {
 			if i < len(row) {
-				ctx[col] = row[i]
+				yieldCtx[col] = row[i]
 			}
 		}
 
@@ -3164,7 +3164,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(innerResult *ExecuteResult, 
 				newRow[i] = row[p.idx]
 				continue
 			}
-			newRow[i] = e.evaluateReturnExprInContext(p.expr, ctx)
+			newRow[i] = e.evaluateReturnExprInContext(ctx, p.expr, yieldCtx)
 		}
 		newRows = append(newRows, newRow)
 	}

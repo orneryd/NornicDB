@@ -1728,7 +1728,7 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 	createdNodes := make(map[string]*storage.Node)
 	nodes := make([]*storage.Node, 0, len(nodePatterns))
 	for _, nodePatternStr := range nodePatterns {
-		nodePattern := e.parseNodePattern(nodePatternStr)
+		nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 
 		for _, label := range nodePattern.labels {
 			if !isValidIdentifier(label) {
@@ -1785,7 +1785,7 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 
 			for variable, node := range createdNodes {
 				if strings.HasPrefix(item.expr, variable) || item.expr == variable {
-					row[i] = e.resolveReturnItem(item, variable, node)
+					row[i] = e.resolveReturnItem(ctx, item, variable, node)
 					break
 				}
 			}
@@ -1793,7 +1793,7 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 			if row[i] == nil {
 				if varName := extractVariableNameFromReturnItem(item.expr); varName != "" {
 					if node, ok := createdNodes[varName]; ok {
-						row[i] = e.resolveReturnItem(item, varName, node)
+						row[i] = e.resolveReturnItem(ctx, item, varName, node)
 					}
 				}
 			}
@@ -3093,7 +3093,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		if params := getParamsFromContext(ctx); params != nil {
 			spCypher = e.substituteParams(spCypher, params)
 		}
-		query, err := e.parseShortestPathQuery(spCypher)
+		query, err := e.parseShortestPathQuery(ctx, spCypher)
 		if err != nil {
 			return nil, err
 		}
@@ -3107,7 +3107,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		isMultiMatch := matchCount-optionalMatchCount > 1
 		if !isMultiMatch {
 			// Check for optimizable patterns FIRST
-			patternInfo := DetectQueryPattern(cypher)
+			patternInfo := DetectQueryPattern(ctx, cypher)
 			if patternInfo.IsOptimizable() {
 				if result, ok := e.ExecuteOptimized(ctx, cypher, patternInfo); ok {
 					return result, nil
@@ -3324,7 +3324,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 
 		// Try to evaluate as a function or expression first
-		result := e.evaluateExpressionWithContext(part, nil, nil)
+		result := e.evaluateExpressionWithContext(ctx, part, nil, nil)
 		if result != nil {
 			values = append(values, result)
 			continue
