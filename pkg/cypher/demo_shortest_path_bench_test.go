@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"math"
 	"testing"
@@ -10,6 +11,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+// demoBenchEnable gates the demo shortestPath Test* functions. The
+// benchmarks (Benchmark*) gate themselves implicitly via `go test -bench`
+// so they don't need a flag. Off by default so a plain `go test ./...`
+// stays under a few seconds; pass -demobench to opt in. Matches the
+// pattern used by the large-scale traversal bench (-largescale).
+var demoBenchEnable = flag.Bool("demobench", false,
+	"run the demo shortestPath Test* harnesses (~3-4s combined seed + traversals)")
 
 // Mirror of the /demo route's procedural seed + shortestPath query.
 // Lives next to the cypher executor so the same code path runs that the
@@ -71,6 +80,14 @@ func (r *pseudoRand) next() float64 {
 // (Badger → Async → Namespaced) and returns a configured executor.
 // Uses a temp dir so each call starts cold.
 func buildDemoExecutor(tb testing.TB) (*StorageExecutor, *storage.AsyncEngine) {
+	exec, async, _ := buildDemoExecutorNS(tb)
+	return exec, async
+}
+
+// buildDemoExecutorNS is the variant the large-scale traversal bench uses
+// so it can push direct BulkCreate writes through the namespaced engine
+// without paying cypher parse + plan cost on every seeded node.
+func buildDemoExecutorNS(tb testing.TB) (*StorageExecutor, *storage.AsyncEngine, *storage.NamespacedEngine) {
 	tb.Helper()
 	dir := tb.TempDir()
 	badger, err := storage.NewBadgerEngine(dir)
@@ -79,7 +96,7 @@ func buildDemoExecutor(tb testing.TB) (*StorageExecutor, *storage.AsyncEngine) {
 	tb.Cleanup(func() { _ = async.Close() })
 	ns := storage.NewNamespacedEngine(async, "d3_demo")
 	exec := NewStorageExecutor(ns)
-	return exec, async
+	return exec, async, ns
 }
 
 // seedDemoGalaxy seeds the same layout the TS demo seeds. Returns the
@@ -211,8 +228,8 @@ func runShortestPath(tb testing.TB, exec *StorageExecutor, startID, endID string
 // path exists across the sector chain so subsequent benchmarks have a
 // known-good fixture.
 func TestDemoShortestPath_E2E(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping demo e2e in -short")
+	if !*demoBenchEnable {
+		t.Skip("set -demobench to run the demo shortestPath harness")
 	}
 	exec, _ := buildDemoExecutor(t)
 	shape := defaultDemoShape()
@@ -299,8 +316,8 @@ func BenchmarkDemoShortestPath_Cold(b *testing.B) {
 // over 100 runs at the demo's default shape. Reports as a t.Logf so we
 // have an in-Go baseline that doesn't depend on a browser.
 func TestDemoShortestPath_LatencyDistribution(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping latency distribution test in -short")
+	if !*demoBenchEnable {
+		t.Skip("set -demobench to run the demo latency distribution test")
 	}
 	exec, async := buildDemoExecutor(t)
 	shape := defaultDemoShape()
@@ -371,8 +388,8 @@ func TestDemoShortestPath_LatencyDistribution(t *testing.T) {
 // chunks. The user reported "initial 42ms then warm 100+ms" — this is the
 // shape that pattern produces.
 func TestDemoShortestPath_LatencyOverTime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping latency-over-time test in -short")
+	if !*demoBenchEnable {
+		t.Skip("set -demobench to run the demo latency-over-time test")
 	}
 	exec, async := buildDemoExecutor(t)
 	shape := defaultDemoShape()
