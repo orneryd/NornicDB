@@ -38,7 +38,16 @@ type AsyncEngine struct {
 	edgeCache   map[EdgeID]*Edge
 	deleteNodes map[NodeID]bool
 	deleteEdges map[EdgeID]bool
-	mu          sync.RWMutex
+	// Per-node inverted indexes over edgeCache so GetOutgoingEdges /
+	// GetIncomingEdges run in O(degree) instead of O(len(edgeCache)).
+	// Maintained alongside every edgeCache mutation (Create/Update/Delete/
+	// Bulk*/flush eviction). Without these, BFS-style traversals over the
+	// async cache scaled with total cached edges per frontier expansion,
+	// producing a roughly constant per-traversal floor regardless of true
+	// path length.
+	cacheEdgesByStart map[NodeID]map[EdgeID]struct{}
+	cacheEdgesByEnd   map[NodeID]map[EdgeID]struct{}
+	mu                sync.RWMutex
 
 	// Event callbacks (optional): used to keep external services in sync when
 	// operations are satisfied purely from the async cache (i.e., no inner engine
@@ -191,6 +200,8 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 		engine:             engine,
 		nodeCache:          make(map[NodeID]*Node),
 		edgeCache:          make(map[EdgeID]*Edge),
+		cacheEdgesByStart:  make(map[NodeID]map[EdgeID]struct{}),
+		cacheEdgesByEnd:    make(map[NodeID]map[EdgeID]struct{}),
 		deleteNodes:        make(map[NodeID]bool),
 		deleteEdges:        make(map[EdgeID]bool),
 		inFlightNodes:      make(map[NodeID]bool),
@@ -229,6 +240,73 @@ func (e *AsyncEngine) GetInnerEngine() Engine {
 		return nil
 	}
 	return e.engine
+}
+
+// indexCacheEdgeLocked records edge in the per-node inverted indexes.
+// Caller must hold ae.mu.Lock(). Idempotent.
+func (ae *AsyncEngine) indexCacheEdgeLocked(edge *Edge) {
+	if edge == nil {
+		return
+	}
+	startSet, ok := ae.cacheEdgesByStart[edge.StartNode]
+	if !ok {
+		startSet = make(map[EdgeID]struct{})
+		ae.cacheEdgesByStart[edge.StartNode] = startSet
+	}
+	startSet[edge.ID] = struct{}{}
+	endSet, ok := ae.cacheEdgesByEnd[edge.EndNode]
+	if !ok {
+		endSet = make(map[EdgeID]struct{})
+		ae.cacheEdgesByEnd[edge.EndNode] = endSet
+	}
+	endSet[edge.ID] = struct{}{}
+}
+
+// unindexCacheEdgeLocked removes id from the per-node inverted indexes
+// for the endpoints of prev. Caller must hold ae.mu.Lock(). Safe if prev is nil.
+func (ae *AsyncEngine) unindexCacheEdgeLocked(prev *Edge) {
+	if prev == nil {
+		return
+	}
+	if startSet, ok := ae.cacheEdgesByStart[prev.StartNode]; ok {
+		delete(startSet, prev.ID)
+		if len(startSet) == 0 {
+			delete(ae.cacheEdgesByStart, prev.StartNode)
+		}
+	}
+	if endSet, ok := ae.cacheEdgesByEnd[prev.EndNode]; ok {
+		delete(endSet, prev.ID)
+		if len(endSet) == 0 {
+			delete(ae.cacheEdgesByEnd, prev.EndNode)
+		}
+	}
+}
+
+// putCacheEdgeLocked inserts or replaces edge in edgeCache, keeping the
+// per-node inverted indexes in sync. Caller must hold ae.mu.Lock().
+func (ae *AsyncEngine) putCacheEdgeLocked(edge *Edge) {
+	if edge == nil {
+		return
+	}
+	if prev, ok := ae.edgeCache[edge.ID]; ok && prev != nil {
+		// Endpoints can change on update; rebuild only if they shifted.
+		if prev.StartNode != edge.StartNode || prev.EndNode != edge.EndNode {
+			ae.unindexCacheEdgeLocked(prev)
+			ae.indexCacheEdgeLocked(edge)
+		}
+	} else {
+		ae.indexCacheEdgeLocked(edge)
+	}
+	ae.edgeCache[edge.ID] = edge
+}
+
+// deleteCacheEdgeLocked removes id from edgeCache and the inverted indexes.
+// Caller must hold ae.mu.Lock().
+func (ae *AsyncEngine) deleteCacheEdgeLocked(id EdgeID) {
+	if prev, ok := ae.edgeCache[id]; ok {
+		ae.unindexCacheEdgeLocked(prev)
+		delete(ae.edgeCache, id)
+	}
 }
 
 // flushLoop periodically flushes pending writes to the underlying engine.
@@ -607,13 +685,19 @@ func (ae *AsyncEngine) FlushWithResult() FlushResult {
 			delete(ae.nodeCache, id)
 			delete(ae.updateNodes, id) // Clear update flag
 			delete(ae.nodeUpdateBaseline, id)
+			// Drop labelIndex entries for this node — without this, the
+			// per-label sets grow unbounded across flushes, and entries
+			// reference nodes that are no longer in nodeCache. That makes
+			// every label-scoped read pay an O(flushed_history) cost
+			// dereferencing stale IDs back through nodeCache to find nils.
+			ae.removeNodeIDFromLabelIndexLocked(id)
 		}
 		// Always clear in-flight marker for this batch (success or fail)
 		delete(ae.inFlightNodes, id)
 	}
 	for id := range edgesToWrite {
 		if successfulEdgeWrites[id] && ae.edgeCache[id] == edgesToWrite[id] {
-			delete(ae.edgeCache, id)
+			ae.deleteCacheEdgeLocked(id)
 			delete(ae.updateEdges, id) // Clear update flag
 		}
 		// Always clear in-flight marker for this batch (success or fail)
@@ -1028,7 +1112,7 @@ func (ae *AsyncEngine) CreateEdge(edge *Edge) error {
 		delete(ae.updateEdges, edge.ID)
 	}
 
-	ae.edgeCache[edge.ID] = edge
+	ae.putCacheEdgeLocked(edge)
 	ae.pendingWrites++
 	return nil
 }
@@ -1044,7 +1128,7 @@ func (ae *AsyncEngine) UpdateEdge(edge *Edge) error {
 	ae.mu.Lock()
 	defer ae.mu.Unlock()
 
-	ae.edgeCache[edge.ID] = edge
+	ae.putCacheEdgeLocked(edge)
 	ae.pendingWrites++
 	return nil
 }
@@ -1069,7 +1153,7 @@ func (ae *AsyncEngine) DeleteEdge(id EdgeID) error {
 	// Check if edge was created in this transaction (still in cache)
 	if _, existsInCache := ae.edgeCache[id]; existsInCache {
 		// Edge was created but not flushed - just remove from cache
-		delete(ae.edgeCache, id)
+		ae.deleteCacheEdgeLocked(id)
 
 		// CRITICAL FIX: If edge is in-flight, the flush will still write it
 		// to the underlying engine, so we must also mark it for deletion
@@ -1281,24 +1365,25 @@ func (ae *AsyncEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
+	// Use labelIndex (per-label inverted index over nodeCache) instead of
+	// scanning every cached node. Before this, every label-scoped read paid
+	// O(len(nodeCache)) — and prior to the FlushWithResult cleanup fix the
+	// labelIndex itself accumulated stale IDs across flushes, so even O(1)
+	// readers walked through old entries.
 	ae.mu.RLock()
-	cachedNodes := make([]*Node, 0)
-	deletedIDs := make(map[NodeID]bool)
-	overriddenIDs := make(map[NodeID]bool, len(ae.nodeCache))
-
-	// Normalize label for case-insensitive matching (Neo4j compatible)
 	normalLabel := strings.ToLower(label)
-
-	for id := range ae.deleteNodes {
-		deletedIDs[id] = true
-	}
-	for id, node := range ae.nodeCache {
-		overriddenIDs[id] = true
-		for _, l := range node.Labels {
-			if strings.ToLower(l) == normalLabel { // Case-insensitive comparison
-				cachedNodes = append(cachedNodes, node)
-				break
+	var cachedNodes []*Node
+	if ids := ae.labelIndex[normalLabel]; len(ids) > 0 {
+		cachedNodes = make([]*Node, 0, len(ids))
+		for id := range ids {
+			if ae.deleteNodes[id] {
+				continue
 			}
+			node := ae.nodeCache[id]
+			if node == nil {
+				continue
+			}
+			cachedNodes = append(cachedNodes, node)
 		}
 	}
 	ae.mu.RUnlock()
@@ -1309,23 +1394,30 @@ func (ae *AsyncEngine) GetNodesByLabel(label string) ([]*Node, error) {
 		return cachedNodes, nil // Return cache-only on error
 	}
 
-	// Merge: cache overrides engine
-	result := make([]*Node, 0, len(cachedNodes)+len(engineNodes))
+	if len(engineNodes) == 0 {
+		return cachedNodes, nil
+	}
 
-	// Add cached nodes first
-	seenIDs := make(map[NodeID]bool)
+	result := make([]*Node, 0, len(cachedNodes)+len(engineNodes))
+	seenIDs := make(map[NodeID]bool, len(cachedNodes))
 	for _, node := range cachedNodes {
 		result = append(result, node)
 		seenIDs[node.ID] = true
 	}
 
-	// Add engine nodes not in cache or deleted
+	// Filter engine results by the (small) live cache state by ID — keeps
+	// per-engine-edge work O(1) without materializing two N-sized sets.
+	ae.mu.RLock()
 	for _, node := range engineNodes {
-		if !seenIDs[node.ID] && !deletedIDs[node.ID] && !overriddenIDs[node.ID] {
-			result = append(result, node)
+		if seenIDs[node.ID] || ae.deleteNodes[node.ID] {
+			continue
 		}
+		if _, overridden := ae.nodeCache[node.ID]; overridden {
+			continue
+		}
+		result = append(result, node)
 	}
-
+	ae.mu.RUnlock()
 	return result, nil
 }
 
@@ -1528,19 +1620,25 @@ func (ae *AsyncEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 // Delegate read-only methods to engine
 
 func (ae *AsyncEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	// Check cache first for this node's outgoing edges
+	// Pull cached outgoing edges through the per-node inverted index so
+	// per-call work is O(degree), not O(len(edgeCache)). Prior to the
+	// index this loop scanned every cached edge per BFS frontier
+	// expansion, producing a roughly constant per-traversal floor on any
+	// graph that fit in the async cache.
 	ae.mu.RLock()
 	var cached []*Edge
-	overriddenIDs := make(map[EdgeID]bool, len(ae.edgeCache))
-	for id, edge := range ae.edgeCache {
-		overriddenIDs[id] = true
-		if edge.StartNode == nodeID && !ae.deleteEdges[edge.ID] {
+	if startSet, ok := ae.cacheEdgesByStart[nodeID]; ok && len(startSet) > 0 {
+		cached = make([]*Edge, 0, len(startSet))
+		for id := range startSet {
+			if ae.deleteEdges[id] {
+				continue
+			}
+			edge, ok := ae.edgeCache[id]
+			if !ok || edge == nil || edge.StartNode != nodeID {
+				continue
+			}
 			cached = append(cached, edge)
 		}
-	}
-	deletedIDs := make(map[EdgeID]bool)
-	for id := range ae.deleteEdges {
-		deletedIDs[id] = true
 	}
 	ae.mu.RUnlock()
 
@@ -1548,35 +1646,49 @@ func (ae *AsyncEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return cached, nil
 	}
+	if len(engineEdges) == 0 {
+		return cached, nil
+	}
 
-	// Merge
-	seenIDs := make(map[EdgeID]bool)
 	result := make([]*Edge, 0, len(cached)+len(engineEdges))
+	seenIDs := make(map[EdgeID]bool, len(cached))
 	for _, e := range cached {
 		result = append(result, e)
 		seenIDs[e.ID] = true
 	}
+
+	// Filter engine results by the (small) live cache state. Re-acquiring
+	// the RLock briefly is cheap; checking each engine edge against the
+	// cache by ID stays O(1) per edge, so total cost is O(engineEdges).
+	ae.mu.RLock()
 	for _, e := range engineEdges {
-		if !seenIDs[e.ID] && !deletedIDs[e.ID] && !overriddenIDs[e.ID] {
-			result = append(result, e)
+		if seenIDs[e.ID] || ae.deleteEdges[e.ID] {
+			continue
 		}
+		if _, overridden := ae.edgeCache[e.ID]; overridden {
+			continue
+		}
+		result = append(result, e)
 	}
+	ae.mu.RUnlock()
 	return result, nil
 }
 
 func (ae *AsyncEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	ae.mu.RLock()
 	var cached []*Edge
-	overriddenIDs := make(map[EdgeID]bool, len(ae.edgeCache))
-	for id, edge := range ae.edgeCache {
-		overriddenIDs[id] = true
-		if edge.EndNode == nodeID && !ae.deleteEdges[edge.ID] {
+	if endSet, ok := ae.cacheEdgesByEnd[nodeID]; ok && len(endSet) > 0 {
+		cached = make([]*Edge, 0, len(endSet))
+		for id := range endSet {
+			if ae.deleteEdges[id] {
+				continue
+			}
+			edge, ok := ae.edgeCache[id]
+			if !ok || edge == nil || edge.EndNode != nodeID {
+				continue
+			}
 			cached = append(cached, edge)
 		}
-	}
-	deletedIDs := make(map[EdgeID]bool)
-	for id := range ae.deleteEdges {
-		deletedIDs[id] = true
 	}
 	ae.mu.RUnlock()
 
@@ -1584,19 +1696,122 @@ func (ae *AsyncEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return cached, nil
 	}
+	if len(engineEdges) == 0 {
+		return cached, nil
+	}
 
-	seenIDs := make(map[EdgeID]bool)
 	result := make([]*Edge, 0, len(cached)+len(engineEdges))
+	seenIDs := make(map[EdgeID]bool, len(cached))
 	for _, e := range cached {
 		result = append(result, e)
 		seenIDs[e.ID] = true
 	}
+
+	ae.mu.RLock()
 	for _, e := range engineEdges {
-		if !seenIDs[e.ID] && !deletedIDs[e.ID] && !overriddenIDs[e.ID] {
-			result = append(result, e)
+		if seenIDs[e.ID] || ae.deleteEdges[e.ID] {
+			continue
+		}
+		if _, overridden := ae.edgeCache[e.ID]; overridden {
+			continue
+		}
+		result = append(result, e)
+	}
+	ae.mu.RUnlock()
+	return result, nil
+}
+
+// GetAdjacentEdges fetches outgoing+incoming edges for nodeID, folding the
+// async cache with a single inner-engine call. Mirrors the merge logic of
+// the per-direction methods; the win is one transaction at the inner engine
+// instead of two per BFS frontier expansion.
+func (ae *AsyncEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+	// Cached side first (lock-only work, no I/O).
+	ae.mu.RLock()
+	var cachedOut, cachedIn []*Edge
+	if startSet, ok := ae.cacheEdgesByStart[nodeID]; ok && len(startSet) > 0 {
+		cachedOut = make([]*Edge, 0, len(startSet))
+		for id := range startSet {
+			if ae.deleteEdges[id] {
+				continue
+			}
+			edge := ae.edgeCache[id]
+			if edge == nil || edge.StartNode != nodeID {
+				continue
+			}
+			cachedOut = append(cachedOut, edge)
 		}
 	}
-	return result, nil
+	if endSet, ok := ae.cacheEdgesByEnd[nodeID]; ok && len(endSet) > 0 {
+		cachedIn = make([]*Edge, 0, len(endSet))
+		for id := range endSet {
+			if ae.deleteEdges[id] {
+				continue
+			}
+			edge := ae.edgeCache[id]
+			if edge == nil || edge.EndNode != nodeID {
+				continue
+			}
+			cachedIn = append(cachedIn, edge)
+		}
+	}
+	ae.mu.RUnlock()
+
+	// Engine side: one call when supported, two otherwise.
+	var engineOut, engineIn []*Edge
+	if inner, ok := ae.engine.(AdjacentEdgesEngine); ok {
+		out, in, err := inner.GetAdjacentEdges(nodeID)
+		if err != nil {
+			return cachedOut, cachedIn, nil //nolint:nilerr // engine errors fall back to cache, matching per-direction methods
+		}
+		engineOut, engineIn = out, in
+	} else {
+		var err error
+		engineOut, err = ae.engine.GetOutgoingEdges(nodeID)
+		if err != nil {
+			return cachedOut, cachedIn, nil //nolint:nilerr
+		}
+		engineIn, err = ae.engine.GetIncomingEdges(nodeID)
+		if err != nil {
+			// Cache + outgoing-only fallback.
+			merged := mergeAsyncEdges(ae, cachedOut, engineOut)
+			return merged, cachedIn, nil
+		}
+	}
+
+	outgoing := mergeAsyncEdges(ae, cachedOut, engineOut)
+	incoming := mergeAsyncEdges(ae, cachedIn, engineIn)
+	return outgoing, incoming, nil
+}
+
+// mergeAsyncEdges merges async-cache edges with engine-returned edges,
+// honoring the cache's override and delete sets. Caller-supplied cached
+// already excludes pending deletes for that direction.
+func mergeAsyncEdges(ae *AsyncEngine, cached, engineEdges []*Edge) []*Edge {
+	if len(engineEdges) == 0 {
+		return cached
+	}
+	result := make([]*Edge, 0, len(cached)+len(engineEdges))
+	seen := make(map[EdgeID]bool, len(cached))
+	for _, e := range cached {
+		result = append(result, e)
+		seen[e.ID] = true
+	}
+	ae.mu.RLock()
+	for _, e := range engineEdges {
+		if e == nil {
+			continue
+		}
+		if seen[e.ID] || ae.deleteEdges[e.ID] {
+			continue
+		}
+		if _, overridden := ae.edgeCache[e.ID]; overridden {
+			continue
+		}
+		result = append(result, e)
+	}
+	ae.mu.RUnlock()
+	return result
 }
 
 func (ae *AsyncEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
@@ -2394,7 +2609,7 @@ func (ae *AsyncEngine) BulkCreateEdges(edges []*Edge) error {
 	for _, edge := range edges {
 		delete(ae.deleteEdges, edge.ID)
 		delete(ae.updateEdges, edge.ID)
-		ae.edgeCache[edge.ID] = edge
+		ae.putCacheEdgeLocked(edge)
 	}
 	ae.pendingWrites += int64(len(edges))
 	return nil
@@ -2432,7 +2647,7 @@ func (ae *AsyncEngine) BulkDeleteEdges(ids []EdgeID) error {
 	defer ae.mu.Unlock()
 
 	for _, id := range ids {
-		delete(ae.edgeCache, id)
+		ae.deleteCacheEdgeLocked(id)
 		ae.deleteEdges[id] = true
 	}
 	ae.pendingWrites += int64(len(ids))

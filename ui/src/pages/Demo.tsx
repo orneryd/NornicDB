@@ -49,7 +49,15 @@ type DemoForceGraph = ForceGraph3DInstance<GraphNode, GraphLink>;
 interface PathInfo {
   hops: number;
   starIds: string[];
+  // totalMs: wall-clock time as observed by JS (request → response handled).
+  // Includes any main-thread contention while the await resumes. Best for
+  // user-perceived latency.
   totalMs: number;
+  // wireMs: time the browser reports the request actually spent on the
+  // network (Resource Timing). Authoritative network number; surfaced
+  // separately so the HUD can show "what curl sees" alongside "what the
+  // app feels".
+  wireMs: number;
   startName: string;
   endName: string;
   source: "auto" | "manual";
@@ -113,6 +121,29 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+// readLastResourceTimingMs returns the duration of the most recent /tx/commit
+// fetch against the named database, as reported by the browser's Resource
+// Timing buffer. This is the authoritative network number — independent of
+// when JS got around to running the await-resume continuation. Returns null
+// when the entry isn't available (browser buffer trimmed, or the request
+// was served from disk cache without an entry).
+function readLastResourceTimingMs(dbName: string): number | null {
+  if (typeof performance === "undefined" || !performance.getEntriesByType) {
+    return null;
+  }
+  const needle = `/db/${encodeURIComponent(dbName)}/tx/commit`;
+  const entries = performance.getEntriesByType(
+    "resource",
+  ) as PerformanceResourceTiming[];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.name.includes(needle) && e.duration > 0) {
+      return e.duration;
+    }
+  }
+  return null;
 }
 
 function sectorColor(hue: number): string {
@@ -275,9 +306,22 @@ export function Demo() {
       const endStar = starById.get(endId);
       if (!startStar || !endStar) return;
 
+      // Pin the force-graph simulation: ticks render ~1000 nodes / 10K
+      // edges via WebGL on the main thread, which delays microtask
+      // resolution of the fetch await and pollutes any latency timer
+      // that wraps it.
+      const fg = graphRef.current;
+      fg?.pauseAnimation();
+
+      // Sample the wall-clock timer BEFORE any React state updates so a
+      // queued render between await-resume and the second timer read
+      // doesn't get attributed to network time. setPhase/setStatusLine
+      // below are intentionally scheduled, not awaited — React batches
+      // them outside the measurement window.
+      const start = nowMs();
       setPhase("traversing");
       setStatusLine(`shortestPath ${startStar.name} ↔ ${endStar.name}`);
-      const start = nowMs();
+
       try {
         const resp = await api.executeCypherOnDatabase(
           DEMO_DB,
@@ -285,6 +329,13 @@ export function Demo() {
           { startId, endId },
         );
         const totalMs = nowMs() - start;
+        // Cross-check against Resource Timing — the browser's authoritative
+        // network duration for the actual request. Useful when JS work on
+        // the main thread stretches the awaited fetch (the JS-observed
+        // total above is what the user "feels", but the wire number is
+        // what the server actually delivered against).
+        const wireMs = readLastResourceTimingMs(DEMO_DB) ?? totalMs;
+        fg?.resumeAnimation();
         const rows = rowsFromCypher(resp);
         const first = rows[0];
         const ids = (first?.pathIds as string[] | undefined) ?? [];
@@ -301,20 +352,22 @@ export function Demo() {
           hops,
           starIds: ids,
           totalMs,
+          wireMs,
           startName: startStar.name,
           endName: endStar.name,
           source,
         });
         recordTraversalLatency(
           `${startStar.name} → ${endStar.name}`,
-          totalMs,
+          wireMs,
           hops,
         );
         setPhase("ready");
         setStatusLine(
-          `${hops} hops · ${totalMs.toFixed(1)} ms · ${startStar.name} → ${endStar.name}`,
+          `${hops} hops · ${wireMs.toFixed(1)} ms wire · ${totalMs.toFixed(1)} ms total · ${startStar.name} → ${endStar.name}`,
         );
       } catch (err) {
+        fg?.resumeAnimation();
         const message = err instanceof Error ? err.message : String(err);
         setStatusLine(`Traversal failed: ${message}`);
         setPhase("error");
@@ -534,7 +587,7 @@ export function Demo() {
   const totalEdges = galaxy.edges.length;
 
   const titlePathLine = pathInfo
-    ? `shortest path: ${pathInfo.hops} hops · ${pathInfo.totalMs.toFixed(1)} ms · ${pathInfo.startName} → ${pathInfo.endName}`
+    ? `shortest path: ${pathInfo.hops} hops · ${pathInfo.wireMs.toFixed(1)} ms wire · ${pathInfo.startName} → ${pathInfo.endName}`
     : seedReady
       ? "click any two stars to traverse"
       : "preparing galaxy...";

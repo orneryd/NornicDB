@@ -797,6 +797,25 @@ func (w *WALEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	return w.engine.GetIncomingEdges(nodeID)
 }
 
+// GetAdjacentEdges delegates to the inner engine when it implements the
+// optional AdjacentEdgesEngine capability. WAL writes are never reflected
+// in reads (it only logs), so a forwarded call sees the same data as the
+// pair of single-direction methods.
+func (w *WALEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+	if inner, ok := w.engine.(AdjacentEdgesEngine); ok {
+		return inner.GetAdjacentEdges(nodeID)
+	}
+	out, err := w.engine.GetOutgoingEdges(nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	in, err := w.engine.GetIncomingEdges(nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, in, nil
+}
+
 // GetEdgesBetween delegates to underlying engine.
 func (w *WALEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 	return w.engine.GetEdgesBetween(startID, endID)

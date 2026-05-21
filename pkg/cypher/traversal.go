@@ -1894,6 +1894,19 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 // shortestPath finds the shortest path between two nodes.
 // ctx is checked periodically inside the BFS so the caller can cancel a
 // long-running traversal (client disconnect, server shutdown).
+//
+// Implementation notes:
+//
+//   - When the storage chain implements AdjacentEdgesEngine, BFS fetches both
+//     directions in a single underlying view per frontier node. Profiling
+//     showed ~64% of per-request CPU was in Badger view-transaction setup;
+//     halving the open-count is the dominant win.
+//   - The frontier stores parent pointers (predecessor edge + node ID) only,
+//     not full path slices. Old behavior copied O(L) nodes/edges per
+//     discovered neighbor — for paths of length ~50 that's tens of thousands
+//     of unused allocations because BFS visits far more nodes than it ends
+//     up keeping. We rebuild the path once, after the end is hit, fetching
+//     the materialized node bodies in a single BatchGetNodes call.
 func (e *StorageExecutor) shortestPath(ctx context.Context, startNode, endNode *storage.Node, relTypes []string, direction string, maxHops int) (*PathResult, error) {
 	if startNode == nil || endNode == nil {
 		return nil, nil
@@ -1901,22 +1914,10 @@ func (e *StorageExecutor) shortestPath(ctx context.Context, startNode, endNode *
 
 	relTypeSet := buildRelTypeSet(relTypes)
 
-	// BFS for shortest path
-	type queueItem struct {
-		node *storage.Node
-		path PathResult
-	}
+	preds := map[storage.NodeID]bfsPredecessor{startNode.ID: {}}
+	queue := []storage.NodeID{startNode.ID}
 
-	queue := []queueItem{{
-		node: startNode,
-		path: PathResult{
-			Nodes:         []*storage.Node{startNode},
-			Relationships: []*storage.Edge{},
-			Length:        0,
-		},
-	}}
-
-	visited := map[storage.NodeID]bool{startNode.ID: true}
+	adj, hasAdj := e.storage.(storage.AdjacentEdgesEngine)
 
 	for head := 0; head < len(queue); head++ {
 		if head&bfsCancelCheckMask == 0 {
@@ -1924,81 +1925,142 @@ func (e *StorageExecutor) shortestPath(ctx context.Context, startNode, endNode *
 				return nil, err
 			}
 		}
-		current := queue[head]
-
-		if current.path.Length >= maxHops {
+		currentID := queue[head]
+		currentDepth := preds[currentID].depth
+		if currentDepth >= maxHops {
 			continue
 		}
 
-		// Get edges based on direction
-		var edges []*storage.Edge
+		var outgoing, incoming []*storage.Edge
 		switch direction {
 		case "outgoing":
-			edges, _ = e.storage.GetOutgoingEdges(current.node.ID)
+			outgoing, _ = e.storage.GetOutgoingEdges(currentID)
 		case "incoming":
-			edges, _ = e.storage.GetIncomingEdges(current.node.ID)
+			incoming, _ = e.storage.GetIncomingEdges(currentID)
 		default:
-			outgoing, _ := e.storage.GetOutgoingEdges(current.node.ID)
-			incoming, _ := e.storage.GetIncomingEdges(current.node.ID)
-			edges = append(outgoing, incoming...)
+			if hasAdj {
+				outgoing, incoming, _ = adj.GetAdjacentEdges(currentID)
+			} else {
+				outgoing, _ = e.storage.GetOutgoingEdges(currentID)
+				incoming, _ = e.storage.GetIncomingEdges(currentID)
+			}
 		}
 
-		for _, edge := range edges {
-			// Filter by relationship type
-			if len(relTypes) > 0 {
-				if len(relTypes) == 1 {
-					if edge.Type != relTypes[0] {
-						continue
-					}
-				} else {
-					if _, ok := relTypeSet[edge.Type]; !ok {
-						continue
-					}
+		expand := func(edge *storage.Edge, fromOutgoing bool) (done bool) {
+			if len(relTypes) == 1 {
+				if edge.Type != relTypes[0] {
+					return false
+				}
+			} else if len(relTypes) > 1 {
+				if _, ok := relTypeSet[edge.Type]; !ok {
+					return false
 				}
 			}
 
-			// Get next node
 			var nextNodeID storage.NodeID
-			if direction == "outgoing" || (direction == "both" && edge.StartNode == current.node.ID) {
+			switch {
+			case direction == "outgoing":
 				nextNodeID = edge.EndNode
-			} else {
+			case direction == "incoming":
+				nextNodeID = edge.StartNode
+			case fromOutgoing:
+				nextNodeID = edge.EndNode
+			default:
 				nextNodeID = edge.StartNode
 			}
-
-			if visited[nextNodeID] {
-				continue
+			if _, seen := preds[nextNodeID]; seen {
+				return false
 			}
-
-			nextNode, err := e.storage.GetNode(nextNodeID)
-			if err != nil || nextNode == nil {
-				continue
-			}
-
-			newNodes := make([]*storage.Node, len(current.path.Nodes)+1)
-			copy(newNodes, current.path.Nodes)
-			newNodes[len(current.path.Nodes)] = nextNode
-
-			newRels := make([]*storage.Edge, len(current.path.Relationships)+1)
-			copy(newRels, current.path.Relationships)
-			newRels[len(current.path.Relationships)] = edge
-
-			newPath := PathResult{
-				Nodes:         newNodes,
-				Relationships: newRels,
-				Length:        current.path.Length + 1,
-			}
-
-			// Check if we've reached the end
+			preds[nextNodeID] = bfsPredecessor{parent: currentID, edge: edge, depth: currentDepth + 1}
 			if nextNodeID == endNode.ID {
-				return &newPath, nil
+				return true
 			}
+			queue = append(queue, nextNodeID)
+			return false
+		}
 
-			visited[nextNodeID] = true
-			queue = append(queue, queueItem{node: nextNode, path: newPath})
+		for _, edge := range outgoing {
+			if expand(edge, true) {
+				return e.reconstructShortestPath(ctx, startNode, endNode, preds)
+			}
+		}
+		for _, edge := range incoming {
+			if expand(edge, false) {
+				return e.reconstructShortestPath(ctx, startNode, endNode, preds)
+			}
 		}
 	}
 
 	return nil, nil // No path found
+}
+
+// bfsPredecessor records, for every node BFS visits, the edge it was
+// discovered through and the parent NodeID. We rebuild the path by walking
+// these pointers from end → start once the goal is reached.
+type bfsPredecessor struct {
+	parent storage.NodeID
+	edge   *storage.Edge
+	depth  int
+}
+
+// reconstructShortestPath walks the predecessor map from end → start and
+// materializes the *Node bodies for every node on the path in a single
+// BatchGetNodes call. The startNode/endNode bodies are used as-is when
+// available (the executor already had to fetch them to start BFS).
+func (e *StorageExecutor) reconstructShortestPath(ctx context.Context, startNode, endNode *storage.Node, preds map[storage.NodeID]bfsPredecessor) (*PathResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	var revIDs []storage.NodeID
+	var revEdges []*storage.Edge
+	cur := endNode.ID
+	for cur != startNode.ID {
+		p := preds[cur]
+		revIDs = append(revIDs, cur)
+		revEdges = append(revEdges, p.edge)
+		cur = p.parent
+		if cur == "" {
+			return nil, nil
+		}
+	}
+	revIDs = append(revIDs, startNode.ID)
+
+	// Reverse path order: start → end.
+	pathIDs := make([]storage.NodeID, len(revIDs))
+	for i, id := range revIDs {
+		pathIDs[len(revIDs)-1-i] = id
+	}
+	pathEdges := make([]*storage.Edge, len(revEdges))
+	for i, edge := range revEdges {
+		pathEdges[len(revEdges)-1-i] = edge
+	}
+
+	nodeBodies, err := e.storage.BatchGetNodes(pathIDs)
+	if err != nil {
+		return nil, err
+	}
+	pathNodes := make([]*storage.Node, len(pathIDs))
+	for i, id := range pathIDs {
+		switch id {
+		case startNode.ID:
+			pathNodes[i] = startNode
+		case endNode.ID:
+			pathNodes[i] = endNode
+		default:
+			n, ok := nodeBodies[id]
+			if !ok || n == nil {
+				return nil, nil
+			}
+			pathNodes[i] = n
+		}
+	}
+
+	return &PathResult{
+		Nodes:         pathNodes,
+		Relationships: pathEdges,
+		Length:        len(pathEdges),
+	}, nil
 }
 
 // allShortestPaths finds all shortest paths between two nodes.

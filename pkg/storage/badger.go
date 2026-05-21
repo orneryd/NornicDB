@@ -144,6 +144,26 @@ type BadgerEngine struct {
 	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
 	edgeTypeCacheMu sync.RWMutex
 
+	// Hot edge-body cache. BFS-style traversals (shortestPath, variable-
+	// length MATCH) re-read the same edges repeatedly across requests; the
+	// CPU profile showed badger.Txn.Get + decodeEdgeBodyByID was the
+	// dominant per-request cost on warm runs. Populated lazily inside
+	// collectEdgesByIndexPrefix and invalidated on every edge mutation.
+	edgeCache         map[EdgeID]*Edge
+	edgeCacheMu       sync.RWMutex
+	edgeCacheMaxItems int
+
+	// Per-node adjacency-ID caches. Stores the result of an
+	// outgoing/incoming index iteration so subsequent BFS frontier
+	// expansions skip the Badger iterator entirely. Profiling showed
+	// Iterator.Rewind+Next+parseItem was ~55% of warm shortestPath cost
+	// after the edge-body cache landed. Invalidated when any edge that
+	// touches one of the cached nodes is created/updated/deleted.
+	outgoingAdjCache map[NodeID][]EdgeID
+	incomingAdjCache map[NodeID][]EdgeID
+	adjCacheMu       sync.RWMutex
+	adjCacheMaxNodes int
+
 	// Fast label lookup cache: label -> first node ID
 	// Used by ID-only label scans to avoid repeated index iteration.
 	labelFirstNodeCache   map[string]NodeID
@@ -719,6 +739,12 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine.nodeCache = make(map[NodeID]*Node, engine.nodeCacheMaxEntries)
 	engine.edgeTypeCache = make(map[string][]*Edge, engine.edgeTypeCacheMaxTypes)
 	engine.labelFirstNodeCache = make(map[string]NodeID, engine.labelFirstCacheMax)
+	// Mirror the node cache sizing knob unless we add a dedicated tunable.
+	engine.edgeCacheMaxItems = engine.nodeCacheMaxEntries
+	engine.edgeCache = make(map[EdgeID]*Edge, engine.edgeCacheMaxItems)
+	engine.adjCacheMaxNodes = engine.nodeCacheMaxEntries
+	engine.outgoingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
+	engine.incomingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
 	engine.namespaceNodeCounts = make(map[string]int64)
 	engine.namespaceEdgeCounts = make(map[string]int64)
 

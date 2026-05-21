@@ -530,56 +530,188 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
+	if ids, ok := b.adjCacheLoadOutgoing(nodeID); ok {
+		return b.materializeAdjEdges(ids), nil
+	}
+
 	prefix := b.outgoingIndexPrefixString(nodeID)
 	if prefix == nil {
 		return nil, nil
 	}
 	var edges []*Edge
+	var ids []EdgeID
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
-		defer it.Close()
+		edges, ids = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	b.adjCacheStoreOutgoing(nodeID, ids)
+	return edges, nil
+}
 
-		for it.Rewind(); it.Valid(); it.Next() {
-			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
-			if !ok {
+// GetAdjacentEdges fetches both outgoing and incoming edges for nodeID. On a
+// hot path the per-node adjacency cache short-circuits the Badger iterator
+// entirely, falling back to a single view transaction when either direction
+// misses.
+func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+	if nodeID == "" {
+		return nil, nil, ErrInvalidID
+	}
+
+	cachedOutIDs, outHit := b.adjCacheLoadOutgoing(nodeID)
+	cachedInIDs, inHit := b.adjCacheLoadIncoming(nodeID)
+	if outHit && inHit {
+		return b.materializeAdjEdges(cachedOutIDs), b.materializeAdjEdges(cachedInIDs), nil
+	}
+
+	var outPrefix, inPrefix []byte
+	if !outHit {
+		outPrefix = b.outgoingIndexPrefixString(nodeID)
+	}
+	if !inHit {
+		inPrefix = b.incomingIndexPrefixString(nodeID)
+	}
+	if outPrefix == nil && inPrefix == nil && !outHit && !inHit {
+		return nil, nil, nil
+	}
+
+	var outgoing, incoming []*Edge
+	var outIDs, inIDs []EdgeID
+	nowNanos := DecayScoringTime()
+	err := b.withView(func(txn *badger.Txn) error {
+		if !outHit && outPrefix != nil {
+			outgoing, outIDs = b.collectEdgesByIndexPrefix(txn, outPrefix, nowNanos)
+		}
+		if !inHit && inPrefix != nil {
+			incoming, inIDs = b.collectEdgesByIndexPrefix(txn, inPrefix, nowNanos)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if !outHit {
+		b.adjCacheStoreOutgoing(nodeID, outIDs)
+	} else {
+		outgoing = b.materializeAdjEdges(cachedOutIDs)
+	}
+	if !inHit {
+		b.adjCacheStoreIncoming(nodeID, inIDs)
+	} else {
+		incoming = b.materializeAdjEdges(cachedInIDs)
+	}
+	return outgoing, incoming, nil
+}
+
+// materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
+// hitting the edge body cache first, then falling back to a one-shot view
+// transaction for any IDs that miss. Used by the adjacency-cache fast path.
+func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID) []*Edge {
+	if len(ids) == 0 {
+		return nil
+	}
+	nowNanos := DecayScoringTime()
+	out := make([]*Edge, 0, len(ids))
+	var miss []EdgeID
+	for _, id := range ids {
+		if cached, ok := b.cacheLoadEdge(id); ok {
+			if b.filterEdgeByDecay(cached, nowNanos) {
 				continue
 			}
-			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-			if !ok {
-				continue
-			}
-
-			// Get the edge
-			item, err := txn.Get(edgeKey(edgeID))
+			out = append(out, cached)
+			continue
+		}
+		miss = append(miss, id)
+	}
+	if len(miss) == 0 {
+		return out
+	}
+	_ = b.withView(func(txn *badger.Txn) error {
+		for _, id := range miss {
+			item, err := txn.Get(edgeKey(id))
 			if err != nil {
 				continue
 			}
-
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
 				return decodeErr
 			}); err != nil {
 				continue
 			}
-
+			b.cacheStoreEdge(edge)
 			if b.filterEdgeByDecay(edge, nowNanos) {
 				continue
 			}
-
-			edges = append(edges, edge)
+			out = append(out, edge)
 		}
-
 		return nil
 	})
+	return out
+}
 
-	if err != nil {
-		return nil, err
+// collectEdgesByIndexPrefix iterates the outgoing/incoming edge index under
+// prefix. Returns the live (non-decayed) edges AND the ordered EdgeID list
+// the caller should hand to the adjacency cache. The ID list is the
+// authoritative cache value — using it on subsequent reads lets us skip the
+// Badger iterator entirely.
+//
+// Edge bodies are looked up in the per-engine edge cache before falling
+// back to a Badger Txn.Get. The cache turns BFS-style traversals (which
+// revisit a small set of edges thousands of times per request) into
+// memory-bound work after the first encounter.
+func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64) ([]*Edge, []EdgeID) {
+	it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
+	defer it.Close()
+
+	var edges []*Edge
+	var ids []EdgeID
+	for it.Rewind(); it.Valid(); it.Next() {
+		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
+		if !ok {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if !ok {
+			continue
+		}
+		ids = append(ids, edgeID)
+
+		if cached, ok := b.cacheLoadEdge(edgeID); ok {
+			if b.filterEdgeByDecay(cached, nowNanos) {
+				continue
+			}
+			edges = append(edges, cached)
+			continue
+		}
+
+		item, err := txn.Get(edgeKey(edgeID))
+		if err != nil {
+			continue
+		}
+
+		var edge *Edge
+		if err := item.Value(func(val []byte) error {
+			var decodeErr error
+			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+			return decodeErr
+		}); err != nil {
+			continue
+		}
+
+		b.cacheStoreEdge(edge)
+
+		if b.filterEdgeByDecay(edge, nowNanos) {
+			continue
+		}
+
+		edges = append(edges, edge)
 	}
-
-	return edges, nil
+	return edges, ids
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.
@@ -588,55 +720,25 @@ func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
+	if ids, ok := b.adjCacheLoadIncoming(nodeID); ok {
+		return b.materializeAdjEdges(ids), nil
+	}
+
 	prefix := b.incomingIndexPrefixString(nodeID)
 	if prefix == nil {
 		return nil, nil
 	}
 	var edges []*Edge
+	var ids []EdgeID
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerIterOptsKeyOnly(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
-			if !ok {
-				continue
-			}
-			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-			if !ok {
-				continue
-			}
-
-			// Get the edge
-			item, err := txn.Get(edgeKey(edgeID))
-			if err != nil {
-				continue
-			}
-
-			var edge *Edge
-			if err := item.Value(func(val []byte) error {
-				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
-				return decodeErr
-			}); err != nil {
-				continue
-			}
-
-			if b.filterEdgeByDecay(edge, nowNanos) {
-				continue
-			}
-
-			edges = append(edges, edge)
-		}
-
+		edges, ids = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos)
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
-
+	b.adjCacheStoreIncoming(nodeID, ids)
 	return edges, nil
 }
 

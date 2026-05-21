@@ -448,6 +448,20 @@ type PrefixStatsEngine interface {
 	EdgeCountByPrefix(prefix string) (int64, error)
 }
 
+// AdjacentEdgesEngine is an optional extension interface for fetching both
+// directions of edges incident to a node in a single underlying transaction.
+//
+// BFS-style traversals (shortestPath, variable-length MATCH) historically
+// called GetOutgoingEdges + GetIncomingEdges per frontier node, opening two
+// fresh Badger view transactions for each. With ~500-1000 frontier nodes per
+// shortestPath request, that adds 1000-2000 transaction opens — the dominant
+// per-request fixed cost the profile flagged. Engines that can fold both
+// directions into a single view should implement this; callers fall back to
+// the pair of single-direction calls when an engine doesn't.
+type AdjacentEdgesEngine interface {
+	GetAdjacentEdges(nodeID NodeID) (outgoing, incoming []*Edge, err error)
+}
+
 // NamespaceLister is an optional extension interface that reports the known
 // database namespaces stored in an engine.
 //

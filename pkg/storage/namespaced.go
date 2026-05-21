@@ -164,52 +164,36 @@ func (n *NamespacedEngine) hasEdgePrefix(id EdgeID) bool {
 	return strings.HasPrefix(string(id), n.namespace+n.separator)
 }
 
-// requiresDeepCopy returns true when the inner engine may return cached pointers
-// that must not be mutated (e.g., AsyncEngine caches nodes/edges).
-func (n *NamespacedEngine) requiresDeepCopy() bool {
-	engine := n.inner
-	// Unwrap WAL if present
-	if walEngine, ok := engine.(*WALEngine); ok {
-		engine = walEngine.GetEngine()
-	}
-	// AsyncEngine returns cached objects; always deep copy for safety.
-	if _, ok := engine.(*AsyncEngine); ok {
-		return true
-	}
-	return false
-}
-
+// toUserNode returns a node with the namespace prefix stripped from its ID.
+//
+// The Edge/Node Properties map is shared with whatever the inner engine
+// returned (often a cache pointer). All current callers in the cypher
+// executor and storage layer treat Get*/AllNodes results as read-only:
+// mutations go through UpdateNode/UpdateEdge with fresh structs. If a
+// future caller needs to mutate, it must call CopyNode/CopyEdge first.
+//
+// Profiling: NamespacedEngine.toUserEdge → CopyEdge was 30% of the warm
+// shortestPath benchmark. The deep copy was duplicating the Properties
+// map for every cache-hit edge — pure waste because nothing in the
+// traversal path touches the map.
 func (n *NamespacedEngine) toUserNode(node *Node) *Node {
 	if node == nil {
 		return nil
 	}
-	if !n.requiresDeepCopy() {
-		// Shallow copy is safe for engines that do not expose cached pointers
-		out := *node
-		out.ID = n.unprefixNodeID(out.ID)
-		return &out
-	}
-	out := CopyNode(node)
+	out := *node
 	out.ID = n.unprefixNodeID(out.ID)
-	return out
+	return &out
 }
 
 func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
 	if edge == nil {
 		return nil
 	}
-	if !n.requiresDeepCopy() {
-		out := *edge
-		out.ID = n.unprefixEdgeID(out.ID)
-		out.StartNode = n.unprefixNodeID(out.StartNode)
-		out.EndNode = n.unprefixNodeID(out.EndNode)
-		return &out
-	}
-	out := CopyEdge(edge)
+	out := *edge
 	out.ID = n.unprefixEdgeID(out.ID)
 	out.StartNode = n.unprefixNodeID(out.StartNode)
 	out.EndNode = n.unprefixNodeID(out.EndNode)
-	return out
+	return &out
 }
 
 // ============================================================================
@@ -429,6 +413,44 @@ func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 		}
 	}
 	return filtered, nil
+}
+
+// GetAdjacentEdges fetches both directions through a single inner call when
+// the inner engine supports the AdjacentEdgesEngine capability. ID
+// translation and namespace filtering mirror the per-direction methods.
+func (n *NamespacedEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+	namespacedID := n.prefixNodeID(nodeID)
+	var outgoing, incoming []*Edge
+	if inner, ok := n.inner.(AdjacentEdgesEngine); ok {
+		out, in, err := inner.GetAdjacentEdges(namespacedID)
+		if err != nil {
+			return nil, nil, err
+		}
+		outgoing, incoming = out, in
+	} else {
+		out, err := n.inner.GetOutgoingEdges(namespacedID)
+		if err != nil {
+			return nil, nil, err
+		}
+		in, err := n.inner.GetIncomingEdges(namespacedID)
+		if err != nil {
+			return nil, nil, err
+		}
+		outgoing, incoming = out, in
+	}
+
+	var filteredOut, filteredIn []*Edge
+	for _, edge := range outgoing {
+		if n.hasEdgePrefix(edge.ID) {
+			filteredOut = append(filteredOut, n.toUserEdge(edge))
+		}
+	}
+	for _, edge := range incoming {
+		if n.hasEdgePrefix(edge.ID) {
+			filteredIn = append(filteredIn, n.toUserEdge(edge))
+		}
+	}
+	return filteredOut, filteredIn, nil
 }
 
 func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {

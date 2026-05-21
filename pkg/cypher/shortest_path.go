@@ -172,10 +172,42 @@ func extractPreviousMatchClause(cypher string, beforeIdx int) string {
 	return strings.TrimSpace(cypher[previousMatchIdx+len("MATCH") : currentMatchIdx])
 }
 
-// findNodeByPattern finds a node matching the given pattern
+// findNodeByPattern finds a node matching the given pattern.
+//
+// Hot path for shortestPath start/end resolution: this runs twice per
+// shortestPath request. The previous implementation always full-scanned
+// `GetNodesByLabel` and linear-filtered, which on label populations of a
+// few thousand fetched and decoded every node body — adding a fixed cost
+// per request that scaled with total label size, not path length. When a
+// property index covers any of the requested properties, the schema
+// lookup returns the candidate IDs directly so we only fetch the few
+// nodes whose value actually matches.
 func (e *StorageExecutor) findNodeByPattern(pattern nodePatternInfo) *storage.Node {
-	var candidates []*storage.Node
+	if len(pattern.labels) > 0 && len(pattern.properties) > 0 {
+		if schema := e.storage.GetSchema(); schema != nil {
+			label := pattern.labels[0]
+			for _, prop := range mergePropertyNamesSorted(pattern.properties) {
+				if _, ok := schema.GetPropertyIndex(label, prop); !ok {
+					continue
+				}
+				ids := schema.PropertyIndexLookup(label, prop, pattern.properties[prop])
+				for _, id := range ids {
+					n, err := e.storage.GetNode(id)
+					if err != nil || n == nil {
+						continue
+					}
+					if e.nodeMatchesProps(n, pattern.properties) {
+						return n
+					}
+				}
+				// Property is indexed; the index lookup is authoritative
+				// for this (label, prop) pair, so no fallback scan.
+				return nil
+			}
+		}
+	}
 
+	var candidates []*storage.Node
 	if len(pattern.labels) > 0 {
 		candidates, _ = e.storage.GetNodesByLabel(pattern.labels[0])
 	} else {

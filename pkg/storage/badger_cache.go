@@ -37,6 +37,125 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 	b.nodeCacheMu.Unlock()
 }
 
+// cacheLoadEdge returns the cached edge pointer if present.
+//
+// The pointer is shared with the cache and any other caller that took a
+// hit since the last write. Callers MUST treat the returned edge as
+// immutable; any mutation must clone via CopyEdge first. The cached body
+// is replaced wholesale on UpdateEdge / CreateEdge and dropped on
+// DeleteEdge, so a stable read keeps observing the value at the moment
+// of the cache hit even if a concurrent writer races.
+//
+// This is the hot path for BFS traversals (shortestPath, variable-length
+// MATCH). Profiling showed a per-hit copyEdge was ~33% of the warm
+// shortestPath benchmark. None of the current Get*Edges callers mutate
+// the returned edges, so sharing is correct.
+func (b *BadgerEngine) cacheLoadEdge(id EdgeID) (*Edge, bool) {
+	b.edgeCacheMu.RLock()
+	cached, ok := b.edgeCache[id]
+	b.edgeCacheMu.RUnlock()
+	if !ok || cached == nil {
+		return nil, false
+	}
+	return cached, true
+}
+
+// cacheStoreEdge inserts edge into the per-engine edge body cache. Stores a
+// deep copy so callers cannot mutate the cached state.
+func (b *BadgerEngine) cacheStoreEdge(edge *Edge) {
+	if edge == nil {
+		return
+	}
+	b.edgeCacheMu.Lock()
+	if b.edgeCacheMaxItems > 0 && len(b.edgeCache) > b.edgeCacheMaxItems {
+		b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	}
+	b.edgeCache[edge.ID] = copyEdge(edge)
+	b.edgeCacheMu.Unlock()
+}
+
+// cacheDeleteEdge drops an edge from the body cache. Called from the edge
+// mutation lifecycle hooks below.
+func (b *BadgerEngine) cacheDeleteEdge(id EdgeID) {
+	if id == "" {
+		return
+	}
+	b.edgeCacheMu.Lock()
+	delete(b.edgeCache, id)
+	b.edgeCacheMu.Unlock()
+}
+
+// cacheInvalidateEdges clears the entire edge body cache. Used by bulk
+// delete and other callers that can't enumerate affected IDs cheaply.
+func (b *BadgerEngine) cacheInvalidateEdges() {
+	b.edgeCacheMu.Lock()
+	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheMu.Unlock()
+}
+
+// adjCacheLoadOutgoing returns the cached EdgeIDs incident to nodeID as
+// outgoing, or (nil, false) on miss. Returned slice is shared with the
+// cache; callers must treat it as read-only.
+func (b *BadgerEngine) adjCacheLoadOutgoing(nodeID NodeID) ([]EdgeID, bool) {
+	b.adjCacheMu.RLock()
+	ids, ok := b.outgoingAdjCache[nodeID]
+	b.adjCacheMu.RUnlock()
+	return ids, ok
+}
+
+func (b *BadgerEngine) adjCacheLoadIncoming(nodeID NodeID) ([]EdgeID, bool) {
+	b.adjCacheMu.RLock()
+	ids, ok := b.incomingAdjCache[nodeID]
+	b.adjCacheMu.RUnlock()
+	return ids, ok
+}
+
+func (b *BadgerEngine) adjCacheStoreOutgoing(nodeID NodeID, ids []EdgeID) {
+	b.adjCacheMu.Lock()
+	if b.adjCacheMaxNodes > 0 && len(b.outgoingAdjCache) > b.adjCacheMaxNodes {
+		b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	}
+	// Defensive copy: the iterator's growslice can re-allocate, but the
+	// caller's slice is the canonical one. Store a fresh slice header.
+	cached := make([]EdgeID, len(ids))
+	copy(cached, ids)
+	b.outgoingAdjCache[nodeID] = cached
+	b.adjCacheMu.Unlock()
+}
+
+func (b *BadgerEngine) adjCacheStoreIncoming(nodeID NodeID, ids []EdgeID) {
+	b.adjCacheMu.Lock()
+	if b.adjCacheMaxNodes > 0 && len(b.incomingAdjCache) > b.adjCacheMaxNodes {
+		b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	}
+	cached := make([]EdgeID, len(ids))
+	copy(cached, ids)
+	b.incomingAdjCache[nodeID] = cached
+	b.adjCacheMu.Unlock()
+}
+
+// adjCacheInvalidateForEdge drops the entries for both endpoints of edge.
+// Called from edge create/update/delete lifecycle hooks. Cheap (two map
+// deletes per edge mutation), so we don't bother batching.
+func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
+	if edge == nil {
+		return
+	}
+	b.adjCacheMu.Lock()
+	delete(b.outgoingAdjCache, edge.StartNode)
+	delete(b.incomingAdjCache, edge.EndNode)
+	b.adjCacheMu.Unlock()
+}
+
+// adjCacheInvalidateAll clears the entire adjacency cache. Used by bulk
+// edge deletion paths that can't cheaply enumerate the affected node IDs.
+func (b *BadgerEngine) adjCacheInvalidateAll() {
+	b.adjCacheMu.Lock()
+	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.adjCacheMu.Unlock()
+}
+
 func (b *BadgerEngine) labelCacheGetFirst(label string) (NodeID, bool) {
 	if label == "" {
 		return "", false
@@ -209,6 +328,8 @@ func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
 		return
 	}
 	b.InvalidateEdgeTypeCacheForType(edge.Type)
+	b.cacheStoreEdge(edge)
+	b.adjCacheInvalidateForEdge(edge)
 	b.edgeCount.Add(1)
 	b.addNamespaceEdgeCount(edge.ID, 1)
 }
@@ -223,6 +344,13 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 		b.InvalidateEdgeTypeCacheForType(oldType)
 	}
 	b.InvalidateEdgeTypeCacheForType(newEdge.Type)
+	b.cacheStoreEdge(newEdge)
+	// Endpoints can change on update; the safe move is to drop the
+	// adjacency entries for the new endpoints. (Old endpoints, if any
+	// changed, are handled by the writer that supplied oldNode/oldEdge —
+	// see the per-engine UpdateEdge path which calls this hook AFTER
+	// already passing the stale pair through DeleteEdge index removal.)
+	b.adjCacheInvalidateForEdge(newEdge)
 }
 
 func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
@@ -231,6 +359,12 @@ func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
 	} else {
 		b.InvalidateEdgeTypeCache()
 	}
+	b.cacheDeleteEdge(id)
+	// Without the edge body we can't target the endpoint nodes; clear
+	// everything. Bulk delete paths use the same fallback. Adjacency
+	// cache misses recover via a single index iteration on the next
+	// read, so the worst case is one extra iteration per affected node.
+	b.adjCacheInvalidateAll()
 	b.edgeCount.Add(-1)
 	b.addNamespaceEdgeCount(id, -1)
 }
@@ -248,6 +382,8 @@ func (b *BadgerEngine) cacheOnEdgesCreated(edges []*Edge) {
 			continue
 		}
 		b.addNamespaceEdgeCount(edge.ID, 1)
+		b.cacheStoreEdge(edge)
+		b.adjCacheInvalidateForEdge(edge)
 	}
 }
 
@@ -257,6 +393,8 @@ func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 	}
 	// Bulk delete may cover many types; invalidate once.
 	b.InvalidateEdgeTypeCache()
+	b.cacheInvalidateEdges()
+	b.adjCacheInvalidateAll()
 	b.edgeCount.Add(-int64(len(deletedIDs)))
 
 	// Batch namespace updates under a single lock.
