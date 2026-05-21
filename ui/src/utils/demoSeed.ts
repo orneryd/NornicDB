@@ -104,11 +104,11 @@ export function generateGalaxy(seed = 42): DemoGalaxy {
   // deep multi-hop paths and the visual topology stays the same as the
   // smaller demo — just bigger.
   const sectorCount = 20;
-  const starsPerSector = 50;
+  const starsPerSector = 100;
   // Intra-sector edges are by far the largest contributor to total edge
   // count (200K+ at this scale). Two per star keeps the sector visually
   // connected without flooding the seeder.
-  const intraEdgesPerStar = 3;
+  const intraEdgesPerStar = 7;
   const gatewaysPerLink = 2;
 
   const rand = pseudoRand(seed);
