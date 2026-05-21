@@ -1,0 +1,23 @@
+docs/performance/hot-path-query-cookbook.md
+  s_f2f7fbb6f30866::t_ddb4e032158fd4 497-503
+pkg/cypher/transaction.go
+  s_f2f7fbb6f30866::t_165c55e8d44238 457-460
+pkg/cypher/transaction_namespace_test.go
+  s_f2f7fbb6f30866::t_db1896fff73e81 250-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "e425c5672299a5076d195aa635c545c01b706c0c",
+  "prompts": {},
+  "sessions": {
+    "s_f2f7fbb6f30866": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e360b-90eb-7472-bac7-56d488b65f77",
+        "model": "gpt-5.5"
+      },
+      "human_author": "linuxdynasty <1255573+linuxdynasty@users.noreply.github.com>"
+    }
+  }
+}
