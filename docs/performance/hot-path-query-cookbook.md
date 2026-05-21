@@ -494,6 +494,13 @@ LIMIT 1;
 
 Use when the API needs immediate confirmed view of updated data.
 
+Explicit transaction dispatch must preserve the same routing as implicit
+execution for `MATCH ... MERGE ... ON CREATE SET` shapes: classify the statement
+as `MATCH ... MERGE` before checking for `MATCH ... CREATE`, because `ON CREATE
+SET` is a MERGE modifier rather than a CREATE clause. This keeps constrained
+MERGE lookups on the `MergeSchemaLookupUsed` path inside `BEGIN`/`COMMIT`
+sessions and avoids accidentally falling back to relationship-create parsing.
+
 ### 7.3 Bulk Ingestion With UNWIND
 
 ```cypher

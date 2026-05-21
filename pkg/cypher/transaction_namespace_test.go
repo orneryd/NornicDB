@@ -28,6 +28,21 @@ func countFromResult(t *testing.T, result *ExecuteResult) int64 {
 	}
 }
 
+func executeExplicitTransactionQueryForTrace(t *testing.T, exec *StorageExecutor, ctx context.Context, query string) (*ExecuteResult, HotPathTrace) {
+	t.Helper()
+	_, err := exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+
+	exec.resetHotPathTrace()
+	result, err := exec.Execute(ctx, strings.TrimSpace(query), nil)
+	require.NoError(t, err)
+	trace := exec.LastHotPathTrace()
+
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+	return result, trace
+}
+
 func TestExplicitTransaction_NamespacedCreateCommit(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
@@ -245,6 +260,71 @@ func TestExecuteQueryAgainstStorage_DispatchCoverage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExplicitTransaction_MatchMergeOnCreateRoutesToMerge(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	for _, stmt := range []string{
+		"CREATE CONSTRAINT dispatch_source_uid_unique IF NOT EXISTS FOR (n:DispatchSource) REQUIRE n.uid IS UNIQUE",
+		"CREATE CONSTRAINT dispatch_target_uid_unique IF NOT EXISTS FOR (n:DispatchTarget) REQUIRE n.uid IS UNIQUE",
+	} {
+		_, err := exec.Execute(ctx, stmt, nil)
+		require.NoError(t, err)
+	}
+
+	_, err := exec.Execute(ctx, "CREATE (:DispatchSource {uid: 'source-1'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:DispatchTarget {uid: 'target-existing', created: false})", nil)
+	require.NoError(t, err)
+
+	result, trace := executeExplicitTransactionQueryForTrace(t, exec, ctx, `
+		MATCH (s:DispatchSource {uid: 'source-1'})
+		MERGE (t:DispatchTarget {uid: 'target-1'})
+		ON CREATE SET t.created = true
+		MERGE (s)-[rel:DISPATCHES_TO]->(t)
+		ON CREATE SET rel.created = true
+		RETURN t.uid
+	`)
+	require.NotNil(t, result)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "target-1", result.Rows[0][0])
+	require.True(t, trace.MergeSchemaLookupUsed,
+		"MATCH...MERGE with ON CREATE SET must route through merge handling and use schema lookup")
+	require.False(t, trace.MergeScanFallbackUsed,
+		"DispatchTarget.uid has a unique constraint; label scan fallback is not justified")
+
+	verifyCreated, err := exec.Execute(ctx, `
+		MATCH (s:DispatchSource {uid: 'source-1'})-[rel:DISPATCHES_TO]->(t:DispatchTarget {uid: 'target-1'})
+		RETURN t.created, count(rel)
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, verifyCreated.Rows, 1)
+	require.Equal(t, true, verifyCreated.Rows[0][0])
+	require.Equal(t, int64(1), verifyCreated.Rows[0][1])
+
+	result, trace = executeExplicitTransactionQueryForTrace(t, exec, ctx, `
+		MATCH (s:DispatchSource {uid: 'source-1'})
+		MERGE (t:DispatchTarget {uid: 'target-existing'})
+		ON CREATE SET t.created = true
+		ON MATCH SET t.matched = true
+		SET t.lastSeen = 'tx'
+		MERGE (s)-[rel:DISPATCHES_TO]->(t)
+		ON CREATE SET rel.created = true
+		RETURN t.uid, t.matched, t.lastSeen
+	`)
+	require.NotNil(t, result)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "target-existing", result.Rows[0][0])
+	require.Equal(t, true, result.Rows[0][1])
+	require.Equal(t, "tx", result.Rows[0][2])
+	require.True(t, trace.MergeSchemaLookupUsed,
+		"MATCH...MERGE with ON MATCH SET and standalone SET must stay on merge handling")
+	require.False(t, trace.MergeScanFallbackUsed,
+		"matched DispatchTarget.uid has a unique constraint; label scan fallback is not justified")
 }
 
 func TestExecuteQueryAgainstStorage_ShowDispatchWithDatabaseManager(t *testing.T) {

@@ -450,13 +450,14 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 		if findKeywordIndex(cypher, "OPTIONAL MATCH") > 0 {
 			return e.executeCompoundMatchOptionalMatch(ctx, cypher)
 		}
-		// Check for compound MATCH...CREATE queries
-		if findKeywordIndex(cypher, "CREATE") > 0 {
-			return e.executeCompoundMatchCreate(ctx, cypher)
-		}
 		// Check for compound MATCH...MERGE queries
 		if findKeywordIndex(cypher, "MERGE") > 0 {
 			return e.executeCompoundMatchMerge(ctx, cypher)
+		}
+		// Check for compound MATCH...CREATE queries. This must stay after
+		// MATCH...MERGE because MERGE modifiers contain ON CREATE SET.
+		if findKeywordIndex(cypher, "CREATE") > 0 {
+			return e.executeCompoundMatchCreate(ctx, cypher)
 		}
 		return e.executeMatch(ctx, cypher)
 	case strings.HasPrefix(upper, "OPTIONAL MATCH"):
