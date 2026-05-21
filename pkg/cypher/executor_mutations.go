@@ -1164,10 +1164,11 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 						continue
 					}
 					setNodeProperty(entity, propName, propValue)
-					if err := store.UpdateNode(entity); err == nil {
-						result.Stats.PropertiesSet++
-						e.notifyNodeMutated(string(entity.ID))
+					if err := store.UpdateNode(entity); err != nil {
+						return nil, fmt.Errorf("SET %s.%s: %w", variable, propName, err)
 					}
+					result.Stats.PropertiesSet++
+					e.notifyNodeMutated(string(entity.ID))
 				case *storage.Edge:
 					if entity == nil {
 						continue
@@ -1176,9 +1177,10 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 						entity.Properties = make(map[string]interface{})
 					}
 					entity.Properties[propName] = propValue
-					if err := store.UpdateEdge(entity); err == nil {
-						result.Stats.PropertiesSet++
+					if err := store.UpdateEdge(entity); err != nil {
+						return nil, fmt.Errorf("SET %s.%s: %w", variable, propName, err)
 					}
+					result.Stats.PropertiesSet++
 				}
 			}
 		}

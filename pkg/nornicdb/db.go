@@ -1240,22 +1240,33 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if db.accessFlusher != nil {
 		db.accessFlusher.Start(db.buildCtx)
 	}
+	// Temporal index + MVCC head rebuild MUST complete before Open() returns.
+	// Both ops touch the same key prefixes that user mutations write to, so
+	// running them concurrently with the first user CreateNode/UpdateNode
+	// produces races where the rebuild rewrites the head a user txn just
+	// observed → MVCC SSI conflict, with the user txn silently swallowed by
+	// some Cypher write paths (executor_mutations.go's `if err == nil` SET).
+	// Both rebuild ops are fast (single-pass scans) on a fresh DB; on a
+	// recovered DB they are bounded by node/edge count.
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
+	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
+		log.Printf("🕰️ Rebuilding temporal indexes before serving traffic...")
+		if err := maint.RebuildTemporalIndexes(bootstrapCtx); err != nil {
+			log.Printf("⚠️  Temporal index rebuild failed: %v", err)
+		}
+	}
+	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+		log.Printf("🧾 Rebuilding MVCC heads before serving traffic...")
+		if err := maint.RebuildMVCCHeads(bootstrapCtx); err != nil {
+			log.Printf("⚠️  MVCC head rebuild failed: %v", err)
+		}
+	}
+	bootstrapCancel()
+
 	_ = db.startBackgroundTask(func() {
 		ctx, cancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
 		defer cancel()
 
-		if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
-			log.Printf("🕰️ Rebuilding temporal indexes before search warmup...")
-			if err := maint.RebuildTemporalIndexes(ctx); err != nil {
-				log.Printf("⚠️  Temporal index rebuild failed: %v", err)
-			}
-		}
-		if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
-			log.Printf("🧾 Rebuilding MVCC heads before search warmup...")
-			if err := maint.RebuildMVCCHeads(ctx); err != nil {
-				log.Printf("⚠️  MVCC head rebuild failed: %v", err)
-			}
-		}
 		if db.lifecycleManager != nil {
 			db.lifecycleManager.StartLifecycle(db.buildCtx)
 			if db.config.Database.MVCCLifecycleCycleInterval > 0 {
