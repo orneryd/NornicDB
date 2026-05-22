@@ -37,10 +37,10 @@ var httpGet = []byte("GET ")
 // to hold a full WebSocket handshake plus several Bolt RECORD batches.
 const defaultPeekBufferSize = 256 * 1024
 
-// boltSniffTimeout bounds how long peekTransport will wait for the first
-// five bytes of a connection. Exposed as a package-level var so the server
-// can override it; mirrors Neo4j's transport-sniff budget (default 5s).
-var boltSniffTimeout = 5 * time.Second
+// defaultBoltSniffTimeout bounds how long peekTransport will wait for the
+// first five bytes of a connection when callers pass sniffTimeout=0.
+// Mirrors Neo4j's transport-sniff budget.
+const defaultBoltSniffTimeout = 5 * time.Second
 
 // ErrUnencryptedRequired is returned when peekTransport refuses a plaintext
 // connection because RequireTLS is set. The error text matches Neo4j's
@@ -80,16 +80,20 @@ func peekTransport(
 	isEncrypted bool,
 	requireTLS bool,
 	bufSize int,
+	sniffTimeout time.Duration,
 ) (kind transportKind, conn2 net.Conn, br *bufio.Reader, err error) {
 	if bufSize <= 0 {
 		bufSize = defaultPeekBufferSize
+	}
+	if sniffTimeout <= 0 {
+		sniffTimeout = defaultBoltSniffTimeout
 	}
 
 	// TODO: pool *bufio.Reader to avoid one allocation per accept under
 	// WS-storm load.
 	br = bufio.NewReaderSize(conn, bufSize)
 
-	if err = conn.SetReadDeadline(time.Now().Add(boltSniffTimeout)); err != nil {
+	if err = conn.SetReadDeadline(time.Now().Add(sniffTimeout)); err != nil {
 		return 0, conn, nil, fmt.Errorf("set sniff read deadline: %w", err)
 	}
 
@@ -120,7 +124,7 @@ func peekTransport(
 		}
 		// Recurse on the decrypted stream. isEncrypted=true forbids
 		// nested TLS in the recursive call.
-		return peekTransport(tlsConn, tlsCfg, true, requireTLS, bufSize)
+		return peekTransport(tlsConn, tlsCfg, true, requireTLS, bufSize, sniffTimeout)
 
 	case bytes.HasPrefix(head, httpGet):
 		if requireTLS && !isEncrypted {

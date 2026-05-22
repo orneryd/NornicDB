@@ -29,21 +29,23 @@ A WebSocket BinaryMessage carries the same Bolt bytes that a raw TCP session wou
 
 ## URL Schemes
 
-Drivers may use these schemes; on the wire they all collapse onto one of the four wire-level transports above.
+The official Neo4j drivers (Java, Go, Python, .NET, JavaScript) accept only the canonical Bolt schemes — `bolt`, `bolt+s`, `bolt+ssc`, `neo4j`, `neo4j+s`, `neo4j+ssc`. They do NOT take `ws://` / `wss://` URLs; the browser build of the JS driver picks the WebSocket transport internally based on the runtime, while the Node build picks raw TCP. Either way you pass a `bolt://` URL.
 
-| Driver scheme          | What the server sees                                    |
-|------------------------|---------------------------------------------------------|
-| `bolt://`              | `tcp`                                                   |
-| `bolt+s://`            | `tcp_tls`                                               |
-| `bolt+ssc://`          | `tcp_tls` (driver disables cert verification client-side) |
-| `ws://`                | `ws`                                                    |
-| `wss://`               | `ws_tls`                                                |
-| `neo4j://`             | `tcp` + driver-side routing wrapper                     |
-| `neo4j+s://`           | `tcp_tls` + routing                                     |
-| `neo4j+ssc://`         | `tcp_tls` + routing (no client-side verification)       |
-| `neo4j+ws://` (some drivers) | `ws` + routing                                    |
+| Driver scheme          | Runtime    | Wire transport produced |
+|------------------------|------------|--------------------------|
+| `bolt://host:7687`     | Node / JVM | `tcp`                    |
+| `bolt://host:7687`     | Browser JS | `ws`                     |
+| `bolt+s://host:7687`   | Node / JVM | `tcp_tls`                |
+| `bolt+s://host:7687`   | Browser JS | `ws_tls`                 |
+| `bolt+ssc://`          | Any        | Same as `bolt+s` (driver disables cert verification client-side) |
+| `neo4j://`             | Node / JVM | `tcp` + driver-side routing |
+| `neo4j://`             | Browser JS | `ws` + routing           |
+| `neo4j+s://`           | —          | `tcp_tls` / `ws_tls` + routing |
+| `neo4j+ssc://`         | —          | Same as `neo4j+s`, no client-side cert verification |
 
 The routing wrappers (`neo4j://*`) ask the server for a routing table via the ROUTE message; NornicDB returns a single-server table pointing at the listener's address.
+
+If you're a third-party tool already speaking raw WebSockets and bypassing the Neo4j driver, the server *also* accepts unwrapped `ws://` / `wss://` upgrades on the same port — it just means dialing the WS handshake yourself and writing Bolt bytes into BinaryMessage frames. That path is the same wire-level transport the JS driver's browser build produces internally.
 
 ## Authentication
 
@@ -72,14 +74,17 @@ The raw TCP transports (`bolt://`, `bolt+s://`) have no HTTP layer; the implicit
 import neo4j from "neo4j-driver";
 
 // Browser: same-origin cookie carries the JWT; auth.none() suffices.
+// The driver's URL scheme is bolt:// — its browser build picks the
+// WebSocket transport internally, so the wire is still ws:// frames.
 const driver = neo4j.driver(
-  "ws://localhost:7687",
-  neo4j.auth.none()
+  "bolt://localhost:7687",
+  // neo4j-driver's auth.none() is browser-only; in TS pass the literal.
+  { scheme: "none" }
 );
 
-// Node.js: explicit bearer; the cookie path is browser-only.
+// Node.js: explicit bearer (no implicit-cookie path on raw TCP).
 const driverNode = neo4j.driver(
-  "ws://localhost:7687",
+  "bolt://localhost:7687",
   neo4j.auth.bearer(process.env.NORNICDB_TOKEN)
 );
 
@@ -96,7 +101,8 @@ await driver.close();
 For TLS:
 
 ```javascript
-const driver = neo4j.driver("wss://nornicdb.example.com:7687", neo4j.auth.basic("alice", "alice-password"));
+// In a browser served over HTTPS this becomes a wss:// frame on the wire.
+const driver = neo4j.driver("bolt+s://nornicdb.example.com:7687", neo4j.auth.basic("alice", "alice-password"));
 ```
 
 ### Go
@@ -168,7 +174,7 @@ driver.close();
 
 Browsers cannot open raw TCP sockets, so browser-based Cypher tooling (Neo4j Browser, Bloom, custom React/Vue UIs using `neo4j-driver` in-browser) must use `ws://` or `wss://`.
 
-The NornicDB UI itself uses `ws://` and relies on the same-origin `nornicdb_token` cookie set by login. No additional config is required for first-party browser clients — set the cookie via `/auth/token` (or finish OAuth via `/auth/oauth/callback`) and `neo4j.driver("ws://host:7687", neo4j.auth.none())` Just Works.
+The NornicDB UI itself runs the official `neo4j-driver` browser build with a `bolt://` URL and `auth.none()`; the driver's browser channel turns that into a `ws://` upgrade on the wire, the same-origin `nornicdb_token` cookie rides along, and the server's HELLO handler promotes the session to that cookie's claims. No additional config is required for first-party browser clients — sign in via `/auth/token` (or finish OAuth via `/auth/oauth/callback`) and Cypher queries Just Work.
 
 For cross-origin browser clients (e.g. a UI on `https://app.example.com` connecting to `wss://bolt.example.com:7687`), the cookie's `SameSite=Lax` setting prevents the browser from attaching it to the WS upgrade. Two options:
 

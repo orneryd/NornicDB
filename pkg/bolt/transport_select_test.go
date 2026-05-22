@@ -100,7 +100,7 @@ func TestPeekTransport_T1_BoltMagic(t *testing.T) {
 		_, _ = client.Write(payload)
 	}()
 
-	kind, conn, br, err := peekTransport(server, nil, false, false, 0)
+	kind, conn, br, err := peekTransport(server, nil, false, false, 0, 0)
 	if err != nil {
 		t.Fatalf("peekTransport: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestPeekTransport_T2_GET(t *testing.T) {
 
 	go func() { _, _ = client.Write(payload) }()
 
-	kind, _, br, err := peekTransport(server, nil, false, false, 0)
+	kind, _, br, err := peekTransport(server, nil, false, false, 0, 0)
 	if err != nil {
 		t.Fatalf("peekTransport: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestPeekTransport_T3_TLSByteNoConfig(t *testing.T) {
 
 	go func() { _, _ = client.Write(payload) }()
 
-	_, _, _, err := peekTransport(server, nil, false, false, 0)
+	_, _, _, err := peekTransport(server, nil, false, false, 0, 0)
 	if err == nil {
 		t.Fatalf("expected unrecognized-prefix error, got nil")
 	}
@@ -188,7 +188,7 @@ func runTLSCase(t *testing.T, payload []byte, want transportKind) {
 	}
 	t.Cleanup(func() { _ = rawConn.Close() })
 
-	kind, _, br, err := peekTransport(rawConn, srvCfg, false, false, 0)
+	kind, _, br, err := peekTransport(rawConn, srvCfg, false, false, 0, 0)
 	if err != nil {
 		t.Fatalf("peekTransport: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestPeekTransport_T7_NestedTLSRejected(t *testing.T) {
 
 	go func() { _, _ = client.Write(payload) }()
 
-	_, _, _, err := peekTransport(server, srvCfg, true, false, 0)
+	_, _, _, err := peekTransport(server, srvCfg, true, false, 0, 0)
 	if err == nil {
 		t.Fatalf("expected error on nested TLS, got nil")
 	}
@@ -242,7 +242,7 @@ func TestPeekTransport_T8_RequireTLSWithGET(t *testing.T) {
 	server, client := pipePair(t)
 	go func() { _, _ = client.Write([]byte("GET /")) }()
 
-	_, _, _, err := peekTransport(server, nil, false, true, 0)
+	_, _, _, err := peekTransport(server, nil, false, true, 0, 0)
 	if !errors.Is(err, ErrUnencryptedRequired) {
 		t.Fatalf("error = %v, want ErrUnencryptedRequired", err)
 	}
@@ -257,7 +257,7 @@ func TestPeekTransport_T9_RequireTLSWithBolt(t *testing.T) {
 	payload := append(append([]byte{}, boltMagic...), 0xAA)
 	go func() { _, _ = client.Write(payload) }()
 
-	_, _, _, err := peekTransport(server, nil, false, true, 0)
+	_, _, _, err := peekTransport(server, nil, false, true, 0, 0)
 	if !errors.Is(err, ErrUnencryptedRequired) {
 		t.Fatalf("error = %v, want ErrUnencryptedRequired", err)
 	}
@@ -268,7 +268,7 @@ func TestPeekTransport_T10_UnrecognizedPrefix(t *testing.T) {
 	server, client := pipePair(t)
 	go func() { _, _ = client.Write([]byte{0x00, 0x01, 0x02, 0x03, 0x04}) }()
 
-	_, _, _, err := peekTransport(server, nil, false, false, 0)
+	_, _, _, err := peekTransport(server, nil, false, false, 0, 0)
 	if err == nil {
 		t.Fatalf("expected unrecognized-prefix error, got nil")
 	}

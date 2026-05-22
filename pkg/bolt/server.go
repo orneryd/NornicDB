@@ -1000,7 +1000,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.activeConnections.Add(1)
 	}
 	defer s.activeConnections.Add(-1)
-	defer conn.Close()
+	// closeTarget is the conn we close on exit. It starts as the raw
+	// accepted conn and is replaced by the post-sniff wrapper (a
+	// *tls.Conn, *wsConn, or both) once transport selection runs, so
+	// the right shutdown semantics fire on the way out — TLS sends
+	// close_notify, wsConn writes a WS close frame, etc. Closing the
+	// raw conn directly would skip those.
+	closeTarget := conn
+	defer func() { _ = closeTarget.Close() }()
 
 	// Disable Nagle's algorithm on the underlying TCP socket for lower
 	// latency. Harmless no-op for non-TCP wrappers (tls.Conn, wsConn).
@@ -1053,6 +1060,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		false, // not yet encrypted
 		s.config.RequireTLS,
 		s.config.ReadBufferSize,
+		s.config.BoltSniffTimeout,
 	)
 	if err != nil {
 		reason := classifySniffError(err)
@@ -1085,6 +1093,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// pass br (not a fresh bufio.NewReaderSize) into Session so the peeked
 	// bytes flow into the Bolt handshake.
 	transportLabel = transportLabelFor(kind, sniffedConn)
+	// Close the TLS wrapper on exit (sends close_notify); a *tls.Conn
+	// returned from peekTransport otherwise wouldn't shut down cleanly.
+	closeTarget = sniffedConn
 
 	// On WS branch, run the HTTP request through the discovery handler
 	// first; only then upgrade. wsConn replaces sniffedConn for the rest of
@@ -1113,6 +1124,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 		sniffedConn = res.conn
 		br = res.br
 		implicitBearer = res.implicitBearer
+		// Now the *wsConn is the outermost wrapper; closing it sends a
+		// WS close frame before tearing down the underlying transport.
+		closeTarget = sniffedConn
 	case transportRaw:
 		// nothing to do; sniffedConn + br carry the peeked Bolt magic
 	}

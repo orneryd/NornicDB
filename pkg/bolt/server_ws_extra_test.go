@@ -362,11 +362,16 @@ func TestWSBolt_AuthorizationHeaderHonored(t *testing.T) {
 
 // S-CookieWinsOverHeader — when both a cookie and an Authorization
 // header are present, the cookie wins (it's first-party-set).
+//
+// The test gives the cookie's user (alice) admin and the header's
+// user (bob) viewer-only, then wires a DatabaseAccessModeResolver that
+// allows admin and denies viewer. If the cookie path wins, the
+// follow-up RUN/PULL completes; if the header path were chosen
+// instead, the per-DB access check would surface
+// Neo.ClientError.Security.Forbidden mid-stream. Both auth attempts
+// validate successfully on their own, so the role check is the only
+// observable distinguisher.
 func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
-	// Build two distinct admin tokens for two distinct users; cookie
-	// carries one, Authorization carries the other; assert HELLO
-	// SUCCESS (cookie path wins), the bearer is consumed, and no
-	// FAILURE leaks through.
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
@@ -375,7 +380,7 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	requireNoError(t, err)
 	_, err = authenticator.CreateUser("alice", "alice-password", []auth.Role{auth.RoleAdmin})
 	requireNoError(t, err)
-	_, err = authenticator.CreateUser("bob", "bob-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser("bob", "bob-password", []auth.Role{auth.RoleViewer})
 	requireNoError(t, err)
 	aliceResp, _, err := authenticator.Authenticate("alice", "alice-password", "127.0.0.1", "test")
 	requireNoError(t, err)
@@ -386,6 +391,8 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	cfg.RequireAuth = true
 	cfg.Authenticator = NewAuthenticatorAdapter(authenticator)
 	srv, port := startWSBoltServer(t, cfg)
+	// Admin reaches every database; viewer is denied. The asymmetry is
+	// what makes the cookie-vs-header outcome observable downstream.
 	srv.SetDatabaseAccessModeResolver(func(roles []string) auth.DatabaseAccessMode {
 		for _, r := range roles {
 			if r == string(auth.RoleAdmin) {
@@ -395,7 +402,7 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 		return auth.DenyAllDatabaseAccessMode
 	})
 
-	// Cookie = alice; Authorization = bob. Cookie must win.
+	// Cookie = alice (admin); Authorization = bob (viewer). Cookie must win.
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 	u := url.URL{Scheme: "ws", Host: fmt.Sprintf("127.0.0.1:%d", port), Path: "/"}
 	hdr := http.Header{}
@@ -408,16 +415,37 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	conn := &wsConnAdapter{ws: ws}
 	requireNoError(t, PerformHandshakeWithTesting(t, conn))
 	requireNoError(t, SendHello(t, conn, nil))
-	// HELLO SUCCESS metadata is opaque to this test, but the bare fact
-	// that we got SUCCESS (not FAILURE) and that subsequent queries
-	// succeed proves the cookie path validated. To prove "cookie wins,
-	// not header", we also assert the session uses cookie's claims by
-	// running a query — both users are admins so either set succeeds,
-	// but the tampered-vs-clean flow is exercised: the session won't
-	// fail mid-run because the token chosen was valid.
 	requireNoError(t, ReadSuccess(t, conn))
 	requireNoError(t, SendRun(t, conn, "RETURN 1 AS x", nil, nil))
-	requireNoError(t, ReadSuccess(t, conn))
+	if mt, data, err := ReadMessage(conn); err != nil {
+		t.Fatalf("read after RUN: %v", err)
+	} else if mt == MsgFailure {
+		// If the header path had won, this is exactly where the test
+		// would diverge: bob's viewer role would trigger
+		// Neo.ClientError.Security.Forbidden on the access check.
+		t.Fatalf("RUN failed (header path likely won): %s", string(data))
+	} else if mt != MsgSuccess {
+		t.Fatalf("RUN got 0x%02X (expected SUCCESS)", mt)
+	}
+	requireNoError(t, SendPull(t, conn, nil))
+	gotRecords := 0
+	for {
+		mt, data, err := ReadMessage(conn)
+		requireNoError(t, err)
+		switch mt {
+		case MsgRecord:
+			gotRecords++
+		case MsgSuccess:
+			if gotRecords != 1 {
+				t.Fatalf("expected 1 RECORD, got %d", gotRecords)
+			}
+			return
+		case MsgFailure:
+			t.Fatalf("PULL failed: %s", string(data))
+		default:
+			t.Fatalf("unexpected msg 0x%02X", mt)
+		}
+	}
 }
 
 // S-StrayHeaderIgnoredUnderHELLO — when the HELLO carries scheme=bearer

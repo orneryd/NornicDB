@@ -1,13 +1,18 @@
 // NornicDB API Client
 
-// neo4j-driver ships a `browser` field in its package.json that Vite
-// resolves automatically — the browser build understands ws:// and
-// wss:// URLs. The Node entry (which is what the package's `main`
-// field points at) does NOT recognize those schemes, but Vite swaps in
-// the browser internals at bundle time, so this single import works.
+// neo4j-driver ships a `browser` field in its package.json that swaps
+// the package's node-internal channel for the browser channel at bundle
+// time (Rolldown under Vite 8 needs an explicit plugin — see
+// vite.config.ts). The driver's URL parser still only accepts the
+// canonical Bolt schemes (bolt / bolt+s / neo4j / neo4j+s); the
+// browser channel is what turns those into WebSocket frames on the
+// wire, so this single import is enough as long as the channel swap
+// is wired in vite.config.ts.
 import neo4j, {
+  isInt,
   type AuthToken,
   type Driver,
+  type Integer,
   type Session,
 } from "neo4j-driver";
 import { BASE_PATH, joinBasePath } from "./basePath";
@@ -380,8 +385,6 @@ export interface KPDeindexStatusResponse {
 interface DiscoveryResponse {
   bolt_direct: string;
   bolt_routing: string;
-  ws_direct?: string; // NornicDB extension: ws:// equivalent of bolt://
-  wss_direct?: string; // NornicDB extension: wss:// equivalent of bolt+s://
   transaction: string;
   neo4j_version: string;
   neo4j_edition: string;
@@ -401,25 +404,16 @@ function neo4jValueToPlain(v: unknown): unknown {
   if (v === null || v === undefined) {
     return v;
   }
-  // neo4j Integer: { low, high, toNumber, toString }. Use safeNumber:
-  // values that fit in JS Number become Number; larger become String
-  // (the HTTP path also serialized big ints as Strings via JSON).
-  if (
-    typeof v === "object" &&
-    "low" in (v as Record<string, unknown>) &&
-    "high" in (v as Record<string, unknown>) &&
-    typeof (v as { toNumber?: () => number }).toNumber === "function"
-  ) {
-    const intLike = v as {
-      low: number;
-      high: number;
-      toNumber: () => number;
-      toString: () => string;
-    };
-    if (intLike.high === 0 || intLike.high === -1) {
-      return intLike.toNumber();
+  // neo4j Integer: detected via the driver's isInt() typeguard. Values
+  // within Number.MIN_SAFE_INTEGER..MAX_SAFE_INTEGER come back as JS
+  // Number; larger ones round-trip as String to avoid precision loss
+  // (matching the HTTP /tx/commit path's JSON serialization).
+  if (isInt(v)) {
+    const intValue = v as Integer;
+    if (intValue.inSafeRange()) {
+      return intValue.toNumber();
     }
-    return intLike.toString();
+    return intValue.toString();
   }
   // Node / Relationship / PathSegment: serialize properties + identity.
   // Surface elementId at the top level so downstream consumers
@@ -612,7 +606,7 @@ class NornicDBClient {
 
   // Get default database name from discovery endpoint. As a side effect
   // this also caches the full DiscoveryResponse so getBoltDriver can
-  // pick the ws:// or wss:// URL the server advertises.
+  // read bolt_direct (and pick its scheme based on the page protocol).
   private async getDefaultDatabase(): Promise<string> {
     if (this.defaultDatabase) {
       return this.defaultDatabase;

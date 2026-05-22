@@ -35,13 +35,14 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		host = "localhost"
 	}
 
-	// Neo4j-compatible discovery response - minimal info to reduce reconnaissance surface
-	// Feature details moved to authenticated /status endpoint
+	// Neo4j-compatible discovery response - minimal info to reduce reconnaissance surface.
+	// Feature details moved to authenticated /status endpoint.
 	//
-	// ws_direct / wss_direct are NornicDB extensions: browser-based
-	// clients use these to construct neo4j-driver Bolt-over-WS sessions.
-	// All four bolt URLs share s.config.BoltPort so non-default ports
-	// (Docker, multi-instance dev) are reflected accurately.
+	// All bolt URLs share s.config.BoltPort so non-default ports
+	// (Docker, multi-instance dev) are reflected accurately. Browser
+	// clients use bolt:// (or bolt+s:// over HTTPS) — neo4j-driver's
+	// browser bundle picks the WebSocket transport internally; the
+	// driver itself rejects ws:// / wss:// schemes via its allowlist.
 	boltPort := s.config.BoltPort
 	if boltPort == 0 {
 		boltPort = 7687
@@ -49,8 +50,6 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"bolt_direct":   fmt.Sprintf("bolt://%s:%d", host, boltPort),
 		"bolt_routing":  fmt.Sprintf("neo4j://%s:%d", host, boltPort),
-		"ws_direct":     fmt.Sprintf("ws://%s:%d", host, boltPort),
-		"wss_direct":    fmt.Sprintf("wss://%s:%d", host, boltPort),
 		"transaction":   fmt.Sprintf("http://%s:%d/db/{databaseName}/tx", host, s.config.Port),
 		"neo4j_version": "5.0.0",
 		"neo4j_edition": "community",
