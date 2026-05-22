@@ -1,0 +1,39 @@
+pkg/storage/wal.go
+  s_f2f7fbb6f30866::t_dfd0af75bece77 2336,2339,2571,2574
+docs/property-key-dictionary.md
+  s_f2f7fbb6f30866::t_51dd8e2297c811 105-108
+pkg/nornicdb/storage_recovery.go
+  s_f2f7fbb6f30866::t_9f3f4f0107b2c1 174,178
+  s_f2f7fbb6f30866::t_5d9d31e331c5aa 41
+pkg/storage/wal_recovery_chunking_test.go
+  s_f2f7fbb6f30866::t_bbe2ed6fa1e234 1-61
+pkg/storage/wal_recovery_chunking.go
+  s_f2f7fbb6f30866::t_96297bb2c4e5aa 1-54
+docs/features/feature-flags.md
+  s_f2f7fbb6f30866::t_063f69a02d1f2b 270-271
+docs/operations/troubleshooting.md
+  s_f2f7fbb6f30866::t_10c1ad4bfec41e 252-258
+pkg/nornicdb/storage_recovery_test.go
+  s_f2f7fbb6f30866::t_0f62b12c1c5950 259-309
+  s_f2f7fbb6f30866::t_32445a913ab389 222,229,256
+  s_f2f7fbb6f30866::t_4795b5b3bc04fd 90,217-218,221,224,230,232,239-249,251,253-255
+  s_f2f7fbb6f30866::t_0ad2f192f04d85 7
+  s_f2f7fbb6f30866::t_3587b2f9ace56c 219-220,223,225-228,231,233-238
+  s_f2f7fbb6f30866::t_d0a6d313833ae3 250,252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "1cfe1412dfbe98a93cff49f876d89ba81ee87c9c",
+  "prompts": {},
+  "sessions": {
+    "s_f2f7fbb6f30866": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e360b-90eb-7472-bac7-56d488b65f77",
+        "model": "gpt-5.5"
+      },
+      "human_author": "linuxdynasty <1255573+linuxdynasty@users.noreply.github.com>"
+    }
+  }
+}
