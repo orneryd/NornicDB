@@ -646,11 +646,11 @@ class NornicDBClient {
 
   // resolveBoltURL picks the URL the UI hands to neo4j.driver(). The
   // scheme is bolt:// (or bolt+s:// when the page is served over HTTPS
-  // so browsers don't refuse a mixed-content upgrade), NOT bolt://.
+  // so browsers don't refuse a mixed-content upgrade), NOT ws:// / wss://.
   //
   // The full neo4j-driver package validates schemes upfront and only
   // accepts bolt / bolt+s / bolt+ssc / neo4j / neo4j+s / neo4j+ssc;
-  // bolt:// / bolt+s:// fail with "Unknown scheme: ws". WebSocket transport
+  // ws:// / wss:// fail with "Unknown scheme: ws". WebSocket transport
   // is selected automatically at runtime when the bundle resolves the
   // browser channel (vite.config.ts wires that), so passing bolt://
   // from the browser still produces a WS upgrade on the wire.

@@ -288,14 +288,24 @@ Notes:
 
 NornicDB multiplexes four wire-level transports on the Bolt port (`:7687` by default). The first 5 bytes of every accepted connection decide which path it takes:
 
-| URL scheme            | First bytes on the wire                 | Transport label |
-| --------------------- | --------------------------------------- | --------------- |
-| `bolt://host:7687/`   | Bolt magic preamble `60 60 B0 17`       | `tcp`           |
-| `bolt+s://host:7687/` | TLS handshake (`0x16`), then Bolt magic | `tcp_tls`       |
-| `bolt://host:7687/`   | `GET ` (HTTP/1.1 upgrade)               | `ws`            |
-| `bolt+s://host:7687/` | TLS handshake, then `GET `              | `ws_tls`        |
+| First bytes on the wire                 | Wire-level transport | Metric label |
+| --------------------------------------- | -------------------- | ------------ |
+| Bolt magic preamble `60 60 B0 17`       | raw TCP              | `tcp`        |
+| TLS handshake (`0x16`), then Bolt magic | TLS + raw            | `tcp_tls`    |
+| `GET ` (HTTP/1.1 upgrade)               | WebSocket            | `ws`         |
+| TLS handshake, then `GET `              | TLS + WebSocket      | `ws_tls`     |
 
-Driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`, `bolt+bolt://`) all map to one of these four wire transports; the server doesn't see the alias, only the bytes.
+How clients reach each wire transport:
+
+| Client                                                  | URL the client uses                                | Wire bytes    | Resulting metric label |
+| ------------------------------------------------------- | -------------------------------------------------- | ------------- | ---------------------- |
+| Official Neo4j driver (Node, JVM, Python, .NET)         | `bolt://host:7687`                                 | Bolt magic    | `tcp`                  |
+| Official Neo4j driver (browser build of `neo4j-driver`) | `bolt://host:7687`                                 | `GET ` upgrade| `ws`                   |
+| Same drivers with TLS                                   | `bolt+s://host:7687` (or `bolt+ssc://`)            | TLS first     | `tcp_tls` / `ws_tls`   |
+| Routing wrappers                                        | `neo4j://`, `neo4j+s://`, `neo4j+ssc://`           | Same as above | Same as above          |
+| Custom tool speaking raw WebSockets                     | `ws://host:7687/`, `wss://host:7687/`              | `GET ` upgrade| `ws` / `ws_tls`        |
+
+The official drivers' URL parsers reject `ws://` / `wss://` — the WebSocket transport is selected automatically by the browser build and produces a `GET ` upgrade on the wire from a `bolt://` URL. The `ws://` / `wss://` rows in the second table are for third-party clients that do their own WebSocket dial and write Bolt frames into BinaryMessage payloads.
 
 #### YAML
 
@@ -350,7 +360,7 @@ When `NORNICDB_AUTH_PROVIDER=oauth` is set with `NORNICDB_OAUTH_*` filled in, th
 
 #### `RequireTLS=true`
 
-When set, plaintext `bolt://` and `bolt://` upgrade attempts are rejected with the canonical Neo4j error `An unencrypted connection attempt was made where encryption is required.` and the `bolt_connections_rejected_total{reason="requires_tls"}` counter increments.
+When set, plaintext `bolt://` and `ws://` upgrade attempts are rejected with the canonical Neo4j error `An unencrypted connection attempt was made where encryption is required.` and the `bolt_connections_rejected_total{reason="requires_tls"}` counter increments.
 
 #### `WebSocketEnabled=false`
 

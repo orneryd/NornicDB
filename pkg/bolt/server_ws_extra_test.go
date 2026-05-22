@@ -26,7 +26,7 @@ import (
 // startTLSBoltServer is a TLS-fronted twin of startWSBoltServer. The
 // returned cfg.TLSConfig is the server-side config; the corresponding
 // client-side *tls.Config (with InsecureSkipVerify) is also returned so
-// tests can dial bolt+s:// and bolt+s:// against the same listener.
+// tests can dial bolt+s:// and wss:// against the same listener.
 func startTLSBoltServer(t *testing.T, modify func(*Config)) (port int, clientTLS *tls.Config) {
 	t.Helper()
 	srvTLS, cliTLS := mustGenSelfSignedTLSConfig(t)
@@ -104,7 +104,7 @@ func TestWSBolt_TLS_RawHappyPath(t *testing.T) {
 	runHelloRunPull(t, conn)
 }
 
-// W4 — bolt+s:// happy path. tls.Dial first, then upgrade with
+// W4 — wss:// happy path. tls.Dial first, then upgrade with
 // gorilla.Dialer using NetDial that returns the already-wrapped tls.Conn.
 // The server sees TLS first byte, recurses, sees "GET ", upgrades to WS.
 func TestWSBolt_TLS_WSHappyPath(t *testing.T) {
@@ -121,7 +121,7 @@ func TestWSBolt_TLS_WSHappyPath(t *testing.T) {
 	runHelloRunPull(t, conn)
 }
 
-// S2 — mixed-mode: bolt:// + bolt+s:// + bolt:// + bolt+s:// all completing
+// S2 — mixed-mode: bolt:// + bolt+s:// + ws:// + wss:// all completing
 // concurrently against the same listener. Each session must see its own
 // query result; no cross-talk. The TLS-fronted listener accepts all four.
 func TestWSBolt_MixedMode_AllFourTransports(t *testing.T) {
@@ -148,22 +148,22 @@ func TestWSBolt_MixedMode_AllFourTransports(t *testing.T) {
 			},
 		},
 		{
-			name: "bolt://",
+			name: "ws://",
 			dial: func() net.Conn {
 				u := url.URL{Scheme: "ws", Host: fmt.Sprintf("127.0.0.1:%d", port), Path: "/"}
 				ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 				if err != nil {
-					// The TLS branch sniffs first byte; bolt:// (no TLS)
+					// The TLS branch sniffs first byte; ws:// (no TLS)
 					// is still served because tls.Server only fires when
-					// the byte is 0x16. So the listener accepts plain bolt://
-					// alongside bolt+s://. This dial should succeed.
-					t.Fatalf("bolt:// dial failed against TLS-enabled listener: %v", err)
+					// the byte is 0x16. So the listener accepts plain ws://
+					// alongside wss://. This dial should succeed.
+					t.Fatalf("ws:// dial failed against TLS-enabled listener: %v", err)
 				}
 				return &wsConnAdapter{ws: ws}
 			},
 		},
 		{
-			name: "bolt+s://",
+			name: "wss://",
 			dial: func() net.Conn {
 				dialer := websocket.Dialer{TLSClientConfig: cliTLS}
 				u := url.URL{Scheme: "wss", Host: fmt.Sprintf("127.0.0.1:%d", port), Path: "/"}

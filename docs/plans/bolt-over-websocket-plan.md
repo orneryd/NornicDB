@@ -467,7 +467,7 @@ Neo4j's `TransportSelectionHandler` handles all four transport combinations off 
 | First bytes on the wire                                       | Decision                                                                                                          | Result                                                                                                                                            |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TLS record (`SslHandler.isEncrypted`) and `sslContext != nil` | Install `SslHandler`, on handshake completion install a fresh `TransportSelectionHandler` on the decrypted stream | Recursion: the new handler sees plain `GET ` → WS, or Bolt magic → raw, but never another TLS layer (line 106-113 makes nested TLS a fatal error) |
-| `"GET "` (HTTP)                                               | Install HTTP/WS pipeline                                                                                          | `bolt://` (or `bolt+s://` after the TLS branch above)                                                                                             |
+| `"GET "` (HTTP)                                               | Install HTTP/WS pipeline                                                                                          | `ws://` (or `wss://` after the TLS branch above)                                                                                                  |
 | Bolt magic `0x60 0x60 0xB0 0x17`                              | Install raw-Bolt handshake                                                                                        | `bolt://` (or `bolt+s://` after the TLS branch above)                                                                                             |
 | Anything else                                                 | Close                                                                                                             | Connection rejected                                                                                                                               |
 
@@ -488,8 +488,8 @@ type Config struct {
     // ...existing fields...
 
     // TLS settings. When TLSConfig is non-nil, the listener accepts
-    // TLS-on-first-byte connections (bolt+s:// for raw and bolt+s:// for
-    // WebSocket). Plain bolt:// and bolt:// remain accepted unless
+    // TLS-on-first-byte connections (bolt+s:// for raw and wss:// for
+    // WebSocket). Plain bolt:// and ws:// remain accepted unless
     // RequireTLS is set, mirroring Neo4j's sslContext + requiresEncryption
     // pattern.
     TLSConfig  *tls.Config // nil = TLS disabled; non-nil = TLS optional or required per RequireTLS
@@ -558,11 +558,11 @@ After `peekTransport` returns, check `cfg.RequireTLS && !isEncrypted` and reject
 | `bolt://host:7687/`                      | TCP, magic first                                                                                           | `transportRaw`                              |
 | `bolt+s://host:7687/`                    | TLS first, then magic                                                                                      | TLS branch → recurse → `transportRaw`       |
 | `bolt+ssc://host:7687/`                  | Same as `bolt+s://` (driver tells `tls.Config` to skip cert verification client-side; server doesn't care) | TLS branch → recurse → `transportRaw`       |
-| `bolt://host:7687/`                      | TCP, `GET ` first                                                                                          | `transportWebSocket`                        |
-| `bolt+s://host:7687/`                    | TLS first, then `GET `                                                                                     | TLS branch → recurse → `transportWebSocket` |
+| `ws://host:7687/`                        | TCP, `GET ` first                                                                                          | `transportWebSocket`                        |
+| `wss://host:7687/`                       | TLS first, then `GET `                                                                                     | TLS branch → recurse → `transportWebSocket` |
 | `neo4j://`, `neo4j+s://`, `neo4j+ssc://` | Driver-side routing wrappers; on the wire they look like `bolt://` etc.                                    | Same as the corresponding `bolt+*` row      |
 
-**Wire-level transports: four** — `bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`. The `bolt+ssc://` scheme is a driver-side alias for `bolt+s://` (the driver disables certificate verification client-side; the server sees the same TLS bytes). The `neo4j://` / `neo4j+s://` / `neo4j+ssc://` schemes are routing wrappers that, on the wire, look identical to their `bolt`-side counterparts. The server multiplexer therefore handles **four wire-level transports**; drivers may target NornicDB with any of the eight URL schemes above. All eight reach the same Bolt port and one `tls.Config`.
+**Wire-level transports: four** — `bolt://`, `bolt+s://`, `ws://`, `wss://`. The `bolt+ssc://` scheme is a driver-side alias for `bolt+s://` (the driver disables certificate verification client-side; the server sees the same TLS bytes). The `neo4j://` / `neo4j+s://` / `neo4j+ssc://` schemes are routing wrappers that, on the wire, look identical to their `bolt`-side counterparts. The server multiplexer therefore handles **four wire-level transports**; drivers may target NornicDB with any of the eight URL schemes above. All eight reach the same Bolt port and one `tls.Config`.
 
 #### Config + env
 
@@ -618,15 +618,15 @@ A 5s `time.Ticker` re-reads the files in the background; on successful `tls.Load
 Beyond the WS scenarios:
 
 1. **`bolt+s://` happy path**: Go `bolt` driver in TLS mode connects, completes handshake, runs `RETURN 1`.
-2. **`bolt+s://` happy path**: `gorilla/websocket.Dialer` over `tls.Dialer`, completes WS upgrade, runs Bolt HELLO/RUN/PULL/BYE.
-3. **Mixed-mode**: All four (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) on the same listener simultaneously, each session isolated.
+2. **`wss://` happy path**: `gorilla/websocket.Dialer` over `tls.Dialer`, completes WS upgrade, runs Bolt HELLO/RUN/PULL/BYE.
+3. **Mixed-mode**: All four (`bolt://`, `bolt+s://`, `ws://`, `wss://`) on the same listener simultaneously, each session isolated.
 4. **`RequireTLS=true`**: Plain `bolt://` rejected with the canonical error message.
-5. **`RequireTLS=true` + WS**: Plain `bolt://` rejected the same way (the TLS branch never fires for plaintext).
+5. **`RequireTLS=true` + WS**: Plain `ws://` rejected the same way (the TLS branch never fires for plaintext).
 6. **Nested TLS rejected**: A pathological client that sends a TLS record after the TLS handshake completed gets fatal error (mirrors Neo4j's lines 106-113).
 7. **mTLS**: When `client_ca_file` is set, an unverified client cert is rejected at handshake; a verified one passes.
 8. **Cert rotation**: T-Cert-Rotate + T-Cert-Rotate-MidWrite. Atomic rename picks up new cert on next handshake; in-flight connections continue on old cert; mid-write file truncation does not crash. Specified in the "Cert rotation without restart" section above.
 
-All four wire-level transports (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) ship in one listener. See the Phasing section for which phase each test lands in.
+All four wire-level transports (`bolt://`, `bolt+s://`, `ws://`, `wss://`) ship in one listener. See the Phasing section for which phase each test lands in.
 
 ### Origin policy
 
@@ -787,20 +787,20 @@ Phase 3 ships and merges only if all three benchmarks pass against the current `
 | `pkg/bolt/server.go` (handleRoute)                 | Verify the synthetic-addr fix on `wsConn.LocalAddr()` works through the type assertion at line 2141-2151. Same fix applies for `*tls.Conn` underlying when TLS is in play. Add regression tests for both.                                                                                                                                                                                                                                                                                                                                                      |
 | `pkg/bolt/server.go` (Config)                      | New fields: `TLSConfig *tls.Config`, `RequireTLS bool`, `BoltSniffTimeout` (default 5s), `BoltAuthTimeout` (default 30s), `WebSocketEnabled` (default true), `WebSocketAllowedOrigins` (default `*`), `WebSocketMaxMessageSize` (default 65536), `WebSocketWriteBufferSize` (default 256 KB), `WebSocketPingInterval` (default 30s), `WebSocketPongTimeout` (default 60s). The discovery-response body is derived from `pkg/auth.OAuthConfig` at startup, not configured here directly. Defaults match Neo4j where applicable.                                 |
 | `pkg/bolt/server.go` (handleConnection)            | After session ends: emit `transport=` enum metric — `tcp` / `tcp_tls` / `ws` / `ws_tls`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `pkg/bolt/server_ws_test.go` (NEW)                 | Integration tests using `gorilla/websocket.Dialer`: `bolt://` + `bolt+s://` happy paths against a real `bolt.Server`. Bolt HELLO/RUN/PULL/BYE complete; oversized-message rejection; partial-frame Bolt message; mixed TCP+WS+TLS sessions on one listener; `RequireTLS=true` rejects plaintext.                                                                                                                                                                                                                                                               |
+| `pkg/bolt/server_ws_test.go` (NEW)                 | Integration tests using `gorilla/websocket.Dialer`: `ws://` + `wss://` happy paths against a real `bolt.Server`. Bolt HELLO/RUN/PULL/BYE complete; oversized-message rejection; partial-frame Bolt message; mixed TCP+WS+TLS sessions on one listener; `RequireTLS=true` rejects plaintext.                                                                                                                                                                                                                                                                  |
 | `pkg/config/config.go`                             | New fields under `Bolt` section: `BoltTLSCertFile`, `BoltTLSKeyFile`, `BoltTLSRequire`, `BoltTLSClientCAFile`, `BoltTLSClientAuthMode`, `BoltSniffTimeout`, `BoltAuthTimeout`, `BoltWebSocketEnabled`, `BoltWebSocketAllowedOrigins`, `BoltWebSocketMaxMessageSize`, `BoltWebSocketWriteBufferSize`, `BoltWebSocketPingInterval`, `BoltWebSocketPongTimeout`. Env vars: `NORNICDB_BOLT_*`. CLI flags. Honour the precedence ladder.                                                                                                                            |
 | `cmd/nornicdb/main.go`                             | Plumb new config fields into `boltConfig`, call `bolt.LoadTLSConfig(...)` when cert paths are present. CLI flags follow the search-flag pattern: `cmd.Flags().Changed(...)` populates `cfg.CLIOverrides`.                                                                                                                                                                                                                                                                                                                                                      |
 | `docker/entrypoint.sh`                             | Pass new `NORNICDB_BOLT_*` env vars through as CLI flags (existing pattern).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `docs/operations/configuration.md`                 | New "Bolt over WebSocket + TLS" section: when to enable, origin policy, frame-size limits, ping/pong, TLS cert wiring, mTLS, RequireTLS semantics.                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `docs/operations/environment-variables.md`         | Add `NORNICDB_BOLT_*` keys with the precedence note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `docs/user-guides/connecting-bolt.md` (or similar) | Driver examples for the four wire-level transports (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) plus the driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`). Browser/JS driver code snippet.                                                                                                                                                                                                                                                                                                                                    |
+| `docs/user-guides/connecting-bolt.md` (or similar) | Driver examples for the four wire-level transports (`bolt://`, `bolt+s://`, `ws://`, `wss://`) plus the driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`). Browser/JS driver code snippet.                                                                                                                                                                                                                                                                                                                                       |
 | `pkg/bolt/README.md`                               | Add a "WebSocket transport" + "TLS" section after "Wire format".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 The HTTP server (`pkg/server`) is **not** touched. The earlier draft's concerns about middleware ordering, CORS, public routes, etc. all dissolve.
 
 ## Phasing
 
-All four schemes (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) ship in one cut. They all flow through the same `peekTransport` so building one without the others would mean writing the multiplexer twice. Splitting saves no work; combining them keeps the call-site changes contained to a single PR.
+All four schemes (`bolt://`, `bolt+s://`, `ws://`, `wss://`) ship in one cut. They all flow through the same `peekTransport` so building one without the others would mean writing the multiplexer twice. Splitting saves no work; combining them keeps the call-site changes contained to a single PR.
 
 **Phase 1 — primitives**
 
@@ -813,7 +813,7 @@ All four schemes (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) ship in one cu
 
 - `handleConnection` calls `peekTransport` before `session.handshake()`. On `transportWS`: run the WS upgrade with the discovery handler in front; swap `conn` for `wsConn`; continue. On `transportTLS`: `tls.Server`, handshake, recurse. On `transportRaw`: today's path, unchanged.
 - Verify `handleRoute` type-assertion works against synthetic `*net.TCPAddr` from both `wsConn` and `*tls.Conn` underlying.
-- Integration tests for all four happy paths (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) end-to-end: HELLO + RUN + PULL + BYE, results match.
+- Integration tests for all four happy paths (`bolt://`, `bolt+s://`, `ws://`, `wss://`) end-to-end: HELLO + RUN + PULL + BYE, results match.
 
 **Phase 3 — config + metrics + edge cases**
 
@@ -824,7 +824,7 @@ All four schemes (`bolt://`, `bolt+s://`, `bolt://`, `bolt+s://`) ship in one cu
 - Idle ping/pong with configurable cadence; close emits `result=timeout` metric.
 - mTLS path (client cert verification) — separate test.
 - Mixed-mode test: 4 transports × N connections each, all on one listener, all sessions isolated.
-- `RequireTLS=true` rejection paths for both `bolt://` and `bolt://`.
+- `RequireTLS=true` rejection paths for both `bolt://` and `ws://`.
 
 **Phase 4 — cert rotation, docs, driver verification, go.mod**
 
@@ -853,8 +853,8 @@ T10. Unrecognized prefix (e.g. `0x00 0x01 0x02 0x03 0x04`) → close.
 
 W1. **`bolt://` happy path.** `gorilla/net.Dial("tcp")` + handshake + HELLO + RUN+PULL + BYE. Bytes-on-wire identical to today.
 W2. **`bolt+s://` happy path.** `tls.Dial` to the Bolt port, then same handshake. The `peekTransport` recursion fires; result identical to W1.
-W3. **`bolt://` happy path.** `gorilla/websocket.Dialer` to `bolt://host:port/`. HTTP upgrade succeeds; subsequent BinaryMessages carry Bolt magic + versions + HELLO + RUN + PULL + BYE; results returned correctly.
-W4. **`bolt+s://` happy path.** `tls.Dial` + `gorilla/websocket.NewClient` (or `Dialer.TLSClientConfig`). Two layers of recursion: TLS detected → handshake → `peekTransport` again → `"GET "` → WS upgrade.
+W3. **`ws://` happy path.** `gorilla/websocket.Dialer` to `ws://host:port/`. HTTP upgrade succeeds; subsequent BinaryMessages carry Bolt magic + versions + HELLO + RUN + PULL + BYE; results returned correctly.
+W4. **`wss://` happy path.** `tls.Dial` + `gorilla/websocket.NewClient` (or `Dialer.TLSClientConfig`). Two layers of recursion: TLS detected → handshake → `peekTransport` again → `"GET "` → WS upgrade.
 
 ### Discovery response
 
@@ -866,7 +866,7 @@ D4. Spurious `Upgrade: h2c` (HTTP/2 cleartext) → discovery response (NOT a WS 
 ### WebSocket-specific
 
 S1. **Auth enforced.** `RequireAuth=true`: unauthenticated HELLO over WS is rejected exactly like over TCP (test runs the same assertion against both transports).
-S2. **Concurrent sessions.** N each of `bolt://`, `bolt+s://`, `bolt://`, `bolt+s://` simultaneously; all complete RETURN 1 successfully; `ConnectionsActive` per-transport is correct.
+S2. **Concurrent sessions.** N each of `bolt://`, `bolt+s://`, `ws://`, `wss://` simultaneously; all complete RETURN 1 successfully; `ConnectionsActive` per-transport is correct.
 S3. **Partial frame reads.** Adapter reads a Bolt message split across two `BinaryMessage` frames.
 S4. **Large RECORD stream.** A query returning >64 KB of results splits across multiple WS frames. JS driver and Go driver both consume correctly.
 S5. **Origin allowlist.** Default `*` allows; specific origin allows only that origin; bogus origin rejected with 403.
@@ -880,7 +880,7 @@ S9. **Oversized message rejection.** Client sends a BinaryMessage exceeding `Max
 L1. **Cert + key load** from disk via `LoadTLSConfig`; missing file errors; malformed PEM errors.
 L2. **mTLS strict (`require_verify`)** with `LoadTLSConfigWithClientCA(..., ClientAuthRequireVerify)`: unverified client cert rejected at handshake; valid cert passes through to Bolt session. (Other modes covered by L7 below.)
 L3. **`MinVersion = TLS 1.2`** enforced — client offering only TLS 1.0 / 1.1 is rejected.
-L4. **TLS for `bolt+s://`** — same listener, same code path as `bolt+s://`, just lands at the WS branch instead of the raw branch.
+L4. **TLS for `wss://`** — same listener, same code path as `bolt+s://`, just lands at the WS branch instead of the raw branch.
 L5. **`RequireTLS=true` end-to-end**: rejects plaintext on both raw and WS branches.
 L6. **`*tls.Conn` underlying for `wsConn`**: `wsConn.LocalAddr()` derives from `(*tls.Conn).NetConn().LocalAddr()` (Go 1.18+) and produces a usable `*net.TCPAddr`.
 L7. **`ClientAuthMode` enum coverage**: `none` (default), `request` (`tls.RequestClientCert`), `request_verify` (`tls.VerifyClientCertIfGiven`), `require_verify` (`tls.RequireAndVerifyClientCert`). Each value tested with: no cert / valid cert / invalid cert. Verifies the four-mode matrix lands at the right outcome (accept/reject/pass-through).
@@ -899,7 +899,7 @@ M2. **Go driver smoke test.** `github.com/neo4j/neo4j-go-driver/v5` connecting v
 4. **Path collision.** Neo4j uses `"/"`. We use `"/"`. No configurable path field for this plan; if future Bolt versions ever introduce a path component, we'd add it then.
 5. **Replication / cluster mode.** NornicDB has no inter-node Bolt traffic (cluster references in the code are JWT-related). WS is additive; clusters unaffected. Confirmed via review-agent search.
 6. **`cypher-shell` compatibility.** JVM client speaks raw TCP only; unaffected. Browser case is the new one.
-7. **Driver scheme aliases.** `bolt+bolt://` and `neo4j+bolt://` are driver-side aliases for "use WS transport." Server doesn't see the scheme — it just sees an HTTP Upgrade. No server-side change needed.
+7. **Driver scheme aliases.** `bolt+ws://` and `neo4j+ws://` are driver-side aliases for "use WS transport." Server doesn't see the scheme — it just sees an HTTP Upgrade. No server-side change needed.
 8. **`MaxConnections` enforcement** — fixed as part of this plan (see "MaxConnections" section above). Single shared atomic counter across all four transports; new accepts beyond the cap are closed immediately.
 9. **Discovery response schema drift.** Neo4j's discovery response evolves between versions. We pick a minimal stable subset and version it; document the fields we expose.
 
@@ -915,9 +915,9 @@ M2. **Go driver smoke test.** `github.com/neo4j/neo4j-go-driver/v5` connecting v
 - All four schemes operational on the Bolt port:
   - `bolt://host:7687/` (raw TCP, today's path).
   - `bolt+s://host:7687/` (TLS).
-  - `bolt://host:7687/` (plaintext WS).
-  - `bolt+s://host:7687/` (TLS + WS).
-- The official Neo4j JS driver in a browser tab connects via `bolt://` and `bolt+s://`, completes HELLO + RUN + PULL + BYE, returns correct results.
+  - `ws://host:7687/` (plaintext WS).
+  - `wss://host:7687/` (TLS + WS).
+- The official Neo4j JS driver in a browser tab connects (via `bolt://` and `bolt+s://` URLs that the browser build turns into `ws://` / `wss://` upgrades on the wire), completes HELLO + RUN + PULL + BYE, returns correct results.
 - The Neo4j Go driver connects via the four wire-level transports plus their driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`).
 - Plain `GET http://host:7687/` (no upgrade headers) returns the discovery response: 200 OK, the five required headers, body empty when OAuth is unconfigured (Community parity) or the OAuth-derived JSON when `OAuthConfig.IsConfigured()` is true.
 - All existing Bolt tests still pass; new tests cover all transport-sniff (T1-T10), wire-compatibility (W1-W4), discovery (D-Empty / D-WSUpgrade / D-OAuth / D-OAuthPartial / D-MalformedIssuer / D-NoSecretLeak), WebSocket-specific (S1-S9), and TLS-specific (L1-L8) scenarios above.
@@ -998,7 +998,7 @@ References (Neo4j source, all under `community/`):
 ### Test scenario completion
 
 - [x] T1-T10 transport-sniff (in `transport_select_test.go`)
-- [x] W1-W4 wire-compatibility happy paths: W1 (`bolt://`) via `TestBoltCypherIntegration`; W3 (`bolt://`) via `TestWSBolt_HappyPath`. W2/W4 (`bolt+s://`/`bolt+s://`) covered by the same code path via TLS recursion in `peekTransport`; the underlying TLS handshake is tested in `TestPeekTransport_T4*`. End-to-end TLS+driver smoke tests are M1/M2 manual.
+- [x] W1-W4 wire-compatibility happy paths: W1 (`bolt://`) via `TestBoltCypherIntegration`; W3 (`ws://`) via `TestWSBolt_HappyPath`. W2/W4 (`bolt+s://`/`wss://`) covered by the same code path via TLS recursion in `peekTransport`; the underlying TLS handshake is tested in `TestPeekTransport_T4*`. End-to-end TLS+driver smoke tests are M1/M2 manual.
 - [x] D-Empty / D-OAuth / D-OAuthPartial / D-MalformedIssuer / D-NoSecretLeak / D1 / D2 / D3 / D4 (in `discovery_test.go`)
 - [x] S-WSDisabled-426 / S-WSDisabled-DiscoveryStillWorks (in `server_ws_test.go`)
 - [x] Origin allowlist (S5) (in `server_ws_test.go`)

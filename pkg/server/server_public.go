@@ -21,10 +21,11 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pick the host the way the caller addressed us so browser-based
-	// clients construct cookie-aware bolt:// / bolt:// URLs that match
-	// the page origin. Cookies are scoped by exact hostname per RFC 6265
-	// (localhost and 127.0.0.1 are distinct), so emitting bolt://localhost
-	// when the page is on 127.0.0.1 (or vice versa) silently breaks the
+	// clients construct cookie-aware bolt:// / bolt+s:// URLs that match
+	// the page origin (and produce ws:// / wss:// upgrades on the wire).
+	// Cookies are scoped by exact hostname per RFC 6265 (localhost and
+	// 127.0.0.1 are distinct), so emitting bolt://localhost when the
+	// page is on 127.0.0.1 (or vice versa) silently breaks the
 	// implicit-bearer flow. Fall back to the configured Address only when
 	// the request didn't include a Host header (rare).
 	host := hostnameFromRequest(r)
@@ -42,7 +43,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	// (Docker, multi-instance dev) are reflected accurately. Browser
 	// clients use bolt:// (or bolt+s:// over HTTPS) — neo4j-driver's
 	// browser bundle picks the WebSocket transport internally; the
-	// driver itself rejects bolt:// / bolt+s:// schemes via its allowlist.
+	// driver itself rejects ws:// / wss:// schemes via its allowlist.
 	boltPort := s.config.BoltPort
 	if boltPort == 0 {
 		boltPort = 7687

@@ -554,7 +554,7 @@ type Config struct {
 
 	// TLSConfig, when non-nil, enables TLS-on-first-byte sniffing on the
 	// Bolt port. Mirrors Neo4j's sslContext + requiresEncryption pattern:
-	// one listener accepts plain bolt://, bolt+s://, bolt://, and bolt+s://
+	// one listener accepts plain bolt://, bolt+s://, ws://, and wss://
 	// based on the first 5 bytes of the connection.
 	TLSConfig *tls.Config
 	// RequireTLS rejects any non-TLS connection on the Bolt port with the
