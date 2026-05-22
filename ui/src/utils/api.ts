@@ -493,7 +493,9 @@ function asNumber(value: unknown): number {
 }
 
 function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function asBoolean(value: unknown): boolean {
@@ -504,7 +506,9 @@ function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const strings = value.filter((item): item is string => typeof item === "string");
+  const strings = value.filter(
+    (item): item is string => typeof item === "string",
+  );
   return strings.length > 0 ? strings : undefined;
 }
 
@@ -565,7 +569,10 @@ class NornicDBClient {
     let session: Session | null = null;
     try {
       session = driver.session({ database: dbName });
-      const result = await session.run(statement, (parameters ?? {}) as Record<string, unknown>);
+      const result = await session.run(
+        statement,
+        (parameters ?? {}) as Record<string, unknown>,
+      );
       // Driver: QueryResult is { records, summary }. keys live on each
       // Record; pull them from the first record (or empty for 0-row results).
       const columns: string[] =
@@ -573,9 +580,7 @@ class NornicDBClient {
           ? (result.records[0].keys as string[]).slice()
           : [];
       const data = result.records.map((rec) => {
-        const row = columns.map((k) =>
-          neo4jValueToPlain(rec.get(k)),
-        );
+        const row = columns.map((k) => neo4jValueToPlain(rec.get(k)));
         return { row, meta: [] };
       });
       return {
@@ -586,7 +591,10 @@ class NornicDBClient {
       // assertCypherSuccess / display layer expects.
       const message = err instanceof Error ? err.message : String(err);
       const code =
-        err && typeof err === "object" && "code" in err && typeof (err as { code?: unknown }).code === "string"
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        typeof (err as { code?: unknown }).code === "string"
           ? (err as { code: string }).code
           : "Neo.ClientError.Statement.SyntaxError";
       return {
@@ -638,11 +646,11 @@ class NornicDBClient {
 
   // resolveBoltURL picks the URL the UI hands to neo4j.driver(). The
   // scheme is bolt:// (or bolt+s:// when the page is served over HTTPS
-  // so browsers don't refuse a mixed-content upgrade), NOT ws://.
+  // so browsers don't refuse a mixed-content upgrade), NOT bolt://.
   //
   // The full neo4j-driver package validates schemes upfront and only
   // accepts bolt / bolt+s / bolt+ssc / neo4j / neo4j+s / neo4j+ssc;
-  // ws:// / wss:// fail with "Unknown scheme: ws". WebSocket transport
+  // bolt:// / bolt+s:// fail with "Unknown scheme: ws". WebSocket transport
   // is selected automatically at runtime when the bundle resolves the
   // browser channel (vite.config.ts wires that), so passing bolt://
   // from the browser still produces a WS upgrade on the wire.
@@ -962,7 +970,9 @@ class NornicDBClient {
 
   private assertCypherSuccess(resp: CypherResponse, fallback: string): void {
     if (resp.errors && resp.errors.length > 0) {
-      throw new Error(resp.errors.map((err) => err.message).join("; ") || fallback);
+      throw new Error(
+        resp.errors.map((err) => err.message).join("; ") || fallback,
+      );
     }
   }
 
@@ -1089,7 +1099,11 @@ class NornicDBClient {
       const statement = `MATCH (n) WHERE id(n) IN $ids DETACH DELETE n RETURN count(n) as deleted`;
       const parameters = { ids: nodeIds };
 
-      const result = await this.runCypherOverBolt(dbName, statement, parameters);
+      const result = await this.runCypherOverBolt(
+        dbName,
+        statement,
+        parameters,
+      );
 
       if (result.errors && result.errors.length > 0) {
         return {
@@ -1170,7 +1184,11 @@ class NornicDBClient {
     const statement = `MATCH (n) WHERE id(n) = $nodeId OR n.id = $nodeId SET ${setParts.join(", ")} RETURN n`;
 
     try {
-      const result = await this.runCypherOverBolt(dbName, statement, parameters);
+      const result = await this.runCypherOverBolt(
+        dbName,
+        statement,
+        parameters,
+      );
 
       if (result.errors && result.errors.length > 0) {
         return {
@@ -1380,9 +1398,12 @@ class NornicDBClient {
   }
 
   async getRetentionStatus(): Promise<RetentionStatus> {
-    const res = await fetch(joinBasePath(BASE_PATH, "/admin/retention/status"), {
-      credentials: "include",
-    });
+    const res = await fetch(
+      joinBasePath(BASE_PATH, "/admin/retention/status"),
+      {
+        credentials: "include",
+      },
+    );
     if (!res.ok) {
       const message = await this.parseErrorMessage(
         res,
@@ -1456,7 +1477,9 @@ class NornicDBClient {
     return res.json();
   }
 
-  async deleteRetentionPolicy(id: string): Promise<{ status: string; id: string }> {
+  async deleteRetentionPolicy(
+    id: string,
+  ): Promise<{ status: string; id: string }> {
     const res = await fetch(
       joinBasePath(
         BASE_PATH,
@@ -1533,9 +1556,14 @@ class NornicDBClient {
     return res.json();
   }
 
-  async releaseRetentionHold(id: string): Promise<{ status: string; id: string }> {
+  async releaseRetentionHold(
+    id: string,
+  ): Promise<{ status: string; id: string }> {
     const res = await fetch(
-      joinBasePath(BASE_PATH, `/admin/retention/holds/${encodeURIComponent(id)}`),
+      joinBasePath(
+        BASE_PATH,
+        `/admin/retention/holds/${encodeURIComponent(id)}`,
+      ),
       {
         method: "DELETE",
         credentials: "include",
@@ -1589,9 +1617,7 @@ class NornicDBClient {
     return res.json();
   }
 
-  async processRetentionErasure(
-    id: string,
-  ): Promise<RetentionErasureRequest> {
+  async processRetentionErasure(id: string): Promise<RetentionErasureRequest> {
     const res = await fetch(
       joinBasePath(
         BASE_PATH,
@@ -1627,13 +1653,24 @@ class NornicDBClient {
     return res.json();
   }
 
-  async getKnowledgePolicyProfiles(database?: string): Promise<KPProfilesResponse> {
+  async getKnowledgePolicyProfiles(
+    database?: string,
+  ): Promise<KPProfilesResponse> {
     const dbName = await this.getResolvedDatabaseName(database);
     const [profilesResp, infoResp] = await Promise.all([
-      this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.profiles()"),
-      this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.info()"),
+      this.executeCypherOnDatabase(
+        dbName,
+        "CALL nornicdb.knowledgepolicy.profiles()",
+      ),
+      this.executeCypherOnDatabase(
+        dbName,
+        "CALL nornicdb.knowledgepolicy.info()",
+      ),
     ]);
-    this.assertCypherSuccess(profilesResp, "Failed to load knowledge policy profiles");
+    this.assertCypherSuccess(
+      profilesResp,
+      "Failed to load knowledge policy profiles",
+    );
     this.assertCypherSuccess(infoResp, "Failed to load knowledge policy info");
 
     const rows = this.parseCypherRows<Record<string, unknown>>(profilesResp);
@@ -1680,9 +1717,14 @@ class NornicDBClient {
     };
   }
 
-  async getKnowledgePolicyPolicies(database?: string): Promise<KPPoliciesResponse> {
+  async getKnowledgePolicyPolicies(
+    database?: string,
+  ): Promise<KPPoliciesResponse> {
     const dbName = await this.getResolvedDatabaseName(database);
-    const resp = await this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.policies()");
+    const resp = await this.executeCypherOnDatabase(
+      dbName,
+      "CALL nornicdb.knowledgepolicy.policies()",
+    );
     this.assertCypherSuccess(resp, "Failed to load knowledge policy policies");
 
     const rows = this.parseCypherRows<Record<string, unknown>>(resp);
@@ -1742,7 +1784,8 @@ class NornicDBClient {
       ResolvedDecayProfileID: asString(row.ResolvedDecayProfileID),
       ResolvedScoreFrom: asString(row.ResolvedScoreFrom),
       ResolutionSourceChain: asStringArray(row.ResolutionSourceChain) ?? [],
-      AppliedDecayProfileNames: asStringArray(row.AppliedDecayProfileNames) ?? [],
+      AppliedDecayProfileNames:
+        asStringArray(row.AppliedDecayProfileNames) ?? [],
       AppliedPromotionPolicyName: asString(row.AppliedPromotionPolicyName),
       AppliedPromotionProfileName: asString(row.AppliedPromotionProfileName),
       EffectiveRate: asNumber(row.EffectiveRate),
@@ -1758,7 +1801,10 @@ class NornicDBClient {
 
   async getDeindexStatus(database?: string): Promise<KPDeindexStatusResponse> {
     const dbName = await this.getResolvedDatabaseName(database);
-    const resp = await this.executeCypherOnDatabase(dbName, "CALL nornicdb.knowledgepolicy.deindexStatus()");
+    const resp = await this.executeCypherOnDatabase(
+      dbName,
+      "CALL nornicdb.knowledgepolicy.deindexStatus()",
+    );
     this.assertCypherSuccess(resp, "Failed to load deindex status");
 
     const rows = this.parseCypherRows<Record<string, unknown>>(resp);

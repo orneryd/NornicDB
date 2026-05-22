@@ -30,12 +30,12 @@ Neo4j-compatible Bolt protocol server for NornicDB. Enables any Neo4j driver to 
 
 The Bolt port multiplexes four wire-level transports based on the first 5 bytes of every accepted connection — mirroring Neo4j's `TransportSelectionHandler` exactly:
 
-| URL scheme              | First bytes                                       | Transport label  |
-|-------------------------|---------------------------------------------------|------------------|
-| `bolt://host:7687/`     | Bolt magic `60 60 B0 17`                          | `tcp`            |
-| `bolt+s://host:7687/`   | TLS handshake (`0x16`), then Bolt magic           | `tcp_tls`        |
-| `ws://host:7687/`       | `GET ` (HTTP/1.1 upgrade)                         | `ws`             |
-| `wss://host:7687/`      | TLS handshake, then `GET `                        | `ws_tls`         |
+| URL scheme            | First bytes                             | Transport label |
+| --------------------- | --------------------------------------- | --------------- |
+| `bolt://host:7687/`   | Bolt magic `60 60 B0 17`                | `tcp`           |
+| `bolt+s://host:7687/` | TLS handshake (`0x16`), then Bolt magic | `tcp_tls`       |
+| `bolt://host:7687/`   | `GET ` (HTTP/1.1 upgrade)               | `ws`            |
+| `bolt+s://host:7687/` | TLS handshake, then `GET `              | `ws_tls`        |
 
 A plain `GET /` (no Upgrade headers) returns a 200 OK discovery response — empty body when OAuth is not configured (Community parity), JSON describing the OAuth provider when it is.
 

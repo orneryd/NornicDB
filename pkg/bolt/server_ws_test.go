@@ -116,7 +116,7 @@ func (a *wsConnAdapter) SetReadDeadline(t time.Time) error  { return a.ws.SetRea
 func (a *wsConnAdapter) SetWriteDeadline(t time.Time) error { return a.ws.SetWriteDeadline(t) }
 
 // TestWSBolt_HappyPath asserts the W3 wire-compatibility scenario from
-// the plan: ws://host:port/ → upgrade succeeds → HELLO/RUN/PULL/BYE
+// the plan: bolt://host:port/ → upgrade succeeds → HELLO/RUN/PULL/BYE
 // completes. Buffering inside the bolt server folds 4 RECORD messages
 // plus surrounding SUCCESS into a single binary frame, so the
 // wsConnAdapter.Read path must coalesce frames correctly.
@@ -243,7 +243,7 @@ func TestWSBolt_OriginAllowlist_RejectsBogus(t *testing.T) {
 }
 
 // TestWSBolt_RequireTLS_RejectsPlaintext asserts that with RequireTLS=true,
-// a plain ws:// upgrade is rejected via the canonical Neo4j error
+// a plain bolt:// upgrade is rejected via the canonical Neo4j error
 // (S "RequireTLS=true + WS"). The connection is closed immediately;
 // the dialer surfaces the error.
 func TestWSBolt_RequireTLS_RejectsPlaintext(t *testing.T) {

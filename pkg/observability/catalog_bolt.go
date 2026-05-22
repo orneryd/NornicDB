@@ -78,8 +78,8 @@ var AllowedPackstreamReasons = []string{
 //
 //	tcp     - raw bolt:// over plain TCP
 //	tcp_tls - bolt+s:// (TLS-wrapped raw)
-//	ws      - ws://    (WebSocket over plain TCP)
-//	ws_tls  - wss://   (WebSocket over TLS)
+//	ws      - bolt://    (WebSocket over plain TCP)
+//	ws_tls  - bolt+s://   (WebSocket over TLS)
 //
 // Cardinality ceiling for `bolt_connections_total` rises from 3 to 12
 // (3 results x 4 transports) and `bolt_connections_active` from 1 to 4.

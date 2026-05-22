@@ -404,13 +404,13 @@ subscription DeletedRelationships {
 ### Using Subscriptions in JavaScript/TypeScript
 
 ```typescript
-import { createClient } from 'graphql-ws';
+import { createClient } from "graphql-ws";
 
 // Create WebSocket client
 const client = createClient({
-  url: 'ws://localhost:7474/graphql',
+  url: "bolt://localhost:7474/graphql",
   connectionParams: {
-    Authorization: 'Bearer <your-token>',
+    Authorization: "Bearer <your-token>",
   },
 });
 
@@ -429,15 +429,15 @@ const unsubscribe = client.subscribe(
   },
   {
     next: (data) => {
-      console.log('New person created:', data.data.nodeCreated);
+      console.log("New person created:", data.data.nodeCreated);
     },
     error: (err) => {
-      console.error('Subscription error:', err);
+      console.error("Subscription error:", err);
     },
     complete: () => {
-      console.log('Subscription completed');
+      console.log("Subscription completed");
     },
-  }
+  },
 );
 
 // Later, unsubscribe
@@ -461,7 +461,7 @@ const httpLink = new HttpLink({
 
 const wsLink = new GraphQLWsLink(
   createClient({
-    url: 'ws://localhost:7474/graphql',
+    url: 'bolt://localhost:7474/graphql',
     connectionParams: {
       Authorization: 'Bearer <your-token>',
     },
@@ -500,9 +500,9 @@ const NEW_PERSONS_SUBSCRIPTION = gql`
 
 function PersonList() {
   const { data, loading } = useSubscription(NEW_PERSONS_SUBSCRIPTION);
-  
+
   if (loading) return <p>Loading...</p>;
-  
+
   return (
     <div>
       <h2>New Person: {data?.nodeCreated?.properties?.name}</h2>
@@ -537,22 +537,32 @@ Subscriptions support flexible filtering:
 ```graphql
 # Only Person nodes
 subscription Persons {
-  nodeCreated(labels: ["Person"]) { id }
+  nodeCreated(labels: ["Person"]) {
+    id
+  }
 }
 
 # Multiple labels (OR logic - matches any)
 subscription PeopleOrCompanies {
-  nodeCreated(labels: ["Person", "Company"]) { id }
+  nodeCreated(labels: ["Person", "Company"]) {
+    id
+  }
 }
 
 # Specific relationship types
 subscription KnowsOrLikes {
-  relationshipCreated(types: ["KNOWS", "LIKES"]) { id type }
+  relationshipCreated(types: ["KNOWS", "LIKES"]) {
+    id
+    type
+  }
 }
 
 # Specific node updates
 subscription AliceUpdates {
-  nodeUpdated(id: "alice-id") { id properties }
+  nodeUpdated(id: "alice-id") {
+    id
+    properties
+  }
 }
 ```
 
@@ -630,7 +640,7 @@ const response = await fetch("/graphql", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "Authorization": "Bearer <token>",
+    Authorization: "Bearer <token>",
   },
   body: JSON.stringify({
     query: `
@@ -695,4 +705,3 @@ data = response.json()
 ---
 
 **Ready to start?** → **[GraphQL Playground](http://localhost:7474/graphql/playground)**
-

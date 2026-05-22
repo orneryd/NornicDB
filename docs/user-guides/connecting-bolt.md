@@ -18,34 +18,34 @@ NornicDB speaks the Neo4j Bolt protocol on port `:7687`. Any official Neo4j driv
 
 Every accepted connection on the Bolt port goes through a 5-byte sniff that picks one of four transports:
 
-| URL scheme              | First bytes on the wire                        | Server-side label  |
-|-------------------------|-------------------------------------------------|--------------------|
-| `bolt://host:7687/`     | Bolt magic preamble `60 60 B0 17`               | `tcp`              |
-| `bolt+s://host:7687/`   | TLS handshake (`0x16`), then Bolt magic         | `tcp_tls`          |
-| `ws://host:7687/`       | `GET ` (HTTP/1.1 upgrade)                       | `ws`               |
-| `wss://host:7687/`      | TLS handshake, then `GET `                      | `ws_tls`           |
+| URL scheme            | First bytes on the wire                 | Server-side label |
+| --------------------- | --------------------------------------- | ----------------- |
+| `bolt://host:7687/`   | Bolt magic preamble `60 60 B0 17`       | `tcp`             |
+| `bolt+s://host:7687/` | TLS handshake (`0x16`), then Bolt magic | `tcp_tls`         |
+| `bolt://host:7687/`   | `GET ` (HTTP/1.1 upgrade)               | `ws`              |
+| `bolt+s://host:7687/` | TLS handshake, then `GET `              | `ws_tls`          |
 
 A WebSocket BinaryMessage carries the same Bolt bytes that a raw TCP session would; the WebSocket frame is just a wrapper. JS drivers reassemble multi-frame messages by concatenating BinaryMessage payloads.
 
 ## URL Schemes
 
-The official Neo4j drivers (Java, Go, Python, .NET, JavaScript) accept only the canonical Bolt schemes — `bolt`, `bolt+s`, `bolt+ssc`, `neo4j`, `neo4j+s`, `neo4j+ssc`. They do NOT take `ws://` / `wss://` URLs; the browser build of the JS driver picks the WebSocket transport internally based on the runtime, while the Node build picks raw TCP. Either way you pass a `bolt://` URL.
+The official Neo4j drivers (Java, Go, Python, .NET, JavaScript) accept only the canonical Bolt schemes — `bolt`, `bolt+s`, `bolt+ssc`, `neo4j`, `neo4j+s`, `neo4j+ssc`. They do NOT take `bolt://` / `bolt+s://` URLs; the browser build of the JS driver picks the WebSocket transport internally based on the runtime, while the Node build picks raw TCP. Either way you pass a `bolt://` URL.
 
-| Driver scheme          | Runtime    | Wire transport produced |
-|------------------------|------------|--------------------------|
-| `bolt://host:7687`     | Node / JVM | `tcp`                    |
-| `bolt://host:7687`     | Browser JS | `ws`                     |
-| `bolt+s://host:7687`   | Node / JVM | `tcp_tls`                |
-| `bolt+s://host:7687`   | Browser JS | `ws_tls`                 |
-| `bolt+ssc://`          | Any        | Same as `bolt+s` (driver disables cert verification client-side) |
-| `neo4j://`             | Node / JVM | `tcp` + driver-side routing |
-| `neo4j://`             | Browser JS | `ws` + routing           |
-| `neo4j+s://`           | —          | `tcp_tls` / `ws_tls` + routing |
-| `neo4j+ssc://`         | —          | Same as `neo4j+s`, no client-side cert verification |
+| Driver scheme        | Runtime    | Wire transport produced                                          |
+| -------------------- | ---------- | ---------------------------------------------------------------- |
+| `bolt://host:7687`   | Node / JVM | `tcp`                                                            |
+| `bolt://host:7687`   | Browser JS | `ws`                                                             |
+| `bolt+s://host:7687` | Node / JVM | `tcp_tls`                                                        |
+| `bolt+s://host:7687` | Browser JS | `ws_tls`                                                         |
+| `bolt+ssc://`        | Any        | Same as `bolt+s` (driver disables cert verification client-side) |
+| `neo4j://`           | Node / JVM | `tcp` + driver-side routing                                      |
+| `neo4j://`           | Browser JS | `ws` + routing                                                   |
+| `neo4j+s://`         | —          | `tcp_tls` / `ws_tls` + routing                                   |
+| `neo4j+ssc://`       | —          | Same as `neo4j+s`, no client-side cert verification              |
 
 The routing wrappers (`neo4j://*`) ask the server for a routing table via the ROUTE message; NornicDB returns a single-server table pointing at the listener's address.
 
-If you're a third-party tool already speaking raw WebSockets and bypassing the Neo4j driver, the server *also* accepts unwrapped `ws://` / `wss://` upgrades on the same port — it just means dialing the WS handshake yourself and writing Bolt bytes into BinaryMessage frames. That path is the same wire-level transport the JS driver's browser build produces internally.
+If you're a third-party tool already speaking raw WebSockets and bypassing the Neo4j driver, the server _also_ accepts unwrapped `bolt://` / `bolt+s://` upgrades on the same port — it just means dialing the WS handshake yourself and writing Bolt bytes into BinaryMessage frames. That path is the same wire-level transport the JS driver's browser build produces internally.
 
 ## Authentication
 
@@ -75,17 +75,17 @@ import neo4j from "neo4j-driver";
 
 // Browser: same-origin cookie carries the JWT; auth.none() suffices.
 // The driver's URL scheme is bolt:// — its browser build picks the
-// WebSocket transport internally, so the wire is still ws:// frames.
+// WebSocket transport internally, so the wire is still bolt:// frames.
 const driver = neo4j.driver(
   "bolt://localhost:7687",
   // neo4j-driver's auth.none() is browser-only; in TS pass the literal.
-  { scheme: "none" }
+  { scheme: "none" },
 );
 
 // Node.js: explicit bearer (no implicit-cookie path on raw TCP).
 const driverNode = neo4j.driver(
   "bolt://localhost:7687",
-  neo4j.auth.bearer(process.env.NORNICDB_TOKEN)
+  neo4j.auth.bearer(process.env.NORNICDB_TOKEN),
 );
 
 const session = driver.session();
@@ -101,8 +101,11 @@ await driver.close();
 For TLS:
 
 ```javascript
-// In a browser served over HTTPS this becomes a wss:// frame on the wire.
-const driver = neo4j.driver("bolt+s://nornicdb.example.com:7687", neo4j.auth.basic("alice", "alice-password"));
+// In a browser served over HTTPS this becomes a bolt+s:// frame on the wire.
+const driver = neo4j.driver(
+  "bolt+s://nornicdb.example.com:7687",
+  neo4j.auth.basic("alice", "alice-password"),
+);
 ```
 
 ### Go
@@ -160,7 +163,7 @@ driver = neo4j.GraphDatabase.driver(
 
 ```java
 Driver driver = GraphDatabase.driver(
-    "wss://nornicdb.example.com:7687",
+    "bolt+s://nornicdb.example.com:7687",
     AuthTokens.bearer(jwtToken));
 
 try (Session session = driver.session()) {
@@ -172,31 +175,31 @@ driver.close();
 
 ## Browser-Based Tools
 
-Browsers cannot open raw TCP sockets, so browser-based Cypher tooling (Neo4j Browser, Bloom, custom React/Vue UIs using `neo4j-driver` in-browser) must use `ws://` or `wss://`.
+Browsers cannot open raw TCP sockets, so browser-based Cypher tooling (Neo4j Browser, Bloom, custom React/Vue UIs using `neo4j-driver` in-browser) must use `bolt://` or `bolt+s://`.
 
-The NornicDB UI itself runs the official `neo4j-driver` browser build with a `bolt://` URL and `auth.none()`; the driver's browser channel turns that into a `ws://` upgrade on the wire, the same-origin `nornicdb_token` cookie rides along, and the server's HELLO handler promotes the session to that cookie's claims. No additional config is required for first-party browser clients — sign in via `/auth/token` (or finish OAuth via `/auth/oauth/callback`) and Cypher queries Just Work.
+The NornicDB UI itself runs the official `neo4j-driver` browser build with a `bolt://` URL and `auth.none()`; the driver's browser channel turns that into a `bolt://` upgrade on the wire, the same-origin `nornicdb_token` cookie rides along, and the server's HELLO handler promotes the session to that cookie's claims. No additional config is required for first-party browser clients — sign in via `/auth/token` (or finish OAuth via `/auth/oauth/callback`) and Cypher queries Just Work.
 
-For cross-origin browser clients (e.g. a UI on `https://app.example.com` connecting to `wss://bolt.example.com:7687`), the cookie's `SameSite=Lax` setting prevents the browser from attaching it to the WS upgrade. Two options:
+For cross-origin browser clients (e.g. a UI on `https://app.example.com` connecting to `bolt+s://bolt.example.com:7687`), the cookie's `SameSite=Lax` setting prevents the browser from attaching it to the WS upgrade. Two options:
 
 1. Use `Authorization: Bearer <jwt>` instead. Cross-origin requests can carry custom headers (subject to CORS preflight on `OPTIONS`, which the WS handshake bypasses for `GET /`).
 2. Reconfigure the cookie with `SameSite=None; Secure` and a parent-domain scope (`Domain=.example.com`). This requires server-side changes to `/auth/token` and is an operator decision.
 
 ## Operator-Configurable Knobs
 
-| Setting                                     | Default     | Effect                                                                |
-|---------------------------------------------|-------------|-----------------------------------------------------------------------|
-| `NORNICDB_BOLT_TLS_ENABLED`                 | `false`     | Enables `bolt+s://` and `wss://`.                                     |
-| `NORNICDB_BOLT_TLS_CERT` / `_KEY`           | (unset)     | Cert and key paths; rotation re-reads every 5 s (atomic rename).      |
-| `NORNICDB_BOLT_TLS_REQUIRE`                 | `false`     | Reject every plaintext connection (raw and ws).                       |
-| `NORNICDB_BOLT_TLS_CLIENT_CA`               | (unset)     | mTLS: verify client certs against this CA.                            |
-| `NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE`        | `none`      | `none` / `request` / `request_verify` / `require_verify`.             |
-| `NORNICDB_BOLT_WEBSOCKET_ENABLED`           | `true`      | `false` ⇒ `426 Upgrade Required` on real WS upgrades.                 |
-| `NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS`   | `*`         | Comma-separated origin allowlist for the WS upgrade.                  |
-| `NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE`  | `65536`     | Per-frame limit (Neo4j parity).                                       |
-| `NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL`     | `30s`       | Server-side WS ping cadence (post-HELLO only).                        |
-| `NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT`      | `60s`       | Pong arrival deadline.                                                |
-| `NORNICDB_BOLT_SNIFF_TIMEOUT`               | `5s`        | Bound on the transport-sniff peek.                                    |
-| `NORNICDB_BOLT_AUTH_TIMEOUT`                | `30s`       | Bound on the pre-HELLO handshake/auth window.                         |
+| Setting                                    | Default | Effect                                                           |
+| ------------------------------------------ | ------- | ---------------------------------------------------------------- |
+| `NORNICDB_BOLT_TLS_ENABLED`                | `false` | Enables `bolt+s://` and `bolt+s://`.                             |
+| `NORNICDB_BOLT_TLS_CERT` / `_KEY`          | (unset) | Cert and key paths; rotation re-reads every 5 s (atomic rename). |
+| `NORNICDB_BOLT_TLS_REQUIRE`                | `false` | Reject every plaintext connection (raw and ws).                  |
+| `NORNICDB_BOLT_TLS_CLIENT_CA`              | (unset) | mTLS: verify client certs against this CA.                       |
+| `NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE`       | `none`  | `none` / `request` / `request_verify` / `require_verify`.        |
+| `NORNICDB_BOLT_WEBSOCKET_ENABLED`          | `true`  | `false` ⇒ `426 Upgrade Required` on real WS upgrades.            |
+| `NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS`  | `*`     | Comma-separated origin allowlist for the WS upgrade.             |
+| `NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE` | `65536` | Per-frame limit (Neo4j parity).                                  |
+| `NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL`    | `30s`   | Server-side WS ping cadence (post-HELLO only).                   |
+| `NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT`     | `60s`   | Pong arrival deadline.                                           |
+| `NORNICDB_BOLT_SNIFF_TIMEOUT`              | `5s`    | Bound on the transport-sniff peek.                               |
+| `NORNICDB_BOLT_AUTH_TIMEOUT`               | `30s`   | Bound on the pre-HELLO handshake/auth window.                    |
 
 See `docs/operations/configuration.md` for the YAML and CLI equivalents.
 
@@ -212,7 +215,7 @@ The server has `WebSocketEnabled=false` and the client is trying to upgrade. Eit
 
 ### `An unencrypted connection attempt was made where encryption is required.`
 
-The server has `RequireTLS=true` and the driver is on `bolt://` or `ws://`. Switch to `bolt+s://` or `wss://`.
+The server has `RequireTLS=true` and the driver is on `bolt://` or `bolt://`. Switch to `bolt+s://` or `bolt+s://`.
 
 ### `Authentication required` on a WS connection from the browser
 
@@ -221,5 +224,6 @@ The cookie is missing or expired. Either log in again at `/login` or send `Autho
 ### `Access to database 'nornic' is not allowed.`
 
 Bolt successfully authenticated, but the principal's roles don't include access to the requested database. Either:
+
 - The user is missing the `admin` / `editor` / `viewer` role bound to the database, or
 - `RequireAuth=true` is set without a `DatabaseAccessModeResolver` wired (rare; see operator docs).

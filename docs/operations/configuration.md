@@ -186,23 +186,23 @@ Configuration values for these flags resolve through a fixed ladder, lowest → 
 
 In all other directions: per-DB overrides win over global, in both directions. An override of `true` turns on a globally-disabled index; an override of `false` turns off a globally-enabled one. Same for warming. The "always wins" guarantee is what makes the multi-tenant story work (one DB needs search, the rest don't).
 
-| Key                              | Type    | Default   | Meaning                                                                                                                                                                                                                                       |
-| -------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                     |
-| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                                |
-| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever.   |
-| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                       |
+| Key                              | Type    | Default   | Meaning                                                                                                                                                                                                                                 |
+| -------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                 |
+| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                            |
+| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever. |
+| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                   |
 
 Behavior summary (all combinations supported):
 
-| BM25         | Vector       | First search request                                                            |
-| ------------ | ------------ | ------------------------------------------------------------------------------- |
-| on / startup | on / startup | Hybrid (today's default).                                                       |
-| on / startup | on / lazy    | Synchronous wait while vector warms; first response includes vector results.    |
-| on / lazy    | on / lazy    | Synchronous wait while both warm; first response is fully ranked.                |
-| on / startup | off / —      | Lexical-only 200.                                                               |
-| off / —      | on / startup | Vector-only 200 (HNSW falls back to random insertion order).                    |
-| off / —      | off / —      | 503 `search_disabled_for_database`, `retryable: false` — permanent.            |
+| BM25         | Vector       | First search request                                                         |
+| ------------ | ------------ | ---------------------------------------------------------------------------- |
+| on / startup | on / startup | Hybrid (today's default).                                                    |
+| on / startup | on / lazy    | Synchronous wait while vector warms; first response includes vector results. |
+| on / lazy    | on / lazy    | Synchronous wait while both warm; first response is fully ranked.            |
+| on / startup | off / —      | Lexical-only 200.                                                            |
+| off / —      | on / startup | Vector-only 200 (HNSW falls back to random insertion order).                 |
+| off / —      | off / —      | 503 `search_disabled_for_database`, `retryable: false` — permanent.          |
 
 Configure via (in order of effective precedence; later sources override earlier ones):
 
@@ -218,19 +218,19 @@ Health checks **must not** target `/nornicdb/search` for `warming=lazy` or any `
 
 ```yaml
 databases:
-  hot_app_db: {}                # both indexes default (enabled, startup)
+  hot_app_db: {} # both indexes default (enabled, startup)
 
   analytics:
-    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_BM25_ENABLED: "false"
     NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
 
   audit_logs:
-    NORNICDB_SEARCH_BM25_ENABLED:   "false"
+    NORNICDB_SEARCH_BM25_ENABLED: "false"
     NORNICDB_SEARCH_VECTOR_ENABLED: "false"
 
   exports_only:
-    NORNICDB_SEARCH_BM25_ENABLED:   "true"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false"  # write embeddings; never load in-process
+    NORNICDB_SEARCH_BM25_ENABLED: "true"
+    NORNICDB_SEARCH_VECTOR_ENABLED: "false" # write embeddings; never load in-process
 ```
 
 The yaml `databases:` map is read into `dbconfig.Store` **only on first boot** for each `(dbName, key)` pair. Once an admin has PUT a value via `/admin/databases/{name}/config`, that value is authoritative across restarts and yaml changes for the same key are ignored. Operators who want yaml to win again can either delete the `_DbConfig` node from the system database or PUT the desired value back via the admin API.
@@ -288,14 +288,14 @@ Notes:
 
 NornicDB multiplexes four wire-level transports on the Bolt port (`:7687` by default). The first 5 bytes of every accepted connection decide which path it takes:
 
-| URL scheme              | First bytes on the wire                          | Transport label  |
-|-------------------------|--------------------------------------------------|------------------|
-| `bolt://host:7687/`     | Bolt magic preamble `60 60 B0 17`                | `tcp`            |
-| `bolt+s://host:7687/`   | TLS handshake (`0x16`), then Bolt magic          | `tcp_tls`        |
-| `ws://host:7687/`       | `GET ` (HTTP/1.1 upgrade)                        | `ws`             |
-| `wss://host:7687/`      | TLS handshake, then `GET `                       | `ws_tls`         |
+| URL scheme            | First bytes on the wire                 | Transport label |
+| --------------------- | --------------------------------------- | --------------- |
+| `bolt://host:7687/`   | Bolt magic preamble `60 60 B0 17`       | `tcp`           |
+| `bolt+s://host:7687/` | TLS handshake (`0x16`), then Bolt magic | `tcp_tls`       |
+| `bolt://host:7687/`   | `GET ` (HTTP/1.1 upgrade)               | `ws`            |
+| `bolt+s://host:7687/` | TLS handshake, then `GET `              | `ws_tls`        |
 
-Driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`, `bolt+ws://`) all map to one of these four wire transports; the server doesn't see the alias, only the bytes.
+Driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`, `bolt+bolt://`) all map to one of these four wire transports; the server doesn't see the alias, only the bytes.
 
 #### YAML
 
@@ -304,13 +304,13 @@ server:
   bolt_tls_enabled: true
   bolt_tls_cert: /etc/nornicdb/tls/cert.pem
   bolt_tls_key: /etc/nornicdb/tls/key.pem
-  bolt_tls_require: false               # true = reject any plaintext connection
-  bolt_tls_client_ca_file: ""           # mTLS: path to client-CA bundle
-  bolt_tls_client_auth_mode: none       # none | request | request_verify | require_verify
+  bolt_tls_require: false # true = reject any plaintext connection
+  bolt_tls_client_ca_file: "" # mTLS: path to client-CA bundle
+  bolt_tls_client_auth_mode: none # none | request | request_verify | require_verify
   bolt_sniff_timeout: 5s
   bolt_auth_timeout: 30s
-  bolt_websocket_enabled: true          # false ⇒ 426 Upgrade Required on WS attempts
-  bolt_websocket_allowed_origins: "*"   # or "https://app.example.com,https://admin.example.com"
+  bolt_websocket_enabled: true # false ⇒ 426 Upgrade Required on WS attempts
+  bolt_websocket_allowed_origins: "*" # or "https://app.example.com,https://admin.example.com"
   bolt_websocket_max_message_size: 65536
   bolt_websocket_write_buffer_size: 262144
   bolt_websocket_ping_interval: 30s
@@ -319,22 +319,22 @@ server:
 
 #### Environment variables
 
-| Key                                        | Default | Notes |
-|--------------------------------------------|---------|-------|
-| `NORNICDB_BOLT_TLS_ENABLED`                | `false` | enables TLS-on-first-byte sniffing |
-| `NORNICDB_BOLT_TLS_CERT`                   |         | path to cert PEM |
-| `NORNICDB_BOLT_TLS_KEY`                    |         | path to key PEM |
-| `NORNICDB_BOLT_TLS_REQUIRE`                | `false` | reject plaintext (raw OR ws) |
-| `NORNICDB_BOLT_TLS_CLIENT_CA`              |         | path to CA bundle for mTLS |
-| `NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE`       | `none`  | `none` / `request` / `request_verify` / `require_verify` |
-| `NORNICDB_BOLT_SNIFF_TIMEOUT`              | `5s`    | bound on transport-sniff peek |
-| `NORNICDB_BOLT_AUTH_TIMEOUT`               | `30s`   | bound on pre-HELLO handshake/auth |
-| `NORNICDB_BOLT_WEBSOCKET_ENABLED`          | `true`  | set `false` for purely-TCP deployments |
-| `NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS`  | `*`     | comma-separated; `*` = any |
-| `NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE` | `65536` | bytes; matches Neo4j `MAX_WEBSOCKET_FRAME_SIZE` |
-| `NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE`| `262144`| bufio writer size for WS sessions |
-| `NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL`    | `30s`   | server WS ping cadence |
-| `NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT`     | `60s`   | pong arrival deadline |
+| Key                                         | Default  | Notes                                                    |
+| ------------------------------------------- | -------- | -------------------------------------------------------- |
+| `NORNICDB_BOLT_TLS_ENABLED`                 | `false`  | enables TLS-on-first-byte sniffing                       |
+| `NORNICDB_BOLT_TLS_CERT`                    |          | path to cert PEM                                         |
+| `NORNICDB_BOLT_TLS_KEY`                     |          | path to key PEM                                          |
+| `NORNICDB_BOLT_TLS_REQUIRE`                 | `false`  | reject plaintext (raw OR ws)                             |
+| `NORNICDB_BOLT_TLS_CLIENT_CA`               |          | path to CA bundle for mTLS                               |
+| `NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE`        | `none`   | `none` / `request` / `request_verify` / `require_verify` |
+| `NORNICDB_BOLT_SNIFF_TIMEOUT`               | `5s`     | bound on transport-sniff peek                            |
+| `NORNICDB_BOLT_AUTH_TIMEOUT`                | `30s`    | bound on pre-HELLO handshake/auth                        |
+| `NORNICDB_BOLT_WEBSOCKET_ENABLED`           | `true`   | set `false` for purely-TCP deployments                   |
+| `NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS`   | `*`      | comma-separated; `*` = any                               |
+| `NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE`  | `65536`  | bytes; matches Neo4j `MAX_WEBSOCKET_FRAME_SIZE`          |
+| `NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE` | `262144` | bufio writer size for WS sessions                        |
+| `NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL`     | `30s`    | server WS ping cadence                                   |
+| `NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT`      | `60s`    | pong arrival deadline                                    |
 
 #### Discovery probe
 
@@ -350,7 +350,7 @@ When `NORNICDB_AUTH_PROVIDER=oauth` is set with `NORNICDB_OAUTH_*` filled in, th
 
 #### `RequireTLS=true`
 
-When set, plaintext `bolt://` and `ws://` upgrade attempts are rejected with the canonical Neo4j error `An unencrypted connection attempt was made where encryption is required.` and the `bolt_connections_rejected_total{reason="requires_tls"}` counter increments.
+When set, plaintext `bolt://` and `bolt://` upgrade attempts are rejected with the canonical Neo4j error `An unencrypted connection attempt was made where encryption is required.` and the `bolt_connections_rejected_total{reason="requires_tls"}` counter increments.
 
 #### `WebSocketEnabled=false`
 
