@@ -1,0 +1,20 @@
+pkg/cypher/transaction_namespace_test.go
+  s_09a3c21aa6fcce::t_075c6d0a9be3c5 302,307
+  s_09a3c21aa6fcce::t_902f7b86946348 31-45,265-301,303-306,308-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "06f2a26f3d08370ff21442634898dc582a74cea4",
+  "prompts": {},
+  "sessions": {
+    "s_09a3c21aa6fcce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4c19-693b-7e91-87c6-95552a3d0135",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Allen Sanabria <asanabria6910@gmail.com>"
+    }
+  }
+}
