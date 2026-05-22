@@ -139,6 +139,39 @@ type Config struct {
 	// yet — admin API edits remain authoritative across restarts.
 	// Empty/nil for callers that didn't go through LoadFromFile.
 	PerDBOverrides map[string]map[string]string `yaml:"-" json:"-"`
+
+	// DeferSearchWarmup tells nornicdb.Open NOT to start the per-DB
+	// search-index warmup until the caller explicitly calls
+	// db.MarkSearchWarmupReady(). The wiring layer (pkg/server) sets
+	// this so it can install the per-DB flags resolver before any
+	// warmup goroutine reads it.
+	//
+	// Default false: Open kicks the warmup gate open before returning
+	// so embedded callers (scripts, tests, anyone using the Open +
+	// query pattern without a server layer) get today's behaviour with
+	// no extra wiring. Setting it true is opt-in and carries the
+	// contract that the caller must release the gate; if they forget,
+	// search warmup blocks indefinitely. Runtime-only; never serialized.
+	DeferSearchWarmup bool `yaml:"-" json:"-"`
+
+	// CLIOverrides captures values that were explicitly set on the
+	// command line (only keys where cmd.Flags().Changed(...) is true).
+	// Treated as the highest-precedence source by dbconfig.Resolve so
+	// an operator's explicit `--search-bm25-enabled=false` at boot
+	// overrides any per-DB stored value, YAML, or env. CLI is the
+	// kill switch — when an operator types it during an incident, it
+	// must take effect even if a tenant's per-DB configuration says
+	// otherwise.
+	//
+	// Keys are the canonical NORNICDB_* env-var names (e.g.
+	// NORNICDB_SEARCH_BM25_ENABLED) so the resolver can use the same
+	// override key namespace it already uses for dbconfig store
+	// entries. Values are stringified to match the dbconfig store's
+	// schema. Nil/empty for non-CLI callers; that branch falls back
+	// to the existing per-DB > global precedence.
+	//
+	// Runtime-only; never serialized to YAML/JSON.
+	CLIOverrides map[string]string `yaml:"-" json:"-"`
 }
 
 // AuthConfig holds authentication settings.

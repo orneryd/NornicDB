@@ -185,6 +185,46 @@ Features:
 	}
 }
 
+// setCLIOverride stamps a single canonical NORNICDB_* key into
+// cfg.CLIOverrides. Initializes the map lazily so non-CLI consumers
+// (LoadFromEnv / LoadFromFile) don't have to remember to seed it.
+//
+// The CLI override layer is the highest-precedence source consulted by
+// dbconfig.Resolve — an explicit boot-time CLI flag must trump any
+// per-DB value stored in the dbconfig store, which in turn trumps the
+// env/YAML-loaded global. See docs/operations/configuration.md for
+// the full ladder.
+func setCLIOverride(cfg *config.Config, key, value string) {
+	if cfg.CLIOverrides == nil {
+		cfg.CLIOverrides = make(map[string]string)
+	}
+	cfg.CLIOverrides[key] = value
+}
+
+// boolToCLIString renders a bool in the same shape the dbconfig store
+// uses ("true"/"false"). The resolver's parseBoolFallback recognises
+// both "true"/"false" and "1"/"0", so the literal here just needs to
+// be unambiguous.
+func boolToCLIString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// normalizeWarmingFlag mirrors the resolver's normalizeWarming: anything
+// other than "lazy" (case-insensitive, trimmed) collapses to "startup".
+// Centralised here so the CLI override path uses the same canonical
+// values that dbconfig.Resolve produces.
+func normalizeWarmingFlag(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "lazy":
+		return "lazy"
+	default:
+		return "startup"
+	}
+}
+
 func runServe(cmd *cobra.Command, args []string) error {
 	boltPort, _ := cmd.Flags().GetInt("bolt-port")
 	httpPort, _ := cmd.Flags().GetInt("http-port")
@@ -319,33 +359,43 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("embedding-cache") {
 		cfg.Memory.EmbeddingCacheSize = embeddingCache
 	}
-	// Per-DB search index master switches: CLI flag overrides yaml/env-loaded
-	// defaults so operators can flip them at boot without editing yaml.
+	// Per-DB search index master switches.
+	//
+	// CLI flags here serve two purposes:
+	//   1. Update cfg.Memory.Search* so the global default reflects
+	//      the operator's choice (lower-precedence sources like YAML
+	//      and env-loaded values are already in cfg by this point;
+	//      the assignment here is the "CLI > env > YAML" overlay).
+	//   2. Stamp cfg.CLIOverrides with the canonical NORNICDB_* key.
+	//      dbconfig.Resolve treats CLIOverrides as the highest
+	//      precedence source — strictly above per-DB store entries —
+	//      so an operator's `--search-*=false` at boot acts as a
+	//      kill switch even if a tenant has set per-DB values.
+	//
+	// Keys parallel the dbconfig store's NORNICDB_* namespace so
+	// the resolver consults a single override map regardless of who
+	// produced the value.
 	if cmd.Flags().Changed("search-bm25-enabled") {
 		v, _ := cmd.Flags().GetBool("search-bm25-enabled")
 		cfg.Memory.SearchBM25Enabled = v
+		setCLIOverride(cfg, "NORNICDB_SEARCH_BM25_ENABLED", boolToCLIString(v))
 	}
 	if cmd.Flags().Changed("search-bm25-warming") {
 		v, _ := cmd.Flags().GetString("search-bm25-warming")
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "lazy":
-			cfg.Memory.SearchBM25Warming = "lazy"
-		default:
-			cfg.Memory.SearchBM25Warming = "startup"
-		}
+		warming := normalizeWarmingFlag(v)
+		cfg.Memory.SearchBM25Warming = warming
+		setCLIOverride(cfg, "NORNICDB_SEARCH_BM25_WARMING", warming)
 	}
 	if cmd.Flags().Changed("search-vector-enabled") {
 		v, _ := cmd.Flags().GetBool("search-vector-enabled")
 		cfg.Memory.SearchVectorEnabled = v
+		setCLIOverride(cfg, "NORNICDB_SEARCH_VECTOR_ENABLED", boolToCLIString(v))
 	}
 	if cmd.Flags().Changed("search-vector-warming") {
 		v, _ := cmd.Flags().GetString("search-vector-warming")
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "lazy":
-			cfg.Memory.SearchVectorWarming = "lazy"
-		default:
-			cfg.Memory.SearchVectorWarming = "startup"
-		}
+		warming := normalizeWarmingFlag(v)
+		cfg.Memory.SearchVectorWarming = warming
+		setCLIOverride(cfg, "NORNICDB_SEARCH_VECTOR_WARMING", warming)
 	}
 
 	// Override with CLI flags if provided
@@ -435,26 +485,28 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
 
-	// Configure database
-	dbConfig := nornicdb.DefaultConfig()
+	// Configure database. cfg is the canonical config snapshot built by
+	// LoadFromEnv / LoadFromFile + the CLI override block above. Past
+	// versions of this code copied a hand-picked subset of fields into
+	// a fresh DefaultConfig() — that pattern silently dropped any new
+	// field unless someone remembered to add a copy line (lab incident
+	// 80719f25 hit exactly this with the Search* flags). Pass cfg
+	// directly: any field that lives on Config now flows through.
+	dbConfig := cfg
 	dbConfig.Database.DataDir = dataDir
 	dbConfig.Server.BoltPort = boltPort
 	dbConfig.Server.HTTPPort = httpPort
-	dbConfig.Memory.DecayEnabled = cfg.Memory.DecayEnabled
-	dbConfig.Memory.DecayInterval = cfg.Memory.DecayInterval
-	dbConfig.Memory.AccessFlushBufferSize = cfg.Memory.AccessFlushBufferSize
-	dbConfig.Memory.VisibilityThreshold = cfg.Memory.VisibilityThreshold
+	// Embedding endpoint/credentials are still computed locally from a
+	// mix of CLI flags + env, then assigned here so the resolved values
+	// land on the same struct.
 	dbConfig.Memory.EmbeddingAPIURL = embeddingURL
 	dbConfig.Memory.EmbeddingAPIKey = embeddingKey
 	dbConfig.Memory.EmbeddingModel = embeddingModel
 	dbConfig.Memory.EmbeddingDimensions = embeddingDim
-	dbConfig.Memory.SearchMinSimilarity = cfg.Memory.SearchMinSimilarity
-	dbConfig.EmbeddingWorker.NumWorkers = cfg.EmbeddingWorker.NumWorkers
-	dbConfig.EmbeddingWorker.PropertiesInclude = cfg.EmbeddingWorker.PropertiesInclude
-	dbConfig.EmbeddingWorker.PropertiesExclude = cfg.EmbeddingWorker.PropertiesExclude
-	dbConfig.EmbeddingWorker.IncludeLabels = cfg.EmbeddingWorker.IncludeLabels
+	dbConfig.Database.AllowStorageUpgrade = upgradeStorage
 
-	// Memory mode
+	// Memory mode flag is CLI-only (no Config field today). Apply it
+	// before Open so cache sizing is correct.
 	lowMemory, _ := cmd.Flags().GetBool("low-memory")
 	if lowMemory {
 		// Preserve low-memory behavior by shrinking hot caches.
@@ -462,31 +514,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = 10
 	}
 
-	// Encryption settings from config
-	dbConfig.Database.EncryptionEnabled = cfg.Database.EncryptionEnabled
-	dbConfig.Database.EncryptionPassword = cfg.Database.EncryptionPassword
-
-	// Async write settings from config
-	dbConfig.Database.AsyncWritesEnabled = cfg.Database.AsyncWritesEnabled
-	dbConfig.Database.AsyncFlushInterval = cfg.Database.AsyncFlushInterval
-	dbConfig.Database.AsyncMaxNodeCacheSize = cfg.Database.AsyncMaxNodeCacheSize
-	dbConfig.Database.AsyncMaxEdgeCacheSize = cfg.Database.AsyncMaxEdgeCacheSize
-
-	// WAL retention settings from config
-	dbConfig.Database.WALRetentionMaxSegments = cfg.Database.WALRetentionMaxSegments
-	dbConfig.Database.WALRetentionMaxAge = cfg.Database.WALRetentionMaxAge
-	dbConfig.Database.WALRetentionLedgerDefaults = cfg.Database.WALRetentionLedgerDefaults
-	dbConfig.Database.WALAutoCompactionEnabled = cfg.Database.WALAutoCompactionEnabled
-	dbConfig.Database.WALSnapshotRetentionMaxCount = cfg.Database.WALSnapshotRetentionMaxCount
-	dbConfig.Database.WALSnapshotRetentionMaxAge = cfg.Database.WALSnapshotRetentionMaxAge
-
-	// Badger in-process cache sizing (hot read paths)
-	dbConfig.Database.BadgerNodeCacheMaxEntries = cfg.Database.BadgerNodeCacheMaxEntries
-	dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = cfg.Database.BadgerEdgeTypeCacheMaxTypes
-	dbConfig.Database.PersistSearchIndexes = cfg.Database.PersistSearchIndexes
-	dbConfig.Database.AllowStorageUpgrade = upgradeStorage
-	dbConfig.Memory.KmeansNumClusters = cfg.Memory.KmeansNumClusters
-	dbConfig.Memory.EmbeddingEnabled = cfg.Memory.EmbeddingEnabled
+	// pkg/server installs the per-DB search-flags resolver after Open
+	// returns. Tell Open to hold the warmup gate until then — server.New
+	// releases it via db.MarkSearchWarmupReady once SetDbSearchFlagsResolver
+	// has run. Without this, the warmup goroutine could race past resolver
+	// installation and warm the default DB with global fallbacks instead of
+	// the operator's per-DB overrides.
+	dbConfig.DeferSearchWarmup = true
 
 	// Phase 2 D-08 reordering: build the production *slog.Logger BEFORE
 	// nornicdb.Open so storage (BadgerEngine, WAL, AsyncEngine) emits

@@ -1690,6 +1690,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			})
 		}
 	}
+	// Release the search-index warmup gate. nornicdb.Open holds the
+	// warmup goroutine at a sync point until this is called so it can
+	// resolve per-DB flags through the resolver wired above instead of
+	// racing with it. Default DB and named DBs go through the same
+	// resolution path; per-DB overrides (YAML databases: block, admin
+	// API store) apply uniformly. If wiring above failed (e.g. system
+	// storage unavailable) the gate is still released — warmup falls
+	// through to db.config.Memory.Search* + the (true,true,startup)
+	// final fallback, which matches today's behaviour for misconfigured
+	// systems.
+	db.MarkSearchWarmupReady()
 
 	// Initialize slow query logger if file specified.
 	// D-04d collapse: threshold + log file path read from the canonical

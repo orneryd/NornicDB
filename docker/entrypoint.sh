@@ -45,4 +45,17 @@ if [ -n "$NORNICDB_BASE_PATH" ]; then
     ARGS="$ARGS --base-path=$NORNICDB_BASE_PATH"
 fi
 
-exec /app/nornicdb $ARGS "$@"
+# Per-DB search index master switches. The Go binary already reads
+# NORNICDB_SEARCH_* directly via pkg/config.LoadFromEnv, but propagating
+# them as CLI flags makes them visible in `ps`, in container inspect
+# output, and in tests that grep --search-* in startup logs. Both paths
+# converge on the same cfg.Memory.Search* fields downstream.
+[ -n "$NORNICDB_SEARCH_BM25_ENABLED" ] && ARGS="$ARGS --search-bm25-enabled=$NORNICDB_SEARCH_BM25_ENABLED"
+[ -n "$NORNICDB_SEARCH_BM25_WARMING" ] && ARGS="$ARGS --search-bm25-warming=$NORNICDB_SEARCH_BM25_WARMING"
+[ -n "$NORNICDB_SEARCH_VECTOR_ENABLED" ] && ARGS="$ARGS --search-vector-enabled=$NORNICDB_SEARCH_VECTOR_ENABLED"
+[ -n "$NORNICDB_SEARCH_VECTOR_WARMING" ] && ARGS="$ARGS --search-vector-warming=$NORNICDB_SEARCH_VECTOR_WARMING"
+
+# NORNICDB_BIN lets test harnesses (and unusual layouts) substitute a
+# different binary path. Production images install at /app/nornicdb, so
+# the default keeps the original behavior intact.
+exec "${NORNICDB_BIN:-/app/nornicdb}" $ARGS "$@"

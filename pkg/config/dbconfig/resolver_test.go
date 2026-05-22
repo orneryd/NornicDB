@@ -241,3 +241,167 @@ func TestEnumValidation(t *testing.T) {
 	ok, _ = IsValidEnumValue("NORNICDB_SEARCH_BM25_ENABLED", "anything")
 	assert.True(t, ok)
 }
+
+// TestResolve_PrecedenceLadder walks every level of the precedence
+// ladder for the four search flags and asserts each level overrides
+// the levels below it. Order, lowest → highest:
+//
+//  1. defaults     (config.LoadDefaults; bm25=true, vector=true, both startup)
+//  2. global       (cfg.Memory.Search* — populated from YAML/env)
+//  3. per-DB       (the `overrides` map — admin API store / YAML databases:)
+//  4. CLI          (cfg.CLIOverrides — cmd.Flags().Changed at boot)
+//
+// Each subtest holds the levels above the one under test as no-op
+// (matching the level below) so the ONE level we're exercising is
+// what's actually demonstrated to win.
+func TestResolve_PrecedenceLadder(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		// No overlay anywhere: the resolved values mirror LoadDefaults.
+		global := config.LoadDefaults()
+		r := Resolve(global, nil)
+		assert.True(t, r.BM25Enabled, "default BM25 must be enabled")
+		assert.True(t, r.VectorEnabled, "default vector must be enabled")
+		assert.Equal(t, "startup", r.BM25Warming, "default warming")
+		assert.Equal(t, "startup", r.VectorWarming, "default warming")
+	})
+
+	t.Run("global overrides defaults", func(t *testing.T) {
+		// Stand-in for YAML/env loading: cfg.Memory.Search* differs
+		// from defaults; no per-DB or CLI overrides.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		global.Memory.SearchBM25Warming = "lazy"
+		global.Memory.SearchVectorWarming = "lazy"
+		r := Resolve(global, nil)
+		assert.False(t, r.BM25Enabled, "global must override default")
+		assert.False(t, r.VectorEnabled, "global must override default")
+		assert.Equal(t, "lazy", r.BM25Warming)
+		assert.Equal(t, "lazy", r.VectorWarming)
+	})
+
+	t.Run("per-DB overrides global", func(t *testing.T) {
+		// Global says enabled; per-DB store says disabled. Per-DB wins.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+			"NORNICDB_SEARCH_BM25_WARMING":   "lazy",
+			"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled, "per-DB must override global")
+		assert.False(t, r.VectorEnabled, "per-DB must override global")
+		assert.Equal(t, "lazy", r.BM25Warming)
+		assert.Equal(t, "lazy", r.VectorWarming)
+	})
+
+	t.Run("per-DB overrides global the other direction", func(t *testing.T) {
+		// Belt-and-suspenders: ensure per-DB can also turn ON something
+		// global says is off, not just off-something-on.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		r := Resolve(global, overrides)
+		assert.True(t, r.BM25Enabled, "per-DB true must override global false")
+		assert.True(t, r.VectorEnabled, "per-DB true must override global false")
+	})
+
+	t.Run("CLI trumps per-DB and global (kill switch)", func(t *testing.T) {
+		// The lab-incident shape: tenant has search ON via per-DB store,
+		// operator boots with --search-*-enabled=false to mitigate OOM.
+		// CLI must win.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		// Per-DB explicitly says enabled — CLI must still win.
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled,
+			"CLI kill switch must override per-DB enable; got=%+v", r)
+		assert.False(t, r.VectorEnabled,
+			"CLI kill switch must override per-DB enable; got=%+v", r)
+		// Effective map should reflect CLI's value as the last writer.
+		assert.Equal(t, "false", r.Effective["NORNICDB_SEARCH_BM25_ENABLED"])
+		assert.Equal(t, "false", r.Effective["NORNICDB_SEARCH_VECTOR_ENABLED"])
+	})
+
+	t.Run("CLI trumps per-DB the other direction", func(t *testing.T) {
+		// Operator wants search ON globally even though a per-DB entry
+		// says off. Less common but symmetric — a debug or recovery
+		// session could need it.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = false
+		global.Memory.SearchVectorEnabled = false
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		r := Resolve(global, overrides)
+		assert.True(t, r.BM25Enabled, "CLI true must trump per-DB false")
+		assert.True(t, r.VectorEnabled, "CLI true must trump per-DB false")
+	})
+
+	t.Run("CLI applies even without per-DB override", func(t *testing.T) {
+		// CLI must work whether or not the dbconfig store has any
+		// row for this DB. Single-source environments (no admin API
+		// usage, no YAML databases: block) are common.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED": "false",
+		}
+		r := Resolve(global, nil)
+		assert.False(t, r.BM25Enabled, "CLI must apply even with no per-DB overrides")
+	})
+
+	t.Run("CLI scoped per-key — partial overrides don't bleed", func(t *testing.T) {
+		// Operator only flips BM25 via CLI. Vector flag must follow
+		// the next-highest level (per-DB here), not get coerced by
+		// CLI's BM25 entry.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Enabled = true
+		global.Memory.SearchVectorEnabled = true
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_ENABLED": "false",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+		}
+		r := Resolve(global, overrides)
+		assert.False(t, r.BM25Enabled, "CLI overrides BM25 only")
+		assert.False(t, r.VectorEnabled, "per-DB overrides vector — CLI didn't touch it")
+	})
+
+	t.Run("CLI warming override beats per-DB warming", func(t *testing.T) {
+		// Warming is enum-typed (startup/lazy). Make sure the CLI path
+		// applies it the same way as the boolean path.
+		global := config.LoadDefaults()
+		global.Memory.SearchBM25Warming = "startup"
+		global.CLIOverrides = map[string]string{
+			"NORNICDB_SEARCH_BM25_WARMING": "lazy",
+		}
+		overrides := map[string]string{
+			"NORNICDB_SEARCH_BM25_WARMING": "startup",
+		}
+		r := Resolve(global, overrides)
+		assert.Equal(t, "lazy", r.BM25Warming, "CLI warming override wins")
+	})
+}

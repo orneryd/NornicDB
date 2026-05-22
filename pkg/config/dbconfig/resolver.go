@@ -37,12 +37,27 @@ type ResolvedDbConfig struct {
 }
 
 // Resolve merges global config with per-DB overrides and returns the resolved config.
-// Overrides are applied on top of global; omitted keys use global default.
 //
-// Per-DB overrides always win over the global default, in both directions: an
-// override of `true` turns on a globally-disabled index; an override of `false`
-// turns off a globally-enabled one. This is load-bearing for the multi-tenant
-// story (one DB needs search, the rest don't).
+// Precedence ladder, lowest → highest:
+//
+//  1. Built-in defaults (config.LoadDefaults).
+//  2. YAML / env-loaded `global` config (cfg.Memory.Search* etc).
+//  3. Per-DB overrides supplied via the `overrides` map (admin API, YAML
+//     `databases:` block).
+//  4. CLI overrides on the same global config (cfg.CLIOverrides).
+//
+// CLI is the kill switch: when an operator explicitly sets a flag at
+// boot — e.g. `--search-bm25-enabled=false` during an OOM incident — it
+// must take effect across every database, including ones that have a
+// per-DB store entry saying otherwise. Env and YAML do NOT get this
+// treatment because they're declarative config that's easy to forget
+// in a compose file or k8s manifest; CLI is what an operator types
+// when something is on fire and intent is unambiguous.
+//
+// In both directions: an override of `true` turns on a globally-disabled
+// index; an override of `false` turns off a globally-enabled one. Same
+// for warming. The "always wins" guarantee is what makes the
+// multi-tenant story work (one DB needs search, the rest don't).
 func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConfig {
 	r := &ResolvedDbConfig{
 		EmbeddingDimensions: global.Memory.EmbeddingDimensions,
@@ -59,7 +74,19 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 	}
 	// Build effective map from global (we'll overlay overrides below).
 	effectiveFromGlobal(global, r.Effective)
+	// Per-DB overrides (admin API store / YAML databases: block) apply
+	// on top of global.
 	for k, v := range overrides {
+		if !IsAllowedKey(k) {
+			continue
+		}
+		applyOverride(r, k, v)
+		r.Effective[k] = v
+	}
+	// CLI overrides apply LAST — top of the precedence ladder. Empty
+	// for callers that didn't go through the runServe CLI parser, in
+	// which case this loop is a no-op.
+	for k, v := range global.CLIOverrides {
 		if !IsAllowedKey(k) {
 			continue
 		}

@@ -171,7 +171,20 @@ Instance-level configuration (env, config file) is the **default** for every dat
 
 ### Per-database search index control
 
-Two orthogonal axes per index, four keys total. Per-DB overrides always win over the global default in **both directions**: an override of `true` turns on a globally-disabled index, an override of `false` turns off a globally-enabled one.
+Two orthogonal axes per index, four keys total.
+
+#### Precedence ladder
+
+Configuration values for these flags resolve through a fixed ladder, lowest → highest:
+
+1. **Built-in defaults** — bm25=true, vector=true, both warming=startup.
+2. **Global config** — `cfg.Memory.Search*` populated by YAML and env vars (`NORNICDB_SEARCH_*`).
+3. **Per-DB overrides** — admin API (`PUT /admin/databases/{name}/config`) and the YAML `databases:` block.
+4. **CLI overrides** — `--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve`. Only flags explicitly typed on the command line participate; unset flags inherit the next level down.
+
+**Why CLI trumps per-DB.** CLI is the operational kill switch. When an operator types `--search-bm25-enabled=false` at boot — typically during an OOM incident, disk-pressure recovery, or debug session — that intent must take effect even if a tenant's per-DB store entry says otherwise. Env and YAML do **not** get this treatment because they're declarative config that's easy to forget in a compose file or k8s manifest, and a stale env shouldn't be able to silently revert a tenant's intentional per-DB configuration. CLI is what an operator types when something is on fire; it's unambiguous.
+
+In all other directions: per-DB overrides win over global, in both directions. An override of `true` turns on a globally-disabled index; an override of `false` turns off a globally-enabled one. Same for warming. The "always wins" guarantee is what makes the multi-tenant story work (one DB needs search, the rest don't).
 
 | Key                              | Type    | Default   | Meaning                                                                                                                                                                                                                                       |
 | -------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -191,12 +204,13 @@ Behavior summary (all combinations supported):
 | off / —      | on / startup | Vector-only 200 (HNSW falls back to random insertion order).                    |
 | off / —      | off / —      | 503 `search_disabled_for_database`, `retryable: false` — permanent.            |
 
-Configure via:
+Configure via (in order of effective precedence; later sources override earlier ones):
 
-- `nornicdb.yaml`: top-level `databases:` map keyed by database name (see the [yaml schema example](#yaml-databases-map)).
-- Env vars at boot: act as global defaults.
-- CLI: `--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve` set global defaults.
-- Admin API: `PUT /admin/databases/{name}/config` accepts these as per-DB overrides at runtime; flipping `enabled=true→false` triggers an immediate teardown of the affected index.
+- **YAML global** (`memory.search_*` block in `nornicdb.yaml`): sets the global default. Affects all databases that don't have a per-DB override or a CLI flag set.
+- **Env vars** (`NORNICDB_SEARCH_*` at boot): override YAML on the global default.
+- **YAML per-DB** (`databases:` map keyed by database name; see the [yaml schema example](#yaml-databases-map)): seeded into the dbconfig store on first boot only.
+- **Admin API** (`PUT /admin/databases/{name}/config`): per-DB overrides applied at runtime; flipping `enabled=true→false` triggers an immediate teardown of the affected index.
+- **CLI** (`--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve`): explicit boot-time overrides. Top of the precedence ladder — these trump per-DB store entries (the kill-switch contract above). Only flags explicitly set on the command line participate.
 
 Health checks **must not** target `/nornicdb/search` for `warming=lazy` or any `*_enabled=false` database — use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead. Probing search on a lazy DB triggers the build on every probe; probing a disabled DB streams 503s that look like real failures in monitoring.
 

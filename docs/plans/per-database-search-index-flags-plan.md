@@ -89,14 +89,16 @@ When an index is `enabled=true, warming=startup` (today's default):
 
 - Build kicks off in `EnsureSearchIndexesBuildStarted` at boot, same as today.
 
-The flags are configurable in four places, with the standard precedence:
+The flags resolve through a fixed precedence ladder, lowest → highest:
 
-1. CLI flags on `nornicdb` startup
-2. Environment variables
-3. `nornicdb.yaml` (global defaults + per-database overrides)
-4. Runtime via `PUT /admin/databases/{name}/config` (already-existing surface)
+1. **Built-in defaults** baked into `pkg/config.LoadDefaults` (bm25=true, vector=true, both warming=startup).
+2. **YAML / env** global config (`memory.search_*` block, `NORNICDB_SEARCH_*` vars).
+3. **Per-DB overrides** from the YAML `databases:` block (seeded on first boot only) and the admin API (`PUT /admin/databases/{name}/config`, authoritative across restarts).
+4. **CLI overrides** for flags explicitly typed on `nornicdb serve`. Top of the ladder — these trump per-DB store entries.
 
-All four converge on the same per-database key store at [`pkg/config/dbconfig/store.go`](../../pkg/config/dbconfig/store.go), so the runtime surface is unchanged — we only add new keys.
+CLI is the operational kill switch. When an operator types `--search-bm25-enabled=false` at boot during an OOM incident, that intent must take effect even if a tenant's per-DB store entry says otherwise. Env and YAML do NOT trump per-DB overrides because they're declarative config that's easy to forget in a compose file or k8s manifest, and a stale env shouldn't be able to silently revert a tenant's intentional configuration.
+
+All four sources converge on the same `dbconfig.Resolve` entry point. Implementation: `cfg.CLIOverrides map[string]string` (populated only by `cmd.Flags().Changed(...)` paths) is consulted last by the resolver, so it strictly wins over the per-DB `overrides` map. See [`pkg/config/dbconfig/resolver.go`](../../pkg/config/dbconfig/resolver.go) (`Resolve`) and the precedence-ladder tests in [`pkg/config/dbconfig/resolver_test.go`](../../pkg/config/dbconfig/resolver_test.go).
 
 ### Why "vector" and not "HNSW"
 
@@ -205,9 +207,11 @@ type ResolvedDbConfig struct {
 
 `effectiveFromGlobal` mirrors the four new keys into the `Effective` map so the admin "GET config" response surfaces the resolved value.
 
-**Override semantics — explicit guarantee.** Per-DB overrides always win over the global default, in both directions. That means an operator who sets the **global** flag off (e.g. `NORNICDB_SEARCH_VECTOR_ENABLED=false` at startup, or `memory.search_vector_enabled: false` in yaml) but configures a **per-DB** override of `true` or a per-DB warming of `lazy` for a specific database gets vector search on for that database. Symmetric for BM25. The implementation falls out of `Resolve`'s existing "overrides applied on top of global" loop ([`pkg/config/dbconfig/resolver.go:39`](../../pkg/config/dbconfig/resolver.go)) — the new keys plug into `applyOverride` the same way the existing per-DB keys do — but the guarantee is load-bearing for the multi-tenant story (one DB needs search, the rest don't), so it is tested explicitly in Phase 9.
+**Override semantics — explicit guarantee.** Per-DB overrides win over the global default, in both directions. That means an operator who sets the **global** flag off (e.g. `NORNICDB_SEARCH_VECTOR_ENABLED=false` at startup, or `memory.search_vector_enabled: false` in yaml) but configures a **per-DB** override of `true` or a per-DB warming of `lazy` for a specific database gets vector search on for that database. Symmetric for BM25. This guarantee is load-bearing for the multi-tenant story (one DB needs search, the rest don't), so it is tested explicitly in Phase 9.
 
 The same guarantee runs in reverse: a per-DB override of `false` overrides a global default of `true`, and a per-DB `warming=lazy` overrides a global `warming=startup`. The boot orchestrator in Phase 3.1 consults the resolved per-DB config, never the raw global, so a per-DB override of `enabled=true, warming=lazy` correctly defers the build for that database alone.
+
+**CLI is the kill switch.** A boot-time CLI flag (`--search-bm25-enabled=false` etc.) trumps per-DB overrides too. The resolver applies CLI overrides last — see `cfg.CLIOverrides` in `pkg/config.Config` and the consumption loop at the end of `Resolve`. This exists so an operator can disable search across every database during an incident without first editing the dbconfig store. Env vars and YAML do NOT escalate above per-DB; only flags explicitly typed on the command line do.
 
 ### 2.3 yaml schema
 

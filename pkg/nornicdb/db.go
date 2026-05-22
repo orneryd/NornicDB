@@ -218,6 +218,23 @@ type DB struct {
 	dbSearchFlagsResolverMu sync.RWMutex
 	dbSearchFlagsResolver   DbSearchFlagsResolver
 
+	// searchWarmupReady gates the background search-index warmup so it
+	// doesn't start resolving per-DB flags until the wiring layer
+	// (typically pkg/server) has installed the per-DB resolver. Without
+	// this gate, the warmup goroutine races server.New: it can read
+	// db.dbSearchFlagsResolver as nil and fall through to the global
+	// fallback even though per-DB overrides exist for the database it's
+	// warming. The default DB hit this most visibly because it's the
+	// first thing warmed.
+	//
+	// Closed by MarkSearchWarmupReady (typically called by server.New
+	// AFTER SetDbSearchFlagsResolver). Embedded callers that never set
+	// a resolver still get warmup — the auto-ready timer in
+	// startSearchIndexWarmup closes the channel after a grace window
+	// so callers without a server layer don't deadlock.
+	searchWarmupReady     chan struct{}
+	searchWarmupReadyOnce sync.Once
+
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
@@ -588,7 +605,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	db := &DB{
-		config: config,
+		config:            config,
+		searchWarmupReady: make(chan struct{}),
 	}
 
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
@@ -1279,6 +1297,22 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			db.startRetentionSweep(db.buildCtx)
 		}
 
+		// Wait for the wiring layer to release the search-warmup gate.
+		// Ownership is explicit: when Config.DeferSearchWarmup is true
+		// (set by pkg/server before Open returns), the caller MUST
+		// call MarkSearchWarmupReady once it has installed the per-DB
+		// flags resolver. When false (default for embedded callers),
+		// Open itself opens the gate as part of construction — see
+		// the MarkSearchWarmupReady call right after Open returns
+		// below — so this select returns immediately. No timer, no
+		// race window: either the caller signed up for the gate and
+		// will release it, or it was never closed.
+		select {
+		case <-db.searchWarmupReady:
+		case <-ctx.Done():
+			return
+		}
+
 		// Collect all database names: default plus any from storage namespace listing.
 		dbNames := make(map[string]struct{})
 		dbNames[defaultDBName] = struct{}{}
@@ -1404,6 +1438,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Note: Auto-embed queue is initialized via SetEmbedder() after the server creates
 	// the embedder. This avoids duplicate embedder creation and ensures consistency
 	// between search embeddings and auto-embed.
+
+	// Default contract: Open releases the search-warmup gate before
+	// returning so embedded callers (scripts, tests, anyone using Open
+	// without a server layer) get warmup with no extra wiring. Callers
+	// that need the gate held — typically pkg/server, which has to
+	// install the per-DB flags resolver first — opt in via
+	// Config.DeferSearchWarmup and call db.MarkSearchWarmupReady once
+	// their wiring is complete.
+	if !config.DeferSearchWarmup {
+		db.MarkSearchWarmupReady()
+	}
 
 	return db, nil
 }
@@ -2042,6 +2087,23 @@ func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
 	db.dbSearchFlagsResolverMu.Lock()
 	defer db.dbSearchFlagsResolverMu.Unlock()
 	db.dbSearchFlagsResolver = resolver
+}
+
+// MarkSearchWarmupReady signals to the background search-index warmup
+// goroutine that the wiring layer has finished installing per-DB
+// resolvers and warmup may proceed. Idempotent; safe to call before or
+// after the warmup goroutine has reached its wait point.
+//
+// Typical caller is server.New, AFTER it has called
+// SetDbSearchFlagsResolver and SetDbConfigResolver. Embedded callers
+// that don't run a server layer don't need to call this — Open's
+// warmup auto-readies after a grace window so they aren't blocked.
+func (db *DB) MarkSearchWarmupReady() {
+	db.searchWarmupReadyOnce.Do(func() {
+		if db.searchWarmupReady != nil {
+			close(db.searchWarmupReady)
+		}
+	})
 }
 
 // resolveSearchFlags returns the per-database search index master switches
