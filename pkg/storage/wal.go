@@ -2333,10 +2333,10 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			if err := BulkCreateNodesForRecovery(namespacedEngine, snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := BulkCreateEdgesForRecovery(namespacedEngine, snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
@@ -2568,10 +2568,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			}
 
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			if err := BulkCreateNodesForRecovery(namespacedEngine, snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := BulkCreateEdgesForRecovery(namespacedEngine, snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}

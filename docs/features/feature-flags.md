@@ -267,6 +267,8 @@ export NORNICDB_AUTO_RECOVER_ON_CORRUPTION=true
 - If the persistent store still fails to open:
   - Preserves your original directory by renaming it to `<dataDir>.corrupted-<timestamp>`
   - Rebuilds a fresh store from **snapshot + WAL replay** (or WAL-only if no snapshots exist yet)
+- Treats missing tokenized property-key dictionary entries (`property key id ... not in dictionary`) as corruption signals.
+- Splits large restore batches into smaller Badger transactions when a full restore exceeds Badger's transaction-size limit.
 
 **Safety notes**:
 - Auto-recovery is **not attempted** for encrypted stores (to avoid data loss when the encryption key is wrong).

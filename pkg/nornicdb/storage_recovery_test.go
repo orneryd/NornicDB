@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,7 @@ func TestStorageRecoveryHelpers_HeuristicsAndArtifacts(t *testing.T) {
 		require.False(t, looksLikeCorruption(nil))
 		require.True(t, looksLikeCorruption(fmt.Errorf("manifest checksum mismatch")))
 		require.True(t, looksLikeCorruption(fmt.Errorf("badger value log truncate required")))
+		require.True(t, looksLikeCorruption(fmt.Errorf("schema: rebuild unique values: decode node: property key id 179 not in dictionary for namespace %q", "nornic")))
 		require.False(t, looksLikeCorruption(fmt.Errorf("permission denied")))
 	})
 
@@ -210,6 +212,99 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID("test:seed-1"), edge.StartNode)
 	require.Equal(t, storage.NodeID("test:seed-2"), edge.EndNode)
+}
+
+func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeNodeSetInChunks(t *testing.T) {
+	dataDir := t.TempDir()
+	snapshotDir := filepath.Join(dataDir, "snapshots")
+	require.NoError(t, os.MkdirAll(snapshotDir, 0755))
+
+	const nodeCount = 12000
+	nodes := make([]*storage.Node, 0, nodeCount)
+	for i := 0; i < nodeCount; i++ {
+		nodes = append(nodes, &storage.Node{
+			ID:     storage.NodeID(fmt.Sprintf("test:node-%03d", i)),
+			Labels: []string{"Recovered"},
+			Properties: map[string]any{
+				"payload": strings.Repeat("x", 128),
+			},
+		})
+	}
+	require.NoError(t, storage.SaveSnapshot(&storage.Snapshot{
+		Sequence:  1,
+		Timestamp: time.Now(),
+		Nodes:     nodes,
+		Version:   "1.0",
+	}, filepath.Join(snapshotDir, "snapshot-current.json")))
+
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{
+		DataDir:   dataDir,
+		LowMemory: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, recovered)
+	require.NotEmpty(t, backupDir)
+	t.Cleanup(func() { _ = recovered.Close() })
+	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
+
+	recoveredNodes, err := recovered.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, recoveredNodes, nodeCount)
+
+	node, err := recovered.GetNode(storage.NodeID("test:node-047"))
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("x", 128), node.Properties["payload"])
+}
+
+func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeEdgeSetInChunks(t *testing.T) {
+	dataDir := t.TempDir()
+	snapshotDir := filepath.Join(dataDir, "snapshots")
+	require.NoError(t, os.MkdirAll(snapshotDir, 0755))
+
+	nodes := []*storage.Node{
+		{ID: "test:start", Labels: []string{"Recovered"}},
+		{ID: "test:end", Labels: []string{"Recovered"}},
+	}
+	const edgeCount = 12000
+	edges := make([]*storage.Edge, 0, edgeCount)
+	for i := 0; i < edgeCount; i++ {
+		edges = append(edges, &storage.Edge{
+			ID:        storage.EdgeID(fmt.Sprintf("test:edge-%05d", i)),
+			StartNode: "test:start",
+			EndNode:   "test:end",
+			Type:      "RECOVERED",
+			Properties: map[string]any{
+				"payload": strings.Repeat("x", 128),
+			},
+		})
+	}
+	require.NoError(t, storage.SaveSnapshot(&storage.Snapshot{
+		Sequence:  1,
+		Timestamp: time.Now(),
+		Nodes:     nodes,
+		Edges:     edges,
+		Version:   "1.0",
+	}, filepath.Join(snapshotDir, "snapshot-current.json")))
+
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{
+		DataDir:   dataDir,
+		LowMemory: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, recovered)
+	require.NotEmpty(t, backupDir)
+	t.Cleanup(func() { _ = recovered.Close() })
+	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
+
+	recoveredEdges, err := recovered.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, recoveredEdges, edgeCount)
+
+	edge, err := recovered.GetEdge(storage.EdgeID("test:edge-00047"))
+	require.NoError(t, err)
+	require.Equal(t, storage.NodeID("test:start"), edge.StartNode)
+	require.Equal(t, storage.NodeID("test:end"), edge.EndNode)
+	require.Equal(t, strings.Repeat("x", 128), edge.Properties["payload"])
 }
 
 func TestRecoverBadgerFromSnapshotAndWAL_WALReplayError(t *testing.T) {

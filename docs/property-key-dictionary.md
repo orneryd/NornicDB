@@ -102,6 +102,10 @@ The hot-path decoder in V2 stores **rejects** any non-V2 body with a hard error.
 
 If a body references a dictionary ID with no reverse-map entry, the decoder returns `property key id %d not in dictionary for namespace %q` rather than silently dropping the property. Tests assert this error contract on exact message text — callers parse it for diagnostic output.
 
+That error is also a startup corruption signal for the auto-recovery path. When
+WAL or snapshot artifacts are available, NornicDB can rebuild a fresh store from
+those artifacts instead of asking the operator to delete the data directory.
+
 ### Cypher property-name semantics
 
 Tokenization changes WHAT is stored, not WHEN a property exists.

@@ -249,6 +249,13 @@ On startup, NornicDB will:
 - **Rename** your original directory to `<dataDir>.corrupted-<timestamp>` (for forensics)
 - Rebuild a fresh store and restore recovered nodes/edges
 
+Startup errors that report `property key id ... not in dictionary` are treated
+as corruption signals. That error means a persisted node or edge references a
+tokenized property-key dictionary entry that is missing from the store, so the
+safe recovery path is snapshot + WAL replay into a fresh store. Large recovery
+restores are split into smaller Badger transactions automatically when the
+backend rejects the full restore batch as too large.
+
 3. **If recovery can’t run**
 
 - Ensure the container has write access to the volume
@@ -424,4 +431,3 @@ docker logs nornicdb > nornicdb.log 2>&1
 - **[Monitoring](monitoring.md)** - Health monitoring
 - **[Deployment](deployment.md)** - Deployment guide
 - **[Scaling](scaling.md)** - Performance tuning
-

@@ -38,6 +38,7 @@ func looksLikeCorruption(err error) bool {
 		strings.Contains(s, "manifest") ||
 		strings.Contains(s, "log truncate required") ||
 		strings.Contains(s, "badger") && strings.Contains(s, "truncate") ||
+		strings.Contains(s, "property key id") && strings.Contains(s, "not in dictionary") ||
 		strings.Contains(s, "value log")
 }
 
@@ -170,11 +171,11 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 	}
 
 	// Restore recovered state into the fresh store.
-	if err := newStore.BulkCreateNodes(nodes); err != nil {
+	if err := storage.BulkCreateNodesForRecovery(newStore, nodes); err != nil {
 		_ = newStore.Close()
 		return nil, backupDir, fmt.Errorf("auto-recover: failed to restore nodes into fresh store: %w", err)
 	}
-	if err := newStore.BulkCreateEdges(edges); err != nil {
+	if err := storage.BulkCreateEdgesForRecovery(newStore, edges); err != nil {
 		_ = newStore.Close()
 		return nil, backupDir, fmt.Errorf("auto-recover: failed to restore edges into fresh store: %w", err)
 	}
