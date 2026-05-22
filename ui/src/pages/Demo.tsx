@@ -123,29 +123,6 @@ function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
-// readLastResourceTimingMs returns the duration of the most recent /tx/commit
-// fetch against the named database, as reported by the browser's Resource
-// Timing buffer. This is the authoritative network number — independent of
-// when JS got around to running the await-resume continuation. Returns null
-// when the entry isn't available (browser buffer trimmed, or the request
-// was served from disk cache without an entry).
-function readLastResourceTimingMs(dbName: string): number | null {
-  if (typeof performance === "undefined" || !performance.getEntriesByType) {
-    return null;
-  }
-  const needle = `/db/${encodeURIComponent(dbName)}/tx/commit`;
-  const entries = performance.getEntriesByType(
-    "resource",
-  ) as PerformanceResourceTiming[];
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (e.name.includes(needle) && e.duration > 0) {
-      return e.duration;
-    }
-  }
-  return null;
-}
-
 function sectorColor(hue: number): string {
   return `hsl(${hue}, 80%, 60%)`;
 }
@@ -329,12 +306,10 @@ export function Demo() {
           { startId, endId },
         );
         const totalMs = nowMs() - start;
-        // Cross-check against Resource Timing — the browser's authoritative
-        // network duration for the actual request. Useful when JS work on
-        // the main thread stretches the awaited fetch (the JS-observed
-        // total above is what the user "feels", but the wire number is
-        // what the server actually delivered against).
-        const wireMs = readLastResourceTimingMs(DEMO_DB) ?? totalMs;
+        // Bolt-over-WS sessions don't surface wire timings via the
+        // browser's Resource Timing buffer (that API only covers HTTP
+        // fetches). The JS-observed total is what the user feels.
+        const wireMs = totalMs;
         fg?.resumeAnimation();
         const rows = rowsFromCypher(resp);
         const first = rows[0];

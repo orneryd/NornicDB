@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -675,6 +676,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = httpPort
+	serverConfig.BoltPort = boltPort
 	serverConfig.Address = resolvedAddress
 	// MCP server configuration
 	serverConfig.MCPEnabled = mcpEnabled
@@ -757,6 +759,59 @@ func runServe(cmd *cobra.Command, args []string) error {
 		boltConfig.Authenticator = boltAuth
 		boltConfig.RequireAuth = true
 	}
+
+	// Bolt-over-WebSocket + TLS plumbing. Each setting flows through
+	// the precedence ladder (CLI > env > YAML > defaults) via cfg.Server,
+	// then lands here as plain Go values. Cert+key paths construct a
+	// *tls.Config with cert rotation; mTLS is opt-in via ClientCAFile.
+	if cfg.Server.BoltTLSEnabled && cfg.Server.BoltTLSCert != "" && cfg.Server.BoltTLSKey != "" {
+		mode, err := bolt.ParseClientAuthMode(cfg.Server.BoltTLSClientAuthMode)
+		if err != nil {
+			return fmt.Errorf("bolt tls client auth mode: %w", err)
+		}
+		var tlsCfg *tls.Config
+		if cfg.Server.BoltTLSClientCAFile != "" {
+			tlsCfg, err = bolt.LoadTLSConfigWithClientCA(
+				cfg.Server.BoltTLSCert,
+				cfg.Server.BoltTLSKey,
+				cfg.Server.BoltTLSClientCAFile,
+				mode,
+			)
+		} else {
+			tlsCfg, err = bolt.LoadTLSConfig(cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey)
+		}
+		if err != nil {
+			return fmt.Errorf("bolt tls load: %w", err)
+		}
+		boltConfig.TLSConfig = tlsCfg
+	}
+	boltConfig.RequireTLS = cfg.Server.BoltTLSRequire
+	if cfg.Server.BoltSniffTimeout > 0 {
+		boltConfig.BoltSniffTimeout = cfg.Server.BoltSniffTimeout
+	}
+	if cfg.Server.BoltAuthTimeout > 0 {
+		boltConfig.BoltAuthTimeout = cfg.Server.BoltAuthTimeout
+	}
+	boltConfig.WebSocketEnabled = cfg.Server.BoltWebSocketEnabled
+	if cfg.Server.BoltWebSocketAllowedOrigins != "" {
+		boltConfig.WebSocketAllowedOrigins = cfg.Server.BoltWebSocketAllowedOrigins
+	}
+	if cfg.Server.BoltWebSocketMaxMessageSize > 0 {
+		boltConfig.WebSocketMaxMessageSize = cfg.Server.BoltWebSocketMaxMessageSize
+	}
+	if cfg.Server.BoltWebSocketWriteBufferSize > 0 {
+		boltConfig.WebSocketWriteBufferSize = cfg.Server.BoltWebSocketWriteBufferSize
+	}
+	if cfg.Server.BoltWebSocketPingInterval > 0 {
+		boltConfig.WebSocketPingInterval = cfg.Server.BoltWebSocketPingInterval
+	}
+	if cfg.Server.BoltWebSocketPongTimeout > 0 {
+		boltConfig.WebSocketPongTimeout = cfg.Server.BoltWebSocketPongTimeout
+	}
+	// Discovery body is derived from auth.OAuthConfig at startup. The
+	// Bolt server pre-encodes the response and refreshes the Date header
+	// once per second.
+	boltConfig.OAuthConfig = auth.GetOAuthConfig()
 
 	// Create query executor adapter (fallback for single-DB mode) and bind Bolt
 	// to the same database manager used by HTTP so multi-db/composite/fabric

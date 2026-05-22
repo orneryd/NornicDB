@@ -26,6 +26,27 @@ Neo4j-compatible Bolt protocol server for NornicDB. Enables any Neo4j driver to 
 - **Transactions**: BEGIN, COMMIT, ROLLBACK support
 - **Connection Pooling**: Multiple concurrent connections
 
+### WebSocket transport
+
+The Bolt port multiplexes four wire-level transports based on the first 5 bytes of every accepted connection — mirroring Neo4j's `TransportSelectionHandler` exactly:
+
+| URL scheme              | First bytes                                       | Transport label  |
+|-------------------------|---------------------------------------------------|------------------|
+| `bolt://host:7687/`     | Bolt magic `60 60 B0 17`                          | `tcp`            |
+| `bolt+s://host:7687/`   | TLS handshake (`0x16`), then Bolt magic           | `tcp_tls`        |
+| `ws://host:7687/`       | `GET ` (HTTP/1.1 upgrade)                         | `ws`             |
+| `wss://host:7687/`      | TLS handshake, then `GET `                        | `ws_tls`         |
+
+A plain `GET /` (no Upgrade headers) returns a 200 OK discovery response — empty body when OAuth is not configured (Community parity), JSON describing the OAuth provider when it is.
+
+WebSocket sessions speak the same Bolt wire format inside binary frames: same magic, same version negotiation, same chunked message framing.
+
+### TLS
+
+Cert+key paths are read on every TLS handshake (the `tls.Config.GetCertificate` callback) and a 5-second background ticker re-loads them from disk. Operator update protocol: write to `cert.pem.new` then `mv cert.pem.new cert.pem`.
+
+`RequireTLS=true` rejects every plaintext connection (raw or WS) with the canonical Neo4j error message. mTLS is opt-in via `BoltTLSClientCAFile` + a `BoltTLSClientAuthMode` enum (`none` / `request` / `request_verify` / `require_verify`).
+
 ### Message Types
 
 | Message  | Type | Status | Description               |

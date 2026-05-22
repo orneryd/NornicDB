@@ -72,6 +72,36 @@ var AllowedPackstreamReasons = []string{
 	"oversize",
 }
 
+// AllowedBoltTransports is the closed enum for the `transport` label
+// added in the bolt-over-websocket landing. The four values cover every
+// wire-level transport the Bolt port multiplexes:
+//
+//	tcp     - raw bolt:// over plain TCP
+//	tcp_tls - bolt+s:// (TLS-wrapped raw)
+//	ws      - ws://    (WebSocket over plain TCP)
+//	ws_tls  - wss://   (WebSocket over TLS)
+//
+// Cardinality ceiling for `bolt_connections_total` rises from 3 to 12
+// (3 results x 4 transports) and `bolt_connections_active` from 1 to 4.
+var AllowedBoltTransports = []string{"tcp", "tcp_tls", "ws", "ws_tls"}
+
+// AllowedBoltConnectionRejectReasons is the closed enum for the new
+// `bolt_connections_rejected_total` counter introduced with WebSocket
+// transport selection. Each reason is a discrete, named failure mode so
+// dashboards can distinguish operator-misconfiguration from attack noise
+// from organic load.
+var AllowedBoltConnectionRejectReasons = []string{
+	"max_connections",
+	"sniff_timeout",
+	"auth_timeout",
+	"tls_handshake",
+	"ws_handshake",
+	"oversized_message",
+	"requires_tls",
+	"unrecognized_prefix",
+	"ws_disabled",
+}
+
 // BoltMetrics is the typed handle-bag (CONTEXT D-02 / D-02a) for the Bolt
 // subsystem. One bag per Provider; constructed at cmd/nornicdb startup and
 // injected into pkg/bolt.Server via SetBoltMetrics(...) so the connection-
@@ -84,13 +114,24 @@ var AllowedPackstreamReasons = []string{
 // `BindMessageDuration(op)` helper amortizes the lookup at session
 // construction (the per-message observe call uses the cached observer).
 type BoltMetrics struct {
-	// ConnectionsActive is the live connection count gauge; Inc on accept,
-	// Dec on close (deferred). Single value, no labels (cardinality=1).
-	ConnectionsActive prometheus.Gauge
+	// ConnectionsActive is the live connection count gauge labelled by
+	// transport. Cardinality ceiling = 4 (len(AllowedBoltTransports)).
+	ConnectionsActive *prometheus.GaugeVec
 
-	// ConnectionsTotal counts connection terminations by result.
-	// Cardinality ceiling = 3 (RESEARCH §Q11; len(AllowedBoltResults)).
+	// ConnectionsTotal counts connection terminations by result and
+	// transport. Cardinality ceiling = 12 (3 results x 4 transports).
 	ConnectionsTotal *prometheus.CounterVec
+
+	// ConnectionsRejectedTotal counts connections rejected before the
+	// session loop started — sniff timeouts, oversized messages, TLS
+	// handshake failures, RequireTLS rejections, and so on. Closed enum
+	// for the reason label (AllowedBoltConnectionRejectReasons).
+	ConnectionsRejectedTotal *prometheus.CounterVec
+
+	// WebSocketOversizedTotal counts WebSocket messages that exceeded
+	// the configured frame size limit. Discrete because oversized
+	// messages are a WS-only failure mode worth a dedicated alert.
+	WebSocketOversizedTotal prometheus.Counter
 
 	// SessionDuration histograms the wall-clock lifetime of each Bolt session
 	// (accept → close). Phase-3-locked LatencyBucketsSeconds. No labels.
@@ -125,22 +166,43 @@ type BoltMetrics struct {
 func NewBoltMetrics(reg *prometheus.Registry) *BoltMetrics {
 	bm := &BoltMetrics{}
 
-	bm.ConnectionsActive = prometheus.NewGauge(prometheus.GaugeOpts{
+	bm.ConnectionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "nornicdb",
 		Subsystem: "bolt",
 		Name:      "connections_active",
-		Help:      "Number of currently-active Bolt protocol connections.",
-	})
+		Help: "Number of currently-active Bolt protocol connections by transport. " +
+			"Transport enum closed (tcp, tcp_tls, ws, ws_tls).",
+	}, []string{"transport"})
 	reg.MustRegister(bm.ConnectionsActive)
 
 	bm.ConnectionsTotal = NewCounterVec(reg,
 		MetricOpts{
 			Subsystem: "bolt",
 			Name:      "connections_total",
-			Help: "Bolt connections terminated by result. " +
-				"Result enum closed (CONTEXT D-11: success, error, timeout).",
+			Help: "Bolt connections terminated by result and transport. " +
+				"Result enum closed (CONTEXT D-11: success, error, timeout). " +
+				"Transport enum closed (tcp, tcp_tls, ws, ws_tls).",
 		},
-		[]string{"result"})
+		[]string{"result", "transport"})
+
+	bm.ConnectionsRejectedTotal = NewCounterVec(reg,
+		MetricOpts{
+			Subsystem: "bolt",
+			Name:      "connections_rejected_total",
+			Help: "Bolt connections rejected before session loop start. " +
+				"Reason enum closed (max_connections, sniff_timeout, auth_timeout, " +
+				"tls_handshake, ws_handshake, oversized_message, requires_tls, " +
+				"unrecognized_prefix, ws_disabled).",
+		},
+		[]string{"reason"})
+
+	bm.WebSocketOversizedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "nornicdb",
+		Subsystem: "bolt",
+		Name:      "websocket_oversized_total",
+		Help:      "WebSocket messages dropped because they exceeded the configured frame size limit.",
+	})
+	reg.MustRegister(bm.WebSocketOversizedTotal)
 
 	bm.SessionDuration = NewLatencyHistogram(reg,
 		MetricOpts{

@@ -41,13 +41,15 @@ func TestServerStartup_HTTPBoltMetricsRegistered(t *testing.T) {
 	httpBag.InFlight.Inc()
 	httpBag.InFlight.Dec()
 
-	boltBag.ConnectionsActive.Inc()
-	boltBag.ConnectionsActive.Dec()
-	boltBag.ConnectionsTotal.WithLabelValues("success").Inc()
+	boltBag.ConnectionsActive.WithLabelValues("tcp").Inc()
+	boltBag.ConnectionsActive.WithLabelValues("tcp").Dec()
+	boltBag.ConnectionsTotal.WithLabelValues("success", "tcp").Inc()
 	boltBag.SessionDuration.Bind().Observe(nil, 0.001)
 	boltBag.MessagesTotal.WithLabelValues("run", "success").Inc()
 	boltBag.MessageDuration.Bind("run").Observe(nil, 0.001)
 	boltBag.PackstreamDecodeErrors.WithLabelValues("truncated").Inc()
+	boltBag.ConnectionsRejectedTotal.WithLabelValues("max_connections").Inc()
+	boltBag.WebSocketOversizedTotal.Inc()
 
 	// Verify all 11 Phase-4-so-far families are present (5 http + 6 bolt
 	// = 11 new this plan; cache+runtime adds 6 more from Plan 04-01).

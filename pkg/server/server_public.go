@@ -20,17 +20,37 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Neo4j-compatible discovery response (exact format)
-	host := s.config.Address
-	if host == "0.0.0.0" {
+	// Pick the host the way the caller addressed us so browser-based
+	// clients construct cookie-aware bolt:// / ws:// URLs that match
+	// the page origin. Cookies are scoped by exact hostname per RFC 6265
+	// (localhost and 127.0.0.1 are distinct), so emitting bolt://localhost
+	// when the page is on 127.0.0.1 (or vice versa) silently breaks the
+	// implicit-bearer flow. Fall back to the configured Address only when
+	// the request didn't include a Host header (rare).
+	host := hostnameFromRequest(r)
+	if host == "" {
+		host = s.config.Address
+	}
+	if host == "0.0.0.0" || host == "::" {
 		host = "localhost"
 	}
 
 	// Neo4j-compatible discovery response - minimal info to reduce reconnaissance surface
 	// Feature details moved to authenticated /status endpoint
+	//
+	// ws_direct / wss_direct are NornicDB extensions: browser-based
+	// clients use these to construct neo4j-driver Bolt-over-WS sessions.
+	// All four bolt URLs share s.config.BoltPort so non-default ports
+	// (Docker, multi-instance dev) are reflected accurately.
+	boltPort := s.config.BoltPort
+	if boltPort == 0 {
+		boltPort = 7687
+	}
 	response := map[string]interface{}{
-		"bolt_direct":   fmt.Sprintf("bolt://%s:7687", host),
-		"bolt_routing":  fmt.Sprintf("neo4j://%s:7687", host),
+		"bolt_direct":   fmt.Sprintf("bolt://%s:%d", host, boltPort),
+		"bolt_routing":  fmt.Sprintf("neo4j://%s:%d", host, boltPort),
+		"ws_direct":     fmt.Sprintf("ws://%s:%d", host, boltPort),
+		"wss_direct":    fmt.Sprintf("wss://%s:%d", host, boltPort),
 		"transaction":   fmt.Sprintf("http://%s:%d/db/{databaseName}/tx", host, s.config.Port),
 		"neo4j_version": "5.0.0",
 		"neo4j_edition": "community",

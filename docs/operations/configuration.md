@@ -284,6 +284,81 @@ Notes:
 - It does not claim full Neo4j product identity or feature parity.
 - Leave it unset unless a strict client requires it.
 
+### Bolt over WebSocket + TLS
+
+NornicDB multiplexes four wire-level transports on the Bolt port (`:7687` by default). The first 5 bytes of every accepted connection decide which path it takes:
+
+| URL scheme              | First bytes on the wire                          | Transport label  |
+|-------------------------|--------------------------------------------------|------------------|
+| `bolt://host:7687/`     | Bolt magic preamble `60 60 B0 17`                | `tcp`            |
+| `bolt+s://host:7687/`   | TLS handshake (`0x16`), then Bolt magic          | `tcp_tls`        |
+| `ws://host:7687/`       | `GET ` (HTTP/1.1 upgrade)                        | `ws`             |
+| `wss://host:7687/`      | TLS handshake, then `GET `                       | `ws_tls`         |
+
+Driver-side aliases (`bolt+ssc://`, `neo4j://`, `neo4j+s://`, `neo4j+ssc://`, `bolt+ws://`) all map to one of these four wire transports; the server doesn't see the alias, only the bytes.
+
+#### YAML
+
+```yaml
+server:
+  bolt_tls_enabled: true
+  bolt_tls_cert: /etc/nornicdb/tls/cert.pem
+  bolt_tls_key: /etc/nornicdb/tls/key.pem
+  bolt_tls_require: false               # true = reject any plaintext connection
+  bolt_tls_client_ca_file: ""           # mTLS: path to client-CA bundle
+  bolt_tls_client_auth_mode: none       # none | request | request_verify | require_verify
+  bolt_sniff_timeout: 5s
+  bolt_auth_timeout: 30s
+  bolt_websocket_enabled: true          # false ⇒ 426 Upgrade Required on WS attempts
+  bolt_websocket_allowed_origins: "*"   # or "https://app.example.com,https://admin.example.com"
+  bolt_websocket_max_message_size: 65536
+  bolt_websocket_write_buffer_size: 262144
+  bolt_websocket_ping_interval: 30s
+  bolt_websocket_pong_timeout: 60s
+```
+
+#### Environment variables
+
+| Key                                        | Default | Notes |
+|--------------------------------------------|---------|-------|
+| `NORNICDB_BOLT_TLS_ENABLED`                | `false` | enables TLS-on-first-byte sniffing |
+| `NORNICDB_BOLT_TLS_CERT`                   |         | path to cert PEM |
+| `NORNICDB_BOLT_TLS_KEY`                    |         | path to key PEM |
+| `NORNICDB_BOLT_TLS_REQUIRE`                | `false` | reject plaintext (raw OR ws) |
+| `NORNICDB_BOLT_TLS_CLIENT_CA`              |         | path to CA bundle for mTLS |
+| `NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE`       | `none`  | `none` / `request` / `request_verify` / `require_verify` |
+| `NORNICDB_BOLT_SNIFF_TIMEOUT`              | `5s`    | bound on transport-sniff peek |
+| `NORNICDB_BOLT_AUTH_TIMEOUT`               | `30s`   | bound on pre-HELLO handshake/auth |
+| `NORNICDB_BOLT_WEBSOCKET_ENABLED`          | `true`  | set `false` for purely-TCP deployments |
+| `NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS`  | `*`     | comma-separated; `*` = any |
+| `NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE` | `65536` | bytes; matches Neo4j `MAX_WEBSOCKET_FRAME_SIZE` |
+| `NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE`| `262144`| bufio writer size for WS sessions |
+| `NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL`    | `30s`   | server WS ping cadence |
+| `NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT`     | `60s`   | pong arrival deadline |
+
+#### Discovery probe
+
+A plain `GET /` to the Bolt port (no `Upgrade` headers) returns a 200 OK discovery response. Health checks and `curl` probes work without configuration.
+
+When `NORNICDB_AUTH_PROVIDER=oauth` is set with `NORNICDB_OAUTH_*` filled in, the discovery body advertises the OAuth provider in the JSON shape Neo4j browser drivers consume. The `client_secret` is **never** exposed.
+
+#### Cert rotation
+
+`bolt_tls_cert` and `bolt_tls_key` are re-read on a 5-second background ticker; a successful reload swaps the cached certificate atomically. New connections immediately see the new cert; in-flight TLS sessions continue on the old cert until they close.
+
+**Operator update protocol:** atomic rename. Write the new cert to `cert.pem.new`, then `mv cert.pem.new cert.pem`. Reading mid-write returns half a PEM; the rotator preserves the previous cert until the next successful reload.
+
+#### `RequireTLS=true`
+
+When set, plaintext `bolt://` and `ws://` upgrade attempts are rejected with the canonical Neo4j error `An unencrypted connection attempt was made where encryption is required.` and the `bolt_connections_rejected_total{reason="requires_tls"}` counter increments.
+
+#### `WebSocketEnabled=false`
+
+When WS is disabled:
+
+- Plain `GET /` (no Upgrade headers) → still returns the 200 discovery response (health checks unaffected).
+- A real WS upgrade attempt → returns `426 Upgrade Required` with body pointing at `bolt://<host>:<port>/` and increments `bolt_connections_rejected_total{reason="ws_disabled"}`.
+
 ## Async Write Settings ⭐ New
 
 The async write engine provides write-behind caching for improved throughput. Async-eligible auto-commit writes return immediately after updating the cache and are flushed to disk asynchronously. Mutations that still need the implicit transactional path continue to execute synchronously and produce durable receipts.

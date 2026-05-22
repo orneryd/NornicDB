@@ -108,13 +108,15 @@ func driveOneObservationPerVec(
 	httpM.InFlight.Dec()
 
 	// Bolt
-	boltM.ConnectionsTotal.WithLabelValues(AllowedBoltResults[0]).Inc()
+	boltM.ConnectionsTotal.WithLabelValues(AllowedBoltResults[0], AllowedBoltTransports[0]).Inc()
 	boltM.SessionDuration.Bind().Observe(ctx, 0.0)
 	boltM.MessagesTotal.WithLabelValues(AllowedBoltOps[0], AllowedBoltResults[0]).Inc()
 	boltM.MessageDuration.Bind(AllowedBoltOps[0]).Observe(ctx, 0.0)
 	boltM.PackstreamDecodeErrors.WithLabelValues(AllowedPackstreamReasons[0]).Inc()
-	boltM.ConnectionsActive.Inc()
-	boltM.ConnectionsActive.Dec()
+	boltM.ConnectionsActive.WithLabelValues(AllowedBoltTransports[0]).Inc()
+	boltM.ConnectionsActive.WithLabelValues(AllowedBoltTransports[0]).Dec()
+	boltM.ConnectionsRejectedTotal.WithLabelValues(AllowedBoltConnectionRejectReasons[0]).Inc()
+	boltM.WebSocketOversizedTotal.Inc()
 
 	// Cypher: op_type = "read" (closed enum). Tenant-OFF means no `database`.
 	cypherM.Queries.WithLabelValues("read").Inc()

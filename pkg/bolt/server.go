@@ -122,15 +122,20 @@ package bolt
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -254,6 +259,22 @@ type Server struct {
 	// adds the call site behind a nil-check (observeAuthAttempt no-ops);
 	// Plan 04-06 ships the GREEN bag and wires it via SetAuthMetrics.
 	authMetrics *observability.AuthMetrics
+
+	// activeConnections is a single shared cap across all four transports
+	// (tcp, tcp_tls, ws, ws_tls); the accept loop closes new conns past
+	// MaxConnections.
+	activeConnections atomic.Int64
+
+	// discoveryResponse holds the pre-encoded HTTP/1.1 200 response served
+	// to plain GET / probes on the Bolt port. Refreshed by a 1s ticker so
+	// the Date header stays current.
+	discoveryResponse atomic.Pointer[[]byte]
+	// discoveryStop cancels the discovery refresh goroutine on Close.
+	discoveryStop chan struct{}
+
+	// upgrader is the gorilla/websocket Upgrader configured per Config at
+	// ListenAndServe time. Reused across all WS upgrades.
+	upgrader *websocket.Upgrader
 }
 
 // DatabaseManagerInterface provides database management without importing multidb.
@@ -530,6 +551,44 @@ type Config struct {
 	// already includes "credentials", so per-call scrubbing is not
 	// required in pkg/bolt.
 	Logger *slog.Logger
+
+	// TLSConfig, when non-nil, enables TLS-on-first-byte sniffing on the
+	// Bolt port. Mirrors Neo4j's sslContext + requiresEncryption pattern:
+	// one listener accepts plain bolt://, bolt+s://, ws://, and wss://
+	// based on the first 5 bytes of the connection.
+	TLSConfig *tls.Config
+	// RequireTLS rejects any non-TLS connection on the Bolt port with the
+	// canonical Neo4j error message.
+	RequireTLS bool
+	// BoltSniffTimeout bounds the transport-sniff peek (default 5s).
+	BoltSniffTimeout time.Duration
+	// BoltAuthTimeout bounds the pre-HELLO handshake/auth window after
+	// transport selection (default 30s, matches Neo4j).
+	BoltAuthTimeout time.Duration
+	// WebSocketEnabled controls whether WebSocket transport is accepted on
+	// the Bolt port. When false, the server returns the discovery response
+	// for plain GET / and HTTP 426 for actual WS upgrade attempts.
+	// Defaults to true.
+	WebSocketEnabled bool
+	// WebSocketAllowedOrigins is a comma-separated list of allowed Origin
+	// header values for WS upgrades. Use "*" for any origin.
+	WebSocketAllowedOrigins string
+	// WebSocketMaxMessageSize bounds inbound WS BinaryMessage size
+	// (default 65536, matches Neo4j MAX_WEBSOCKET_FRAME_SIZE).
+	WebSocketMaxMessageSize int64
+	// WebSocketWriteBufferSize is the bufio writer buffer size used for
+	// sessions whose transport is WS or WS+TLS (default 256 KB).
+	WebSocketWriteBufferSize int
+	// WebSocketPingInterval is the cadence at which the server sends WS
+	// ping control frames (default 30s).
+	WebSocketPingInterval time.Duration
+	// WebSocketPongTimeout is the deadline within which a pong must
+	// arrive after a ping (default 60s).
+	WebSocketPongTimeout time.Duration
+	// OAuthConfig optionally provides the OAuth/OIDC discovery payload
+	// emitted on plain GET / probes. When nil or unconfigured, the
+	// discovery body is empty (Community-parity).
+	OAuthConfig *auth.OAuthConfig
 }
 
 // DefaultConfig returns Neo4j-compatible default Bolt server configuration.
@@ -545,11 +604,19 @@ type Config struct {
 //	server := bolt.New(config, executor)
 func DefaultConfig() *Config {
 	return &Config{
-		Host:            "127.0.0.1",
-		Port:            7687,
-		MaxConnections:  100,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 64 * 1024,
+		Host:                     "127.0.0.1",
+		Port:                     7687,
+		MaxConnections:           100,
+		ReadBufferSize:           8192,
+		WriteBufferSize:          64 * 1024,
+		BoltSniffTimeout:         5 * time.Second,
+		BoltAuthTimeout:          30 * time.Second,
+		WebSocketEnabled:         true,
+		WebSocketAllowedOrigins:  "*",
+		WebSocketMaxMessageSize:  65536,
+		WebSocketWriteBufferSize: 256 * 1024,
+		WebSocketPingInterval:    30 * time.Second,
+		WebSocketPongTimeout:     60 * time.Second,
 	}
 }
 
@@ -870,6 +937,13 @@ func (s *Server) ListenAndServe() error {
 	}
 	s.logger().Info("bolt server listening", "host", announceHost, "port", actualPort)
 
+	// Validate the discovery body once at startup and start the 1s Date
+	// refresh ticker. Startup fails if OAuthConfig has malformed URLs.
+	if err := s.startDiscoveryRefresher(); err != nil {
+		_ = s.listener.Close()
+		return fmt.Errorf("discovery response startup: %w", err)
+	}
+
 	return s.serve()
 }
 
@@ -895,6 +969,7 @@ func (s *Server) serve() error {
 // Close stops the Bolt server.
 func (s *Server) Close() error {
 	s.closed.Store(true)
+	s.stopDiscoveryRefresher()
 	if s.listener != nil {
 		return s.listener.Close()
 	}
@@ -906,34 +981,62 @@ func (s *Server) IsClosed() bool {
 	return s.closed.Load()
 }
 
-// handleConnection handles a single client connection.
+// handleConnection handles a single client connection. It performs
+// transport selection (raw TCP / TLS / WS / WS+TLS) before constructing
+// the Bolt Session and then drives the message loop.
 func (s *Server) handleConnection(conn net.Conn) {
+	// MaxConnections enforcement (single shared cap across all four
+	// transports). Atomic CAS — no channel, no syscall on the hot path.
+	if max := s.config.MaxConnections; max > 0 {
+		if s.activeConnections.Add(1) > int64(max) {
+			s.activeConnections.Add(-1)
+			if ms := s.metricsState; ms != nil && ms.bag != nil {
+				incBoltConnectionsRejected(ms.bag, "max_connections")
+			}
+			_ = conn.Close()
+			return
+		}
+	} else {
+		s.activeConnections.Add(1)
+	}
+	defer s.activeConnections.Add(-1)
 	defer conn.Close()
 
-	// Plan 04-02 D-11 session-lifecycle instrumentation: ConnectionsActive
-	// gauge Inc on accept, Dec on close (deferred); SessionDuration
-	// observed on close; ConnectionsTotal{result} incremented with the
-	// terminal-result enum (success | error | timeout). Result=success
-	// is the default; sessionResult mutates from the message-handling
-	// loop on error paths and from the panic-recover handler.
-	sessionStart := time.Now()
-	sessionResult := "success"
-	if ms := s.metricsState; ms != nil && ms.bag != nil {
-		ms.bag.ConnectionsActive.Inc()
-		defer func() {
-			ms.bag.ConnectionsActive.Dec()
-			ms.bag.ConnectionsTotal.WithLabelValues(sessionResult).Inc()
-			ms.bag.SessionDuration.Bind().Observe(context.Background(), time.Since(sessionStart).Seconds())
-		}()
-	}
-
-	// Disable Nagle's algorithm for lower latency
-	// Without this, small packets get delayed up to 40ms
+	// Disable Nagle's algorithm on the underlying TCP socket for lower
+	// latency. Harmless no-op for non-TCP wrappers (tls.Conn, wsConn).
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 	}
 
-	// Recover from panics to prevent crashing the server
+	// Plan 04-02 D-11 session-lifecycle instrumentation. We defer Inc
+	// until after transport selection so the label that gets Inc'd
+	// matches the label the deferred Dec sees — a connection that ends
+	// up as ws_tls is recorded entirely under ws_tls, not Inc'd as tcp
+	// and Dec'd as ws_tls (which would silently leak gauges).
+	//
+	// emitMetrics is set to true once a session actually starts; the
+	// short-circuit paths (transport-sniff failure, discovery probe,
+	// 426 refusal) record their own counters via incBoltConnectionsRejected
+	// or skip the lifecycle metric entirely so refused upgrades aren't
+	// counted as result=success.
+	sessionStart := time.Now()
+	sessionResult := "success"
+	transportLabel := ""
+	emitMetrics := false
+	defer func() {
+		if !emitMetrics {
+			return
+		}
+		if ms := s.metricsState; ms != nil && ms.bag != nil {
+			decBoltConnectionsActive(ms.bag, transportLabel)
+			incBoltConnectionsTotal(ms.bag, sessionResult, transportLabel)
+			ms.bag.SessionDuration.Bind().Observe(context.Background(), time.Since(sessionStart).Seconds())
+		}
+	}()
+
+	// Recover from panics to prevent crashing the server. Sits at the
+	// outermost layer so a panic anywhere in transport selection or the
+	// session loop is caught.
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger().Error("connection handler panic", slog.Any("recover", r))
@@ -941,25 +1044,116 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 	}()
 
+	remoteAddr := conn.RemoteAddr().String()
+
+	// Transport sniff: peek the first 5 bytes and dispatch.
+	kind, sniffedConn, br, err := peekTransport(
+		conn,
+		s.config.TLSConfig,
+		false, // not yet encrypted
+		s.config.RequireTLS,
+		s.config.ReadBufferSize,
+	)
+	if err != nil {
+		reason := classifySniffError(err)
+		if ms := s.metricsState; ms != nil && ms.bag != nil {
+			incBoltConnectionsRejected(ms.bag, reason)
+			// A failed sniff is still a Bolt-session-attempt termination
+			// in the lifecycle ledger (the connection opened but never
+			// produced enough bytes to identify itself). The transport
+			// label is "tcp" because we never got far enough to know
+			// what the client wanted.
+			incBoltConnectionsActive(ms.bag, "tcp")
+			transportLabel = "tcp"
+			emitMetrics = true
+		}
+		if errors.Is(err, ErrUnencryptedRequired) {
+			s.logger().Warn("rejecting unencrypted connection", "remote", remoteAddr)
+		} else {
+			s.logger().Warn("transport sniff failed", "remote", remoteAddr, slog.Any("error", err))
+		}
+		if reason == "sniff_timeout" {
+			sessionResult = "timeout"
+		} else {
+			sessionResult = "error"
+		}
+		return
+	}
+
+	// At this point sniffedConn is the (possibly TLS-wrapped) net.Conn and
+	// br is the *bufio.Reader holding the peeked bytes. The caller MUST
+	// pass br (not a fresh bufio.NewReaderSize) into Session so the peeked
+	// bytes flow into the Bolt handshake.
+	transportLabel = transportLabelFor(kind, sniffedConn)
+
+	// On WS branch, run the HTTP request through the discovery handler
+	// first; only then upgrade. wsConn replaces sniffedConn for the rest of
+	// the session. For raw branches the conn passes through unchanged.
+	var implicitBearer string
+	switch kind {
+	case transportWebSocket:
+		res, err := s.acceptWebSocket(sniffedConn, br, remoteAddr)
+		if err != nil {
+			// Failed WS upgrade is a session-attempt termination.
+			// acceptWebSocket already incremented the rejected counter
+			// with the specific reason (ws_handshake / path_404).
+			if ms := s.metricsState; ms != nil && ms.bag != nil {
+				incBoltConnectionsActive(ms.bag, transportLabel)
+				emitMetrics = true
+			}
+			sessionResult = "error"
+			return
+		}
+		if res == nil {
+			// Discovery probe or 426 path already wrote a response and
+			// closed the conn. No Bolt session was ever attempted; do
+			// NOT pollute connections_total with a fake success.
+			return
+		}
+		sniffedConn = res.conn
+		br = res.br
+		implicitBearer = res.implicitBearer
+	case transportRaw:
+		// nothing to do; sniffedConn + br carry the peeked Bolt magic
+	}
+
+	// A real Bolt session is about to start. Activate the lifecycle
+	// metric: Inc here under the resolved label, Dec from the deferred
+	// closure above. Discovery probes and 426 refusals returned earlier
+	// without setting emitMetrics, so they do NOT pollute connections_total.
+	if ms := s.metricsState; ms != nil && ms.bag != nil {
+		incBoltConnectionsActive(ms.bag, transportLabel)
+		emitMetrics = true
+	}
+
 	// TRC-13: session-level span wraps the entire connection lifetime.
-	sessionCtx, sessionSpan := startSessionSpan(conn.RemoteAddr().String())
+	sessionCtx, sessionSpan := startSessionSpan(remoteAddr)
 	defer func() {
 		sessionSpan.SetAttributes(attribute.String("bolt.result", sessionResult))
+		sessionSpan.SetAttributes(attribute.String("bolt.transport", transportLabel))
 		if sessionResult != "success" {
 			sessionSpan.SetStatus(codes.Error, sessionResult)
 		}
 		sessionSpan.End()
 	}()
 
+	// Bufio sizing: WS sessions get a larger write buffer so steady-state
+	// RECORD batches don't fragment into 4KB frames.
+	writeBufSize := s.config.WriteBufferSize
+	if kind == transportWebSocket && s.config.WebSocketWriteBufferSize > 0 {
+		writeBufSize = s.config.WebSocketWriteBufferSize
+	}
+
 	session := &Session{
-		conn:       conn,
-		reader:     bufio.NewReaderSize(conn, s.config.ReadBufferSize),
-		writer:     bufio.NewWriterSize(conn, s.config.WriteBufferSize),
-		server:     s,
-		baseExec:   s.executor,
-		executor:   s.executor,
-		messageBuf: make([]byte, 0, 4096), // Pre-allocate 4KB message buffer
-		spanCtx:    sessionCtx,
+		conn:           sniffedConn,
+		reader:         br, // load-bearing: holds peeked bytes from peekTransport
+		writer:         bufio.NewWriterSize(sniffedConn, writeBufSize),
+		server:         s,
+		baseExec:       s.executor,
+		executor:       s.executor,
+		messageBuf:     make([]byte, 0, 4096),
+		spanCtx:        sessionCtx,
+		implicitBearer: implicitBearer,
 	}
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
 		session.executor = factory.NewSessionExecutor()
@@ -971,26 +1165,49 @@ func (s *Server) handleConnection(conn net.Conn) {
 		deferrable.SetDeferFlush(true)
 	}
 
-	// Ensure cleanup on session end
 	defer func() {
-		// Flush any pending writes
 		if flushable, ok := session.executor.(FlushableExecutor); ok {
 			flushable.Flush()
 		}
-		// Disable deferred flush mode
 		if deferrable, ok := session.executor.(DeferrableExecutor); ok {
 			deferrable.SetDeferFlush(false)
 		}
 	}()
 
-	// Perform handshake
+	// Pre-HELLO budget: the connection has BoltAuthTimeout to complete
+	// the Bolt handshake + HELLO + auth. handshake() itself reads from
+	// the bufio.Reader so the deadline applies to the underlying conn.
+	authTimeout := s.config.BoltAuthTimeout
+	if authTimeout > 0 {
+		_ = sniffedConn.SetReadDeadline(time.Now().Add(authTimeout))
+	}
+
 	if err := session.handshake(); err != nil {
-		s.logger().Warn("handshake failed", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
-		sessionResult = "error"
+		s.logger().Warn("handshake failed", "remote", remoteAddr, slog.Any("error", err))
+		if ms := s.metricsState; ms != nil && ms.bag != nil {
+			reason := "unrecognized_prefix"
+			if isDeadlineErr(err) {
+				reason = "auth_timeout"
+				sessionResult = "timeout"
+			}
+			incBoltConnectionsRejected(ms.bag, reason)
+		}
+		if sessionResult == "success" {
+			sessionResult = "error"
+		}
 		return
 	}
 
-	// Handle messages synchronously (simpler, lower overhead for request-response)
+	// Clear the auth deadline; subsequent Bolt messages run with no read
+	// deadline. WebSocket-level keepalive (ping/pong) handles idle WS
+	// sessions independently — but the keepalive is installed only AFTER
+	// HELLO succeeds, not before, so the pong handler can't override
+	// BoltAuthTimeout during the pre-HELLO window.
+	if authTimeout > 0 {
+		_ = sniffedConn.SetReadDeadline(time.Time{})
+	}
+
+	keepaliveStarted := false
 	for {
 		if s.closed.Load() {
 			return
@@ -1005,11 +1222,94 @@ func (s *Server) handleConnection(conn net.Conn) {
 				strings.Contains(errStr, "use of closed network connection") {
 				return
 			}
-			s.logger().Warn("message handling error", "remote", conn.RemoteAddr().String(), slog.Any("error", err))
+			s.logger().Warn("message handling error", "remote", remoteAddr, slog.Any("error", err))
 			sessionResult = "error"
 			return
 		}
+		// First successful message after HELLO → install WS keepalive
+		// (no-op for raw TCP). Idempotent guard prevents re-installing.
+		if !keepaliveStarted && session.authenticated {
+			if wc, ok := sniffedConn.(*wsConn); ok {
+				s.startWebSocketKeepalive(wc)
+			}
+			keepaliveStarted = true
+		}
 	}
+}
+
+// isDeadlineErr reports whether err is the i/o-deadline-exceeded variant
+// returned by net.Conn.Read after SetReadDeadline fires. Used at the
+// pre-HELLO handshake boundary to distinguish auth_timeout rejections
+// from generic protocol errors.
+func isDeadlineErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
+// classifySniffError maps an error returned by peekTransport (or the
+// surrounding TLS handshake) to a closed-enum reason label for
+// connections_rejected_total. Unknown errors fall through to
+// "unrecognized_prefix" so the cardinality budget stays bounded.
+func classifySniffError(err error) string {
+	if err == nil {
+		return "unrecognized_prefix"
+	}
+	if errors.Is(err, ErrUnencryptedRequired) {
+		return "requires_tls"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "transport sniff timeout"):
+		return "sniff_timeout"
+	case strings.Contains(msg, "tls handshake"):
+		return "tls_handshake"
+	}
+	return "unrecognized_prefix"
+}
+
+// transportLabelFor maps the transport-sniff outcome to the closed-enum
+// metric label per the Bolt observability schema. The four label values
+// are tcp, tcp_tls, ws, ws_tls.
+func transportLabelFor(kind transportKind, conn net.Conn) string {
+	_, encrypted := unwrapTLS(conn)
+	switch kind {
+	case transportWebSocket:
+		if encrypted {
+			return "ws_tls"
+		}
+		return "ws"
+	default:
+		if encrypted {
+			return "tcp_tls"
+		}
+		return "tcp"
+	}
+}
+
+// unwrapTLS reports whether the conn is (or wraps) a *tls.Conn, returning
+// the unwrapped underlying net.Conn for cases where callers need it. For
+// wsConn, this checks the gorilla/websocket UnderlyingConn.
+func unwrapTLS(conn net.Conn) (net.Conn, bool) {
+	switch c := conn.(type) {
+	case *tls.Conn:
+		return c.NetConn(), true
+	case *wsConn:
+		// wsConn carries no direct TLS reference; encryption status is
+		// captured at upgrade time and stored on the adapter when needed.
+		// We rely on the localAddr being a *net.TCPAddr regardless and
+		// on the upgrade pipeline to mark the session label.
+		return conn, c.encrypted
+	}
+	return conn, false
 }
 
 // Session represents a client session.
@@ -1068,6 +1368,13 @@ type Session struct {
 	// Async message processing (Neo4j-style batching)
 	messageQueue chan *boltMessage // Incoming messages queue
 	writeMu      sync.Mutex        // Protects writer for concurrent access
+
+	// implicitBearer carries a JWT pulled from the WS-upgrade cookie
+	// (nornicdb_token / token). It is set by acceptWebSocket BEFORE the
+	// session loop starts; handleHello consumes it on a scheme=none HELLO
+	// to promote the session as if the driver had sent scheme=bearer.
+	// Empty for raw TCP and TLS sessions — they have no HTTP layer.
+	implicitBearer string
 }
 
 // boltMessage represents a parsed Bolt message ready for processing
@@ -1396,17 +1703,49 @@ func (s *Session) handleHello(data []byte) error {
 
 		// Handle anonymous auth
 		if scheme == "none" || scheme == "" {
-			if !s.server.config.AllowAnonymous {
-				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required")
+			// Cookie-as-implicit-bearer: if the WS upgrade carried a
+			// nornicdb_token cookie that validated, treat scheme=none as
+			// scheme=bearer with that token. This lets first-party browser
+			// clients (the NornicDB UI) connect via neo4j.auth.none() and
+			// have the same-origin cookie carry the credential. HELLO
+			// bearer always wins over the cookie because we only enter
+			// this branch when the driver explicitly chose scheme=none.
+			s.server.logger().Debug("hello scheme=none",
+				"implicit_bearer_present", s.implicitBearer != "",
+				"allow_anonymous", s.server.config.AllowAnonymous)
+			cookieAuthed := false
+			if s.implicitBearer != "" {
+				result, err := s.server.config.Authenticator.Authenticate("bearer", "", s.implicitBearer)
+				if err == nil {
+					s.authenticated = true
+					s.authResult = result
+					s.forwardedAuthHeader = "Bearer " + s.implicitBearer
+					cookieAuthed = true
+				} else {
+					// Logging at warn keeps the operator-visible signal
+					// without leaking the token; we do NOT short-circuit
+					// to a failure response — the driver still has the
+					// AllowAnonymous fallback below.
+					remoteAddr := "unknown"
+					if s.conn != nil {
+						remoteAddr = s.conn.RemoteAddr().String()
+					}
+					s.server.logger().Warn("ws cookie bearer rejected",
+						"remote", remoteAddr, slog.Any("error", err))
+				}
 			}
-			// Anonymous user gets viewer role (canonical from auth)
-			s.authenticated = true
-			s.authResult = &BoltAuthResult{
-				Authenticated: true,
-				Username:      "anonymous",
-				Roles:         []string{string(auth.RoleViewer)},
+			if !cookieAuthed {
+				if !s.server.config.AllowAnonymous {
+					return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required")
+				}
+				s.authenticated = true
+				s.authResult = &BoltAuthResult{
+					Authenticated: true,
+					Username:      "anonymous",
+					Roles:         []string{string(auth.RoleViewer)},
+				}
+				s.forwardedAuthHeader = ""
 			}
-			s.forwardedAuthHeader = ""
 		} else if scheme == "basic" {
 			// Authenticate with provided credentials
 			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)

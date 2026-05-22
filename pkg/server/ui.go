@@ -174,12 +174,20 @@ func newUIHandler() (*uiHandler, error) {
 func (h *uiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqPath := r.URL.Path
 
-	// Validate path to prevent directory traversal attacks
+	// Validate path to prevent directory traversal attacks. We compare
+	// the cleaned path against the request path with a single allowance:
+	// a benign trailing slash (e.g. /databases/) is fine — React Router
+	// produces those normally and `path.Clean` strips them. Any OTHER
+	// difference (`..`, `//`, control chars) is a real traversal attempt.
 	cleanPath := path.Clean(reqPath)
 	if !strings.HasPrefix(cleanPath, "/") {
 		cleanPath = "/" + cleanPath
 	}
-	if strings.Contains(cleanPath, "..") || cleanPath != reqPath {
+	normalized := strings.TrimSuffix(reqPath, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+	if strings.Contains(cleanPath, "..") || cleanPath != normalized {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}

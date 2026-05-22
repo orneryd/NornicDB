@@ -425,6 +425,42 @@ type ServerConfig struct {
 	BoltTLSCert string
 	// BoltTLSKey path to private key
 	BoltTLSKey string
+	// BoltTLSRequire rejects any plaintext connection on the Bolt port.
+	// Env: NORNICDB_BOLT_TLS_REQUIRE
+	BoltTLSRequire bool
+	// BoltTLSClientCAFile enables mTLS by verifying client certs against
+	// this CA. Env: NORNICDB_BOLT_TLS_CLIENT_CA
+	BoltTLSClientCAFile string
+	// BoltTLSClientAuthMode controls client-cert handling when ClientCAFile
+	// is set. Values: "none", "request", "request_verify", "require_verify".
+	// Env: NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE
+	BoltTLSClientAuthMode string
+
+	// BoltSniffTimeout bounds the transport-sniff peek (default 5s).
+	// Env: NORNICDB_BOLT_SNIFF_TIMEOUT
+	BoltSniffTimeout time.Duration
+	// BoltAuthTimeout bounds pre-HELLO handshake/auth (default 30s).
+	// Env: NORNICDB_BOLT_AUTH_TIMEOUT
+	BoltAuthTimeout time.Duration
+
+	// BoltWebSocketEnabled allows WebSocket transport on the Bolt port
+	// (default true). Env: NORNICDB_BOLT_WEBSOCKET_ENABLED
+	BoltWebSocketEnabled bool
+	// BoltWebSocketAllowedOrigins comma-separated allowlist for WS Origin
+	// header. "*" allows any. Env: NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS
+	BoltWebSocketAllowedOrigins string
+	// BoltWebSocketMaxMessageSize bounds inbound WS BinaryMessage size
+	// (default 65536). Env: NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE
+	BoltWebSocketMaxMessageSize int64
+	// BoltWebSocketWriteBufferSize bufio writer size for WS sessions
+	// (default 262144). Env: NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE
+	BoltWebSocketWriteBufferSize int
+	// BoltWebSocketPingInterval cadence for WS ping control frames
+	// (default 30s). Env: NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL
+	BoltWebSocketPingInterval time.Duration
+	// BoltWebSocketPongTimeout pong arrival deadline (default 60s).
+	// Env: NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT
+	BoltWebSocketPongTimeout time.Duration
 
 	// HTTPEnabled controls HTTP API server
 	HTTPEnabled bool
@@ -1666,6 +1702,16 @@ func LoadDefaults() *Config {
 	config.Server.BoltAddress = "0.0.0.0"
 	config.Server.BoltServerAnnouncement = ""
 	config.Server.BoltTLSEnabled = false
+	config.Server.BoltTLSRequire = false
+	config.Server.BoltTLSClientAuthMode = "none"
+	config.Server.BoltSniffTimeout = 5 * time.Second
+	config.Server.BoltAuthTimeout = 30 * time.Second
+	config.Server.BoltWebSocketEnabled = true
+	config.Server.BoltWebSocketAllowedOrigins = "*"
+	config.Server.BoltWebSocketMaxMessageSize = 65536
+	config.Server.BoltWebSocketWriteBufferSize = 256 * 1024
+	config.Server.BoltWebSocketPingInterval = 30 * time.Second
+	config.Server.BoltWebSocketPongTimeout = 60 * time.Second
 
 	// Server defaults - HTTP
 	config.Server.HTTPEnabled = true
@@ -1992,6 +2038,45 @@ func applyEnvVars(config *Config) error {
 	if v := getEnv("NORNICDB_TLS_DIR", ""); v != "" {
 		config.Server.BoltTLSCert = v + "/public.crt"
 		config.Server.BoltTLSKey = v + "/private.key"
+	}
+	if v := getEnv("NORNICDB_BOLT_TLS_CERT", ""); v != "" {
+		config.Server.BoltTLSCert = v
+	}
+	if v := getEnv("NORNICDB_BOLT_TLS_KEY", ""); v != "" {
+		config.Server.BoltTLSKey = v
+	}
+	if v, ok := envutil.LookupBoolLoose("NORNICDB_BOLT_TLS_REQUIRE"); ok {
+		config.Server.BoltTLSRequire = v
+	}
+	if v := getEnv("NORNICDB_BOLT_TLS_CLIENT_CA", ""); v != "" {
+		config.Server.BoltTLSClientCAFile = v
+	}
+	if v := getEnv("NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE", ""); v != "" {
+		config.Server.BoltTLSClientAuthMode = v
+	}
+	if v := getEnvDuration("NORNICDB_BOLT_SNIFF_TIMEOUT", 0); v > 0 {
+		config.Server.BoltSniffTimeout = v
+	}
+	if v := getEnvDuration("NORNICDB_BOLT_AUTH_TIMEOUT", 0); v > 0 {
+		config.Server.BoltAuthTimeout = v
+	}
+	if v, ok := envutil.LookupBoolLoose("NORNICDB_BOLT_WEBSOCKET_ENABLED"); ok {
+		config.Server.BoltWebSocketEnabled = v
+	}
+	if v := getEnv("NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS", ""); v != "" {
+		config.Server.BoltWebSocketAllowedOrigins = v
+	}
+	if v := getEnvInt("NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE", -1); v >= 0 {
+		config.Server.BoltWebSocketMaxMessageSize = int64(v)
+	}
+	if v := getEnvInt("NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE", -1); v >= 0 {
+		config.Server.BoltWebSocketWriteBufferSize = v
+	}
+	if v := getEnvDuration("NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL", 0); v > 0 {
+		config.Server.BoltWebSocketPingInterval = v
+	}
+	if v := getEnvDuration("NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT", 0); v > 0 {
+		config.Server.BoltWebSocketPongTimeout = v
 	}
 
 	// Server settings - HTTP

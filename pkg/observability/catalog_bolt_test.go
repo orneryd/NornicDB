@@ -23,11 +23,14 @@ func TestBoltMetrics_RegistersSixFamilies(t *testing.T) {
 	// Materialize one instance per *Vec so Gather() emits the family
 	// (client_golang skips empty *Vec families). ConnectionsActive is a
 	// plain Gauge; SessionDuration has no labels and emits when observed.
-	bag.ConnectionsTotal.WithLabelValues("success").Inc()
+	bag.ConnectionsActive.WithLabelValues("tcp").Inc()
+	bag.ConnectionsTotal.WithLabelValues("success", "tcp").Inc()
 	bag.SessionDuration.Bind().Observe(nil, 0.001)
 	bag.MessagesTotal.WithLabelValues("run", "success").Inc()
 	bag.MessageDuration.Bind("run").Observe(nil, 0.001)
 	bag.PackstreamDecodeErrors.WithLabelValues("truncated").Inc()
+	bag.ConnectionsRejectedTotal.WithLabelValues("max_connections").Inc()
+	bag.WebSocketOversizedTotal.Inc()
 
 	mfs, err := te.Registry.Gather()
 	require.NoError(t, err)
@@ -80,15 +83,19 @@ func TestBoltOp_ClosedEnum(t *testing.T) {
 	})
 }
 
-// TestBoltResult_ClosedEnum asserts CONTEXT D-11: connections_total{result}
-// accepts only {success, error, timeout}. Cardinality ceiling = 3.
+// TestBoltResult_ClosedEnum asserts CONTEXT D-11: connections_total{result,
+// transport} accepts only the closed-enum cross product. Cardinality
+// ceiling = 12 (3 results x 4 transports) after the bolt-over-websocket
+// schema migration.
 func TestBoltResult_ClosedEnum(t *testing.T) {
 	te := NewTestEnv(t)
 	bag := NewBoltMetrics(te.Registry)
 	require.NotNil(t, bag)
-	te.AssertCardinalityCeiling(t, "nornicdb_bolt_connections_total", 3, func(tenant string) {
+	te.AssertCardinalityCeiling(t, "nornicdb_bolt_connections_total", 12, func(tenant string) {
 		for _, result := range AllowedBoltResults {
-			bag.ConnectionsTotal.WithLabelValues(result).Inc()
+			for _, transport := range AllowedBoltTransports {
+				bag.ConnectionsTotal.WithLabelValues(result, transport).Inc()
+			}
 		}
 		_ = tenant
 	})

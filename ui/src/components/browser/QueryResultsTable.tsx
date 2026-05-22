@@ -4,7 +4,7 @@
  * Extracted from Browser.tsx for reusability
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { UiGrid } from "@ornery/ui-grid-react";
 import type {
   GridCellTemplateContext,
@@ -88,9 +88,9 @@ export function QueryResultsTable({
 
     const nextColumnDefs: GridColumnDef[] = [
       {
-        name: "__select__",
+        name: "nornicSelect",
         displayName: "Select",
-        field: "__select__",
+        field: "nornicSelect",
         width: "96px",
         headerRenderer: () => "",
         sortable: false,
@@ -201,30 +201,38 @@ export function QueryResultsTable({
     }
   }, [gridApi, gridData, selectedNodeIds]);
 
-  const renderSelectCell = (ctx: GridCellTemplateContext) => {
-    const row = ctx.row as GridRecord & {
-      __nodeData?: QueryResultNodeData | null;
-    };
-    const nodeData = row.__nodeData ?? null;
+  // Stable renderer identity matters: the UiGrid React wrapper drops
+  // and re-portals every cell when cellRenderers identity changes, so
+  // useCallback keeps the same closure across renders. Mirrors the
+  // /react demo's pattern of declaring renderers once on the component
+  // (statusCellRenderer is a class arrow property there).
+  const renderSelectCell = useCallback(
+    (ctx: GridCellTemplateContext) => {
+      const row = ctx.row as GridRecord & {
+        __nodeData?: QueryResultNodeData | null;
+      };
+      const nodeData = row.__nodeData ?? null;
 
-    if (!nodeData) {
-      return <div className="text-xs text-norse-fog py-1">-</div>;
-    }
+      if (!nodeData) {
+        return <div className="text-xs text-norse-fog py-1">-</div>;
+      }
 
-    return (
-      <div className="py-1" onClick={(event) => event.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => onNodeSelect(nodeData)}
-          className="inline-flex items-center rounded-full border border-nornic-primary/40 bg-nornic-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-nornic-primary hover:border-nornic-primary hover:bg-nornic-primary/20 hover:text-white"
-        >
-          Select
-        </button>
-      </div>
-    );
-  };
+      return (
+        <div className="py-1" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onNodeSelect(nodeData)}
+            className="inline-flex items-center rounded-full border border-nornic-primary/40 bg-nornic-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-nornic-primary hover:border-nornic-primary hover:bg-nornic-primary/20 hover:text-white"
+          >
+            Select
+          </button>
+        </div>
+      );
+    },
+    [onNodeSelect],
+  );
 
-  const renderCell = (ctx: GridCellTemplateContext) => {
+  const renderCell = useCallback((ctx: GridCellTemplateContext) => {
     const value = ctx.value;
 
     if (value && typeof value === "object") {
@@ -247,14 +255,14 @@ export function QueryResultsTable({
         {displayValue}
       </div>
     );
-  };
+  }, []);
 
   const cellRenderers = useMemo(
     () =>
       Object.fromEntries(
         columnDefs.map(({ name }) => [
           name,
-          name === "__select__" ? renderSelectCell : renderCell,
+          name === "nornicSelect" ? renderSelectCell : renderCell,
         ]),
       ),
     [columnDefs, renderCell, renderSelectCell],

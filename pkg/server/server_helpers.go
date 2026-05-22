@@ -39,6 +39,41 @@ func getCookie(r *http.Request, name string) string {
 	return cookie.Value
 }
 
+// hostnameFromRequest returns the hostname portion of the request's
+// Host header, or empty when the header is missing. Used by the
+// discovery handler so the bolt_direct / ws_direct URLs it advertises
+// match the hostname the browser is already using — cookies are
+// scoped by exact hostname (localhost vs 127.0.0.1 are distinct), so
+// returning the configured bind address would silently break the
+// cookie-as-implicit-bearer flow on the WS upgrade.
+//
+// Forwarded headers (X-Forwarded-Host) take precedence so deployments
+// behind a reverse proxy advertise the externally-visible hostname.
+func hostnameFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	candidates := []string{
+		r.Header.Get("X-Forwarded-Host"),
+		r.Host,
+	}
+	for _, raw := range candidates {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		// X-Forwarded-Host may contain multiple comma-separated names; take the first.
+		if idx := strings.Index(raw, ","); idx >= 0 {
+			raw = strings.TrimSpace(raw[:idx])
+		}
+		if host, _, err := net.SplitHostPort(raw); err == nil {
+			return host
+		}
+		return raw
+	}
+	return ""
+}
+
 func getClientIP(r *http.Request) string {
 	// Check X-Forwarded-For first
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {

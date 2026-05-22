@@ -44,3 +44,52 @@ func TestUIHandler_ServeHTTP_DoesNotReflectMaliciousBasePathHeader(t *testing.T)
 	require.Contains(t, body, `src="/trusted/assets/app.js"`)
 	require.NotContains(t, body, `src="//assets/`)
 }
+
+// TestUIHandler_ServeHTTP_AcceptsTrailingSlash covers the SPA-fallback
+// path validator. React Router emits trailing slashes for nested
+// routes (e.g. /databases/, /admin/users/); a hard-refresh on those
+// URLs reaches the server, so the path validator must NOT reject them.
+// path.Clean strips the trailing slash, so a naive cleanPath==reqPath
+// equality test 400s — fixed in the handler.
+func TestUIHandler_ServeHTTP_AcceptsTrailingSlash(t *testing.T) {
+	h := &uiHandler{
+		fileServer: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError) // assets path; never reached for /databases/
+		}),
+		indexHTML: []byte(`<html><body>ok</body></html>`),
+		basePath:  "",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/databases/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "<body>ok</body>")
+}
+
+// TestUIHandler_ServeHTTP_RejectsPathTraversal — the relaxed
+// trailing-slash allowance must NOT punch a hole through the
+// directory-traversal guard.
+func TestUIHandler_ServeHTTP_RejectsPathTraversal(t *testing.T) {
+	h := &uiHandler{
+		fileServer: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+		indexHTML: []byte(`<html>ok</html>`),
+		basePath:  "",
+	}
+
+	for _, badPath := range []string{
+		"/../etc/passwd",
+		"/foo/../bar",
+		"/foo/..",
+	} {
+		t.Run(badPath, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, badPath, nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusBadRequest, rec.Code, "must reject traversal: %s", badPath)
+		})
+	}
+}

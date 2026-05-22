@@ -9,11 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ornery/ui-grid-core": "^1.0.5",
-    "@ornery/ui-grid-react": "^1.0.5",
-    "@ornery/ui-grid-vanilla": "^1.0.5",
+    "@ornery/ui-grid-core": "^1.0.6",
+    "@ornery/ui-grid-react": "^1.0.6",
+    "@ornery/ui-grid-vanilla": "^1.0.6",
     "3d-force-graph": "^1.80.0",
     "lucide-react": "^1.16.0",
+    "neo4j-driver": "^6.0.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",

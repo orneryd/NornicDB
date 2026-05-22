@@ -113,11 +113,47 @@ Default `Config.WebSocketEnabled = true`. Operators who want WS disabled (purely
 
 **Test S-WSDisabled-DiscoveryStillWorks**: with `WebSocketEnabled=false`, send a plain `GET /`. Assert response is 200 with the discovery body (proves health checks still pass).
 
-#### HTTP-level auth headers explicitly ignored (S3)
+#### HTTP-level auth headers — `Cookie` and `Authorization: Bearer` honored
 
-Auth happens in the Bolt HELLO message, identical to the TCP path. `Authorization`, `Cookie`, and any other HTTP-side credential headers on the WS upgrade request are **dropped on the floor**. This matches Neo4j: their pipeline runs `WebSocketServerProtocolHandler` → `WebSocketFramePackingEncoder` → Bolt protocol, with no HTTP auth handler in between.
+Bolt drivers (Neo4j JS, Go, Java, Python) authenticate inside the HELLO message regardless of transport. The HTTP layer that wraps a WS upgrade is normally invisible to the driver. We deliberately leave two HTTP-level credential surfaces wired through to Bolt auth on WS connections:
 
-Documented in code as a load-bearing invariant. A regression test (`S-AuthHeadersIgnored`) opens a WS upgrade with a wrong `Authorization` header AND a Bolt HELLO with valid creds, asserts the connection authenticates successfully (HTTP header ignored). And the inverse: WS upgrade with valid `Authorization` AND Bolt HELLO with `auth: none` against a server requiring auth, asserts the connection is rejected (HTTP header didn't grant anything).
+1. **`Cookie: nornicdb_token=<jwt>`** — the canonical first-party path. Browsers automatically attach cookies on same-hostname WS upgrades (RFC 6265). The NornicDB UI sets this cookie at login and the same JWT validates the WS Bolt session.
+2. **`Authorization: Bearer <jwt>`** — the canonical third-party path. Tools that already mint JWTs via `/auth/api-token` (MCP servers, scripts, integrations) frequently send them as `Authorization: Bearer …`. Honoring this lets those clients reach Bolt-over-WS without re-issuing the token through HELLO.
+
+Both feed the same `Session.implicitBearer` slot. When both are present, the **cookie wins** (it's first-party-set by the same server). When only one is present, that one is used. When the HELLO message carries an explicit `scheme: bearer` or `scheme: basic`, **HELLO always wins** — neither HTTP source is consulted.
+
+Other HTTP-side credential headers (`X-API-Key`, `?token=`, `?api_key=`) are **not** honored on WS upgrades — they are HTTP-API conventions and have no analog on Bolt drivers, so accepting them would invite confusion. Documented as a load-bearing scope.
+
+##### Dual-path HELLO auth
+
+`acceptWebSocket` reads `nornicdb_token` and `Authorization: Bearer <token>` from the parsed HTTP request and stashes the raw JWT on the Bolt `Session.implicitBearer` (cookie wins on conflict). Validation happens in `handleHello` (one auth-resolution path: `auth.Authenticator.Authenticate("bearer", "", token)`). The TCP path has no HTTP layer; it never has a stashed token. Drivers use one of three HELLO shapes:
+
+| HELLO scheme         | Cookie state              | Result                                                              |
+|----------------------|---------------------------|---------------------------------------------------------------------|
+| `bearer` + credentials | any                     | Existing path. `auth_adapter.Authenticate` validates the credential token. |
+| `basic` + principal/credentials | any              | Existing path. Bcrypt + `auth.Authenticate`.                        |
+| `none`                | valid stashed claims      | New: cookie-as-implicit-bearer. Session promotes to the cookie's roles. |
+| `none`                | absent or invalid claims  | Existing path. Anonymous viewer if `AllowAnonymous`; reject otherwise. |
+
+**HELLO bearer wins over cookie.** A driver that explicitly sends `scheme: bearer` with a *different* token is choosing that token; cookie is ignored. This avoids the "stale cookie silently overrides a fresh token" footgun.
+
+##### Cookie scoping caveats
+
+- **Same hostname (dev: UI on `:7474`, Bolt on `:7687`)** — RFC 6265 scopes cookies by hostname, not port. Cookie set by `/auth/token` on `localhost:7474` rides along to `ws://localhost:7687/`. Just works.
+- **Cross-origin (UI on `app.example.com`, Bolt on `bolt.example.com`)** — the existing cookie is `SameSite=Lax`, which the spec lets the browser send on cross-site WebSocket upgrades only when the upgrade is a top-level navigation. In practice browsers treat the WS handshake as a non-top-level subresource → cookie blocked. Operators in this shape must (a) set `SameSite=None; Secure` on `nornicdb_token` AND scope it to the parent domain (`Domain=.example.com`), or (b) use the bearer-in-HELLO path explicitly.
+
+The `Same-Origin-Cookies` constraint is a deployment concern, not a protocol bug. Documented in `docs/operations/configuration.md` under "Bolt over WebSocket + TLS / Cookie auth across origins."
+
+##### Tests
+
+- **S-CookieImplicitBearer**: with auth enabled, login via `/auth/token` → set cookie → open WS to Bolt port → HELLO `scheme: none` → assert SUCCESS and roles match the cookie's claims.
+- **S-CookieIgnoredOnTCP**: same login → raw TCP `bolt://` → HELLO `scheme: none` → reject (raw TCP carries no cookie, so the implicit bearer path doesn't fire).
+- **S-BearerOverridesCookie**: cookie present + HELLO `scheme: bearer, credentials: <different valid JWT>` → assert the HELLO token wins (assert username/roles match the bearer token, not the cookie).
+- **S-InvalidCookieFallsThrough**: cookie present but expired/tampered + HELLO `scheme: none` + `RequireAuth=true` → reject. (The invalid cookie does NOT promote the session; the rejection comes from the existing anonymous-disallowed path.)
+- **S-AuthorizationHeaderHonored**: WS upgrade with a valid `Authorization: Bearer <jwt>` and no cookie + HELLO `scheme: none` → SUCCESS, session promoted to the bearer's roles.
+- **S-CookieWinsOverHeader**: WS upgrade with a valid cookie AND a different valid `Authorization: Bearer <jwt2>` + HELLO `scheme: none` → SUCCESS, session promoted to the **cookie's** roles, not the header's. (Verified by minting two tokens for two different users and asserting the username on the resulting session.)
+- **S-StrayHeaderIgnoredUnderHELLO**: WS upgrade with an invalid `Authorization` header AND HELLO `scheme: bearer, credentials: <valid>` → SUCCESS using the HELLO credential. The header is silently ignored because HELLO bearer always wins.
+- **S-OnlyAuthorizationAndCookieHonored**: WS upgrade with `X-API-Key: <valid>` (no cookie, no `Authorization`, no HELLO creds) under `RequireAuth=true` → FAILURE. Only `Cookie: nornicdb_token` and `Authorization: Bearer` feed the implicit-bearer path.
 
 #### Subprotocol and extensions (S4)
 
@@ -896,3 +932,51 @@ References (Neo4j source, all under `community/`):
 - `bolt/src/main/java/org/neo4j/bolt/protocol/common/connector/netty/AbstractNettyConnector.java` — `sslContext()` + `requiresEncryption()` config surface that informs our `TLSConfig` + `RequireTLS` design.
 - `bolt/src/test/java/org/neo4j/bolt/testing/client/WebSocketConnection.java` and `SecureWebSocketConnection.java` — confirm client-side URL is `ws://host:7687/` / `wss://host:7687/`.
 - `server/src/main/java/org/neo4j/server/rest/repr/CommunityAuthConfigProvider.java` and `AuthConfigRepresentation.java` — empty body in Community Edition.
+
+## Implementation checklist (2026-05-22)
+
+### Phase 1 — primitives ✅
+- [x] `pkg/bolt/wsconn.go` + `wsconn_test.go` — `wsConn` adapter; 8 tests cover read coalescing, text-frame drop, write framing, idempotent Close, synthetic `*net.TCPAddr` (incl. nil + non-TCP inputs), `SetReadLimit` rejection, deadline propagation, multi-chunk reads.
+- [x] `pkg/bolt/tls.go` + `tls_test.go` — `LoadTLSConfig`, `LoadTLSConfigWithClientCA`, `ParseClientAuthMode`, four-mode `ClientAuthMode` enum, 5s cert-rotation ticker (configurable seam for tests), atomic-rename rotation + mid-write survival.
+- [x] `pkg/bolt/transport_select.go` + `transport_select_test.go` — `peekTransport` with bounded TLS recursion; `peekedConn` re-presents buffered bytes to TLS handshake; T1-T10 scenarios all pass.
+- [x] `pkg/bolt/discovery.go` + `discovery_test.go` — `buildDiscoveryBody`, `buildDiscoveryResponse`, `isWebSocketUpgrade`; D-Empty / D-OAuth / D-OAuthPartial / D-MalformedIssuer / D-NoSecretLeak / D1-D4 covered.
+
+### Phase 2 — wire into the Bolt server ✅
+- [x] `pkg/bolt/server.go` Config gains `TLSConfig`, `RequireTLS`, `BoltSniffTimeout`, `BoltAuthTimeout`, `WebSocketEnabled`, `WebSocketAllowedOrigins`, `WebSocketMaxMessageSize`, `WebSocketWriteBufferSize`, `WebSocketPingInterval`, `WebSocketPongTimeout`, `OAuthConfig`. `DefaultConfig()` populates Neo4j-parity defaults.
+- [x] `Server` struct gains `activeConnections atomic.Int64`, `discoveryResponse atomic.Pointer[[]byte]`, `discoveryStop chan`, `upgrader *websocket.Upgrader`.
+- [x] `handleConnection` rewritten: MaxConnections enforcement → metric Inc → `peekTransport` → on WS branch `acceptWebSocket` (discovery probe / 426 / upgrade) → Session built with the bufio.Reader returned by peekTransport (B4 handoff).
+- [x] `pkg/bolt/transport_ws.go` — `acceptWebSocket`, ping loop, `hijackableResponseWriter`, 426 / 404 helpers; origin allowlist (`*` allows any, comma-list strict-matches).
+- [x] `pkg/bolt/transport_discovery.go` — `startDiscoveryRefresher` with 1s Date ticker, `serveDiscovery` writes pre-encoded bytes; `Server.ListenAndServe` bootstraps it; `Close` tears it down.
+- [x] `pkg/bolt/server_ws_test.go` integration tests: WS happy path with HELLO/RUN/PULL/BYE; discovery probe; 426 when WS disabled; discovery still served when WS disabled; bogus-origin rejected; RequireTLS rejects plaintext WS; raw TCP path still works.
+
+### Phase 3 — config, metrics, edge cases ✅
+- [x] `pkg/config/config.go` `ServerConfig` extended; defaults set in `setDefaults`; env vars wired in `applyEnvVars` (`NORNICDB_BOLT_TLS_*`, `NORNICDB_BOLT_SNIFF_TIMEOUT`, `NORNICDB_BOLT_AUTH_TIMEOUT`, `NORNICDB_BOLT_WEBSOCKET_*`).
+- [x] `cmd/nornicdb/main.go` plumbs cfg.Server.Bolt* into `boltConfig`; calls `bolt.LoadTLSConfig` / `LoadTLSConfigWithClientCA` when cert paths are set; passes `auth.GetOAuthConfig()` for the discovery body.
+- [x] Metric schema migrated in `pkg/observability/catalog_bolt.go`: `ConnectionsActive` becomes `*GaugeVec` (label `transport`); `ConnectionsTotal` gains `transport` label (cardinality ceiling 3 → 12); new `ConnectionsRejectedTotal{reason}` and `WebSocketOversizedTotal` counters.
+- [x] `AllowedBoltTransports` = `{tcp, tcp_tls, ws, ws_tls}`; `AllowedBoltConnectionRejectReasons` covers nine reject reasons.
+- [x] `pkg/bolt/transport_metrics.go` helpers wrap the `*Vec` Inc/Dec/Reset patterns; rejection sites wired (`max_connections`, `sniff_timeout`, `tls_handshake`, `requires_tls`, `unrecognized_prefix`, `ws_disabled`, `ws_handshake`).
+- [x] Updated existing tests `catalog_bolt_test.go`, `catalog_full_enumeration_test.go`, `cmd/nornicdb/http_bolt_metrics_test.go` for new label cardinality; ceilings re-asserted.
+
+### Phase 4 — cert rotation, go.mod, docs ✅
+- [x] Cert rotation lives in `pkg/bolt/tls.go` (Phase-1 file); 5s ticker re-reads under mutex; `Certificates` left nil so `GetCertificate` fires every handshake; T-Cert-Rotate + T-Cert-Rotate-MidWrite tests pass.
+- [x] `go.mod` `github.com/gorilla/websocket v1.5.3` promoted from indirect → direct after `go mod tidy`.
+- [x] `pkg/bolt/README.md` — added "WebSocket transport" + "TLS" sections.
+- [x] `docs/operations/configuration.md` — added "Bolt over WebSocket + TLS" section with YAML, env-var table, discovery probe, cert rotation, RequireTLS, WebSocketEnabled=false semantics.
+- [x] `docs/operations/environment-variables.md` — 13 new `NORNICDB_BOLT_*` rows.
+- [ ] Manual verification with the official Neo4j JS driver in a browser tab + Go driver against a running NornicDB — left for the operator/PR reviewer at landing time (the test suite covers the wire-level scenarios; live driver verification is M1/M2 in the spec).
+
+### Test scenario completion
+- [x] T1-T10 transport-sniff (in `transport_select_test.go`)
+- [x] W1-W4 wire-compatibility happy paths: W1 (`bolt://`) via `TestBoltCypherIntegration`; W3 (`ws://`) via `TestWSBolt_HappyPath`. W2/W4 (`bolt+s://`/`wss://`) covered by the same code path via TLS recursion in `peekTransport`; the underlying TLS handshake is tested in `TestPeekTransport_T4*`. End-to-end TLS+driver smoke tests are M1/M2 manual.
+- [x] D-Empty / D-OAuth / D-OAuthPartial / D-MalformedIssuer / D-NoSecretLeak / D1 / D2 / D3 / D4 (in `discovery_test.go`)
+- [x] S-WSDisabled-426 / S-WSDisabled-DiscoveryStillWorks (in `server_ws_test.go`)
+- [x] Origin allowlist (S5) (in `server_ws_test.go`)
+- [x] RequireTLS+WS rejection (in `server_ws_test.go`)
+- [x] L1 / L2 / L3 / L7 / L8 (in `tls_test.go`)
+- [x] L6 (synthetic *net.TCPAddr for non-TCP underlying) (in `wsconn_test.go`)
+- [ ] Phase-3-spec benchmarks (`B-WS-Throughput-Records`, `B-WS-Allocs-Records`, `B-WS-RoundTrip-P99`) — not gated in this landing; see "Performance contract" — recommended as a follow-up benchmark PR before claiming the 5% throughput contract is met.
+
+### Build + tests
+- [x] `go build ./...` — clean
+- [x] `go vet ./pkg/bolt/...` — clean
+- [x] `go test ./...` — all packages pass

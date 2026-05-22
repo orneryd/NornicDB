@@ -346,6 +346,11 @@ type Config struct {
 	PerDBYAMLOverrides map[string]map[string]string
 	// Port to listen on (default: 7474)
 	Port int
+	// BoltPort is the port the Bolt protocol server listens on. Surfaced
+	// in the discovery response so browser clients constructing
+	// neo4j-driver Bolt-over-WS sessions know where to connect.
+	// Default: 7687 when zero.
+	BoltPort int
 	// ReadTimeout for requests
 	ReadTimeout time.Duration
 	// WriteTimeout for responses
