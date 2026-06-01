@@ -252,6 +252,14 @@ The output of Phase 4 is a data directory that's logically equivalent to one pro
 
 - **Exit code 0:** every row imported, every index built, every constraint satisfied. Report file written.
 
+### Regression scenarios to keep covered
+
+- Missing source folder or file path should fail fast with a CSV/open error before any writes begin.
+- Importing into the same database namespace twice should fail the second time because the target is no longer empty.
+- Importing into a different database namespace on the same underlying engine should succeed and keep the records isolated by namespace.
+- Multi-file sources must treat the first file as the header-bearing file and read subsequent files as data without dropping their first row.
+- After each scenario, verify the loaded database contents through the namespaced storage API, not just through the import report.
+
 ## Phase 6 — Cypher procedure helpers (post-import)
 
 Two small additions to the running server, scoped to make the bulk-load UX cleaner for _online_ loads that still want the deferred-population behavior:

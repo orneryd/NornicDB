@@ -107,7 +107,7 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: deploy-all deploy-arm64-all deploy-amd64-all
 .PHONY: build-llama-cpu push-llama-cpu deploy-llama-cpu ensure-llama-cpu
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda ensure-llama-cuda
-.PHONY: build build-ui build-binary build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
+.PHONY: build build-ui build-binary build-admin build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed
 .PHONY: download-models download-bge download-qwen download-bge-reranker check-models
 .PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers
 
@@ -796,6 +796,9 @@ else
 endif
 endif
 
+build-admin: sync-version
+	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/nornicdb-admin$(BIN_EXT) ./cmd/nornicdb-admin
+
 # Build plugins only if platform supports Go plugins (Linux/macOS, not Windows)
 build-plugins-if-supported:
 ifeq ($(OS),Windows_NT)
@@ -919,6 +922,57 @@ endif
 # Note: CGO is disabled for cross-compilation (pure Go, no Metal/CUDA)
 
 .PHONY: cross-linux-amd64 cross-linux-arm64 cross-rpi cross-rpi-zero cross-windows cross-all
+
+# Admin binary cross-compilation mirrors the main binary targets.
+.PHONY: cross-linux-amd64-admin cross-linux-arm64-admin cross-rpi-admin cross-rpi-zero-admin cross-windows-admin cross-all-admin
+
+cross-linux-amd64-admin:
+	@echo "Building admin binary for Linux x86_64..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=amd64 && go build -o bin/nornicdb-admin-linux-amd64 ./cmd/nornicdb-admin
+else
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/nornicdb-admin-linux-amd64 ./cmd/nornicdb-admin
+endif
+	@echo "bin/nornicdb-admin-linux-amd64"
+
+cross-linux-arm64-admin:
+	@echo "Building admin binary for Linux ARM64..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm64 && go build -o bin/nornicdb-admin-linux-arm64 ./cmd/nornicdb-admin
+else
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-admin-linux-arm64 ./cmd/nornicdb-admin
+endif
+	@echo "bin/nornicdb-admin-linux-arm64"
+
+cross-rpi-admin:
+	@echo "Building admin binary for Raspberry Pi (64-bit ARM)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm64 && go build -o bin/nornicdb-admin-rpi64 ./cmd/nornicdb-admin
+else
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/nornicdb-admin-rpi64 ./cmd/nornicdb-admin
+endif
+	@echo "bin/nornicdb-admin-rpi64"
+
+cross-rpi-zero-admin:
+	@echo "Building admin binary for Raspberry Pi Zero (ARMv6)..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=linux && set GOARCH=arm && set GOARM=6 && go build -o bin/nornicdb-admin-rpi-zero ./cmd/nornicdb-admin
+else
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -o bin/nornicdb-admin-rpi-zero ./cmd/nornicdb-admin
+endif
+	@echo "bin/nornicdb-admin-rpi-zero"
+
+cross-windows-admin:
+	@echo "Building admin binary for Windows x86_64..."
+ifeq ($(HOST_OS),windows)
+	@set CGO_ENABLED=0 && set GOOS=windows && set GOARCH=amd64 && go build -o bin/nornicdb-admin.exe ./cmd/nornicdb-admin
+else
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/nornicdb-admin.exe ./cmd/nornicdb-admin
+endif
+	@echo "bin/nornicdb-admin.exe"
+
+cross-all-admin: cross-linux-amd64-admin cross-linux-arm64-admin cross-rpi-admin cross-rpi-zero-admin cross-windows-admin
+	@echo "Admin cross-compilation complete!"
 
 # Linux x86_64 (standard servers, VPS, Docker hosts)
 cross-linux-amd64:
