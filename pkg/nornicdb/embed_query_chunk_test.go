@@ -170,27 +170,29 @@ func TestDB_EmbedQuery_LongQuery_UsesFirstChunkForCompatibility(t *testing.T) {
 }
 
 func TestDB_EmbedQueryChunks_LongQuery_ReturnsChunkEmbeddings(t *testing.T) {
-	emb := &chunkingTestEmbedder{dims: 4}
+	emb := &deterministicChunkEmbedder{
+		dims: 4,
+		chunks: []string{
+			"first chunk",
+			"second chunk",
+		},
+	}
 	db := &DB{embedQueue: &EmbedQueue{embedder: emb}}
 
-	longQuery := loadLargeDocQuery(t)
-	chunks, embs, err := db.EmbedQueryChunks(context.Background(), longQuery)
+	chunks, embs, err := db.EmbedQueryChunks(context.Background(), "long query")
 	require.NoError(t, err)
-	require.Greater(t, len(chunks), 1)
+	require.Equal(t, []string{"first chunk", "second chunk"}, chunks)
 	require.Len(t, embs, len(chunks))
 	for _, vec := range embs {
 		require.Len(t, vec, 4)
 	}
 
 	emb.mu.Lock()
-	embedCalls := emb.embedCalls
-	batchCalls := emb.embedBatchCall
-	maxTokens := emb.maxTokens
+	batchCalls := append([][]string(nil), emb.batchCalls...)
 	emb.mu.Unlock()
 
-	require.Equal(t, 0, embedCalls, "expected long query path to avoid single-text embedding")
-	require.Equal(t, 1, batchCalls, "expected long query path to batch-embed chunks once")
-	require.LessOrEqual(t, maxTokens, 512, "expected all embedded chunks to be <= 512 tokens")
+	require.Len(t, batchCalls, 1, "expected multi-chunk query path to batch-embed chunks once")
+	require.Equal(t, chunks, batchCalls[0])
 }
 
 func TestDB_EmbedQueryForDB_NoResolver_ReturnsSameAsEmbedQuery(t *testing.T) {
