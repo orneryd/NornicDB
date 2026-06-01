@@ -27,6 +27,7 @@ This section is the canonical runbook set for deploying, operating, and recoveri
 - MVCC retention and historical reads: [../user-guides/historical-reads-mvcc-retention.md](../user-guides/historical-reads-mvcc-retention.md)
 - Storage encoding format and migration details: [storage-serialization.md](storage-serialization.md)
 - CLI workflows: [cli-commands.md](cli-commands.md)
+- Offline admin import workflow: [admin-tool.md](admin-tool.md)
 
 ## Incident Routing
 

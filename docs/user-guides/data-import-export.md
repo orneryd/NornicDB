@@ -79,7 +79,7 @@ RETURN labels(n) AS labels, properties(n) AS properties
 
 -- Export with relationships
 MATCH (n)-[r]->(m)
-RETURN 
+RETURN
   labels(n) AS fromLabels,
   properties(n) AS fromProps,
   type(r) AS relType,
@@ -107,14 +107,14 @@ curl -X POST http://localhost:7474/db/nornic/tx/commit \
 
 ### Supported Features
 
-| Feature | Status | Notes |
-|---------|--------|-------|
+| Feature        | Status  | Notes               |
+| -------------- | ------- | ------------------- |
 | Cypher Queries | ✅ Full | All standard Cypher |
-| Bolt Protocol | ✅ Full | v4.4 compatible |
-| HTTP API | ✅ Full | Neo4j REST API |
-| Transactions | ✅ Full | ACID compliant |
-| Indexes | ✅ Full | B-tree and vector |
-| Constraints | ✅ Full | Unique, exists |
+| Bolt Protocol  | ✅ Full | v4.4 compatible     |
+| HTTP API       | ✅ Full | Neo4j REST API      |
+| Transactions   | ✅ Full | ACID compliant      |
+| Indexes        | ✅ Full | B-tree and vector   |
+| Constraints    | ✅ Full | Unique, exists      |
 
 ### Driver Compatibility
 
@@ -133,19 +133,32 @@ All official Neo4j drivers work with NornicDB:
 ### From Neo4j to NornicDB
 
 1. **Export from Neo4j**:
+
    ```cypher
    CALL apoc.export.json.all("export.json", {})
    ```
 
 2. **Start NornicDB**:
+
    ```bash
    docker run -d -p 7474:7474 -p 7687:7687 nornicdb
    ```
 
 3. **Import to NornicDB**:
    ```bash
-   # Use same driver/queries - just change connection URL
+
    ```
+
+# Use the offline admin tool for bulk CSV imports
+
+nornicdb-admin database import full mydb \
+ --nodes=Person=people.csv \
+ --relationships=KNOWS=relationships.csv \
+ --data-dir=./data
+
+````
+
+See the [admin tool guide](../operations/admin-tool.md) for CSV header examples and recovery notes.
 
 ### From NornicDB to Neo4j
 
@@ -160,8 +173,8 @@ Same process in reverse - the formats are identical.
 ```bash
 # Trigger a snapshot via the authenticated admin HTTP endpoint
 curl -X POST http://localhost:7474/admin/backup \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
+-H "Authorization: Bearer $ADMIN_TOKEN"
+````
 
 For volume-level backups (raw `tar` of `/data`) see the [Backup & Restore operations guide](../operations/backup-restore.md).
 
@@ -192,6 +205,7 @@ curl -X POST http://localhost:7474/gdpr/delete \
 - **[Getting Started](../getting-started/README.md)** - Installation guide
 - **[Cypher Queries](cypher-queries.md)** - Query language reference
 - **[API Reference](../api-reference/README.md)** - Complete API docs
+- **[nornicdb-admin](../operations/admin-tool.md)** - Offline bulk import and operator workflows
 
 ---
 

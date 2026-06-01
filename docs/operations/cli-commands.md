@@ -27,7 +27,7 @@ The CLI surface is intentionally small. The full set is:
 - `nornicdb decay suppress` — re-evaluate suppression status.
 - `nornicdb decay stats` — print decay statistics.
 
-For migration, backup, and import operations, use the HTTP/Bolt APIs or the runnable scripts under [`scripts/migration/`](https://github.com/orneryd/nornicdb/tree/main/scripts/migration). The CLI does not have `import`, `export`, `backup`, or `restore` subcommands.
+For migration, backup, and import operations, use the HTTP/Bolt APIs, the runnable scripts under [`scripts/migration/`](https://github.com/orneryd/nornicdb/tree/main/scripts/migration), or the offline admin guide at [admin-tool.md](admin-tool.md). The main `nornicdb` CLI does not have `import`, `export`, `backup`, or `restore` subcommands.
 
 ---
 
@@ -185,7 +185,7 @@ nornicdb version
 
 ## Knowledge-Layer Scoring
 
-Decay behavior, visibility thresholds, and promotion tiers are authored through Cypher DDL (`CREATE DECAY PROFILE`, `CREATE PROMOTION POLICY`). The CLI subcommands above are operational helpers; the *configuration* surface is Cypher. See:
+Decay behavior, visibility thresholds, and promotion tiers are authored through Cypher DDL (`CREATE DECAY PROFILE`, `CREATE PROMOTION POLICY`). The CLI subcommands above are operational helpers; the _configuration_ surface is Cypher. See:
 
 - [Decay Profiles](../user-guides/decay-profiles.md) — defining decay behavior.
 - [Promotion Policies](../user-guides/promotion-policies.md) — boosting scores.
@@ -229,3 +229,4 @@ chown -R $USER:$USER /path/to/data
 - [Operations Guide](README.md) — production deployment and maintenance.
 - [Backup & Restore](backup-restore.md) — data protection strategies.
 - [Monitoring](monitoring.md) — health checks and metrics.
+- [nornicdb-admin Guide](admin-tool.md) — offline bulk import and operator workflows.

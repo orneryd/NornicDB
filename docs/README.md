@@ -27,6 +27,7 @@ If you know your goal, start in **"Find by task"**. If you are debugging, start 
 - Configure deployment/runtime: [Configuration](operations/configuration.md), [Environment Variables](operations/environment-variables.md)
 - Deploy with Docker: [Docker Deployment](getting-started/docker-deployment.md), [Operations Docker](operations/docker.md)
 - Observe/operate production: [Monitoring](operations/monitoring.md), [Backup & Restore](operations/backup-restore.md)
+- Offline bulk import: [nornicdb-admin](operations/admin-tool.md)
 - Migrate from Neo4j drivers/schemas: [Migration Guide](neo4j-migration/README.md)
 
 ## Find by Issue
