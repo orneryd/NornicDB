@@ -608,6 +608,103 @@ func TestImporterBooleanParsingIsCaseInsensitiveAndRejectsInvalidValues(t *testi
 	require.Equal(t, ExitCSV, importErr.ExitCode)
 }
 
+func TestImporterRelationshipEndpointIDsAreRequired(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE\n,n2,KNOWS\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName:         "missingrelid",
+		NodeSources:          []string{nodesPath},
+		RelSources:           []string{relsPath},
+		SkipBadRelationships: true,
+		BuildIndexes:         false,
+		Now:                  fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.Contains(t, importErr.Error(), relsPath)
+	require.Contains(t, importErr.Error(), "missing ID value")
+}
+
+func TestImporterNodeParseErrorsIncludeFilePath(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "invalid_nodes.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,active:boolean\nn1,notabool\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "nodeparse",
+		NodeSources:  []string{nodesPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.Contains(t, importErr.Error(), nodesPath)
+}
+
+func TestImporterRelationshipParseErrorsIncludeFilePath(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "invalid_rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,since:int\nn1,n2,KNOWS,notanint\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "relparse",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.Contains(t, importErr.Error(), relsPath)
+}
+
+func TestImporterNamedEmbeddingDimensionsAreInferredAndValidated(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,:EMBEDDING(image)\nn1,0.1;0.2\nn2,0.3;0.4;0.5\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "embeddims",
+		NodeSources:  []string{nodesPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.Contains(t, importErr.Error(), nodesPath)
+	require.Contains(t, importErr.Error(), "vector dimensions mismatch")
+}
+
 func TestImporterScenario_TargetingAndExistingDataIsolation(t *testing.T) {
 	dir := t.TempDir()
 

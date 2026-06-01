@@ -230,6 +230,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		return err
 	}
 	idCols := filterColumns(cols, kindID)
+	namedEmbeddingDims := make(map[string]int)
 	nodes := make([]*storage.Node, 0, opts.ChunkSize)
 	for {
 		select {
@@ -249,7 +250,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 			anonymousSeq = state.anonymousNodeSeq
 			state.anonymousNodeSeq++
 		}
-		node, lookupKey, err := nodeFromRecord(record, cols, idCols, spec.prefix, opts, rowNum, anonymousSeq)
+		node, lookupKey, err := nodeFromRecord(record, filePath, cols, idCols, spec.prefix, opts, rowNum, anonymousSeq, namedEmbeddingDims)
 		if err != nil {
 			return err
 		}
@@ -322,7 +323,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 		edgeSeq := state.edgeSeq
 		state.edgeSeq++
-		edge, skip, err := edgeFromRecord(record, cols, startCols, endCols, typeCols, spec.prefix, opts, state, rowNum, edgeSeq, report)
+		edge, skip, err := edgeFromRecord(record, filePath, cols, startCols, endCols, typeCols, spec.prefix, opts, state, rowNum, edgeSeq, report)
 		if err != nil {
 			return err
 		}
@@ -347,7 +348,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	return nil
 }
 
-func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int, anonymousSeq int) (*storage.Node, string, error) {
+func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int, anonymousSeq int, namedEmbeddingDims map[string]int) (*storage.Node, string, error) {
 	props := make(map[string]any)
 	named := make(map[string][]float32)
 	labels := append([]string{}, prefixLabels...)
@@ -361,11 +362,11 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 		switch col.Kind {
 		case kindID:
 			if value == "" {
-				return nil, "", csvErr("", line, i+1, fmt.Errorf("missing ID value"))
+				return nil, "", csvErr(filePath, line, i+1, fmt.Errorf("missing ID value"))
 			}
 			canonical, err := canonicalID(value, opts.IDType)
 			if err != nil {
-				return nil, "", csvErr("", line, i+1, err)
+				return nil, "", csvErr(filePath, line, i+1, err)
 			}
 			idValues = append(idValues, canonical)
 			idSpaces = append(idSpaces, col.IDSpace)
@@ -387,23 +388,30 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 			}
 			parsed, err := parsePropertyValue(value, col, opts)
 			if err != nil {
-				return nil, "", csvErr("", line, i+1, err)
+				return nil, "", csvErr(filePath, line, i+1, err)
 			}
 			props[col.Name] = parsed
 		case kindNamedEmbedding:
 			if value == "" {
 				continue
 			}
-			vec, err := parseVector(value, opts.VectorDelimiter, col.VectorDims)
+			dims := col.VectorDims
+			if dims == 0 {
+				dims = namedEmbeddingDims[col.EmbedKey]
+			}
+			vec, err := parseVector(value, opts.VectorDelimiter, dims)
 			if err != nil {
-				return nil, "", csvErr("", line, i+1, err)
+				return nil, "", csvErr(filePath, line, i+1, err)
+			}
+			if dims == 0 {
+				namedEmbeddingDims[col.EmbedKey] = len(vec)
 			}
 			named[col.EmbedKey] = vec
 		case kindIgnore:
 		}
 	}
 	if len(record) > len(cols) && !opts.IgnoreExtraColumns {
-		return nil, "", csvErr("", line, len(cols)+1, fmt.Errorf("extra column without header"))
+		return nil, "", csvErr(filePath, line, len(cols)+1, fmt.Errorf("extra column without header"))
 	}
 	var id storage.NodeID
 	var lookupKey string
@@ -420,15 +428,15 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 	return node, lookupKey, nil
 }
 
-func edgeFromRecord(record []string, cols []columnSpec, startCols, endCols, typeCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
+func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCols, endCols, typeCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
 	props := make(map[string]any)
-	startValues, startSpaces, err := idValuesFromRecord(record, cols, startCols, opts)
+	startValues, startSpaces, startCol, err := idValuesFromRecord(record, cols, startCols, opts)
 	if err != nil {
-		return nil, false, csvErr("", line, 0, err)
+		return nil, false, csvErr(filePath, line, startCol+1, err)
 	}
-	endValues, endSpaces, err := idValuesFromRecord(record, cols, endCols, opts)
+	endValues, endSpaces, endCol, err := idValuesFromRecord(record, cols, endCols, opts)
 	if err != nil {
-		return nil, false, csvErr("", line, 0, err)
+		return nil, false, csvErr(filePath, line, endCol+1, err)
 	}
 	startID, ok := state.idMap[importIDKey(startSpaces, startValues)]
 	if !ok {
@@ -467,7 +475,7 @@ func edgeFromRecord(record []string, cols []columnSpec, startCols, endCols, type
 		}
 		parsed, err := parsePropertyValue(value, col, opts)
 		if err != nil {
-			return nil, false, csvErr("", line, i+1, err)
+			return nil, false, csvErr(filePath, line, i+1, err)
 		}
 		props[col.Name] = parsed
 	}
@@ -482,21 +490,24 @@ func badRelationship(opts Options, report *Report, line int, msg string) error {
 	return &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship at row %d: %s", line, msg)}
 }
 
-func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts Options) ([]string, []string, error) {
+func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts Options) ([]string, []string, int, error) {
 	values := make([]string, 0, len(indexes))
 	spaces := make([]string, 0, len(indexes))
 	for _, idx := range indexes {
 		if idx >= len(record) {
-			return nil, nil, fmt.Errorf("missing ID column")
+			return nil, nil, idx, fmt.Errorf("missing ID column")
+		}
+		if record[idx] == "" {
+			return nil, nil, idx, fmt.Errorf("missing ID value")
 		}
 		value, err := canonicalID(record[idx], opts.IDType)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, idx, err
 		}
 		values = append(values, value)
 		spaces = append(spaces, cols[idx].IDSpace)
 	}
-	return values, spaces, nil
+	return values, spaces, 0, nil
 }
 
 func parseHeader(header []string, node bool) ([]columnSpec, error) {
@@ -534,7 +545,15 @@ func parseColumnSpec(raw string, node bool) (columnSpec, error) {
 		case "TYPE":
 			return columnSpec{Kind: kindType}, nil
 		case "EMBEDDING", "NAMED_EMBEDDING":
-			return columnSpec{Kind: kindNamedEmbedding, EmbedKey: defaultString(arg, "default"), Options: opts}, nil
+			dims := 0
+			if d, ok := opts["dimensions"]; ok {
+				parsed, err := strconv.Atoi(d)
+				if err != nil {
+					return columnSpec{}, unsupported("invalid vector dimensions in header: " + raw)
+				}
+				dims = parsed
+			}
+			return columnSpec{Kind: kindNamedEmbedding, EmbedKey: defaultString(arg, "default"), Options: opts, VectorDims: dims}, nil
 		default:
 			return columnSpec{}, unsupported("unsupported header token: " + raw)
 		}
