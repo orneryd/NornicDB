@@ -470,7 +470,7 @@ func allFloatLikeReflect(values reflect.Value) bool {
 }
 
 func writeCSV(path string, header []string, rows [][]string, delimiter rune) error {
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

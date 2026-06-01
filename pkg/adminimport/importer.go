@@ -30,8 +30,6 @@ const (
 	ExitUnsupported         = 6
 )
 
-var fixedImportTime = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-
 type Options struct {
 	DatabaseName         string
 	NodeSources          []string
@@ -179,7 +177,9 @@ func (o Options) withDefaults() Options {
 }
 
 type importState struct {
-	idMap map[string]storage.NodeID
+	idMap            map[string]storage.NodeID
+	anonymousNodeSeq int
+	edgeSeq          int
 }
 
 type sourceSpec struct {
@@ -244,7 +244,12 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		if err != nil {
 			return csvErr(filePath, rowNum, 0, err)
 		}
-		node, lookupKey, err := nodeFromRecord(record, cols, idCols, spec.prefix, opts, rowNum)
+		anonymousSeq := -1
+		if len(idCols) == 0 {
+			anonymousSeq = state.anonymousNodeSeq
+			state.anonymousNodeSeq++
+		}
+		node, lookupKey, err := nodeFromRecord(record, cols, idCols, spec.prefix, opts, rowNum, anonymousSeq)
 		if err != nil {
 			return err
 		}
@@ -315,7 +320,9 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		if err != nil {
 			return csvErr(filePath, rowNum, 0, err)
 		}
-		edge, skip, err := edgeFromRecord(record, cols, startCols, endCols, typeCols, spec.prefix, opts, state, rowNum, report)
+		edgeSeq := state.edgeSeq
+		state.edgeSeq++
+		edge, skip, err := edgeFromRecord(record, cols, startCols, endCols, typeCols, spec.prefix, opts, state, rowNum, edgeSeq, report)
 		if err != nil {
 			return err
 		}
@@ -340,7 +347,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	return nil
 }
 
-func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int) (*storage.Node, string, error) {
+func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int, anonymousSeq int) (*storage.Node, string, error) {
 	props := make(map[string]any)
 	named := make(map[string][]float32)
 	labels := append([]string{}, prefixLabels...)
@@ -351,11 +358,11 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 			continue
 		}
 		value := record[i]
-		if value == "" || (opts.IgnoreEmptyStrings && value == "") {
-			continue
-		}
 		switch col.Kind {
 		case kindID:
+			if value == "" {
+				return nil, "", csvErr("", line, i+1, fmt.Errorf("missing ID value"))
+			}
 			canonical, err := canonicalID(value, opts.IDType)
 			if err != nil {
 				return nil, "", csvErr("", line, i+1, err)
@@ -366,14 +373,27 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 				props[col.Name] = canonical
 			}
 		case kindLabel:
+			if value == "" {
+				continue
+			}
 			labels = append(labels, splitList(value, opts.ArrayDelimiter)...)
 		case kindProperty:
+			if value == "" {
+				if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
+					continue
+				}
+				props[col.Name] = ""
+				continue
+			}
 			parsed, err := parsePropertyValue(value, col, opts)
 			if err != nil {
 				return nil, "", csvErr("", line, i+1, err)
 			}
 			props[col.Name] = parsed
 		case kindNamedEmbedding:
+			if value == "" {
+				continue
+			}
 			vec, err := parseVector(value, opts.VectorDelimiter, col.VectorDims)
 			if err != nil {
 				return nil, "", csvErr("", line, i+1, err)
@@ -391,7 +411,7 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 		id = storage.NodeID(strings.Join(idValues, "|"))
 		lookupKey = importIDKey(idSpaces, idValues)
 	} else {
-		id = storage.NodeID(fmt.Sprintf("_anon_%d", line-1))
+		id = storage.NodeID(fmt.Sprintf("_anon_%d", anonymousSeq))
 	}
 	node := &storage.Node{ID: id, Labels: uniqueNonEmpty(labels), Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now}
 	if len(named) > 0 {
@@ -400,7 +420,7 @@ func nodeFromRecord(record []string, cols []columnSpec, idCols []int, prefixLabe
 	return node, lookupKey, nil
 }
 
-func edgeFromRecord(record []string, cols []columnSpec, startCols, endCols, typeCols []int, prefixType []string, opts Options, state *importState, line int, report *Report) (*storage.Edge, bool, error) {
+func edgeFromRecord(record []string, cols []columnSpec, startCols, endCols, typeCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
 	props := make(map[string]any)
 	startValues, startSpaces, err := idValuesFromRecord(record, cols, startCols, opts)
 	if err != nil {
@@ -431,19 +451,27 @@ func edgeFromRecord(record []string, cols []columnSpec, startCols, endCols, type
 		return nil, false, unsupported("relationship source requires :TYPE column or --relationships=TYPE= prefix")
 	}
 	for i, col := range cols {
-		if i >= len(record) || record[i] == "" {
+		if i >= len(record) {
 			continue
 		}
 		if col.Kind != kindProperty {
 			continue
 		}
-		parsed, err := parsePropertyValue(record[i], col, opts)
+		value := record[i]
+		if value == "" {
+			if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
+				continue
+			}
+			props[col.Name] = ""
+			continue
+		}
+		parsed, err := parsePropertyValue(value, col, opts)
 		if err != nil {
 			return nil, false, csvErr("", line, i+1, err)
 		}
 		props[col.Name] = parsed
 	}
-	return &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("rel_%d", line-1)), StartNode: startID, EndNode: endID, Type: edgeType, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now, Confidence: 1.0}, false, nil
+	return &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("rel_%d", edgeSeq)), StartNode: startID, EndNode: endID, Type: edgeType, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now, Confidence: 1.0}, false, nil
 }
 
 func badRelationship(opts Options, report *Report, line int, msg string) error {
@@ -602,7 +630,11 @@ func parseScalar(value, typ string, opts Options) (any, error) {
 		}
 		return v, nil
 	case "boolean":
-		return value == "true", nil
+		v, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+		return v, nil
 	default:
 		return nil, unsupported("unsupported property type: " + typ)
 	}
@@ -658,6 +690,11 @@ type csvSourceReader struct {
 func openCSVSource(files []string, opts Options) (*csvSourceReader, error) {
 	if opts.Quote != '"' {
 		return nil, unsupported("custom --quote is not supported by the Go CSV reader yet")
+	}
+	for _, path := range files {
+		if _, err := os.Stat(path); err != nil {
+			return nil, &Error{ExitCode: ExitCSV, Message: "failed to open CSV file", Err: err}
+		}
 	}
 	return &csvSourceReader{files: files, opts: opts}, nil
 }
@@ -954,6 +991,18 @@ func splitList(value string, delim rune) []string {
 		}
 	}
 	return out
+}
+
+func preserveEmptyStringProperty(col columnSpec) bool {
+	if strings.HasSuffix(col.Type, "[]") || strings.EqualFold(col.Type, "vector") {
+		return false
+	}
+	switch strings.ToLower(defaultString(col.Type, "string")) {
+	case "string", "char":
+		return true
+	default:
+		return false
+	}
 }
 
 func uniqueNonEmpty(values []string) []string {

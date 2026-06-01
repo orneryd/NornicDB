@@ -150,8 +150,6 @@ Export Neo4j-compatible CSV files from Neo4j using the tooling you already use f
     --data-dir=./data
    ```
 
-````
-
 If the folder includes `schema.cypher`, `nornicdb-admin` will apply it automatically unless you override `--schema`.
 
 See the [admin tool guide](../operations/admin-tool.md) for CSV header examples, `--from-path`, and recovery notes.
@@ -162,9 +160,9 @@ Use the offline admin export tool to create a Neo4j-compatible package:
 
 ```bash
 nornicdb-admin database export neo4j-csv mydb \
---to-path=./neo4j-export \
---data-dir=./data
-````
+  --to-path=./neo4j-export \
+  --data-dir=./data
+```
 
 This writes:
 
@@ -183,7 +181,7 @@ That package is designed to be re-imported with `nornicdb-admin database import 
 ```bash
 # Trigger a snapshot via the authenticated admin HTTP endpoint
 curl -X POST http://localhost:7474/admin/backup \
--H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 For volume-level backups (raw `tar` of `/data`) see the [Backup & Restore operations guide](../operations/backup-restore.md).

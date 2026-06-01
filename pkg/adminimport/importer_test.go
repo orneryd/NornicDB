@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+var fixedImportTime = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 func TestImporterFullLoadsNeo4jCSVWithVectorsEmbeddingsAndRelationships(t *testing.T) {
 	dir := t.TempDir()
@@ -430,6 +433,179 @@ func TestImporterScenario_MissingSourceFolderFails(t *testing.T) {
 	require.ErrorAs(t, err, &importErr)
 	require.Equal(t, ExitCSV, importErr.ExitCode)
 	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
+}
+
+func TestImporterScenario_MissingLaterSourceFailsBeforeWrites(t *testing.T) {
+	dir := t.TempDir()
+	headerPath := filepath.Join(dir, "nodes_header.csv")
+	missingPath := filepath.Join(dir, "nodes_rows_missing.csv")
+	require.NoError(t, os.WriteFile(headerPath, []byte(":ID,name:string\nn1,Alice\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "missingdb",
+		NodeSources:  []string{headerPath + "," + missingPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
+
+	engine := storage.NewNamespacedEngine(base, "missingdb")
+	count, countErr := engine.NodeCount()
+	require.NoError(t, countErr)
+	require.Equal(t, int64(0), count)
+}
+
+func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string,nickname:string,age:int\nn1,Alice,,34\nn2,Bob,builder,29\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,note:string,since:int\nn1,n2,KNOWS,,2024\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "keepempty",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	keep := storage.NewNamespacedEngine(base, "keepempty")
+	node, err := keep.GetNode("n1")
+	require.NoError(t, err)
+	require.Equal(t, "", node.Properties["nickname"])
+	edges, err := keep.GetOutgoingEdges("n1")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, "", edges[0].Properties["note"])
+
+	_, err = ImportFull(context.Background(), base, Options{
+		DatabaseName:       "dropempty",
+		NodeSources:        []string{nodesPath},
+		RelSources:         []string{relsPath},
+		IgnoreEmptyStrings: true,
+		BuildIndexes:       false,
+		Now:                fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	drop := storage.NewNamespacedEngine(base, "dropempty")
+	node, err = drop.GetNode("n1")
+	require.NoError(t, err)
+	_, exists := node.Properties["nickname"]
+	require.False(t, exists)
+	edges, err = drop.GetOutgoingEdges("n1")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	_, exists = edges[0].Properties["note"]
+	require.False(t, exists)
+}
+
+func TestImporterMultiFileAnonymousNodeIDsRemainUnique(t *testing.T) {
+	dir := t.TempDir()
+	headerPath := filepath.Join(dir, "nodes_header.csv")
+	rowsPath := filepath.Join(dir, "nodes_rows.csv")
+	require.NoError(t, os.WriteFile(headerPath, []byte("name:string\nAlice\n"), 0o600))
+	require.NoError(t, os.WriteFile(rowsPath, []byte("Bob\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	report, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "anon",
+		NodeSources:  []string{headerPath + "," + rowsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), report.NodesImported)
+
+	engine := storage.NewNamespacedEngine(base, "anon")
+	alice, err := engine.GetNode("_anon_0")
+	require.NoError(t, err)
+	require.Equal(t, "Alice", alice.Properties["name"])
+	bob, err := engine.GetNode("_anon_1")
+	require.NoError(t, err)
+	require.Equal(t, "Bob", bob.Properties["name"])
+}
+
+func TestImporterMultiFileRelationshipIDsRemainUnique(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsHeader := filepath.Join(dir, "rels_header.csv")
+	relsRows := filepath.Join(dir, "rels_rows.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\nn3,Carol\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsHeader, []byte(":START_ID,:END_ID,:TYPE\nn1,n2,KNOWS\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsRows, []byte("n2,n3,KNOWS\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	report, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "rels",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsHeader + "," + relsRows},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), report.RelationshipsImported)
+
+	engine := storage.NewNamespacedEngine(base, "rels")
+	edges, err := engine.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, edges, 2)
+	require.NotEqual(t, edges[0].ID, edges[1].ID)
+}
+
+func TestImporterBooleanParsingIsCaseInsensitiveAndRejectsInvalidValues(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,active:boolean\nn1,TRUE\nn2,False\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "bools",
+		NodeSources:  []string{nodesPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	engine := storage.NewNamespacedEngine(base, "bools")
+	n1, err := engine.GetNode("n1")
+	require.NoError(t, err)
+	require.Equal(t, true, n1.Properties["active"])
+	n2, err := engine.GetNode("n2")
+	require.NoError(t, err)
+	require.Equal(t, false, n2.Properties["active"])
+
+	invalidPath := filepath.Join(dir, "invalid_bool.csv")
+	require.NoError(t, os.WriteFile(invalidPath, []byte(":ID,active:boolean\nn1,notabool\n"), 0o600))
+	_, err = ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+		DatabaseName: "badbool",
+		NodeSources:  []string{invalidPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
 }
 
 func TestImporterScenario_TargetingAndExistingDataIsolation(t *testing.T) {
