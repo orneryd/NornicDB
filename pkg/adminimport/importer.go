@@ -792,6 +792,9 @@ func (c closers) Close() error {
 }
 
 func applySchema(ctx context.Context, engine storage.Engine, path string) error {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return applySchemaDefinition(engine, path)
+	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -803,6 +806,70 @@ func applySchema(ctx context.Context, engine storage.Engine, path string) error 
 		}
 		if _, err := exec.Execute(ctx, stmt, nil); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func applySchemaDefinition(engine storage.Engine, path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var def storage.SchemaDefinition
+	if err := json.Unmarshal(contents, &def); err != nil {
+		return err
+	}
+	schema := engine.GetSchema()
+	if err := schema.ReplaceFromDefinition(&def); err != nil {
+		return err
+	}
+	if err := rebuildSchemaDerivedState(engine, schema); err != nil {
+		return err
+	}
+	for _, constraint := range schema.GetAllConstraints() {
+		if err := storage.ValidateConstraintOnCreationForEngine(engine, constraint); err != nil {
+			return err
+		}
+	}
+	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
+		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(engine, typeConstraint); err != nil {
+			return err
+		}
+	}
+	for _, contract := range schema.GetAllConstraintContracts() {
+		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaManager) error {
+	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
+		return err
+	}
+	nodes, err := engine.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		for _, label := range node.Labels {
+			for property, value := range node.Properties {
+				if _, ok := schema.GetPropertyIndex(label, property); ok {
+					if err := schema.PropertyIndexInsert(label, property, node.ID, value); err != nil {
+						return err
+					}
+				}
+			}
+			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
+				if idx == nil {
+					continue
+				}
+				if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

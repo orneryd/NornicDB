@@ -49,6 +49,35 @@ func TestEvaluateNodeConstraintContractExpressionEngine_PropertyIn_False(t *test
 	require.False(t, got)
 }
 
+func TestEvaluateNodeConstraintContractExpressionEngine_PropertyComparison(t *testing.T) {
+	engine := constraintContractsEngineFixture(t)
+	node := &Node{
+		ID:     "test:n1",
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name":  "Alice",
+			"score": int64(75),
+		},
+	}
+
+	for _, c := range []struct {
+		expr string
+		want bool
+	}{
+		{"n.score > 50", true},
+		{"n.score < 50", false},
+		{"n.score >= 75", true},
+		{"n.score <= 50", false},
+		{"n.name = 'Alice'", true},
+		{"n.name <> ''", true},
+		{"n.name <> 'Alice'", false},
+	} {
+		got, err := evaluateNodeConstraintContractExpressionEngine(engine, node, c.expr)
+		require.NoError(t, err, "expr=%q", c.expr)
+		require.Equal(t, c.want, got, "expr=%q", c.expr)
+	}
+}
+
 func TestEvaluateNodeConstraintContractExpressionEngine_CountPattern(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	// Set up alice with 3 outgoing OWNS edges.

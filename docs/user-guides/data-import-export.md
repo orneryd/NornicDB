@@ -134,9 +134,7 @@ All official Neo4j drivers work with NornicDB:
 
 1. **Export from Neo4j**:
 
-   ```cypher
-   CALL apoc.export.json.all("export.json", {})
-   ```
+Export Neo4j-compatible CSV files from Neo4j using the tooling you already use for offline import packages.
 
 2. **Start NornicDB**:
 
@@ -145,24 +143,36 @@ All official Neo4j drivers work with NornicDB:
    ```
 
 3. **Import to NornicDB**:
+
    ```bash
-
+   nornicdb-admin database import full mydb \
+    --from-path=./neo4j-export \
+    --data-dir=./data
    ```
-
-# Use the offline admin tool for bulk CSV imports
-
-nornicdb-admin database import full mydb \
- --nodes=Person=people.csv \
- --relationships=KNOWS=relationships.csv \
- --data-dir=./data
 
 ````
 
-See the [admin tool guide](../operations/admin-tool.md) for CSV header examples and recovery notes.
+If the folder includes `schema.cypher`, `nornicdb-admin` will apply it automatically unless you override `--schema`.
+
+See the [admin tool guide](../operations/admin-tool.md) for CSV header examples, `--from-path`, and recovery notes.
 
 ### From NornicDB to Neo4j
 
-Same process in reverse - the formats are identical.
+Use the offline admin export tool to create a Neo4j-compatible package:
+
+```bash
+nornicdb-admin database export neo4j-csv mydb \
+--to-path=./neo4j-export \
+--data-dir=./data
+````
+
+This writes:
+
+- `nodes.csv`
+- `relationships.csv` when the database has relationships
+- `schema.cypher` when the database has exportable constraints or indexes
+
+That package is designed to be re-imported with `nornicdb-admin database import full --from-path=...` and to stay close to Neo4j's offline CSV conventions.
 
 ---
 
@@ -174,7 +184,7 @@ Same process in reverse - the formats are identical.
 # Trigger a snapshot via the authenticated admin HTTP endpoint
 curl -X POST http://localhost:7474/admin/backup \
 -H "Authorization: Bearer $ADMIN_TOKEN"
-````
+```
 
 For volume-level backups (raw `tar` of `/data`) see the [Backup & Restore operations guide](../operations/backup-restore.md).
 
@@ -205,7 +215,7 @@ curl -X POST http://localhost:7474/gdpr/delete \
 - **[Getting Started](../getting-started/README.md)** - Installation guide
 - **[Cypher Queries](cypher-queries.md)** - Query language reference
 - **[API Reference](../api-reference/README.md)** - Complete API docs
-- **[nornicdb-admin](../operations/admin-tool.md)** - Offline bulk import and operator workflows
+- **[nornicdb-admin](../operations/admin-tool.md)** - Offline bulk import, `--from-path`, and Neo4j-compatible export workflows
 
 ---
 

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -99,6 +101,229 @@ n1,Bob
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, "Alice", node.Properties["name"])
+}
+
+func TestDiscoverNeo4jCSVSourcesFromDirectory(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "relationships.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(`:ID,name,:LABEL
+n1,Alice,Person
+`), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(`:START_ID,:END_ID,:TYPE,since:int
+n1,n2,KNOWS,2024
+`), 0o600))
+
+	nodeSources, relSources, err := DiscoverNeo4jCSVSources(dir, Options{})
+	require.NoError(t, err)
+	require.Equal(t, []string{nodesPath}, nodeSources)
+	require.Equal(t, []string{relsPath}, relSources)
+}
+
+func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	source := storage.NewNamespacedEngine(base, "source")
+	_, err := source.CreateNode(&storage.Node{
+		ID:     "u1",
+		Labels: []string{"Person", "User"},
+		Properties: map[string]any{
+			"name": "Alice",
+			"age":  int64(34),
+			"tags": []any{"agent", "graph"},
+			"vec":  []float32{0.1, 0.2, 0.3},
+		},
+		NamedEmbeddings: map[string][]float32{"default": {0.4, 0.5, 0.6}},
+	})
+	require.NoError(t, err)
+	_, err = source.CreateNode(&storage.Node{
+		ID:     "u2",
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name": "Bob",
+			"age":  int64(29),
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, source.CreateEdge(&storage.Edge{
+		ID:        "r1",
+		StartNode: "u1",
+		EndNode:   "u2",
+		Type:      "KNOWS",
+		Properties: map[string]any{
+			"since": int64(2024),
+		},
+	}))
+	require.NoError(t, source.GetSchema().AddUniqueConstraint("person_name_unique", "Person", "name"))
+	require.NoError(t, source.GetSchema().AddPropertyIndex("person_age_idx", "Person", []string{"age"}))
+
+	outDir := filepath.Join(t.TempDir(), "neo4j-csv")
+	require.NoError(t, ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: outDir}))
+	schemaBytes, err := os.ReadFile(filepath.Join(outDir, Neo4jCSVSchemaFileName))
+	require.NoError(t, err)
+	require.Contains(t, string(schemaBytes), "CREATE CONSTRAINT `person_name_unique` IF NOT EXISTS")
+	require.True(t, strings.Contains(string(schemaBytes), "CREATE INDEX `person_age_idx` IF NOT EXISTS") || strings.Contains(string(schemaBytes), "CREATE INDEX person_age_idx IF NOT EXISTS"))
+	_, err = os.Stat(filepath.Join(outDir, Neo4jCSVNornicSchemaFileName))
+	require.NoError(t, err)
+
+	nodeSources, relSources, err := DiscoverNeo4jCSVSources(outDir, Options{})
+	require.NoError(t, err)
+
+	destBase := storage.NewMemoryEngine()
+	report, err := ImportFull(context.Background(), destBase, Options{
+		DatabaseName: "dest",
+		NodeSources:  nodeSources,
+		RelSources:   relSources,
+		SchemaFile:   filepath.Join(outDir, Neo4jCSVSchemaFileName),
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), report.NodesImported)
+	require.Equal(t, int64(1), report.RelationshipsImported)
+
+	dest := storage.NewNamespacedEngine(destBase, "dest")
+	alice, err := dest.GetNode("u1")
+	require.NoError(t, err)
+	require.Equal(t, "Alice", alice.Properties["name"])
+	require.Equal(t, int64(34), alice.Properties["age"])
+	require.Equal(t, []any{"agent", "graph"}, alice.Properties["tags"])
+	require.Equal(t, []float32{0.1, 0.2, 0.3}, alice.Properties["vec"])
+	require.Equal(t, []float32{0.4, 0.5, 0.6}, alice.NamedEmbeddings["default"])
+	require.ElementsMatch(t, []string{"Person", "User"}, alice.Labels)
+
+	edges, err := dest.GetOutgoingEdges("u1")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, "KNOWS", edges[0].Type)
+	require.Equal(t, int64(2024), edges[0].Properties["since"])
+	constraints := dest.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	require.Len(t, constraints, 1)
+	require.Equal(t, "person_name_unique", constraints[0].Name)
+	indexes := dest.GetSchema().GetIndexes()
+	require.NotEmpty(t, indexes)
+}
+
+func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	source := storage.NewNamespacedEngine(base, "source")
+	_, err := source.CreateNode(&storage.Node{
+		ID:     "u1",
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name":      "Alice",
+			"age":       int64(34),
+			"email":     "alice@example.com",
+			"country":   "US",
+			"city":      "NYC",
+			"status":    "active",
+			"embedding": []float32{0.1, 0.2, 0.3},
+		},
+	})
+	require.NoError(t, err)
+	_, err = source.CreateNode(&storage.Node{
+		ID:     "u2",
+		Labels: []string{"Person"},
+		Properties: map[string]any{
+			"name":    "Bob",
+			"age":     int64(29),
+			"email":   "bob@example.com",
+			"country": "US",
+			"city":    "LA",
+			"status":  "active",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, source.CreateEdge(&storage.Edge{
+		ID:        "r1",
+		StartNode: "u1",
+		EndNode:   "u2",
+		Type:      "KNOWS",
+		Properties: map[string]any{
+			"note":  "met at graph conf",
+			"since": int64(2024),
+		},
+	}))
+
+	schema := source.GetSchema()
+	require.NoError(t, schema.AddUniqueConstraint("person_email_unique", "Person", "email"))
+	require.NoError(t, schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger))
+	require.NoError(t, schema.AddPropertyIndex("person_name_idx", "Person", []string{"name"}))
+	require.NoError(t, schema.AddCompositeIndex("person_location_idx", "Person", []string{"country", "city"}))
+	require.NoError(t, schema.AddFulltextIndex("person_search_idx", []string{"Person"}, []string{"name"}))
+	require.NoError(t, schema.AddFulltextRelationshipIndex("knows_note_idx", []string{"KNOWS"}, []string{"note"}))
+	require.NoError(t, schema.AddVectorIndex("person_embedding_idx", "Person", "embedding", 3, "cosine"))
+	require.NoError(t, schema.AddRangeIndex("person_age_range", "Person", "age"))
+	require.NoError(t, schema.AddConstraintContractBundle(storage.ConstraintContract{
+		Name:              "person_name_contract",
+		TargetEntityType:  string(storage.ConstraintEntityNode),
+		TargetLabelOrType: "Person",
+		Definition:        "CREATE CONSTRAINT CONTRACT person_name_contract FOR (n:Person) REQUIRE n.name IS NOT NULL",
+		Entries: []storage.ConstraintContractEntry{{
+			Kind:       storage.ConstraintContractKindBooleanNode,
+			Expression: "n.status IN ['active']",
+		}},
+	}, nil, nil, false))
+	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name:                "person_decay_profile",
+		HalfLifeSeconds:     86400,
+		VisibilityThreshold: 0.25,
+		ScoreFloor:          0.10,
+		Function:            knowledgepolicy.DecayFunctionExponential,
+		Scope:               knowledgepolicy.ScopeNode,
+		DecayEnabled:        true,
+		ScoreFrom:           knowledgepolicy.ScoreFromCreated,
+		Enabled:             true,
+	}))
+	threshold := 0.25
+	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+		Name:                "person_decay_binding",
+		TargetLabels:        []string{"Person"},
+		ProfileRef:          "person_decay_profile",
+		VisibilityThreshold: &threshold,
+		Order:               1,
+	}))
+	require.NoError(t, schema.CreatePromotionProfile(knowledgepolicy.PromotionProfileDef{
+		Name:       "person_boost_profile",
+		Scope:      knowledgepolicy.ScopeNode,
+		Multiplier: 1.5,
+		ScoreFloor: 0.20,
+		ScoreCap:   1.0,
+		Enabled:    true,
+	}))
+	require.NoError(t, schema.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name:         "person_boost_policy",
+		TargetLabels: []string{"Person"},
+		Enabled:      true,
+		WhenClauses: []knowledgepolicy.PromotionPolicyWhenClause{{
+			Predicate:  "n.age >= 30",
+			ProfileRef: "person_boost_profile",
+			Order:      1,
+		}},
+	}))
+
+	outDir := filepath.Join(t.TempDir(), "neo4j-csv-full-schema")
+	require.NoError(t, ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: outDir}))
+	_, err = os.Stat(filepath.Join(outDir, Neo4jCSVSchemaFileName))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(outDir, Neo4jCSVNornicSchemaFileName))
+	require.NoError(t, err)
+
+	nodeSources, relSources, err := DiscoverNeo4jCSVSources(outDir, Options{})
+	require.NoError(t, err)
+
+	destBase := storage.NewMemoryEngine()
+	_, err = ImportFull(context.Background(), destBase, Options{
+		DatabaseName: "dest",
+		NodeSources:  nodeSources,
+		RelSources:   relSources,
+		SchemaFile:   filepath.Join(outDir, Neo4jCSVNornicSchemaFileName),
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	dest := storage.NewNamespacedEngine(destBase, "dest")
+	require.Equal(t, source.GetSchema().ExportDefinition(), dest.GetSchema().ExportDefinition())
 }
 
 func TestImporterReportsDuplicateIDs(t *testing.T) {

@@ -8,6 +8,8 @@ Use `nornicdb-admin` when you need to:
 
 - load a database from CSV into an empty target
 - import Neo4j-style node and relationship files
+- import a whole Neo4j-compatible CSV package from a directory
+- export a NornicDB database as a Neo4j-compatible offline package
 - run an import that should build search artifacts after load
 - verify the resulting database by namespace after import
 
@@ -45,6 +47,24 @@ Example `relationships.csv`:
 u1,u2,KNOWS,2024
 ```
 
+## Import From A Directory
+
+If you already have a folder containing Neo4j-compatible CSV files, use `--from-path` instead of repeating `--nodes` and `--relationships`.
+
+```bash
+nornicdb-admin database import full mydb \
+  --from-path=./neo4j-export \
+  --data-dir=./data
+```
+
+The directory importer:
+
+- scans for `*.csv`, `*.csv.gz`, and single-member `*.zip` CSV files
+- classifies node vs relationship files from their CSV headers
+- automatically uses `schema.cypher` from that same directory when present and `--schema` is not set
+
+This makes it possible to import a full offline package produced by `database export neo4j-csv` with a single command.
+
 ## Multi-File Sources
 
 The first file in a source must contain the header. Additional files in the same source are read as data files.
@@ -66,10 +86,36 @@ nornicdb-admin database import full beta --nodes=Person=beta.csv --data-dir=./da
 
 Re-importing into an existing target database is rejected.
 
+## Export A Neo4j-Compatible Package
+
+`database export neo4j-csv` writes a filesystem package that can be imported back with `--from-path`.
+
+```bash
+nornicdb-admin database export neo4j-csv mydb \
+  --to-path=./neo4j-export \
+  --data-dir=./data
+```
+
+When schema exists, the export also writes `schema.cypher` alongside the CSV files.
+
+Typical output:
+
+- `nodes.csv`
+- `relationships.csv`
+- `schema.cypher` when the database has exportable constraints or indexes
+
+Roundtrip back into a fresh target:
+
+```bash
+nornicdb-admin database export neo4j-csv mydb --to-path=./neo4j-export --data-dir=./data
+nornicdb-admin database import full restored --from-path=./neo4j-export --data-dir=./restored-data
+```
+
 ## Common Flags
 
 - `--nodes` - Node CSV sources. Repeatable.
 - `--relationships` - Relationship CSV sources. Repeatable.
+- `--from-path` - Directory containing Neo4j-compatible CSV files for auto-discovery.
 - `--data-dir` - Target data directory.
 - `--schema` - Cypher file applied after the data load.
 - `--report-file` - JSON report written after import.
@@ -82,6 +128,7 @@ Re-importing into an existing target database is rejected.
 - The target database must be empty.
 - Missing source files fail before any writes begin.
 - Composite IDs, labels, vector properties, and named embeddings are supported through the CSV header dialect in the admin import plan.
+- `database export neo4j-csv` emits Neo4j-compatible CSV plus `schema.cypher` when the current database schema can be expressed as Cypher DDL.
 - After import, verify the loaded data by opening the namespace through the storage API or by starting the database normally.
 
 ## Recovery
