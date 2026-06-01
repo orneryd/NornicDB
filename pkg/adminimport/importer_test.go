@@ -15,6 +15,7 @@ func TestImporterFullLoadsNeo4jCSVWithVectorsEmbeddingsAndRelationships(t *testi
 	dir := t.TempDir()
 	nodesPath := filepath.Join(dir, "nodes.csv")
 	relsPath := filepath.Join(dir, "rels.csv")
+	schemaPath := filepath.Join(dir, "schema.cypher")
 
 	require.NoError(t, os.WriteFile(nodesPath, []byte(`id:ID(User),name:string,age:int,active:boolean,tags:string[],"embedding:vector{coordinateType:float,dimensions:3}",:EMBEDDING(default),:LABEL,:IGNORE
 u1,Alice,34,true,"agent;graph","0.1;0.2;0.3","0.4;0.5;0.6",Person;User,ignored
@@ -23,13 +24,17 @@ u2,Bob,29,false,"graph","0.7;0.8;0.9","1.0;1.1;1.2",Person,ignored
 	require.NoError(t, os.WriteFile(relsPath, []byte(`:START_ID(User),:END_ID(User),:TYPE,since:int
 u1,u2,KNOWS,2024
 `), 0o600))
+	require.NoError(t, os.WriteFile(schemaPath, []byte(`CREATE CONSTRAINT person_name_unique IF NOT EXISTS FOR (n:Person) REQUIRE n.name IS UNIQUE;
+`), 0o600))
 
 	base := storage.NewMemoryEngine()
 	report, err := ImportFull(context.Background(), base, Options{
 		DatabaseName: "mydb",
 		NodeSources:  []string{"Imported=" + nodesPath},
 		RelSources:   []string{relsPath},
-		BuildIndexes: false,
+		SchemaFile:   schemaPath,
+		DataDir:      dir,
+		BuildIndexes: true,
 		ChunkSize:    2,
 		Now:          fixedImportTime,
 		ReportFile:   filepath.Join(dir, "report.json"),
@@ -57,9 +62,43 @@ u1,u2,KNOWS,2024
 	require.Equal(t, storage.NodeID("u2"), edges[0].EndNode)
 	require.Equal(t, "KNOWS", edges[0].Type)
 	require.Equal(t, int64(2024), edges[0].Properties["since"])
+	require.True(t, report.IndexesBuilt)
+
+	constraints := engine.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	require.Len(t, constraints, 1)
+	require.Equal(t, "person_name_unique", constraints[0].Name)
+	require.Equal(t, storage.ConstraintUnique, constraints[0].Type)
+	require.Equal(t, []string{"name"}, constraints[0].Properties)
 
 	_, err = os.Stat(filepath.Join(dir, "report.json"))
 	require.NoError(t, err)
+}
+
+func TestImporterSkipsDuplicateNodesWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(`:ID,name
+n1,Alice
+n1,Bob
+`), 0o600))
+
+	base := storage.NewMemoryEngine()
+	report, err := ImportFull(context.Background(), base, Options{
+		DatabaseName:       "mydb",
+		NodeSources:        []string{nodesPath},
+		BuildIndexes:       false,
+		SkipDuplicateNodes: true,
+		Now:                fixedImportTime,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), report.NodesImported)
+	require.Equal(t, int64(1), report.DuplicateNodesSkipped)
+
+	engine := storage.NewNamespacedEngine(base, "mydb")
+	node, err := engine.GetNode("n1")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	require.Equal(t, "Alice", node.Properties["name"])
 }
 
 func TestImporterReportsDuplicateIDs(t *testing.T) {
