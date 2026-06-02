@@ -82,3 +82,4 @@ metrics-doc-gen
 *.pyc
 site
 nornicdb-admin
+!cmd/nornicdb-admin
