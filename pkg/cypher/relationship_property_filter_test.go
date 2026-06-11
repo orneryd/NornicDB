@@ -237,6 +237,30 @@ func TestCategoryRelationshipTraversal(t *testing.T) {
 	})
 }
 
+func TestRelationshipInlinePropertyFilterOnRelationship(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, "CREATE (:A {id:'a1'}), (:A {id:'a2'}), (:B {id:'b1'}), (:B {id:'b2'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:A {id:'a1'}), (b:B {id:'b1'}) CREATE (a)-[:REL {prop:'x'}]->(b)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (a:A {id:'a2'}), (b:B {id:'b2'}) CREATE (a)-[:REL {prop:'y'}]->(b)", nil)
+	require.NoError(t, err)
+
+	inlineRes, err := exec.Execute(ctx, "MATCH ()-[r:REL {prop: $v}]->() RETURN count(r) AS c", map[string]interface{}{"v": "x"})
+	require.NoError(t, err)
+	require.Len(t, inlineRes.Rows, 1)
+	require.Equal(t, int64(1), inlineRes.Rows[0][0], "inline relationship property filter should match one relationship")
+
+	whereRes, err := exec.Execute(ctx, "MATCH ()-[r:REL]->() WHERE r.prop = $v RETURN count(r) AS c", map[string]interface{}{"v": "x"})
+	require.NoError(t, err)
+	require.Len(t, whereRes.Rows, 1)
+	require.Equal(t, int64(1), whereRes.Rows[0][0], "WHERE relationship property filter should match one relationship")
+}
+
 // TestSpecialCharacterPropertyValues tests various special characters in property values
 func TestSpecialCharacterPropertyValues(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)

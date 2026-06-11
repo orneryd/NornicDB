@@ -386,11 +386,11 @@ Current behavior:
 ```yaml
 # === Async Write Settings ===
 # These control the async write-behind cache for better throughput
-async_writes:
-  enabled: true # Enable async writes (default: true)
-  flush_interval: 50ms # How often to flush pending writes
-  max_node_cache_size: 50000 # Max nodes to buffer before forcing flush
-  max_edge_cache_size: 100000 # Max edges to buffer before forcing flush
+database:
+  async_writes_enabled: true # Enable async writes (default: true)
+  async_flush_interval: 50ms # How often to flush pending writes
+  async_max_node_cache_size: 50000 # Max nodes to buffer before forcing flush
+  async_max_edge_cache_size: 100000 # Max edges to buffer before forcing flush
 ```
 
 ### Environment Variables
@@ -407,28 +407,28 @@ async_writes:
 **For High Throughput (bulk operations):**
 
 ```yaml
-async_writes:
-  enabled: true
-  flush_interval: 200ms # Larger = better throughput
-  max_node_cache_size: 100000 # Increase for bulk inserts
-  max_edge_cache_size: 200000
+database:
+  async_writes_enabled: true
+  async_flush_interval: 200ms # Larger = better throughput
+  async_max_node_cache_size: 100000 # Increase for bulk inserts
+  async_max_edge_cache_size: 200000
 ```
 
 **For Lower Staleness Window (still eventual consistency):**
 
 ```yaml
-async_writes:
-  enabled: true
-  flush_interval: 10ms # Smaller = more consistent
-  max_node_cache_size: 1000 # Smaller = less memory risk
-  max_edge_cache_size: 2000
+database:
+  async_writes_enabled: true
+  async_flush_interval: 10ms # Smaller = more consistent
+  async_max_node_cache_size: 1000 # Smaller = less memory risk
+  async_max_edge_cache_size: 2000
 ```
 
 **For Maximum Durability:**
 
 ```yaml
-async_writes:
-  enabled: false # Disable async writes
+database:
+  async_writes_enabled: false # Disable async writes
 ```
 
 With `enabled: true`, do not assume every mutation becomes eventual. The setting enables the async write-behind engine and lets eligible queries use it; durable transactional mutations still return `200 OK` and include `receipt` metadata.
@@ -977,9 +977,9 @@ NornicDB validates configuration on startup and will:
 
 | Setting                | Impact                               | Recommendation            |
 | ---------------------- | ------------------------------------ | ------------------------- |
-| `enabled: true`        | 3-10x write throughput improvement   | Enable for most workloads |
-| `flush_interval: 50ms` | Balance of consistency vs throughput | Default works well        |
-| `cache_size: 50000`    | Memory usage vs bulk performance     | Adjust based on RAM       |
+| `async_writes_enabled: true`        | 3-10x write throughput improvement   | Enable for most workloads |
+| `async_flush_interval: 50ms` | Balance of consistency vs throughput | Default works well        |
+| `async_max_node_cache_size: 50000`    | Memory usage vs bulk performance     | Adjust based on RAM       |
 
 ### Search Similarity
 
@@ -995,13 +995,13 @@ NornicDB validates configuration on startup and will:
 
 **High memory usage:**
 
-- Reduce `max_node_cache_size` and `max_edge_cache_size`
+- Reduce `async_max_node_cache_size` and `async_max_edge_cache_size`
 - Monitor during bulk operations
 - Consider disabling async writes for memory-constrained environments
 
 **Stale data reads:**
 
-- Reduce `flush_interval` for more frequent writes
+- Reduce `async_flush_interval` for more frequent writes
 - Disable async writes if strong consistency is required
 - Monitor WAL size and compaction
 
@@ -1031,11 +1031,11 @@ curl http://localhost:7474/metrics | grep search
 ### Development Environment
 
 ```yaml
-async_writes:
-  enabled: true
-  flush_interval: 10ms # Fast feedback
-  max_node_cache_size: 1000
-  max_edge_cache_size: 2000
+database:
+  async_writes_enabled: true
+  async_flush_interval: 10ms # Fast feedback
+  async_max_node_cache_size: 1000
+  async_max_edge_cache_size: 2000
 
 search:
   min_similarity: 0.3 # More results for testing
@@ -1044,11 +1044,11 @@ search:
 ### Production High-Throughput
 
 ```yaml
-async_writes:
-  enabled: true
-  flush_interval: 100ms # Better throughput
-  max_node_cache_size: 100000
-  max_edge_cache_size: 200000
+database:
+  async_writes_enabled: true
+  async_flush_interval: 100ms # Better throughput
+  async_max_node_cache_size: 100000
+  async_max_edge_cache_size: 200000
 
 search:
   min_similarity: 0.7 # Higher precision
@@ -1057,11 +1057,11 @@ search:
 ### Memory-Constrained
 
 ```yaml
-async_writes:
-  enabled: false # Disable to save memory
+database:
+  async_writes_enabled: false # Disable to save memory
   # or small cache sizes:
-  # max_node_cache_size: 500
-  # max_edge_cache_size: 1000
+  # async_max_node_cache_size: 500
+  # async_max_edge_cache_size: 1000
 
 search:
   min_similarity: 0.8 # Reduce result processing

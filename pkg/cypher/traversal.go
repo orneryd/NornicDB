@@ -38,6 +38,7 @@ type TraversalContext struct {
 	endNode          *storage.Node
 	relTypes         []string // Allowed relationship types (empty = any)
 	relTypeSet       map[string]struct{}
+	relProperties    map[string]interface{}
 	direction        string // "outgoing", "incoming", "both"
 	minHops          int
 	maxHops          int
@@ -216,7 +217,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 	if whereClause == "" && pathVariable == "" && !matches.IsChained && len(returnItems) == 1 &&
 		matches.StartNode.variable == "" && len(matches.StartNode.labels) == 0 && len(matches.StartNode.properties) == 0 &&
 		matches.EndNode.variable == "" && len(matches.EndNode.labels) == 0 && len(matches.EndNode.properties) == 0 &&
-		matches.Relationship.MinHops == 1 && matches.Relationship.MaxHops == 1 {
+		matches.Relationship.MinHops == 1 && matches.Relationship.MaxHops == 1 &&
+		len(matches.Relationship.Properties) == 0 {
 		if count, ok, err := e.tryFastRelationshipCount(matches, returnItems[0]); ok {
 			if err != nil {
 				return nil, err
@@ -1443,6 +1445,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			startNode:        startNode,
 			relTypes:         match.Relationship.Types,
 			relTypeSet:       buildRelTypeSet(match.Relationship.Types),
+			relProperties:    match.Relationship.Properties,
 			direction:        match.Relationship.Direction,
 			minHops:          match.Relationship.MinHops,
 			maxHops:          match.Relationship.MaxHops,
@@ -1509,6 +1512,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					startNode:        startNode,
 					relTypes:         match.Relationship.Types,
 					relTypeSet:       buildRelTypeSet(match.Relationship.Types),
+					relProperties:    match.Relationship.Properties,
 					direction:        match.Relationship.Direction,
 					minHops:          match.Relationship.MinHops,
 					maxHops:          match.Relationship.MaxHops,
@@ -1651,6 +1655,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 		startNode:        startNode,
 		relTypes:         match.Relationship.Types,
 		relTypeSet:       buildRelTypeSet(match.Relationship.Types),
+		relProperties:    match.Relationship.Properties,
 		direction:        match.Relationship.Direction,
 		minHops:          match.Relationship.MinHops,
 		maxHops:          match.Relationship.MaxHops,
@@ -1746,6 +1751,9 @@ func (e *StorageExecutor) findPaths(
 					continue
 				}
 			}
+		}
+		if len(ctx.relProperties) > 0 && !e.edgeMatchesProps(edge, ctx.relProperties) {
+			continue
 		}
 
 		// Get next node

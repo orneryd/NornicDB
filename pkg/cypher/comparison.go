@@ -90,6 +90,23 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 	return true
 }
 
+// edgeMatchesProps checks if an edge's properties match the expected values.
+func (e *StorageExecutor) edgeMatchesProps(edge *storage.Edge, props map[string]interface{}) bool {
+	if props == nil {
+		return true
+	}
+	for key, expected := range props {
+		actual, exists := edge.Properties[key]
+		if !exists {
+			return false
+		}
+		if !e.compareEqual(actual, expected) {
+			return false
+		}
+	}
+	return true
+}
+
 // compareEqual handles equality comparison with type coercion.
 //
 // # Parameters

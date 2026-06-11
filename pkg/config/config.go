@@ -1402,16 +1402,26 @@ type YAMLConfig struct {
 		EncryptionAuditSignKey            string `yaml:"encryption_audit_sign_key"`
 		EncryptionRotationEnabled         *bool  `yaml:"encryption_rotation_enabled"`
 		EncryptionRotationInterval        string `yaml:"encryption_rotation_interval"`
-		BadgerNodeCacheMaxEntries         int    `yaml:"badger_node_cache_max_entries"`
-		BadgerEdgeTypeCacheMaxTypes       int    `yaml:"badger_edge_type_cache_max_types"`
-		MVCCRetentionMaxVersions          int    `yaml:"mvcc_retention_max_versions"`
-		MVCCRetentionTTL                  string `yaml:"mvcc_retention_ttl"`
-		IDFreelistTTL                     string `yaml:"id_freelist_ttl"`
-		MVCCLifecycleEnabled              *bool  `yaml:"mvcc_lifecycle_enabled"`
-		MVCCLifecycleCycleInterval        string `yaml:"mvcc_lifecycle_interval"`
-		MVCCLifecycleMaxSnapshotAge       string `yaml:"mvcc_lifecycle_max_snapshot_age"`
-		MVCCLifecycleMaxChainCap          int    `yaml:"mvcc_lifecycle_max_chain_cap"`
-		PersistSearchIndexes              bool   `yaml:"persist_search_indexes"`
+		AsyncWritesEnabled                *bool  `yaml:"async_writes_enabled"`
+		AsyncFlushInterval                string `yaml:"async_flush_interval"`
+		AsyncMaxNodeCacheSize             *int   `yaml:"async_max_node_cache_size"`
+		AsyncMaxEdgeCacheSize             *int   `yaml:"async_max_edge_cache_size"`
+		AsyncWrites                       struct {
+			Enabled          *bool  `yaml:"enabled"`
+			FlushInterval    string `yaml:"flush_interval"`
+			MaxNodeCacheSize *int   `yaml:"max_node_cache_size"`
+			MaxEdgeCacheSize *int   `yaml:"max_edge_cache_size"`
+		} `yaml:"async_writes"`
+		BadgerNodeCacheMaxEntries   int    `yaml:"badger_node_cache_max_entries"`
+		BadgerEdgeTypeCacheMaxTypes int    `yaml:"badger_edge_type_cache_max_types"`
+		MVCCRetentionMaxVersions    int    `yaml:"mvcc_retention_max_versions"`
+		MVCCRetentionTTL            string `yaml:"mvcc_retention_ttl"`
+		IDFreelistTTL               string `yaml:"id_freelist_ttl"`
+		MVCCLifecycleEnabled        *bool  `yaml:"mvcc_lifecycle_enabled"`
+		MVCCLifecycleCycleInterval  string `yaml:"mvcc_lifecycle_interval"`
+		MVCCLifecycleMaxSnapshotAge string `yaml:"mvcc_lifecycle_max_snapshot_age"`
+		MVCCLifecycleMaxChainCap    int    `yaml:"mvcc_lifecycle_max_chain_cap"`
+		PersistSearchIndexes        bool   `yaml:"persist_search_indexes"`
 	} `yaml:"database"`
 
 	// Storage alias for database
@@ -2027,10 +2037,8 @@ func applyEnvVars(config *Config) error {
 	}
 
 	// Async write settings
-	if getEnv("NORNICDB_ASYNC_WRITES_ENABLED", "true") == "false" {
-		config.Database.AsyncWritesEnabled = false
-	} else {
-		config.Database.AsyncWritesEnabled = true
+	if v, ok := envutil.LookupBoolLoose("NORNICDB_ASYNC_WRITES_ENABLED"); ok {
+		config.Database.AsyncWritesEnabled = v
 	}
 	if v := getEnvDuration("NORNICDB_ASYNC_FLUSH_INTERVAL", 0); v > 0 {
 		config.Database.AsyncFlushInterval = v
@@ -3022,6 +3030,30 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if d, err := time.ParseDuration(strings.TrimSpace(yamlCfg.Database.EncryptionRotationInterval)); err == nil {
 			config.Database.EncryptionRotationInterval = d
 		}
+	}
+	if yamlCfg.Database.AsyncWritesEnabled != nil {
+		config.Database.AsyncWritesEnabled = *yamlCfg.Database.AsyncWritesEnabled
+	} else if yamlCfg.Database.AsyncWrites.Enabled != nil {
+		config.Database.AsyncWritesEnabled = *yamlCfg.Database.AsyncWrites.Enabled
+	}
+	asyncFlushInterval := strings.TrimSpace(yamlCfg.Database.AsyncFlushInterval)
+	if asyncFlushInterval == "" {
+		asyncFlushInterval = strings.TrimSpace(yamlCfg.Database.AsyncWrites.FlushInterval)
+	}
+	if asyncFlushInterval != "" {
+		if d, err := time.ParseDuration(asyncFlushInterval); err == nil {
+			config.Database.AsyncFlushInterval = d
+		}
+	}
+	if yamlCfg.Database.AsyncMaxNodeCacheSize != nil {
+		config.Database.AsyncMaxNodeCacheSize = *yamlCfg.Database.AsyncMaxNodeCacheSize
+	} else if yamlCfg.Database.AsyncWrites.MaxNodeCacheSize != nil {
+		config.Database.AsyncMaxNodeCacheSize = *yamlCfg.Database.AsyncWrites.MaxNodeCacheSize
+	}
+	if yamlCfg.Database.AsyncMaxEdgeCacheSize != nil {
+		config.Database.AsyncMaxEdgeCacheSize = *yamlCfg.Database.AsyncMaxEdgeCacheSize
+	} else if yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize != nil {
+		config.Database.AsyncMaxEdgeCacheSize = *yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize
 	}
 	if yamlCfg.Database.BadgerNodeCacheMaxEntries > 0 {
 		config.Database.BadgerNodeCacheMaxEntries = yamlCfg.Database.BadgerNodeCacheMaxEntries

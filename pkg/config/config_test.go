@@ -884,6 +884,77 @@ func TestLoadFromFile_MVCCLifecycle(t *testing.T) {
 	require.Equal(t, 9*time.Second, cfg.EmbeddingWorker.TriggerDebounceDelay)
 }
 
+func TestLoadFromFile_AsyncWriteSettingsFlatYAML(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+database:
+  async_writes_enabled: false
+  async_flush_interval: "75ms"
+  async_max_node_cache_size: 123
+  async_max_edge_cache_size: 456
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Database.AsyncWritesEnabled)
+	require.Equal(t, 75*time.Millisecond, cfg.Database.AsyncFlushInterval)
+	require.Equal(t, 123, cfg.Database.AsyncMaxNodeCacheSize)
+	require.Equal(t, 456, cfg.Database.AsyncMaxEdgeCacheSize)
+}
+
+func TestLoadFromFile_AsyncWriteSettingsNestedYAMLLegacyShape(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+database:
+  async_writes:
+    enabled: false
+    flush_interval: "150ms"
+    max_node_cache_size: 321
+    max_edge_cache_size: 654
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Database.AsyncWritesEnabled)
+	require.Equal(t, 150*time.Millisecond, cfg.Database.AsyncFlushInterval)
+	require.Equal(t, 321, cfg.Database.AsyncMaxNodeCacheSize)
+	require.Equal(t, 654, cfg.Database.AsyncMaxEdgeCacheSize)
+}
+
+func TestLoadFromFile_AsyncWriteSettingsEnvPrecedence(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("NORNICDB_ASYNC_WRITES_ENABLED", "true")
+	t.Setenv("NORNICDB_ASYNC_FLUSH_INTERVAL", "25ms")
+	t.Setenv("NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE", "777")
+	t.Setenv("NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE", "888")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+database:
+  async_writes_enabled: false
+  async_flush_interval: "75ms"
+  async_max_node_cache_size: 123
+  async_max_edge_cache_size: 456
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.True(t, cfg.Database.AsyncWritesEnabled)
+	require.Equal(t, 25*time.Millisecond, cfg.Database.AsyncFlushInterval)
+	require.Equal(t, 777, cfg.Database.AsyncMaxNodeCacheSize)
+	require.Equal(t, 888, cfg.Database.AsyncMaxEdgeCacheSize)
+}
+
 func TestLoadFromFile_ComprehensiveSectionsAndEnvPrecedence(t *testing.T) {
 	clearEnvVars(t)
 
