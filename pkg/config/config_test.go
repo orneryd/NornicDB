@@ -955,6 +955,60 @@ database:
 	require.Equal(t, 888, cfg.Database.AsyncMaxEdgeCacheSize)
 }
 
+func TestLoadFromFile_AsyncWriteSettingsRejectsNegativeFlatCacheSizes(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+database:
+  async_max_node_cache_size: -1
+`), 0o600)
+	require.NoError(t, err)
+
+	_, err = LoadFromFile(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid async_max_node_cache_size")
+
+	err = os.WriteFile(path, []byte(`
+database:
+  async_max_edge_cache_size: -2
+`), 0o600)
+	require.NoError(t, err)
+
+	_, err = LoadFromFile(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid async_max_edge_cache_size")
+}
+
+func TestLoadFromFile_AsyncWriteSettingsRejectsNegativeNestedCacheSizes(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+database:
+  async_writes:
+    max_node_cache_size: -3
+`), 0o600)
+	require.NoError(t, err)
+
+	_, err = LoadFromFile(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid async_writes.max_node_cache_size")
+
+	err = os.WriteFile(path, []byte(`
+database:
+  async_writes:
+    max_edge_cache_size: -4
+`), 0o600)
+	require.NoError(t, err)
+
+	_, err = LoadFromFile(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid async_writes.max_edge_cache_size")
+}
+
 func TestLoadFromFile_ComprehensiveSectionsAndEnvPrecedence(t *testing.T) {
 	clearEnvVars(t)
 

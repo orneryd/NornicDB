@@ -431,7 +431,7 @@ database:
   async_writes_enabled: false # Disable async writes
 ```
 
-With `enabled: true`, do not assume every mutation becomes eventual. The setting enables the async write-behind engine and lets eligible queries use it; durable transactional mutations still return `200 OK` and include `receipt` metadata.
+With `async_writes_enabled: true`, do not assume every mutation becomes eventual. The setting enables the async write-behind engine and lets eligible queries use it; durable transactional mutations still return `200 OK` and include `receipt` metadata.
 
 ### Memory Management
 

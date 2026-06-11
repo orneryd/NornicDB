@@ -3046,13 +3046,25 @@ func LoadFromFile(configPath string) (*Config, error) {
 		}
 	}
 	if yamlCfg.Database.AsyncMaxNodeCacheSize != nil {
+		if *yamlCfg.Database.AsyncMaxNodeCacheSize < 0 {
+			return nil, fmt.Errorf("invalid async_max_node_cache_size: %d", *yamlCfg.Database.AsyncMaxNodeCacheSize)
+		}
 		config.Database.AsyncMaxNodeCacheSize = *yamlCfg.Database.AsyncMaxNodeCacheSize
 	} else if yamlCfg.Database.AsyncWrites.MaxNodeCacheSize != nil {
+		if *yamlCfg.Database.AsyncWrites.MaxNodeCacheSize < 0 {
+			return nil, fmt.Errorf("invalid async_writes.max_node_cache_size: %d", *yamlCfg.Database.AsyncWrites.MaxNodeCacheSize)
+		}
 		config.Database.AsyncMaxNodeCacheSize = *yamlCfg.Database.AsyncWrites.MaxNodeCacheSize
 	}
 	if yamlCfg.Database.AsyncMaxEdgeCacheSize != nil {
+		if *yamlCfg.Database.AsyncMaxEdgeCacheSize < 0 {
+			return nil, fmt.Errorf("invalid async_max_edge_cache_size: %d", *yamlCfg.Database.AsyncMaxEdgeCacheSize)
+		}
 		config.Database.AsyncMaxEdgeCacheSize = *yamlCfg.Database.AsyncMaxEdgeCacheSize
 	} else if yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize != nil {
+		if *yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize < 0 {
+			return nil, fmt.Errorf("invalid async_writes.max_edge_cache_size: %d", *yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize)
+		}
 		config.Database.AsyncMaxEdgeCacheSize = *yamlCfg.Database.AsyncWrites.MaxEdgeCacheSize
 	}
 	if yamlCfg.Database.BadgerNodeCacheMaxEntries > 0 {
