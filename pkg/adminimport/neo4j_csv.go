@@ -194,7 +194,9 @@ func inferNodeColumns(nodes []*storage.Node) []inferredColumn {
 	for _, node := range nodes {
 		for key, value := range node.Properties {
 			if key == "id" {
-				continue
+				if s, ok := value.(string); ok && s == string(node.ID) {
+					continue
+				}
 			}
 			props[key] = mergeColumn(props[key], key, value)
 		}

@@ -150,7 +150,7 @@ Export Neo4j-compatible CSV files from Neo4j using the tooling you already use f
     --data-dir=./data
    ```
 
-If the folder includes `schema.cypher`, `nornicdb-admin` will apply it automatically unless you override `--schema`.
+If the folder includes `schema.nornic.json` or `schema.cypher`, `nornicdb-admin` will apply it automatically (preferring `schema.nornic.json`) unless you override `--schema`.
 
 See the [admin tool guide](../operations/admin-tool.md) for CSV header examples, `--from-path`, and recovery notes.
 

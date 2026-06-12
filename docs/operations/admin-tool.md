@@ -61,7 +61,7 @@ The directory importer:
 
 - scans for `*.csv`, `*.csv.gz`, and single-member `*.zip` CSV files
 - classifies node vs relationship files from their CSV headers
-- automatically uses `schema.cypher` from that same directory when present and `--schema` is not set
+- automatically uses `schema.nornic.json` (preferred) or `schema.cypher` from that same directory when present and `--schema` is not set
 
 This makes it possible to import a full offline package produced by `database export neo4j-csv` with a single command.
 
