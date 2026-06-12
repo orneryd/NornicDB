@@ -600,11 +600,6 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	if !ok || len(queryVector) == 0 {
 		return nil, false
 	}
-	if !orderDesc {
-		for i := range queryVector {
-			queryVector[i] = -queryVector[i]
-		}
-	}
 
 	var targetLabel, targetProperty string
 	similarityFunc := "cosine"
@@ -624,6 +619,9 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	}
 	if wantDims <= 0 {
 		wantDims = search.DefaultVectorDimensions
+	}
+	if !orderDesc {
+		return e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, limit, queryVector, orderDesc, wantDims)
 	}
 	if e.searchService != nil && !e.searchService.VectorEnabled() {
 		return []vectorNodeScore{}, true
@@ -654,12 +652,120 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 			continue
 		}
 		score := hit.Score
-		if !orderDesc {
-			score = -score
+		if strings.EqualFold(similarityFunc, "cosine") {
+			score = clampCosineFastPathScore(score)
 		}
 		out = append(out, vectorNodeScore{node: node, score: score})
 	}
 	return out, true
+}
+
+func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label string, property string, similarity string, limit int, queryVector []float32, orderDesc bool, wantDims int) ([]vectorNodeScore, bool) {
+	if limit <= 0 {
+		return []vectorNodeScore{}, true
+	}
+	if wantDims > 0 && len(queryVector) != wantDims {
+		return []vectorNodeScore{}, true
+	}
+	nodes, err := e.storage.GetNodesByLabel(label)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]vectorNodeScore, 0, min(limit, len(nodes)))
+	for _, node := range nodes {
+		select {
+		case <-ctx.Done():
+			return nil, false
+		default:
+		}
+		score, ok := scoreNodeVectorForFastPath(node, property, similarity, queryVector)
+		if !ok {
+			continue
+		}
+		out = append(out, vectorNodeScore{node: node, score: score})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].score == out[j].score {
+			return string(out[i].node.ID) < string(out[j].node.ID)
+		}
+		if orderDesc {
+			return out[i].score > out[j].score
+		}
+		return out[i].score < out[j].score
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, true
+}
+
+func scoreNodeVectorForFastPath(node *storage.Node, property string, similarity string, queryVector []float32) (float64, bool) {
+	if node == nil {
+		return 0, false
+	}
+	vectorName := property
+	if vectorName == "" {
+		vectorName = "default"
+	}
+
+	bestScore := -2.0
+	if node.NamedEmbeddings != nil {
+		if embedding, ok := node.NamedEmbeddings[vectorName]; ok {
+			if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok {
+				bestScore = score
+			}
+		}
+		if bestScore < -1.0 && property == "" {
+			for _, embedding := range node.NamedEmbeddings {
+				if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok && score > bestScore {
+					bestScore = score
+				}
+			}
+		}
+	}
+
+	if bestScore < -1.0 && property != "" && node.Properties != nil {
+		if score, ok := scoreVectorForFastPath(queryVector, toFloat32Slice(node.Properties[property]), similarity); ok {
+			bestScore = score
+		}
+	}
+
+	if bestScore < -1.0 {
+		for _, embedding := range node.ChunkEmbeddings {
+			if score, ok := scoreVectorForFastPath(queryVector, embedding, similarity); ok && score > bestScore {
+				bestScore = score
+			}
+		}
+	}
+
+	if bestScore < -1.0 {
+		return 0, false
+	}
+	return bestScore, true
+}
+
+func scoreVectorForFastPath(queryVector []float32, embedding []float32, similarity string) (float64, bool) {
+	if len(embedding) == 0 || len(embedding) != len(queryVector) {
+		return 0, false
+	}
+	switch strings.ToLower(strings.TrimSpace(similarity)) {
+	case "euclidean":
+		return vector.EuclideanSimilarity(queryVector, embedding), true
+	case "dot":
+		return vector.DotProduct(queryVector, embedding), true
+	default:
+		return clampCosineFastPathScore(vector.CosineSimilarity(queryVector, embedding)), true
+	}
+}
+
+func clampCosineFastPathScore(score float64) float64 {
+	if score > 1.0 {
+		return 1.0
+	}
+	if score < -1.0 {
+		return -1.0
+	}
+	return score
 }
 
 func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
@@ -699,7 +805,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 		case "dot":
 			score = vector.DotProduct(vec, embedding)
 		default:
-			score = vector.CosineSimilarity(vec, embedding)
+			score = clampCosineFastPathScore(vector.CosineSimilarity(vec, embedding))
 		}
 		out = append(out, vectorEdgeScore{edge: edge, score: score})
 	}
