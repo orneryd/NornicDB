@@ -504,6 +504,7 @@ type VectorIndex struct {
 	Property       string
 	Dimensions     int
 	SimilarityFunc string // "cosine", "euclidean", "dot"
+	EntityType     ConstraintEntityType
 }
 
 // RangeIndex represents an index for range queries on a single property.
@@ -1225,11 +1226,19 @@ func (sm *SchemaManager) AddFulltextRelationshipIndex(name string, relTypes, pro
 
 // AddVectorIndex adds a vector index.
 func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions int, similarityFunc string) error {
+	return sm.AddVectorIndexForEntity(name, label, property, dimensions, similarityFunc, ConstraintEntityNode)
+}
+
+// AddVectorIndexForEntity adds a vector index scoped to a node label or relationship type.
+func (sm *SchemaManager) AddVectorIndexForEntity(name, label, property string, dimensions int, similarityFunc string, entityType ConstraintEntityType) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	if _, exists := sm.vectorIndexes[name]; exists {
 		return nil // Already exists
+	}
+	if entityType == "" {
+		entityType = ConstraintEntityNode
 	}
 
 	sm.vectorIndexes[name] = &VectorIndex{
@@ -1238,6 +1247,7 @@ func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions
 		Property:       property,
 		Dimensions:     dimensions,
 		SimilarityFunc: similarityFunc,
+		EntityType:     entityType,
 	}
 
 	if sm.persist != nil {
@@ -1770,10 +1780,11 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 
 	for _, idx := range sm.fulltextIndexes {
 		indexes = append(indexes, map[string]interface{}{
-			"name":       idx.Name,
-			"type":       "FULLTEXT",
-			"labels":     idx.Labels,
-			"properties": idx.Properties,
+			"name":              idx.Name,
+			"type":              "FULLTEXT",
+			"labels":            idx.Labels,
+			"relationshipTypes": idx.RelationshipTypes,
+			"properties":        idx.Properties,
 		})
 	}
 
@@ -1785,6 +1796,7 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 			"property":       idx.Property,
 			"dimensions":     idx.Dimensions,
 			"similarityFunc": idx.SimilarityFunc,
+			"entityType":     string(defaultConstraintEntityType(idx.EntityType)),
 		})
 	}
 
@@ -1812,6 +1824,13 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 	}
 
 	return indexes
+}
+
+func defaultConstraintEntityType(entityType ConstraintEntityType) ConstraintEntityType {
+	if entityType == "" {
+		return ConstraintEntityNode
+	}
+	return entityType
 }
 
 // GetVectorIndex returns a vector index by name.

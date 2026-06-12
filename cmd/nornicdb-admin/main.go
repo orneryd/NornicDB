@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,12 @@ import (
 )
 
 func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(exitCodeForError(err))
+	}
+}
+
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "nornicdb-admin",
 		Short: "Administrative tools for NornicDB",
@@ -94,9 +101,7 @@ func main() {
 		fmt.Println(buildinfo.DisplayVersion())
 	}})
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
@@ -215,4 +220,17 @@ func firstRune(value string, fallback rune) rune {
 		return fallback
 	}
 	return []rune(value)[0]
+}
+
+func exitCodeForError(err error) int {
+	if err == nil {
+		return adminimport.ExitOK
+	}
+	var importErr *adminimport.Error
+	if errors.As(err, &importErr) {
+		if importErr.ExitCode > 0 {
+			return importErr.ExitCode
+		}
+	}
+	return 1
 }

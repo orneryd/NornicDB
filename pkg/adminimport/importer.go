@@ -101,13 +101,19 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 	if opts.IDType == "actual" {
 		return report, unsupported("--id-type=actual is not supported")
 	}
+	if err := preflightSources(opts); err != nil {
+		return report, err
+	}
 
 	target := storage.NewNamespacedEngine(engine, opts.DatabaseName)
 	if err := ensureEmpty(target); err != nil {
 		return report, err
 	}
 
-	state := &importState{idMap: make(map[string]storage.NodeID)}
+	state := &importState{
+		idMap:           make(map[string]storage.NodeID),
+		relationshipIDs: make(map[storage.EdgeID]struct{}),
+	}
 	for _, sourceSpec := range opts.NodeSources {
 		if err := importNodeSource(ctx, target, opts, sourceSpec, state, &report); err != nil {
 			report.Errors = append(report.Errors, err.Error())
@@ -178,6 +184,7 @@ func (o Options) withDefaults() Options {
 
 type importState struct {
 	idMap            map[string]storage.NodeID
+	relationshipIDs  map[storage.EdgeID]struct{}
 	anonymousNodeSeq int
 	edgeSeq          int
 }
@@ -304,6 +311,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	startCols := filterColumns(cols, kindStartID)
 	endCols := filterColumns(cols, kindEndID)
 	typeCols := filterColumns(cols, kindType)
+	relIDCols := filterColumns(cols, kindID)
 	if len(startCols) == 0 || len(endCols) == 0 {
 		return unsupported("relationship source requires :START_ID and :END_ID columns")
 	}
@@ -323,7 +331,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 		edgeSeq := state.edgeSeq
 		state.edgeSeq++
-		edge, skip, err := edgeFromRecord(record, filePath, cols, startCols, endCols, typeCols, spec.prefix, opts, state, rowNum, edgeSeq, report)
+		edge, skip, err := edgeFromRecord(record, filePath, cols, startCols, endCols, typeCols, relIDCols, spec.prefix, opts, state, rowNum, edgeSeq, report)
 		if err != nil {
 			return err
 		}
@@ -333,6 +341,9 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		edges = append(edges, edge)
 		if len(edges) >= opts.ChunkSize {
 			if err := engine.BulkCreateEdges(edges); err != nil {
+				if errors.Is(err, storage.ErrAlreadyExists) {
+					return &Error{ExitCode: ExitDuplicateID, Message: "duplicate relationship ID", Err: err}
+				}
 				return err
 			}
 			report.RelationshipsImported += int64(len(edges))
@@ -341,6 +352,9 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	}
 	if len(edges) > 0 {
 		if err := engine.BulkCreateEdges(edges); err != nil {
+			if errors.Is(err, storage.ErrAlreadyExists) {
+				return &Error{ExitCode: ExitDuplicateID, Message: "duplicate relationship ID", Err: err}
+			}
 			return err
 		}
 		report.RelationshipsImported += int64(len(edges))
@@ -428,8 +442,9 @@ func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols 
 	return node, lookupKey, nil
 }
 
-func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCols, endCols, typeCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
+func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCols, endCols, typeCols, relIDCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
 	props := make(map[string]any)
+	edgeID := fmt.Sprintf("rel_%d", edgeSeq)
 	startValues, startSpaces, startCol, err := idValuesFromRecord(record, cols, startCols, opts)
 	if err != nil {
 		return nil, false, csvErr(filePath, line, startCol+1, err)
@@ -440,11 +455,19 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	}
 	startID, ok := state.idMap[importIDKey(startSpaces, startValues)]
 	if !ok {
-		return nil, opts.SkipBadRelationships, badRelationship(opts, report, line, "missing start node")
+		skip, relErr := badRelationship(opts, report, line, "missing start node")
+		if relErr != nil {
+			return nil, false, relErr
+		}
+		return nil, skip, nil
 	}
 	endID, ok := state.idMap[importIDKey(endSpaces, endValues)]
 	if !ok {
-		return nil, opts.SkipBadRelationships, badRelationship(opts, report, line, "missing end node")
+		skip, relErr := badRelationship(opts, report, line, "missing end node")
+		if relErr != nil {
+			return nil, false, relErr
+		}
+		return nil, skip, nil
 	}
 	edgeType := ""
 	if len(prefixType) > 0 {
@@ -458,6 +481,18 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	if edgeType == "" {
 		return nil, false, unsupported("relationship source requires :TYPE column or --relationships=TYPE= prefix")
 	}
+	if len(relIDCols) > 0 {
+		edgeValues, _, edgeIDCol, idErr := idValuesFromRecord(record, cols, relIDCols, opts)
+		if idErr != nil {
+			return nil, false, csvErr(filePath, line, edgeIDCol+1, idErr)
+		}
+		edgeID = strings.Join(edgeValues, "|")
+	}
+	edgeIDValue := storage.EdgeID(edgeID)
+	if _, exists := state.relationshipIDs[edgeIDValue]; exists {
+		return nil, false, &Error{ExitCode: ExitDuplicateID, Message: fmt.Sprintf("duplicate relationship ID at row %d", line)}
+	}
+	state.relationshipIDs[edgeIDValue] = struct{}{}
 	for i, col := range cols {
 		if i >= len(record) {
 			continue
@@ -479,15 +514,21 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 		}
 		props[col.Name] = parsed
 	}
-	return &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("rel_%d", edgeSeq)), StartNode: startID, EndNode: endID, Type: edgeType, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now, Confidence: 1.0}, false, nil
+	return &storage.Edge{ID: edgeIDValue, StartNode: startID, EndNode: endID, Type: edgeType, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now, Confidence: 1.0}, false, nil
 }
 
-func badRelationship(opts Options, report *Report, line int, msg string) error {
+func badRelationship(opts Options, report *Report, line int, msg string) (bool, error) {
 	report.BadRelationships++
-	if opts.SkipBadRelationships {
-		return nil
+	if opts.BadTolerance > 0 && report.BadRelationships <= int64(opts.BadTolerance) {
+		return true, nil
 	}
-	return &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship at row %d: %s", line, msg)}
+	if opts.SkipBadRelationships && opts.BadTolerance <= 0 {
+		return true, nil
+	}
+	if opts.BadTolerance > 0 && report.BadRelationships > int64(opts.BadTolerance) {
+		return false, &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship tolerance exceeded at row %d (%d > %d): %s", line, report.BadRelationships, opts.BadTolerance, msg)}
+	}
+	return false, &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship at row %d: %s", line, msg)}
 }
 
 func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts Options) ([]string, []string, int, error) {
@@ -530,9 +571,6 @@ func parseColumnSpec(raw string, node bool) (columnSpec, error) {
 		keyword, arg, opts := parseKeyword(raw[1:])
 		switch strings.ToUpper(keyword) {
 		case "ID":
-			if !node {
-				return columnSpec{}, unsupported(":ID is only valid in node headers")
-			}
 			return columnSpec{Kind: kindID, IDSpace: arg}, nil
 		case "LABEL":
 			return columnSpec{Kind: kindLabel}, nil
@@ -716,6 +754,51 @@ func openCSVSource(files []string, opts Options) (*csvSourceReader, error) {
 		}
 	}
 	return &csvSourceReader{files: files, opts: opts}, nil
+}
+
+func preflightSources(opts Options) error {
+	for _, raw := range opts.NodeSources {
+		spec, err := parseSourceSpec(raw, true)
+		if err != nil {
+			return err
+		}
+		if err := preflightCSVSource(spec.files, opts, true); err != nil {
+			return err
+		}
+	}
+	for _, raw := range opts.RelSources {
+		spec, err := parseSourceSpec(raw, false)
+		if err != nil {
+			return err
+		}
+		if err := preflightCSVSource(spec.files, opts, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func preflightCSVSource(files []string, opts Options, node bool) error {
+	source, err := openCSVSource(files, opts)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	header, err := source.ReadHeader()
+	if err != nil {
+		return csvErr(files[0], 1, 0, err)
+	}
+	cols, err := parseHeader(header, node)
+	if err != nil {
+		return err
+	}
+	if !node {
+		if len(filterColumns(cols, kindStartID)) == 0 || len(filterColumns(cols, kindEndID)) == 0 {
+			return unsupported("relationship source requires :START_ID and :END_ID columns")
+		}
+	}
+	return nil
 }
 
 func (s *csvSourceReader) Close() error {

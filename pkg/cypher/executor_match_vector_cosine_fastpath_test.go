@@ -236,3 +236,17 @@ LIMIT $k`
 
 	require.Equal(t, 0, counting.allNodesCalls)
 }
+
+func TestFindCosineVectorIndexName_DisambiguatesByEntityType(t *testing.T) {
+	schema := storage.NewSchemaManager()
+	require.NoError(t, schema.AddVectorIndexForEntity("a_rel_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndexForEntity("z_node_idx", "Thing", "emb", 3, "cosine", storage.ConstraintEntityNode))
+
+	nodeIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityNode)
+	require.True(t, ok)
+	require.Equal(t, "z_node_idx", nodeIndex)
+
+	relIndex, ok := findCosineVectorIndexName(schema, "Thing", "emb", storage.ConstraintEntityRelationship)
+	require.True(t, ok)
+	require.Equal(t, "a_rel_idx", relIndex)
+}

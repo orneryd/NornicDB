@@ -1058,9 +1058,12 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 						}
 					case "FULLTEXT":
 						labels := anyToStringSlice(idxMap["labels"])
+						relationshipTypes := anyToStringSlice(idxMap["relationshipTypes"])
 						properties := anyToStringSlice(idxMap["properties"])
 						if len(labels) > 0 && len(properties) > 0 {
 							_ = mergedSchema.AddFulltextIndex(idxName, labels, properties)
+						} else if len(relationshipTypes) > 0 && len(properties) > 0 {
+							_ = mergedSchema.AddFulltextRelationshipIndex(idxName, relationshipTypes, properties)
 						}
 					case "VECTOR":
 						if label, ok := idxMap["label"].(string); ok {
@@ -1075,7 +1078,11 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 								if sim, ok := idxMap["similarityFunc"].(string); ok {
 									similarityFunc = sim
 								}
-								_ = mergedSchema.AddVectorIndex(idxName, label, property, dimensions, similarityFunc)
+								entityType := ConstraintEntityNode
+								if etRaw, ok := idxMap["entityType"].(string); ok && strings.EqualFold(etRaw, string(ConstraintEntityRelationship)) {
+									entityType = ConstraintEntityRelationship
+								}
+								_ = mergedSchema.AddVectorIndexForEntity(idxName, label, property, dimensions, similarityFunc, entityType)
 							}
 						}
 					case "RANGE":

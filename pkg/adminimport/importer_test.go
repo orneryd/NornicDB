@@ -819,3 +819,158 @@ u1,u2,WORKS_WITH,2025
 	require.Error(t, err)
 	require.True(t, errors.Is(err, storage.ErrNotFound))
 }
+
+func TestImporterScenario_MissingSecondSourceAcrossFlagsFailsBeforeWrites(t *testing.T) {
+	dir := t.TempDir()
+	goodPath := filepath.Join(dir, "nodes_good.csv")
+	missingPath := filepath.Join(dir, "nodes_missing.csv")
+	require.NoError(t, os.WriteFile(goodPath, []byte(":ID,name:string\nn1,Alice\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "missingdb",
+		NodeSources:  []string{goodPath, missingPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitCSV, importErr.ExitCode)
+	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
+
+	engine := storage.NewNamespacedEngine(base, "missingdb")
+	count, countErr := engine.NodeCount()
+	require.NoError(t, countErr)
+	require.Equal(t, int64(0), count)
+}
+
+func TestImporterBadRelationshipTolerance(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name\nn1,Alice\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE\nn1,missing1,KNOWS\nn1,missing2,KNOWS\n"), 0o600))
+
+	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+		DatabaseName: "tol0",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+
+	report, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+		DatabaseName: "tol2",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+		BadTolerance: 2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), report.BadRelationships)
+
+	_, err = ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+		DatabaseName: "tol1",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+		BadTolerance: 1,
+	})
+	require.Error(t, err)
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitBadRelationship, importErr.ExitCode)
+}
+
+func TestImporterRelationshipIDColumnPreservedAndRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":ID,:START_ID,:END_ID,:TYPE\nrA,n1,n2,KNOWS\n"), 0o600))
+
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	_, err := ImportFull(context.Background(), base, Options{
+		DatabaseName: "rels-id",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		Now:          fixedImportTime,
+	})
+	require.NoError(t, err)
+
+	engine := storage.NewNamespacedEngine(base, "rels-id")
+	edges, err := engine.AllEdges()
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, storage.EdgeID("rA"), edges[0].ID)
+
+	outDir := filepath.Join(t.TempDir(), "export")
+	require.NoError(t, ExportNeo4jCSV(engine, Neo4jCSVExportOptions{OutputDir: outDir}))
+	relsBytes, err := os.ReadFile(filepath.Join(outDir, "relationships.csv"))
+	require.NoError(t, err)
+	require.Contains(t, string(relsBytes), ":ID,:START_ID,:END_ID,:TYPE")
+	require.Contains(t, string(relsBytes), "rA,n1,n2,KNOWS")
+}
+
+func TestImporterReportsDuplicateRelationshipIDsAcrossChunks(t *testing.T) {
+	dir := t.TempDir()
+	nodesPath := filepath.Join(dir, "nodes.csv")
+	relsPath := filepath.Join(dir, "rels.csv")
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":ID,:START_ID,:END_ID,:TYPE\nrA,n1,n2,KNOWS\nrA,n1,n2,KNOWS\n"), 0o600))
+
+	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+		DatabaseName: "rels-dup",
+		NodeSources:  []string{nodesPath},
+		RelSources:   []string{relsPath},
+		BuildIndexes: false,
+		ChunkSize:    1,
+		Now:          fixedImportTime,
+	})
+	require.Error(t, err)
+	var importErr *Error
+	require.ErrorAs(t, err, &importErr)
+	require.Equal(t, ExitDuplicateID, importErr.ExitCode)
+	require.Contains(t, importErr.Error(), "duplicate relationship ID")
+}
+
+func TestNeo4jCSVExportSchemaCypher_IncludesRelationshipFulltextAndVectorIndexes(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	source := storage.NewNamespacedEngine(base, "source")
+	_, err := source.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	require.NoError(t, err)
+	_, err = source.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	require.NoError(t, err)
+	require.NoError(t, source.CreateEdge(&storage.Edge{
+		ID:        "e1",
+		StartNode: "n1",
+		EndNode:   "n2",
+		Type:      "RELATES_TO",
+		Properties: map[string]any{
+			"fact":           "a to b",
+			"fact_embedding": []float32{0.1, 0.2, 0.3},
+		},
+	}))
+
+	schema := source.GetSchema()
+	require.NoError(t, schema.AddFulltextRelationshipIndex("rel_fact_ft", []string{"RELATES_TO"}, []string{"fact"}))
+	require.NoError(t, schema.AddVectorIndexForEntity("rel_fact_vec", "RELATES_TO", "fact_embedding", 3, "cosine", storage.ConstraintEntityRelationship))
+
+	outDir := filepath.Join(t.TempDir(), "schema-ddl")
+	require.NoError(t, ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: outDir}))
+	schemaDDL, err := os.ReadFile(filepath.Join(outDir, Neo4jCSVSchemaFileName))
+	require.NoError(t, err)
+
+	ddl := string(schemaDDL)
+	require.Contains(t, ddl, "CREATE FULLTEXT INDEX `rel_fact_ft` IF NOT EXISTS FOR ()-[r:`RELATES_TO`]-() ON EACH [r.`fact`]")
+	require.Contains(t, ddl, "CREATE VECTOR INDEX `rel_fact_vec` IF NOT EXISTS FOR ()-[r:`RELATES_TO`]-() ON (r.`fact_embedding`)")
+}

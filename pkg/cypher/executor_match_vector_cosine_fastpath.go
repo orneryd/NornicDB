@@ -95,7 +95,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	if !hasIndex {
 		return nil, false
 	}
@@ -252,7 +252,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	if !hasIndex {
 		return nil, false
 	}
@@ -373,7 +373,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -522,7 +522,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp)
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -842,9 +842,12 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 	return limit, true
 }
 
-func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string) (string, bool) {
+func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
 	if schema == nil {
 		return "", false
+	}
+	if entityType == "" {
+		entityType = storage.ConstraintEntityNode
 	}
 	indexes := schema.GetIndexes()
 	matches := make([]string, 0, 2)
@@ -863,6 +866,13 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 		}
 		idxProp, _ := idx["property"].(string)
 		if !strings.EqualFold(strings.TrimSpace(idxProp), strings.TrimSpace(property)) {
+			continue
+		}
+		idxEntityType, _ := idx["entityType"].(string)
+		if idxEntityType == "" {
+			idxEntityType = string(storage.ConstraintEntityNode)
+		}
+		if !strings.EqualFold(strings.TrimSpace(idxEntityType), string(entityType)) {
 			continue
 		}
 

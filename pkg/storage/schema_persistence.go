@@ -208,6 +208,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				Property:       idx.Property,
 				Dimensions:     idx.Dimensions,
 				SimilarityFunc: idx.SimilarityFunc,
+				EntityType:     defaultConstraintEntityType(idx.EntityType),
 			})
 		}
 		sort.Slice(def.VectorIndexes, func(i, j int) bool {
@@ -442,6 +443,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			Property:       idx.Property,
 			Dimensions:     idx.Dimensions,
 			SimilarityFunc: idx.SimilarityFunc,
+			EntityType:     defaultConstraintEntityType(idx.EntityType),
 		}
 	}
 

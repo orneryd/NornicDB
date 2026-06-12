@@ -483,7 +483,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, 
 
 	// Create vector index using schema manager
 	schema := e.storage.GetSchema()
-	err := schema.AddVectorIndex(indexName, label, property, dimension, similarity)
+	err := schema.AddVectorIndexForEntity(indexName, label, property, dimension, similarity, storage.ConstraintEntityNode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vector index: %w", err)
 	}
@@ -534,7 +534,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	// Create vector index on relationships using schema manager
 	schema := e.storage.GetSchema()
 	// Use relationship type as "label" for index naming
-	err = schema.AddVectorIndex(indexName, relType, property, dimension, similarity)
+	err = schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create relationship vector index: %w", err)
 	}

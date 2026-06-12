@@ -174,13 +174,13 @@ func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptio
 
 func exportRelationshipsCSV(path string, edges []*storage.Edge, opts Neo4jCSVExportOptions) error {
 	columns := inferEdgeColumns(edges)
-	header := []string{":START_ID", ":END_ID", ":TYPE"}
+	header := []string{":ID", ":START_ID", ":END_ID", ":TYPE"}
 	for _, col := range columns {
 		header = append(header, col.Header)
 	}
 	rows := make([][]string, 0, len(edges))
 	for _, edge := range edges {
-		row := []string{string(edge.StartNode), string(edge.EndNode), edge.Type}
+		row := []string{string(edge.ID), string(edge.StartNode), string(edge.EndNode), edge.Type}
 		for _, col := range columns {
 			row = append(row, formatPropertyValue(edge.Properties[col.Property], col, opts))
 		}
@@ -646,6 +646,7 @@ func renderIndexStatement(index any) (string, bool) {
 	case "FULLTEXT":
 		properties := stringSliceValue(m["properties"])
 		labels := stringSliceValue(m["labels"])
+		relationshipTypes := stringSliceValue(m["relationshipTypes"])
 		if len(properties) == 0 {
 			return "", false
 		}
@@ -655,6 +656,13 @@ func renderIndexStatement(index any) (string, bool) {
 				parts = append(parts, quoteCypherIdent(item))
 			}
 			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
+		}
+		if len(relationshipTypes) > 0 {
+			parts := make([]string, 0, len(relationshipTypes))
+			for _, item := range relationshipTypes {
+				parts = append(parts, quoteCypherIdent(item))
+			}
+			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
 		}
 		return "", false
 	case "VECTOR":
@@ -669,12 +677,19 @@ func renderIndexStatement(index any) (string, bool) {
 		if property == "" || label == "" || dimensions == 0 {
 			return "", false
 		}
+		entityType, _ := m["entityType"].(string)
+		entity := storage.ConstraintEntityNode
+		variable := "n"
+		if entityType == string(storage.ConstraintEntityRelationship) {
+			entity = storage.ConstraintEntityRelationship
+			variable = "r"
+		}
 		options := fmt.Sprintf("OPTIONS {indexConfig: {`vector.dimensions`: %d", dimensions)
 		if similarity != "" {
 			options += fmt.Sprintf(", `vector.similarity_function`: '%s'", strings.ToLower(similarity))
 		}
 		options += "}}"
-		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", quoteCypherIdent(name), cypherPattern(storage.ConstraintEntityNode, label), strings.Join(cypherPropertyRefs("n", []string{property}), ", "), options), true
+		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", quoteCypherIdent(name), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(variable, []string{property}), ", "), options), true
 	default:
 		return "", false
 	}

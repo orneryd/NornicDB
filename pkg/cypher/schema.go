@@ -2462,7 +2462,11 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	// space is only registered when vector search is enabled — otherwise
 	// the operator explicitly turned vector indexing off and we must not
 	// allocate or warm any vector backend on their behalf.
-	if err := e.storage.GetSchema().AddVectorIndex(indexName, label, property, dimensions, similarityFunc); err != nil {
+	entityType := storage.ConstraintEntityNode
+	if parsed.isRelationship {
+		entityType = storage.ConstraintEntityRelationship
+	}
+	if err := e.storage.GetSchema().AddVectorIndexForEntity(indexName, label, property, dimensions, similarityFunc, entityType); err != nil {
 		return nil, err
 	}
 
