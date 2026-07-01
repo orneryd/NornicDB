@@ -14,7 +14,7 @@
     "@ornery/ui-grid-vanilla": "^1.0.6",
     "3d-force-graph": "^1.80.0",
     "lucide-react": "^1.22.0",
-    "neo4j-driver": "^6.1.0",
+    "neo4j-driver": "^6.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
