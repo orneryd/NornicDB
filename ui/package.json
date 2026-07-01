@@ -18,7 +18,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.18.0",
+    "react-router-dom": "^7.18.1",
     "remark-gfm": "^4.0.0",
     "three": "^0.184.0",
     "zustand": "^5.0.14"
