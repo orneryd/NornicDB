@@ -641,16 +641,7 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 	} else {
 		// Simple node pattern
 		nodePattern := e.parseNodePattern(ctx, pattern)
-		var nodes []*storage.Node
-		if len(nodePattern.labels) > 0 {
-			nodes, _ = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
-		} else {
-			nodes, _ = e.loadNodesWithTemporalViewport(ctx, nil)
-		}
-
-		if len(nodePattern.properties) > 0 {
-			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-		}
+		nodes, _ := e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, "", -1)
 
 		for _, node := range nodes {
 			b := make(binding)
@@ -678,7 +669,12 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundStartNode := existing[matches.StartNode.variable]
 			boundEndNode := existing[matches.EndNode.variable]
 
-			paths := e.traverseGraph(ctx, matches)
+			var paths []PathResult
+			if boundStartNode != nil {
+				paths = e.traverseFromNode(ctx, boundStartNode, matches)
+			} else {
+				paths = e.traverseGraph(ctx, matches)
+			}
 			for _, path := range paths {
 				if len(path.Nodes) < 2 {
 					continue

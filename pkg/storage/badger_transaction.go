@@ -1382,7 +1382,7 @@ func (tx *BadgerTransaction) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, err
 	}
 
-	committed, err := tx.engine.GetOutgoingEdges(nodeID)
+	committed, err := tx.getCommittedAdjacentEdgesLocked(nodeID, "outgoing")
 	if err != nil {
 		return nil, err
 	}
@@ -1402,7 +1402,7 @@ func (tx *BadgerTransaction) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 		return nil, err
 	}
 
-	committed, err := tx.engine.GetIncomingEdges(nodeID)
+	committed, err := tx.getCommittedAdjacentEdgesLocked(nodeID, "incoming")
 	if err != nil {
 		return nil, err
 	}
@@ -1510,7 +1510,7 @@ func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 		return nil, err
 	}
 
-	committed, err := tx.engine.AllNodes()
+	committed, err := tx.getAllCommittedNodesLocked()
 	if err != nil {
 		return nil, err
 	}

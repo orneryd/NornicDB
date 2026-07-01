@@ -155,6 +155,12 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	// LIMIT/SKIP/WITH/ORDER BY/CALL/UNWIND in the MATCH segment.
 	matchSegment := strings.TrimSpace(cypher[matchIdx:deleteIdx])
 	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
+	if hot, ok, err := e.tryExecuteBoundRelationshipDelete(ctx, matchSegment, cypher, deleteVars, detach); ok || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return hot, nil
+	}
 	if !inTransactionWrapper && e.isDeleteStreamingEligible(matchSegment, deleteVars, detach) {
 		result, err := e.executeDeleteStreaming(ctx, matchSegment, deleteVars, needEdgeStats)
 		if err != nil {

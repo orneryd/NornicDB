@@ -33,7 +33,9 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -49,6 +51,10 @@ type scanCountingEngine struct {
 	*storage.MemoryEngine
 	allNodesCalls       int64
 	getNodesByLabelHits int64
+	outgoingEdgeCalls   int64
+	outgoingEdgeErr     error
+	incomingEdgeErr     error
+	getNodeErr          error
 }
 
 func (e *scanCountingEngine) AllNodes() ([]*storage.Node, error) {
@@ -61,14 +67,40 @@ func (e *scanCountingEngine) GetNodesByLabel(label string) ([]*storage.Node, err
 	return e.MemoryEngine.GetNodesByLabel(label)
 }
 
+func (e *scanCountingEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	atomic.AddInt64(&e.outgoingEdgeCalls, 1)
+	if e.outgoingEdgeErr != nil {
+		return nil, e.outgoingEdgeErr
+	}
+	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+}
+
+func (e *scanCountingEngine) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	if e.incomingEdgeErr != nil {
+		return nil, e.incomingEdgeErr
+	}
+	return e.MemoryEngine.GetIncomingEdges(nodeID)
+}
+
+func (e *scanCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+	if e.getNodeErr != nil {
+		return nil, e.getNodeErr
+	}
+	return e.MemoryEngine.GetNode(id)
+}
+
 func (e *scanCountingEngine) AllNodesCalls() int64 { return atomic.LoadInt64(&e.allNodesCalls) }
 func (e *scanCountingEngine) GetNodesByLabelCalls() int64 {
 	return atomic.LoadInt64(&e.getNodesByLabelHits)
+}
+func (e *scanCountingEngine) OutgoingEdgeCalls() int64 {
+	return atomic.LoadInt64(&e.outgoingEdgeCalls)
 }
 
 func (e *scanCountingEngine) reset() {
 	atomic.StoreInt64(&e.allNodesCalls, 0)
 	atomic.StoreInt64(&e.getNodesByLabelHits, 0)
+	atomic.StoreInt64(&e.outgoingEdgeCalls, 0)
 }
 
 // newCountingExecutor builds a StorageExecutor over a wrapped MemoryEngine.
@@ -316,4 +348,382 @@ func TestMatchPatternProperty_EdgeShapeNoDoubleScan(t *testing.T) {
 
 	require.Zerof(t, wrapped.AllNodesCalls(),
 		"graphify edge MATCH leaked %d AllNodes() calls", wrapped.AllNodesCalls())
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteUsesAdjacency(t *testing.T) {
+	exec, wrapped := newCountingExecutor(t)
+	seedScanTestPopulation(t, exec, 500)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+
+	for i := 0; i < 50; i++ {
+		_, err := exec.Execute(ctx,
+			"CREATE (:Repository {id:$id})",
+			map[string]interface{}{"id": fmt.Sprintf("repository:unrelated-%03d", i)})
+		require.NoError(t, err)
+	}
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	wrapped.reset()
+	deleteResult, err := exec.Execute(ctx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+DELETE rel
+`, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleteResult.Stats.RelationshipsDeleted)
+	require.LessOrEqual(t, wrapped.OutgoingEdgeCalls(), int64(1),
+		"bound relationship DELETE should expand only the bound source node, got %d outgoing probes",
+		wrapped.OutgoingEdgeCalls())
+
+	verify, err := exec.Execute(ctx, `
+MATCH ()-[rel:DEPLOYS_FROM]->()
+RETURN count(rel) AS c
+`, nil)
+	require.NoError(t, err)
+	require.Len(t, verify.Rows, 1)
+	require.Equal(t, int64(0), verify.Rows[0][0])
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteSegmentEligibility(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+	simple := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+`
+	require.True(t, isSimpleBoundRelationshipDeleteMatchSegment(simple))
+
+	limited, limitN, ok := parseBoundRelationshipDeleteWithLimitSegment(simple+`
+WITH rel LIMIT 1`, "rel")
+	require.True(t, ok)
+	require.Equal(t, 1, limitN)
+	require.Equal(t, strings.TrimSpace(simple), limited)
+
+	pseudo := strings.TrimSpace(simple) + " RETURN __delete_probe__"
+	returnIdx := findKeywordIndex(pseudo, "RETURN")
+	whereIdx := lastKeywordIndexBefore(pseudo, "WHERE", returnIdx)
+	clauses := splitMatchClauses(pseudo, whereIdx, returnIdx)
+	require.Len(t, clauses, 2)
+	sourcePattern := exec.parseNodePattern(context.Background(), clauses[0])
+	require.Equal(t, "source_repo", sourcePattern.variable)
+	relMatch := exec.parseTraversalPattern(context.Background(), clauses[1])
+	require.NotNil(t, relMatch)
+	require.Equal(t, "source_repo", relMatch.StartNode.variable)
+	require.Equal(t, "rel", relMatch.Relationship.Variable)
+	require.Equal(t, []string{"DEPLOYS_FROM"}, relMatch.Relationship.Types)
+	require.Equal(t, "outgoing", relMatch.Relationship.Direction)
+}
+
+func TestMatchPatternProperty_TryBoundRelationshipDeleteDeletesSimpleMatch(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	cypher := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+DELETE rel
+`
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+`, cypher, "rel", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+}
+
+func TestMatchPatternProperty_TryBoundRelationshipDeleteDeletesUnionAndLimitedMatches(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		_, err = exec.Execute(ctx,
+			"CREATE (:Repository {id:$id})",
+			map[string]interface{}{"id": fmt.Sprintf("repository:target-%d", i)})
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:$id})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, map[string]interface{}{"id": fmt.Sprintf("repository:target-%d", i)})
+		require.NoError(t, err)
+	}
+
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+WITH rel LIMIT 1
+`, "", "rel", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+}
+
+func TestMatchPatternProperty_ExecuteDeleteUsesBoundRelationshipDelete(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	result, err := exec.executeDelete(ctx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+DELETE rel
+`)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteRoutingPredicates(t *testing.T) {
+	cypher := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+DELETE rel
+`
+	trimmed := strings.TrimSpace(cypher)
+	require.Equal(t, 0, findKeywordIndex(trimmed, "MATCH"))
+	require.Equal(t, -1, findKeywordIndex(trimmed, "CREATE"))
+	require.Greater(t, findKeywordIndex(trimmed, "DELETE"), 0)
+	require.True(t, findKeywordIndex(trimmed, "DELETE") > 0)
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteHonorsWithLimit(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		_, err = exec.Execute(ctx,
+			"CREATE (:Repository {id:$id})",
+			map[string]interface{}{"id": fmt.Sprintf("repository:target-%d", i)})
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:$id})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, map[string]interface{}{"id": fmt.Sprintf("repository:target-%d", i)})
+		require.NoError(t, err)
+	}
+
+	deleteResult, err := exec.Execute(ctx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WITH rel LIMIT 1
+DELETE rel
+`, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleteResult.Stats.RelationshipsDeleted)
+
+	verify, err := exec.Execute(ctx, `
+MATCH ()-[rel:DEPLOYS_FROM]->()
+RETURN count(rel) AS c
+`, nil)
+	require.NoError(t, err)
+	require.Len(t, verify.Rows, 1)
+	require.Equal(t, int64(1), verify.Rows[0][0])
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteUsesTransactionSnapshot(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	inner := exec.storage.(*storage.NamespacedEngine).GetInnerEngine().(*scanCountingEngine)
+	require.NoError(t, inner.EnsureNamespaceMVCC("scan"))
+	tx, err := inner.BeginTransaction()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	require.NoError(t, tx.SetNamespace("scan"))
+
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:late-target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:late-target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	txWrapper := &transactionStorageWrapper{tx: tx, underlying: exec.storage, namespace: "scan", separator: ":"}
+	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
+	txExec := exec.cloneWithStorage(txWrapper)
+
+	result, ok, err := txExec.tryExecuteBoundRelationshipDelete(txCtx, `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+`, "", "rel", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+
+	require.NoError(t, tx.Commit())
+
+	verify, err := exec.Execute(ctx, `
+MATCH ()-[rel:DEPLOYS_FROM]->()
+RETURN count(rel) AS c
+`, nil)
+	require.NoError(t, err)
+	require.Len(t, verify.Rows, 1)
+	require.Equal(t, int64(1), verify.Rows[0][0])
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteReturnsCandidateLookupErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		direction string
+		configure func(*scanCountingEngine, error)
+	}{
+		{
+			name:      "outgoing",
+			direction: "outgoing",
+			configure: func(wrapped *scanCountingEngine, lookupErr error) {
+				wrapped.outgoingEdgeErr = lookupErr
+			},
+		},
+		{
+			name:      "incoming",
+			direction: "incoming",
+			configure: func(wrapped *scanCountingEngine, lookupErr error) {
+				wrapped.incomingEdgeErr = lookupErr
+			},
+		},
+		{
+			name:      "both outgoing",
+			direction: "both",
+			configure: func(wrapped *scanCountingEngine, lookupErr error) {
+				wrapped.outgoingEdgeErr = lookupErr
+			},
+		},
+		{
+			name:      "both incoming",
+			direction: "both",
+			configure: func(wrapped *scanCountingEngine, lookupErr error) {
+				wrapped.incomingEdgeErr = lookupErr
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exec, wrapped := newCountingExecutor(t)
+			lookupErr := errors.New(tt.name + " edge lookup failed")
+			tt.configure(wrapped, lookupErr)
+
+			_, err := exec.boundRelationshipDeleteCandidateEdges(wrapped, "source", tt.direction)
+			require.ErrorIs(t, err, lookupErr)
+		})
+	}
+}
+
+func TestMatchPatternProperty_TryBoundRelationshipDeletePropagatesCandidateLookupError(t *testing.T) {
+	exec, wrapped := newCountingExecutor(t)
+	seedScanTestPopulation(t, exec, 10)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:target'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (source:Repository {id:'repository:source'})
+MATCH (target:Repository {id:'repository:target'})
+CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target)
+`, nil)
+	require.NoError(t, err)
+
+	lookupErr := errors.New("outgoing edge lookup failed")
+	wrapped.outgoingEdgeErr = lookupErr
+	cypher := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'
+DELETE rel
+`
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx,
+		`MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'`,
+		cypher,
+		"rel",
+		false)
+	require.ErrorIs(t, err, lookupErr)
+	require.True(t, ok)
+	require.Nil(t, result)
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteReturnsTargetLookupError(t *testing.T) {
+	exec, wrapped := newCountingExecutor(t)
+
+	lookupErr := errors.New("target lookup failed")
+	wrapped.getNodeErr = lookupErr
+	_, ok, err := exec.boundRelationshipDeleteTargetNode(wrapped, "source", &storage.Edge{
+		StartNode: "source",
+		EndNode:   "target",
+	}, "outgoing")
+	require.ErrorIs(t, err, lookupErr)
+	require.False(t, ok)
 }

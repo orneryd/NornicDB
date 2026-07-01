@@ -144,6 +144,50 @@ func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
 	require.Len(t, fresh, 4)
 }
 
+func TestTransaction_AllNodesRepeatabilityWithinSnapshot(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	for i := 0; i < 3; i++ {
+		_, err := engine.CreateNode(&Node{
+			ID:         NodeID(prefixTestID(fmt.Sprintf("all-node-%d", i))),
+			Labels:     []string{"Node"},
+			Properties: map[string]interface{}{"index": i},
+		})
+		require.NoError(t, err)
+	}
+
+	txScan, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer txScan.Rollback()
+
+	before, err := txScan.AllNodes()
+	require.NoError(t, err)
+	beforeIDs := sortedNodeIDs(before)
+
+	txInsert, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = txInsert.CreateNode(&Node{
+		ID:         NodeID(prefixTestID("all-node-new")),
+		Labels:     []string{"Node"},
+		Properties: map[string]interface{}{"index": 99},
+	})
+	require.NoError(t, err)
+	require.NoError(t, txInsert.Commit())
+
+	after, err := txScan.AllNodes()
+	require.NoError(t, err)
+	afterIDs := sortedNodeIDs(after)
+	require.Equal(t, beforeIDs, afterIDs)
+
+	txFresh, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer txFresh.Rollback()
+	fresh, err := txFresh.AllNodes()
+	require.NoError(t, err)
+	require.Len(t, fresh, 4)
+}
+
 func TestTransaction_CreateEdgeConflictsWithConcurrentNodeDelete(t *testing.T) {
 	engine := NewMemoryEngine()
 	defer engine.Close()
@@ -175,6 +219,55 @@ func TestTransaction_CreateEdgeConflictsWithConcurrentNodeDelete(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = engine.GetEdge(EdgeID(prefixTestID("edge-created-before-delete-commit")))
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
+	engine := NewMemoryEngine()
+	defer engine.Close()
+
+	start := NodeID(prefixTestID("adjacency-snapshot-start"))
+	target := NodeID(prefixTestID("adjacency-snapshot-target"))
+	firstEdgeID := EdgeID(prefixTestID("adjacency-snapshot-edge-first"))
+
+	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: target, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: firstEdgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
+
+	txRead, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer txRead.Rollback()
+
+	outBefore, err := txRead.GetOutgoingEdges(start)
+	require.NoError(t, err)
+	inBefore, err := txRead.GetIncomingEdges(target)
+	require.NoError(t, err)
+	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(outBefore))
+	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(inBefore))
+
+	laterTarget := NodeID(prefixTestID("adjacency-snapshot-target-later"))
+	laterEdgeID := EdgeID(prefixTestID("adjacency-snapshot-edge-later"))
+	txInsert, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = txInsert.CreateNode(&Node{ID: laterTarget, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	require.NoError(t, txInsert.CreateEdge(&Edge{ID: laterEdgeID, StartNode: start, EndNode: laterTarget, Type: "LINKS"}))
+	require.NoError(t, txInsert.Commit())
+
+	outAfter, err := txRead.GetOutgoingEdges(start)
+	require.NoError(t, err)
+	inAfter, err := txRead.GetIncomingEdges(laterTarget)
+	require.NoError(t, err)
+	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter))
+	require.Empty(t, inAfter)
+
+	txFresh, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer txFresh.Rollback()
+	freshOut, err := txFresh.GetOutgoingEdges(start)
+	require.NoError(t, err)
+	require.Equal(t, []string{string(firstEdgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }
 
 func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelete(t *testing.T) {
@@ -358,5 +451,16 @@ func sortedNodeIDs(nodes []*Node) []NodeID {
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return string(ids[i]) < string(ids[j]) })
+	return ids
+}
+
+func sortedEdgeIDStrings(edges []*Edge) []string {
+	ids := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		if edge != nil {
+			ids = append(ids, string(edge.ID))
+		}
+	}
+	sort.Strings(ids)
 	return ids
 }
