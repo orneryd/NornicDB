@@ -44,7 +44,7 @@ jobs:
           echo "release_tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.meta.outputs.checkout_ref }}
 
@@ -95,7 +95,7 @@ jobs:
             runner: macos-15-intel
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.build-macos-release-assets.outputs.checkout_ref }}
 

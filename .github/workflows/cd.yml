@@ -34,7 +34,7 @@ jobs:
       llama_cuda_image: ${{ steps.meta.outputs.llama_cuda_image }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
 
@@ -155,7 +155,7 @@ jobs:
               HEADLESS=true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.checkout_ref }}
 
@@ -232,7 +232,7 @@ jobs:
               HEADLESS=true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.checkout_ref }}
 
