@@ -375,19 +375,20 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		if err != nil {
 			return err
 		}
+		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
+		if err != nil && err != ErrNotFound {
+			return err
+		}
 		// deleteEdgeInTxn archives the pre-delete body into its version
 		// record (no-op when retention is head-only) before removing
 		// the primary key.
 		if err := b.deleteEdgeInTxn(txn, id); err != nil {
 			return err
 		}
-		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
-		if err == nil {
+		if edgeForAdjacency != nil {
 			if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edgeForAdjacency, version); err != nil {
 				return err
 			}
-		} else if err != ErrNotFound {
-			return err
 		}
 		// Tombstone marker (tiny, no body) preserved at the deletion
 		// version so snapshot reads at that version observe the delete
@@ -483,7 +484,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 
 // deleteNodeInTxn is the internal helper for deleting a node within a transaction.
 // Returns the count of edges that were deleted along with the node (for stats tracking).
-func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted int64, deletedEdgeIDs []EdgeID, deletedNode *Node, err error) {
+func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted int64, deletedEdgeIDs []EdgeID, deletedEdges []*Edge, deletedNode *Node, err error) {
 	key := nodeKey(id)
 
 	// CRITICAL: Delete separately stored embeddings FIRST, before checking if node exists.
@@ -495,7 +496,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	defer it.Close()
 	for it.Rewind(); it.Valid(); it.Next() {
 		if err := txn.Delete(it.Item().Key()); err != nil {
-			return 0, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
+			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
 		}
 	}
 
@@ -505,10 +506,10 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		// Node doesn't exist, but we've already cleaned up embeddings above.
 		// Also clean up pending embeddings index.
 		txn.Delete(pendingEmbedKey(id))
-		return 0, nil, nil, ErrNotFound
+		return 0, nil, nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 
 	if err := item.Value(func(val []byte) error {
@@ -518,7 +519,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		deletedNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
 
 	// Archive the node body at the current head's version BEFORE we
@@ -526,10 +527,10 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	// <= head.Version.
 	if head, headErr := b.loadNodeMVCCHeadInTxn(txn, id); headErr == nil && !head.Tombstoned {
 		if err := b.archiveNodeBodyInTxn(txn, id, deletedNode, head.Version); err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 	} else if headErr != nil && headErr != ErrNotFound {
-		return 0, nil, nil, headErr
+		return 0, nil, nil, nil, headErr
 	}
 
 	// Delete label indexes
@@ -539,29 +540,31 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 			continue
 		}
 		if err := txn.Delete(lblKey); err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 	}
 
 	// Delete outgoing edges (and track count). Lookup-only: if the node
 	// never got a numID no outgoing entries exist either.
 	if outPrefix := b.outgoingIndexPrefixString(id); outPrefix != nil {
-		outCount, outIDs, err := b.deleteEdgesWithPrefix(txn, outPrefix)
+		outCount, outIDs, outEdges, err := b.deleteEdgesWithPrefix(txn, outPrefix)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 		edgesDeleted += outCount
 		deletedEdgeIDs = append(deletedEdgeIDs, outIDs...)
+		deletedEdges = append(deletedEdges, outEdges...)
 	}
 
 	// Delete incoming edges.
 	if inPrefix := b.incomingIndexPrefixString(id); inPrefix != nil {
-		inCount, inIDs, err := b.deleteEdgesWithPrefix(txn, inPrefix)
+		inCount, inIDs, inEdges, err := b.deleteEdgesWithPrefix(txn, inPrefix)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, nil, err
 		}
 		edgesDeleted += inCount
 		deletedEdgeIDs = append(deletedEdgeIDs, inIDs...)
+		deletedEdges = append(deletedEdges, inEdges...)
 	}
 
 	// Remove from pending embeddings index (if present)
@@ -577,9 +580,9 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	// existing numID. The prune pipeline is the final owner of dict
 	// cleanup for tombstoned entities.
 	if err := txn.Delete(key); err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, nil, err
 	}
-	return edgesDeleted, deletedEdgeIDs, deletedNode, nil
+	return edgesDeleted, deletedEdgeIDs, deletedEdges, deletedNode, nil
 }
 
 // BulkDeleteNodes removes multiple nodes in a single transaction.
@@ -600,6 +603,7 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	// Track edges deleted along with nodes
 	totalEdgesDeleted := int64(0)
 	deletedEdgeIDs := make([]EdgeID, 0)
+	deletedEdges := make([]*Edge, 0)
 
 	ns, err := namespaceForNodeIDs(ids)
 	if err != nil {
@@ -614,7 +618,7 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 			if id == "" {
 				continue // Skip invalid IDs
 			}
-			edgesDeleted, edgeIDs, deletedNode, err := b.deleteNodeInTxn(txn, id)
+			edgesDeleted, edgeIDs, edges, deletedNode, err := b.deleteNodeInTxn(txn, id)
 			if err == nil {
 				deletedNodeCount++                          // Successfully deleted
 				deletedNodeIDs = append(deletedNodeIDs, id) // Track for callbacks
@@ -623,6 +627,7 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 				}
 				totalEdgesDeleted += edgesDeleted
 				deletedEdgeIDs = append(deletedEdgeIDs, edgeIDs...)
+				deletedEdges = append(deletedEdges, edges...)
 			} else if err != ErrNotFound {
 				return err // Actual error, abort transaction
 			}
@@ -638,7 +643,12 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 				return err
 			}
 		}
-		for _, edgeID := range deletedEdgeIDs {
+		for i, edgeID := range deletedEdgeIDs {
+			if deletedEdges[i] != nil {
+				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
+					return err
+				}
+			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
 				return err
 			}
@@ -706,6 +716,7 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 	// Track which edges were actually deleted for accurate counting
 	deletedCount := int64(0)
 	deletedIDs := make([]EdgeID, 0, len(ids))
+	deletedEdges := make([]*Edge, 0, len(ids))
 	ns, err := namespaceForEdgeIDs(ids)
 	if err != nil {
 		return err
@@ -719,17 +730,27 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 			if id == "" {
 				continue // Skip invalid IDs
 			}
-			err := b.deleteEdgeInTxn(txn, id)
+			edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
+			if err != nil && err != ErrNotFound {
+				return err
+			}
+			err = b.deleteEdgeInTxn(txn, id)
 			if err == nil {
 				deletedCount++                      // Successfully deleted
 				deletedIDs = append(deletedIDs, id) // Track for callbacks
+				deletedEdges = append(deletedEdges, edgeForAdjacency)
 			} else if err != ErrNotFound {
 				return err // Actual error, abort transaction
 			}
 			// ErrNotFound is ignored (edge didn't exist, no count change)
 		}
 		// Tombstone markers preserve "deleted at this version" semantics.
-		for _, id := range deletedIDs {
+		for i, id := range deletedIDs {
+			if deletedEdges[i] != nil {
+				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
+					return err
+				}
+			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
 				return err
 			}

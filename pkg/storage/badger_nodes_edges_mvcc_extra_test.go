@@ -46,7 +46,7 @@ func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *test
 		if err := txn.Set(embeddingKey(id, 1), []byte{4, 5, 6}); err != nil {
 			return err
 		}
-		_, _, _, err := engine.deleteNodeInTxn(txn, id)
+		_, _, _, _, err := engine.deleteNodeInTxn(txn, id)
 		return err
 	})
 	require.ErrorIs(t, err, ErrNotFound)
@@ -83,7 +83,7 @@ func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 		if err := txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{}); err != nil {
 			return err
 		}
-		deleted, ids, delErr := engine.deleteEdgesWithPrefix(txn, prefix)
+		deleted, ids, _, delErr := engine.deleteEdgesWithPrefix(txn, prefix)
 		if delErr != nil {
 			return delErr
 		}

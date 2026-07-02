@@ -929,6 +929,72 @@ func TestBadgerEngine_PruneMVCCVersions_PrunesDirectionalAdjacencyHistory(t *tes
 	require.Empty(t, inNow)
 }
 
+func TestBadgerEngine_DeleteEdge_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	start := NodeID(prefixTestID("headonly-del-start"))
+	end := NodeID(prefixTestID("headonly-del-end"))
+	_, err = engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("headonly-del-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	require.NoError(t, engine.DeleteEdge(edgeID))
+
+	outPrefix := engine.mvccOutgoingAdjacencyPrefixString(start)
+	inPrefix := engine.mvccIncomingAdjacencyPrefixString(end)
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, inPrefix))
+}
+
+func TestBadgerEngine_BulkDeleteEdges_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	start := NodeID(prefixTestID("headonly-bulk-edge-start"))
+	end := NodeID(prefixTestID("headonly-bulk-edge-end"))
+	_, err = engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("headonly-bulk-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{edgeID}))
+
+	outPrefix := engine.mvccOutgoingAdjacencyPrefixString(start)
+	inPrefix := engine.mvccIncomingAdjacencyPrefixString(end)
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, inPrefix))
+}
+
+func TestBadgerEngine_DeleteNodeCascade_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	start := NodeID(prefixTestID("headonly-node-del-start"))
+	end := NodeID(prefixTestID("headonly-node-del-end"))
+	_, err = engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("headonly-node-del-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	require.NoError(t, engine.DeleteNode(end))
+
+	outPrefix := engine.mvccOutgoingAdjacencyPrefixString(start)
+	inPrefix := engine.mvccIncomingAdjacencyPrefixString(end)
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, inPrefix))
+}
+
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {
 	baseInner := NewMemoryEngine()
 	t.Cleanup(func() { _ = baseInner.Close() })

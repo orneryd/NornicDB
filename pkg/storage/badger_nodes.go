@@ -722,6 +722,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	// Track edge deletions for counter update after transaction
 	var totalEdgesDeleted int64
 	var deletedEdgeIDs []EdgeID
+	var deletedEdges []*Edge
 	var deletedNode *Node
 
 	b.labelCountWriteMu.Lock()
@@ -733,9 +734,10 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		// deleteNodeInTxn archives the pre-delete node body and each
 		// cascade-deleted edge body into their version records BEFORE
 		// removing the primary keys — see that function's doc.
-		edgesDeleted, edgeIDs, node, err := b.deleteNodeInTxn(txn, id)
+		edgesDeleted, edgeIDs, edges, node, err := b.deleteNodeInTxn(txn, id)
 		totalEdgesDeleted = edgesDeleted
 		deletedEdgeIDs = edgeIDs
+		deletedEdges = edges
 		deletedNode = node
 		if err != nil {
 			return err
@@ -762,14 +764,11 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		if err := b.writeNodeMVCCHeadInTxn(txn, id, version, true); err != nil {
 			return err
 		}
-		for _, edgeID := range deletedEdgeIDs {
-			edgeForAdjacency, edgeErr := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
-			if edgeErr == nil {
-				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edgeForAdjacency, version); err != nil {
+		for i, edgeID := range deletedEdgeIDs {
+			if deletedEdges[i] != nil {
+				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
 					return err
 				}
-			} else if edgeErr != ErrNotFound {
-				return edgeErr
 			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
 				return err
@@ -818,7 +817,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 // deleteEdgesWithPrefix deletes all edges matching the given prefix.
 // Returns the count of edges actually deleted for accurate stats tracking.
 // IMPORTANT: The returned count MUST be used to decrement edgeCount after txn commits.
-func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (int64, []EdgeID, error) {
+func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (int64, []EdgeID, []*Edge, error) {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchValues = false
 	it := txn.NewIterator(opts)
@@ -839,17 +838,23 @@ func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (in
 
 	var deletedCount int64
 	var deletedIDs []EdgeID
+	var deletedEdges []*Edge
 	for _, edgeID := range edgeIDs {
-		err := b.deleteEdgeInTxn(txn, edgeID)
+		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
+		if err != nil && err != ErrNotFound {
+			return 0, nil, nil, err
+		}
+		err = b.deleteEdgeInTxn(txn, edgeID)
 		if err == nil {
 			deletedCount++
 			deletedIDs = append(deletedIDs, edgeID)
+			deletedEdges = append(deletedEdges, edgeForAdjacency)
 		} else if err != ErrNotFound {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 	}
 
-	return deletedCount, deletedIDs, nil
+	return deletedCount, deletedIDs, deletedEdges, nil
 }
 
 // ============================================================================
