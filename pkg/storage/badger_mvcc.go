@@ -275,6 +275,20 @@ func (b *BadgerEngine) writeEdgeAdjacencyTombstoneInTxn(txn *badger.Txn, edge *E
 	return b.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, true)
 }
 
+func (b *BadgerEngine) writeEdgeAdjacencyDeltaInTxn(txn *badger.Txn, oldEdge, newEdge *Edge, version MVCCVersion) error {
+	if oldEdge != nil {
+		if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, oldEdge, version); err != nil {
+			return err
+		}
+	}
+	if newEdge != nil {
+		if err := b.writeEdgeAdjacencyLiveInTxn(txn, newEdge, version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id EdgeID) (*Edge, error) {
 	item, err := txn.Get(edgeKey(id))
 	if err == nil {
@@ -322,9 +336,6 @@ func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version
 				decoded, decodeErr := b.decodeEdgeBodyByID(val, id)
 				if decodeErr != nil {
 					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
 				}
 				decoded.ID = id
 				edge = decoded
@@ -1591,7 +1602,7 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 			for _, edgeID := range op.DeletedEdgeIDs {
 				edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 				if err == nil {
-					if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edge, version); err != nil {
+					if err := b.writeEdgeAdjacencyDeltaInTxn(txn, edge, nil, version); err != nil {
 						return err
 					}
 				} else if err != ErrNotFound {
@@ -1608,7 +1619,7 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 			if op.Edge == nil {
 				continue
 			}
-			if err := b.writeEdgeAdjacencyLiveInTxn(txn, op.Edge, version); err != nil {
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, op.Edge, version); err != nil {
 				return err
 			}
 			if op.FreshID {
@@ -1625,10 +1636,7 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 				continue
 			}
 			if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
-				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, op.OldEdge, version); err != nil {
-					return err
-				}
-				if err := b.writeEdgeAdjacencyLiveInTxn(txn, op.Edge, version); err != nil {
+				if err := b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version); err != nil {
 					return err
 				}
 			}

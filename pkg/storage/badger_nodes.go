@@ -765,10 +765,8 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			return err
 		}
 		for i, edgeID := range deletedEdgeIDs {
-			if deletedEdges[i] != nil {
-				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
-					return err
-				}
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
+				return err
 			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
 				return err

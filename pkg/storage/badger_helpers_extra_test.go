@@ -75,6 +75,30 @@ func TestExtractMVCCVersionFromKey_Errors(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid mvcc key length")
 }
 
+func TestExtractMVCCLogicalKeyAndVersion_NodeAndAdjacencyShapes(t *testing.T) {
+	v := MVCCVersion{
+		CommitTimestamp: time.Date(2025, 5, 2, 0, 0, 0, 0, time.UTC),
+		CommitSequence:  7,
+	}
+
+	nodeKey := mvccNodeVersionKey(44, v)
+	logical, gotV, err := extractMVCCLogicalKeyAndVersion(nodeKey)
+	require.NoError(t, err)
+	require.Equal(t, nodeKey[:9], logical)
+	require.Equal(t, 0, gotV.Compare(v))
+
+	adjKey := mvccOutgoingAdjacencyKey(11, 22, v)
+	logical, gotV, err = extractMVCCLogicalKeyAndVersion(adjKey)
+	require.NoError(t, err)
+	require.Equal(t, adjKey[:17], logical)
+	require.Equal(t, 0, gotV.Compare(v))
+
+	badAdjKey := append([]byte{0xFF}, bytes.Repeat([]byte{0}, 32)...)
+	_, _, err = extractMVCCLogicalKeyAndVersion(badAdjKey)
+	require.Error(t, err)
+
+}
+
 func TestExtractNodeNumIDAndMVCCVersionFromVersionKey(t *testing.T) {
 	v := MVCCVersion{
 		CommitTimestamp: time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
@@ -279,4 +303,19 @@ func TestBadgerHelpers_EmbeddingShardMarkerHelpers(t *testing.T) {
 	count, ok = parseEmbeddingShardMarker(marker)
 	require.True(t, ok)
 	require.Equal(t, 4, count)
+}
+
+func TestBadgerHelpers_MVCCIncomingAdjacencyKeyString_EdgeAllocationErrors(t *testing.T) {
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		_, err := engine.labelIndexKeyString(txn, "N", "test:node-only")
+		require.NoError(t, err)
+		readTxn := engine.db.NewTransaction(false)
+		defer readTxn.Discard()
+		_, err = engine.mvccIncomingAdjacencyKeyString(readTxn, "test:node-only", "test:missing-edge", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
+		require.Error(t, err)
+		return nil
+	}))
 }

@@ -149,17 +149,11 @@ func extractEdgeNumIDAndMVCCVersionFromVersionKey(key []byte) (uint64, MVCCVersi
 func extractMVCCLogicalKeyAndVersion(key []byte) ([]byte, MVCCVersion, error) {
 	switch {
 	case len(key) == 1+8+16:
-		version, err := decodeMVCCSortVersion(key[9:])
-		if err != nil {
-			return nil, MVCCVersion{}, err
-		}
+		version, _ := decodeMVCCSortVersion(key[9:])
 		logical := append([]byte(nil), key[:9]...)
 		return logical, version, nil
 	case len(key) == 1+8+8+16 && (key[0] == prefixMVCCOutgoingAdj || key[0] == prefixMVCCIncomingAdj):
-		version, err := decodeMVCCSortVersion(key[17:])
-		if err != nil {
-			return nil, MVCCVersion{}, err
-		}
+		version, _ := decodeMVCCSortVersion(key[17:])
 		logical := append([]byte(nil), key[:17]...)
 		return logical, version, nil
 	default:
@@ -837,10 +831,7 @@ func extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(key []byte) (uint64, MVCCVer
 	if len(key) != 1+8+8+16 {
 		return 0, MVCCVersion{}, fmt.Errorf("invalid mvcc adjacency key length: %d", len(key))
 	}
-	version, err := decodeMVCCSortVersion(key[17:])
-	if err != nil {
-		return 0, MVCCVersion{}, err
-	}
+	version, _ := decodeMVCCSortVersion(key[17:])
 	return binary.BigEndian.Uint64(key[9:17]), version, nil
 }
 

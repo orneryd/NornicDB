@@ -106,3 +106,30 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 	})
 	require.Error(t, err)
 }
+
+func TestBadgerMVCC_MaterializeCommit_ReadOnlyTxnWriteFailures(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	for _, nodeID := range []NodeID{"test:ro-a", "test:ro-b", "test:ro-c"} {
+		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}))
+	oldEdge, err := engine.GetEdge("test:ro-edge")
+	require.NoError(t, err)
+
+	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(4 * time.Second), CommitSequence: 7001}
+	readTxn := engine.db.NewTransaction(false)
+	defer readTxn.Discard()
+
+	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpCreateEdge, Edge: &Edge{ID: "test:ro-create", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}, FreshID: true}})
+	require.Error(t, err)
+
+	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpUpdateEdge, Edge: &Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-c", Type: "R"}, OldEdge: oldEdge}})
+	require.Error(t, err)
+
+	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpDeleteEdge, EdgeID: "test:ro-edge", OldEdge: oldEdge}})
+	require.Error(t, err)
+
+	err = engine.materializeMVCCCommitInTxn(readTxn, v, []Operation{{Type: OpDeleteNode, NodeID: "test:ro-b", OldNode: &Node{ID: "test:ro-b", Labels: []string{"N"}}, DeletedEdgeIDs: []EdgeID{"test:ro-edge"}}})
+	require.Error(t, err)
+}

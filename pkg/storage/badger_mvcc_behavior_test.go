@@ -659,10 +659,32 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	require.Len(t, edges, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), edges[0].ID)
 
+	outgoing, err := namespaced.GetOutgoingEdgesVisibleAt(startID, edgeHead.Version)
+	require.NoError(t, err)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, EdgeID("mvcc-ns-edge"), outgoing[0].ID)
+	require.Equal(t, startID, outgoing[0].StartNode)
+	require.Equal(t, endID, outgoing[0].EndNode)
+
+	incoming, err := namespaced.GetIncomingEdgesVisibleAt(endID, edgeHead.Version)
+	require.NoError(t, err)
+	require.Len(t, incoming, 1)
+	require.Equal(t, EdgeID("mvcc-ns-edge"), incoming[0].ID)
+	require.Equal(t, startID, incoming[0].StartNode)
+	require.Equal(t, endID, incoming[0].EndNode)
+
 	between, err := namespaced.GetEdgesBetweenVisibleAt(startID, endID, edgeHead.Version)
 	require.NoError(t, err)
 	require.Len(t, between, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), between[0].ID)
+
+	fallbackInner := &nonMVCCEngine{Engine: NewMemoryEngine()}
+	t.Cleanup(func() { _ = fallbackInner.Close() })
+	fallback := NewNamespacedEngine(fallbackInner, "test")
+	_, err = fallback.GetOutgoingEdgesVisibleAt("mvcc-ns-start", edgeHead.Version)
+	require.ErrorIs(t, err, ErrNotImplemented)
+	_, err = fallback.GetIncomingEdgesVisibleAt("mvcc-ns-end", edgeHead.Version)
+	require.ErrorIs(t, err, ErrNotImplemented)
 }
 
 func TestBadgerEngine_MVCCIndexedVisibilityAtSnapshot(t *testing.T) {
@@ -927,6 +949,85 @@ func TestBadgerEngine_PruneMVCCVersions_PrunesDirectionalAdjacencyHistory(t *tes
 	inNow, err := engine.GetIncomingEdgesVisibleAt(end, maxMVCCVersion())
 	require.NoError(t, err)
 	require.Empty(t, inNow)
+}
+
+func TestBadgerEngine_PruneMVCCVersions_DropsHeadlessAdjacencyTombstonesWhenUnretained(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	start := NodeID(prefixTestID("mvcc-adj-prune-zero-start"))
+	end := NodeID(prefixTestID("mvcc-adj-prune-zero-end"))
+	_, err = engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("mvcc-adj-prune-zero-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	require.NoError(t, engine.DeleteEdge(edgeID))
+
+	outPrefix := engine.mvccOutgoingAdjacencyPrefixString(start)
+	inPrefix := engine.mvccIncomingAdjacencyPrefixString(end)
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, inPrefix))
+
+	deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, deleted, int64(2))
+	require.Equal(t, 0, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 0, countAdjacencyMVCCVersions(t, engine, inPrefix))
+}
+
+func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testing.T) {
+	t.Run("outgoing adjacency decode failure aborts prune", func(t *testing.T) {
+		engine := createMVCCBadgerEngine(t)
+		_, err := engine.CreateNode(&Node{ID: "test:prune-out", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		prefix := engine.mvccOutgoingAdjacencyPrefixString("test:prune-out")
+		require.NotNil(t, prefix)
+		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
+		}))
+		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+		require.ErrorContains(t, err, "invalid mvcc key length")
+	})
+
+	t.Run("incoming adjacency decode failure aborts prune after outgoing succeeds", func(t *testing.T) {
+		engine := createMVCCBadgerEngine(t)
+		_, err := engine.CreateNode(&Node{ID: "test:prune-in", Labels: []string{"Node"}})
+		require.NoError(t, err)
+		prefix := engine.mvccIncomingAdjacencyPrefixString("test:prune-in")
+		require.NotNil(t, prefix)
+		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
+		}))
+		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+		require.ErrorContains(t, err, "invalid mvcc key length")
+	})
+}
+
+func TestBadgerEngine_PruneMVCCVersions_ZeroRetentionDropsNodeAndEdgeHeads(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	_, err = engine.CreateNode(&Node{ID: "test:prune-node", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "test:prune-peer", Labels: []string{"Node"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:prune-edge", StartNode: "test:prune-node", EndNode: "test:prune-peer", Type: "REL"}))
+	require.NoError(t, engine.DeleteEdge("test:prune-edge"))
+	require.NoError(t, engine.DeleteNode("test:prune-node"))
+
+	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
+	require.NoError(t, err)
+
+	_, err = engine.GetNodeCurrentHead("test:prune-node")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = engine.GetEdgeCurrentHead("test:prune-edge")
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Nil(t, engine.mvccOutgoingAdjacencyPrefixString("test:prune-node"))
 }
 
 func TestBadgerEngine_DeleteEdge_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {

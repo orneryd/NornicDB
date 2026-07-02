@@ -121,7 +121,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 			return err
 		}
-		if err := b.writeEdgeAdjacencyLiveInTxn(txn, edge, version); err != nil {
+		if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, edge, version); err != nil {
 			return err
 		}
 		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
@@ -284,10 +284,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
-			if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, existing, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeAdjacencyLiveInTxn(txn, edge, version); err != nil {
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, existing, edge, version); err != nil {
 				return err
 			}
 		}
@@ -385,10 +382,8 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		if err := b.deleteEdgeInTxn(txn, id); err != nil {
 			return err
 		}
-		if edgeForAdjacency != nil {
-			if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edgeForAdjacency, version); err != nil {
-				return err
-			}
+		if err := b.writeEdgeAdjacencyDeltaInTxn(txn, edgeForAdjacency, nil, version); err != nil {
+			return err
 		}
 		// Tombstone marker (tiny, no body) preserved at the deletion
 		// version so snapshot reads at that version observe the delete
@@ -644,10 +639,8 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 			}
 		}
 		for i, edgeID := range deletedEdgeIDs {
-			if deletedEdges[i] != nil {
-				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
-					return err
-				}
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
+				return err
 			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
 				return err
@@ -746,10 +739,8 @@ func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 		}
 		// Tombstone markers preserve "deleted at this version" semantics.
 		for i, id := range deletedIDs {
-			if deletedEdges[i] != nil {
-				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, deletedEdges[i], version); err != nil {
-					return err
-				}
+			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
+				return err
 			}
 			if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
 				return err

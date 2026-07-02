@@ -154,3 +154,80 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_OperationMatrix(t *testing.T) {
 	require.True(t, headEdgeDeleted.Tombstoned)
 	require.Equal(t, version, headEdgeDeleted.Version)
 }
+
+func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+
+	for _, nodeID := range []NodeID{"test:mat-a", "test:mat-b", "test:mat-c", "test:mat-d"} {
+		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-delete", StartNode: "test:mat-b", EndNode: "test:mat-c", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-child", StartNode: "test:mat-d", EndNode: "test:mat-c", Type: "REL"}))
+
+	oldUpdate, err := engine.GetEdge("test:mat-update")
+	require.NoError(t, err)
+	oldDelete, err := engine.GetEdge("test:mat-delete")
+	require.NoError(t, err)
+	newCreate := &Edge{ID: "test:mat-create", StartNode: "test:mat-a", EndNode: "test:mat-d", Type: "REL"}
+	newUpdate := &Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-d", Type: "REL2"}
+
+	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(2 * time.Second), CommitSequence: 8801}
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		createBody, err := engine.encodeEdgeInTxn(txn, namespaceForEdgeID(newCreate.ID), newCreate)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(edgeKey(newCreate.ID), createBody); err != nil {
+			return err
+		}
+		updateBody, err := engine.encodeEdgeInTxn(txn, namespaceForEdgeID(newUpdate.ID), newUpdate)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(edgeKey(newUpdate.ID), updateBody); err != nil {
+			return err
+		}
+		if err := txn.Delete(edgeKey("test:mat-delete")); err != nil {
+			return err
+		}
+		if err := txn.Delete(edgeKey("test:mat-child")); err != nil {
+			return err
+		}
+		if err := txn.Delete(nodeKey("test:mat-c")); err != nil {
+			return err
+		}
+		ops := []Operation{
+			{Type: OpDeleteNode, NodeID: "test:mat-c", OldNode: &Node{ID: "test:mat-c", Labels: []string{"N"}}, DeletedEdgeIDs: []EdgeID{"test:mat-child"}},
+			{Type: OpCreateEdge, Edge: newCreate, FreshID: true},
+			{Type: OpUpdateEdge, Edge: newUpdate, OldEdge: oldUpdate},
+			{Type: OpDeleteEdge, EdgeID: "test:mat-delete", OldEdge: oldDelete},
+		}
+		return engine.materializeMVCCCommitInTxn(txn, version, ops)
+	}))
+
+	outA, err := engine.GetOutgoingEdgesVisibleAt("test:mat-a", version)
+	require.NoError(t, err)
+	require.Len(t, outA, 2)
+
+	inD, err := engine.GetIncomingEdgesVisibleAt("test:mat-d", version)
+	require.NoError(t, err)
+	require.Len(t, inD, 2)
+
+	inB, err := engine.GetIncomingEdgesVisibleAt("test:mat-b", version)
+	require.NoError(t, err)
+	require.Empty(t, inB)
+
+	outB, err := engine.GetOutgoingEdgesVisibleAt("test:mat-b", version)
+	require.NoError(t, err)
+	require.Empty(t, outB)
+
+	inC, err := engine.GetIncomingEdgesVisibleAt("test:mat-c", version)
+	require.NoError(t, err)
+	require.Empty(t, inC)
+
+	outD, err := engine.GetOutgoingEdgesVisibleAt("test:mat-d", version)
+	require.NoError(t, err)
+	require.Empty(t, outD)
+}

@@ -62,6 +62,19 @@ type namespacedSchemaFallbackEngine struct {
 	schema *SchemaManager
 }
 
+type namespacedMVCCVisibleEngine struct {
+	*MemoryEngine
+	nodes              []*Node
+	outgoing           []*Edge
+	incoming           []*Edge
+	edgesByType        []*Edge
+	edgesBetween       []*Edge
+	outgoingErr        error
+	incomingErr        error
+	lastOutgoingNodeID NodeID
+	lastIncomingNodeID NodeID
+}
+
 func (e *namespacedHelperEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
 	if e.streamNodeErr != nil {
 		return e.streamNodeErr
@@ -272,6 +285,34 @@ func (e *namespacedStreamingOnlyEngine) StreamNodeChunks(ctx context.Context, ch
 		}
 	}
 	return nil
+}
+
+func (e *namespacedMVCCVisibleEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+	return e.nodes, nil
+}
+
+func (e *namespacedMVCCVisibleEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	e.lastOutgoingNodeID = nodeID
+	if e.outgoingErr != nil {
+		return nil, e.outgoingErr
+	}
+	return e.outgoing, nil
+}
+
+func (e *namespacedMVCCVisibleEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	e.lastIncomingNodeID = nodeID
+	if e.incomingErr != nil {
+		return nil, e.incomingErr
+	}
+	return e.incoming, nil
+}
+
+func (e *namespacedMVCCVisibleEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+	return e.edgesByType, nil
+}
+
+func (e *namespacedMVCCVisibleEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return e.edgesBetween, nil
 }
 
 func (e *namespacedPrefixStreamingEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
@@ -1225,6 +1266,10 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetNodesByLabelVisibleAt("Doc", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
+	_, err = ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	require.ErrorIs(t, err, ErrNotImplemented)
+	_, err = ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetEdgesByTypeVisibleAt("REL", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetEdgesBetweenVisibleAt("n1", "n2", MVCCVersion{})
@@ -1250,6 +1295,63 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	latestEdge, err := ns.GetEdgeLatestVisible("missing")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, latestEdge)
+}
+
+func TestNamespacedEngine_MVCCIndexedVisibilityFiltersAndStripsNamespace(t *testing.T) {
+	inner := &namespacedMVCCVisibleEngine{
+		MemoryEngine: NewMemoryEngine(),
+		nodes: []*Node{
+			{ID: "tenant_a:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "kept"}},
+			{ID: "tenant_b:n2", Labels: []string{"Doc"}, Properties: map[string]any{"name": "filtered"}},
+		},
+		outgoing: []*Edge{
+			{ID: "tenant_a:e1", Type: "REL", StartNode: "tenant_a:n1", EndNode: "tenant_a:n3"},
+			{ID: "tenant_b:e2", Type: "REL", StartNode: "tenant_b:n1", EndNode: "tenant_b:n3"},
+		},
+		incoming: []*Edge{
+			{ID: "tenant_a:e3", Type: "REL", StartNode: "tenant_a:n4", EndNode: "tenant_a:n1"},
+			{ID: "tenant_b:e4", Type: "REL", StartNode: "tenant_b:n4", EndNode: "tenant_b:n1"},
+		},
+	}
+	t.Cleanup(func() { _ = inner.Close() })
+
+	ns := NewNamespacedEngine(inner, "tenant_a")
+
+	nodes, err := ns.GetNodesByLabelVisibleAt("Doc", MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, NodeID("n1"), nodes[0].ID)
+
+	outgoing, err := ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, NodeID("tenant_a:n1"), inner.lastOutgoingNodeID)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, EdgeID("e1"), outgoing[0].ID)
+	require.Equal(t, NodeID("n1"), outgoing[0].StartNode)
+	require.Equal(t, NodeID("n3"), outgoing[0].EndNode)
+
+	incoming, err := ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, NodeID("tenant_a:n1"), inner.lastIncomingNodeID)
+	require.Len(t, incoming, 1)
+	require.Equal(t, EdgeID("e3"), incoming[0].ID)
+	require.Equal(t, NodeID("n4"), incoming[0].StartNode)
+	require.Equal(t, NodeID("n1"), incoming[0].EndNode)
+}
+
+func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testing.T) {
+	inner := &namespacedMVCCVisibleEngine{
+		MemoryEngine: NewMemoryEngine(),
+		outgoingErr:  errors.New("outgoing boom"),
+		incomingErr:  errors.New("incoming boom"),
+	}
+	t.Cleanup(func() { _ = inner.Close() })
+	ns := NewNamespacedEngine(inner, "tenant_a")
+
+	_, err := ns.GetOutgoingEdgesVisibleAt("n1", MVCCVersion{})
+	require.EqualError(t, err, "outgoing boom")
+	_, err = ns.GetIncomingEdgesVisibleAt("n1", MVCCVersion{})
+	require.EqualError(t, err, "incoming boom")
 }
 
 func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {

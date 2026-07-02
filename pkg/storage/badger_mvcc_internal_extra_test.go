@@ -24,8 +24,9 @@ func (r *testSnapshotRegistry) Snapshot() []SnapshotReaderInfo { return nil }
 func (r *testSnapshotRegistry) OldestReaderAge() time.Duration { return r.oldest }
 
 type testLifecycleController struct {
-	registry *testSnapshotRegistry
-	pinned   int64
+	registry   *testSnapshotRegistry
+	pinned     int64
+	acquireErr error
 }
 
 func (c *testLifecycleController) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
@@ -46,6 +47,9 @@ func (c *testLifecycleController) SetLifecycleSchedule(interval time.Duration) e
 	return nil
 }
 func (c *testLifecycleController) AcquireSnapshotReader(info SnapshotReaderInfo) (func(), error) {
+	if c.acquireErr != nil {
+		return nil, c.acquireErr
+	}
 	return c.RegisterSnapshotReader(info), nil
 }
 func (c *testLifecycleController) EvaluateSnapshotReader(info SnapshotReaderInfo) (bool, bool) {
@@ -80,6 +84,79 @@ func TestMVCCAccessors_WithLifecycleController(t *testing.T) {
 	require.Equal(t, int64(3), engine.ActiveReaders())
 	require.Equal(t, int64(4096), engine.PinnedBytes())
 	require.Equal(t, 5.0, engine.OldestReaderAgeSeconds())
+}
+
+func TestBadgerEngine_AdjacencySnapshotReaderAcquisitionErrors(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	ctrl := &testLifecycleController{
+		registry:   &testSnapshotRegistry{},
+		acquireErr: context.Canceled,
+	}
+	engine.mu.Lock()
+	engine.lifecycleController = ctrl
+	engine.mu.Unlock()
+
+	_, err := engine.GetOutgoingEdgesVisibleAt("test:n1", MVCCVersion{})
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = engine.GetIncomingEdgesVisibleAt("test:n1", MVCCVersion{})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_EmptyPrefix(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		edgeIDs, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(txn, nil, MVCCVersion{})
+		require.NoError(t, err)
+		require.Nil(t, edgeIDs)
+		return nil
+	}))
+}
+
+func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	_, err := engine.CreateNode(&Node{ID: "test:adj-a", Labels: []string{"N"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "test:adj-b", Labels: []string{"N"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:adj-edge", StartNode: "test:adj-a", EndNode: "test:adj-b", Type: "R"}))
+	head, err := engine.GetEdgeCurrentHead("test:adj-edge")
+	require.NoError(t, err)
+
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		key, keyErr := engine.mvccOutgoingAdjacencyKeyString(txn, "test:adj-a", "test:adj-edge", head.Version)
+		if keyErr != nil {
+			return keyErr
+		}
+		return txn.Set(key, []byte("bad-adj"))
+	}))
+
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		_, err := engine.collectVisibleAdjacencyEdgeIDsInTxn(txn, engine.mvccOutgoingAdjacencyPrefixString("test:adj-a"), head.Version)
+		require.Error(t, err)
+		return nil
+	}))
+}
+
+func TestBadgerEngine_VisibleAdjacencyReaders_PropagateEdgeLookupErrors(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	_, err := engine.CreateNode(&Node{ID: "test:ga", Labels: []string{"N"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "test:gb", Labels: []string{"N"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ge", StartNode: "test:ga", EndNode: "test:gb", Type: "R"}))
+	head, err := engine.GetEdgeCurrentHead("test:ge")
+	require.NoError(t, err)
+
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		edgeNum, ok := engine.idDict.lookupEdgeNumID("test:ge")
+		require.True(t, ok)
+		return txn.Set(mvccEdgeHeadKey(edgeNum), []byte("bad-head"))
+	}))
+
+	_, err = engine.GetOutgoingEdgesVisibleAt("test:ga", head.Version)
+	require.Error(t, err)
+	_, err = engine.GetIncomingEdgesVisibleAt("test:gb", head.Version)
+	require.Error(t, err)
 }
 
 func TestWriteAndLoadMVCCHeadForLogicalKeyInTxn_NodeAndEdge(t *testing.T) {

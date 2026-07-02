@@ -300,6 +300,12 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	nodes, err := wrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Node{node}, nodes)
+	outgoing, err := wrapper.GetOutgoingEdgesVisibleAt("nornic:n1", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, outgoing)
+	incoming, err := wrapper.GetIncomingEdgesVisibleAt("nornic:n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Equal(t, []*storage.Edge{edge}, incoming)
 	edges, err := wrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, edges)
@@ -312,14 +318,14 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{nsNode}, edges: []*storage.Edge{nsEdge}}
 	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
 
-	outgoing, err := nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	outgoing, err = nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
 	require.Equal(t, storage.NodeID("n1"), outgoing[0].StartNode)
 	require.Equal(t, storage.NodeID("n2"), outgoing[0].EndNode)
 
-	incoming, err := nsWrapper.GetIncomingEdgesVisibleAt("n2", storage.MVCCVersion{})
+	incoming, err = nsWrapper.GetIncomingEdgesVisibleAt("n2", storage.MVCCVersion{})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, storage.EdgeID("e1"), incoming[0].ID)
@@ -328,6 +334,10 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 
 	plainWrapper := &transactionStorageWrapper{}
 	_, err = plainWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	_, err = plainWrapper.GetIncomingEdgesVisibleAt("n1", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 	_, err = plainWrapper.GetEdgesByTypeVisibleAt("LINKS", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)

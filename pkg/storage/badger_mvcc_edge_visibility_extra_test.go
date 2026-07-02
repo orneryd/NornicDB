@@ -89,3 +89,53 @@ func TestBadgerEngine_MVCCEdgeVisibility_FilterAndBetweenGuards(t *testing.T) {
 	_, err = engine.GetEdgesBetweenVisibleAt("", end, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
 	require.ErrorIs(t, err, ErrInvalidID)
 }
+
+func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranches(t *testing.T) {
+	t.Run("historical suppressed record is filtered after mvcc lookup", func(t *testing.T) {
+		engine := createMVCCBadgerEngine(t)
+		engine.SetDecayEnabled(true)
+		for _, nodeID := range []NodeID{"test:hs-a", "test:hs-b"} {
+			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			require.NoError(t, err)
+		}
+		edgeID := EdgeID("test:hs-edge")
+		v1 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Second), CommitSequence: 10}
+		v2 := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}
+		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			if err := engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hs-a", EndNode: "test:hs-b", Type: "REL", VisibilitySuppressed: true}, v1); err != nil {
+				return err
+			}
+			return engine.writeEdgeMVCCHeadWithFloorInTxn(txn, edgeID, v2, false, v1)
+		}))
+
+		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+			_, err := engine.getEdgeVisibleAtInTxn(txn, edgeID, v1)
+			require.ErrorIs(t, err, ErrNotFound)
+			return nil
+		}))
+	})
+
+	t.Run("missing primary falls back to older mvcc record when head record is absent", func(t *testing.T) {
+		engine := createMVCCBadgerEngine(t)
+		for _, nodeID := range []NodeID{"test:hf-a", "test:hf-b"} {
+			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			require.NoError(t, err)
+		}
+		edgeID := EdgeID("test:hf-edge")
+		require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
+		require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}))
+		v2, err := engine.GetEdgeCurrentHead(edgeID)
+		require.NoError(t, err)
+
+		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			return txn.Delete(edgeKey(edgeID))
+		}))
+
+		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+			edge, err := engine.getEdgeVisibleAtInTxn(txn, edgeID, v2.Version)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, edge.Properties["w"])
+			return nil
+		}))
+	})
+}
