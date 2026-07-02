@@ -460,6 +460,115 @@ WHERE rel.evidence_source = 'resolver/cross-repo'
 	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
 }
 
+func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceUsesIndex(t *testing.T) {
+	exec, wrapped := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	for i := 0; i < 500; i++ {
+		_, err = exec.Execute(ctx,
+			"CREATE (:Repository {id:$id})",
+			map[string]interface{}{"id": fmt.Sprintf("repository:unrelated-%03d", i)})
+		require.NoError(t, err)
+	}
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+	require.NoError(t, err)
+
+	wrapped.reset()
+	sourcePattern := nodePatternInfo{
+		variable: "source_repo",
+		labels:   []string{"Repository"},
+		properties: map[string]interface{}{
+			"id": "repository:source",
+		},
+	}
+	sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	require.Equal(t, "repository:source", sources[0].Properties["id"])
+	require.Zerof(t, wrapped.GetNodesByLabelCalls(),
+		"transaction-mode bound relationship DELETE source lookup leaked %d GetNodesByLabel calls",
+		wrapped.GetNodesByLabelCalls())
+}
+
+func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceKeepsPendingNodes(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+
+	inner := exec.storage.(*storage.NamespacedEngine).GetInnerEngine().(*scanCountingEngine)
+	require.NoError(t, inner.EnsureNamespaceMVCC("scan"))
+	tx, err := inner.BeginTransaction()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	require.NoError(t, tx.SetNamespace("scan"))
+
+	txWrapper := &transactionStorageWrapper{tx: tx, underlying: exec.storage, namespace: "scan", separator: ":"}
+	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
+	txExec := exec.cloneWithStorage(txWrapper)
+	require.NoError(t, txWrapper.BulkCreateNodes([]*storage.Node{{
+		ID:     "pending-source-node",
+		Labels: []string{"Repository"},
+		Properties: map[string]interface{}{
+			"id": "repository:pending-source",
+		},
+	}}))
+
+	sourcePattern := nodePatternInfo{
+		variable: "source_repo",
+		labels:   []string{"Repository"},
+		properties: map[string]interface{}{
+			"id": "repository:pending-source",
+		},
+	}
+	sources, err := txExec.collectBoundRelationshipDeleteSources(txCtx, sourcePattern, true)
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	require.Equal(t, "repository:pending-source", sources[0].Properties["id"])
+}
+
+func BenchmarkMatchPatternProperty_BoundRelationshipDeleteTransactionSourceLookup(b *testing.B) {
+	for _, repoCount := range []int{100, 1000, 5000} {
+		b.Run(fmt.Sprintf("repositories=%d", repoCount), func(b *testing.B) {
+			exec, _ := newCountingExecutor(b)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+			require.NoError(b, err)
+			for i := 0; i < repoCount; i++ {
+				_, err = exec.Execute(ctx,
+					"CREATE (:Repository {id:$id})",
+					map[string]interface{}{"id": fmt.Sprintf("repository:unrelated-%05d", i)})
+				require.NoError(b, err)
+			}
+			_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:source'})", nil)
+			require.NoError(b, err)
+
+			sourcePattern := nodePatternInfo{
+				variable: "source_repo",
+				labels:   []string{"Repository"},
+				properties: map[string]interface{}{
+					"id": "repository:source",
+				},
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(sources) != 1 {
+					b.Fatalf("expected one source, got %d", len(sources))
+				}
+			}
+		})
+	}
+}
+
 func TestMatchPatternProperty_TryBoundRelationshipDeleteDeletesUnionAndLimitedMatches(t *testing.T) {
 	exec, _ := newCountingExecutor(t)
 
