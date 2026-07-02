@@ -128,3 +128,110 @@ WITH rel LIMIT 1`
 	require.NoError(t, err)
 	require.Equal(t, int64(1), verify.Rows[0][0], "one edge should remain")
 }
+
+// TestBoundRelationshipDelete_EligibilityGuards covers the pattern-shape guards
+// that decline the fast path when the two-clause bound-delete form is not met.
+func TestBoundRelationshipDelete_EligibilityGuards(t *testing.T) {
+	cases := []struct {
+		name      string
+		segment   string
+		deleteVar string
+	}{
+		{"unparseable with/limit segment", `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
+WITH rel SKIP 1`, "rel"},
+		{"limit base not simple", `
+MATCH (a) WITH a
+MATCH (a)-[rel]->(b)
+WITH rel LIMIT 1`, "rel"},
+		{"source clause has no variable", `
+MATCH ()
+MATCH (source_repo)-[rel]->(b)`, "rel"},
+		{"relationship pattern is chained", `
+MATCH (source_repo)
+MATCH (source_repo)-[rel]->(b)-[other]->(c)`, "rel"},
+		{"start variable not the source", `
+MATCH (source_repo)
+MATCH (other)-[rel]->(b)`, "rel"},
+		{"relationship variable is not the delete var", `
+MATCH (source_repo)
+MATCH (source_repo)-[other]->(b)`, "rel"},
+		{"variable length relationship", `
+MATCH (source_repo)
+MATCH (source_repo)-[rel*1..2]->(b)`, "rel"},
+	}
+	exec := seedBoundDeleteFixture(t, 1)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), tc.segment, "", tc.deleteVar, false)
+			require.NoError(t, err)
+			require.False(t, ok, "fast path should decline this shape")
+			require.Nil(t, res)
+		})
+	}
+}
+
+// TestBoundRelationshipDelete_DirectionVariants exercises the incoming and
+// both-direction candidate-edge branches.
+func TestBoundRelationshipDelete_DirectionVariants(t *testing.T) {
+	t.Run("incoming", func(t *testing.T) {
+		exec := seedBoundDeleteFixture(t, 1)
+		seg := `
+MATCH (target:Repository {id:'repository:target-a'})
+MATCH (target)<-[rel:DEPLOYS_FROM]-(:Repository)`
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, 1, res.Stats.RelationshipsDeleted)
+	})
+	t.Run("both", func(t *testing.T) {
+		exec := seedBoundDeleteFixture(t, 1)
+		seg := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]-(:Repository)`
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, 1, res.Stats.RelationshipsDeleted)
+	})
+}
+
+// TestBoundRelationshipDelete_NamedEndNodeWithWhere covers the branch that binds
+// a named end-node variable into the WHERE evaluation path.
+func TestBoundRelationshipDelete_NamedEndNodeWithWhere(t *testing.T) {
+	exec := seedBoundDeleteFixture(t, 1)
+	seg := `
+MATCH (source_repo:Repository {id:'repository:source'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]->(dest:Repository)
+WHERE rel.evidence_source = 'resolver/cross-repo'`
+	res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, res.Stats.RelationshipsDeleted)
+}
+
+// TestBoundRelationshipDelete_SelfLoopBothDirectionDedup covers the seen-edge
+// dedup branch: a self-loop edge appears in both the outgoing and incoming
+// candidate sets for a both-direction match and must be deleted once.
+func TestBoundRelationshipDelete_SelfLoopBothDirectionDedup(t *testing.T) {
+	exec, _ := newCountingExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Repository {id:'repository:self'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+MATCH (s:Repository {id:'repository:self'})
+CREATE (s)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(s)
+`, nil)
+	require.NoError(t, err)
+
+	seg := `
+MATCH (source_repo:Repository {id:'repository:self'})
+MATCH (source_repo)-[rel:DEPLOYS_FROM]-(:Repository)`
+	res, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, seg, "", "rel", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 1, res.Stats.RelationshipsDeleted, "self-loop edge must be deleted exactly once")
+}

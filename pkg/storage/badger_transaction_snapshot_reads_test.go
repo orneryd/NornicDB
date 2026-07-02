@@ -111,6 +111,40 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidData)
 }
 
+// TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex covers the
+// no-snapshot branch (zero read timestamp) of the committed-adjacency and
+// committed-nodes helpers, where reads fall back to the current index/head
+// rather than the visible-at path.
+func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	start, target, edgeID := seedSnapshotAdjacencyGraph(t, engine, 1)
+
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	// Force the no-snapshot path deterministically.
+	tx.mu.Lock()
+	tx.readTS = MVCCVersion{}
+	require.True(t, tx.readTS.IsZero())
+
+	out, err := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
+	require.NoError(t, err)
+	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(out))
+
+	in, err := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
+	require.NoError(t, err)
+	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(in))
+
+	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	require.ErrorIs(t, err, ErrInvalidData)
+
+	nodes, err := tx.getAllCommittedNodesLocked()
+	tx.mu.Unlock()
+	require.NoError(t, err)
+	require.NotEmpty(t, nodes)
+}
+
 // BenchmarkTransaction_SnapshotAdjacency measures tx-snapshot outgoing adjacency
 // cost as the total edge count grows while the bound node's degree stays at 1.
 // A node-local read stays flat across edge counts; an all-edges scan degrades
