@@ -93,9 +93,9 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 }
 
 // TestTransaction_SnapshotAdjacencyRejectsUnknownDirection covers the defensive
-// guard in the snapshot branch: an unrecognized direction returns ErrInvalidData
-// rather than silently resolving. The callers only pass "outgoing"/"incoming",
-// so this guard is reachable only from within the package.
+// guard in the snapshot branch: an EdgeDirection outside Outgoing/Incoming
+// returns ErrInvalidData rather than silently resolving. The callers only pass
+// Outgoing/Incoming, so this guard is reachable only from within the package.
 func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	start, _, _ := seedSnapshotAdjacencyGraph(t, engine, 1)
@@ -106,7 +106,7 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
 
 	tx.mu.Lock()
-	_, err = tx.getCommittedAdjacentEdgesLocked(start, "sideways")
+	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrInvalidData)
 }
