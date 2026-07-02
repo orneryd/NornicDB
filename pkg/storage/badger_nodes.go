@@ -846,6 +846,8 @@ func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (in
 		if err == nil {
 			deletedCount++
 			deletedIDs = append(deletedIDs, edgeID)
+			// ErrNotFound from the pre-delete load leaves this nil; the later adjacency-delta write
+			// intentionally no-ops because there was no live adjacency membership left to tombstone.
 			deletedEdges = append(deletedEdges, edgeForAdjacency)
 		} else if err != ErrNotFound {
 			return 0, nil, nil, err
