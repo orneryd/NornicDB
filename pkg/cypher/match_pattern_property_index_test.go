@@ -824,15 +824,14 @@ WHERE rel.evidence_source = 'resolver/cross-repo'`,
 	require.Nil(t, result)
 }
 
-func TestMatchPatternProperty_BoundRelationshipDeleteReturnsTargetLookupError(t *testing.T) {
+func TestMatchPatternProperty_BoundRelationshipDeleteSkipsTargetLookupError(t *testing.T) {
 	exec, wrapped := newCountingExecutor(t)
 
-	lookupErr := errors.New("target lookup failed")
-	wrapped.getNodeErr = lookupErr
+	wrapped.getNodeErr = errors.New("target lookup failed")
 	_, ok, err := exec.boundRelationshipDeleteTargetNode(wrapped, "source", &storage.Edge{
 		StartNode: "source",
 		EndNode:   "target",
 	}, "outgoing")
-	require.ErrorIs(t, err, lookupErr)
+	require.NoError(t, err)
 	require.False(t, ok)
 }

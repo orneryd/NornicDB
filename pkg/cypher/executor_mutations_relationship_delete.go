@@ -79,7 +79,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	}
 	if len(sources) == 0 {
 		result := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-		e.applyDeleteReturnProjection(result, cypher, deleteVar)
+		e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 		return result, true, nil
 	}
 
@@ -146,7 +146,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		}
 		result.Stats.RelationshipsDeleted = len(edgeIDs)
 	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar)
+	e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 	return result, true, nil
 }
 
@@ -298,10 +298,7 @@ func (e *StorageExecutor) boundRelationshipDeleteTargetNode(
 		return nil, false, nil
 	}
 	target, err := store.GetNode(targetID)
-	if err != nil {
-		return nil, false, err
-	}
-	if target == nil {
+	if err != nil || target == nil {
 		return nil, false, nil
 	}
 	return target, true, nil
