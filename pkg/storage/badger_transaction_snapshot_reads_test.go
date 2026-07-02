@@ -123,25 +123,26 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	// Force the no-snapshot path deterministically.
+	// The *Locked helpers require tx.mu held. Capture every result while
+	// holding the lock, release it, then assert: a failing assertion calls
+	// runtime.Goexit, which would run the deferred Rollback (also locks
+	// tx.mu) and deadlock if we asserted under the lock.
 	tx.mu.Lock()
-	tx.readTS = MVCCVersion{}
-	require.True(t, tx.readTS.IsZero())
-
-	out, err := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
-	require.NoError(t, err)
-	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(out))
-
-	in, err := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
-	require.NoError(t, err)
-	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(in))
-
-	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
-	require.ErrorIs(t, err, ErrInvalidData)
-
-	nodes, err := tx.getAllCommittedNodesLocked()
+	tx.readTS = MVCCVersion{} // force the no-snapshot path deterministically
+	zeroed := tx.readTS.IsZero()
+	out, outErr := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
+	in, inErr := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
+	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	nodes, nodesErr := tx.getAllCommittedNodesLocked()
 	tx.mu.Unlock()
-	require.NoError(t, err)
+
+	require.True(t, zeroed)
+	require.NoError(t, outErr)
+	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(out))
+	require.NoError(t, inErr)
+	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(in))
+	require.ErrorIs(t, badDirErr, ErrInvalidData)
+	require.NoError(t, nodesErr)
 	require.NotEmpty(t, nodes)
 }
 
