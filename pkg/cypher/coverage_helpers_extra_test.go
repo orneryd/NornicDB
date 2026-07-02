@@ -315,7 +315,8 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 
 	nsNode := &storage.Node{ID: "tenant:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "Ada"}}
 	nsEdge := &storage.Edge{ID: "tenant:e1", Type: "LINKS", StartNode: "tenant:n1", EndNode: "tenant:n2", Properties: map[string]interface{}{"rank": 1}}
-	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{nsNode}, edges: []*storage.Edge{nsEdge}}
+	otherTenantEdge := &storage.Edge{ID: "other:e2", Type: "LINKS", StartNode: "other:n1", EndNode: "other:n2", Properties: map[string]interface{}{"rank": 2}}
+	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{nsNode}, edges: []*storage.Edge{nsEdge, otherTenantEdge}}
 	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
 
 	outgoing, err = nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
