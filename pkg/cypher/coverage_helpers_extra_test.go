@@ -307,6 +307,25 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []*storage.Edge{edge}, edges)
 
+	nsNode := &storage.Node{ID: "tenant:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "Ada"}}
+	nsEdge := &storage.Edge{ID: "tenant:e1", Type: "LINKS", StartNode: "tenant:n1", EndNode: "tenant:n2", Properties: map[string]interface{}{"rank": 1}}
+	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{nsNode}, edges: []*storage.Edge{nsEdge}}
+	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
+
+	outgoing, err := nsWrapper.GetOutgoingEdgesVisibleAt("n1", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, outgoing, 1)
+	require.Equal(t, storage.EdgeID("e1"), outgoing[0].ID)
+	require.Equal(t, storage.NodeID("n1"), outgoing[0].StartNode)
+	require.Equal(t, storage.NodeID("n2"), outgoing[0].EndNode)
+
+	incoming, err := nsWrapper.GetIncomingEdgesVisibleAt("n2", storage.MVCCVersion{})
+	require.NoError(t, err)
+	require.Len(t, incoming, 1)
+	require.Equal(t, storage.EdgeID("e1"), incoming[0].ID)
+	require.Equal(t, storage.NodeID("n1"), incoming[0].StartNode)
+	require.Equal(t, storage.NodeID("n2"), incoming[0].EndNode)
+
 	plainWrapper := &transactionStorageWrapper{}
 	_, err = plainWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
 	require.ErrorIs(t, err, storage.ErrNotImplemented)

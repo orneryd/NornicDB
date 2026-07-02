@@ -147,16 +147,24 @@ func extractEdgeNumIDAndMVCCVersionFromVersionKey(key []byte) (uint64, MVCCVersi
 }
 
 func extractMVCCLogicalKeyAndVersion(key []byte) ([]byte, MVCCVersion, error) {
-	// Layout (post-refactor): [prefix(1)][numID(8)][version(16)].
-	if len(key) != 1+8+16 {
+	switch {
+	case len(key) == 1+8+16:
+		version, err := decodeMVCCSortVersion(key[9:])
+		if err != nil {
+			return nil, MVCCVersion{}, err
+		}
+		logical := append([]byte(nil), key[:9]...)
+		return logical, version, nil
+	case len(key) == 1+8+8+16 && (key[0] == prefixMVCCOutgoingAdj || key[0] == prefixMVCCIncomingAdj):
+		version, err := decodeMVCCSortVersion(key[17:])
+		if err != nil {
+			return nil, MVCCVersion{}, err
+		}
+		logical := append([]byte(nil), key[:17]...)
+		return logical, version, nil
+	default:
 		return nil, MVCCVersion{}, fmt.Errorf("invalid mvcc key length: %d", len(key))
 	}
-	version, err := decodeMVCCSortVersion(key[9:])
-	if err != nil {
-		return nil, MVCCVersion{}, err
-	}
-	logical := append([]byte(nil), key[:9]...)
-	return logical, version, nil
 }
 
 // labelIndexKey creates a key for the label index.

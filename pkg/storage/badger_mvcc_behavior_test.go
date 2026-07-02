@@ -32,6 +32,22 @@ func countNodeMVCCVersions(t *testing.T, engine *BadgerEngine, nodeID NodeID) in
 	return count
 }
 
+func countAdjacencyMVCCVersions(t *testing.T, engine *BadgerEngine, prefix []byte) int {
+	t.Helper()
+	count := 0
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = prefix
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+			count++
+		}
+		return nil
+	}))
+	return count
+}
+
 type nonMVCCEngine struct {
 	Engine
 }
@@ -876,6 +892,41 @@ func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, inAtCreate, 1)
 	require.Equal(t, edgeID, inAtCreate[0].ID)
+}
+
+func TestBadgerEngine_PruneMVCCVersions_PrunesDirectionalAdjacencyHistory(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+
+	start := NodeID(prefixTestID("mvcc-adj-prune-start"))
+	end := NodeID(prefixTestID("mvcc-adj-prune-end"))
+	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("mvcc-adj-prune-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	require.NoError(t, engine.DeleteEdge(edgeID))
+
+	outPrefix := engine.mvccOutgoingAdjacencyPrefixString(start)
+	inPrefix := engine.mvccIncomingAdjacencyPrefixString(end)
+	require.NotNil(t, outPrefix)
+	require.NotNil(t, inPrefix)
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 2, countAdjacencyMVCCVersions(t, engine, inPrefix))
+
+	deleted, err := engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, deleted, int64(2))
+	require.Equal(t, 1, countAdjacencyMVCCVersions(t, engine, outPrefix))
+	require.Equal(t, 1, countAdjacencyMVCCVersions(t, engine, inPrefix))
+
+	outNow, err := engine.GetOutgoingEdgesVisibleAt(start, maxMVCCVersion())
+	require.NoError(t, err)
+	require.Empty(t, outNow)
+	inNow, err := engine.GetIncomingEdgesVisibleAt(end, maxMVCCVersion())
+	require.NoError(t, err)
+	require.Empty(t, inNow)
 }
 
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {

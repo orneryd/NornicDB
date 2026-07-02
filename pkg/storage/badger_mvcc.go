@@ -2236,7 +2236,15 @@ func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOpti
 		if err != nil {
 			return err
 		}
-		deleted = nodeDeleted + edgeDeleted
+		outgoingDeleted, err := b.pruneMVCCKeyspaceInTxn(ctx, txn, []byte{prefixMVCCOutgoingAdj}, effectiveOpts, activeSnapshotReaders)
+		if err != nil {
+			return err
+		}
+		incomingDeleted, err := b.pruneMVCCKeyspaceInTxn(ctx, txn, []byte{prefixMVCCIncomingAdj}, effectiveOpts, activeSnapshotReaders)
+		if err != nil {
+			return err
+		}
+		deleted = nodeDeleted + edgeDeleted + outgoingDeleted + incomingDeleted
 		return nil
 	})
 	if err != nil {
@@ -2271,13 +2279,21 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 			currentGroup = currentGroup[:0]
 			return nil
 		}
-		head, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical)
-		if err != nil {
-			if err != ErrNotFound {
-				return err
+		hasExternalHead := len(currentGroup[0].logical) == 1+8
+		var head MVCCHead
+		if hasExternalHead {
+			var err error
+			head, err = b.loadMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical)
+			if err != nil {
+				if err != ErrNotFound {
+					return err
+				}
+				latest := currentGroup[len(currentGroup)-1]
+				head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned, FloorVersion: latest.version}
 			}
+		} else {
 			latest := currentGroup[len(currentGroup)-1]
-			head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned}
+			head = MVCCHead{Version: latest.version, Tombstoned: latest.tombstoned, FloorVersion: latest.version}
 		}
 
 		if head.Tombstoned && !activeSnapshotReaders && protectedAfter.IsZero() {
@@ -2308,36 +2324,40 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 				// Delete the MVCC head itself, drop the dict entry, and
 				// push the numID onto the debounced freelist so future
 				// allocations can recycle it after the TTL window.
-				logical := currentGroup[0].logical
-				switch logical[0] {
-				case prefixMVCCNode:
-					numID := binary.BigEndian.Uint64(logical[1:])
-					if err := txn.Delete(mvccNodeHeadKey(numID)); err != nil {
-						return err
-					}
-					if err := b.idDict.deleteNodeEntryByNumInTxn(txn, numID); err != nil {
-						return err
-					}
-					if err := b.idDict.pushFreeNodeInTxn(txn, numID); err != nil {
-						return err
-					}
-				case prefixMVCCEdge:
-					numID := binary.BigEndian.Uint64(logical[1:])
-					if err := txn.Delete(mvccEdgeHeadKey(numID)); err != nil {
-						return err
-					}
-					if err := b.idDict.deleteEdgeEntryByNumInTxn(txn, numID); err != nil {
-						return err
-					}
-					if err := b.idDict.pushFreeEdgeInTxn(txn, numID); err != nil {
-						return err
+				if hasExternalHead {
+					logical := currentGroup[0].logical
+					switch logical[0] {
+					case prefixMVCCNode:
+						numID := binary.BigEndian.Uint64(logical[1:])
+						if err := txn.Delete(mvccNodeHeadKey(numID)); err != nil {
+							return err
+						}
+						if err := b.idDict.deleteNodeEntryByNumInTxn(txn, numID); err != nil {
+							return err
+						}
+						if err := b.idDict.pushFreeNodeInTxn(txn, numID); err != nil {
+							return err
+						}
+					case prefixMVCCEdge:
+						numID := binary.BigEndian.Uint64(logical[1:])
+						if err := txn.Delete(mvccEdgeHeadKey(numID)); err != nil {
+							return err
+						}
+						if err := b.idDict.deleteEdgeEntryByNumInTxn(txn, numID); err != nil {
+							return err
+						}
+						if err := b.idDict.pushFreeEdgeInTxn(txn, numID); err != nil {
+							return err
+						}
 					}
 				}
 				currentGroup = currentGroup[:0]
 				return nil
 			}
-			if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, true, head.Version); err != nil {
-				return err
+			if hasExternalHead {
+				if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, true, head.Version); err != nil {
+					return err
+				}
 			}
 			currentGroup = currentGroup[:0]
 			return nil
@@ -2357,8 +2377,10 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 		}
 
 		if len(currentGroup) <= 1 && headInGroup {
-			if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, head.Tombstoned, currentGroup[0].version); err != nil {
-				return err
+			if hasExternalHead {
+				if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, head.Tombstoned, currentGroup[0].version); err != nil {
+					return err
+				}
 			}
 			currentGroup = currentGroup[:0]
 			return nil
@@ -2406,8 +2428,10 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 		if floorVersion.IsZero() {
 			floorVersion = head.Version
 		}
-		if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, head.Tombstoned, floorVersion); err != nil {
-			return err
+		if hasExternalHead {
+			if err := b.writeMVCCHeadForLogicalKeyInTxn(txn, currentGroup[0].logical, head.Version, head.Tombstoned, floorVersion); err != nil {
+				return err
+			}
 		}
 		currentGroup = currentGroup[:0]
 		return nil
@@ -2435,6 +2459,12 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 				tombstoned = record.Tombstoned
 			case prefixMVCCEdge:
 				record, decodeErr := decodeMVCCEdgeRecord(val)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				tombstoned = record.Tombstoned
+			case prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj:
+				record, decodeErr := decodeMVCCAdjacencyRecord(val)
 				if decodeErr != nil {
 					return decodeErr
 				}
