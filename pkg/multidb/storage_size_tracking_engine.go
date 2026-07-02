@@ -224,6 +224,20 @@ func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(label string, version stor
 	return nil, storage.ErrNotImplemented
 }
 
+func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, storage.ErrNotImplemented
+}
+
+func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, storage.ErrNotImplemented
+}
+
 func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
 		return provider.GetEdgesByTypeVisibleAt(edgeType, version)

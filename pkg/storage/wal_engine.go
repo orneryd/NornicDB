@@ -159,6 +159,22 @@ func (w *WALEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) 
 	return nil, ErrNotImplemented
 }
 
+// GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries when supported.
+func (w *WALEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, ErrNotImplemented
+}
+
+// GetIncomingEdgesVisibleAt delegates snapshot-visible incoming adjacency queries when supported.
+func (w *WALEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, ErrNotImplemented
+}
+
 // GetEdgesByTypeVisibleAt delegates snapshot-visible edge-type queries when supported.
 func (w *WALEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {

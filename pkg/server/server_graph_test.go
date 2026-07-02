@@ -216,6 +216,26 @@ func (e *graphSnapshotIndexEngine) GetNodesByLabelVisibleAt(label string, _ stor
 	return out, nil
 }
 
+func (e *graphSnapshotIndexEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	out := make([]*storage.Edge, 0, len(e.edges))
+	for _, edge := range e.edges {
+		if edge != nil && edge.StartNode == nodeID {
+			out = append(out, edge)
+		}
+	}
+	return out, nil
+}
+
+func (e *graphSnapshotIndexEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	out := make([]*storage.Edge, 0, len(e.edges))
+	for _, edge := range e.edges {
+		if edge != nil && edge.EndNode == nodeID {
+			out = append(out, edge)
+		}
+	}
+	return out, nil
+}
+
 func (e *graphSnapshotIndexEngine) GetEdgesByTypeVisibleAt(edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
 	e.getEdgesByTypeCalls++
 	out := make([]*storage.Edge, 0, len(e.edges))

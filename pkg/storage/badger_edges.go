@@ -121,6 +121,9 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 			return err
 		}
+		if err := b.writeEdgeAdjacencyLiveInTxn(txn, edge, version); err != nil {
+			return err
+		}
 		if err := putIndexEntryCatalogInTxn(txn, string(edge.ID), &IndexEntryCatalog{
 			TargetID:    string(edge.ID),
 			TargetScope: "EDGE",
@@ -281,6 +284,12 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
 				return err
 			}
+			if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, existing, version); err != nil {
+				return err
+			}
+			if err := b.writeEdgeAdjacencyLiveInTxn(txn, edge, version); err != nil {
+				return err
+			}
 		}
 
 		// If type changed, update edge type index.
@@ -370,6 +379,14 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		// record (no-op when retention is head-only) before removing
 		// the primary key.
 		if err := b.deleteEdgeInTxn(txn, id); err != nil {
+			return err
+		}
+		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
+		if err == nil {
+			if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edgeForAdjacency, version); err != nil {
+				return err
+			}
+		} else if err != ErrNotFound {
 			return err
 		}
 		// Tombstone marker (tiny, no body) preserved at the deletion

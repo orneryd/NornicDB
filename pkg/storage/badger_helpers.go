@@ -219,6 +219,48 @@ func incomingIndexPrefix(nodeNumID uint64) []byte {
 	return key
 }
 
+func mvccOutgoingAdjacencyPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCOutgoingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+func mvccOutgoingAdjacencyEdgePrefix(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixMVCCOutgoingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+func mvccOutgoingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) []byte {
+	key := mvccOutgoingAdjacencyEdgePrefix(nodeNumID, edgeNumID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
+func mvccIncomingAdjacencyPrefix(nodeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8)
+	key = append(key, prefixMVCCIncomingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	return key
+}
+
+func mvccIncomingAdjacencyEdgePrefix(nodeNumID, edgeNumID uint64) []byte {
+	key := make([]byte, 0, 1+8+8)
+	key = append(key, prefixMVCCIncomingAdj)
+	key = append(key, encodeNumID(nodeNumID)...)
+	key = append(key, encodeNumID(edgeNumID)...)
+	return key
+}
+
+func mvccIncomingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) []byte {
+	key := mvccIncomingAdjacencyEdgePrefix(nodeNumID, edgeNumID)
+	key = append(key, encodeMVCCSortVersion(version)...)
+	return key
+}
+
 // edgeTypeIndexKey creates a key for the edge type index.
 // Layout: [prefix][type-lowercased]\x00[edgeNumID 8B]. Type stays as
 // string because it has good shared-prefix compression in the LSM.
@@ -553,6 +595,46 @@ func (b *BadgerEngine) mvccEdgeVersionPrefixString(id EdgeID) []byte {
 	return mvccEdgeVersionPrefix(num)
 }
 
+func (b *BadgerEngine) mvccOutgoingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
+	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	if err != nil {
+		return nil, err
+	}
+	return mvccOutgoingAdjacencyKey(nodeNum, edgeNum, version), nil
+}
+
+func (b *BadgerEngine) mvccIncomingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
+	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	if err != nil {
+		return nil, err
+	}
+	return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
+}
+
+func (b *BadgerEngine) mvccOutgoingAdjacencyPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return mvccOutgoingAdjacencyPrefix(nodeNum)
+}
+
+func (b *BadgerEngine) mvccIncomingAdjacencyPrefixString(nodeID NodeID) []byte {
+	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
+	if !ok {
+		return nil
+	}
+	return mvccIncomingAdjacencyPrefix(nodeNum)
+}
+
 // edgeBetweenIndexKeyFromStringIDs is a test-support convenience that
 // resolves string IDs through the dictionary and returns the numeric-keyed
 // compact index key. Returns nil if any string ID is unknown.
@@ -741,6 +823,17 @@ func extractNodeNumIDFromLabelIndex(key []byte, labelLen int) (uint64, bool) {
 		return 0, false
 	}
 	return binary.BigEndian.Uint64(key[offset:]), true
+}
+
+func extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(key []byte) (uint64, MVCCVersion, error) {
+	if len(key) != 1+8+8+16 {
+		return 0, MVCCVersion{}, fmt.Errorf("invalid mvcc adjacency key length: %d", len(key))
+	}
+	version, err := decodeMVCCSortVersion(key[17:])
+	if err != nil {
+		return 0, MVCCVersion{}, err
+	}
+	return binary.BigEndian.Uint64(key[9:17]), version, nil
 }
 
 // ============================================================================

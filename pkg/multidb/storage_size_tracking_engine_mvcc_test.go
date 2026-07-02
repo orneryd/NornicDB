@@ -31,6 +31,14 @@ func (m *mvccDelegatingEngine) GetNodesByLabelVisibleAt(label string, _ storage.
 	return []*storage.Node{{ID: storage.NodeID("n:" + label)}}, nil
 }
 
+func (m *mvccDelegatingEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	return []*storage.Edge{{ID: storage.EdgeID("out:" + string(nodeID)), StartNode: nodeID}}, nil
+}
+
+func (m *mvccDelegatingEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, _ storage.MVCCVersion) ([]*storage.Edge, error) {
+	return []*storage.Edge{{ID: storage.EdgeID("in:" + string(nodeID)), EndNode: nodeID}}, nil
+}
+
 func (m *mvccDelegatingEngine) GetEdgesByTypeVisibleAt(edgeType string, _ storage.MVCCVersion) ([]*storage.Edge, error) {
 	return []*storage.Edge{{ID: storage.EdgeID("e:" + edgeType)}}, nil
 }

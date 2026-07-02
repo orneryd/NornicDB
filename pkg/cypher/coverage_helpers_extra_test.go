@@ -22,6 +22,14 @@ func (e *cypherVisibleMemoryEngine) GetNodesByLabelVisibleAt(label string, versi
 	return e.nodes, nil
 }
 
+func (e *cypherVisibleMemoryEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
+func (e *cypherVisibleMemoryEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	return e.edges, nil
+}
+
 func (e *cypherVisibleMemoryEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	return e.edges, nil
 }

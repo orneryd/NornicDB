@@ -49,6 +49,8 @@ const (
 	prefixIndexTombstone    = byte(0x17) // idxtomb:<original-index-key> -> []byte{} (presence marker)
 	prefixEdgeBetweenIndex  = byte(0x18) // edgebetween_set:start:end:type:edgeID -> []byte{} (all exact relationship lookups)
 	prefixEdgeBetweenHead   = byte(0x19) // edgebetween_head:start:end:type -> edgeID (fast single relationship lookup)
+	prefixMVCCOutgoingAdj   = byte(0x23) // mvcc_outgoing:nodeNum:edgeNum:version -> adjacency membership tombstone/live
+	prefixMVCCIncomingAdj   = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.

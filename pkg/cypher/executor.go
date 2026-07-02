@@ -2644,6 +2644,20 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, versi
 	return nil, storage.ErrNotImplemented
 }
 
+func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
+		return provider.GetOutgoingEdgesVisibleAt(w.prefixNodeID(nodeID), version)
+	}
+	return nil, storage.ErrNotImplemented
+}
+
+func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
+	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
+		return provider.GetIncomingEdgesVisibleAt(w.prefixNodeID(nodeID), version)
+	}
+	return nil, storage.ErrNotImplemented
+}
+
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
 	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
 		return provider.GetEdgesByTypeVisibleAt(edgeType, version)

@@ -59,6 +59,18 @@ func (e *walOptionalEngine) GetNodesByLabelVisibleAt(label string, _ MVCCVersion
 	}
 	return nil, nil
 }
+func (e *walOptionalEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
+	if e.edge != nil && e.edge.StartNode == nodeID {
+		return []*Edge{copyEdge(e.edge)}, nil
+	}
+	return nil, nil
+}
+func (e *walOptionalEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, _ MVCCVersion) ([]*Edge, error) {
+	if e.edge != nil && e.edge.EndNode == nodeID {
+		return []*Edge{copyEdge(e.edge)}, nil
+	}
+	return nil, nil
+}
 func (e *walOptionalEngine) GetEdgesByTypeVisibleAt(edgeType string, _ MVCCVersion) ([]*Edge, error) {
 	if e.edge != nil && e.edge.Type == edgeType {
 		return []*Edge{copyEdge(e.edge)}, nil

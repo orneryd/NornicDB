@@ -558,6 +558,44 @@ func (n *NamespacedEngine) GetNodesByLabelVisibleAt(label string, version MVCCVe
 	return filtered, nil
 }
 
+// GetOutgoingEdgesVisibleAt resolves snapshot-visible outgoing adjacency queries within the namespace.
+func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	edges, err := provider.GetOutgoingEdgesVisibleAt(n.prefixNodeID(nodeID), version)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if n.hasEdgePrefix(edge.ID) {
+			filtered = append(filtered, n.toUserEdge(edge))
+		}
+	}
+	return filtered, nil
+}
+
+// GetIncomingEdgesVisibleAt resolves snapshot-visible incoming adjacency queries within the namespace.
+func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	if !ok {
+		return nil, ErrNotImplemented
+	}
+	edges, err := provider.GetIncomingEdgesVisibleAt(n.prefixNodeID(nodeID), version)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]*Edge, 0, len(edges))
+	for _, edge := range edges {
+		if n.hasEdgePrefix(edge.ID) {
+			filtered = append(filtered, n.toUserEdge(edge))
+		}
+	}
+	return filtered, nil
+}
+
 // GetEdgesByTypeVisibleAt resolves snapshot-visible edge-type queries within the namespace.
 func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
 	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)

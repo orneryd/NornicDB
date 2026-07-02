@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -742,6 +743,139 @@ func TestBadgerEngine_MVCCBetweenVisibleAtIgnoresLatestEdgeBetweenIndex(t *testi
 	require.Len(t, betweenAtFirst, 1)
 	require.Equal(t, first.ID, betweenAtFirst[0].ID)
 	require.Equal(t, "OLD_LINK", betweenAtFirst[0].Type)
+}
+
+func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksEndpointMoves(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+
+	start := NodeID(prefixTestID("mvcc-adj-start"))
+	middle := NodeID(prefixTestID("mvcc-adj-middle"))
+	end := NodeID(prefixTestID("mvcc-adj-end"))
+	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: middle, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("mvcc-adj-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: middle, Type: "LINKS"}))
+	v1, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	v2, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+
+	outAtV1, err := engine.GetOutgoingEdgesVisibleAt(start, v1.Version)
+	require.NoError(t, err)
+	require.Len(t, outAtV1, 1)
+	require.Equal(t, middle, outAtV1[0].EndNode)
+
+	inMiddleAtV1, err := engine.GetIncomingEdgesVisibleAt(middle, v1.Version)
+	require.NoError(t, err)
+	require.Len(t, inMiddleAtV1, 1)
+	require.Equal(t, edgeID, inMiddleAtV1[0].ID)
+
+	inEndAtV1, err := engine.GetIncomingEdgesVisibleAt(end, v1.Version)
+	require.NoError(t, err)
+	require.Empty(t, inEndAtV1)
+
+	outAtV2, err := engine.GetOutgoingEdgesVisibleAt(start, v2.Version)
+	require.NoError(t, err)
+	require.Len(t, outAtV2, 1)
+	require.Equal(t, end, outAtV2[0].EndNode)
+
+	inMiddleAtV2, err := engine.GetIncomingEdgesVisibleAt(middle, v2.Version)
+	require.NoError(t, err)
+	require.Empty(t, inMiddleAtV2)
+
+	inEndAtV2, err := engine.GetIncomingEdgesVisibleAt(end, v2.Version)
+	require.NoError(t, err)
+	require.Len(t, inEndAtV2, 1)
+	require.Equal(t, edgeID, inEndAtV2[0].ID)
+}
+
+func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksDeletes(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+
+	start := NodeID(prefixTestID("mvcc-adj-del-start"))
+	end := NodeID(prefixTestID("mvcc-adj-del-end"))
+	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("mvcc-adj-del-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	v1, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.DeleteEdge(edgeID))
+	v2, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+
+	outAtV1, err := engine.GetOutgoingEdgesVisibleAt(start, v1.Version)
+	require.NoError(t, err)
+	require.Len(t, outAtV1, 1)
+	require.Equal(t, edgeID, outAtV1[0].ID)
+
+	inAtV1, err := engine.GetIncomingEdgesVisibleAt(end, v1.Version)
+	require.NoError(t, err)
+	require.Len(t, inAtV1, 1)
+	require.Equal(t, edgeID, inAtV1[0].ID)
+
+	outAtV2, err := engine.GetOutgoingEdgesVisibleAt(start, v2.Version)
+	require.NoError(t, err)
+	require.Empty(t, outAtV2)
+
+	inAtV2, err := engine.GetIncomingEdgesVisibleAt(end, v2.Version)
+	require.NoError(t, err)
+	require.Empty(t, inAtV2)
+}
+
+func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "mvcc-adj-restart")
+	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		DataDir: dir,
+		EngineOptions: EngineOptions{
+			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
+		},
+	})
+	require.NoError(t, err)
+
+	start := NodeID(prefixTestID("mvcc-adj-restart-start"))
+	end := NodeID(prefixTestID("mvcc-adj-restart-end"))
+	_, err = engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+	require.NoError(t, err)
+
+	edgeID := EdgeID(prefixTestID("mvcc-adj-restart-edge"))
+	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+	head, err := engine.GetEdgeCurrentHead(edgeID)
+	require.NoError(t, err)
+	require.NoError(t, engine.DeleteEdge(edgeID))
+	require.NoError(t, engine.Close())
+
+	reopened, err := NewBadgerEngineWithOptions(BadgerOptions{
+		DataDir: dir,
+		EngineOptions: EngineOptions{
+			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	outAtCreate, err := reopened.GetOutgoingEdgesVisibleAt(start, head.Version)
+	require.NoError(t, err)
+	require.Len(t, outAtCreate, 1)
+	require.Equal(t, edgeID, outAtCreate[0].ID)
+
+	inAtCreate, err := reopened.GetIncomingEdgesVisibleAt(end, head.Version)
+	require.NoError(t, err)
+	require.Len(t, inAtCreate, 1)
+	require.Equal(t, edgeID, inAtCreate[0].ID)
 }
 
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {

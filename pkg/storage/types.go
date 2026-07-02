@@ -672,6 +672,8 @@ type MVCCVisibilityEngine interface {
 // MVCC history instead of only the current materialized indexes.
 type MVCCIndexedVisibilityEngine interface {
 	GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error)
+	GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error)
+	GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error)
 	GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error)
 	GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error)
 }

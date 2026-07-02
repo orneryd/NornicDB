@@ -198,6 +198,14 @@ func (e *asyncOptionalDelegationEngine) GetNodesByLabelVisibleAt(label string, v
 	return e.nodesVisible, nil
 }
 
+func (e *asyncOptionalDelegationEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return e.edgesVisible, nil
+}
+
+func (e *asyncOptionalDelegationEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return e.edgesVisible, nil
+}
+
 func (e *asyncOptionalDelegationEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
 	return e.edgesVisible, nil
 }

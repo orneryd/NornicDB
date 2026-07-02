@@ -87,6 +87,22 @@ func (ae *AsyncEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersio
 	return nil, ErrNotImplemented
 }
 
+// GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries to the wrapped engine when supported.
+func (ae *AsyncEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if provider, ok := ae.engine.(MVCCIndexedVisibilityEngine); ok {
+		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, ErrNotImplemented
+}
+
+// GetIncomingEdgesVisibleAt delegates snapshot-visible incoming adjacency queries to the wrapped engine when supported.
+func (ae *AsyncEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if provider, ok := ae.engine.(MVCCIndexedVisibilityEngine); ok {
+		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
+	}
+	return nil, ErrNotImplemented
+}
+
 // GetEdgesByTypeVisibleAt delegates snapshot-visible edge-type queries to the wrapped engine when supported.
 func (ae *AsyncEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
 	if provider, ok := ae.engine.(MVCCIndexedVisibilityEngine); ok {

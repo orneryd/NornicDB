@@ -23,6 +23,10 @@ type mvccEdgeRecord struct {
 	Tombstoned bool
 }
 
+type mvccAdjacencyRecord struct {
+	Tombstoned bool
+}
+
 func encodeMVCCNodeRecord(node *Node, tombstoned bool) ([]byte, error) {
 	return msgpack.Marshal(mvccNodeRecord{Node: mvccSnapshotNode(node), Tombstoned: tombstoned})
 }
@@ -59,6 +63,20 @@ func decodeMVCCEdgeRecord(data []byte) (mvccEdgeRecord, error) {
 		return mvccEdgeRecord{}, err
 	}
 	return record, nil
+}
+
+func encodeMVCCAdjacencyRecord(tombstoned bool) []byte {
+	if tombstoned {
+		return []byte{1}
+	}
+	return []byte{0}
+}
+
+func decodeMVCCAdjacencyRecord(data []byte) (mvccAdjacencyRecord, error) {
+	if len(data) != 1 {
+		return mvccAdjacencyRecord{}, fmt.Errorf("invalid mvcc adjacency record length: %d", len(data))
+	}
+	return mvccAdjacencyRecord{Tombstoned: data[0] != 0}, nil
 }
 
 // MVCCHead is written once per entity, updated on every commit, and
@@ -219,6 +237,184 @@ func (b *BadgerEngine) writeEdgeMVCCTombstoneInTxn(txn *badger.Txn, id EdgeID, v
 		return err
 	}
 	return txn.Set(key, encoded)
+}
+
+func (b *BadgerEngine) writeOutgoingAdjacencyMVCCVersionInTxn(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
+	key, err := b.mvccOutgoingAdjacencyKeyString(txn, nodeID, edgeID, version)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, encodeMVCCAdjacencyRecord(tombstoned))
+}
+
+func (b *BadgerEngine) writeIncomingAdjacencyMVCCVersionInTxn(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
+	key, err := b.mvccIncomingAdjacencyKeyString(txn, nodeID, edgeID, version)
+	if err != nil {
+		return err
+	}
+	return txn.Set(key, encodeMVCCAdjacencyRecord(tombstoned))
+}
+
+func (b *BadgerEngine) writeEdgeAdjacencyLiveInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {
+	if edge == nil {
+		return nil
+	}
+	if err := b.writeOutgoingAdjacencyMVCCVersionInTxn(txn, edge.StartNode, edge.ID, version, false); err != nil {
+		return err
+	}
+	return b.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, false)
+}
+
+func (b *BadgerEngine) writeEdgeAdjacencyTombstoneInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {
+	if edge == nil {
+		return nil
+	}
+	if err := b.writeOutgoingAdjacencyMVCCVersionInTxn(txn, edge.StartNode, edge.ID, version, true); err != nil {
+		return err
+	}
+	return b.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, true)
+}
+
+func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id EdgeID) (*Edge, error) {
+	item, err := txn.Get(edgeKey(id))
+	if err == nil {
+		var edge *Edge
+		if err := item.Value(func(val []byte) error {
+			var decodeErr error
+			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+			return decodeErr
+		}); err != nil {
+			return nil, err
+		}
+		return edge, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return nil, err
+	}
+	record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+	if err != nil {
+		return nil, err
+	}
+	if record.Tombstoned || record.Edge == nil {
+		return nil, ErrNotFound
+	}
+	return copyEdge(record.Edge), nil
+}
+
+func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (*Edge, error) {
+	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return nil, err
+	}
+	if version.Compare(head.FloorVersion) < 0 {
+		return nil, ErrNotVisibleAtSnapshot
+	}
+
+	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
+		item, getErr := txn.Get(edgeKey(id))
+		if getErr == nil {
+			var edge *Edge
+			if err := item.Value(func(val []byte) error {
+				decoded, decodeErr := b.decodeEdgeBodyByID(val, id)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				if decoded == nil {
+					return ErrNotFound
+				}
+				decoded.ID = id
+				edge = decoded
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+			if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+				return nil, ErrNotFound
+			}
+			return edge, nil
+		}
+		if getErr != badger.ErrKeyNotFound {
+			return nil, getErr
+		}
+	}
+	if head.Tombstoned && version.Compare(head.Version) >= 0 {
+		return nil, ErrNotFound
+	}
+
+	var record mvccEdgeRecord
+	switch {
+	case version.Compare(head.Version) >= 0:
+		record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.Version)
+	case version.Compare(head.FloorVersion) == 0:
+		record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.FloorVersion)
+	default:
+		record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, version)
+	}
+	if err != nil {
+		if err == ErrNotFound && version.Compare(head.Version) >= 0 {
+			record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if record.Tombstoned || record.Edge == nil {
+		return nil, ErrNotFound
+	}
+	edge := copyEdge(record.Edge)
+	if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+		return nil, ErrNotFound
+	}
+	return edge, nil
+}
+
+func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+	if len(prefix) == 0 {
+		return nil, nil
+	}
+	seek := append(append([]byte{}, prefix...), bytes.Repeat([]byte{0xFF}, 24)...)
+	seen := make(map[uint64]struct{})
+	edgeIDs := make([]EdgeID, 0)
+	opts := badger.DefaultIteratorOptions
+	opts.Prefix = prefix
+	opts.PrefetchValues = true
+	opts.Reverse = true
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
+		key := append([]byte(nil), it.Item().Key()...)
+		edgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(key)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[edgeNum]; ok {
+			continue
+		}
+		if recordVersion.Compare(version) > 0 {
+			continue
+		}
+		seen[edgeNum] = struct{}{}
+		var record mvccAdjacencyRecord
+		if err := it.Item().Value(func(val []byte) error {
+			var decodeErr error
+			record, decodeErr = decodeMVCCAdjacencyRecord(val)
+			return decodeErr
+		}); err != nil {
+			return nil, err
+		}
+		if record.Tombstoned {
+			continue
+		}
+		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if ok && edgeID != "" {
+			edgeIDs = append(edgeIDs, edgeID)
+		}
+	}
+	return edgeIDs, nil
 }
 
 func (b *BadgerEngine) writeNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, tombstoned bool) error {
@@ -949,73 +1145,81 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 	defer deregister()
 	var edge *Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+		var innerErr error
+		edge, innerErr = b.getEdgeVisibleAtInTxn(txn, id, version)
+		return innerErr
+	})
+	return edge, err
+}
+
+func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if nodeID == "" {
+		return nil, ErrInvalidID
+	}
+	deregister, err := b.beginMVCCSnapshotRead(version)
+	if err != nil {
+		return nil, err
+	}
+	defer deregister()
+	var edges []*Edge
+	err = b.withView(func(txn *badger.Txn) error {
+		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccOutgoingAdjacencyPrefixString(nodeID), version)
 		if err != nil {
 			return err
 		}
-		if version.Compare(head.FloorVersion) < 0 {
-			return ErrNotVisibleAtSnapshot
-		}
-
-		// Fast path: current head is visible and entity is live — read
-		// straight from the primary key. See GetNodeVisibleAt for the
-		// node analogue and the post-refactor invariant.
-		if version.Compare(head.Version) >= 0 && !head.Tombstoned {
-			item, getErr := txn.Get(edgeKey(id))
-			if getErr == nil {
-				return item.Value(func(val []byte) error {
-					decoded, decodeErr := b.decodeEdgeBodyByID(val, id)
-					if decodeErr != nil {
-						return decodeErr
-					}
-					if decoded == nil {
-						return ErrNotFound
-					}
-					decoded.ID = id
-					edge = decoded
-					if b.filterEdgeByDecay(edge, DecayScoringTime()) {
-						edge = nil
-						return ErrNotFound
-					}
-					return nil
-				})
+		for _, edgeID := range edgeIDs {
+			edge, edgeErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
+			if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
+				continue
 			}
-			if getErr != badger.ErrKeyNotFound {
-				return getErr
+			if edgeErr != nil {
+				return edgeErr
 			}
-		}
-		if head.Tombstoned && version.Compare(head.Version) >= 0 {
-			return ErrNotFound
-		}
-
-		var record mvccEdgeRecord
-		switch {
-		case version.Compare(head.Version) >= 0:
-			record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.Version)
-		case version.Compare(head.FloorVersion) == 0:
-			record, err = b.loadEdgeMVCCRecordExactInTxn(txn, id, head.FloorVersion)
-		default:
-			record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, version)
-		}
-		if err != nil {
-			if err == ErrNotFound && version.Compare(head.Version) >= 0 {
-				record, _, err = b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+			if edge != nil && edge.StartNode == nodeID {
+				edges = append(edges, edge)
 			}
-			if err != nil {
-				return err
-			}
-		}
-		if record.Tombstoned || record.Edge == nil {
-			return ErrNotFound
-		}
-		edge = copyEdge(record.Edge)
-		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
-			edge = nil
-			return ErrNotFound
 		}
 		return nil
 	})
-	return edge, err
+	if err != nil {
+		return nil, err
+	}
+	return edges, nil
+}
+
+func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if nodeID == "" {
+		return nil, ErrInvalidID
+	}
+	deregister, err := b.beginMVCCSnapshotRead(version)
+	if err != nil {
+		return nil, err
+	}
+	defer deregister()
+	var edges []*Edge
+	err = b.withView(func(txn *badger.Txn) error {
+		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccIncomingAdjacencyPrefixString(nodeID), version)
+		if err != nil {
+			return err
+		}
+		for _, edgeID := range edgeIDs {
+			edge, edgeErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
+			if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
+				continue
+			}
+			if edgeErr != nil {
+				return edgeErr
+			}
+			if edge != nil && edge.EndNode == nodeID {
+				edges = append(edges, edge)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error) {
@@ -1385,6 +1589,14 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 				return err
 			}
 			for _, edgeID := range op.DeletedEdgeIDs {
+				edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
+				if err == nil {
+					if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, edge, version); err != nil {
+						return err
+					}
+				} else if err != ErrNotFound {
+					return err
+				}
 				if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
 					return err
 				}
@@ -1395,6 +1607,9 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 		case OpCreateEdge:
 			if op.Edge == nil {
 				continue
+			}
+			if err := b.writeEdgeAdjacencyLiveInTxn(txn, op.Edge, version); err != nil {
+				return err
 			}
 			if op.FreshID {
 				if err := b.writeEdgeMVCCHeadForFreshCreateInTxn(txn, op.Edge.ID, version); err != nil {
@@ -1409,6 +1624,14 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 			if op.Edge == nil {
 				continue
 			}
+			if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
+				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, op.OldEdge, version); err != nil {
+					return err
+				}
+				if err := b.writeEdgeAdjacencyLiveInTxn(txn, op.Edge, version); err != nil {
+					return err
+				}
+			}
 			if retainsHistory && op.OldEdge != nil {
 				if head, headErr := b.loadEdgeMVCCHead(op.Edge.ID); headErr == nil && !head.Tombstoned {
 					if err := b.archiveEdgeBodyInTxn(txn, op.Edge.ID, op.OldEdge, head.Version); err != nil {
@@ -1422,6 +1645,11 @@ func (b *BadgerEngine) materializeMVCCCommitInTxn(txn *badger.Txn, version MVCCV
 				return err
 			}
 		case OpDeleteEdge:
+			if op.OldEdge != nil {
+				if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, op.OldEdge, version); err != nil {
+					return err
+				}
+			}
 			if retainsHistory && op.OldEdge != nil {
 				if head, headErr := b.loadEdgeMVCCHead(op.EdgeID); headErr == nil && !head.Tombstoned {
 					if err := b.archiveEdgeBodyInTxn(txn, op.EdgeID, op.OldEdge, head.Version); err != nil {
