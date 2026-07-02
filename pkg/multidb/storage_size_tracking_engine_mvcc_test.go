@@ -84,6 +84,12 @@ func TestSizeTrackingEngine_MVCCDelegation_NotImplementedFallback(t *testing.T) 
 	_, err = tracker.GetNodesByLabelVisibleAt("Person", version)
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 
+	_, err = tracker.GetOutgoingEdgesVisibleAt("n1", version)
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+
+	_, err = tracker.GetIncomingEdgesVisibleAt("n1", version)
+	require.ErrorIs(t, err, storage.ErrNotImplemented)
+
 	_, err = tracker.GetEdgesByTypeVisibleAt("KNOWS", version)
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 
@@ -127,6 +133,18 @@ func TestSizeTrackingEngine_MVCCDelegation_Supported(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodesAt, 1)
 	require.Equal(t, storage.NodeID("n:Person"), nodesAt[0].ID)
+
+	outgoingAt, err := tracker.GetOutgoingEdgesVisibleAt("n1", version)
+	require.NoError(t, err)
+	require.Len(t, outgoingAt, 1)
+	require.Equal(t, storage.EdgeID("out:n1"), outgoingAt[0].ID)
+	require.Equal(t, storage.NodeID("n1"), outgoingAt[0].StartNode)
+
+	incomingAt, err := tracker.GetIncomingEdgesVisibleAt("n1", version)
+	require.NoError(t, err)
+	require.Len(t, incomingAt, 1)
+	require.Equal(t, storage.EdgeID("in:n1"), incomingAt[0].ID)
+	require.Equal(t, storage.NodeID("n1"), incomingAt[0].EndNode)
 
 	edgesByType, err := tracker.GetEdgesByTypeVisibleAt("KNOWS", version)
 	require.NoError(t, err)
