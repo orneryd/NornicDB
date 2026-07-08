@@ -353,17 +353,21 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		return nil, fmt.Errorf("expected multiple MATCH clauses")
 	}
 
-	// Execute first MATCH and get initial bindings
-	bindings := e.executeFirstMatch(ctx, matchClauses[0])
+	// Execute first MATCH and get initial bindings. relBindings is
+	// index-aligned with bindings and carries any relationship variable
+	// bound by a clause (e.g. "rel" in `(s)-[rel]->(x)`); see the binding
+	// type's doc comment for why relationships aren't stored inside binding
+	// itself.
+	bindings, relBindings := e.executeFirstMatch(ctx, matchClauses[0])
 
 	// Execute subsequent MATCH clauses with bindings
 	for i := 1; i < len(matchClauses); i++ {
-		bindings = e.executeChainedMatch(ctx, matchClauses[i], bindings)
+		bindings, relBindings = e.executeChainedMatch(ctx, matchClauses[i], bindings, relBindings)
 	}
 
 	// Apply WHERE filter if present
 	if whereClause != "" {
-		bindings = e.filterBindingsByWhere(ctx, bindings, whereClause, getParamsFromContext(ctx))
+		bindings, relBindings = e.filterBindingsByWhereWithRels(ctx, bindings, relBindings, whereClause, getParamsFromContext(ctx))
 	}
 
 	// Build result from bindings
@@ -391,29 +395,42 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 	}
 
+	// relAt returns the relationship-binding map for row idx, or nil when
+	// relBindings is shorter than bindings (e.g. rows added before any
+	// relationship variable existed).
+	relAt := func(idx int) map[string]*storage.Edge {
+		if idx < len(relBindings) {
+			return relBindings[idx]
+		}
+		return nil
+	}
+
 	if hasAggregation {
-		// Group bindings by non-aggregated columns
-		groups := make(map[string][]binding)
+		// Group binding ROW INDICES (not bindings themselves) by
+		// non-aggregated columns, so relAt(idx) stays available for
+		// aggregation functions applied over a relationship variable
+		// (e.g. count(rel), collect(rel.evidence_source)).
+		groups := make(map[string][]int)
 		groupKeys := make(map[string][]interface{})
 
-		for _, b := range bindings {
+		for idx, b := range bindings {
 			// Build group key from non-aggregated columns
 			keyParts := make([]interface{}, 0)
 			for i, item := range returnItems {
 				if !isAggFlags[i] {
-					val := e.resolveBindingItem(ctx, item, b)
+					val := e.resolveBindingItem(ctx, item, b, relAt(idx))
 					keyParts = append(keyParts, val)
 				}
 			}
 			key := fmt.Sprintf("%v", keyParts)
-			groups[key] = append(groups[key], b)
+			groups[key] = append(groups[key], idx)
 			if _, exists := groupKeys[key]; !exists {
 				groupKeys[key] = keyParts
 			}
 		}
 
 		// Build result rows with aggregations
-		for key, groupBindings := range groups {
+		for key, groupIdxs := range groups {
 			row := make([]interface{}, len(returnItems))
 			keyIdx := 0
 
@@ -430,11 +447,11 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
 					if inner == "*" {
-						row[i] = int64(len(groupBindings))
+						row[i] = int64(len(groupIdxs))
 					} else {
 						count := int64(0)
-						for _, b := range groupBindings {
-							val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+						for _, idx := range groupIdxs {
+							val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 							if val != nil {
 								count++
 							}
@@ -444,8 +461,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 				case isAggregateFuncName(item.expr, "sum"):
 					sum := float64(0)
-					for _, b := range groupBindings {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+					for _, idx := range groupIdxs {
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if num, ok := toFloat64(val); ok {
 							sum += num
 						}
@@ -455,8 +472,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 				case isAggregateFuncName(item.expr, "avg"):
 					sum := float64(0)
 					count := 0
-					for _, b := range groupBindings {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+					for _, idx := range groupIdxs {
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if num, ok := toFloat64(val); ok {
 							sum += num
 							count++
@@ -470,8 +487,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 				case isAggregateFuncName(item.expr, "min"):
 					var minVal interface{}
-					for _, b := range groupBindings {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+					for _, idx := range groupIdxs {
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if val != nil && (minVal == nil || e.compareOrderValues(val, minVal) < 0) {
 							minVal = val
 						}
@@ -480,8 +497,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 				case isAggregateFuncName(item.expr, "max"):
 					var maxVal interface{}
-					for _, b := range groupBindings {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+					for _, idx := range groupIdxs {
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						if val != nil && (maxVal == nil || e.compareOrderValues(val, maxVal) > 0) {
 							maxVal = val
 						}
@@ -490,8 +507,8 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 
 				case isAggregateFuncName(item.expr, "collect"):
 					var collected []interface{}
-					for _, b := range groupBindings {
-						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, b)
+					for _, idx := range groupIdxs {
+						val := e.resolveBindingItem(ctx, returnItem{expr: inner}, bindings[idx], relAt(idx))
 						collected = append(collected, val)
 					}
 					row[i] = collected
@@ -501,10 +518,10 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 	} else {
 		// Non-aggregation - process each binding directly
-		for _, b := range bindings {
+		for idx, b := range bindings {
 			row := make([]interface{}, len(returnItems))
 			for i, item := range returnItems {
-				row[i] = e.resolveBindingItem(ctx, item, b)
+				row[i] = e.resolveBindingItem(ctx, item, b, relAt(idx))
 			}
 			result.Rows = append(result.Rows, row)
 		}
@@ -529,6 +546,33 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 		}
 		orderExpr := strings.TrimSpace(orderPart[:endIdx])
 		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderExpr)
+	}
+
+	// BUG FIX: SKIP/LIMIT were parsed nowhere in this function despite the
+	// comment above claiming otherwise — a multi-MATCH query with
+	// `... ORDER BY ... LIMIT N` silently ignored LIMIT and returned every
+	// row. Apply SKIP then LIMIT the same way the single-MATCH path does
+	// (see executeMatch's early SKIP/LIMIT parse in match.go), after ORDER
+	// BY has already run above.
+	if skipIdx := findKeywordIndex(cypher, "SKIP"); skipIdx > 0 {
+		skipPart := strings.TrimSpace(cypher[skipIdx+4:])
+		if fields := strings.Fields(skipPart); len(fields) > 0 {
+			if skip, err := strconv.Atoi(fields[0]); err == nil && skip > 0 {
+				if skip >= len(result.Rows) {
+					result.Rows = [][]interface{}{}
+				} else {
+					result.Rows = result.Rows[skip:]
+				}
+			}
+		}
+	}
+	if limitIdx := findKeywordIndex(cypher, "LIMIT"); limitIdx > 0 {
+		limitPart := strings.TrimSpace(cypher[limitIdx+5:])
+		if fields := strings.Fields(limitPart); len(fields) > 0 {
+			if limit, err := strconv.Atoi(fields[0]); err == nil && limit >= 0 && limit < len(result.Rows) {
+				result.Rows = result.Rows[:limit]
+			}
+		}
 	}
 
 	return result, nil
@@ -610,18 +654,32 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 	return clauses
 }
 
-// binding represents variable bindings from multiple MATCH clauses
+// binding represents variable bindings from multiple MATCH clauses.
+//
+// NOTE: this stays map[string]*storage.Node (node-only) on purpose. A wide
+// range of existing tests (binding_where_compile*_test.go,
+// coverage_binding_where_test.go, coverage_lift_test.go,
+// internal_branch_coverage_boost_test.go, binding_where_benchmark_test.go,
+// ...) construct and index `binding{...}` directly, so widening its value
+// type would ripple into all of them for no benefit. Relationship variables
+// bound by a MATCH clause (e.g. "rel" in `(s)-[rel]->(x)`) are tracked in a
+// parallel `map[string]*storage.Edge` — see executeFirstMatch/
+// executeChainedMatch below — that travels index-aligned alongside a
+// []binding slice rather than living inside binding itself.
 type binding map[string]*storage.Node
 
-// executeFirstMatch executes the first MATCH and returns initial bindings
-func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string) []binding {
+// executeFirstMatch executes the first MATCH and returns initial bindings,
+// plus the relationship variable (if any) bound by this same clause for each
+// row, index-aligned with the returned bindings slice.
+func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string) ([]binding, []map[string]*storage.Edge) {
 	var bindings []binding
+	var relBindings []map[string]*storage.Edge
 
 	// Check for relationship pattern
 	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
 		matches := e.parseTraversalPattern(ctx, pattern)
 		if matches == nil {
-			return bindings
+			return bindings, relBindings
 		}
 
 		paths := e.traverseGraph(ctx, matches)
@@ -637,6 +695,13 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 				b[matches.EndNode.variable] = path.Nodes[len(path.Nodes)-1]
 			}
 			bindings = append(bindings, b)
+			// BUG FIX: a relationship variable bound by this clause (e.g.
+			// "rel" in `(s)-[rel]->(x)`) was previously dropped entirely —
+			// `binding` only ever stored nodes. buildPathContext already
+			// knows how to map a PathResult's relationships onto the
+			// pattern's relationship variable(s) (including chained
+			// segments); reuse it instead of duplicating that logic.
+			relBindings = append(relBindings, e.buildPathContext(path, matches).rels)
 		}
 	} else {
 		// Simple node pattern
@@ -647,17 +712,30 @@ func (e *StorageExecutor) executeFirstMatch(ctx context.Context, pattern string)
 			b := make(binding)
 			b[nodePattern.variable] = node
 			bindings = append(bindings, b)
+			relBindings = append(relBindings, nil)
 		}
 	}
 
-	return bindings
+	return bindings, relBindings
 }
 
-// executeChainedMatch executes a subsequent MATCH against existing bindings
-func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding) []binding {
+// executeChainedMatch executes a subsequent MATCH against existing bindings.
+// existingRelBindings must be index-aligned with existingBindings (as
+// returned by executeFirstMatch/executeChainedMatch); it may be nil when no
+// relationship variable has been bound by an earlier clause. The returned
+// relationship-binding slice is index-aligned with the returned bindings and
+// carries forward any relationship bound earlier in the chain plus any
+// relationship variable bound by this clause's own pattern.
+func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []map[string]*storage.Edge) ([]binding, []map[string]*storage.Edge) {
 	var newBindings []binding
+	var newRelBindings []map[string]*storage.Edge
 
-	for _, existing := range existingBindings {
+	for idx, existing := range existingBindings {
+		var existingRels map[string]*storage.Edge
+		if idx < len(existingRelBindings) {
+			existingRels = existingRelBindings[idx]
+		}
+
 		// Check for relationship pattern
 		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
 			matches := e.parseTraversalPattern(ctx, pattern)
@@ -699,6 +777,11 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 						b[matches.EndNode.variable] = endNode
 					}
 					newBindings = append(newBindings, b)
+					// BUG FIX: carry forward any relationship bound by an
+					// earlier clause plus the relationship variable (if any)
+					// bound by *this* clause's pattern.
+					newRelBindings = append(newRelBindings,
+						mergeRelBindings(existingRels, e.buildPathContext(path, matches).rels))
 				}
 			}
 		} else {
@@ -709,6 +792,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
 				// Variable is bound, just propagate
 				newBindings = append(newBindings, existing)
+				newRelBindings = append(newRelBindings, existingRels)
 				continue
 			}
 
@@ -730,14 +814,38 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				}
 				b[nodePattern.variable] = node
 				newBindings = append(newBindings, b)
+				newRelBindings = append(newRelBindings, existingRels)
 			}
 		}
 	}
 
-	return newBindings
+	return newBindings, newRelBindings
 }
 
-// filterBindingsByWhere filters bindings based on WHERE clause
+// mergeRelBindings merges two relationship-binding maps (e.g. one carried
+// forward from earlier MATCH clauses and one bound by the current clause).
+// Returns nil when both are empty so callers can treat "no relationship
+// bound yet" and "empty map" identically.
+func mergeRelBindings(a, b map[string]*storage.Edge) map[string]*storage.Edge {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	merged := make(map[string]*storage.Edge, len(a)+len(b))
+	for k, v := range a {
+		merged[k] = v
+	}
+	for k, v := range b {
+		merged[k] = v
+	}
+	return merged
+}
+
+// filterBindingsByWhere filters bindings based on WHERE clause. Kept
+// unchanged (node-only) because several existing tests
+// (binding_where_benchmark_test.go, migration_query_shapes_test.go) call it
+// directly with plain []binding for queries that bind no relationship
+// variable. See filterBindingsByWhereWithRels for the relationship-aware
+// variant used by executeMultiMatch.
 func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
 	compiled := e.getCompiledBindingWhere(ctx, whereClause)
 	result := make([]binding, 0, len(bindings))
@@ -749,6 +857,62 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 	}
 
 	return result
+}
+
+// filterBindingsByWhereWithRels filters (binding, relationship-binding) row
+// pairs by a WHERE clause that may reference a relationship variable's
+// properties (e.g. "rel.evidence_source = $e"). The returned slices stay
+// index-aligned with each other.
+//
+// This reuses the existing node-only WHERE compiler
+// (binding_where_compile.go) unchanged by presenting each bound relationship
+// as a read-only property view alongside the row's real node bindings for
+// the duration of the WHERE check only — see bindingWithRelView. The real
+// *storage.Edge values (needed for RETURN/DELETE) are returned separately
+// and never replaced by the view.
+func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []map[string]*storage.Edge, whereClause string, params map[string]interface{}) ([]binding, []map[string]*storage.Edge) {
+	compiled := e.getCompiledBindingWhere(ctx, whereClause)
+	resultBindings := make([]binding, 0, len(bindings))
+	resultRels := make([]map[string]*storage.Edge, 0, len(bindings))
+
+	for i, b := range bindings {
+		var rels map[string]*storage.Edge
+		if i < len(relBindings) {
+			rels = relBindings[i]
+		}
+		if compiled(bindingWithRelView(b, rels), params) {
+			resultBindings = append(resultBindings, b)
+			resultRels = append(resultRels, rels)
+		}
+	}
+
+	return resultBindings, resultRels
+}
+
+// bindingWithRelView returns a binding row for WHERE-clause evaluation that
+// additionally exposes each bound relationship variable as a read-only,
+// node-shaped property view (ID + Properties only, no labels/edges). The
+// binding-where evaluator (binding_where_compile.go) only ever reads
+// `.Properties[prop]` or `.ID` off a bound variable via getBindingNodeValue,
+// so this view lets relationship property predicates (e.g.
+// "rel.evidence_source = $e") evaluate correctly without teaching every
+// WHERE-compiler function in binding_where_compile.go about a second
+// bound-value kind. Returns b unchanged when there is nothing to add.
+func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
+	if len(rels) == 0 {
+		return b
+	}
+	view := make(binding, len(b)+len(rels))
+	for k, v := range b {
+		view[k] = v
+	}
+	for k, edge := range rels {
+		if edge == nil {
+			continue
+		}
+		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+	}
+	return view
 }
 
 // evaluateBindingWhere evaluates WHERE clause against a binding
@@ -777,33 +941,39 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 	return e.parseValue(ctx, s)
 }
 
-// resolveBindingItem resolves a return item against a binding
-func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding) interface{} {
+// resolveBindingItem resolves a return item against a binding. rels carries
+// any relationship variable(s) bound for this specific row (index-aligned
+// counterpart produced by executeFirstMatch/executeChainedMatch); pass nil
+// when the row binds no relationship variable.
+func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
 	expr := strings.TrimSpace(item.expr)
 	if expr == "" {
 		return nil
 	}
-	return e.resolveBindingExpr(ctx, expr, b)
+	return e.resolveBindingExpr(ctx, expr, b, rels)
 }
 
-func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding) interface{} {
+func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding, rels map[string]*storage.Edge) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
 	}
 
-	// elementId(var)
+	// elementId(var) — check node bindings first, then relationship bindings.
 	if strings.HasPrefix(strings.ToLower(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
 			return string(node.ID)
+		}
+		if edge := rels[inner]; edge != nil {
+			return string(edge.ID)
 		}
 		return nil
 	}
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
 	if strings.HasPrefix(strings.ToUpper(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
-		return e.evaluateCoalesceInContext(expr, b, nil, nil)
+		return e.evaluateCoalesceInContext(expr, b, rels, nil)
 	}
 
 	// Literal value
@@ -813,7 +983,8 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 		return e.parseValue(ctx, expr)
 	}
 
-	// Property access: var.prop
+	// Property access: var.prop — check node bindings first, then
+	// relationship bindings (e.g. "rel.evidence_source").
 	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
 		varName := expr[:dotIdx]
 		propName := expr[dotIdx+1:]
@@ -823,6 +994,9 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 			}
 			return nil
 		}
+		if edge := rels[varName]; edge != nil {
+			return edge.Properties[propName]
+		}
 		return nil
 	}
 
@@ -831,8 +1005,22 @@ func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b
 		return node
 	}
 
-	// Fallback to the common expression evaluator used in other MATCH/RETURN paths.
-	if val := e.evaluateExpressionWithContext(ctx, expr, b, nil); val != nil {
+	// BUG FIX: relationship variable (e.g. bare "rel" in `RETURN rel` or
+	// `DELETE rel`). Previously unreachable — `binding` never stored
+	// relationships, so this always fell through to the generic evaluator
+	// below with a nil rels map and produced nil. Returning the real
+	// *storage.Edge here (rather than a synthetic node) matters because
+	// DELETE's classifyDeleteTargetValue and Neo4j-compat RETURN both
+	// distinguish edges from nodes by Go type.
+	if edge := rels[expr]; edge != nil {
+		return edge
+	}
+
+	// Fallback to the common expression evaluator used in other MATCH/RETURN
+	// paths. It already accepts a relationship map (previously always passed
+	// nil here), so expressions like count(rel) / collect(rel.prop) resolve
+	// correctly once rels is populated.
+	if val := e.evaluateExpressionWithContext(ctx, expr, b, rels); val != nil {
 		return val
 	}
 

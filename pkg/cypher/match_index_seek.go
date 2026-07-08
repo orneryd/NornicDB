@@ -486,6 +486,61 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	return nodes, true, nil
 }
 
+// tryCollectNodesFromPropertyIndexInCompound attempts to satisfy an IN-list
+// start-node predicate from a schema property index, including when the
+// IN-list conjunct is combined with other predicates via AND — e.g. a
+// relationship-pattern traversal's WHERE clause that also filters a bound
+// relationship variable, as in `WHERE s.uid IN $u AND rel.evidence_source =
+// $e`. Only a single AND conjunct needs to match an indexed property IN-list
+// for pruning to be safe: the caller (executeMatchWithRelationshipsWithPath)
+// always re-applies the full WHERE clause via filterPathsByWhere afterward,
+// so seeding from one recognized conjunct can only over-fetch, never
+// under-fetch, and correctness does not depend on this helper understanding
+// the rest of the clause.
+//
+// Mirrors tryCollectNodesFromIDEqualityCompound's AND-conjunct handling
+// (match_index_seek.go) for the IN-list case. Tries the param-bound form
+// first, then the literal-list form, at both the top level and inside each
+// top-level AND conjunct.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	params map[string]interface{},
+) ([]*storage.Node, bool, error) {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" {
+		return nil, false, nil
+	}
+
+	// 1) Simple clause (param or literal list).
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clause, params); used || err != nil {
+		return nodes, used, err
+	}
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
+		return nodes, used, err
+	}
+
+	// 2) Conjunction: any recognized IN-list conjunct is safe to use as a
+	// pruning seek (see over-fetch-only argument in the doc comment above).
+	if findTopLevelKeyword(clause, " AND ") > 0 {
+		for _, raw := range splitTopLevelAndConjuncts(clause) {
+			term := unwrapOuterParens(strings.TrimSpace(raw))
+			if term == "" {
+				continue
+			}
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, term, params); used || err != nil {
+				return nodes, used, err
+			}
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, term); used || err != nil {
+				return nodes, used, err
+			}
+		}
+	}
+
+	return nil, false, nil
+}
+
 // tryCollectNodesFromPropertyIndexInOrParam attempts to satisfy OR-combined IN
 // predicates backed by indexes, e.g.:
 //
