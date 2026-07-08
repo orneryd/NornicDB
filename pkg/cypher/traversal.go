@@ -274,6 +274,20 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 					usedPropertyIndex = true
 				}
 			}
+			// BUG FIX: a start-node `WHERE var.prop IN [...]` / `IN $param`
+			// predicate previously fell through every branch above (none of
+			// them recognize IN-lists) straight to the O(all-label-nodes)
+			// scan below, even though match.go/clauses.go/executor_mutations.go
+			// already use this exact index-seek for plain node MATCH and
+			// single-clause DELETE. Reuse it here so a relationship-pattern
+			// traversal anchored by an IN-list seeds from the property index
+			// instead of scanning every node of the label.
+			if !usedPropertyIndex {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
+					optimizedStartNodes = nodes
+					usedPropertyIndex = true
+				}
+			}
 			// Fallback optimization: even when no property index exists, pre-prune start
 			// nodes for simple start-variable predicates before traversing relationships.
 			// This preserves semantics while avoiding expensive traversal from irrelevant

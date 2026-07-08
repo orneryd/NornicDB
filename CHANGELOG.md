@@ -21,6 +21,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-MATCH relationship variable bound in a later clause was silently
+  dropped.**
+  `MATCH (s) WHERE s.uid IN $u MATCH (s)-[rel]->() WHERE
+  rel.evidence_source = $e DELETE rel` deleted zero edges instead of the
+  matching set, and the same shape used as a read (`RETURN count(rel)`,
+  `RETURN rel`, `RETURN rel.prop`, `elementId(rel)`) silently returned
+  zero/nil for the relationship column while node columns in the same query
+  resolved correctly. Root cause: `pkg/cypher/match_multi.go`'s multi-match
+  binding row (`type binding map[string]*storage.Node`) can only hold node
+  values, so `executeFirstMatch`/`executeChainedMatch` never stored the
+  relationship a clause's pattern bound, even though the `PathResult`
+  computed by the traversal already carried it. Kept `binding` itself
+  unchanged (a `map[string]*storage.Node` value-typed literal is
+  constructed/indexed directly by ~10 existing binding-where test files) and
+  instead threaded a parallel, index-aligned `map[string]*storage.Edge` per
+  row through `executeFirstMatch`, `executeChainedMatch`, a new
+  `filterBindingsByWhereWithRels` (relationship-aware WHERE filtering that
+  reuses the unchanged node-only WHERE compiler via a read-only
+  `bindingWithRelView` property adapter), and `resolveBindingExpr`/
+  `resolveBindingItem`. Also fixed a related gap where `executeMultiMatch`
+  never applied SKIP/LIMIT despite a comment claiming it did. Added
+  `pkg/cypher/multi_match_relationship_binding_bug_test.go`
+  (`TestBug_MultiMatchRelationshipBindingLost` + `_Variations`,
+  `TestMergeRelBindings`, `TestBindingWithRelView`,
+  `TestResolveBindingExprUnboundVariable`). Discovered a separate,
+  pre-existing defect while scoping this fix: `MATCH ... WITH ... MATCH ...
+  RETURN` pipelines are mis-parsed by `executeMatchWithClause` /
+  `executeChainedMatchWithAggregations` independently of relationship
+  bindings (even a plain node-to-node chain silently returns nil for every
+  projected column) — left out of scope and documented via a skipped subtest
+  rather than folded into this change.
 - **Fulltext query parser: `field:"value" AND (term)` now intersects correctly.**
   `db.index.fulltext.queryNodes` / `queryRelationships` previously tokenized the
   query with a whitespace splitter that had no notion of parenthesized groups,
@@ -70,6 +101,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **IN-list-anchored relationship traversal now index-seeds instead of
+  scanning the whole label.**
+  `MATCH (s:Label)-[rel]->() WHERE s.uid IN $list ...` (with or without an
+  additional `AND` predicate on the bound relationship, e.g.
+  `rel.evidence_source = $e`) previously fell through every start-node
+  pruning branch in `executeMatchWithRelationshipsWithPath`
+  (`pkg/cypher/traversal.go`) — none of them recognized an `IN [...]` /
+  `IN $param` predicate — straight to `loadNodesWithTemporalViewport`, an
+  O(all nodes of the label) scan, even though the equivalent node-only
+  `MATCH (s:Label) WHERE s.uid IN $list RETURN s` already used the schema
+  property index via `tryCollectNodesFromPropertyIndexIn(Literal)`
+  (`pkg/cypher/match_index_seek.go`, already wired into `match.go`,
+  `clauses.go`, and `executor_mutations.go`). Added
+  `tryCollectNodesFromPropertyIndexInCompound`, which wires those existing
+  index-seek helpers into the traversal start-node pruning chain —
+  including when the IN-list is one conjunct of an `AND`-combined WHERE
+  clause, mirroring `tryCollectNodesFromIDEqualityCompound`'s conjunct
+  handling. Correctness is unaffected: `filterPathsByWhere` still
+  re-evaluates the full WHERE clause after seeding, so pruning from one
+  recognized conjunct can only over-fetch, never under-fetch.
+  `BenchmarkInListAnchoredRelMatch` (50k-node label, 100-node target
+  sublist; 5k was tried first but the algorithmic difference is inside
+  measurement noise for an in-process `MemoryEngine` at that size) on this
+  branch: 109,930,838 ns/op → 301,410 ns/op (~365x), 83,268,576 B/op →
+  228,696 B/op (~364x), 1,388,688 allocs/op → 2,800 allocs/op (~496x).
+  Added `pkg/cypher/inlist_start_node_index_seed_bug_test.go`
+  (`TestBug_InListStartNodeDoesNotIndexSeed` + scan-budget and DELETE
+  variants, `TestTryCollectNodesFromPropertyIndexInCompound`,
+  `BenchmarkInListAnchoredRelMatch`).
 - **Match/merge hot path from Graphify workloads.**
   `pkg/cypher/match_multi.go`, `merge.go`, and `pkg/storage/schema.go` gain a
   fast pattern-property index lookup so multi-pattern `MATCH`/`MERGE`
