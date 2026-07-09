@@ -5,7 +5,7 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v1.1.11] - 7/9/2026
 
 ### Added
 
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-MATCH relationship variable bound in a later clause was silently
   dropped.**
   `MATCH (s) WHERE s.uid IN $u MATCH (s)-[rel]->() WHERE
-  rel.evidence_source = $e DELETE rel` deleted zero edges instead of the
+rel.evidence_source = $e DELETE rel` deleted zero edges instead of the
   matching set, and the same shape used as a read (`RETURN count(rel)`,
   `RETURN rel`, `RETURN rel.prop`, `elementId(rel)`) silently returned
   zero/nil for the relationship column while node columns in the same query
@@ -122,9 +122,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `WHERE NOT c.met` returns rows where `c.met` is false.
   - Allow multiple relationship `CREATE` clauses with inline endpoint nodes
     in one statement.
-  Touched: `pkg/cypher/clauses.go`, `create_pipeline_helpers.go`,
-  `executor_mutations.go`, `match_rows.go`, `traversal.go` plus new
-  `pkg/cypher/stats_query_test.go`.
+    Touched: `pkg/cypher/clauses.go`, `create_pipeline_helpers.go`,
+    `executor_mutations.go`, `match_rows.go`, `traversal.go` plus new
+    `pkg/cypher/stats_query_test.go`.
 - **DDL / CALL-tail / UNWIND / typed conversion cluster fixes.**
   - Preserve cardinality constraint parser errors for malformed
     `REQUIRE MAX COUNT` DDL.
