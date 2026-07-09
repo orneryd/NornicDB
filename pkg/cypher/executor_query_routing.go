@@ -281,6 +281,12 @@ skipMatchCallRoute:
 	if startsWithCreate && withIdx > 0 && deleteIdx > 0 {
 		return e.executeCompoundCreateWithDelete(ctx, cypher)
 	}
+	if startsWithCreate && withIdx > 0 {
+		if result, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+			return result, err
+		}
+		return e.executeMultipleCreates(ctx, cypher)
+	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 {
 		return e.executeUnwind(ctx, cypher)
 	}

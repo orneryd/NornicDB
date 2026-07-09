@@ -710,6 +710,9 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 			if node, isNode := baseVal.(*storage.Node); isNode && node != nil {
 				return node.Properties[field], true
 			}
+			if edge, isEdge := baseVal.(*storage.Edge); isEdge && edge != nil {
+				return edge.Properties[field], true
+			}
 			if m, isMap := toStringAnyMap(baseVal); isMap {
 				return m[field], true
 			}

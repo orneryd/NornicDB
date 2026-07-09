@@ -421,6 +421,13 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 		return e.executeCreateSet(ctx, cypher)
 	}
 
+	if strings.HasPrefix(upper, "CREATE") && findKeywordIndex(cypher, "WITH") > 0 {
+		if result, handled, err := e.executePipeline(ctx, cypher); handled || err != nil {
+			return result, err
+		}
+		return e.executeMultipleCreates(ctx, cypher)
+	}
+
 	// Check for DELETE queries (MATCH...DELETE, DETACH DELETE)
 	// But NOT if it's a MATCH...CREATE...DELETE pattern (handled above)
 	hasCreate := findKeywordIndex(cypher, "CREATE") > 0
