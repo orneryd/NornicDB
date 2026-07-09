@@ -843,10 +843,11 @@ func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[st
 		merged[k] = v
 	}
 	for k, v := range current {
-		if prev := merged[k]; prev != nil && v != nil && prev.ID != v.ID {
+		prev := merged[k]
+		if prev != nil && v != nil && prev.ID != v.ID {
 			return nil, false
 		}
-		if merged[k] == nil {
+		if prev == nil {
 			merged[k] = v
 		}
 	}
