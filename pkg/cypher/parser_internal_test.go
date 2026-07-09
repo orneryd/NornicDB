@@ -185,13 +185,14 @@ func TestPatternParserHelpers(t *testing.T) {
 	t.Run("parseProperties handles nested values and malformed pairs", func(t *testing.T) {
 		ctx := context.Background()
 
-		props := exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", invalid, title: toUpper('friend')}`)
+		props := exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', invalid, title: toUpper('friend')}`)
 		assert.Equal(t, "Alice", props["name"])
 		assert.Equal(t, int64(30), props["age"])
 		assert.Equal(t, true, props["active"])
 		assert.Equal(t, []interface{}{"a", "b"}, props["tags"])
 		assert.Equal(t, map[string]interface{}{"score": int64(1)}, props["meta"])
 		assert.Equal(t, "ok", props["quoted key"])
+		assert.Equal(t, "value", props["key:key"])
 		assert.Equal(t, "FRIEND", props["title"])
 		_, exists := props["invalid"]
 		assert.False(t, exists)

@@ -186,9 +186,10 @@ func TestParseSetMergeMapLiteralStrict_Branches(t *testing.T) {
 
 	t.Run("quoted key and nested value", func(t *testing.T) {
 		ctx := context.Background()
-		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{'a': 1, b: {x: 2}, c: [1,2]}")
+		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{'a': 1, 'key:key': 'value', b: {x: 2}, c: [1,2]}")
 		require.NoError(t, err)
 		assert.EqualValues(t, int64(1), props["a"])
+		assert.Equal(t, "value", props["key:key"])
 		assert.NotNil(t, props["b"])
 		assert.NotNil(t, props["c"])
 	})

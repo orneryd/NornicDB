@@ -797,11 +797,11 @@ func parseLiteralMapForPipeline(s string) map[string]interface{} {
 	pairs := splitTopLevelComma(inner)
 	out := make(map[string]interface{}, len(pairs))
 	for _, pair := range pairs {
-		colon := strings.Index(pair, ":")
+		colon := findTopLevelMapKeyValueSeparator(pair)
 		if colon <= 0 {
 			return nil
 		}
-		k := strings.TrimSpace(pair[:colon])
+		k := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
 		vRaw := strings.TrimSpace(pair[colon+1:])
 		v, ok := parseLiteralValueForPipeline(vRaw)
 		if !ok {
