@@ -96,6 +96,59 @@ func TestExecutePipeline_ErrorAndFallbackBranches(t *testing.T) {
 	require.Nil(t, res)
 }
 
+func TestExecuteCreateWithMalformedTailSurfacesError(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "pipeline_bad_create_with")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `
+CREATE (n:ImplicitRollback {id: 1})
+WITH n
+CREAT (m:ImplicitRollback {id: 2})
+RETURN n
+`, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE...WITH")
+
+	res, err := exec.Execute(ctx, "MATCH (n:ImplicitRollback) RETURN count(n) AS cnt", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, int64(0), res.Rows[0][0])
+}
+
+func TestCreateWithPipeline_SupportedShapes(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "pipeline_create_with_supported")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	t.Run("create with return", func(t *testing.T) {
+		res, err := exec.Execute(ctx, "CREATE (n:Tmp {id:'cwr-1'}) WITH n RETURN n.id AS id", nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		require.Equal(t, "cwr-1", res.Rows[0][0])
+	})
+
+	t.Run("create with alias return", func(t *testing.T) {
+		res, err := exec.Execute(ctx, "CREATE (n:Tmp {id:'cwr-2'}) WITH n AS created RETURN created.id AS id", nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		require.Equal(t, "cwr-2", res.Rows[0][0])
+	})
+
+	t.Run("create with match return", func(t *testing.T) {
+		_, err := exec.Execute(ctx, "CREATE (:Lookup {id:'lookup-1'})", nil)
+		require.NoError(t, err)
+
+		res, err := exec.Execute(ctx, "CREATE (n:Tmp {id:'cwmr-1'}) WITH n MATCH (l:Lookup {id:'lookup-1'}) RETURN n.id AS nid, l.id AS lid", nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		require.Equal(t, "cwmr-1", res.Rows[0][0])
+		require.Equal(t, "lookup-1", res.Rows[0][1])
+	})
+}
+
 func TestPipelineApplyMatch_AdditionalBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "pipeline_match_cov")

@@ -3026,18 +3026,32 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 			// Create new context with only the WITH variables
 			newNodeContext := make(map[string]*storage.Node)
 			newEdgeContext := make(map[string]*storage.Edge)
+			row := make(pipelineRow, len(nodeContext)+len(edgeContext))
+			for name, node := range nodeContext {
+				row[name] = node
+			}
+			for name, edge := range edgeContext {
+				row[name] = edge
+			}
 
 			for _, item := range withItems {
-				varName := item.expr
+				alias := item.expr
 				if item.alias != "" {
-					varName = item.alias
+					alias = item.alias
 				}
-
-				// Look up in existing context
-				if node, ok := nodeContext[varName]; ok {
-					newNodeContext[varName] = node
-				} else if edge, ok := edgeContext[varName]; ok {
-					newEdgeContext[varName] = edge
+				val, ok := projectFromRow(row, item.expr)
+				if !ok {
+					return nil, fmt.Errorf("invalid CREATE...WITH query: invalid WITH expression %q", item.expr)
+				}
+				switch v := val.(type) {
+				case *storage.Node:
+					if v != nil {
+						newNodeContext[alias] = v
+					}
+				case *storage.Edge:
+					if v != nil {
+						newEdgeContext[alias] = v
+					}
 				}
 			}
 
