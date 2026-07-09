@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hnsw_build_topk_rows.comp` and their compiled SPIR-V). Falls back to CPU
   build when GPU backends are unavailable. Follow-up commit tightens Vulkan
   shader dispatch/binding performance (`perf(hnsw): optimize vulkan`).
+- **Adjacency snapshot-isolation API for storage-backed graph reads.**
+  Added a new adjacency snapshot-isolation path across `pkg/storage` and
+  `pkg/cypher` so traversal and delete-adjacent reads resolve visible edges
+  against the correct MVCC view instead of relying on coarser snapshot
+  behavior. This also threads through namespaced and WAL-wrapped engines and
+  adds focused regression coverage in storage and server graph tests.
 
 ### Fixed
 
@@ -45,13 +51,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pkg/cypher/multi_match_relationship_binding_bug_test.go`
   (`TestBug_MultiMatchRelationshipBindingLost` + `_Variations`,
   `TestMergeRelBindings`, `TestBindingWithRelView`,
-  `TestResolveBindingExprUnboundVariable`). Discovered a separate,
-  pre-existing defect while scoping this fix: `MATCH ... WITH ... MATCH ...
-  RETURN` pipelines are mis-parsed by `executeMatchWithClause` /
-  `executeChainedMatchWithAggregations` independently of relationship
-  bindings (even a plain node-to-node chain silently returns nil for every
-  projected column) — left out of scope and documented via a skipped subtest
-  rather than folded into this change.
+  `TestResolveBindingExprUnboundVariable`). Follow-up fixes now also restore
+  `MATCH ... WITH ... MATCH ... RETURN` and `... DELETE rel` pipeline shapes
+  by delegating valid chained pipeline forms through the general pipeline
+  executor, preserving row-bound node/relationship context across later MATCH
+  clauses, and trimming trailing `ORDER BY` / `SKIP` / `LIMIT` correctly in
+  pipeline RETURN projection.
+- **`CREATE ... WITH ...` query routing now distinguishes missing behavior from
+  invalid syntax.**
+  Valid `CREATE ... WITH ... RETURN`, `CREATE ... WITH ... MATCH ... RETURN`,
+  and related pipeline/fallback shapes now execute instead of failing as
+  generically unsupported, while malformed tails now surface deterministic
+  invalid-query errors and correctly roll back implicit single-statement
+  transactions. This reuses the existing multiple-create executor as a strict
+  fallback after pipeline routing and adds regression coverage for the rollback
+  case.
+- **Cypher map keys containing `:` now parse correctly across map-literal
+  surfaces.**
+  Quoted keys such as `{'key:key': 'value'}` were previously split at the
+  first colon and mis-parsed in `SET`, `MERGE`, helper evaluators, APOC map
+  parsing, and pipeline/map-literal call sites. Added a shared top-level
+  key/value separator helper in `pkg/cypher/pattern_parser.go` and applied it
+  across the affected map parsers, with parser-level and end-to-end regression
+  coverage.
+- **Bolt 4.x datetime/time encoding compatibility restored.**
+  `pkg/bolt/packstream.go` and `pkg/bolt/server.go` now negotiate older Bolt
+  datetime encodings correctly, including the Rust-driver compatibility path
+  and UTC/compatibility-sensitive record emission. Added focused packstream and
+  server regressions for datetime structure decoding and negotiated time
+  encoding.
+- **Bound relationship delete correctness hardened.**
+  Unified delete projection typing so relationship delete targets are preserved
+  as relationships rather than flattened into mismatched row shapes, and
+  normalized dangling-edge traversal semantics so stale adjacency rows are
+  skipped consistently instead of surfacing inconsistent delete behavior. This
+  also adds focused delete-helper and chained-traversal regressions.
+- **MVCC adjacency / visibility regressions corrected.**
+  Fixed several storage-layer correctness issues in the new snapshot-adjacency
+  path, including edge visibility flags being dropped while copying materialized
+  edges, pruning/order bugs that could tombstone visible adjacency incorrectly,
+  and namespace filtering being applied too late during unprefixing.
 - **Fulltext query parser: `field:"value" AND (term)` now intersects correctly.**
   `db.index.fulltext.queryNodes` / `queryRelationships` previously tokenized the
   query with a whitespace splitter that had no notion of parenthesized groups,
@@ -137,6 +176,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New benchmark (`graphify_push_profile_bench_test.go`) and
   pattern-property regression tests (`match_pattern_property_index_test.go`)
   guard the change.
+- **Bound relationship deletes now use targeted source lookup and cheaper
+  snapshot adjacency reads.**
+  The delete hot path now resolves bound relationship candidates using indexed
+  and node-local transaction-snapshot reads instead of broader adjacency scans,
+  reducing the cost of relationship delete workloads while keeping the delete
+  projection contract intact.
 - **Vulkan compute shaders tuned.**
   Dispatch/binding refactor in `pkg/gpu/vulkan/compute.go` following the GPU
   HNSW build feature.
@@ -166,6 +211,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `pkg/cypher/coverage_lift_test.go` (+1163 lines) exercising DDL,
   CALL-tail predicates, UNWIND filtering, and typed assignment.
+- New `pkg/cypher/multi_match_relationship_binding_bug_test.go` and
+  `pkg/cypher/inlist_start_node_index_seed_bug_test.go` covering the
+  multi-MATCH relationship-binding regression, the follow-up MATCH/WITH/MATCH
+  pipeline behavior, and IN-list traversal index-seeding correctness,
+  scan-budget, DELETE, and benchmark variants.
 - New `pkg/cypher/kalman_functions_test.go` covering the Kalman helper
   branches.
 - New `pkg/cypher/fulltext_query_test.go` and
@@ -175,6 +225,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `graphify_push_profile_bench_test.go` guarding the WHERE-semantics and
   hot-path match/merge changes.
 - `pkg/search/hnsw_build_gpu_test.go` extended for GPU-build coverage.
+- New Bolt compatibility regressions in `pkg/bolt/packstream_into_test.go` and
+  `pkg/bolt/server_test.go` covering older PackStream datetime structures,
+  negotiated datetime emission, and Rust-driver compatibility.
+
+### Technical Details
+
+- **Range covered**: `v1.1.10..HEAD`
+- **Commits in range**: 37
+- **Repository delta**: 114 files changed, +13,740 / -2,173 lines
 
 ## [v1.1.10] - 2026-06-29
 
