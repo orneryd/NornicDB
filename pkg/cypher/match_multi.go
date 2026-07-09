@@ -776,12 +776,18 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 					if matches.EndNode.variable != "" {
 						b[matches.EndNode.variable] = endNode
 					}
+					pathRels := e.buildPathContext(path, matches).rels
+					mergedRels, ok := mergeRelBindingsChecked(existingRels, pathRels)
+					if !ok {
+						continue
+					}
 					newBindings = append(newBindings, b)
-					// BUG FIX: carry forward any relationship bound by an
-					// earlier clause plus the relationship variable (if any)
-					// bound by *this* clause's pattern.
-					newRelBindings = append(newRelBindings,
-						mergeRelBindings(existingRels, e.buildPathContext(path, matches).rels))
+					// Carry forward any relationship bound by an earlier
+					// clause plus the relationship variable (if any) bound
+					// by this clause's pattern, rejecting rows that would
+					// rebind an already-bound relationship variable to a
+					// different edge.
+					newRelBindings = append(newRelBindings, mergedRels)
 				}
 			}
 		} else {
@@ -822,22 +828,29 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	return newBindings, newRelBindings
 }
 
-// mergeRelBindings merges two relationship-binding maps (e.g. one carried
-// forward from earlier MATCH clauses and one bound by the current clause).
-// Returns nil when both are empty so callers can treat "no relationship
-// bound yet" and "empty map" identically.
-func mergeRelBindings(a, b map[string]*storage.Edge) map[string]*storage.Edge {
-	if len(a) == 0 && len(b) == 0 {
-		return nil
+// mergeRelBindingsChecked merges two relationship-binding maps (e.g. one
+// carried forward from earlier MATCH clauses and one bound by the current
+// clause). Overlapping keys must point at the same edge ID; otherwise the row
+// combination is invalid and the merge fails. Returns nil when both are empty
+// so callers can treat "no relationship bound yet" and "empty map"
+// identically.
+func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[string]*storage.Edge, bool) {
+	if len(existing) == 0 && len(current) == 0 {
+		return nil, true
 	}
-	merged := make(map[string]*storage.Edge, len(a)+len(b))
-	for k, v := range a {
+	merged := make(map[string]*storage.Edge, len(existing)+len(current))
+	for k, v := range existing {
 		merged[k] = v
 	}
-	for k, v := range b {
-		merged[k] = v
+	for k, v := range current {
+		if prev := merged[k]; prev != nil && v != nil && prev.ID != v.ID {
+			return nil, false
+		}
+		if merged[k] == nil {
+			merged[k] = v
+		}
 	}
-	return merged
+	return merged, true
 }
 
 // filterBindingsByWhere filters bindings based on WHERE clause. Kept

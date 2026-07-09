@@ -322,27 +322,79 @@ func TestBug_MultiMatchRelationshipBindingLost_Variations(t *testing.T) {
 	})
 }
 
-// TestMergeRelBindings directly unit-tests the helper's merge/nil-input
-// branches, including the non-empty-`a` case that a two-clause multi-match
-// query can never reach on its own (see the three-clause chain test above
-// for the integration-level equivalent).
-func TestMergeRelBindings(t *testing.T) {
+func TestBug_MultiMatchRelationshipBindingRebinding(t *testing.T) {
+	exec := newRelSeedExecutor(t)
+	ctx := context.Background()
+
+	_, err := exec.Execute(ctx, `CREATE (:Node {name: 'a'})-[:LINKS {kind: 'left'}]->(:Node {name: 'b'})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `CREATE (:Node {name: 'a'})-[:LINKS {kind: 'right'}]->(:Node {name: 'c'})`, nil)
+	require.NoError(t, err)
+
+	t.Run("same relationship variable only counts rows for the same edge", func(t *testing.T) {
+		res, err := exec.Execute(ctx,
+			`MATCH (a:Node {name: 'a'})-[r]->(b)
+			 MATCH (a)-[r]->(c)
+			 RETURN count(*)`,
+			nil)
+		require.NoError(t, err)
+		require.Len(t, res.Rows, 1)
+		require.Equal(t, int64(2), toInt64Bug(t, res.Rows[0][0]))
+	})
+
+	t.Run("same relationship variable rejects rows that would overwrite the bound edge", func(t *testing.T) {
+		res, err := exec.Execute(ctx,
+			`MATCH (a:Node {name: 'a'})-[r]->(b)
+			 MATCH (a)-[r]->(c)
+			 WHERE b.name <> c.name
+			 RETURN b.name, c.name`,
+			nil)
+		require.NoError(t, err)
+		require.Empty(t, res.Rows)
+	})
+}
+
+// TestMergeRelBindingsChecked directly unit-tests the helper's
+// merge/nil-input branches, including the duplicate-key contract enforced for
+// chained MATCH row combination.
+func TestMergeRelBindingsChecked(t *testing.T) {
 	e1 := &storage.Edge{ID: "e1"}
 	e2 := &storage.Edge{ID: "e2"}
+	e1Duplicate := &storage.Edge{ID: "e1"}
 
 	t.Run("both nil returns nil", func(t *testing.T) {
-		require.Nil(t, mergeRelBindings(nil, nil))
+		merged, ok := mergeRelBindingsChecked(nil, nil)
+		require.True(t, ok)
+		require.Nil(t, merged)
 	})
 	t.Run("only b returns b's entries", func(t *testing.T) {
-		merged := mergeRelBindings(nil, map[string]*storage.Edge{"r2": e2})
+		merged, ok := mergeRelBindingsChecked(nil, map[string]*storage.Edge{"r2": e2})
+		require.True(t, ok)
 		require.Equal(t, map[string]*storage.Edge{"r2": e2}, merged)
 	})
-	t.Run("both non-empty merge with b winning on key conflict", func(t *testing.T) {
-		merged := mergeRelBindings(
+	t.Run("same key with the same edge id passes", func(t *testing.T) {
+		merged, ok := mergeRelBindingsChecked(
 			map[string]*storage.Edge{"r1": e1, "shared": e1},
-			map[string]*storage.Edge{"r2": e2, "shared": e2},
+			map[string]*storage.Edge{"r2": e2, "shared": e1Duplicate},
 		)
-		require.Equal(t, map[string]*storage.Edge{"r1": e1, "r2": e2, "shared": e2}, merged)
+		require.True(t, ok)
+		require.Equal(t, map[string]*storage.Edge{"r1": e1, "r2": e2, "shared": e1}, merged)
+	})
+	t.Run("same key with different edge ids fails", func(t *testing.T) {
+		merged, ok := mergeRelBindingsChecked(
+			map[string]*storage.Edge{"shared": e1},
+			map[string]*storage.Edge{"shared": e2},
+		)
+		require.False(t, ok)
+		require.Nil(t, merged)
+	})
+	t.Run("different keys merge", func(t *testing.T) {
+		merged, ok := mergeRelBindingsChecked(
+			map[string]*storage.Edge{"r1": e1},
+			map[string]*storage.Edge{"r2": e2},
+		)
+		require.True(t, ok)
+		require.Equal(t, map[string]*storage.Edge{"r1": e1, "r2": e2}, merged)
 	})
 }
 
