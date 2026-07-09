@@ -237,20 +237,50 @@ func TestBug_MultiMatchRelationshipBindingLost_Variations(t *testing.T) {
 	})
 
 	t.Run("WITH-pipelined DELETE still resolves rel", func(t *testing.T) {
-		// KNOWN SEPARATE GAP (not this bug's root cause): `MATCH ... WITH s
-		// MATCH (s)-[...]->() ...` pipelines are mis-parsed by
-		// executeMatchWithClause independently of relationship bindings —
-		// even a plain node-to-node `MATCH (s) WITH s MATCH (t) WHERE
-		// t.uid <> s.uid RETURN s.uid, t.uid` silently returns nil for both
-		// columns, because executeChainedMatchWithAggregations bails (no
-		// second WITH stage) and executeMatchWithClause's WITH-section
-		// parser assumes no further MATCH exists between WITH and RETURN.
-		// That is a distinct, pre-existing pipeline-parsing defect in
-		// match_with.go / match_with_chain.go, not the multi-match
-		// binding-type defect this test file targets. Fixing it is a
-		// separate, larger change; skip here rather than silently expanding
-		// this fix's scope. See PR/handoff notes for the repro.
-		t.Skip("MATCH...WITH...MATCH...RETURN pipelines are mis-parsed independently of relationship bindings; separate pre-existing defect, out of scope for the binding-type fix")
+		t.Run("MATCH WITH MATCH RETURN preserves projected bindings", func(t *testing.T) {
+			exec := newRelSeedExecutor(t)
+			setupRelSeedFixture(t, exec)
+			ctx := context.Background()
+
+			res, err := exec.Execute(ctx,
+				`MATCH (s:CloudResource) WHERE s.uid = $u
+				 WITH s
+				 MATCH (t:CloudResource)
+				 WHERE t.uid <> s.uid
+				 RETURN s.uid, t.uid
+				 ORDER BY t.uid`,
+				map[string]interface{}{"u": "u1"})
+			require.NoError(t, err)
+			require.Len(t, res.Rows, 4)
+			for i, row := range res.Rows {
+				require.Equal(t, "u1", row[0])
+				require.Equal(t, uidFor(i+2), row[1])
+			}
+		})
+
+		t.Run("MATCH WITH MATCH DELETE resolves rel through delete match expansion", func(t *testing.T) {
+			exec := newRelSeedExecutor(t)
+			reducerEdgeIDs := setupRelSeedFixture(t, exec)
+			ctx := context.Background()
+
+			_, err := exec.Execute(ctx,
+				`MATCH (s:CloudResource) WHERE s.uid IN $u
+				 WITH s
+				 MATCH (s)-[rel]->()
+				 WHERE rel.evidence_source = $e
+				 DELETE rel`, params)
+			require.NoError(t, err)
+
+			remaining, err := exec.getStorage(ctx).AllEdges()
+			require.NoError(t, err)
+			require.Len(t, remaining, 1, "WITH-pipelined DELETE rel must remove exactly the 5 reducer edges, leaving 1")
+			require.Equal(t, "manual", remaining[0].Properties["evidence_source"])
+
+			for _, id := range reducerEdgeIDs {
+				_, err := exec.getStorage(ctx).GetEdge(id)
+				require.Error(t, err, "reducer edge %s must be gone after WITH-pipelined DELETE", id)
+			}
+		})
 	})
 
 	t.Run("RETURN rel with ORDER BY and LIMIT", func(t *testing.T) {

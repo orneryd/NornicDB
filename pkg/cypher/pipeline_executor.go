@@ -267,12 +267,29 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (*
 func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
 	// If the MATCH has scalar references to already-bound variables (e.g.
 	// `MATCH (p:Product {productID: prodRef.productID})`), substitute them
-	// per-row before invoking executeMatchForContext.
+	// per-row and re-seed referenced node variables by ID before invoking the
+	// normal MATCH executor with a synthetic RETURN of the clause bindings.
 	var out []pipelineRow
+	store := e.getStorage(ctx)
 	for _, row := range rows {
 		substituted := clause
+		var matchPieces []string
 		for name, val := range row {
-			if _, isNode := val.(*storage.Node); isNode {
+			if node, isNode := val.(*storage.Node); isNode {
+				if node != nil {
+					for k, v := range node.Properties {
+						pattern := name + "." + k
+						substituted = strings.ReplaceAll(substituted, pattern, e.valueToLiteral(v))
+					}
+					if referencesVariable(substituted, name) {
+						var label string
+						if len(node.Labels) > 0 {
+							label = ":" + node.Labels[0]
+						}
+						matchPieces = append(matchPieces,
+							fmt.Sprintf("MATCH (%s%s) WHERE id(%s) = %q", name, label, name, string(node.ID)))
+					}
+				}
 				continue
 			}
 			if _, isEdge := val.(*storage.Edge); isEdge {
@@ -289,20 +306,48 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 			substituted = replaceIdentifierOutsideQuotes(substituted, name, e.valueToLiteral(val))
 		}
 
-		combos, edges, err := e.executeMatchForContext(ctx, substituted)
+		patternPart := strings.TrimSpace(strings.TrimPrefix(substituted, "MATCH"))
+		if whereIdx := findKeywordIndex(substituted, "WHERE"); whereIdx > 0 {
+			patternPart = strings.TrimSpace(substituted[len("MATCH"):whereIdx])
+		}
+		returnVars := e.extractVariableNamesFromPattern(patternPart)
+		if relVar := extractRelationshipVariable(patternPart); relVar != "" {
+			seen := false
+			for _, v := range returnVars {
+				if v == relVar {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				returnVars = append(returnVars, relVar)
+			}
+		}
+		if len(returnVars) == 0 {
+			continue
+		}
+
+		queryToRun := substituted
+		if len(matchPieces) > 0 {
+			queryToRun = strings.Join(matchPieces, " ") + " " + substituted
+		}
+
+		result, err := e.executeMatch(ctx, queryToRun+" RETURN "+strings.Join(returnVars, ", "))
 		if err != nil {
 			return nil, true, err
 		}
-		for _, combo := range combos {
-			newRow := make(pipelineRow, len(row)+len(combo)+len(edges))
+		e.normalizeSetMatchRowsToNodes(result, store)
+		e.normalizeSetMatchRowsToEdges(result, store)
+		for _, resultRow := range result.Rows {
+			newRow := make(pipelineRow, len(row)+len(result.Columns))
 			for k, v := range row {
 				newRow[k] = v
 			}
-			for k, n := range combo {
-				newRow[k] = n
-			}
-			for k, ed := range edges {
-				newRow[k] = ed
+			for i, col := range result.Columns {
+				if i >= len(resultRow) {
+					continue
+				}
+				newRow[col] = resultRow[i]
 			}
 			out = append(out, newRow)
 		}
@@ -578,6 +623,12 @@ func (e *StorageExecutor) pipelineApplyUnwind(rows []pipelineRow, clause string)
 func (e *StorageExecutor) pipelineApplyReturn(rows []pipelineRow, clause string) (*ExecuteResult, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "RETURN"))
 	body = strings.TrimPrefix(body, "return")
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(body, keyword); idx >= 0 {
+			body = strings.TrimSpace(body[:idx])
+			break
+		}
+	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
 		return &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{int64(len(rows))}}}, true

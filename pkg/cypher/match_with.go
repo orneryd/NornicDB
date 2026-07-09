@@ -34,6 +34,16 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		return e.executeMatchWithOptionalMatch(ctx, cypher)
 	}
 
+	// MATCH ... WITH ... MATCH ... RETURN is a general pipeline shape, not a
+	// single legacy MATCH/WITH projection. Delegate to the pipeline executor
+	// before parsing the WITH section as if everything until RETURN were still
+	// part of the first WITH clause.
+	if innerMatchIdx := findKeywordIndex(cypher[withIdx+4:returnIdx], "MATCH"); innerMatchIdx > 0 {
+		if pipelineResult, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+			return pipelineResult, err
+		}
+	}
+
 	// Extract MATCH part (before WITH)
 	matchPart := strings.TrimSpace(cypher[5:withIdx]) // Skip "MATCH"
 
