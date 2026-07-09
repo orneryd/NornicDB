@@ -16,6 +16,8 @@ nornicdb-admin okf validate ./knowledge-bundle
 
 The implementation prioritizes correctness, validation, export/import round-trip fidelity, merge-safe idempotency, and index-build efficiency over online convenience. The `<db-name>` argument is the OKF bundle namespace. Import opens that database namespace offline, writes graph-search-ready records in batches, suppresses per-row search index maintenance, and builds search indexes once at the end.
 
+Deterministic export is a format requirement, not just a nice-to-have implementation detail. OKF import/export in `nornicdb-admin` MUST define bundle version fields and canonical ordering rules up front so human review, agent-generated patches, and future bundle migrations remain stable and safe.
+
 `--from-path` MUST accept:
 
 - A directory containing an OKF bundle.
@@ -85,6 +87,37 @@ NornicDB must preserve the source bundle faithfully and use export-compatible ru
 
 Node labels come from the reserved `labels` frontmatter array and `type` as a single node label, normalized if the label name isn't allowed for labels to match node label semantics. `type` is concatenated with `labels` as the first element in the resulting array to be applied as node labels. on export, we choose whatever the first label is and use that as the `type` with the remaining labels exported as `labels`. The raw OKF type value remains available as the `type` property.
 
+## Format Versioning and Canonical Ordering
+
+Versioning and canonical ordering are part of the interchange contract.
+
+Bundle-level version fields:
+
+- `okf_version`: the upstream OKF format version. For this plan, export writes `"0.1"`.
+- `okf_schema_version`: the NornicDB OKF profile/schema version for deterministic export/import behavior. Initial value is `1`.
+
+Rules:
+
+- Root `index.md` is the canonical bundle metadata file when present.
+- Export MUST generate or preserve a root `index.md` whose frontmatter contains `okf_version: "0.1"` and `okf_schema_version: 1`.
+- Import and validate MUST accept bundles with no root `index.md` for backward compatibility and treat them as `okf_version = "0.1"` and `okf_schema_version = 1` by default.
+- Non-root `index.md` MUST NOT contain frontmatter.
+- Unknown future `okf_version` or `okf_schema_version` values are validation errors until an explicit migration path is implemented. Silent best-effort import is not acceptable for unknown bundle contracts.
+
+Canonical ordering rules:
+
+- Concept files are processed and exported in ascending slash-normalized `okf_path` order.
+- Relationship headings for a concept are exported before ordinary heading-derived content sections.
+- Relationship headings are ordered by `(direction, type, target okf_concept_id, original heading text)`.
+- Frontmatter keys are emitted in canonical order: `okf_version`, `okf_schema_version` on root `index.md`; then `type`, `title`, `description`, `resource`, `tags`, `timestamp`, `labels`; then remaining user keys in ascending bytewise key order.
+- Node labels exported through reserved `labels` frontmatter are sorted ascending.
+- `okf_frontmatter_keys` and `okf_heading_keys` are stored sorted ascending.
+- Heading-derived properties are exported in ascending bytewise heading-key order, except reserved `# Schema`, which is emitted first when present.
+- Markdown table rows in `# Schema` are exported in ascending `Property` order.
+- Validation reports emit `errors` and `warnings` in stable order: `(path, line, code, message)`.
+
+These ordering rules are part of the round-trip guarantee. Exporters, validators, and migration tools must produce the same ordering for the same logical bundle contents.
+
 ## Validation Rules
 
 OKF v0.1 conformance is intentionally narrow. NornicDB implements one strict validator:
@@ -101,6 +134,8 @@ OKF v0.1 conformance is intentionally narrow. NornicDB implements one strict val
 | Broken relationship-heading targets               | Warning, never fatal  |
 | Missing `index.md`                                | Allowed               |
 | Root `index.md` with `okf_version` frontmatter    | Allowed               |
+| Root `index.md` with `okf_schema_version`         | Allowed               |
+| Unknown `okf_version` or `okf_schema_version`     | Error                 |
 | Non-root `index.md` with frontmatter              | Error                 |
 
 Broken relationship targets are never fatal because OKF consumers must tolerate not-yet-written knowledge. NornicDB records them in the validation report only. The admin importer MUST NOT create placeholder nodes for broken targets because concept files are the only OKF source of database nodes.
@@ -116,6 +151,8 @@ Use:
 - `okf_path`: slash-normalized source path including `.md`, for example `tables/users.md`.
 - `okf_frontmatter_keys`: sorted list of node property names that came from concept frontmatter.
 - `okf_heading_keys`: sorted list of node property names that came from Markdown headings.
+
+Deterministic identity and deterministic ordering are separate guarantees. Opaque storage IDs remain non-semantic, but exported ordering MUST depend only on stable OKF properties (`okf_path`, `okf_concept_id`, relationship metadata), never on storage insertion order or generated IDs.
 
 The admin import path allocates opaque node and edge IDs normally, then the namespaced engine applies the database prefix. Merge and replace discover existing records by scanning/indexing properties inside the target database namespace.
 
@@ -321,7 +358,7 @@ Export semantics:
    - Apply reserved frontmatter `labels` to `storage.Node.Labels` and omit it from node properties.
    - Record every frontmatter-derived property name in `okf_frontmatter_keys`.
    - Treat `index.md` and `log.md` as reserved files, not graph nodes.
-   - Parse root `index.md` frontmatter only when present and only for `okf_version`; all other root index frontmatter keys are validation issues because reserved files do not create nodes or properties.
+   - Parse root `index.md` frontmatter only when present and only for `okf_version` and `okf_schema_version`; all other root index frontmatter keys are validation issues because reserved files do not create nodes or properties.
    - Reject non-root `index.md` frontmatter.
    - Preserve body bytes after frontmatter, normalized to LF line endings.
    - Parse Markdown headings into ordered sections.
@@ -341,6 +378,9 @@ Export semantics:
    - Broken relationship targets: warning.
    - Invalid `log.md` date heading: error.
    - Invalid `index.md` entry shape: error.
+
+- Unknown `okf_version`: error.
+- Unknown `okf_schema_version`: error.
 
 4. Resolve relationship headings.
    - Implement relationship-heading parsing in `pkg/adminimport/okf_relationships.go`.
@@ -494,6 +534,7 @@ type OKFExportOptions struct {
 type OKFValidationReport struct {
 	Format        string        `json:"format"`
 	FormatVersion string        `json:"format_version"`
+	SchemaVersion int           `json:"schema_version"`
 	Database      string        `json:"database"`
 	BundleRoot    string        `json:"bundle_root"`
 	Valid         bool          `json:"valid"`
@@ -547,6 +588,7 @@ Every validation and import command MUST be able to emit this JSON shape:
 {
   "format": "okf",
   "format_version": "0.1",
+  "schema_version": 1,
   "database": "product-docs",
   "bundle_root": "/absolute/path/to/bundle",
   "valid": true,
@@ -609,6 +651,7 @@ Export steps:
    - Default: export nodes with `okf_concept_id` and `okf_path`.
    - The database namespace is the bundle boundary.
    - Cypher-driven `--match` export is not part of this OKF admin implementation because the current admin export path does not embed the Cypher executor.
+   - Sort the export set in ascending canonical `okf_path` order before writing any files.
 
 2. Compute output paths.
    - Prefer existing `okf_path`.
@@ -619,14 +662,15 @@ Export steps:
 3. Write frontmatter.
    - Emit frontmatter from properties listed in `okf_frontmatter_keys` using their exact property names.
    - Emit node labels as reserved `labels` frontmatter in deterministic sorted order.
+   - Root `index.md` frontmatter MUST begin with `okf_version: "0.1"` and `okf_schema_version: 1`.
    - Emit canonical fields first when present: `type`, `title`, `description`, `resource`, `tags`, `timestamp`.
    - Emit remaining properties listed in `okf_frontmatter_keys` in sorted key order for deterministic output.
-   - Do not emit `okf_*` storage properties as user frontmatter, except root `index.md` MAY emit `okf_version: "0.1"`.
+   - Do not emit `okf_*` storage properties as user frontmatter, except root `index.md` MAY emit `okf_version: "0.1"` and `okf_schema_version: 1`.
 
 4. Write Markdown body.
    - Emit `# Schema` first when the concept has NornicDB OKF schema metadata.
-   - Emit relationship headings for OKF-created edges whose endpoints are in the export set.
-   - Emit properties listed in `okf_heading_keys` as Markdown sections using exact property keys as headings.
+   - Emit relationship headings for OKF-created edges whose endpoints are in the export set, in canonical relationship order.
+   - Emit properties listed in `okf_heading_keys` as Markdown sections using exact property keys as headings, in canonical heading-key order.
    - Do not emit frontmatter-origin properties as Markdown headings because they belong in frontmatter.
    - Do not export `ChunkEmbeddings`, `EmbedMeta`, or `NamedEmbeddings` into Markdown. They are runtime storage concerns, not OKF v0.1 fields.
 
@@ -641,7 +685,7 @@ Export steps:
    - Preserve existing `index.md` and `log.md` files when the source bundle metadata is available, or generate them when requested.
    - Generate `index.md` files for directories when `--generate-index=true` using the OKF v0.1 bullet format: `* [Title](relative-url) - description`.
    - Generate `log.md` from txlog/MVCC metadata when `--generate-log=true` using newest-first `## YYYY-MM-DD` sections.
-   - Do not write frontmatter in non-root `index.md`; root `index.md` MAY include only `okf_version`.
+   - Do not write frontmatter in non-root `index.md`; root `index.md` MAY include only `okf_version` and `okf_schema_version`.
    - Do not write frontmatter in `log.md`.
 
 ## CLI Flags
@@ -792,8 +836,10 @@ Add focused unit/integration tests for:
 - Missing `type` fails validation.
 - Unknown YAML frontmatter maps to same-name properties and round-trips through export.
 - Imported nodes record `okf_frontmatter_keys` and `okf_heading_keys` for deterministic export.
-- Root `index.md` frontmatter accepts only `okf_version`.
+- Root `index.md` frontmatter accepts only `okf_version` and `okf_schema_version`.
 - Non-root `index.md` frontmatter fails validation.
+- Unknown bundle `okf_version` fails validation.
+- Unknown bundle `okf_schema_version` fails validation.
 - `log.md` rejects frontmatter.
 - `log.md` date headings validate `YYYY-MM-DD`.
 - Archive import with a single root.
@@ -809,6 +855,11 @@ Add focused unit/integration tests for:
 - Reserved `labels` frontmatter must be an array of strings.
 - Reserved `labels` frontmatter is applied to `storage.Node.Labels`.
 - Export writes node labels back as sorted reserved `labels` frontmatter.
+- Export writes files in canonical `okf_path` order regardless of storage iteration order.
+- Export writes frontmatter keys in canonical order.
+- Export writes relationship headings in canonical order.
+- Export writes heading-derived sections in canonical order.
+- Validation reports are stable across repeated runs for unchanged bundles.
 - Import does not add `OKFConcept`, `OKFDirectory`, `OKFIndex`, `OKFLog`, or other OKF-specific labels.
 - Property-based idempotency across repeated imports using generated storage IDs.
 - `replace` mode removes stale files that disappeared from the bundle.
@@ -856,6 +907,7 @@ Ship these docs with the implementation:
 - `database import okf --mode=merge` upserts incoming bundle files, refreshes OKF-owned relationships for changed files, and leaves absent bundle files untouched.
 - Imported concepts are queryable by Cypher and fulltext search. Vector retrieval is explicitly outside OKF admin import and is handled by normal runtime/server embedding workflows.
 - Relationship headings become graph relationships with stable target identity.
+- Exported bundles include explicit `okf_version` and `okf_schema_version` metadata and use canonical deterministic ordering for files, frontmatter keys, headings, schema rows, and relationship headings.
 - `database export okf` can export and re-import a NornicDB OKF-profile graph without losing canonical OKF fields or Markdown body content.
 - Generic graph export clearly reports lossy projections instead of silently dropping relationship information.
 - `database import okf` never generates embeddings, never calls the server embedding endpoints, and never issues Cypher `WITH EMBEDDING`.
