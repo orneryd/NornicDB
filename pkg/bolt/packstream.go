@@ -20,6 +20,10 @@ var packstreamFallbackHook func(v any)
 // ============================================================================
 
 func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
+	return encodePackStreamMapIntoWithUTC(dst, m, true)
+}
+
+func encodePackStreamMapIntoWithUTC(dst []byte, m map[string]any, useUTCDateTimeStructs bool) []byte {
 	if len(m) == 0 {
 		return append(dst, 0xA0)
 	}
@@ -51,7 +55,7 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 			continue
 		}
 		dst = encodePackStreamStringInto(dst, k)
-		dst = encodePackStreamValueInto(dst, v)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
 	}
 
 	return dst
@@ -62,6 +66,10 @@ func encodePackStreamMap(m map[string]any) []byte {
 }
 
 func encodePackStreamListInto(dst []byte, items []any) []byte {
+	return encodePackStreamListIntoWithUTC(dst, items, true)
+}
+
+func encodePackStreamListIntoWithUTC(dst []byte, items []any, useUTCDateTimeStructs bool) []byte {
 	if len(items) == 0 {
 		return append(dst, 0x90)
 	}
@@ -76,7 +84,7 @@ func encodePackStreamListInto(dst []byte, items []any) []byte {
 	}
 
 	for _, item := range items {
-		dst = encodePackStreamValueInto(dst, item)
+		dst = encodePackStreamValueIntoWithUTC(dst, item, useUTCDateTimeStructs)
 	}
 
 	return dst
@@ -119,6 +127,10 @@ func encodePackStreamBytesInto(dst []byte, b []byte) []byte {
 }
 
 func encodePackStreamValueInto(dst []byte, v any) []byte {
+	return encodePackStreamValueIntoWithUTC(dst, v, true)
+}
+
+func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs bool) []byte {
 	switch val := v.(type) {
 	case nil:
 		return append(dst, 0xC0)
@@ -170,15 +182,15 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 	// Map types
 	case map[string]any:
 		if path, ok := extractPathFromMap(val); ok {
-			return encodePathInto(dst, path.Nodes, path.Relationships)
+			return encodePathIntoWithUTC(dst, path.Nodes, path.Relationships, useUTCDateTimeStructs)
 		}
 		// Check if this is a node (has _nodeId and labels)
 		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
 			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNodeInto(dst, nodeId, labels, val)
+				return encodeNodeIntoWithUTC(dst, nodeId, labels, val, useUTCDateTimeStructs)
 			}
 		}
-		return encodePackStreamMapInto(dst, val)
+		return encodePackStreamMapIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case map[string]string:
 		if len(val) == 0 {
 			return append(dst, 0xA0)
@@ -198,12 +210,12 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 		return dst
 	// Storage types - Neo4j compatible node/edge encoding
 	case storage.Node:
-		return encodeStorageNodeInto(dst, &val)
+		return encodeStorageNodeIntoWithUTC(dst, &val, useUTCDateTimeStructs)
 	case *storage.Node:
 		if val == nil {
 			return append(dst, 0xC0)
 		}
-		return encodeStorageNodeInto(dst, val)
+		return encodeStorageNodeIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case []storage.Node:
 		if len(val) == 0 {
 			return append(dst, 0x90)
@@ -217,7 +229,7 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = append(dst, 0xD5, byte(size>>8), byte(size))
 		}
 		for i := range val {
-			dst = encodeStorageNodeInto(dst, &val[i])
+			dst = encodeStorageNodeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
 		}
 		return dst
 	case []*storage.Node:
@@ -233,16 +245,16 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = append(dst, 0xD5, byte(size>>8), byte(size))
 		}
 		for _, n := range val {
-			dst = encodePackStreamValueInto(dst, n)
+			dst = encodePackStreamValueIntoWithUTC(dst, n, useUTCDateTimeStructs)
 		}
 		return dst
 	case storage.Edge:
-		return encodeStorageEdgeInto(dst, &val)
+		return encodeStorageEdgeIntoWithUTC(dst, &val, useUTCDateTimeStructs)
 	case *storage.Edge:
 		if val == nil {
 			return append(dst, 0xC0)
 		}
-		return encodeStorageEdgeInto(dst, val)
+		return encodeStorageEdgeIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case unboundRelationship:
 		return encodeUnboundRelationshipInto(dst, &val)
 	case *unboundRelationship:
@@ -263,7 +275,7 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = append(dst, 0xD5, byte(size>>8), byte(size))
 		}
 		for i := range val {
-			dst = encodeStorageEdgeInto(dst, &val[i])
+			dst = encodeStorageEdgeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
 		}
 		return dst
 	case []*storage.Edge:
@@ -279,7 +291,7 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = append(dst, 0xD5, byte(size>>8), byte(size))
 		}
 		for _, e := range val {
-			dst = encodePackStreamValueInto(dst, e)
+			dst = encodePackStreamValueIntoWithUTC(dst, e, useUTCDateTimeStructs)
 		}
 		return dst
 	// List types
@@ -300,7 +312,7 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 		}
 		return dst
 	case []any:
-		return encodePackStreamListInto(dst, val)
+		return encodePackStreamListIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case []int:
 		if len(val) == 0 {
 			return append(dst, 0x90)
@@ -382,11 +394,11 @@ func encodePackStreamValueInto(dst []byte, v any) []byte {
 			dst = append(dst, 0xD5, byte(size>>8), byte(size))
 		}
 		for _, m := range val {
-			dst = encodePackStreamMapInto(dst, m)
+			dst = encodePackStreamMapIntoWithUTC(dst, m, useUTCDateTimeStructs)
 		}
 		return dst
 	case time.Time:
-		return encodePackStreamDateTimeInto(dst, val)
+		return encodePackStreamDateTimeIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case time.Duration:
 		// Encode duration as milliseconds (signed).
 		return encodePackStreamIntInto(dst, val.Milliseconds())
@@ -510,8 +522,16 @@ func encodePackStreamValue(v any) []byte {
 }
 
 func encodePackStreamDateTimeInto(dst []byte, t time.Time) []byte {
+	return encodePackStreamDateTimeIntoWithUTC(dst, t, true)
+}
+
+func encodePackStreamDateTimeIntoWithUTC(dst []byte, t time.Time, useUTCDateTimeStructs bool) []byte {
 	_, offsetSeconds := t.Zone()
-	dst = append(dst, 0xB3, 0x49) // struct(3), DateTime with UTC patch
+	sig := byte(0x49)
+	if !useUTCDateTimeStructs {
+		sig = 0x46
+	}
+	dst = append(dst, 0xB3, sig)
 	dst = encodePackStreamIntInto(dst, t.Unix())
 	dst = encodePackStreamIntInto(dst, int64(t.Nanosecond()))
 	dst = encodePackStreamIntInto(dst, int64(offsetSeconds))
@@ -549,6 +569,10 @@ func encodePackStreamIntInto(dst []byte, val int64) []byte {
 // encodeNodeInto encodes a map-based Cypher node as a proper Bolt Node structure (signature 0x4E).
 // Format: STRUCT(3 fields, signature 0x4E) + id + labels + properties
 func encodeNodeInto(dst []byte, nodeId any, labels any, props map[string]any) []byte {
+	return encodeNodeIntoWithUTC(dst, nodeId, labels, props, true)
+}
+
+func encodeNodeIntoWithUTC(dst []byte, nodeId any, labels any, props map[string]any, useUTCDateTimeStructs bool) []byte {
 	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
 	dst = append(dst, 0xB3, 0x4E)
 
@@ -586,7 +610,7 @@ func encodeNodeInto(dst []byte, nodeId any, labels any, props map[string]any) []
 			}
 		}
 	case []any:
-		dst = encodePackStreamListInto(dst, l)
+		dst = encodePackStreamListIntoWithUTC(dst, l, useUTCDateTimeStructs)
 	default:
 		dst = append(dst, 0x90)
 	}
@@ -618,13 +642,17 @@ func encodeNodeInto(dst []byte, nodeId any, labels any, props map[string]any) []
 			continue
 		}
 		dst = encodePackStreamStringInto(dst, k)
-		dst = encodePackStreamValueInto(dst, v)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
 	}
 
 	return dst
 }
 
 func encodeStorageNodeInto(dst []byte, node *storage.Node) []byte {
+	return encodeStorageNodeIntoWithUTC(dst, node, true)
+}
+
+func encodeStorageNodeIntoWithUTC(dst []byte, node *storage.Node, useUTCDateTimeStructs bool) []byte {
 	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
 	dst = append(dst, 0xB3, 0x4E)
 
@@ -668,12 +696,16 @@ func encodeStorageNodeInto(dst []byte, node *storage.Node) []byte {
 	}
 	for k, v := range props {
 		dst = encodePackStreamStringInto(dst, k)
-		dst = encodePackStreamValueInto(dst, v)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
 	}
 	return dst
 }
 
 func encodeStorageEdgeInto(dst []byte, edge *storage.Edge) []byte {
+	return encodeStorageEdgeIntoWithUTC(dst, edge, true)
+}
+
+func encodeStorageEdgeIntoWithUTC(dst []byte, edge *storage.Edge, useUTCDateTimeStructs bool) []byte {
 	// Bolt Relationship structure: B5 52 (tiny struct, 5 fields, signature 'R')
 	dst = append(dst, 0xB5, 0x52)
 
@@ -702,7 +734,7 @@ func encodeStorageEdgeInto(dst []byte, edge *storage.Edge) []byte {
 	}
 	for k, v := range props {
 		dst = encodePackStreamStringInto(dst, k)
-		dst = encodePackStreamValueInto(dst, v)
+		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
 	}
 	return dst
 }
@@ -714,6 +746,10 @@ type unboundRelationship struct {
 }
 
 func encodeUnboundRelationshipInto(dst []byte, rel *unboundRelationship) []byte {
+	return encodeUnboundRelationshipIntoWithUTC(dst, rel, true)
+}
+
+func encodeUnboundRelationshipIntoWithUTC(dst []byte, rel *unboundRelationship, useUTCDateTimeStructs bool) []byte {
 	// Bolt Unbound Relationship structure: B3 72 (tiny struct, 3 fields, signature 'r')
 	dst = append(dst, 0xB3, 0x72)
 	dst = encodePackStreamIntInto(dst, util.HashStringToInt64(string(rel.id)))
@@ -722,10 +758,14 @@ func encodeUnboundRelationshipInto(dst []byte, rel *unboundRelationship) []byte 
 	if len(rel.properties) == 0 {
 		return append(dst, 0xA0)
 	}
-	return encodePackStreamMapInto(dst, rel.properties)
+	return encodePackStreamMapIntoWithUTC(dst, rel.properties, useUTCDateTimeStructs)
 }
 
 func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge) []byte {
+	return encodePathIntoWithUTC(dst, pathNodes, pathRels, true)
+}
+
+func encodePathIntoWithUTC(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, useUTCDateTimeStructs bool) []byte {
 	// Bolt Path structure: B3 50 (tiny struct, 3 fields, signature 'P')
 	dst = append(dst, 0xB3, 0x50)
 
@@ -737,7 +777,7 @@ func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.E
 
 	if len(pathRels) == 0 {
 		// Path length 0 should contain only the first node.
-		dst = encodePackStreamListInto(dst, []any{pathNodes[0]})
+		dst = encodePackStreamListIntoWithUTC(dst, []any{pathNodes[0]}, useUTCDateTimeStructs)
 		dst = append(dst, 0x90, 0x90)
 		return dst
 	}
@@ -746,7 +786,7 @@ func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.E
 	uniqueRels, relIndex := uniquePathRels(pathRels)
 
 	// Field 1: Nodes list
-	dst = encodePackStreamValueInto(dst, uniqueNodes)
+	dst = encodePackStreamValueIntoWithUTC(dst, uniqueNodes, useUTCDateTimeStructs)
 
 	// Field 2: Unbound relationships list
 	rels := make([]any, len(uniqueRels))
@@ -757,11 +797,11 @@ func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.E
 			properties: rel.Properties,
 		}
 	}
-	dst = encodePackStreamListInto(dst, rels)
+	dst = encodePackStreamListIntoWithUTC(dst, rels, useUTCDateTimeStructs)
 
 	// Field 3: Sequence list
 	sequence := buildPathSequence(pathNodes, pathRels, nodeIndex, relIndex)
-	dst = encodePackStreamValueInto(dst, sequence)
+	dst = encodePackStreamValueIntoWithUTC(dst, sequence, useUTCDateTimeStructs)
 
 	return dst
 }
@@ -932,6 +972,10 @@ func coercePathRels(val any) []*storage.Edge {
 // This makes nodes compatible with Neo4j drivers that expect Node instances with .properties.
 // Format: STRUCT(3 fields, signature 0x4E) + id + labels + properties
 func encodeNode(nodeId any, labels any, nodeMap map[string]any) []byte {
+	return encodeNodeWithUTC(nodeId, labels, nodeMap, true)
+}
+
+func encodeNodeWithUTC(nodeId any, labels any, nodeMap map[string]any, useUTCDateTimeStructs bool) []byte {
 	// Bolt Node structure: B3 4E (tiny struct, 3 fields, signature 'N')
 	buf := []byte{0xB3, 0x4E}
 
@@ -961,7 +1005,7 @@ func encodeNode(nodeId any, labels any, nodeMap map[string]any) []byte {
 	case []any:
 		labelList = l
 	}
-	buf = append(buf, encodePackStreamList(labelList)...)
+	buf = encodePackStreamListIntoWithUTC(buf, labelList, useUTCDateTimeStructs)
 
 	// Field 3: Properties (map) - exclude internal fields
 	props := make(map[string]any)
@@ -972,7 +1016,7 @@ func encodeNode(nodeId any, labels any, nodeMap map[string]any) []byte {
 		}
 		props[k] = v
 	}
-	buf = append(buf, encodePackStreamMap(props)...)
+	buf = encodePackStreamMapIntoWithUTC(buf, props, useUTCDateTimeStructs)
 
 	return buf
 }

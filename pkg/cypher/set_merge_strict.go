@@ -28,7 +28,7 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 			return nil, fmt.Errorf("empty map entry")
 		}
 
-		colonIdx := strings.Index(pair, ":")
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
 			return nil, fmt.Errorf("invalid map entry %q", pair)
 		}

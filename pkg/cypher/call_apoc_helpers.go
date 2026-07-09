@@ -225,12 +225,12 @@ func (e *StorageExecutor) parseMapLiteral(ctx context.Context, s string) map[str
 	// Split map entries while respecting nested collections and quotes.
 	pairs := splitTopLevelComma(inner)
 	for _, pair := range pairs {
-		colonIdx := strings.Index(pair, ":")
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx == -1 {
 			continue
 		}
 
-		key := strings.TrimSpace(pair[:colonIdx])
+		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		value := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Parse value

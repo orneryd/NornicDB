@@ -2498,11 +2498,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			return "", "", "", "", false
 		}
 		pair := strings.TrimSpace(pairs[0])
-		colonIdx := strings.Index(pair, ":")
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
 			return "", "", "", "", false
 		}
-		propName := strings.TrimSpace(pair[:colonIdx])
+		propName := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		propExpr := strings.TrimSpace(pair[colonIdx+1:])
 		if !isSimpleIdentifier(propName) || propExpr == "" {
 			return "", "", "", "", false

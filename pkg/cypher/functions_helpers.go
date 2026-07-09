@@ -218,8 +218,7 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 			continue
 		}
 
-		// Find the first colon (key: value)
-		colonIdx := strings.Index(pair, ":")
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx == -1 {
 			continue
 		}

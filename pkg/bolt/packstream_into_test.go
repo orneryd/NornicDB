@@ -85,7 +85,7 @@ func TestEncodePackStreamValueInto_StorageEdgeStructure(t *testing.T) {
 	}
 }
 
-func TestEncodePackStreamValueInto_TimeUsesDateTimeUTCStructure(t *testing.T) {
+func TestEncodePackStreamValueInto_TimeUsesDateTimeUTCStructureByDefault(t *testing.T) {
 	dt := time.Date(2026, 6, 9, 18, 47, 32, 123456789, time.FixedZone("MST", -7*3600))
 	data := encodePackStreamValueInto(nil, dt)
 	if len(data) < 2 {
@@ -93,6 +93,20 @@ func TestEncodePackStreamValueInto_TimeUsesDateTimeUTCStructure(t *testing.T) {
 	}
 	if data[0] != 0xB3 || data[1] != 0x49 {
 		t.Fatalf("expected DateTime struct header B3 49, got=%x", data[:2])
+	}
+}
+
+func TestEncodePackStreamDateTimeIntoWithUTC_UsesLegacyOrUTCSignature(t *testing.T) {
+	dt := time.Date(2026, 6, 9, 18, 47, 32, 123456789, time.FixedZone("MST", -7*3600))
+
+	legacy := encodePackStreamDateTimeIntoWithUTC(nil, dt, false)
+	if len(legacy) < 2 || legacy[0] != 0xB3 || legacy[1] != 0x46 {
+		t.Fatalf("expected legacy DateTime struct header B3 46, got=%x", legacy[:2])
+	}
+
+	utc := encodePackStreamDateTimeIntoWithUTC(nil, dt, true)
+	if len(utc) < 2 || utc[0] != 0xB3 || utc[1] != 0x49 {
+		t.Fatalf("expected UTC DateTime struct header B3 49, got=%x", utc[:2])
 	}
 }
 

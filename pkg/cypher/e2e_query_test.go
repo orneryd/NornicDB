@@ -98,6 +98,25 @@ func TestE2E_Match_ByMultipleProperties(t *testing.T) {
 	assert.Equal(t, "Alice", result.Rows[0][0])
 }
 
+func TestE2E_Set_MapPropertyWithColonInQuotedKey(t *testing.T) {
+	exec, ctx := setupE2EExecutor(t)
+
+	_, err := exec.Execute(ctx, "MERGE (n:Test {id: 0}) SET n.my_property = {'key:key': 'value'}", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "MATCH (n:Test {id: 0}) RETURN n", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	propMap, ok := node.Properties["my_property"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "value", propMap["key:key"])
+	_, malformedKey := propMap["'key"]
+	assert.False(t, malformedKey)
+}
+
 // =============================================================================
 // WHERE CLAUSE TESTS
 // =============================================================================

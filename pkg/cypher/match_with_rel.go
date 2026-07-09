@@ -57,7 +57,6 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []node
 			continue
 		}
 
-		// Parse: "n.property [ASC|DESC]"
 		tokens := strings.Fields(part)
 		if len(tokens) == 0 {
 			continue

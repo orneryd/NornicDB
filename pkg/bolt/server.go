@@ -1410,10 +1410,11 @@ type Session struct {
 	flushPending bool
 
 	// Query metadata for Neo4j driver compatibility
-	queryId           int64          // Query ID counter for qid field
-	lastQueryIsWrite  bool           // Was last query a write operation
-	lastQueryDatabase string         // Effective database for last RUN
-	lastRunMetadata   map[string]any // Metadata from last RUN message (bookmarks, tx_timeout, etc.)
+	queryId            int64          // Query ID counter for qid field
+	lastQueryIsWrite   bool           // Was last query a write operation
+	lastQueryDatabase  string         // Effective database for last RUN
+	lastRunMetadata    map[string]any // Metadata from last RUN message (bookmarks, tx_timeout, etc.)
+	utcPatchNegotiated bool           // HELLO patch_bolt included "utc" for this connection
 
 	// Transaction sequence for this session's last committed transaction
 	lastTxSequence int64 // Sequence number of last committed transaction in this session
@@ -1437,6 +1438,13 @@ type Session struct {
 	// to promote the session as if the driver had sent scheme=bearer.
 	// Empty for raw TCP and TLS sessions — they have no HTTP layer.
 	implicitBearer string
+}
+
+func (s *Session) useUTCDateTimeStructs() bool {
+	if s.version >= 0x0500 {
+		return true
+	}
+	return s.utcPatchNegotiated
 }
 
 // boltMessage represents a parsed Bolt message ready for processing
@@ -1791,6 +1799,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
 //
 // Server-to-server clustering uses the same auth mechanism with service accounts.
 func (s *Session) handleHello(data []byte) error {
+	s.utcPatchNegotiated = false
 	// Plan 04-02 D-11 / D-05e auth-attempts crosswire: observe a single
 	// auth attempt per HELLO message at the function-exit chokepoint.
 	// Result enum closed (success | failure | denied):
@@ -2042,8 +2051,26 @@ func (s *Session) parseHelloAuth(data []byte) (map[string]string, error) {
 		// Some drivers use "database" instead of "db"
 		result["database"] = db
 	}
+	s.utcPatchNegotiated = helloExtraRequestsUTCPatch(extraMap)
 
 	return result, nil
+}
+
+func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
+	raw, ok := extraMap["patch_bolt"]
+	if !ok {
+		return false
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if token, ok := item.(string); ok && strings.EqualFold(strings.TrimSpace(token), "utc") {
+			return true
+		}
+	}
+	return false
 }
 
 // handleRun handles the RUN message (execute Cypher).
@@ -3083,7 +3110,7 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodePackStreamListInto(buf, fields)
+	buf = encodePackStreamListIntoWithUTC(buf, fields, s.useUTCDateTimeStructs())
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -3102,7 +3129,7 @@ func (s *Session) writeRecordNoFlush(fields []any) error {
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodePackStreamListInto(buf, fields)
+	buf = encodePackStreamListIntoWithUTC(buf, fields, s.useUTCDateTimeStructs())
 
 	err := s.writeMessageNoFlush(buf)
 	s.recordBuf = buf[:0]
@@ -3130,7 +3157,7 @@ func (s *Session) sendRecordsBatched(rows [][]any) error {
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodePackStreamListInto(buf, row)
+		buf = encodePackStreamListIntoWithUTC(buf, row, s.useUTCDateTimeStructs())
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.
@@ -3159,7 +3186,7 @@ func (s *Session) sendSuccess(metadata map[string]any) error {
 	buf = buf[:0]
 
 	buf = append(buf, successHeader...)
-	buf = encodePackStreamMapInto(buf, metadata)
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -3175,7 +3202,7 @@ func (s *Session) sendSuccessNoFlush(metadata map[string]any) error {
 	buf = buf[:0]
 
 	buf = append(buf, successHeader...)
-	buf = encodePackStreamMapInto(buf, metadata)
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
 
 	if err := s.writeMessageNoFlush(buf); err != nil {
 		return err
@@ -3199,7 +3226,7 @@ func (s *Session) sendFailure(code, message string) error {
 		"code":    code,
 		"message": message,
 	}
-	buf = encodePackStreamMapInto(buf, metadata)
+	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)

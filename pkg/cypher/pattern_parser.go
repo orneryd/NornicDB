@@ -158,7 +158,7 @@ func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) 
 	pairs := e.splitPropertyPairs(propsStr)
 
 	for _, pair := range pairs {
-		colonIdx := strings.Index(pair, ":")
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 {
 			continue
 		}
@@ -185,6 +185,80 @@ func normalizePropertyKey(key string) string {
 		}
 	}
 	return key
+}
+
+func findTopLevelMapKeyValueSeparator(pair string) int {
+	depth := 0
+	inSingle := false
+	inDouble := false
+	inBacktick := false
+
+	for i := 0; i < len(pair); i++ {
+		ch := pair[i]
+
+		switch {
+		case inBacktick:
+			if ch == '`' {
+				if i+1 < len(pair) && pair[i+1] == '`' {
+					i++
+					continue
+				}
+				inBacktick = false
+			}
+		case inSingle:
+			if ch == '\'' {
+				if i+1 < len(pair) && pair[i+1] == '\'' {
+					i++
+					continue
+				}
+				if !isBackslashEscaped(pair, i) {
+					inSingle = false
+				}
+			}
+		case inDouble:
+			if ch == '"' {
+				if i+1 < len(pair) && pair[i+1] == '"' {
+					i++
+					continue
+				}
+				if !isBackslashEscaped(pair, i) {
+					inDouble = false
+				}
+			}
+		default:
+			switch ch {
+			case '\'':
+				inSingle = true
+			case '"':
+				inDouble = true
+			case '`':
+				inBacktick = true
+			case '{', '[', '(':
+				depth++
+			case '}', ']', ')':
+				if depth > 0 {
+					depth--
+				}
+			case ':':
+				if depth == 0 {
+					return i
+				}
+			}
+		}
+	}
+
+	return -1
+}
+
+func isBackslashEscaped(s string, idx int) bool {
+	if idx <= 0 {
+		return false
+	}
+	backslashes := 0
+	for i := idx - 1; i >= 0 && s[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 // splitPropertyPairs splits a property string into key:value pairs,

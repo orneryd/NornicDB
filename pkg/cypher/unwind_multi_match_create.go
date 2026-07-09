@@ -653,11 +653,11 @@ func parsePropsBodyForUnwindFastPath(propsBody, unwindVar string) (map[string]st
 		if pair == "" {
 			continue
 		}
-		colon := strings.Index(pair, ":")
+		colon := findTopLevelMapKeyValueSeparator(pair)
 		if colon <= 0 {
 			return nil, nil, false
 		}
-		key := strings.TrimSpace(pair[:colon])
+		key := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
 		expr := strings.TrimSpace(pair[colon+1:])
 		if !isSimpleIdentifier(key) {
 			return nil, nil, false
