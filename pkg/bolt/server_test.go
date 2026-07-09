@@ -3,6 +3,7 @@ package bolt
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -221,6 +222,14 @@ func newTestSession(conn net.Conn, executor QueryExecutor) *Session {
 		executor:   executor,
 		messageBuf: make([]byte, 0, 4096),
 	}
+}
+
+func buildHelloMessageWithPatchBolt(extra map[string]any) []byte {
+	buf := []byte{0xB1, MsgHello}
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	return append(buf, encodePackStreamMap(extra)...)
 }
 
 func TestSessionHandshake(t *testing.T) {
@@ -516,6 +525,64 @@ func TestSessionSendFailure(t *testing.T) {
 	if len(conn.writeData) == 0 {
 		t.Error("expected data to be written")
 	}
+}
+
+func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testing.T) {
+	dt := time.Date(2026, 6, 9, 18, 47, 32, 123456789, time.FixedZone("MST", -7*3600))
+
+	t.Run("bolt 4.4 without utc patch uses legacy datetime struct", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = BoltV4_4
+
+		err := session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x46}) {
+			t.Fatalf("expected legacy datetime struct B3 46 in wire data, got=%x", conn.writeData)
+		}
+		if bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("did not expect UTC datetime struct B3 49 without negotiated patch, got=%x", conn.writeData)
+		}
+	})
+
+	t.Run("bolt 4.4 with utc patch uses utc datetime struct", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = BoltV4_4
+
+		err := session.handleHello(buildHelloMessageWithPatchBolt(map[string]any{
+			"scheme":     "none",
+			"patch_bolt": []any{"utc"},
+		}))
+		if err != nil {
+			t.Fatalf("handleHello() error = %v", err)
+		}
+		conn.writeData = nil
+
+		err = session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("expected UTC datetime struct B3 49 in wire data, got=%x", conn.writeData)
+		}
+	})
+
+	t.Run("bolt 5 and newer use utc datetime structs without patch negotiation", func(t *testing.T) {
+		conn := &mockConn{}
+		session := newTestSession(conn, nil)
+		session.version = 0x0500
+
+		err := session.sendRecord([]any{dt})
+		if err != nil {
+			t.Fatalf("sendRecord() error = %v", err)
+		}
+		if !bytes.Contains(conn.writeData, []byte{0xB3, 0x49}) {
+			t.Fatalf("expected UTC datetime struct B3 49 for Bolt 5+, got=%x", conn.writeData)
+		}
+	})
 }
 
 func TestQueryResult(t *testing.T) {
