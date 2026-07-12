@@ -1000,6 +1000,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 			if subResult == nil {
 				continue
 			}
+			addQueryStats(result.Stats, subResult.Stats)
 			if len(result.Columns) == 0 {
 				result.Columns = append([]string(nil), subResult.Columns...)
 			}

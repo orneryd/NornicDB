@@ -428,6 +428,14 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 		return e.executeMultipleCreates(ctx, cypher)
 	}
 
+	// Bind top-level UNWIND rows before classifying mutations in the trailing
+	// query. Autocommit uses the same ordering; routing DELETE first would drop
+	// the UNWIND binding and silently turn a matched relationship delete into a
+	// successful no-op inside an explicit transaction.
+	if strings.HasPrefix(upper, "UNWIND") {
+		return e.executeUnwind(ctx, cypher)
+	}
+
 	// Check for DELETE queries (MATCH...DELETE, DETACH DELETE)
 	// But NOT if it's a MATCH...CREATE...DELETE pattern (handled above)
 	hasCreate := findKeywordIndex(cypher, "CREATE") > 0
@@ -562,8 +570,6 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 		strings.HasPrefix(upper, "ALTER PROMOTION PROFILE"),
 		strings.HasPrefix(upper, "ALTER PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case strings.HasPrefix(upper, "UNWIND"):
-		return e.executeUnwind(ctx, cypher)
 	case strings.HasPrefix(upper, "WITH"):
 		return e.executeWith(ctx, cypher)
 	case strings.HasPrefix(upper, "FOREACH"):
