@@ -5,6 +5,19 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Bolt explicit transactions now bind top-level `UNWIND` rows before
+  relationship deletion.**
+  `session.ExecuteWrite` queries shaped as `UNWIND ... MATCH ... DELETE`
+  previously routed directly to the delete handler before the UNWIND variable
+  was bound, returned success with zero delete counters, and left matching
+  relationships intact. Explicit transactions now use the same UNWIND-first
+  dispatch order as autocommit, and aggregate per-row mutation counters for
+  Bolt result summaries.
+
 ## [v1.1.11] - 7/9/2026
 
 ### Added
