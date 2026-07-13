@@ -243,8 +243,8 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
 		b.Fatalf("rebuildUniqueConstraintValues: %v", err)
 	}
-	b.ReportMetric(badgerUniqueLockWriters, "writers")
-	b.ReportMetric(badgerUniqueLockKeysPerWriter, "keys/writer")
+	b.ReportMetric(float64(badgerUniqueLockWriters), "writers")
+	b.ReportMetric(float64(badgerUniqueLockKeysPerWriter), "keys/writer")
 	b.ResetTimer()
 
 	for iteration := range b.N {
