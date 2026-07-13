@@ -2727,23 +2727,22 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 }
 
 // acquireUniqueConstraintCommitLocks collects the unique constraints touched
-// by this transaction's pending nodes and acquires bounded
-// per-(label, property, value) mutex stripes on the transaction's pinned
-// namespace's schema. Returns a release function that unlocks in reverse
-// order; safe to defer.
+// by this transaction's pending nodes and acquires exact
+// per-(label, property, value) mutexes on the transaction's pinned namespace's
+// schema. Returns a release function that unlocks in reverse order; safe to
+// defer.
 //
 // Locks are keyed by value, not only by constraint: a transaction adding
-// nodes with uids "X" and "Y" hashes those values to bounded lock stripes; a
-// peer transaction with uids "X" and "Z" serializes against "X" and commits
-// "Z" in parallel unless the bounded stripe hash collides. This was changed
-// from coarser per-(label, property) granularity that effectively serialized
-// every writer touching a UNIQUE-constrained property — see
-// uniqueConstraintLockKey doc.
+// nodes with uids "X" and "Y" acquires those exact values; a peer transaction
+// with uids "X" and "Z" serializes against "X", while fully disjoint batches
+// commit in parallel. This was changed from bounded hash stripes, which
+// effectively serialized large disjoint batches through false collisions —
+// see uniqueConstraintLockKey doc.
 //
 // The transaction is pinned to a single namespace at the first prefixed
 // write (see pinNamespaceFromIDLocked / SetNamespace). All pending nodes
 // therefore share that namespace, so we look up the schema once instead of
-// re-parsing each node ID. Stripe ordering inside the schema's own
+// re-parsing each node ID. Exact-key ordering inside the schema's own
 // acquireUniqueConstraintCommitLocks prevents AB-BA deadlocks between peer
 // transactions in the same namespace.
 //

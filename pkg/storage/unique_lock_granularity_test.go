@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -8,8 +10,7 @@ import (
 
 // TestUniqueConstraintCommitLocks_DisjointValuesAreParallel pins the
 // contract that two transactions whose pending nodes touch disjoint values
-// for the same (label, property) constraint can commit in parallel when the
-// bounded stripe hash keeps their lock domains separate — they do NOT
+// for the same (label, property) constraint commit in parallel — they do NOT
 // serialize on the full constraint.
 //
 // Earlier per-(label, property) granularity collapsed throughput to
@@ -17,15 +18,12 @@ import (
 // workers + collector + ingester all writing TerraformResource nodes with
 // disjoint uids would serialize at the commit boundary, an effective
 // WORKERS=1 contract in disguise. This test fails (deadlock or timeout)
-// under the old coarse granularity and passes under value-keyed stripe
+// under the old coarse granularity and passes under exact value-keyed
 // granularity.
 func TestUniqueConstraintCommitLocks_DisjointValuesAreParallel(t *testing.T) {
 	sm := &SchemaManager{}
 	heldKey := uniqueConstraintLockKey{label: "TerraformResource", property: "uid", value: "X"}
 	disjointKey := uniqueConstraintLockKey{label: "TerraformResource", property: "uid", value: "Y"}
-	for uniqueConstraintLockStripeIndex(heldKey) == uniqueConstraintLockStripeIndex(disjointKey) {
-		disjointKey.value = disjointKey.value.(string) + "Y"
-	}
 
 	// T1 holds the lock for value "X" indefinitely (until we signal).
 	t1Acquired := make(chan struct{})
@@ -65,12 +63,123 @@ func TestUniqueConstraintCommitLocks_DisjointValuesAreParallel(t *testing.T) {
 	<-t2Done
 }
 
-func TestUniqueConstraintLockKeyOrderDistinguishesValueTypes(t *testing.T) {
-	stringKey := uniqueConstraintLockKey{label: "TerraformResource", property: "uid", value: "1"}
-	floatKey := uniqueConstraintLockKey{label: "TerraformResource", property: "uid", value: 1.0}
+func TestUniqueConstraintCommitLocks_RegistryEntriesExpire(t *testing.T) {
+	sm := &SchemaManager{}
+	keys := []uniqueConstraintLockKey{
+		{label: "Function", property: "uid", value: "X"},
+		{label: "Function", property: "uid", value: "Y"},
+	}
 
-	if uniqueConstraintLockOrderKey(stringKey) == uniqueConstraintLockOrderKey(floatKey) {
-		t.Fatal("lock order key collapsed distinct value types with the same display string")
+	release := sm.acquireUniqueConstraintCommitLocks(keys)
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	active := len(sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if active != len(keys) {
+		t.Fatalf("active UNIQUE commit locks = %d, want %d", active, len(keys))
+	}
+
+	release()
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	remaining := len(sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("UNIQUE commit locks after release = %d, want 0", remaining)
+	}
+}
+
+func TestUniqueConstraintCommitLocks_CollidingFormattedKeysHaveDistinctOrder(t *testing.T) {
+	sm := &SchemaManager{}
+	value := "same-value"
+	first := uniqueConstraintLockKey{label: "a", property: "b\x00c", value: value}
+	second := uniqueConstraintLockKey{label: "a\x00b", property: "c", value: value}
+	legacyOrder := func(key uniqueConstraintLockKey) string {
+		return fmt.Sprintf("%s\x00%s\x00%T\x00%#v", key.label, key.property, key.value, key.value)
+	}
+	if legacyOrder(first) != legacyOrder(second) {
+		t.Fatal("test setup requires distinct exact keys with the same legacy formatted order key")
+	}
+
+	release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{first, second})
+	defer release()
+
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	firstLock := sm.uniqueConstraintCommitLocks[first]
+	secondLock := sm.uniqueConstraintCommitLocks[second]
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if firstLock == nil || secondLock == nil {
+		t.Fatal("both exact UNIQUE keys must have active lock entries")
+	}
+	if firstLock.order == secondLock.order {
+		t.Fatal("distinct exact UNIQUE keys must have distinct shared acquisition order")
+	}
+}
+
+func TestUniqueConstraintCommitLocks_NaNDoesNotLeakRegistryEntry(t *testing.T) {
+	sm := &SchemaManager{}
+	release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{
+		{label: "Metric", property: "value", value: math.NaN()},
+	})
+	release()
+
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	remaining := len(sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("UNIQUE commit locks after NaN release = %d, want 0", remaining)
+	}
+}
+
+func TestUniqueConstraintCommitLocks_WaitersKeepEntryAlive(t *testing.T) {
+	sm := &SchemaManager{}
+	key := uniqueConstraintLockKey{label: "Function", property: "uid", value: "X"}
+
+	releaseHolder := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{key})
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	entry := sm.uniqueConstraintCommitLocks[key]
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+
+	waiterAcquired := make(chan struct{})
+	releaseWaiter := make(chan struct{})
+	waiterDone := make(chan struct{})
+	go func() {
+		defer close(waiterDone)
+		release := sm.acquireUniqueConstraintCommitLocks([]uniqueConstraintLockKey{key})
+		close(waiterAcquired)
+		<-releaseWaiter
+		release()
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		sm.uniqueConstraintCommitLocksMu.Lock()
+		refs := entry.refs
+		sm.uniqueConstraintCommitLocksMu.Unlock()
+		if refs == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("holder plus waiter refs = %d, want 2", refs)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	releaseHolder()
+	<-waiterAcquired
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	activeEntry := sm.uniqueConstraintCommitLocks[key]
+	refs := entry.refs
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if activeEntry != entry || refs != 1 {
+		t.Fatalf("active waiter entry = (%p, refs=%d), want (%p, refs=1)", activeEntry, refs, entry)
+	}
+
+	close(releaseWaiter)
+	<-waiterDone
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	remaining := len(sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("UNIQUE commit locks after last waiter = %d, want 0", remaining)
 	}
 }
 
@@ -128,13 +237,13 @@ func TestUniqueConstraintCommitLocks_SameValueSerializes(t *testing.T) {
 
 // TestUniqueConstraintCommitLocks_DeterministicOrderingNoDeadlock verifies
 // that two transactions touching overlapping sets of values acquire locks
-// in the same total order (sorted by label, then property, then value),
+// in the same stable registry-assigned total order,
 // preventing AB-BA deadlock.
 //
 // Without sort-order acquisition: T1 wants {X, Y}, T2 wants {Y, X}. T1
 // holds X, asks for Y; T2 holds Y, asks for X. Deadlock. With sorted
-// acquisition, both transactions request X first, then Y; one waits, the
-// other progresses.
+// acquisition, both transactions request the earlier registered entry first;
+// one waits while the other progresses.
 func TestUniqueConstraintCommitLocks_DeterministicOrderingNoDeadlock(t *testing.T) {
 	sm := &SchemaManager{}
 

@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Large disjoint UNIQUE-constrained write batches no longer serialize on
+  hash-lock collisions.**
+  Replaced the fixed 256-stripe commit-lock table with an active,
+  reference-counted exact-value registry. Transactions touching the same
+  `(label, property, value)` still serialize through validation, Badger commit,
+  and unique-cache publication, while disjoint batches commit concurrently.
+  Registry-assigned ordering prevents AB-BA deadlocks, entries expire after the
+  last holder or waiter, and non-reflexive values such as NaN cannot leak lock
+  entries. Added real Badger commit, same-value retry, race, cleanup, and
+  8-writer/100-key performance coverage.
 - **Multi-MATCH relationship variable bound in a later clause was silently
   dropped.**
   `MATCH (s) WHERE s.uid IN $u MATCH (s)-[rel]->() WHERE

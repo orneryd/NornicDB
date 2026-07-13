@@ -14,7 +14,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"reflect"
 	"sort"
 	"strings"
@@ -38,8 +37,6 @@ const (
 	ConstraintCardinality     ConstraintType = "CARDINALITY"
 	ConstraintPolicy          ConstraintType = "RELATIONSHIP_POLICY"
 )
-
-const uniqueConstraintCommitLockStripeCount = 256
 
 // ConstraintEntityType distinguishes node constraints from relationship constraints.
 type ConstraintEntityType string
@@ -77,14 +74,13 @@ func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 type SchemaManager struct {
 	mu sync.RWMutex
 
-	// Bounded commit-time mutex stripes for UNIQUE constraint values.
-	// BadgerTransaction.Commit acquires the relevant stripe before
-	// validateAllConstraints and releases it after RegisterUniqueValue, so two
-	// transactions touching the same constrained value cannot both validate
-	// against an empty cache and then register conflicting values. Stripes keep
-	// the registry fixed-size; unrelated values normally commit in parallel,
-	// with rare hash collisions causing conservative serialization.
-	uniqueConstraintCommitLockStripes [uniqueConstraintCommitLockStripeCount]sync.Mutex
+	// Active commit-time locks for exact UNIQUE constraint values. Entries are
+	// reference-counted across holders and waiters, then removed when unused, so
+	// same-value transactions serialize without false contention between
+	// disjoint production-sized batches or unbounded historical-key growth.
+	uniqueConstraintCommitLocksMu sync.Mutex
+	uniqueConstraintCommitLocks   map[uniqueConstraintLockKey]*uniqueConstraintCommitLock
+	uniqueConstraintCommitOrder   uint64
 
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
@@ -750,15 +746,14 @@ func propertyIndexValueKey(value interface{}) (interface{}, bool) {
 }
 
 // uniqueConstraintLockKey identifies one (label, property, value) triple for
-// the purpose of acquiring a commit-time mutex stripe. Two transactions whose
+// the purpose of acquiring a commit-time mutex. Two transactions whose
 // pending nodes touch the same (label, property, value) serialize at commit;
-// transactions touching disjoint values usually commit in parallel unless the
-// bounded stripe hash collides. The granularity is per constrained value, not
-// per constraint.
+// transactions touching disjoint values commit in parallel. The granularity
+// is per constrained value, not per constraint.
 //
 // The value is stored in its canonical comparable form returned by
 // uniqueConstraintValueKey so semantically equal but type-distinct values
-// (e.g. int and int64) hash to the same lock and serialize correctly. Values
+// (e.g. int and int64) use the same lock and serialize correctly. Values
 // that are not comparable cannot acquire a lock; their constraint is still
 // validated at commit but without commit-window serialization. (In practice
 // every UNIQUE-constrained property in Eshu and Neo4j-compatible workloads
@@ -778,22 +773,18 @@ type uniqueConstraintLockKey struct {
 	value    interface{}
 }
 
+type uniqueConstraintCommitLock struct {
+	mu    sync.Mutex
+	refs  int
+	order uint64
+}
+
 type uniqueConstraintLockRequest struct {
-	stripe   int
-	orderKey string
+	key  uniqueConstraintLockKey
+	lock *uniqueConstraintCommitLock
 }
 
-func uniqueConstraintLockOrderKey(k uniqueConstraintLockKey) string {
-	return fmt.Sprintf("%s\x00%s\x00%T\x00%#v", k.label, k.property, k.value, k.value)
-}
-
-func uniqueConstraintLockStripeIndex(k uniqueConstraintLockKey) int {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(uniqueConstraintLockOrderKey(k)))
-	return int(h.Sum64() % uniqueConstraintCommitLockStripeCount)
-}
-
-// acquireUniqueConstraintCommitLocks acquires UNIQUE value mutex stripes in a
+// acquireUniqueConstraintCommitLocks acquires exact UNIQUE value mutexes in a
 // deterministic order and returns a release function.
 // Deterministic ordering eliminates the AB-BA deadlock risk when two
 // transactions both touch overlapping sets of constrained values.
@@ -802,12 +793,14 @@ func uniqueConstraintLockStripeIndex(k uniqueConstraintLockKey) int {
 // no-op release function so callers can safely defer the result regardless
 // of whether locks were acquired.
 //
-// The lock guards the entire commit window for its specific value —
+// Each lock guards the entire commit window for its specific value —
 // validateAllConstraints, badgerTx.Commit, and the RegisterUniqueValue call
 // that publishes the committed value to the constraint cache — so a
 // subsequent transaction touching the same value always observes a coherent
-// cache. Transactions touching disjoint values acquire disjoint stripes and
-// commit in parallel unless they hit the same bounded stripe.
+// cache. Transactions touching disjoint values always acquire disjoint locks.
+// Registry entries count both holders and waiters and are evicted when that
+// count reaches zero, bounding memory by active commit demand rather than the
+// historical graph cardinality.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstraintLockKey) func() {
 	if len(keys) == 0 {
 		return func() {}
@@ -815,38 +808,67 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(keys []uniqueConstra
 	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
 	seen := make(map[uniqueConstraintLockKey]struct{}, len(keys))
 	for _, k := range keys {
+		valueType := reflect.TypeOf(k.value)
+		if valueType != nil && !valueType.Comparable() {
+			continue
+		}
+		if k.value != nil && k.value != k.value {
+			// Non-reflexive comparable values such as NaN never conflict
+			// under equality and cannot be safely used as registry map keys:
+			// a lookup or delete with the same value would never find them.
+			continue
+		}
 		if _, dup := seen[k]; dup {
 			continue
 		}
 		seen[k] = struct{}{}
-		requests = append(requests, uniqueConstraintLockRequest{
-			stripe:   uniqueConstraintLockStripeIndex(k),
-			orderKey: uniqueConstraintLockOrderKey(k),
-		})
+		requests = append(requests, uniqueConstraintLockRequest{key: k})
 	}
-	sort.Slice(requests, func(i, j int) bool {
-		if requests[i].stripe != requests[j].stripe {
-			return requests[i].stripe < requests[j].stripe
+	if len(requests) == 0 {
+		return func() {}
+	}
+
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	if sm.uniqueConstraintCommitLocks == nil {
+		sm.uniqueConstraintCommitLocks = make(map[uniqueConstraintLockKey]*uniqueConstraintCommitLock, len(requests))
+	}
+	if len(sm.uniqueConstraintCommitLocks) == 0 {
+		sm.uniqueConstraintCommitOrder = 0
+	}
+	for i := range requests {
+		lock := sm.uniqueConstraintCommitLocks[requests[i].key]
+		if lock == nil {
+			sm.uniqueConstraintCommitOrder++
+			if sm.uniqueConstraintCommitOrder == 0 {
+				panic("UNIQUE commit lock order overflow")
+			}
+			lock = &uniqueConstraintCommitLock{order: sm.uniqueConstraintCommitOrder}
+			sm.uniqueConstraintCommitLocks[requests[i].key] = lock
 		}
-		return requests[i].orderKey < requests[j].orderKey
+		lock.refs++
+		requests[i].lock = lock
+	}
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+	sort.Slice(requests, func(i, j int) bool {
+		return requests[i].lock.order < requests[j].lock.order
 	})
 
-	locks := make([]*sync.Mutex, 0, len(requests))
-	lastStripe := -1
-	for _, req := range requests {
-		if req.stripe == lastStripe {
-			continue
-		}
-		lastStripe = req.stripe
-		locks = append(locks, &sm.uniqueConstraintCommitLockStripes[req.stripe])
-	}
-
-	for _, m := range locks {
-		m.Lock()
+	for i := range requests {
+		requests[i].lock.mu.Lock()
 	}
 	return func() {
-		for i := len(locks) - 1; i >= 0; i-- {
-			locks[i].Unlock()
+		for i := len(requests) - 1; i >= 0; i-- {
+			requests[i].lock.mu.Unlock()
+		}
+
+		sm.uniqueConstraintCommitLocksMu.Lock()
+		defer sm.uniqueConstraintCommitLocksMu.Unlock()
+		for i := range requests {
+			request := requests[i]
+			request.lock.refs--
+			if request.lock.refs == 0 && sm.uniqueConstraintCommitLocks[request.key] == request.lock {
+				delete(sm.uniqueConstraintCommitLocks, request.key)
+			}
 		}
 	}
 }
