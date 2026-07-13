@@ -2234,12 +2234,29 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 		return nil, fmt.Errorf("REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)")
 	}
 
-	// Execute the match first
-	matchQuery := normalized[matchIdx:removeIdx] + " RETURN *"
+	// Execute the MATCH/WITH pipeline while preserving every entity that can
+	// remain in scope after WITH. Returning explicit variables avoids the
+	// legacy MATCH/WITH projection treating RETURN * as an unbound expression.
+	matchSegment := normalized[matchIdx:removeIdx]
+	matchPartEnd := len(matchSegment)
+	if withIdx := findKeywordIndex(matchSegment, "WITH"); withIdx >= 0 {
+		matchPartEnd = withIdx
+	}
+	matchPattern := strings.TrimSpace(matchSegment[len("MATCH"):matchPartEnd])
+	matchVars := e.extractVariableNamesFromPattern(matchPattern)
+	withAliases := extractWithAliases(matchSegment)
+	allVars := dedupeNonEmpty(matchVars, withAliases)
+	matchQuery := matchSegment + " RETURN *"
+	if len(allVars) > 0 {
+		matchQuery = matchSegment + " RETURN " + strings.Join(allVars, ", ")
+	}
 	matchResult, err := e.executeMatch(ctx, matchQuery)
 	if err != nil {
 		return nil, err
 	}
+	// MATCH ... WITH projections can surface nodes as maps. REMOVE needs the
+	// live storage entities so property and label mutations reach the graph.
+	e.normalizeSetMatchRowsToNodes(matchResult, store)
 
 	// Parse REMOVE clause: REMOVE n.prop1, n.prop2, n:Label
 	var removePart string

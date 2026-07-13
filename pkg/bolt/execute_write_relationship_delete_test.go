@@ -13,6 +13,9 @@ import (
 
 func TestDatabaseManagerBoltExecuteWriteDeletesUnwindMatchedRelationship(t *testing.T) {
 	base := storage.NewMemoryEngine()
+	t.Cleanup(func() {
+		require.NoError(t, base.Close())
+	})
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
 			"nornic": storage.NewNamespacedEngine(base, "nornic"),
@@ -162,14 +165,28 @@ ORDER BY s.uid, rel.evidence_source, t.uid`, nil)
 		return summary
 	}
 
-	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) SET n.marked = true")
-	require.Equal(t, 2, summary.Counters().PropertiesSet(), "UNWIND MATCH SET must aggregate per-row counters")
+	summary = executeMutation("UNWIND $uids AS uid CREATE (n:UnwindCreated {uid: uid}) SET n.marked = true")
+	require.Equal(t, 2, summary.Counters().NodesCreated(), "UNWIND CREATE must aggregate per-row node counters")
+	require.Equal(t, 2, summary.Counters().PropertiesSet(), "UNWIND CREATE SET must aggregate per-row property counters")
 
-	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) REMOVE n.legacy")
-	require.Equal(t, 2, summary.Counters().PropertiesSet(), "UNWIND MATCH REMOVE must aggregate per-row counters")
+	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) WITH n SET n.marked = true")
+	require.Equal(t, 2, summary.Counters().PropertiesSet(), "UNWIND MATCH WITH SET must aggregate per-row counters")
+	result, err = session.Run(ctx, "MATCH (n:MutationNode {marked: true}) RETURN count(n)", nil)
+	require.NoError(t, err)
+	record, err = result.Single(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), record.Values[0], "UNWIND MATCH WITH SET must update every matched node")
 
-	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) DETACH DELETE n")
-	require.Equal(t, 2, summary.Counters().NodesDeleted(), "UNWIND MATCH DELETE must aggregate per-row counters")
+	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) WITH n REMOVE n.legacy")
+	require.Equal(t, 2, summary.Counters().PropertiesSet(), "UNWIND MATCH WITH REMOVE must aggregate per-row counters")
+	result, err = session.Run(ctx, "MATCH (n:MutationNode {legacy: true}) RETURN count(n)", nil)
+	require.NoError(t, err)
+	record, err = result.Single(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), record.Values[0], "UNWIND MATCH WITH REMOVE must update every matched node")
+
+	summary = executeMutation("UNWIND $uids AS uid MATCH (n:MutationNode {uid: uid}) WITH n DETACH DELETE n")
+	require.Equal(t, 2, summary.Counters().NodesDeleted(), "UNWIND MATCH WITH DELETE must aggregate per-row counters")
 
 	result, err = session.Run(ctx, "MATCH (n:MutationNode) RETURN count(n)", nil)
 	require.NoError(t, err)

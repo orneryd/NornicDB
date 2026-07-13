@@ -742,6 +742,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					withPrefix = strings.TrimSpace(mutationPart[:withIdx])
 				}
 				countAlias, countReturnOnly := parseUnwindBatchCountReturn(returnPart)
+				countReturnOnly = returnPart != "" && countReturnOnly
 				var processedRows int64
 				for _, item := range items {
 					fullQuery := mutationPart
@@ -774,9 +775,8 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					if err != nil {
 						return nil, fmt.Errorf("UNWIND mutation failed: %w", err)
 					}
-					if mutationResult != nil && mutationResult.Stats != nil {
-						result.Stats.NodesCreated += mutationResult.Stats.NodesCreated
-						result.Stats.RelationshipsCreated += mutationResult.Stats.RelationshipsCreated
+					if mutationResult != nil {
+						addQueryStats(result.Stats, mutationResult.Stats)
 					}
 					if mutationResult != nil && returnPart != "" && len(mutationResult.Rows) > 0 {
 						if len(result.Columns) == 0 {
@@ -902,9 +902,8 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 
 				// Accumulate stats when available. Some execution paths can return a
 				// nil Stats pointer even when the side-effect succeeded.
-				if mutationResult != nil && mutationResult.Stats != nil {
-					result.Stats.NodesCreated += mutationResult.Stats.NodesCreated
-					result.Stats.RelationshipsCreated += mutationResult.Stats.RelationshipsCreated
+				if mutationResult != nil {
+					addQueryStats(result.Stats, mutationResult.Stats)
 				}
 
 				// If there's a RETURN clause, collect the result rows
@@ -1798,9 +1797,8 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 		if !supported {
 			return nil, false, nil
 		}
-		if fast != nil && fast.Stats != nil {
-			result.Stats.NodesCreated += fast.Stats.NodesCreated
-			result.Stats.RelationshipsCreated += fast.Stats.RelationshipsCreated
+		if fast != nil {
+			addQueryStats(result.Stats, fast.Stats)
 		}
 	}
 	e.markCompoundQueryFastPathUsed()
