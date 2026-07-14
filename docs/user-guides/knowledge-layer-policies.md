@@ -46,6 +46,8 @@ Two important consequences:
                     └─────────────┘
 ```
 
+For a full, code-level flowchart of every stage between "entity enters the scorer" and "hand-off to the Visibility Layer" — including the resolver, decay curves, promotion, and the access-feedback loop — see [Knowledge-Policy Scoring Pipeline](../architecture/knowledge-policy-scoring-pipeline.md).
+
 ## Quick Start
 
 ### 1. Enable Scoring

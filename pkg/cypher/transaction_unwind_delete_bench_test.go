@@ -66,41 +66,25 @@ DELETE rel`
 					ctx := context.Background()
 					b.ReportAllocs()
 
-					// DELETE is destructive, so each iteration needs fresh edges.
-					// Pre-build every iteration's fixture up front so the hot path
-					// only pays for BEGIN/UNWIND-DELETE/COMMIT and iteration cost
-					// isn't dominated by re-instantiating the storage engine.
-					type fixture struct {
-						store   *storage.MemoryEngine
-						exec    *StorageExecutor
-						uids    []string
-						edgeIDs []storage.EdgeID
-					}
-					fixtures := make([]fixture, b.N)
 					for i := 0; i < b.N; i++ {
+						// DELETE is destructive, so each iteration needs a fresh fixture.
+						// Keep setup out of the hot path without prebuilding b.N engines,
+						// which can blow up memory as the harness increases iteration count.
+						b.StopTimer()
 						store, uids, edgeIDs := populateUnwindDeleteFixture(b, batchSize)
-						fixtures[i] = fixture{
-							store:   store,
-							exec:    NewStorageExecutor(store),
-							uids:    uids,
-							edgeIDs: edgeIDs,
-						}
-					}
-
-					b.ResetTimer()
-					for i := 0; i < b.N; i++ {
-						f := fixtures[i]
+						exec := NewStorageExecutor(store)
+						b.StartTimer()
 						if explicit {
-							if _, err := f.exec.Execute(ctx, "BEGIN", nil); err != nil {
+							if _, err := exec.Execute(ctx, "BEGIN", nil); err != nil {
 								b.Fatal(err)
 							}
 						}
-						result, err := f.exec.Execute(ctx, query, map[string]any{"uids": f.uids})
+						result, err := exec.Execute(ctx, query, map[string]any{"uids": uids})
 						if err != nil {
 							b.Fatal(err)
 						}
 						if explicit {
-							if _, err := f.exec.Execute(ctx, "COMMIT", nil); err != nil {
+							if _, err := exec.Execute(ctx, "COMMIT", nil); err != nil {
 								b.Fatal(err)
 							}
 						}
@@ -109,12 +93,12 @@ DELETE rel`
 						if result.Stats == nil || result.Stats.RelationshipsDeleted != batchSize {
 							b.Fatalf("relationships deleted = %+v, want %d", result.Stats, batchSize)
 						}
-						for _, edgeID := range f.edgeIDs {
-							if _, err := f.store.GetEdge(edgeID); err == nil {
+						for _, edgeID := range edgeIDs {
+							if _, err := store.GetEdge(edgeID); err == nil {
 								b.Fatalf("edge %s survived", edgeID)
 							}
 						}
-						if err := f.store.Close(); err != nil {
+						if err := store.Close(); err != nil {
 							b.Fatal(err)
 						}
 						b.StartTimer()
