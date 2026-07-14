@@ -105,6 +105,9 @@ DELETE rel`, map[string]any{
 	})
 	require.ErrorIs(t, err, rollbackErr)
 
+	// Verify rollback with a fresh autocommit query. Autocommit runs outside
+	// the (now rolled-back) explicit transaction, so it observes committed
+	// state only — the relationship must still exist.
 	result, err := session.Run(ctx, `MATCH (:Function {uid: 'source-rollback'})-[rel:TAINT_FLOWS_TO]->(:Function {uid: 'target-rollback'}) RETURN count(rel)`, nil)
 	require.NoError(t, err)
 	record, err := result.Single(ctx)

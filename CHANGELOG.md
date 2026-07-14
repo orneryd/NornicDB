@@ -10,13 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Bolt explicit transactions now bind top-level `UNWIND` rows before
-  relationship deletion.**
+  routing to mutation handlers.**
   `session.ExecuteWrite` queries shaped as `UNWIND ... MATCH ... DELETE`
   previously routed directly to the delete handler before the UNWIND variable
   was bound, returned success with zero delete counters, and left matching
-  relationships intact. Explicit transactions now use the same UNWIND-first
-  dispatch order as autocommit, and aggregate per-row mutation counters for
-  Bolt result summaries.
+  relationships intact. The same substring-based routing also intercepted
+  `UNWIND ... MATCH ... SET` and `UNWIND ... MATCH ... REMOVE` in explicit
+  transactions and sent them to `executeSet` / `executeRemove` without binding
+  the UNWIND variable. Explicit transactions now use the same UNWIND-first
+  dispatch order as autocommit for DELETE, DETACH DELETE, SET, and REMOVE, and
+  aggregate per-row mutation counters (nodes/relationships created/deleted,
+  properties set, labels added) into Bolt result summaries so downstream
+  clients observe accurate counters.
 
 ## [v1.1.11] - 7/9/2026
 
