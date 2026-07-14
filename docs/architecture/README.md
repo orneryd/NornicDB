@@ -7,6 +7,8 @@
 - **[System Design](system-design.md)** - High-level architecture overview
 - **[MVCC Lifecycle and Background Work](mvcc-lifecycle-background-work.md)** - Debounced mutation work, lifecycle scheduling, and query-protection behavior
 - **[Embedding Search](embedding-search.md)** - Embedding storage model and search paths
+- **[Knowledge-Policy Scoring Pipeline](knowledge-policy-scoring-pipeline.md)** - Pre-visibility scoring, decay, and promotion resolution
+- **[Knowledge-Policy Visibility Layer and Deindex](knowledge-policy-visibility-layer.md)** - Reveal scopes, suppression enforcement, tombstones, and retention hand-off
 - **[Graph-RAG: NornicDB vs Typical](graph-rag-nornicdb-comparison.md)** - In-memory vs distributed Graph-RAG and latency comparison
 - **[Replication](replication.md)** - Clustering and replication internals
 - **[Clustering Roadmap](clustering-roadmap.md)** - Future sharding and scaling plans

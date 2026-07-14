@@ -139,16 +139,17 @@ Every box in the diagram corresponds to a real function in the codebase.
 
 ---
 
-## What This Diagram Excludes
+## Next Stage
 
-Everything **downstream of `SuppressionEligible`** — the Visibility Layer itself — is out of scope for this document. That includes:
+Everything downstream of `SuppressionEligible` now has its own architecture page: [Knowledge-Policy Visibility Layer and Deindex](knowledge-policy-visibility-layer.md).
 
-- BM25 and vector-index deindex work items
-- `reveal()` bypass semantics from a caller's perspective
-- The reveal-scope reader/writer lock (`BeginQueryRevealScope`) as seen by concurrent queries
-- Retention / MVCC lifecycle actions triggered when an entity remains suppressed past a retention window
+That follow-on document covers:
 
-See [Visibility Suppression and Deindex](../user-guides/visibility-suppression-deindex.md) and [Retention Policies](../user-guides/retention-policies.md) for those stages.
+- query-time `reveal()` bypass behavior
+- reveal-scope locking with `BeginQueryRevealScope`
+- persisted suppression flags and deindex work items
+- tombstone-based hiding of BM25 and vector-backed index entries
+- retention sweep behavior once suppressed entities remain in storage long enough
 
 ## See Also
 
@@ -157,4 +158,5 @@ See [Visibility Suppression and Deindex](../user-guides/visibility-suppression-d
 - [Promotion Policies](../user-guides/promotion-policies.md) — `ON ACCESS`, `WHEN` predicates, Kalman filtering
 - [Knowledge Policy Tuning and Testing](../user-guides/knowledge-policy-tuning-testing.md) — end-to-end tuning workflow
 - [Knowledge Policy Metrics](../observability/knowledge-policy-metrics.md) — the counters and histograms emitted at each stage above
+- [Knowledge-Policy Visibility Layer and Deindex](knowledge-policy-visibility-layer.md) — downstream read filtering, reveal scopes, deindex cleanup, and retention hand-off
 - [Visibility Suppression and Deindex](../user-guides/visibility-suppression-deindex.md) — what happens after `SuppressionEligible=true`

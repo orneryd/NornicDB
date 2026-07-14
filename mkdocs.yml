@@ -229,6 +229,7 @@ nav:
           - Embedding & Search Examples: architecture/embedding-search-examples.md
           - Embedding & Search Flow Diagrams: architecture/embedding-search-flow-diagrams.md
           - Knowledge-Policy Scoring Pipeline: architecture/knowledge-policy-scoring-pipeline.md
+          - Knowledge-Policy Visibility Layer and Deindex: architecture/knowledge-policy-visibility-layer.md
           - Embedding & Search Overview: architecture/embedding-search.md
           - Embedding & Search Index: architecture/embedding-search-index.md
           - Indexing Memory for Large Datasets: architecture/indexing-memory-large-datasets.md
