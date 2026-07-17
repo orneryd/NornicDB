@@ -3558,6 +3558,14 @@ type optionalRelResult struct {
 // This implements left outer join semantics for relationship traversals with aggregation support
 func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	originalCypher := cypher
+
+	// Fail loud on multi-clause shapes this string interpreter cannot evaluate
+	// correctly (e.g. RETURN DISTINCT after OPTIONAL MATCH), rather than
+	// emitting corrupt rows. See unsupportedMultiClauseShape for detail.
+	if detail, unsupported := e.unsupportedMultiClauseShape(cypher); unsupported {
+		return nil, fmt.Errorf("unsupported multi-clause query: %s", detail)
+	}
+
 	params := getParamsFromContext(ctx)
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params != nil {

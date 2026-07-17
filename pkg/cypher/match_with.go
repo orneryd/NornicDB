@@ -13,6 +13,13 @@ import (
 func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	upper := strings.ToUpper(cypher)
 
+	// Fail loud on multi-clause shapes this string interpreter cannot evaluate
+	// correctly, rather than dispatching into it and emitting corrupt rows.
+	// See unsupportedMultiClauseShape for the rationale and per-shape detail.
+	if detail, unsupported := e.unsupportedMultiClauseShape(cypher); unsupported {
+		return nil, fmt.Errorf("unsupported multi-clause query: %s", detail)
+	}
+
 	// Find clause boundaries
 	withIdx := findKeywordIndex(cypher, "WITH")
 	returnIdx := findKeywordIndex(cypher, "RETURN")
@@ -853,6 +860,15 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 // This is a Neo4j compatibility feature that processes WITH clause filtering before OPTIONAL MATCH
 func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	originalCypher := cypher
+
+	// Fail loud on multi-clause shapes this string interpreter cannot evaluate
+	// correctly (checked on the pre-substitution query, since only structure
+	// matters). See unsupportedMultiClauseShape for rationale and per-shape
+	// detail.
+	if detail, unsupported := e.unsupportedMultiClauseShape(cypher); unsupported {
+		return nil, fmt.Errorf("unsupported multi-clause query: %s", detail)
+	}
+
 	params := getParamsFromContext(ctx)
 	// Substitute parameters AFTER routing to avoid keyword detection issues
 	if params != nil {

@@ -22,6 +22,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregate per-row mutation counters (nodes/relationships created/deleted,
   properties set, labels added) into Bolt result summaries so downstream
   clients observe accurate counters.
+- **Unsupported multi-clause Cypher shapes now fail loud instead of returning
+  corrupt results.**
+  The legacy string-slicing WITH interpreters
+  (`executeMatchWithClause` / `executeMatchWithOptionalMatch` /
+  `executeCompoundMatchOptionalMatch`) silently produced corrupt output for a
+  set of multi-clause read shapes they cannot evaluate — raw expression text as
+  a column value, a boolean/nil where a value was expected, skipped `DISTINCT`
+  deduplication, or an empty result — with no error, so a caller could not tell
+  a wrong answer from a right one. A new guard (`unsupportedMultiClauseShape` in
+  `pkg/cypher/failloud_guard.go`) detects exactly these shapes at handler entry
+  and returns a clear, actionable error mirroring the existing
+  "unsupported clause after CALL {}" contract. Rejected shapes: `RETURN DISTINCT`
+  after `WITH`/`OPTIONAL MATCH`; `length(<path>)` projected across an
+  `OPTIONAL MATCH`; `min()`/`max()`/`avg()` over a node pattern in a multi-clause
+  `RETURN`; aggregation in `WITH` followed by `OPTIONAL MATCH`; comma-separated
+  multi-pattern `MATCH` combined with `WITH`; pattern comprehensions in a
+  multi-clause projection; and zero-length variable-length patterns (`*0..`) in
+  the primary `MATCH` consumed by `WITH`. Single-clause queries and supported
+  multi-clause shapes (bare `WITH` + `OPTIONAL MATCH`, `count()`/`sum()`/
+  `collect()` projections, `min()`/`length()` over relationship paths, `*0..`
+  inside `OPTIONAL MATCH`) are unaffected. Added `failloud_multiclause_test.go`
+  with failing-then-green coverage for all seven shapes plus edge cases; guard
+  overhead measured at ~0.76% on an uncached multi-clause `WITH` query
+  (93.6 µs vs 92.9 µs/op), well within the no-regression budget.
 
 ## [v1.1.11] - 7/9/2026
 
