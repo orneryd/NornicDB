@@ -381,6 +381,36 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 	matchPart = strings.TrimSpace(matchPart)
 
+	// A relationship pattern embedded after a literal "OPTIONAL MATCH" keyword
+	// (e.g. matchPart == "(n) OPTIONAL MATCH (n)-[r:TYPE]->(m)") must be routed
+	// through executeCompoundMatchOptionalMatch instead of the naive
+	// relationship-pattern branch below.
+	//
+	// executeMatchWithRelationshipsWithPath -> parseTraversalPatternStateMachine
+	// locates the relationship bracket by scanning forward from the character
+	// right after the FIRST node group's closing paren, assuming that
+	// character starts the "-[" (or "<-[") relationship syntax. The literal
+	// "OPTIONAL MATCH (n)" text between the outer MATCH's node and the
+	// optional relationship breaks that assumption: it gets folded into the
+	// substring handed to parseRelationshipPattern, which requires the
+	// substring (after stripping a leading arrow) to start with "[". Since the
+	// corrupted substring starts with whitespace instead, that check never
+	// fires and the relationship variable/type/properties are silently
+	// dropped -- e.g. a probe built by executeDelete/executeSet/executeRemove's
+	// internal "MATCH ... OPTIONAL MATCH ... RETURN <vars>" probe resolves an
+	// OPTIONAL MATCH-bound relationship variable to nil even though the
+	// OPTIONAL MATCH genuinely matched (eshu #5147).
+	//
+	// This is only reachable here when a caller invokes executeMatch directly
+	// with an embedded OPTIONAL MATCH: the top-level dispatcher
+	// (executeWithoutTransaction) already routes "MATCH ... OPTIONAL MATCH
+	// ..." queries to executeCompoundMatchOptionalMatch before they would ever
+	// reach this function.
+	if (strings.Contains(matchPart, "-[") || strings.Contains(matchPart, "]-")) &&
+		findKeywordIndex(matchPart, "OPTIONAL MATCH") >= 0 {
+		return e.executeCompoundMatchOptionalMatch(ctx, originalCypher)
+	}
+
 	// Check for relationship pattern: (a)-[r:TYPE]->(b) or (a)<-[r]-(b)
 	if strings.Contains(matchPart, "-[") || strings.Contains(matchPart, "]-") {
 		// Extract WHERE clause if present

@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **WHERE relationship-existence predicates now recognize bracket-less and
+  undirected patterns, and bare `COUNT`/`EXISTS` subquery bodies.**
+  `WHERE (n)--()`, `WHERE (n)-->()`, `WHERE (n)<--()`, and the bracketed
+  undirected form `WHERE (n)-[r]-()` previously fell through to the
+  relationship-pattern gate's default branch, which treats an unrecognized
+  expression as `true` -- so `WHERE NOT (n)--()` matched nothing and
+  `WHERE (n)--()` was always true, regardless of the graph's actual shape.
+  Separately, `COUNT { (n)--() }` and `EXISTS { (n)--() }` required their
+  subquery body to start with `MATCH`, so a bare (unprefixed) body always
+  returned `0` / `false`. Both gates now recognize the full range of
+  bracket-less and undirected existence patterns.
+- **Non-DETACH `DELETE` of a node that still has relationships now errors
+  instead of silently cascade-deleting its edges (behavior change).**
+  `MATCH (n) DELETE n` previously called the storage engine's
+  `DeleteNode` unconditionally, which cascade-deletes every adjacent edge --
+  so a plain `DELETE` on a connected node quietly removed its relationships
+  too, diverging from openCypher/Neo4j semantics. `DELETE` now validates that
+  every node in the deletion plan has no relationships left outside the
+  statement's own edge deletions *before* mutating anything (so a multi-row
+  `DELETE` is judged as a whole, not partially applied), and errors with the
+  same "still has relationships" wording Neo4j uses. Deleting a node together
+  with its own edge in one statement (`DELETE a, r`) still works, since the
+  edge being removed no longer counts as residual. Existing callers relying on
+  the old silent cascade must switch to `DETACH DELETE`.
+- **An `OPTIONAL MATCH`-bound relationship variable resolved to `nil` inside
+  `DELETE`/`SET`/`REMOVE`'s internal match probes, even when the `OPTIONAL
+  MATCH` genuinely matched.** `executeDelete`, `executeSet`, and
+  `executeRemove` each build an internal
+  `MATCH ... OPTIONAL MATCH (a)-[r:TYPE]->(b) RETURN <vars>` probe and execute
+  it via the low-level match path instead of the dispatcher that normally
+  detects `OPTIONAL MATCH`. That low-level path located the relationship
+  bracket by scanning forward from the character right after the first node
+  group's closing paren, an assumption the embedded `OPTIONAL MATCH (n)` text
+  broke: the corrupted substring handed to the relationship-pattern parser no
+  longer started with `[`, so the bound variable, type, and properties were
+  silently dropped. A relationship pattern embedded after `OPTIONAL MATCH` is
+  now routed through the same compound-match handler the top-level dispatcher
+  already uses, so the relationship variable resolves to the real edge.
+- **`REMOVE` did not support relationship variables at all.** `REMOVE r.prop`
+  silently no-op'd (it only inspected `*storage.Node` values in the matched
+  rows) and, independent of that gap, a `REMOVE` query returning more than one
+  node variable emitted one duplicated result row per node instead of one row
+  per match. `REMOVE` now removes properties from relationship variables the
+  same way `SET` already does, and its `RETURN` handling builds exactly one
+  row per matched row regardless of how many node/relationship variables are
+  in scope. The same fix applies to a chained `SET ... REMOVE ...` clause in a
+  single statement.
 - **Bolt explicit transactions now bind top-level `UNWIND` rows before
   routing to mutation handlers.**
   `session.ExecuteWrite` queries shaped as `UNWIND ... MATCH ... DELETE`
