@@ -189,58 +189,41 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	e.normalizeSetMatchRowsToNodes(matchResult, store)
 
 	// Delete matched nodes and/or relationships.
-	// Pre-size dedup maps based on match result to reduce rehashing.
-	rowCount := len(matchResult.Rows)
-	deletedNodeIDs := make(map[string]struct{}, rowCount)
-	deletedEdgeIDs := make(map[string]struct{}, rowCount)
-	edgeIDsToDelete := make([]storage.EdgeID, 0, rowCount)
+	//
+	// This runs as collect -> validate -> apply (see
+	// executor_mutations_delete_guard.go) so a non-DETACH DELETE is judged
+	// as a whole statement before anything is mutated: a multi-row DELETE
+	// must not partially apply before a later row is found to still have
+	// relationships, and a plain "DELETE n" on a connected node must error
+	// instead of silently cascading its edges away (eshu #5147).
+	nodeIDs, edgeIDsToDelete := collectDeleteMutationTargets(matchResult)
 
-	for _, row := range matchResult.Rows {
-		for _, val := range row {
-			deleteTarget := classifyDeleteTargetValue(val)
+	if !detach {
+		if err := validateNoResidualRelationships(store, nodeIDs, edgeIDsToDelete); err != nil {
+			return nil, err
+		}
+	}
 
-			// Handle relationship deletion
-			if deleteTarget.kind == deleteProjectionRelationship {
-				edgeID := string(deleteTarget.edgeID)
-				if _, seen := deletedEdgeIDs[edgeID]; seen {
-					continue
-				}
-				deletedEdgeIDs[edgeID] = struct{}{}
-				edgeIDsToDelete = append(edgeIDsToDelete, deleteTarget.edgeID)
-				continue
+	for _, nodeID := range nodeIDs {
+		if detach {
+			// Count edges that will be deleted with the node (for stats).
+			// Combine outgoing + incoming in a single stats tally.
+			edgesCount := 0
+			if needEdgeStats {
+				outgoingEdges, _ := store.GetOutgoingEdges(nodeID)
+				incomingEdges, _ := store.GetIncomingEdges(nodeID)
+				edgesCount = len(outgoingEdges) + len(incomingEdges)
 			}
 
-			// Handle node deletion
-			if deleteTarget.kind != deleteProjectionNode {
-				continue
+			if err := store.DeleteNode(nodeID); err == nil {
+				result.Stats.NodesDeleted++
+				result.Stats.RelationshipsDeleted += edgesCount
+				e.removeNodeFromSearch(string(nodeID))
 			}
-			nodeID := string(deleteTarget.nodeID)
-			if _, seen := deletedNodeIDs[nodeID]; seen {
-				continue
-			}
-
-			if detach {
-				// Count edges that will be deleted with the node (for stats).
-				// Combine outgoing + incoming in a single stats tally.
-				edgesCount := 0
-				if needEdgeStats {
-					outgoingEdges, _ := store.GetOutgoingEdges(storage.NodeID(nodeID))
-					incomingEdges, _ := store.GetIncomingEdges(storage.NodeID(nodeID))
-					edgesCount = len(outgoingEdges) + len(incomingEdges)
-				}
-
-				if err := store.DeleteNode(storage.NodeID(nodeID)); err == nil {
-					result.Stats.NodesDeleted++
-					result.Stats.RelationshipsDeleted += edgesCount
-					deletedNodeIDs[nodeID] = struct{}{}
-					e.removeNodeFromSearch(nodeID)
-				}
-			} else {
-				if err := store.DeleteNode(storage.NodeID(nodeID)); err == nil {
-					result.Stats.NodesDeleted++
-					deletedNodeIDs[nodeID] = struct{}{}
-					e.removeNodeFromSearch(nodeID)
-				}
+		} else {
+			if err := store.DeleteNode(nodeID); err == nil {
+				result.Stats.NodesDeleted++
+				e.removeNodeFromSearch(string(nodeID))
 			}
 		}
 	}
@@ -2246,6 +2229,30 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	matchVars := e.extractVariableNamesFromPattern(matchPattern)
 	withAliases := extractWithAliases(matchSegment)
 	allVars := dedupeNonEmpty(matchVars, withAliases)
+
+	// Include variables referenced only in the REMOVE/RETURN clauses so a
+	// relationship variable bound inside a bracketed pattern (e.g. the "r" in
+	// "OPTIONAL MATCH (n)-[r:TYPE]->(m)") stays in the probe's projection.
+	// extractVariableNamesFromPattern above only scans node groups outside
+	// "[...]", so a bare "REMOVE r.prop" previously vanished from matchQuery's
+	// RETURN list entirely -- the probe never asked for r, so the mutation
+	// loop below never saw a *storage.Edge to remove the property from (eshu
+	// #5147, same root cause class as the OPTIONAL MATCH rel-var fix in
+	// executeSet).
+	removeLen := len("REMOVE")
+	var removePart string
+	if returnIdx > 0 && returnIdx > removeIdx {
+		removePart = strings.TrimSpace(normalized[removeIdx+removeLen : returnIdx])
+	} else {
+		removePart = strings.TrimSpace(normalized[removeIdx+removeLen:])
+	}
+	returnScopePart := ""
+	if returnIdx > removeIdx {
+		returnScopePart = strings.TrimSpace(normalized[returnIdx+6:])
+	}
+	scopeVars := extractScopeVariablesFromRemoveAndReturn(removePart, returnScopePart)
+	allVars = dedupeNonEmpty(allVars, scopeVars)
+
 	matchQuery := matchSegment + " RETURN *"
 	if len(allVars) > 0 {
 		matchQuery = matchSegment + " RETURN " + strings.Join(allVars, ", ")
@@ -2257,61 +2264,77 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	// MATCH ... WITH projections can surface nodes as maps. REMOVE needs the
 	// live storage entities so property and label mutations reach the graph.
 	e.normalizeSetMatchRowsToNodes(matchResult, store)
-
-	// Parse REMOVE clause: REMOVE n.prop1, n.prop2, n:Label
-	var removePart string
-	removeLen := len("REMOVE")
-	if returnIdx > 0 && returnIdx > removeIdx {
-		removePart = strings.TrimSpace(normalized[removeIdx+removeLen : returnIdx])
-	} else {
-		removePart = strings.TrimSpace(normalized[removeIdx+removeLen:])
-	}
+	e.normalizeSetMatchRowsToEdges(matchResult, store)
 
 	// Split by comma and parse property and label removals.
 	propsToRemove, labelsToRemove := e.parseRemoveItems(removePart)
 
-	// Update matched nodes
+	// Update matched nodes and relationships. REMOVE r.prop on a relationship
+	// variable requires the same *storage.Edge handling SET already applies
+	// (see the SET assignment loop above) -- relationships have no labels to
+	// remove, only properties, so labelsToRemove never applies to an edge.
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			node, ok := val.(*storage.Node)
-			if !ok || node == nil {
-				continue
-			}
-			invalidated := false
-			// Remove specified properties
-			for _, prop := range propsToRemove {
-				if _, exists := node.Properties[prop]; exists {
-					delete(node.Properties, prop)
-					result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
-					if !embeddingutil.IsMetadataPropertyKey(prop) {
-						invalidated = true
+			switch entity := val.(type) {
+			case *storage.Node:
+				if entity == nil {
+					continue
+				}
+				invalidated := false
+				// Remove specified properties
+				for _, prop := range propsToRemove {
+					if _, exists := entity.Properties[prop]; exists {
+						delete(entity.Properties, prop)
+						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
+						if !embeddingutil.IsMetadataPropertyKey(prop) {
+							invalidated = true
+						}
 					}
 				}
-			}
-			if invalidated {
-				embeddingutil.InvalidateManagedEmbeddings(node)
-			}
-			if len(labelsToRemove) > 0 {
-				oldLabels := make([]string, len(node.Labels))
-				copy(oldLabels, node.Labels)
-				next, removed := removeNodeLabels(node.Labels, labelsToRemove)
-				if removed > 0 {
-					node.Labels = next
-					// Validate policy constraints before committing the label change.
-					if err := validatePolicyOnLabelChange(store, node, oldLabels); err != nil {
-						node.Labels = oldLabels // restore
-						return nil, err
+				if invalidated {
+					embeddingutil.InvalidateManagedEmbeddings(entity)
+				}
+				if len(labelsToRemove) > 0 {
+					oldLabels := make([]string, len(entity.Labels))
+					copy(oldLabels, entity.Labels)
+					next, removed := removeNodeLabels(entity.Labels, labelsToRemove)
+					if removed > 0 {
+						entity.Labels = next
+						// Validate policy constraints before committing the label change.
+						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
+							entity.Labels = oldLabels // restore
+							return nil, err
+						}
 					}
 				}
+				if err := store.UpdateNode(entity); err != nil {
+					return nil, err
+				}
+				e.notifyNodeMutated(string(entity.ID))
+			case *storage.Edge:
+				if entity == nil {
+					continue
+				}
+				for _, prop := range propsToRemove {
+					if _, exists := entity.Properties[prop]; exists {
+						delete(entity.Properties, prop)
+						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
+					}
+				}
+				if err := store.UpdateEdge(entity); err != nil {
+					return nil, err
+				}
+				e.notifyEdgeMutated(string(entity.ID))
 			}
-			if err := store.UpdateNode(node); err != nil {
-				return nil, err
-			}
-			e.notifyNodeMutated(string(node.ID))
 		}
 	}
 
-	// Handle RETURN
+	// Handle RETURN. Build exactly one result row per matchResult row
+	// (mirroring executeSet's RETURN handling below via varMap/relMap +
+	// extractVariableNameFromReturnItem) instead of emitting one row per
+	// *storage.Node encountered in the row -- the latter both dropped every
+	// relationship variable and duplicated rows whenever a row bound more
+	// than one node variable.
 	if returnIdx > 0 && returnIdx > removeIdx {
 		returnPart := strings.TrimSpace(normalized[returnIdx+6:])
 		returnItems := e.parseReturnItems(returnPart)
@@ -2323,19 +2346,41 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 				result.Columns[i] = item.expr
 			}
 		}
-		// Return updated nodes
 		for _, row := range matchResult.Rows {
-			for _, val := range row {
-				node, ok := val.(*storage.Node)
-				if !ok || node == nil {
+			varMap := make(map[string]*storage.Node, len(matchResult.Columns))
+			relMap := make(map[string]*storage.Edge, len(matchResult.Columns))
+			for i, colName := range matchResult.Columns {
+				if i >= len(row) {
 					continue
 				}
-				resultRow := make([]interface{}, len(returnItems))
-				for i, item := range returnItems {
-					resultRow[i] = e.resolveReturnItem(ctx, item, "n", node)
+				switch entity := row[i].(type) {
+				case *storage.Node:
+					if entity != nil {
+						varMap[colName] = entity
+					}
+				case *storage.Edge:
+					if entity != nil {
+						relMap[colName] = entity
+					}
 				}
-				result.Rows = append(result.Rows, resultRow)
 			}
+
+			resultRow := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				varName := extractVariableNameFromReturnItem(item.expr)
+				if varName != "" {
+					if node, ok := varMap[varName]; ok {
+						resultRow[i] = e.resolveReturnItem(ctx, item, varName, node)
+						continue
+					}
+					if _, ok := relMap[varName]; ok {
+						resultRow[i] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
+						continue
+					}
+				}
+				resultRow[i] = e.evaluateExpressionWithContext(ctx, item.expr, varMap, relMap)
+			}
+			result.Rows = append(result.Rows, resultRow)
 		}
 	}
 
@@ -2411,39 +2456,57 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 	propsToRemove, labelsToRemove := e.parseRemoveItems(removePart)
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			node, ok := val.(*storage.Node)
-			if !ok || node == nil {
-				continue
-			}
-			invalidated := false
-			for _, prop := range propsToRemove {
-				if _, exists := node.Properties[prop]; exists {
-					delete(node.Properties, prop)
-					result.Stats.PropertiesSet++
-					if !embeddingutil.IsMetadataPropertyKey(prop) {
-						invalidated = true
+			switch entity := val.(type) {
+			case *storage.Node:
+				if entity == nil {
+					continue
+				}
+				invalidated := false
+				for _, prop := range propsToRemove {
+					if _, exists := entity.Properties[prop]; exists {
+						delete(entity.Properties, prop)
+						result.Stats.PropertiesSet++
+						if !embeddingutil.IsMetadataPropertyKey(prop) {
+							invalidated = true
+						}
 					}
 				}
-			}
-			if len(labelsToRemove) > 0 {
-				oldLabels := make([]string, len(node.Labels))
-				copy(oldLabels, node.Labels)
-				next, removed := removeNodeLabels(node.Labels, labelsToRemove)
-				if removed > 0 {
-					node.Labels = next
-					if err := validatePolicyOnLabelChange(store, node, oldLabels); err != nil {
-						node.Labels = oldLabels // restore
-						return err
+				if len(labelsToRemove) > 0 {
+					oldLabels := make([]string, len(entity.Labels))
+					copy(oldLabels, entity.Labels)
+					next, removed := removeNodeLabels(entity.Labels, labelsToRemove)
+					if removed > 0 {
+						entity.Labels = next
+						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
+							entity.Labels = oldLabels // restore
+							return err
+						}
 					}
 				}
+				if invalidated {
+					embeddingutil.InvalidateManagedEmbeddings(entity)
+				}
+				if err := store.UpdateNode(entity); err != nil {
+					return err
+				}
+				e.notifyNodeMutated(string(entity.ID))
+			case *storage.Edge:
+				// Relationships have no labels to remove, only properties
+				// (see the mirrored *storage.Node handling in executeRemove).
+				if entity == nil {
+					continue
+				}
+				for _, prop := range propsToRemove {
+					if _, exists := entity.Properties[prop]; exists {
+						delete(entity.Properties, prop)
+						result.Stats.PropertiesSet++
+					}
+				}
+				if err := store.UpdateEdge(entity); err != nil {
+					return err
+				}
+				e.notifyEdgeMutated(string(entity.ID))
 			}
-			if invalidated {
-				embeddingutil.InvalidateManagedEmbeddings(node)
-			}
-			if err := store.UpdateNode(node); err != nil {
-				return err
-			}
-			e.notifyNodeMutated(string(node.ID))
 		}
 	}
 	return nil
@@ -2878,6 +2941,14 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		checkOutgoing = true
 		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
 	}
+	if !checkIncoming && !checkOutgoing {
+		// Bracket-less pattern (e.g. "(n)-->()", "()<--(n)") -- the checks
+		// above only recognize bracketed arrows, so fall back to direction
+		// detection on the bare arrow itself (eshu #5147).
+		if in, out, ok := bareRelDirection(pattern, variable); ok {
+			checkIncoming, checkOutgoing = in, out
+		}
+	}
 	if checkIncoming {
 		edges, _ := e.storage.GetIncomingEdges(node.ID)
 		for _, edge := range edges {
@@ -2906,14 +2977,25 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.Node, variable, subquery string) bool {
 	// Parse the MATCH pattern from the subquery
 	// Format: MATCH (var)<-[:TYPE]-(other) WHERE ...
+	//
+	// EXISTS { ... } and COUNT { ... } also allow an *implicit* MATCH: a
+	// bare pattern body with no "MATCH " keyword (e.g. "EXISTS { (n)--() }").
+	// The previous version required the "MATCH " prefix unconditionally, so
+	// a bare body always returned false here (eshu #5147).
+	subquery = strings.TrimSpace(subquery)
 	upperSub := strings.ToUpper(subquery)
 
-	if !strings.HasPrefix(upperSub, "MATCH ") {
+	var pattern string
+	switch {
+	case strings.HasPrefix(upperSub, "MATCH "):
+		pattern = strings.TrimSpace(subquery[6:])
+	case strings.HasPrefix(subquery, "("):
+		pattern = subquery
+	default:
 		return false
 	}
 
 	// Split out any WHERE clause from the pattern
-	pattern := strings.TrimSpace(subquery[6:])
 	innerWhere := ""
 
 	// Use regex to find WHERE with any whitespace before it (including newlines)
@@ -2952,6 +3034,13 @@ func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.
 	if strings.Contains(pattern, "]->(") || strings.Contains(pattern, "]->") {
 		checkOutgoing = true
 		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+	}
+	if !checkIncoming && !checkOutgoing {
+		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
+		// above only recognize bracketed arrows (eshu #5147).
+		if in, out, ok := bareRelDirection(pattern, variable); ok {
+			checkIncoming, checkOutgoing = in, out
+		}
 	}
 
 	// Check for matching edges
@@ -3589,14 +3678,24 @@ func (e *StorageExecutor) evaluateCountSubqueryComparison(node *storage.Node, va
 
 // countSubqueryMatches counts how many matches a subquery produces
 func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, subquery string) int64 {
-	// Parse the MATCH pattern from the subquery
+	// Parse the MATCH pattern from the subquery.
+	//
+	// COUNT { ... } allows an *implicit* MATCH: a bare pattern body with no
+	// "MATCH " keyword (e.g. "COUNT { (n)--() }"). The previous version
+	// required the "MATCH " prefix unconditionally, so a bare body always
+	// returned 0 here (eshu #5147).
+	subquery = strings.TrimSpace(subquery)
 	upperSub := strings.ToUpper(subquery)
 
-	if !strings.HasPrefix(upperSub, "MATCH ") {
+	var pattern string
+	switch {
+	case strings.HasPrefix(upperSub, "MATCH "):
+		pattern = strings.TrimSpace(subquery[6:])
+	case strings.HasPrefix(subquery, "("):
+		pattern = subquery
+	default:
 		return 0
 	}
-
-	pattern := strings.TrimSpace(subquery[6:])
 
 	// Check if pattern references our variable
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
@@ -3629,6 +3728,14 @@ func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, sub
 		strings.Contains(pattern, "<-[") {
 		checkOutgoing = true
 		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+	}
+
+	if !checkIncoming && !checkOutgoing {
+		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
+		// above only recognize bracketed arrows (eshu #5147).
+		if in, out, ok := bareRelDirection(pattern, variable); ok {
+			checkIncoming, checkOutgoing = in, out
+		}
 	}
 
 	// Count matching edges

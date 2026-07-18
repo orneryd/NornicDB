@@ -347,6 +347,17 @@ func TestNeo4jCompatChunkOperations(t *testing.T) {
 	})
 
 	t.Run("Delete chunks with OPTIONAL MATCH", func(t *testing.T) {
+		// Plain (non-DETACH) "DELETE r, chunk": r is bound by the embedded
+		// OPTIONAL MATCH and must resolve to the real *storage.Edge so the
+		// non-DETACH residual-relationship guard recognizes it as one of the
+		// edges this statement itself removes (eshu #5147). Previously
+		// executeDelete's internal "MATCH ... RETURN r, chunk" probe ran
+		// through the raw executeMatch path, which mishandled the embedded
+		// "OPTIONAL MATCH" text and resolved r to nil; the guard then
+		// rejected this statement outright. match.go's executeMatch now
+		// routes an embedded OPTIONAL MATCH through
+		// executeCompoundMatchOptionalMatch, so r resolves correctly and
+		// this plain DELETE succeeds.
 		result, err := exec.Execute(ctx, `
 			MATCH (n:Node {id: 'parent-node-id'})
 			OPTIONAL MATCH (n)-[r:HAS_CHUNK]->(chunk:NodeChunk)
