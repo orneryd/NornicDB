@@ -10,14 +10,14 @@
 #   - Make (from MinGW or MSYS2)
 #
 # Usage:
-#   .\scripts\build-llama-cuda.ps1 [-Version b9835] [-Clean]
+#   .\scripts\build-llama-cuda.ps1 [-Version b10069] [-Clean]
 #
 # Output:
 #   lib\llama\libllama_windows_amd64.a (static library, CPU-only)
 #   lib\llama\llama.h, ggml*.h (headers)
 
 param(
-    [string]$Version = "b9835",  # Latest stable llama.cpp release tag
+    [string]$Version = "b10069",  # Latest stable llama.cpp release tag
     [switch]$Clean
 )
 
@@ -146,7 +146,7 @@ if (Test-Path $rootCMakePath) {
     $cmakeContent = $cmakeContent -replace '(add_subdirectory\(tools\))', '# $1 # Disabled for library-only build'
     # Comment out add_subdirectory(examples)
     $cmakeContent = $cmakeContent -replace '(add_subdirectory\(examples\))', '# $1 # Disabled for library-only build'
-    # Comment out add_subdirectory(app) -- new in b9835, depends on llama-server-impl
+    # Comment out add_subdirectory(app) -- new in b10069, depends on llama-server-impl
     $cmakeContent = $cmakeContent -replace '(add_subdirectory\(app\))', '# $1 # Disabled for library-only build'
     $cmakeContent | Set-Content $rootCMakePath -NoNewline
 }

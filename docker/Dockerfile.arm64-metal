@@ -7,7 +7,7 @@
 # Headless (no UI):
 #         docker build -f docker/Dockerfile.arm64-metal --build-arg HEADLESS=true -t nornicdb-arm64-metal-headless .
 
-ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b9835
+ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10069
 
 # =============================================================================
 # Stage 1: UI (skipped in headless mode)

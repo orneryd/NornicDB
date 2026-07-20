@@ -1,7 +1,7 @@
 # NornicDB AMD64 CUDA
 # Uses pre-built llama-cuda-libs for fast builds (~2 min vs ~15 min)
 #
-# Prereq (one-time): docker build -f docker/Dockerfile.llama-cuda -t timothyswt/llama-cuda-libs:b9835 .
+# Prereq (one-time): docker build -f docker/Dockerfile.llama-cuda -t timothyswt/llama-cuda-libs:b10069 .
 #
 # Build:  docker build -f docker/Dockerfile.amd64-cuda -t nornicdb-amd64-cuda .
 # With BGE model embedded:
@@ -9,7 +9,7 @@
 # Headless (no UI):
 #         docker build -f docker/Dockerfile.amd64-cuda --build-arg HEADLESS=true -t nornicdb-amd64-cuda-headless .
 
-ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:b9835
+ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:b10069
 ARG CUDA_VERSION=12.6.0
 
 # =============================================================================

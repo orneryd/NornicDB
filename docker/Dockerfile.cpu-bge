@@ -6,7 +6,7 @@
 # Headless (no UI):
 #         docker build -f docker/Dockerfile.cpu-bge --build-arg HEADLESS=true -t nornicdb-cpu-bge-headless .
 
-ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b9835
+ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10069
 
 # =============================================================================
 # Stage 1: UI (skipped in headless mode)
