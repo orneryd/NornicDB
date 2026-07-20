@@ -13,7 +13,7 @@
     "@ornery/ui-grid-react": "^1.0.8",
     "@ornery/ui-grid-vanilla": "^1.0.8",
     "3d-force-graph": "^1.80.0",
-    "lucide-react": "^1.23.0",
+    "lucide-react": "^1.25.0",
     "neo4j-driver": "^6.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -24,15 +24,15 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.2",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.184.1",
+    "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^6.0.3",
-    "autoprefixer": "^10.5.2",
-    "baseline-browser-mapping": "^2.10.40",
-    "postcss": "^8.5.16",
-    "tailwindcss": "^4.3.2",
-    "typescript": "^6.0.3"
+    "autoprefixer": "^10.5.4",
+    "baseline-browser-mapping": "^2.10.44",
+    "postcss": "^8.5.20",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }
