@@ -7,15 +7,11 @@ import "strings"
 // clause, mirroring extractScopeVariablesFromSetAndReturn (executor_mutations.go).
 // executeRemove uses this to keep every variable the REMOVE/RETURN clauses
 // actually need in its internal MATCH probe's projection.
-//
-// extractVariableNamesFromPattern only scans node groups outside "[...]", so
-// a relationship variable bound solely inside a bracketed pattern (e.g. the
-// "r" in "OPTIONAL MATCH (n)-[r:TYPE]->(m)") is invisible to it. Without this
-// helper, "REMOVE r.prop" silently dropped r from the probe's RETURN list, so
-// the mutation loop never received a *storage.Edge to remove the property
-// from -- the relationship-agnostic parseRemoveItems call site never even
-// learns r is the intended target, only that "prop" should be removed from
-// whatever entity in scope has it (eshu #5147).
+type removeTargetBindings struct {
+	propsByVar  map[string][]string
+	labelsByVar map[string][]string
+}
+
 func extractScopeVariablesFromRemoveAndReturn(removePart, returnPart string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
@@ -36,16 +32,14 @@ func extractScopeVariablesFromRemoveAndReturn(removePart, returnPart string) []s
 		if item == "" {
 			continue
 		}
-		var varName string
 		switch {
 		case strings.Contains(item, "."):
-			varName = strings.TrimSpace(item[:strings.Index(item, ".")])
+			add(strings.TrimSpace(item[:strings.Index(item, ".")]))
 		case strings.Contains(item, ":"):
-			varName = strings.TrimSpace(item[:strings.Index(item, ":")])
+			add(strings.TrimSpace(item[:strings.Index(item, ":")]))
 		default:
-			varName = item
+			add(item)
 		}
-		add(varName)
 	}
 
 	if strings.TrimSpace(returnPart) != "" {
@@ -60,5 +54,50 @@ func extractScopeVariablesFromRemoveAndReturn(removePart, returnPart string) []s
 			add(extractVariableNameFromReturnItem(expr))
 		}
 	}
+
 	return out
+}
+
+func parseRemoveTargetBindings(removePart string) removeTargetBindings {
+	bindings := removeTargetBindings{
+		propsByVar:  make(map[string][]string),
+		labelsByVar: make(map[string][]string),
+	}
+
+	for _, raw := range strings.Split(removePart, ",") {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			continue
+		}
+		if dotIdx := strings.Index(item, "."); dotIdx >= 0 {
+			varName := strings.TrimSpace(item[:dotIdx])
+			propName := strings.TrimSpace(item[dotIdx+1:])
+			if isValidIdentifier(varName) && propName != "" {
+				bindings.propsByVar[varName] = append(bindings.propsByVar[varName], propName)
+			}
+			continue
+		}
+		if colonIdx := strings.Index(item, ":"); colonIdx >= 0 {
+			varName := strings.TrimSpace(item[:colonIdx])
+			if !isValidIdentifier(varName) {
+				continue
+			}
+			for _, label := range strings.Split(item[colonIdx+1:], ":") {
+				label = strings.TrimSpace(label)
+				if label != "" {
+					bindings.labelsByVar[varName] = append(bindings.labelsByVar[varName], label)
+				}
+			}
+		}
+	}
+
+	return bindings
+}
+
+func (b removeTargetBindings) propertyNames(varName string) []string {
+	return b.propsByVar[varName]
+}
+
+func (b removeTargetBindings) labelNames(varName string) []string {
+	return b.labelsByVar[varName]
 }
