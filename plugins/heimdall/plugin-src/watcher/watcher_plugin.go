@@ -3,6 +3,7 @@
 // Watcher Plugin - Core Heimdall guardian plugin for NornicDB
 // This is the main watcher plugin that provides SLM management actions.
 // Build with: go build -buildmode=plugin -o watcher.so watcher_plugin.go
+// Remote-provider-only build: go build -tags nolocalllm -buildmode=plugin -o watcher.so watcher_plugin.go
 package main
 
 import (

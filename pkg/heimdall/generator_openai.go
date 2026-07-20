@@ -70,7 +70,7 @@ type openAIMsg struct {
 // openAIMsgWire is the wire format for messages (can include tool_calls and tool_call_id).
 type openAIMsgWire struct {
 	Role       string               `json:"role"`
-	Content    string               `json:"content,omitempty"`
+	Content    string               `json:"content"`
 	ToolCalls  []openAIToolCallWire `json:"tool_calls,omitempty"`
 	ToolCallID string               `json:"tool_call_id,omitempty"`
 }

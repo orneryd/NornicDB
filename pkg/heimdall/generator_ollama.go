@@ -43,7 +43,7 @@ type ollamaMessage struct {
 // ollamaMessageWire supports tool_calls and tool result (role "tool" with content).
 type ollamaMessageWire struct {
 	Role       string               `json:"role"`
-	Content    string               `json:"content,omitempty"`
+	Content    string               `json:"content"`
 	ToolCalls  []ollamaToolCallWire `json:"tool_calls,omitempty"`
 	ToolCallID string               `json:"tool_call_id,omitempty"`
 }

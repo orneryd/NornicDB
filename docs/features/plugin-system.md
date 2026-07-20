@@ -37,6 +37,7 @@ make plugins
 # Build individual plugins
 make plugin-apoc                    # Function plugin (APOC)
 make plugin-heimdall-watcher        # Heimdall plugin
+make plugin-heimdall-watcher-remote # Heimdall plugin for remote-provider-only Heimdall
 
 # Clean built plugins
 make plugins-clean

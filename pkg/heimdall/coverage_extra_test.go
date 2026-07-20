@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1130,10 +1131,11 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 	})
 
 	t.Run("openai tool and stream", func(t *testing.T) {
+		var capturedReq openAIChatRequest
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, "/v1/chat/completions", r.URL.Path)
-			var req openAIChatRequest
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&capturedReq))
+			req := capturedReq
 			if req.Stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello \"}}]}\n\n")
@@ -1178,6 +1180,19 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "openai content", content)
 		assert.Len(t, toolCalls, 1)
+
+		_, _, err = openaiGen.GenerateWithTools(context.Background(), []ToolRoundMessage{
+			{Role: "system", Content: "system"},
+			{Role: "user", Content: "first prompt"},
+			{Role: "assistant", Content: "", ToolCalls: []ParsedToolCall{{Id: "call-1", Name: "tool.one", Arguments: "{\"x\":1}"}}},
+			{Role: "tool", ToolCallID: "call-1", Content: "tool result"},
+		}, []MCPTool{{Name: "tool.one", Description: "desc", InputSchema: DefaultActionInputSchema}}, DefaultGenerateParams())
+		require.NoError(t, err)
+		require.Len(t, capturedReq.Messages, 4)
+		assert.Equal(t, "assistant", capturedReq.Messages[2].Role)
+		assert.Equal(t, "", capturedReq.Messages[2].Content)
+		require.Len(t, capturedReq.Messages[2].ToolCalls, 1)
+		assert.Equal(t, "call-1", capturedReq.Messages[2].ToolCalls[0].Id)
 
 		var streamed strings.Builder
 		err = openaiGen.GenerateStream(context.Background(), "prompt", DefaultGenerateParams(), func(token string) error {
@@ -1265,10 +1280,11 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 	})
 
 	t.Run("ollama tool and stream", func(t *testing.T) {
+		var capturedReq ollamaChatRequest
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, "/api/chat", r.URL.Path)
-			var req ollamaChatRequest
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&capturedReq))
+			req := capturedReq
 			if req.Stream {
 				w.Header().Set("Content-Type", "application/x-ndjson")
 				_, _ = fmt.Fprintln(w, `{"message":{"content":"hello "},"done":false}`)
@@ -1308,6 +1324,19 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "ollama content", content)
 		assert.Len(t, toolCalls, 1)
+
+		_, _, err = ollamaGen.GenerateWithTools(context.Background(), []ToolRoundMessage{
+			{Role: "system", Content: "system"},
+			{Role: "user", Content: "first prompt"},
+			{Role: "assistant", Content: "", ToolCalls: []ParsedToolCall{{Id: "call-2", Name: "tool.two", Arguments: "{\"y\":2}"}}},
+			{Role: "tool", ToolCallID: "call-2", Content: "tool result"},
+		}, []MCPTool{{Name: "tool.two", Description: "desc", InputSchema: DefaultActionInputSchema}}, DefaultGenerateParams())
+		require.NoError(t, err)
+		require.Len(t, capturedReq.Messages, 4)
+		assert.Equal(t, "assistant", capturedReq.Messages[2].Role)
+		assert.Equal(t, "", capturedReq.Messages[2].Content)
+		require.Len(t, capturedReq.Messages[2].ToolCalls, 1)
+		assert.Equal(t, "call-2", capturedReq.Messages[2].ToolCalls[0].Id)
 
 		var streamed strings.Builder
 		err = ollamaGen.GenerateStream(context.Background(), "prompt", DefaultGenerateParams(), func(token string) error {
@@ -1484,6 +1513,11 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 
 		_, err := loadHeimdallPluginFromFile(badPluginPath)
 		require.ErrorContains(t, err, "open:")
+
+		decorated := decoratePluginOpenError(errors.New("plugin.Open(\"watcher\"): plugin was built with a different version of package github.com/orneryd/nornicdb/pkg/heimdall"))
+		require.ErrorContains(t, decorated, "different version of package github.com/orneryd/nornicdb/pkg/heimdall")
+		require.ErrorContains(t, decorated, "same Go toolchain")
+		require.ErrorContains(t, decorated, runtime.Version())
 	})
 
 	t.Run("plugin loading success", func(t *testing.T) {

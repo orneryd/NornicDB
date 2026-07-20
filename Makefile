@@ -1191,8 +1191,13 @@ plugin-apoc: plugin-check
 plugin-heimdall-watcher: plugin-check
 	@mkdir -p $(HEIMDALL_PLUGINS_DIR)
 	@echo "Building Heimdall Watcher plugin..."
-	cd plugins/heimdall/plugin-src/watcher && go build -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go
+	cd plugins/heimdall/plugin-src/watcher && go build $(if $(filter 1,$(NOLOCALLLM)),-tags nolocalllm,) -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go
+	@if [ "$(NOLOCALLLM)" = "1" ]; then echo "Built watcher plugin with -tags nolocalllm (match the host binary build tags)."; fi
 	@echo "Built: $(HEIMDALL_PLUGINS_DIR)/watcher.so"
+
+.PHONY: plugin-heimdall-watcher-remote
+plugin-heimdall-watcher-remote:
+	@$(MAKE) plugin-heimdall-watcher NOLOCALLLM=1
 
 # Note: Heimdall core is built into the binary. Plugins extend functionality.
 # Enable Heimdall with: NORNICDB_HEIMDALL_ENABLED=true
@@ -1212,6 +1217,7 @@ plugins-list:
 	@echo "  make plugins                    Build all plugins (APOC + Heimdall)"
 	@echo "  make plugin-apoc                Build APOC plugin"
 	@echo "  make plugin-heimdall-watcher    Build Heimdall Watcher plugin"
+	@echo "  make plugin-heimdall-watcher-remote  Build watcher plugin for remote-provider-only Heimdall (-tags nolocalllm)"
 	@echo "  make plugins-clean              Remove built plugins"
 	@echo ""
 	@echo "Built APOC plugins:"

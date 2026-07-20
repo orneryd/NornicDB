@@ -75,7 +75,9 @@ import (
 	"path/filepath"
 	"plugin"
 	"reflect"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -978,7 +980,7 @@ func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
 func loadHeimdallPluginFromFile(path string) (HeimdallPlugin, error) {
 	p, err := plugin.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
+		return nil, fmt.Errorf("open: %w", decoratePluginOpenError(err))
 	}
 
 	sym, err := p.Lookup("Plugin")
@@ -1019,6 +1021,17 @@ func loadHeimdallPluginFromFile(path string) (HeimdallPlugin, error) {
 
 	// Wrap in reflectHeimdallPlugin adapter
 	return &reflectHeimdallPlugin{val: val}, nil
+}
+
+func decoratePluginOpenError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "different version of package") {
+		return err
+	}
+	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and build tags as the NornicDB binary (for remote-provider-only Heimdall builds, match whether the host binary was built with -tags nolocalllm)", msg, runtime.Version())
 }
 
 // reflectHeimdallPlugin wraps a plugin loaded via reflection.

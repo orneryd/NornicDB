@@ -389,6 +389,9 @@ func (p *MyPlugin) handleDetect(ctx heimdall.ActionContext) (*heimdall.ActionRes
 cd plugins/myplugin
 go build -buildmode=plugin -o myplugin.so .
 
+# Remote-provider-only Heimdall build (no local GGUF/localllm dependency)
+go build -tags nolocalllm -buildmode=plugin -o myplugin.so .
+
 # Deploy
 export NORNICDB_HEIMDALL_PLUGINS_DIR=/path/to/plugins
 cp myplugin.so $NORNICDB_HEIMDALL_PLUGINS_DIR/
@@ -399,6 +402,18 @@ cp myplugin.so $NORNICDB_HEIMDALL_PLUGINS_DIR/
 - Must export `var Plugin heimdall.HeimdallPlugin = &YourType{}`
 - Built with same Go version as NornicDB
 - Same CGO settings (important for llama.cpp)
+- Same build tags as the NornicDB binary
+
+If your host binary uses Heimdall only through remote providers like Ollama or OpenAI, you can build both the host binary and Heimdall plugins with `-tags nolocalllm` to avoid linking the local GGUF generator.
+
+For the built-in watcher example:
+
+```bash
+make plugin-heimdall-watcher-remote
+# equivalent to: make plugin-heimdall-watcher NOLOCALLLM=1
+```
+
+Homebrew note: Go plugins must match the exact host-binary build context. A Homebrew-installed `nornicdb` binary and a locally built plugin often will not load together unless the host binary was built with the same Go toolchain, CGO setting, architecture, and build tags.
 
 ### Method 2: Built-in Plugin (Recommended)
 
