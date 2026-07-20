@@ -406,7 +406,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	// (executeWithoutTransaction) already routes "MATCH ... OPTIONAL MATCH
 	// ..." queries to executeCompoundMatchOptionalMatch before they would ever
 	// reach this function.
-	if (strings.Contains(matchPart, "-[") || strings.Contains(matchPart, "]-")) &&
+	if (containsOutsideStrings(matchPart, "-[") || containsOutsideStrings(matchPart, "]-")) &&
 		findKeywordIndex(matchPart, "OPTIONAL MATCH") >= 0 {
 		return e.executeCompoundMatchOptionalMatch(ctx, originalCypher)
 	}

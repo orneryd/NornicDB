@@ -2229,16 +2229,6 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	matchVars := e.extractVariableNamesFromPattern(matchPattern)
 	withAliases := extractWithAliases(matchSegment)
 	allVars := dedupeNonEmpty(matchVars, withAliases)
-
-	// Include variables referenced only in the REMOVE/RETURN clauses so a
-	// relationship variable bound inside a bracketed pattern (e.g. the "r" in
-	// "OPTIONAL MATCH (n)-[r:TYPE]->(m)") stays in the probe's projection.
-	// extractVariableNamesFromPattern above only scans node groups outside
-	// "[...]", so a bare "REMOVE r.prop" previously vanished from matchQuery's
-	// RETURN list entirely -- the probe never asked for r, so the mutation
-	// loop below never saw a *storage.Edge to remove the property from (eshu
-	// #5147, same root cause class as the OPTIONAL MATCH rel-var fix in
-	// executeSet).
 	removeLen := len("REMOVE")
 	var removePart string
 	if returnIdx > 0 && returnIdx > removeIdx {
@@ -2253,6 +2243,12 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	scopeVars := extractScopeVariablesFromRemoveAndReturn(removePart, returnScopePart)
 	allVars = dedupeNonEmpty(allVars, scopeVars)
 
+	// Include variables referenced only in the REMOVE/RETURN clauses so a
+	// relationship variable bound inside a bracketed pattern (e.g. the "r" in
+	// "OPTIONAL MATCH (n)-[r:TYPE]->(m)") stays in the probe's projection.
+	// extractVariableNamesFromPattern above only scans node groups outside
+	// "[...]", so a bare "REMOVE r.prop" previously vanished from matchQuery's
+	// RETURN list entirely.
 	matchQuery := matchSegment + " RETURN *"
 	if len(allVars) > 0 {
 		matchQuery = matchSegment + " RETURN " + strings.Join(allVars, ", ")
@@ -2266,23 +2262,28 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	e.normalizeSetMatchRowsToNodes(matchResult, store)
 	e.normalizeSetMatchRowsToEdges(matchResult, store)
 
-	// Split by comma and parse property and label removals.
-	propsToRemove, labelsToRemove := e.parseRemoveItems(removePart)
+	removeTargets := parseRemoveTargetBindings(removePart)
 
-	// Update matched nodes and relationships. REMOVE r.prop on a relationship
-	// variable requires the same *storage.Edge handling SET already applies
-	// (see the SET assignment loop above) -- relationships have no labels to
-	// remove, only properties, so labelsToRemove never applies to an edge.
+	// Update matched nodes and relationships for the variables explicitly named
+	// in the REMOVE clause.
 	for _, row := range matchResult.Rows {
-		for _, val := range row {
+		for colIdx, val := range row {
+			if colIdx >= len(matchResult.Columns) {
+				continue
+			}
+			varName := matchResult.Columns[colIdx]
+			propTargets := removeTargets.propertyNames(varName)
+			labelTargets := removeTargets.labelNames(varName)
+			if len(propTargets) == 0 && len(labelTargets) == 0 {
+				continue
+			}
 			switch entity := val.(type) {
 			case *storage.Node:
 				if entity == nil {
 					continue
 				}
 				invalidated := false
-				// Remove specified properties
-				for _, prop := range propsToRemove {
+				for _, prop := range propTargets {
 					if _, exists := entity.Properties[prop]; exists {
 						delete(entity.Properties, prop)
 						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
@@ -2294,15 +2295,14 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 				if invalidated {
 					embeddingutil.InvalidateManagedEmbeddings(entity)
 				}
-				if len(labelsToRemove) > 0 {
+				if len(labelTargets) > 0 {
 					oldLabels := make([]string, len(entity.Labels))
 					copy(oldLabels, entity.Labels)
-					next, removed := removeNodeLabels(entity.Labels, labelsToRemove)
+					next, removed := removeNodeLabels(entity.Labels, labelTargets)
 					if removed > 0 {
 						entity.Labels = next
-						// Validate policy constraints before committing the label change.
 						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
-							entity.Labels = oldLabels // restore
+							entity.Labels = oldLabels
 							return nil, err
 						}
 					}
@@ -2315,7 +2315,7 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 				if entity == nil {
 					continue
 				}
-				for _, prop := range propsToRemove {
+				for _, prop := range propTargets {
 					if _, exists := entity.Properties[prop]; exists {
 						delete(entity.Properties, prop)
 						result.Stats.PropertiesSet++ // Neo4j counts removals as properties set
@@ -2453,16 +2453,25 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 	removePart string,
 	result *ExecuteResult,
 ) error {
-	propsToRemove, labelsToRemove := e.parseRemoveItems(removePart)
+	removeTargets := parseRemoveTargetBindings(removePart)
 	for _, row := range matchResult.Rows {
-		for _, val := range row {
+		for colIdx, val := range row {
+			if colIdx >= len(matchResult.Columns) {
+				continue
+			}
+			varName := matchResult.Columns[colIdx]
+			propTargets := removeTargets.propertyNames(varName)
+			labelTargets := removeTargets.labelNames(varName)
+			if len(propTargets) == 0 && len(labelTargets) == 0 {
+				continue
+			}
 			switch entity := val.(type) {
 			case *storage.Node:
 				if entity == nil {
 					continue
 				}
 				invalidated := false
-				for _, prop := range propsToRemove {
+				for _, prop := range propTargets {
 					if _, exists := entity.Properties[prop]; exists {
 						delete(entity.Properties, prop)
 						result.Stats.PropertiesSet++
@@ -2471,14 +2480,14 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 						}
 					}
 				}
-				if len(labelsToRemove) > 0 {
+				if len(labelTargets) > 0 {
 					oldLabels := make([]string, len(entity.Labels))
 					copy(oldLabels, entity.Labels)
-					next, removed := removeNodeLabels(entity.Labels, labelsToRemove)
+					next, removed := removeNodeLabels(entity.Labels, labelTargets)
 					if removed > 0 {
 						entity.Labels = next
 						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
-							entity.Labels = oldLabels // restore
+							entity.Labels = oldLabels
 							return err
 						}
 					}
@@ -2491,12 +2500,10 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 				}
 				e.notifyNodeMutated(string(entity.ID))
 			case *storage.Edge:
-				// Relationships have no labels to remove, only properties
-				// (see the mirrored *storage.Node handling in executeRemove).
 				if entity == nil {
 					continue
 				}
-				for _, prop := range propsToRemove {
+				for _, prop := range propTargets {
 					if _, exists := entity.Properties[prop]; exists {
 						delete(entity.Properties, prop)
 						result.Stats.PropertiesSet++
@@ -2933,22 +2940,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	}
 	var checkIncoming, checkOutgoing bool
 	var relTypes []string
-	if strings.Contains(pattern, "<-[") {
-		checkIncoming = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
-	}
-	if strings.Contains(pattern, "]->(") || strings.Contains(pattern, "]->") {
-		checkOutgoing = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
-	}
-	if !checkIncoming && !checkOutgoing {
-		// Bracket-less pattern (e.g. "(n)-->()", "()<--(n)") -- the checks
-		// above only recognize bracketed arrows, so fall back to direction
-		// detection on the bare arrow itself (eshu #5147).
-		if in, out, ok := bareRelDirection(pattern, variable); ok {
-			checkIncoming, checkOutgoing = in, out
-		}
-	}
+	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 	if checkIncoming {
 		edges, _ := e.storage.GetIncomingEdges(node.ID)
 		for _, edge := range edges {
@@ -3026,22 +3018,7 @@ func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.
 	var checkIncoming, checkOutgoing bool
 	var relTypes []string
 
-	if strings.Contains(pattern, "<-[") {
-		checkIncoming = true
-		// Extract relationship type if specified
-		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
-	}
-	if strings.Contains(pattern, "]->(") || strings.Contains(pattern, "]->") {
-		checkOutgoing = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
-	}
-	if !checkIncoming && !checkOutgoing {
-		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks
-		// above only recognize bracketed arrows (eshu #5147).
-		if in, out, ok := bareRelDirection(pattern, variable); ok {
-			checkIncoming, checkOutgoing = in, out
-		}
-	}
+	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 
 	// Check for matching edges
 	if checkIncoming {
@@ -3560,6 +3537,63 @@ func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []s
 	return types
 }
 
+func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) {
+	if groupStart := strings.Index(pattern, "("+variable+")"); groupStart >= 0 || strings.Contains(pattern, "("+variable+":") {
+		if groupStart < 0 {
+			groupStart = strings.Index(pattern, "("+variable+":")
+		}
+		groupEnd := groupStart + len(variable) + 2
+		if strings.HasPrefix(pattern[groupStart:], "("+variable+":") {
+			closeRel := strings.Index(pattern[groupStart:], ")")
+			if closeRel >= 0 {
+				groupEnd = groupStart + closeRel + 1
+			}
+		}
+		before := pattern[:groupStart]
+		after := pattern[groupEnd:]
+
+		switch {
+		case strings.HasPrefix(after, "<-["):
+			incoming = true
+			relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+		case strings.HasPrefix(after, "-["):
+			relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+			if strings.Contains(after, "]->") {
+				outgoing = true
+			} else if strings.Contains(after, "]-") {
+				incoming = true
+				outgoing = true
+			}
+		}
+
+		switch {
+		case strings.HasSuffix(before, "]->"):
+			incoming = true
+			if len(relTypes) == 0 {
+				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+			}
+		case strings.Contains(before, "<-[") && strings.HasSuffix(before, "]-"):
+			outgoing = true
+			if len(relTypes) == 0 {
+				relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+			}
+		case strings.HasSuffix(before, "]-"):
+			incoming = true
+			outgoing = true
+			if len(relTypes) == 0 {
+				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+			}
+		}
+	}
+
+	if !incoming && !outgoing {
+		if in, out, ok := bareRelDirection(pattern, variable); ok {
+			return in, out, nil
+		}
+	}
+	return incoming, outgoing, relTypes
+}
+
 // edgeTypeMatches checks if an edge type matches any of the allowed types
 func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string) bool {
 	for _, t := range allowedTypes {
@@ -3706,29 +3740,7 @@ func (e *StorageExecutor) countSubqueryMatches(node *storage.Node, variable, sub
 	var checkIncoming, checkOutgoing bool
 	var relTypes []string
 
-	// Variable on left side of "<-[" means incoming to variable.
-	if strings.Contains(pattern, "("+variable+")<-[") || strings.Contains(pattern, "("+variable+":") && strings.Contains(pattern, "<-[") {
-		checkIncoming = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
-	}
-	// Variable on left side of "-[" means outgoing from variable.
-	if strings.Contains(pattern, "("+variable+")-[") || strings.Contains(pattern, "("+variable+":") && strings.Contains(pattern, ")-[") {
-		checkOutgoing = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
-	}
-
-	// Variable on right side of "]->" means incoming to variable.
-	if strings.Contains(pattern, "]->("+variable+")") || strings.Contains(pattern, "]->("+variable+":") {
-		checkIncoming = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "-[")
-	}
-	// Variable on right side of "]-(...)" in an incoming-arrow pattern means outgoing from variable:
-	// e.g. ()<-[r]-(n)
-	if (strings.Contains(pattern, "]-("+variable+")") || strings.Contains(pattern, "]-("+variable+":")) &&
-		strings.Contains(pattern, "<-[") {
-		checkOutgoing = true
-		relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
-	}
+	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 
 	if !checkIncoming && !checkOutgoing {
 		// Bracket-less pattern (e.g. "(n)-->()", "(n)--()") -- the checks

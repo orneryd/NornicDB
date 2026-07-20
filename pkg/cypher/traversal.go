@@ -2312,10 +2312,8 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		return evaluateComparableMembership(leftVal, comparableSet, nonComparable, e.compareEqual)
 	}
 
-	// Handle relationship patterns (n)-[:TYPE]->() or (n)<-[:TYPE]-() before operator check.
-	// containsRelExistencePattern also recognizes bracket-less patterns
-	// ((n)--(), (n)-->(), (n)<--()) and the bracketed undirected form
-	// ((n)-[r]-()) -- see rel_existence_pattern.go (eshu #5147).
+	// Handle relationship-existence patterns before operator checks so arrow
+	// syntax is not misinterpreted as a comparison operator.
 	hasRelPattern := containsRelExistencePattern(whereClause)
 	if hasRelPattern && pathCtx.nodes != nil {
 		for variable, node := range pathCtx.nodes {

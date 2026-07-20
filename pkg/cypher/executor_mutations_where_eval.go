@@ -531,15 +531,8 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 		return e.evaluateIsNull(ctx, node, variable, whereClause, true)
 	}
 
-	// Handle relationship patterns like (n)-[:TYPE]->() that may appear as "n)-[:TYPE]->()"
-	// after stripping outer parens from NOT (n)-[:TYPE]->(). Must run BEFORE operator check
-	// so "->" is not misinterpreted as ">" comparison.
-	//
-	// containsRelExistencePattern also recognizes bracket-less patterns
-	// ((n)--(), (n)-->(), (n)<--()) and the bracketed *undirected* form
-	// ((n)-[r]-()) -- the previous gate only matched a bracketed pattern
-	// with an explicit arrow, so those forms fell through to
-	// evaluateWhereAsBoolean's default-true branch (eshu #5147).
+	// Handle relationship-existence patterns before operator checks so arrow
+	// syntax is not misinterpreted as a comparison operator.
 	hasRelPattern := containsRelExistencePattern(whereClause)
 	refsVar := strings.Contains(whereClause, "("+variable+")") || strings.Contains(whereClause, "("+variable+":") ||
 		strings.HasPrefix(whereClause, variable+")") || strings.HasPrefix(whereClause, variable+":")
