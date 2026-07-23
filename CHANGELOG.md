@@ -56,6 +56,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row per matched row regardless of how many node/relationship variables are
   in scope. The same fix applies to a chained `SET ... REMOVE ...` clause in a
   single statement.
+- **Traversal-seeded `OPTIONAL MATCH` projections are now evaluated instead of
+  echoed as literal expression text.**
+  A read query whose primary `MATCH` contains a relationship pattern followed
+  by one or more trailing `OPTIONAL MATCH` clauses (no intervening `WITH`)
+  previously resolved its `RETURN` items with a string resolver that only
+  understood `var.prop` and bare variables. Every other expression came back
+  as its own source text: `RETURN type(rel)` returned the literal string
+  `"type(rel)"`, `coalesce(...)`/`labels(...)`/`head(...)` returned their
+  source text, aggregates like `count(f)` returned the string `"count(f)"`,
+  the primary MATCH's relationship variable was dropped entirely (so
+  `rel.weight` returned `"rel.weight"`), chained second-level `OPTIONAL MATCH`
+  clauses were silently swallowed (their bindings projected as literal text),
+  and per-clause `WHERE` predicates were ignored. The path now executes the
+  seed `MATCH` with relationship variables bound, left-outer joins every
+  chained `OPTIONAL MATCH` clause in either direction (seeding from whichever
+  endpoint is bound), evaluates projections through the real expression
+  evaluator (with a fast path for plain `var.prop`/bare-variable items),
+  routes aggregate projections through implicit-grouping aggregation with
+  Cypher null semantics, and applies `ORDER BY`/`SKIP`/`LIMIT`. An
+  `OPTIONAL MATCH` clause that references no previously bound variable now
+  fails loud instead of returning an empty result.
 - **Bolt explicit transactions now bind top-level `UNWIND` rows before
   routing to mutation handlers.**
   `session.ExecuteWrite` queries shaped as `UNWIND ... MATCH ... DELETE`
