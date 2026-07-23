@@ -3628,110 +3628,12 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 		strings.Contains(nodePatternStr, "<-") ||
 		strings.Contains(nodePatternStr, "-[")
 	if hasTraversal {
-		// Build a standalone MATCH query for the initial section and execute it.
-		// The result provides all bound variables (including traversal endpoints)
-		// that will be used as seeds for the OPTIONAL MATCH.
-		// Extract node variable names from the pattern for an explicit RETURN clause
-		// since RETURN * doesn't expand variables in the traversal executor.
-		patternVars := extractNodeVariables(nodePatternStr)
-		returnVars := strings.Join(patternVars, ", ")
-		if returnVars == "" {
-			returnVars = "*"
-		}
-		matchQuery := "MATCH " + initialSection + " RETURN " + returnVars
-		matchResult, matchErr := e.executeMatch(ctx, matchQuery)
-		if matchErr != nil {
-			return nil, fmt.Errorf("failed to execute initial traversal MATCH: %w", matchErr)
-		}
-
-		// Determine the variable that the OPTIONAL MATCH references (the
-		// source variable of the optional relationship pattern).
-		optRelPattern := e.parseOptionalRelPattern(ctx, optMatchPattern)
-		sourceVar := optRelPattern.sourceVar
-
-		// Find the column index for the source variable in the MATCH result.
-		sourceColIdx := -1
-		for ci, col := range matchResult.Columns {
-			if col == sourceVar {
-				sourceColIdx = ci
-				break
-			}
-		}
-		if sourceColIdx < 0 {
-			// Fallback: variable not found in result columns — cannot perform
-			// the OPTIONAL MATCH seed. Return empty result.
-			return &ExecuteResult{
-				Columns: []string{},
-				Rows:    [][]interface{}{},
-			}, nil
-		}
-
-		// Build joined rows by evaluating the OPTIONAL MATCH for each seed row.
-		type multiVarRow struct {
-			values  map[string]interface{} // variable -> node for all MATCH columns
-			related []optionalRelResult
-		}
-		var mvRows []multiVarRow
-		for _, row := range matchResult.Rows {
-			vals := make(map[string]interface{}, len(matchResult.Columns))
-			for ci, col := range matchResult.Columns {
-				vals[col] = row[ci]
-			}
-			seedNode, _ := vals[sourceVar].(*storage.Node)
-			var related []optionalRelResult
-			if seedNode != nil {
-				related = e.findOptionalRelatedNodes(ctx, seedNode, optMatchPattern, optRelPattern)
-			}
-			mvRows = append(mvRows, multiVarRow{values: vals, related: related})
-		}
-
-		// Evaluate RETURN clause against the joined rows.
-		returnPart := restOfQuery
-		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(returnPart)), "RETURN") {
-			// restOfQuery might start with WITH; try to find RETURN inside it
-			retIdx := findKeywordIndex(restOfQuery, "RETURN")
-			if retIdx >= 0 {
-				returnPart = strings.TrimSpace(restOfQuery[retIdx:])
-			}
-		}
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(returnPart)), "RETURN") {
-			returnExpr := strings.TrimSpace(returnPart[6:])
-			returnItems := e.parseReturnItems(returnExpr)
-			result := &ExecuteResult{
-				Columns: make([]string, len(returnItems)),
-				Rows:    [][]interface{}{},
-			}
-			for i, item := range returnItems {
-				if item.alias != "" {
-					result.Columns[i] = item.alias
-				} else {
-					result.Columns[i] = item.expr
-				}
-			}
-			targetVar := optRelPattern.targetVar
-			for _, mvr := range mvRows {
-				if len(mvr.related) == 0 {
-					// Left outer join: no match → null for optional variables
-					outRow := make([]interface{}, len(returnItems))
-					for i, item := range returnItems {
-						outRow[i] = e.resolveReturnExprFromVarMap(ctx, item.expr, mvr.values, targetVar, optRelPattern.relVar, nil, nil)
-					}
-					result.Rows = append(result.Rows, outRow)
-				} else {
-					for _, rel := range mvr.related {
-						outRow := make([]interface{}, len(returnItems))
-						for i, item := range returnItems {
-							outRow[i] = e.resolveReturnExprFromVarMap(ctx, item.expr, mvr.values, targetVar, optRelPattern.relVar, rel.node, rel.edge)
-						}
-						result.Rows = append(result.Rows, outRow)
-					}
-				}
-			}
-			return result, nil
-		}
-
-		// No RETURN found — shouldn't happen for well-formed queries.
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+		// Traversal-seeded OPTIONAL MATCH: execute the initial MATCH (binding
+		// node AND relationship variables), left-outer join every chained
+		// OPTIONAL MATCH clause, then project through the real expression
+		// evaluator. See optional_match_traversal.go.
+		return e.executeTraversalSeededOptionalMatch(ctx, initialSection, nodePatternStr,
+			strings.TrimSpace(remainingAfterOptMatch[:optMatchEndIdx]), restOfQuery)
 	}
 
 	nodePattern := e.parseNodePattern(ctx, nodePatternStr)
