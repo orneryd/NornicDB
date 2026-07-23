@@ -74,9 +74,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint is bound), evaluates projections through the real expression
   evaluator (with a fast path for plain `var.prop`/bare-variable items),
   routes aggregate projections through implicit-grouping aggregation with
-  Cypher null semantics, and applies `ORDER BY`/`SKIP`/`LIMIT`. An
-  `OPTIONAL MATCH` clause that references no previously bound variable now
-  fails loud instead of returning an empty result.
+  Cypher null semantics, and applies `ORDER BY`/`SKIP`/`LIMIT`. The clause
+  semantics mirror Neo4j's runtime operators: a connected single-hop clause
+  behaves like `OptionalExpandAll` (null seeds propagate null bindings), and
+  every other shape — a disconnected pattern sharing no variable with earlier
+  clauses, a single-node pattern, a multi-hop chain, or a pre-bound
+  relationship variable — is evaluated with `Apply` + `Optional` semantics:
+  matches extend the row, and a row with no match is preserved once with
+  newly-introduced variables bound to null. No valid shape is rejected.
+  Aggregation follows Neo4j's model end to end: implicit grouping by the
+  non-aggregate items, identity values over empty ungrouped input, `stdev`/
+  `stdevp` per Neo4j's `StdevFunction`, and `RETURN` items that contain
+  aggregates inside larger expressions (e.g. `count(x) + 1`,
+  `coalesce(sum(w), 0)`) are isolated and substituted exactly like Neo4j's
+  `isolateAggregation` rewrite.
 - **Bolt explicit transactions now bind top-level `UNWIND` rows before
   routing to mutation handlers.**
   `session.ExecuteWrite` queries shaped as `UNWIND ... MATCH ... DELETE`

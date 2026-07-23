@@ -293,3 +293,136 @@ func TestFix_TrailingOptionalMatch_GroupedAggregate(t *testing.T) {
 	require.EqualValues(t, int64(2), row["fileCount"],
 		"Dog is contained in two files; count(tf) must aggregate both joined rows")
 }
+
+// TestSupport_DisconnectedSingleNodeOptionalMatch proves an OPTIONAL MATCH
+// whose pattern shares no variable with earlier clauses is supported with
+// Neo4j's Apply + Optional semantics (OptionalPipe null-fills newly
+// introduced variables; matches cross-join), never rejected.
+func TestSupport_DisconnectedSingleNodeOptionalMatch(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+
+	// Matching case: one OMRepo exists; every left row joins with it.
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (repo:OMRepo)
+		RETURN type(rel) AS relType, target.name AS targetName, repo.id AS repoId
+	`, nil)
+	require.NoError(t, err, "a disconnected OPTIONAL MATCH is a valid shape and must not error")
+	require.Len(t, res.Rows, 1)
+	row := rowMap(t, res, 0)
+	require.Equal(t, "INHERITS", row["relType"])
+	require.Equal(t, "Dog", row["targetName"])
+	require.Equal(t, "repo:1", row["repoId"], "the independent OMRepo match must bind")
+
+	// Null-fill case: no OMGhost nodes exist; left rows preserved, ghost null.
+	res, err = exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (ghost:OMGhost)
+		RETURN target.name AS targetName, ghost.id AS ghostId
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1, "left row must be preserved when the disconnected pattern matches nothing")
+	row = rowMap(t, res, 0)
+	require.Equal(t, "Dog", row["targetName"])
+	require.Nil(t, row["ghostId"], "unmatched disconnected pattern must null-fill its variables")
+}
+
+// TestSupport_DisconnectedRelationshipOptionalMatch proves a disconnected
+// RELATIONSHIP pattern joins independently (cross product with matches,
+// null-fill with none).
+func TestSupport_DisconnectedRelationshipOptionalMatch(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (repo:OMRepo)-[rc:REPO_CONTAINS]->(anyFile:OMFile)
+		RETURN target.name AS targetName, repo.id AS repoId, type(rc) AS rcType, anyFile.relative_path AS filePath
+	`, nil)
+	require.NoError(t, err, "a disconnected relationship OPTIONAL MATCH must not error")
+	require.Len(t, res.Rows, 1)
+	row := rowMap(t, res, 0)
+	require.Equal(t, "Dog", row["targetName"])
+	require.Equal(t, "repo:1", row["repoId"])
+	require.Equal(t, "REPO_CONTAINS", row["rcType"])
+	require.Equal(t, "svc.py", row["filePath"])
+}
+
+// TestSupport_BoundSingleNodeOptionalMatchIsRowPreserving proves that an
+// OPTIONAL MATCH over an already-bound variable with no new variables
+// preserves rows whether or not the pattern holds (nothing new to null).
+func TestSupport_BoundSingleNodeOptionalMatchIsRowPreserving(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (target:OMNoSuchLabel)
+		RETURN target.name AS targetName
+	`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1, "row must be preserved even though the optional pattern cannot hold")
+	require.Equal(t, "Dog", res.Rows[0][0], "the pre-bound variable keeps its binding")
+}
+
+// TestSupport_MultiHopChainOptionalMatch proves a single OPTIONAL MATCH
+// clause with a multi-hop chain binds all its variables via the general
+// Apply + Optional path.
+func TestSupport_MultiHopChainOptionalMatch(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (target)<-[:CONTAINS]-(tf:OMFile)<-[:REPO_CONTAINS]-(repo:OMRepo)
+		RETURN target.name AS targetName, tf.relative_path AS filePath, repo.id AS repoId
+	`, nil)
+	require.NoError(t, err, "a multi-hop OPTIONAL MATCH chain must not error")
+	require.Len(t, res.Rows, 1)
+	row := rowMap(t, res, 0)
+	require.Equal(t, "Dog", row["targetName"])
+	require.Equal(t, "svc.py", row["filePath"])
+	require.Equal(t, "repo:1", row["repoId"], "both hops of the chain must bind in one clause")
+}
+
+// TestSupport_MixedAggregateExpression proves a RETURN item that CONTAINS an
+// aggregate without BEING one evaluates per Neo4j's isolateAggregation
+// rewrite (aggregate isolated, outer expression applied to the result).
+func TestSupport_MixedAggregateExpression(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (target)<-[:CONTAINS]-(tf:OMFile)
+		RETURN target.name AS targetName, count(tf) + 1 AS bumped, coalesce(sum(rel.weight), 0) AS weightSum
+	`, nil)
+	require.NoError(t, err, "an expression containing an aggregate must not error")
+	require.Len(t, res.Rows, 1)
+	row := rowMap(t, res, 0)
+	require.Equal(t, "Dog", row["targetName"])
+	require.EqualValues(t, int64(2), row["bumped"], "count(tf)=1 plus 1 must evaluate to 2")
+	require.EqualValues(t, int64(2), row["weightSum"], "sum(rel.weight) over the single INHERITS {weight:2} row")
+}
+
+// TestSupport_StdevAggregate proves stdev/stdevp follow Neo4j's StdevFunction
+// contract (0.0 for a single value; sample vs population divisors).
+func TestSupport_StdevAggregate(t *testing.T) {
+	exec, ctx := newOptProjExecutor(t)
+	_, err := exec.Execute(ctx, `CREATE (x:OMClass {uid:"cls:Extra", name:"Extra"})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `
+		MATCH (c:OMClass {uid:"cls:ServiceDog"})
+		MATCH (x:OMClass {uid:"cls:Extra"})
+		CREATE (c)-[:INHERITS {weight: 6}]->(x)
+	`, nil)
+	require.NoError(t, err)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (e:OMClass {uid:"cls:ServiceDog"})-[rel:INHERITS]->(target)
+		OPTIONAL MATCH (target)<-[:CONTAINS]-(tf:OMFile)
+		RETURN stdev(rel.weight) AS sdev, stdevp(rel.weight) AS sdevp
+	`, nil)
+	require.NoError(t, err, "stdev/stdevp must be supported, not rejected")
+	require.Len(t, res.Rows, 1)
+	row := rowMap(t, res, 0)
+	// weights 2 and 6: sample stdev = sqrt(8) ~= 2.828, population = 2.
+	require.InDelta(t, 2.8284, row["sdev"].(float64), 0.001)
+	require.InDelta(t, 2.0, row["sdevp"].(float64), 0.001)
+}

@@ -260,15 +260,41 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 }
 
 // applyTraversalOptionalClause left-outer-joins one OPTIONAL MATCH clause
-// against every row. The bound endpoint seeds the traversal; the unbound
-// endpoint (and the relationship variable, when named) is bound on each row.
-// When both endpoints are already bound the clause acts as a filter that binds
-// only the relationship variable. A row whose seed is null (an earlier
-// OPTIONAL MATCH miss) propagates null bindings, matching Cypher semantics.
+// against every row, routing by pattern shape (mirroring how Neo4j's planner
+// picks OptionalExpandAll for a connected single hop and Apply + Optional for
+// everything else):
+//
+//   - single node group, no relationship: applySingleNodeOptionalClause;
+//   - one hop with a bound endpoint and an unbound (or absent) relationship
+//     variable: the seeded expansion below (OptionalExpandAllPipe semantics —
+//     the bound endpoint seeds the traversal, the unbound endpoint and
+//     relationship variable bind per match, both-endpoints-bound acts as a
+//     relationship filter, and a null seed propagates null bindings);
+//   - everything else (disconnected patterns, multi-hop chains, bound
+//     relationship variables): applyGeneralOptionalClause, the Apply +
+//     Optional contract. No valid shape is rejected.
 func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	nodeGroups, brackets := scanOptionalPatternShape(clause.pattern)
+	if nodeGroups == 1 && brackets == 0 {
+		return e.applySingleNodeOptionalClause(ctx, rows, clause)
+	}
+	if nodeGroups != 2 || brackets != 1 {
+		return e.applyGeneralOptionalClause(ctx, rows, clause)
+	}
 	eps, err := e.parseOptionalClauseEndpoints(ctx, clause.pattern)
 	if err != nil {
-		return nil, err
+		return e.applyGeneralOptionalClause(ctx, rows, clause)
+	}
+	_, srcSeedable := rows[0].nodes[eps.source.variable]
+	_, tgtSeedable := rows[0].nodes[eps.target.variable]
+	_, relBound := rows[0].rels[eps.relVar]
+	if (!srcSeedable && !tgtSeedable) || (eps.relVar != "" && relBound) {
+		// Disconnected one-hop pattern or a pre-bound relationship variable:
+		// evaluate with the general Apply + Optional path.
+		return e.applyGeneralOptionalClause(ctx, rows, clause)
 	}
 
 	out := make([]traversalOptRow, 0, len(rows))
@@ -279,8 +305,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 		var seed *storage.Node
 		var pattern optionalRelPattern
 		newNodeVar := ""
-		switch {
-		case srcBound:
+		if srcBound {
 			seed = srcNode
 			pattern = optionalRelPattern{
 				sourceVar:    eps.source.variable,
@@ -294,7 +319,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 			if !tgtBound {
 				newNodeVar = eps.target.variable
 			}
-		case tgtBound:
+		} else {
 			seed = tgtNode
 			pattern = optionalRelPattern{
 				sourceVar:    eps.target.variable,
@@ -306,10 +331,6 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 				direction:    invertOptionalDirection(eps.direction),
 			}
 			newNodeVar = eps.source.variable
-		default:
-			return nil, fmt.Errorf(
-				"unsupported OPTIONAL MATCH: pattern %q references no variable bound by an earlier clause",
-				truncateQuery(clause.pattern, 60))
 		}
 
 		if seed == nil {
@@ -362,7 +383,7 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 		}
 	}
 
-	if rowHasAggregate(items) {
+	if traversalItemsContainAggregate(items) {
 		aggRows, err := e.aggregateTraversalOptionalRows(ctx, rows, items)
 		if err != nil {
 			return nil, err
