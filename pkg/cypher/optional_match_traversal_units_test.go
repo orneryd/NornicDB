@@ -645,3 +645,87 @@ func TestCompiledVarProjection_UnboundFallsBackToEvaluator(t *testing.T) {
 	require.Equal(t, direct, compiled,
 		"an unbound variable projection must produce exactly the full evaluator's result")
 }
+
+// TestSupport_DisconnectedOptionalBareVarReturn pins the exact review shape
+// "MATCH (a)-[r]->(b) OPTIONAL MATCH (x:X) RETURN a, x": a trailing OPTIONAL
+// MATCH with no previously bound variable is a legal disconnected optional
+// pattern (Neo4j plans it as Apply + Optional; OptionalPipe.scala null-fills
+// when the pattern has no matches). Bare-variable projections return real
+// node entities.
+func TestSupport_DisconnectedOptionalBareVarReturn(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, `CREATE (a:PN {name:"a"})-[:T {n:1}]->(b:PN {name:"b"})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `CREATE (x:XX {name:"only-x"})`, nil)
+	require.NoError(t, err)
+
+	res, err := exec.Execute(ctx, `MATCH (a:PN {name:"a"})-[r]->(b) OPTIONAL MATCH (x:XX) RETURN a, x`, nil)
+	require.NoError(t, err, "a disconnected OPTIONAL MATCH must never be rejected")
+	require.Len(t, res.Rows, 1)
+	aNode, ok := res.Rows[0][0].(*storage.Node)
+	require.True(t, ok, "bare a projects the node entity")
+	require.Equal(t, "a", aNode.Properties["name"])
+	xNode, ok := res.Rows[0][1].(*storage.Node)
+	require.True(t, ok, "bare x projects the independently matched node entity")
+	require.Equal(t, "only-x", xNode.Properties["name"])
+
+	// And the null-fill side: no OMNever nodes exist.
+	res, err = exec.Execute(ctx, `MATCH (a:PN {name:"a"})-[r]->(b) OPTIONAL MATCH (x:OMNever) RETURN a, x`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1, "left row preserved")
+	require.Nil(t, res.Rows[0][1], "unmatched disconnected variable is null")
+}
+
+// TestSupport_ReboundRelVariableIsIdentityConstraint pins the parallel-edge
+// invariant the executor already enforces for chained MATCH
+// (multi_match_relationship_binding_bug_test.go: "same relationship variable
+// only counts rows for the same edge" / "rejects rows that would overwrite
+// the bound edge") on the traversal OPTIONAL MATCH path. Neo4j's planner
+// makes the same choice: a pattern relationship whose variable is already in
+// availableSymbols is planned as ProjectEndpoints over the bound edge, never
+// as a fresh expansion (cypher-planner .../idp/expandSolverStep.scala,
+// plansForNodeConnection). With two parallel :T edges between a and b,
+// re-referencing r must yield one row per originally bound edge and must not
+// overwrite r.
+func TestSupport_ReboundRelVariableIsIdentityConstraint(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, `CREATE (a:PN {name:"a"})-[:T {n:1}]->(b:PN {name:"b"})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (a:PN {name:"a"}) MATCH (b:PN {name:"b"}) CREATE (a)-[:T {n:2}]->(b)`, nil)
+	require.NoError(t, err)
+
+	res, err := exec.Execute(ctx, `MATCH (a:PN)-[r:T]->(b:PN) OPTIONAL MATCH (a)-[r]->(b) RETURN count(*) AS c`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 2, res.Rows[0][0],
+		"one row per originally bound edge — re-referencing r must not fan out across parallel edges")
+
+	res, err = exec.Execute(ctx, `MATCH (a:PN)-[r:T {n:1}]->(b:PN) OPTIONAL MATCH (a)-[r]->(b) RETURN r.n AS n`, nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.EqualValues(t, 1, res.Rows[0][0],
+		"r keeps its original edge binding — the n:2 parallel edge must not overwrite it")
+}
+
+// TestSupport_StdevMixedCaseAggregate: aggregate names are case-insensitive
+// on the traversal OPTIONAL MATCH path, matching the executor-wide registry
+// (aggregateFnNames in clauses.go).
+func TestSupport_StdevMixedCaseAggregate(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, `CREATE (a:PN {name:"a"})-[:T {n:1}]->(b:PN {name:"b"})`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (a:PN {name:"a"}) MATCH (b:PN {name:"b"}) CREATE (a)-[:T {n:2}]->(b)`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `CREATE (x:XX {name:"only-x"})`, nil)
+	require.NoError(t, err)
+
+	res, err := exec.Execute(ctx, `
+		MATCH (a:PN {name:"a"})-[r:T]->(b)
+		OPTIONAL MATCH (x:XX)
+		RETURN stDev(r.n) AS s, STDEVP(r.n) AS sp
+	`, nil)
+	require.NoError(t, err, "mixed-case stDev/STDEVP must be supported like the rest of the executor")
+	require.Len(t, res.Rows, 1)
+	require.InDelta(t, 0.70710678, res.Rows[0][0].(float64), 1e-6, "sample stdev of {1,2}")
+	require.InDelta(t, 0.5, res.Rows[0][1].(float64), 1e-6, "population stdev of {1,2}")
+}
