@@ -82,16 +82,28 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 		}
 	}
 
+	// Compile group-key expressions and aggregate arguments once; the row loop
+	// below runs only the compiled closures.
+	projectors := make([]compiledTraversalProjection, len(items))
+	for i, item := range items {
+		switch {
+		case specs[i] == nil:
+			projectors[i] = e.compileTraversalProjection(ctx, item.expr)
+		case !specs[i].star:
+			projectors[i] = e.compileTraversalProjection(ctx, specs[i].inner)
+		}
+	}
+
 	groups := make(map[string]*traversalAggGroup)
 	var order []string
 	for _, row := range rows {
 		keyParts := make([]string, 0, len(items))
 		groupVals := make([]interface{}, len(items))
-		for i, item := range items {
+		for i := range items {
 			if specs[i] != nil {
 				continue
 			}
-			v := e.evalTraversalProjection(ctx, item.expr, row)
+			v := projectors[i](row)
 			groupVals[i] = v
 			keyParts = append(keyParts, joinedValueKey(v))
 		}
@@ -111,7 +123,7 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 			if spec == nil || spec.star {
 				continue
 			}
-			v := e.evalTraversalProjection(ctx, spec.inner, row)
+			v := projectors[i](row)
 			if v == nil {
 				continue // Cypher aggregates skip nulls
 			}
