@@ -369,11 +369,17 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 		}
 		result.Rows = aggRows
 	} else {
+		// Compile each projection item once; per row only the compiled
+		// closures run (see optional_match_traversal_compile.go).
+		projectors := make([]compiledTraversalProjection, len(items))
+		for i, item := range items {
+			projectors[i] = e.compileTraversalProjection(ctx, item.expr)
+		}
 		result.Rows = make([][]interface{}, 0, len(rows))
 		for _, row := range rows {
 			outRow := make([]interface{}, len(items))
-			for i, item := range items {
-				outRow[i] = e.evalTraversalProjection(ctx, item.expr, row)
+			for i := range items {
+				outRow[i] = projectors[i](row)
 			}
 			result.Rows = append(result.Rows, outRow)
 		}
@@ -381,16 +387,6 @@ func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows
 
 	e.applyTraversalReturnModifiers(result, returnClause)
 	return result, nil
-}
-
-// evalTraversalProjection evaluates one projection expression against a joined
-// row: the "var.prop" / bare-variable fast path first, then the full
-// expression evaluator for everything else (functions, coalesce, CASE, ...).
-func (e *StorageExecutor) evalTraversalProjection(ctx context.Context, expr string, row traversalOptRow) interface{} {
-	if v, ok := fastTraversalExprValue(expr, row); ok {
-		return v
-	}
-	return e.evaluateExpressionWithContext(ctx, expr, row.nodes, row.rels)
 }
 
 // isSimpleTraversalIdentifier reports whether s is a bare Cypher identifier
