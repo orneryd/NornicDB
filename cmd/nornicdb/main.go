@@ -334,6 +334,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	resolvedAddress := resolveBindAddress(cmd, cfg, address, loadedConfigFile)
 	cfg.Server.HTTPAddress = resolvedAddress
 	cfg.Server.BoltAddress = resolvedAddress
+	if noAuth {
+		cfg.Auth.Enabled = false
+	}
 
 	// YAML config file is the source of truth for embedding settings
 	// Always use config file values if they are set (non-zero/non-empty)

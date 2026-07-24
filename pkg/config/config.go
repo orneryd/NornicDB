@@ -1436,7 +1436,7 @@ type YAMLConfig struct {
 
 	// Authentication configuration
 	Auth struct {
-		Enabled           bool   `yaml:"enabled"`
+		Enabled           *bool  `yaml:"enabled"`
 		Username          string `yaml:"username"`
 		Password          string `yaml:"password"`
 		MinPasswordLength int    `yaml:"min_password_length"`
@@ -3132,8 +3132,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 		}
 	}
 	// Also support dedicated auth section
-	if yamlCfg.Auth.Enabled {
-		config.Auth.Enabled = true
+	if yamlCfg.Auth.Enabled != nil {
+		config.Auth.Enabled = *yamlCfg.Auth.Enabled
 	}
 	if yamlCfg.Auth.Username != "" {
 		config.Auth.InitialUsername = yamlCfg.Auth.Username

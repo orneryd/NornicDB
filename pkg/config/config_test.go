@@ -1301,6 +1301,93 @@ plugins:
 	require.Equal(t, "/plugins/heim", cfg.Server.HeimdallPluginsDir)
 }
 
+func TestLoadFromFile_AuthBlockWithoutEnabledKeepsDefaultAuthState(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+auth:
+  username: "admin"
+  password: "password"
+  jwt_secret: "[stored-in-keychain]"
+server:
+  http_port: 7474
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Auth.Enabled,
+		"omitting auth.enabled must preserve the default disabled state")
+	require.Equal(t, "admin", cfg.Auth.InitialUsername)
+	require.Equal(t, "password", cfg.Auth.InitialPassword)
+	require.Contains(t, cfg.Auth.JWTSecret, "CHANGE_ME_IN_PRODUCTION_",
+		"the keychain placeholder should not override the generated default JWT secret")
+}
+
+func TestLoadFromFile_AuthBlockWithoutEnabledDefersToEnvOverride(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("NORNICDB_AUTH", "envuser:envpass")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+auth:
+  username: "yamluser"
+  password: "yamlpass"
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.True(t, cfg.Auth.Enabled,
+		"env auth must override omitted yaml auth.enabled")
+	require.Equal(t, "envuser", cfg.Auth.InitialUsername)
+	require.Equal(t, "envpass", cfg.Auth.InitialPassword)
+}
+
+func TestLoadFromFile_ServerAuthNoneOverridesDedicatedAuthBlock(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+server:
+  auth: "none"
+auth:
+  username: "admin"
+  password: "password"
+  jwt_secret: "file-secret"
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Auth.Enabled,
+		"server.auth=none must remain the explicit YAML auth opt-out")
+}
+
+func TestLoadFromFile_AuthEnabledFalseOverridesDedicatedAuthBlock(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(path, []byte(`
+auth:
+  enabled: false
+  username: "admin"
+  password: "password"
+  jwt_secret: "file-secret"
+`), 0o600)
+	require.NoError(t, err)
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Auth.Enabled,
+		"auth.enabled=false must disable auth even when the auth block is populated")
+}
+
 func TestLoadFromFile_BoltStatementTimeoutAndEnvOverride(t *testing.T) {
 	clearEnvVars(t)
 
