@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.12] - 7/26/2026
+
+### Added
+
+- **Knowledge-policy architecture documentation.**
+  Added end-to-end scoring-pipeline and visibility-layer guides covering policy
+  evaluation, score composition, temporal decay, access decisions, caching,
+  observability, and integration with NornicDB's storage and query layers.
+- **Remote-provider-only Heimdall plugin builds.**
+  Heimdall plugins that use remote providers such as OpenAI or Ollama can now be
+  built without the local GGUF runtime by using the `nolocalllm` build tag. The
+  built-in watcher plugin exposes this through
+  `make plugin-heimdall-watcher-remote` or
+  `make plugin-heimdall-watcher NOLOCALLLM=1`, with matching deployment and Go
+  plugin ABI guidance in the documentation.
+
+### Changed
+
+- **Updated supported runtimes and dependencies.**
+  Upgraded the bundled llama.cpp runtime from `b9835` to `b10069`, refreshed Go
+  dependencies including BadgerDB `v4.9.4`, Prometheus client `v1.24.0`, gRPC
+  `v1.82.1`, and `golang.org/x` modules, and updated UI dependencies including
+  React `19.2.8`, Lucide React `1.26.0`, Three.js `0.185.1`, Tailwind CSS
+  `4.3.3`, and TypeScript `7.0.2`. Build scripts and container images now use
+  the matching runtime versions.
+
 ### Fixed
+
+- **Explicit `auth.enabled` values in YAML configuration now take precedence.**
+  An `auth.enabled: false` setting was previously indistinguishable from an
+  omitted value and could leave authentication enabled by defaults or other
+  configuration sources. Explicit `true` and `false` values are now both
+  honored, while the `--no-auth` startup flag remains the final override.
+- **Heimdall native tool-calling follow-up requests now preserve empty assistant
+  content.** OpenAI-compatible and Ollama request payloads now serialize
+  `content: ""` for assistant messages containing tool calls instead of
+  omitting the field, preventing second-round HTTP 400 responses from providers
+  that require it. Plugin load failures caused by a mismatched Go package build
+  now also report the host toolchain and build settings that must match.
+- **Large disjoint UNIQUE-constrained write batches no longer serialize on
+  hash-lock collisions.**
+  Replaced the fixed 256-stripe commit-lock table with an active,
+  reference-counted exact-value registry. Transactions touching the same
+  `(label, property, value)` still serialize through validation, Badger commit,
+  and unique-cache publication, while disjoint batches commit concurrently.
+  Registry-assigned ordering prevents AB-BA deadlocks, entries expire after the
+  last holder or waiter, and non-reflexive values such as NaN cannot leak lock
+  entries.
 
 - **WHERE relationship-existence predicates now recognize bracket-less and
   undirected patterns, and bare `COUNT`/`EXISTS` subquery bodies.**
@@ -124,16 +171,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Large disjoint UNIQUE-constrained write batches no longer serialize on
-  hash-lock collisions.**
-  Replaced the fixed 256-stripe commit-lock table with an active,
-  reference-counted exact-value registry. Transactions touching the same
-  `(label, property, value)` still serialize through validation, Badger commit,
-  and unique-cache publication, while disjoint batches commit concurrently.
-  Registry-assigned ordering prevents AB-BA deadlocks, entries expire after the
-  last holder or waiter, and non-reflexive values such as NaN cannot leak lock
-  entries. Added real Badger commit, same-value retry, race, cleanup, and
-  8-writer/100-key performance coverage.
 - **Multi-MATCH relationship variable bound in a later clause was silently
   dropped.**
   `MATCH (s) WHERE s.uid IN $u MATCH (s)-[rel]->() WHERE
