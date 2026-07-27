@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.0] - 7/27/2026
+
+### Changed
+
+- **APOC local file permissions now use separate import and export toggles.**
+  Added distinct APOC security controls for local file reads and writes so
+  operators can allow import/load procedures without implicitly allowing export
+  sinks, or vice versa. `allow_file_access` remains supported as a legacy
+  shorthand that enables both directions, while the preferred configuration is
+  `allow_import_file_access` plus `allow_export_file_access`. The APOC config
+  docs, environment-variable reference, and sample YAML now reflect the split
+  settings and the Neo4j-style `file_access_root` behavior.
+- **The UI dependency graph now pins a patched React Router core release.**
+  The UI now overrides the transitive `react-router` dependency to the patched
+  `8.3.0` line while `react-router-dom` remains on its current published
+  release. This clears the known vulnerable router core without requiring a
+  breaking application-level routing refactor.
+
+### Fixed
+
+- **Authentication is now enabled by default, and omitted YAML auth settings no
+  longer downgrade the secure default.**
+  New default deployments now require authentication unless it is explicitly
+  disabled. Configuration loading also preserves the secure default when
+  `auth.enabled` is omitted from YAML, while still honoring explicit `true` and
+  `false` values and the final CLI override path.
+
+- **APOC local file reads now honor explicit security gates and a rooted
+  import/export directory policy.**
+  `apoc.load.json`, `apoc.load.jsonArray`, `apoc.load.csv`, and
+  `apoc.import.json` previously accepted caller-controlled local file paths and
+  opened them directly. Local APOC reads are now denied by default, validate
+  `file:` URL shape, and when `file_access_root` is configured, normalize and
+  rebase local file paths under that root to prevent absolute-path and
+  traversal-based file disclosure.
+- **APOC export procedures no longer write directly to arbitrary caller-supplied
+  paths.**
+  `apoc.export.json.all`, `apoc.export.json.query`, `apoc.export.csv.all`, and
+  `apoc.export.csv.query` now route local file destinations through the same
+  validated path-resolution policy as APOC imports. This closes arbitrary local
+  file write and traversal paths by requiring explicit export file access and,
+  when configured, constraining writes to the configured `file_access_root`.
+- **APOC file-access root configuration now loads independently of the legacy
+  combined file-access flag.**
+  `NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT` was previously only honored when
+  the combined `ALLOW_FILE_ACCESS` env var was also set. The root path now
+  loads independently from environment variables and YAML, so deployments can
+  preconfigure a restricted local-file root without relying on legacy flag
+  ordering.
+
 ## [v1.1.12] - 7/26/2026
 
 ### Added
@@ -74,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so a plain `DELETE` on a connected node quietly removed its relationships
   too, diverging from openCypher/Neo4j semantics. `DELETE` now validates that
   every node in the deletion plan has no relationships left outside the
-  statement's own edge deletions *before* mutating anything (so a multi-row
+  statement's own edge deletions _before_ mutating anything (so a multi-row
   `DELETE` is judged as a whole, not partially applied), and errors with the
   same "still has relationships" wording Neo4j uses. Deleting a node together
   with its own edge in one statement (`DELETE a, r`) still works, since the
@@ -82,7 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the old silent cascade must switch to `DETACH DELETE`.
 - **An `OPTIONAL MATCH`-bound relationship variable resolved to `nil` inside
   `DELETE`/`SET`/`REMOVE`'s internal match probes, even when the `OPTIONAL
-  MATCH` genuinely matched.** `executeDelete`, `executeSet`, and
+MATCH` genuinely matched.** `executeDelete`, `executeSet`, and
   `executeRemove` each build an internal
   `MATCH ... OPTIONAL MATCH (a)-[r:TYPE]->(b) RETURN <vars>` probe and execute
   it via the low-level match path instead of the dispatcher that normally
