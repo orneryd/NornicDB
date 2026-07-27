@@ -17,9 +17,9 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 
 	cfg := LoadFromEnv()
 
-	// Auth defaults - disabled by default for easy development
-	if cfg.Auth.Enabled {
-		t.Error("expected Auth.Enabled to be false by default")
+	// Auth defaults - enabled by default for secure deployments
+	if !cfg.Auth.Enabled {
+		t.Error("expected Auth.Enabled to be true by default")
 	}
 	if cfg.Auth.InitialUsername != "admin" {
 		t.Errorf("expected username 'admin', got %q", cfg.Auth.InitialUsername)
@@ -1318,8 +1318,8 @@ server:
 
 	cfg, err := LoadFromFile(path)
 	require.NoError(t, err)
-	require.False(t, cfg.Auth.Enabled,
-		"omitting auth.enabled must preserve the default disabled state")
+	require.True(t, cfg.Auth.Enabled,
+		"omitting auth.enabled must preserve the default secure auth state")
 	require.Equal(t, "admin", cfg.Auth.InitialUsername)
 	require.Equal(t, "password", cfg.Auth.InitialPassword)
 	require.Contains(t, cfg.Auth.JWTSecret, "CHANGE_ME_IN_PRODUCTION_",

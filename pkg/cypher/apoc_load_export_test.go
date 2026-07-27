@@ -17,6 +17,7 @@ func TestApocLoadJson(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	t.Run("load_json_from_file", func(t *testing.T) {
@@ -67,6 +68,7 @@ func TestApocLoadCsv(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	t.Run("load_csv_with_header", func(t *testing.T) {
@@ -100,6 +102,7 @@ func TestApocExportJsonAll(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	// Create test data
@@ -158,6 +161,7 @@ func TestApocExportCsvAll(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	// Create test data
@@ -190,6 +194,7 @@ func TestApocImportJson(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	t.Run("import_json_graph", func(t *testing.T) {
@@ -253,6 +258,7 @@ func TestApocLoadJsonArray(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	exec := NewStorageExecutor(engine)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	t.Run("load_json_array_file", func(t *testing.T) {

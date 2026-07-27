@@ -1686,7 +1686,7 @@ func LoadDefaults() *Config {
 	config := &Config{}
 
 	// Auth defaults
-	config.Auth.Enabled = false
+	config.Auth.Enabled = true
 	config.Auth.InitialUsername = "admin"
 	config.Auth.InitialPassword = "password"
 	config.Auth.MinPasswordLength = 8

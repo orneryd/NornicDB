@@ -120,6 +120,7 @@ import (
 	"time"
 	"unicode"
 
+	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -399,6 +400,16 @@ type StorageExecutor struct {
 	// flows in from the bootstrap site without breaking the ctor.
 	slowQueryThreshold time.Duration
 
+	// allowLocalAPOCImportFileAccess gates non-HTTP APOC load/import file reads.
+	// Default deny; enable explicitly via env-backed APOC config or setter.
+	allowLocalAPOCImportFileAccess bool
+	// allowLocalAPOCExportFileAccess gates non-HTTP APOC export file writes.
+	// Default deny; enable explicitly via env-backed APOC config or setter.
+	allowLocalAPOCExportFileAccess bool
+	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
+	// set, local APOC file URLs are normalized and rebased under this root.
+	apocLocalFileAccessRoot string
+
 	// metrics is the Plan 04-03 CypherMetrics typed bag (MET-08). Injected
 	// post-construction via SetCypherMetrics (D-01 non-breaking pattern,
 	// mirrors SetLogger / SetSlowQueryThreshold). Nil-safe: the
@@ -456,35 +467,38 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
 	return &StorageExecutor{
-		parser:                      e.parser,
-		storage:                     override,
-		txContext:                   e.txContext,
-		cache:                       e.cache,
-		planCache:                   e.planCache,
-		fabricPlanCache:             e.fabricPlanCache,
-		analyzer:                    e.analyzer,
-		nodeLookupCache:             lookupCache,
-		nodeLookupCacheMu:           lookupCacheMu,
-		deferFlush:                  e.deferFlush,
-		embedder:                    e.embedder,
-		searchService:               e.searchService,
-		inferenceManager:            e.inferenceManager,
-		onNodeMutated:               e.onNodeMutated,
-		inlineEmbeddingTextOptions:  e.inlineEmbeddingTextOptions,
-		inlineEmbeddingChunkSize:    e.inlineEmbeddingChunkSize,
-		inlineEmbeddingChunkOverlap: e.inlineEmbeddingChunkOverlap,
-		defaultEmbeddingDimensions:  e.defaultEmbeddingDimensions,
-		dbManager:                   e.dbManager,
-		shellParams:                 e.shellParams,
-		vectorRegistry:              e.vectorRegistry,
-		vectorIndexSpaces:           e.vectorIndexSpaces,
-		fabricRecordBindings:        e.fabricRecordBindings,
-		hotPathTraceState:           e.hotPathTraceState,
-		vectorQueryEmbedCache:       e.vectorQueryEmbedCache,
-		vectorQueryEmbedInflight:    e.vectorQueryEmbedInflight,
-		unwindMergeChainPlanCache:   e.unwindMergeChainPlanCache,
-		upperQueryCache:             e.upperQueryCache,
-		syntaxValidationCache:       e.syntaxValidationCache,
+		parser:                         e.parser,
+		storage:                        override,
+		txContext:                      e.txContext,
+		cache:                          e.cache,
+		planCache:                      e.planCache,
+		fabricPlanCache:                e.fabricPlanCache,
+		analyzer:                       e.analyzer,
+		nodeLookupCache:                lookupCache,
+		nodeLookupCacheMu:              lookupCacheMu,
+		deferFlush:                     e.deferFlush,
+		embedder:                       e.embedder,
+		searchService:                  e.searchService,
+		inferenceManager:               e.inferenceManager,
+		onNodeMutated:                  e.onNodeMutated,
+		inlineEmbeddingTextOptions:     e.inlineEmbeddingTextOptions,
+		inlineEmbeddingChunkSize:       e.inlineEmbeddingChunkSize,
+		inlineEmbeddingChunkOverlap:    e.inlineEmbeddingChunkOverlap,
+		defaultEmbeddingDimensions:     e.defaultEmbeddingDimensions,
+		dbManager:                      e.dbManager,
+		shellParams:                    e.shellParams,
+		vectorRegistry:                 e.vectorRegistry,
+		vectorIndexSpaces:              e.vectorIndexSpaces,
+		fabricRecordBindings:           e.fabricRecordBindings,
+		hotPathTraceState:              e.hotPathTraceState,
+		vectorQueryEmbedCache:          e.vectorQueryEmbedCache,
+		vectorQueryEmbedInflight:       e.vectorQueryEmbedInflight,
+		unwindMergeChainPlanCache:      e.unwindMergeChainPlanCache,
+		upperQueryCache:                e.upperQueryCache,
+		syntaxValidationCache:          e.syntaxValidationCache,
+		allowLocalAPOCImportFileAccess: e.allowLocalAPOCImportFileAccess,
+		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
+		apocLocalFileAccessRoot:        e.apocLocalFileAccessRoot,
 		// Plan 04-03: propagate the metrics bag + database label through
 		// per-query / per-storage clones so observation chokepoints in
 		// Execute() see the same bag regardless of clone depth.
@@ -590,30 +604,56 @@ type InferenceManager interface {
 //	// Executor is ready for queries
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
 func NewStorageExecutor(store storage.Engine) *StorageExecutor {
+	runtimeCfg := config.LoadFromEnv()
+	apocCfg := apoccfg.LoadFromEnv()
 	exec := &StorageExecutor{
-		parser:                      NewParser(),
-		storage:                     store,
-		cache:                       NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
-		planCache:                   NewQueryPlanCache(500),   // Cache 500 parsed query plans
-		fabricPlanCache:             fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
-		analyzer:                    NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
-		nodeLookupCache:             make(map[string]*storage.Node, 1000),
-		nodeLookupCacheMu:           &sync.RWMutex{},
-		shellParams:                 make(map[string]interface{}),
-		searchService:               nil, // Lazy initialization - will be set via SetSearchService() to reuse DB's cached service
-		vectorRegistry:              vectorspace.NewIndexRegistry(),
-		vectorIndexSpaces:           make(map[string]vectorspace.VectorSpaceKey),
-		hotPathTraceState:           &hotPathTraceState{},
-		vectorQueryEmbedCache:       make(map[string][]float32, 512),
-		vectorQueryEmbedInflight:    make(map[string]*vectorEmbedInflight, 64),
-		unwindMergeChainPlanCache:   &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
-		inlineEmbeddingTextOptions:  embeddingutil.EmbedTextOptionsFromConfig(config.LoadFromEnv()),
-		inlineEmbeddingChunkSize:    maxInt(config.LoadFromEnv().EmbeddingWorker.ChunkSize, 1),
-		inlineEmbeddingChunkOverlap: maxInt(config.LoadFromEnv().EmbeddingWorker.ChunkOverlap, 0),
+		parser:                         NewParser(),
+		storage:                        store,
+		cache:                          NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
+		planCache:                      NewQueryPlanCache(500),   // Cache 500 parsed query plans
+		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
+		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
+		nodeLookupCache:                make(map[string]*storage.Node, 1000),
+		nodeLookupCacheMu:              &sync.RWMutex{},
+		shellParams:                    make(map[string]interface{}),
+		searchService:                  nil, // Lazy initialization - will be set via SetSearchService() to reuse DB's cached service
+		vectorRegistry:                 vectorspace.NewIndexRegistry(),
+		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
+		hotPathTraceState:              &hotPathTraceState{},
+		vectorQueryEmbedCache:          make(map[string][]float32, 512),
+		vectorQueryEmbedInflight:       make(map[string]*vectorEmbedInflight, 64),
+		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
+		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
+		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
+		inlineEmbeddingChunkOverlap:    maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
+		allowLocalAPOCImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
+		allowLocalAPOCExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
+		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
 	ensureBuiltInProceduresRegistered()
 	_ = exec.loadPersistedProcedures()
 	return exec
+}
+
+// SetAllowLocalAPOCFileAccess enables or disables local APOC file reads/writes.
+func (e *StorageExecutor) SetAllowLocalAPOCFileAccess(enabled bool) {
+	e.allowLocalAPOCImportFileAccess = enabled
+	e.allowLocalAPOCExportFileAccess = enabled
+}
+
+// SetAllowLocalAPOCImportFileAccess enables or disables local-file APOC loads/imports.
+func (e *StorageExecutor) SetAllowLocalAPOCImportFileAccess(enabled bool) {
+	e.allowLocalAPOCImportFileAccess = enabled
+}
+
+// SetAllowLocalAPOCExportFileAccess enables or disables local-file APOC exports.
+func (e *StorageExecutor) SetAllowLocalAPOCExportFileAccess(enabled bool) {
+	e.allowLocalAPOCExportFileAccess = enabled
+}
+
+// SetAPOCLocalFileAccessRoot sets the local import root used for APOC file URLs.
+func (e *StorageExecutor) SetAPOCLocalFileAccessRoot(root string) {
+	e.apocLocalFileAccessRoot = strings.TrimSpace(root)
 }
 
 // ClearQueryCaches clears executor-local caches that can retain stale read results.

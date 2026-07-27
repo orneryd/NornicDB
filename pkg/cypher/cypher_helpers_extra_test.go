@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -774,7 +776,10 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
+	apocFileRoot := t.TempDir()
+	exec.SetAPOCLocalFileAccessRoot(apocFileRoot)
 
 	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"L1"}, Properties: map[string]interface{}{"name": "x"}})
 	require.NoError(t, err)
@@ -788,6 +793,21 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		Properties: map[string]interface{}{"text": "hello world"},
 	})
 	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(apocFileRoot, "load.json"), []byte(`{"value":1}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(apocFileRoot, "load.csv"), []byte("name\nage\nalice\n"), 0o644))
+	graphJSON, err := json.Marshal(map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id":         "imported-node",
+				"labels":     []interface{}{"Import"},
+				"properties": map[string]interface{}{"name": "imported"},
+			},
+		},
+		"relationships": []interface{}{},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(apocFileRoot, "import.json"), graphJSON, 0o644))
 
 	// Force executeCall to use legacy switch fallback (instead of registry-first dispatch)
 	// so we can validate and cover those branches while preserving production behavior.
@@ -861,14 +881,14 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL apoc.periodic.iterate('RETURN 1 AS n','RETURN n',{})",
 		"CALL apoc.periodic.commit('RETURN 1')",
 		"CALL apoc.periodic.rock_n_roll('RETURN 1 AS n','RETURN n',{})",
-		"CALL apoc.export.csv.all('file:///missing.csv',{})",
-		"CALL apoc.export.csv.query('MATCH (n) RETURN n','file:///missing.csv',{})",
-		"CALL apoc.export.json.all('file:///missing.json',{})",
-		"CALL apoc.export.json.query('MATCH (n) RETURN n','file:///missing.json',{})",
-		"CALL apoc.load.jsonarray('file:///missing.json')",
-		"CALL apoc.load.json('file:///missing.json')",
-		"CALL apoc.load.csv('file:///missing.csv')",
-		"CALL apoc.import.json('file:///missing.json')",
+		"CALL apoc.export.csv.all('file:///export.csv',{})",
+		"CALL apoc.export.csv.query('MATCH (n) RETURN n','file:///export-query.csv',{})",
+		"CALL apoc.export.json.all('file:///export.json',{})",
+		"CALL apoc.export.json.query('MATCH (n) RETURN n','file:///export-query.json',{})",
+		"CALL apoc.load.jsonarray('file:///load.json')",
+		"CALL apoc.load.json('file:///load.json')",
+		"CALL apoc.load.csv('file:///load.csv')",
+		"CALL apoc.import.json('file:///import.json')",
 		"CALL gds.graph.project('g_cov', ['L1'], ['KNOWS'])",
 		"CALL gds.fastRP.stream('g_cov')",
 		"CALL gds.fastRP.stats('g_cov')",

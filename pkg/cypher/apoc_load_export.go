@@ -5,16 +5,127 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+var (
+	errAPOCLocalImportFileAccessDisabled = errors.New("local APOC import file access is disabled")
+	errAPOCLocalExportFileAccessDisabled = errors.New("local APOC export file access is disabled")
+	errAPOCFileAuthorityNotAllowed       = errors.New("file URL may not contain an authority section (i.e. it should be 'file:///')")
+	errAPOCFileQueryNotAllowed           = errors.New("file URL may not contain a query component")
+	errAPOCFileFragmentNotAllowed        = errors.New("file URL may not contain a fragment component")
+)
+
+func isHTTPSource(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+}
+
+func (e *StorageExecutor) ensureLocalAPOCImportFileAccessAllowed() error {
+	if e != nil && e.allowLocalAPOCImportFileAccess {
+		return nil
+	}
+	return errAPOCLocalImportFileAccessDisabled
+
+}
+
+func (e *StorageExecutor) ensureLocalAPOCExportFileAccessAllowed() error {
+	if e != nil && e.allowLocalAPOCExportFileAccess {
+		return nil
+	}
+	return errAPOCLocalExportFileAccessDisabled
+
+}
+
+func (e *StorageExecutor) resolveAPOCLocalImportFilePath(source string) (string, error) {
+	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCImportFileAccessAllowed)
+}
+
+func (e *StorageExecutor) resolveAPOCLocalExportFilePath(source string) (string, error) {
+	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCExportFileAccessAllowed)
+}
+
+func (e *StorageExecutor) resolveAPOCLocalFilePath(source string, ensureAllowed func() error) (string, error) {
+	if err := ensureAllowed(); err != nil {
+		return "", err
+	}
+
+	parsed, err := url.Parse(source)
+	if err == nil && parsed.Scheme != "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "file":
+			if err := validateAPOCFileURL(parsed); err != nil {
+				return "", err
+			}
+			localPath := parsed.Path
+			if localPath == "" {
+				localPath = parsed.Opaque
+			}
+			return e.rebaseAPOCImportPath(localPath)
+		case "http", "https":
+			return "", fmt.Errorf("expected local APOC file source, got remote URL")
+		default:
+			return "", fmt.Errorf("unsupported APOC file URL scheme %q", parsed.Scheme)
+		}
+	}
+
+	return e.rebaseAPOCImportPath(source)
+}
+
+func validateAPOCFileURL(uri *url.URL) error {
+	if uri.Host != "" {
+		return errAPOCFileAuthorityNotAllowed
+	}
+	if uri.RawQuery != "" {
+		return errAPOCFileQueryNotAllowed
+	}
+	if uri.Fragment != "" {
+		return errAPOCFileFragmentNotAllowed
+	}
+	return nil
+}
+
+func (e *StorageExecutor) rebaseAPOCImportPath(localPath string) (string, error) {
+	root := strings.TrimSpace(e.apocLocalFileAccessRoot)
+	if root == "" {
+		return filepath.Clean(localPath), nil
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve APOC import root: %w", err)
+	}
+
+	relativePath := normalizeAPOCImportRelativePath(localPath)
+	target := absRoot
+	if relativePath != "" {
+		target = filepath.Join(absRoot, filepath.FromSlash(relativePath))
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("resolve APOC local file path: %w", err)
+	}
+	if target != absRoot && !strings.HasPrefix(target, absRoot+string(os.PathSeparator)) {
+		return "", fmt.Errorf("file URL points outside configured import directory")
+	}
+	return target, nil
+}
+
+func normalizeAPOCImportRelativePath(localPath string) string {
+	slashPath := strings.ReplaceAll(localPath, "\\", "/")
+	cleaned := pathpkg.Clean("/" + strings.TrimLeft(slashPath, "/"))
+	return strings.TrimPrefix(cleaned, "/")
+}
 
 // =============================================================================
 // apoc.load.json - Load JSON data
@@ -33,7 +144,7 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, cypher string) (
 	var err error
 
 	// Check if it's a URL or file path
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
+	if isHTTPSource(urlOrFile) {
 		data, err = e.loadJsonFromURL(urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)
@@ -85,7 +196,11 @@ func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
 }
 
 func (e *StorageExecutor) loadJsonFromFile(path string) (interface{}, error) {
-	file, err := os.Open(path)
+	resolvedPath, err := e.resolveAPOCLocalImportFilePath(path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(resolvedPath)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +256,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 	var closer io.Closer
 
 	// Load from URL or file
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
+	if isHTTPSource(urlOrFile) {
 		resp, err := http.Get(urlOrFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch CSV: %w", err)
@@ -149,7 +264,11 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 		closer = resp.Body
 		reader = csv.NewReader(resp.Body)
 	} else {
-		file, err := os.Open(urlOrFile)
+		resolvedPath, err := e.resolveAPOCLocalImportFilePath(urlOrFile)
+		if err != nil {
+			return nil, err
+		}
+		file, err := os.Open(resolvedPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open CSV: %w", err)
 		}
@@ -221,6 +340,14 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 // Syntax: CALL apoc.export.json.all(file, config) YIELD file, nodes, relationships
 func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	filePath := e.extractApocExportArg(cypher, "JSON")
+	resolvedPath := ""
+	if filePath != "" {
+		var err error
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	nodes := e.storage.GetAllNodes()
 	edges, _ := e.storage.AllEdges()
@@ -236,11 +363,11 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, cypher stri
 	}
 
 	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+	if resolvedPath != "" {
+		if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
+		if err := os.WriteFile(resolvedPath, jsonData, 0644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -263,6 +390,14 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 	// Extract the query to execute
 	query := e.extractApocExportQuery(cypher)
 	filePath := e.extractApocExportArg(cypher, "JSON")
+	resolvedPath := ""
+	if filePath != "" {
+		var err error
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if query == "" {
 		return nil, fmt.Errorf("apoc.export.json.query requires a query")
@@ -286,8 +421,8 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 	}
 
 	// Write to file if path provided
-	if filePath != "" {
-		if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
+	if resolvedPath != "" {
+		if err := os.WriteFile(resolvedPath, jsonData, 0644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -310,6 +445,14 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 // Syntax: CALL apoc.export.csv.all(file, config) YIELD file, nodes, relationships
 func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	filePath := e.extractApocExportArg(cypher, "CSV")
+	resolvedPath := ""
+	if filePath != "" {
+		var err error
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	nodes := e.storage.GetAllNodes()
 	edges, _ := e.storage.AllEdges()
@@ -343,11 +486,11 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher strin
 	content := csvContent.String()
 
 	// Write to file if path provided
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+	if resolvedPath != "" {
+		if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(resolvedPath, []byte(content), 0644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -368,6 +511,14 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher strin
 func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	query := e.extractApocExportQuery(cypher)
 	filePath := e.extractApocExportArg(cypher, "CSV")
+	resolvedPath := ""
+	if filePath != "" {
+		var err error
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if query == "" {
 		return nil, fmt.Errorf("apoc.export.csv.query requires a query")
@@ -383,7 +534,8 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 	var csvContent strings.Builder
 
 	// Header
-	csvContent.WriteString(strings.Join(result.Columns, ",") + "\n")
+	csvContent.WriteString(strings.Join(result.Columns, ","))
+	csvContent.WriteByte('\n')
 
 	// Data rows
 	for _, row := range result.Rows {
@@ -399,14 +551,15 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
 			}
 		}
-		csvContent.WriteString(strings.Join(values, ",") + "\n")
+		csvContent.WriteString(strings.Join(values, ","))
+		csvContent.WriteByte('\n')
 	}
 
 	content := csvContent.String()
 
 	// Write to file if path provided
-	if filePath != "" {
-		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+	if resolvedPath != "" {
+		if err := os.WriteFile(resolvedPath, []byte(content), 0644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -578,7 +731,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, cypher stri
 	var data interface{}
 	var err error
 
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
+	if isHTTPSource(urlOrFile) {
 		data, err = e.loadJsonFromURL(urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)
@@ -679,7 +832,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, cypher string)
 	var data interface{}
 	var err error
 
-	if strings.HasPrefix(urlOrFile, "http://") || strings.HasPrefix(urlOrFile, "https://") {
+	if isHTTPSource(urlOrFile) {
 		data, err = e.loadJsonFromURL(urlOrFile)
 	} else {
 		data, err = e.loadJsonFromFile(urlOrFile)

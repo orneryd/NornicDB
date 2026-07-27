@@ -8,7 +8,7 @@ NornicDB includes **850+ APOC functions** fully compatible with Neo4j's APOC lib
 
 ```cypher
 // Collection functions
-MATCH (n:Person) 
+MATCH (n:Person)
 RETURN apoc.coll.sum(n.scores) AS total
 
 // Text processing
@@ -32,51 +32,51 @@ docker run \
 
 ## Available Function Categories
 
-| Category | Functions | Description |
-|----------|-----------|-------------|
-| `apoc.coll.*` | 60+ | Collection operations (sum, avg, sort, filter, etc.) |
-| `apoc.text.*` | 50+ | Text processing (join, split, regex, Levenshtein, etc.) |
-| `apoc.math.*` | 50+ | Math operations (trig, stats, number theory) |
-| `apoc.convert.*` | 30+ | Type conversions (toInteger, toJson, etc.) |
-| `apoc.map.*` | 35+ | Map operations (merge, keys, values, flatten) |
-| `apoc.date.*` | 20+ | Date/time functions (parse, format, add) |
-| `apoc.temporal.*` | 40+ | Advanced date/time (timezone, duration, age) |
-| `apoc.json.*` | 25+ | JSON operations (path, validate, merge) |
-| `apoc.util.*` | 50+ | Utilities (MD5, SHA, UUID, compress) |
-| `apoc.agg.*` | 20+ | Aggregations (median, percentile, histogram) |
-| `apoc.node.*` | 40+ | Node operations (degree, labels, neighbors) |
-| `apoc.nodes.*` | 30+ | Batch node operations (link, group, filter) |
-| `apoc.rel.*` | 30+ | Relationship operations (properties, clone) |
-| `apoc.path.*` | 15+ | Path finding (shortestPath, allPaths) |
-| `apoc.paths.*` | 25+ | Advanced paths (k-shortest, disjoint, cycles) |
-| `apoc.neighbors.*` | 10+ | Neighbor traversal (BFS, DFS, atHop) |
-| `apoc.algo.*` | 15+ | Graph algorithms (PageRank, centrality) |
-| `apoc.create.*` | 25+ | Dynamic creation (virtual nodes, clone) |
-| `apoc.atomic.*` | 20+ | Atomic operations (add, subtract, locks) |
-| `apoc.bitwise.*` | 15+ | Bitwise operations (and, or, xor, shift) |
-| `apoc.cypher.*` | 20+ | Dynamic Cypher (run, parallel, parse) |
-| `apoc.diff.*` | 10+ | Diff operations (nodes, relationships, maps) |
-| `apoc.export.*` | 15+ | Export data (JSON, CSV, Cypher, GraphML) |
-| `apoc.import.*` | 15+ | Import data (JSON, CSV, GraphML, batch) |
-| `apoc.graph.*` | 15+ | Virtual graphs (from, merge, validate) |
-| `apoc.hashing.*` | 20+ | Hashing (MD5, SHA*, MurmurHash, xxHash) |
-| `apoc.label.*` | 15+ | Label operations (add, remove, merge) |
-| `apoc.load.*` | 30+ | Data loading (JSON, CSV, XML, JDBC, S3) |
-| `apoc.lock.*` | 15+ | Locking (nodes, relationships, deadlock) |
-| `apoc.log.*` | 25+ | Logging (info, debug, metrics, audit) |
-| `apoc.merge.*` | 20+ | Merge operations (nodes, rels, properties) |
-| `apoc.meta.*` | 30+ | Metadata (schema, stats, constraints) |
-| `apoc.number.*` | 40+ | Number formatting (roman, hex, base conversion) |
-| `apoc.periodic.*` | 10+ | Periodic execution (iterate, schedule) |
-| `apoc.refactor.*` | 25+ | Graph refactoring (merge, clone, normalize) |
-| `apoc.schema.*` | 25+ | Schema management (indexes, constraints) |
-| `apoc.scoring.*` | 25+ | Scoring/ranking (cosine, jaccard, TF-IDF) |
-| `apoc.search.*` | 30+ | Full-text search (fuzzy, regex, autocomplete) |
-| `apoc.spatial.*` | 25+ | Geographic functions (distance, bearing) |
-| `apoc.stats.*` | 30+ | Statistics (mean, median, correlation) |
-| `apoc.trigger.*` | 20+ | Trigger management (onCreate, onUpdate) |
-| `apoc.warmup.*` | 15+ | Database warmup (cache, indexes) |
-| `apoc.xml.*` | 25+ | XML processing (parse, query, transform) |
+| Category           | Functions | Description                                             |
+| ------------------ | --------- | ------------------------------------------------------- |
+| `apoc.coll.*`      | 60+       | Collection operations (sum, avg, sort, filter, etc.)    |
+| `apoc.text.*`      | 50+       | Text processing (join, split, regex, Levenshtein, etc.) |
+| `apoc.math.*`      | 50+       | Math operations (trig, stats, number theory)            |
+| `apoc.convert.*`   | 30+       | Type conversions (toInteger, toJson, etc.)              |
+| `apoc.map.*`       | 35+       | Map operations (merge, keys, values, flatten)           |
+| `apoc.date.*`      | 20+       | Date/time functions (parse, format, add)                |
+| `apoc.temporal.*`  | 40+       | Advanced date/time (timezone, duration, age)            |
+| `apoc.json.*`      | 25+       | JSON operations (path, validate, merge)                 |
+| `apoc.util.*`      | 50+       | Utilities (MD5, SHA, UUID, compress)                    |
+| `apoc.agg.*`       | 20+       | Aggregations (median, percentile, histogram)            |
+| `apoc.node.*`      | 40+       | Node operations (degree, labels, neighbors)             |
+| `apoc.nodes.*`     | 30+       | Batch node operations (link, group, filter)             |
+| `apoc.rel.*`       | 30+       | Relationship operations (properties, clone)             |
+| `apoc.path.*`      | 15+       | Path finding (shortestPath, allPaths)                   |
+| `apoc.paths.*`     | 25+       | Advanced paths (k-shortest, disjoint, cycles)           |
+| `apoc.neighbors.*` | 10+       | Neighbor traversal (BFS, DFS, atHop)                    |
+| `apoc.algo.*`      | 15+       | Graph algorithms (PageRank, centrality)                 |
+| `apoc.create.*`    | 25+       | Dynamic creation (virtual nodes, clone)                 |
+| `apoc.atomic.*`    | 20+       | Atomic operations (add, subtract, locks)                |
+| `apoc.bitwise.*`   | 15+       | Bitwise operations (and, or, xor, shift)                |
+| `apoc.cypher.*`    | 20+       | Dynamic Cypher (run, parallel, parse)                   |
+| `apoc.diff.*`      | 10+       | Diff operations (nodes, relationships, maps)            |
+| `apoc.export.*`    | 15+       | Export data (JSON, CSV, Cypher, GraphML)                |
+| `apoc.import.*`    | 15+       | Import data (JSON, CSV, GraphML, batch)                 |
+| `apoc.graph.*`     | 15+       | Virtual graphs (from, merge, validate)                  |
+| `apoc.hashing.*`   | 20+       | Hashing (MD5, SHA\*, MurmurHash, xxHash)                |
+| `apoc.label.*`     | 15+       | Label operations (add, remove, merge)                   |
+| `apoc.load.*`      | 30+       | Data loading (JSON, CSV, XML, JDBC, S3)                 |
+| `apoc.lock.*`      | 15+       | Locking (nodes, relationships, deadlock)                |
+| `apoc.log.*`       | 25+       | Logging (info, debug, metrics, audit)                   |
+| `apoc.merge.*`     | 20+       | Merge operations (nodes, rels, properties)              |
+| `apoc.meta.*`      | 30+       | Metadata (schema, stats, constraints)                   |
+| `apoc.number.*`    | 40+       | Number formatting (roman, hex, base conversion)         |
+| `apoc.periodic.*`  | 10+       | Periodic execution (iterate, schedule)                  |
+| `apoc.refactor.*`  | 25+       | Graph refactoring (merge, clone, normalize)             |
+| `apoc.schema.*`    | 25+       | Schema management (indexes, constraints)                |
+| `apoc.scoring.*`   | 25+       | Scoring/ranking (cosine, jaccard, TF-IDF)               |
+| `apoc.search.*`    | 30+       | Full-text search (fuzzy, regex, autocomplete)           |
+| `apoc.spatial.*`   | 25+       | Geographic functions (distance, bearing)                |
+| `apoc.stats.*`     | 30+       | Statistics (mean, median, correlation)                  |
+| `apoc.trigger.*`   | 20+       | Trigger management (onCreate, onUpdate)                 |
+| `apoc.warmup.*`    | 15+       | Database warmup (cache, indexes)                        |
+| `apoc.xml.*`       | 25+       | XML processing (parse, query, transform)                |
 
 ## Configuration
 
@@ -96,7 +96,9 @@ NORNICDB_APOC_ALGO_ENABLED=false     # Graph algorithms (disable if expensive)
 NORNICDB_APOC_CREATE_ENABLED=false   # Dynamic creation (disable for read-only)
 
 # Security settings
-NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS=false
+NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS=false
+NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS=false
+NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT=/var/lib/nornicdb/import
 NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE=100000
 ```
 
@@ -115,26 +117,30 @@ categories:
   coll: true
   text: true
   math: true
-  algo: false      # Disable expensive algorithms
-  create: false    # Disable write operations
+  algo: false # Disable expensive algorithms
+  create: false # Disable write operations
 
 # Fine-grained function control (overrides categories)
 functions:
-  "apoc.export.*": false    # Disable all export
-  "apoc.import.*": false    # Disable all import
+  "apoc.export.*": false # Disable all export
+  "apoc.import.*": false # Disable all import
   "apoc.algo.pageRank": true # Re-enable specific algorithm
 
 # Security
 security:
   allow_dynamic_creation: false
-  allow_file_access: false
+  allow_import_file_access: false
+  allow_export_file_access: false
+  file_access_root: /var/lib/nornicdb/import
   max_collection_size: 10000
 ```
+
+`allow_file_access` remains supported as a legacy shorthand that enables both import and export file access, but prefer the split import/export settings for new configurations.
 
 ### Docker Compose Example
 
 ```yaml
-version: '3.8'
+version: "3.8"
 services:
   nornicdb:
     image: nornicdb/nornicdb:latest
@@ -552,7 +558,7 @@ CALL apoc.log.metrics('query_time', 150, 'ms')
 
 ```cypher
 // Merge nodes
-CALL apoc.merge.node(['Person'], {email: 'alice@example.com'}, 
+CALL apoc.merge.node(['Person'], {email: 'alice@example.com'},
   {created: timestamp()}, {updated: timestamp()})
 YIELD node
 RETURN node
@@ -623,8 +629,8 @@ RETURN apoc.nodes.group(people, 'department') AS grouped
 // Filter nodes
 MATCH (n:Person)
 WITH collect(n) AS people
-RETURN apoc.nodes.filter(people, function(n) { 
-  RETURN n.age > 18 
+RETURN apoc.nodes.filter(people, function(n) {
+  RETURN n.age > 18
 }) AS adults
 ```
 
@@ -677,15 +683,15 @@ CALL apoc.periodic.iterate(
 )
 
 // Scheduled execution
-CALL apoc.periodic.schedule('cleanup', 
-  'MATCH (n:Temp) DELETE n', 
+CALL apoc.periodic.schedule('cleanup',
+  'MATCH (n:Temp) DELETE n',
   60)  // Every 60 seconds
 
 // Commit in batches
 CALL apoc.periodic.commit(
-  'MATCH (n:Person) WHERE n.migrated IS NULL 
-   WITH n LIMIT $limit 
-   SET n.migrated = true 
+  'MATCH (n:Person) WHERE n.migrated IS NULL
+   WITH n LIMIT $limit
+   SET n.migrated = true
    RETURN count(*)',
   {limit: 1000}
 )
@@ -957,6 +963,7 @@ RETURN apoc.custom.myFunc('test')
 ```
 
 **Possible causes**:
+
 1. Plugin not loaded (check `NORNICDB_PLUGINS_DIR`)
 2. Function category disabled (check `NORNICDB_APOC_<CATEGORY>_ENABLED`)
 3. Function specifically disabled in config
@@ -964,6 +971,7 @@ RETURN apoc.custom.myFunc('test')
 ### Platform Compatibility
 
 Go plugins are platform-specific. A `.so` built on Linux x86_64 won't work on:
+
 - macOS (use `.dylib`)
 - Windows (use `.dll`)
 - Linux ARM
@@ -1001,44 +1009,45 @@ Build plugins on the same platform/architecture as your NornicDB deployment.
 
 NornicDB's APOC implementation is designed for compatibility:
 
-| Neo4j APOC | NornicDB | Notes |
-|------------|----------|-------|
-| `apoc.coll.*` | ✅ Same | Full compatibility - all collection functions |
-| `apoc.text.*` | ✅ Same | Full compatibility - text processing |
-| `apoc.math.*` | ✅ Same | Full compatibility - math operations |
-| `apoc.algo.*` | ✅ Same | Real algorithms (PageRank, centrality, etc.) |
-| `apoc.atomic.*` | ✅ Same | Atomic operations with locking |
-| `apoc.bitwise.*` | ✅ Same | Bitwise operations |
-| `apoc.cypher.*` | ✅ Same | Dynamic Cypher execution |
-| `apoc.diff.*` | ✅ Same | Diff operations |
-| `apoc.export.*` | ✅ Same | Export to JSON, CSV, Cypher, GraphML |
-| `apoc.import.*` | ✅ Same | Import from multiple formats |
-| `apoc.graph.*` | ✅ Same | Virtual graph operations |
-| `apoc.hashing.*` | ✅ Same | Multiple hash algorithms |
-| `apoc.label.*` | ✅ Same | Label operations |
-| `apoc.load.*` | ✅ Same | Load from JSON, CSV, XML, JDBC, S3, etc. |
-| `apoc.lock.*` | ✅ Same | Locking mechanisms |
-| `apoc.log.*` | ✅ Same | Logging functions |
-| `apoc.merge.*` | ✅ Same | Merge operations |
-| `apoc.meta.*` | ✅ Same | Metadata functions |
-| `apoc.neighbors.*` | ✅ Same | Neighbor traversal |
-| `apoc.nodes.*` | ✅ Same | Batch node operations |
-| `apoc.number.*` | ✅ Same | Number formatting and conversion |
-| `apoc.paths.*` | ✅ Same | Advanced path operations |
-| `apoc.periodic.*` | ✅ Same | Periodic execution and batch processing |
-| `apoc.refactor.*` | ✅ Same | Graph refactoring |
-| `apoc.rel.*` | ✅ Same | Relationship operations |
-| `apoc.schema.*` | ✅ Same | Schema management |
-| `apoc.scoring.*` | ✅ Same | Scoring and similarity functions |
-| `apoc.search.*` | ✅ Same | Full-text search |
-| `apoc.spatial.*` | ✅ Same | Geographic functions |
-| `apoc.stats.*` | ✅ Same | Statistical functions |
-| `apoc.temporal.*` | ✅ Same | Advanced date/time operations |
-| `apoc.trigger.*` | ✅ Same | Trigger management |
-| `apoc.warmup.*` | ✅ Same | Database warmup |
-| `apoc.xml.*` | ✅ Same | XML processing |
+| Neo4j APOC         | NornicDB | Notes                                         |
+| ------------------ | -------- | --------------------------------------------- |
+| `apoc.coll.*`      | ✅ Same  | Full compatibility - all collection functions |
+| `apoc.text.*`      | ✅ Same  | Full compatibility - text processing          |
+| `apoc.math.*`      | ✅ Same  | Full compatibility - math operations          |
+| `apoc.algo.*`      | ✅ Same  | Real algorithms (PageRank, centrality, etc.)  |
+| `apoc.atomic.*`    | ✅ Same  | Atomic operations with locking                |
+| `apoc.bitwise.*`   | ✅ Same  | Bitwise operations                            |
+| `apoc.cypher.*`    | ✅ Same  | Dynamic Cypher execution                      |
+| `apoc.diff.*`      | ✅ Same  | Diff operations                               |
+| `apoc.export.*`    | ✅ Same  | Export to JSON, CSV, Cypher, GraphML          |
+| `apoc.import.*`    | ✅ Same  | Import from multiple formats                  |
+| `apoc.graph.*`     | ✅ Same  | Virtual graph operations                      |
+| `apoc.hashing.*`   | ✅ Same  | Multiple hash algorithms                      |
+| `apoc.label.*`     | ✅ Same  | Label operations                              |
+| `apoc.load.*`      | ✅ Same  | Load from JSON, CSV, XML, JDBC, S3, etc.      |
+| `apoc.lock.*`      | ✅ Same  | Locking mechanisms                            |
+| `apoc.log.*`       | ✅ Same  | Logging functions                             |
+| `apoc.merge.*`     | ✅ Same  | Merge operations                              |
+| `apoc.meta.*`      | ✅ Same  | Metadata functions                            |
+| `apoc.neighbors.*` | ✅ Same  | Neighbor traversal                            |
+| `apoc.nodes.*`     | ✅ Same  | Batch node operations                         |
+| `apoc.number.*`    | ✅ Same  | Number formatting and conversion              |
+| `apoc.paths.*`     | ✅ Same  | Advanced path operations                      |
+| `apoc.periodic.*`  | ✅ Same  | Periodic execution and batch processing       |
+| `apoc.refactor.*`  | ✅ Same  | Graph refactoring                             |
+| `apoc.rel.*`       | ✅ Same  | Relationship operations                       |
+| `apoc.schema.*`    | ✅ Same  | Schema management                             |
+| `apoc.scoring.*`   | ✅ Same  | Scoring and similarity functions              |
+| `apoc.search.*`    | ✅ Same  | Full-text search                              |
+| `apoc.spatial.*`   | ✅ Same  | Geographic functions                          |
+| `apoc.stats.*`     | ✅ Same  | Statistical functions                         |
+| `apoc.temporal.*`  | ✅ Same  | Advanced date/time operations                 |
+| `apoc.trigger.*`   | ✅ Same  | Trigger management                            |
+| `apoc.warmup.*`    | ✅ Same  | Database warmup                               |
+| `apoc.xml.*`       | ✅ Same  | XML processing                                |
 
 **Migration Notes:**
+
 - Most queries work without modification
 - All core APOC functions are implemented
 - File operations respect security settings
@@ -1046,7 +1055,7 @@ NornicDB's APOC implementation is designed for compatibility:
 - Performance characteristics may differ (often faster due to native Go implementation)
 
 Test your specific APOC usage when migrating, particularly:
+
 - File I/O operations (check security settings)
 - Custom procedures (may need to be rewritten as plugins)
 - Performance-sensitive queries (benchmark in your environment)
-

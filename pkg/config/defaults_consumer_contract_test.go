@@ -27,7 +27,7 @@ func TestDefaults_ConsumerContract(t *testing.T) {
 			got, want,
 		)
 	}
-	if got, want := c.Auth.Enabled, false; got != want {
+	if got, want := c.Auth.Enabled, true; got != want {
 		t.Errorf(
 			"Auth.Enabled default changed: got %v want %v "+
 				"(consumer contract — see consumer-pinned-error-contract-plan.md §2.6)",

@@ -53,7 +53,7 @@ func TestApocLoadExportHelpers_CountProperties(t *testing.T) {
 func TestApocLoadExportHelpers_CallApocLoadCsvParams_Delegates(t *testing.T) {
 	e := &StorageExecutor{}
 	// invalid invocation should return same validation error path as callApocLoadCsv
-	_, err := e.callApocLoadCsvParams(nil, "CALL apoc.load.csvParams()")
+	_, err := e.callApocLoadCsvParams(context.TODO(), "CALL apoc.load.csvParams()")
 	assert.Error(t, err)
 }
 
@@ -61,6 +61,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_FromFile(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
 
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "arr.json")
@@ -78,6 +79,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	_, err := e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray()")
@@ -114,6 +116,7 @@ func TestApocLoadExportHelpers_CallApocImportJson_FromFile(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
 
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "graph.json")
@@ -143,6 +146,7 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 	e := NewStorageExecutor(eng)
+	e.SetAllowLocalAPOCFileAccess(true)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -212,6 +216,7 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -254,6 +259,7 @@ func TestApocLoadExportHelpers_CallApocLoadJson_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json()")
@@ -284,6 +290,132 @@ func TestApocLoadExportHelpers_CallApocLoadJson_Branches(t *testing.T) {
 	require.EqualValues(t, 42.0, res.Rows[0][0])
 }
 
+func TestApocLoadExportHelpers_LocalFileLoadsDeniedByDefault(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "payload.json")
+	csvPath := filepath.Join(dir, "payload.csv")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"x":1}`), 0o644))
+	require.NoError(t, os.WriteFile(csvPath, []byte("a,b\n1,2\n"), 0o644))
+
+	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+jsonPath+"') YIELD value")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('"+csvPath+"') YIELD lineNo, list, map")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('"+jsonPath+"') YIELD value")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocImportJson(ctx, "CALL apoc.import.json('"+jsonPath+"') YIELD source, nodes, relationships")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	_, err = exec.callApocExportJsonAll(ctx, "CALL apoc.export.json.all('"+jsonPath+"', {})")
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+
+	_, err = exec.callApocExportCsvQuery(ctx, "CALL apoc.export.csv.query('RETURN 1 AS x', '"+csvPath+"', {})")
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+}
+
+func TestApocLoadExportHelpers_ResolveAPOCLocalFilePath_MirrorsNeo4jRules(t *testing.T) {
+	e := &StorageExecutor{}
+
+	_, err := e.resolveAPOCLocalImportFilePath("file:///tmp/payload.json")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+
+	e.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	e.SetAPOCLocalFileAccessRoot(importRoot)
+
+	resolved, err := e.resolveAPOCLocalImportFilePath("file:///../safe/payload.json")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(importRoot, "safe", "payload.json"), resolved)
+
+	resolved, err = e.resolveAPOCLocalImportFilePath("/tmp/../safe/payload.json")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(importRoot, "safe", "payload.json"), resolved)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file://localhost/safe/payload.json")
+	require.ErrorIs(t, err, errAPOCFileAuthorityNotAllowed)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file:///safe/payload.json?x=1")
+	require.ErrorIs(t, err, errAPOCFileQueryNotAllowed)
+
+	_, err = e.resolveAPOCLocalImportFilePath("file:///safe/payload.json#frag")
+	require.ErrorIs(t, err, errAPOCFileFragmentNotAllowed)
+}
+
+func TestApocLoadExportHelpers_ImportExportFileAccessCanBeSplit(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "payload.json")
+	csvPath := filepath.Join(dir, "payload.csv")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"x":1}`), 0o644))
+
+	exec.SetAllowLocalAPOCImportFileAccess(true)
+	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+jsonPath+"') YIELD value")
+	require.NoError(t, err)
+	_, err = exec.callApocExportCsvQuery(ctx, "CALL apoc.export.csv.query('RETURN 1 AS x', '"+csvPath+"', {})")
+	require.ErrorIs(t, err, errAPOCLocalExportFileAccessDisabled)
+
+	exec.SetAllowLocalAPOCImportFileAccess(false)
+	exec.SetAllowLocalAPOCExportFileAccess(true)
+	_, err = exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+jsonPath+"') YIELD value")
+	require.ErrorIs(t, err, errAPOCLocalImportFileAccessDisabled)
+	_, err = exec.callApocExportCsvQuery(ctx, "CALL apoc.export.csv.query('RETURN 1 AS x', '"+csvPath+"', {})")
+	require.NoError(t, err)
+}
+
+func TestApocLoadExportHelpers_FileURLReadsUseConfiguredImportRoot(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	exec.SetAPOCLocalFileAccessRoot(importRoot)
+	ctx := context.Background()
+
+	safeDir := filepath.Join(importRoot, "safe")
+	require.NoError(t, os.MkdirAll(safeDir, 0o755))
+	jsonPath := filepath.Join(safeDir, "payload.json")
+	require.NoError(t, os.WriteFile(jsonPath, []byte(`{"name":"neo"}`), 0o644))
+
+	res, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('file:///../safe/payload.json') YIELD value")
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	valueMap, ok := res.Rows[0][0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "neo", valueMap["name"])
+}
+
+func TestApocLoadExportHelpers_FileURLExportsUseConfiguredImportRoot(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
+	importRoot := t.TempDir()
+	exec.SetAPOCLocalFileAccessRoot(importRoot)
+	ctx := context.Background()
+
+	outDir := filepath.Join(importRoot, "safe")
+	require.NoError(t, os.MkdirAll(outDir, 0o755))
+
+	_, err := exec.callApocExportCsvQuery(ctx, "CALL apoc.export.csv.query('RETURN 42 AS marker', 'file:///../safe/out.csv', {})")
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(outDir, "out.csv"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "42")
+}
+
 func TestApocLoadExportHelpers_CallApocExportJsonAll_NoFile(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
@@ -308,6 +440,7 @@ func TestApocLoadExportHelpers_CallApocExportJsonAll_WriteError(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
+	exec.SetAllowLocalAPOCFileAccess(true)
 	ctx := context.Background()
 
 	_, err := eng.CreateNode(&storage.Node{

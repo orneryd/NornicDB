@@ -13,7 +13,10 @@
 //	NORNICDB_APOC_MATH_ENABLED      - Enable math functions (default: true)
 //	NORNICDB_APOC_ALGO_ENABLED      - Enable graph algorithms (default: true)
 //	NORNICDB_APOC_CREATE_ENABLED    - Enable dynamic creation (default: true)
-//	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS - Allow file operations (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS - Legacy shorthand enabling both import and export file operations
+//	NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS - Allow APOC import/load local file operations (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS - Allow APOC export local file operations (default: false)
+//	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT - Rebase local APOC file URLs under this directory when set
 //	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE - Max collection size (default: 100000)
 //
 // Example Docker Usage:
@@ -66,8 +69,18 @@ type Config struct {
 type SecurityConfig struct {
 	// AllowDynamicCreation permits apoc.create.* functions
 	AllowDynamicCreation bool `yaml:"allow_dynamic_creation"`
-	// AllowFileAccess permits file system operations
+	// AllowFileAccess is a legacy shorthand that enables both import and export
+	// local file operations when true.
 	AllowFileAccess bool `yaml:"allow_file_access"`
+	// AllowImportFileAccess permits APOC import/load file system operations.
+	AllowImportFileAccess bool `yaml:"allow_import_file_access"`
+	// AllowExportFileAccess permits APOC export file system operations.
+	AllowExportFileAccess bool `yaml:"allow_export_file_access"`
+	// FileAccessRoot is the local import root used for APOC file URLs.
+	// Empty means local file access, when enabled, is unrestricted.
+	// When set, local file-like inputs are normalized and rebased under that
+	// root, mirroring Neo4j's import-directory behavior.
+	FileAccessRoot string `yaml:"file_access_root"`
 	// MaxCollectionSize limits collection function input sizes
 	MaxCollectionSize int `yaml:"max_collection_size"`
 }
@@ -92,9 +105,12 @@ func DefaultConfig() *Config {
 		},
 		Functions: make(map[string]bool),
 		Security: SecurityConfig{
-			AllowDynamicCreation: true,
-			AllowFileAccess:      false,
-			MaxCollectionSize:    100000,
+			AllowDynamicCreation:  true,
+			AllowFileAccess:       false,
+			AllowImportFileAccess: false,
+			AllowExportFileAccess: false,
+			FileAccessRoot:        "",
+			MaxCollectionSize:     100000,
 		},
 	}
 }
@@ -120,7 +136,10 @@ func DefaultConfig() *Config {
 //	NORNICDB_APOC_ALGO_ENABLED          - Enable apoc.algo.* (default: true)
 //	NORNICDB_APOC_CREATE_ENABLED        - Enable apoc.create.* (default: true)
 //	NORNICDB_APOC_SECURITY_ALLOW_DYNAMIC_CREATION - Allow dynamic creation (default: true)
-//	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS      - Allow file access (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS      - Legacy shorthand enabling both import and export file access
+//	NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS - Allow APOC import/load local file access (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS - Allow APOC export local file access (default: false)
+//	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT       - Restrict local APOC file URLs to this root when set
 //	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE    - Max collection size (default: 100000)
 //
 // Example:
@@ -149,8 +168,20 @@ func LoadFromEnv() *Config {
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_DYNAMIC_CREATION"); val != "" {
 		cfg.Security.AllowDynamicCreation = parseBool(val, true)
 	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT"); val != "" {
+		cfg.Security.FileAccessRoot = strings.TrimSpace(val)
+	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS"); val != "" {
-		cfg.Security.AllowFileAccess = parseBool(val, false)
+		legacyAllow := parseBool(val, false)
+		cfg.Security.AllowFileAccess = legacyAllow
+		cfg.Security.AllowImportFileAccess = legacyAllow
+		cfg.Security.AllowExportFileAccess = legacyAllow
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS"); val != "" {
+		cfg.Security.AllowImportFileAccess = parseBool(val, false)
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS"); val != "" {
+		cfg.Security.AllowExportFileAccess = parseBool(val, false)
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {
@@ -211,6 +242,7 @@ func LoadConfigOrDefault(path string) *Config {
 func LoadFromEnvOrFile(filePath string) *Config {
 	// Start with file config or defaults
 	cfg := LoadConfigOrDefault(filePath)
+	applyLegacyFileAccessShorthand(cfg)
 
 	// Override with environment variables
 	if dir := os.Getenv("NORNICDB_PLUGINS_DIR"); dir != "" {
@@ -228,8 +260,20 @@ func LoadFromEnvOrFile(filePath string) *Config {
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_DYNAMIC_CREATION"); val != "" {
 		cfg.Security.AllowDynamicCreation = parseBool(val, cfg.Security.AllowDynamicCreation)
 	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT"); val != "" {
+		cfg.Security.FileAccessRoot = strings.TrimSpace(val)
+	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS"); val != "" {
-		cfg.Security.AllowFileAccess = parseBool(val, cfg.Security.AllowFileAccess)
+		legacyAllow := parseBool(val, cfg.Security.AllowFileAccess)
+		cfg.Security.AllowFileAccess = legacyAllow
+		cfg.Security.AllowImportFileAccess = legacyAllow
+		cfg.Security.AllowExportFileAccess = legacyAllow
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS"); val != "" {
+		cfg.Security.AllowImportFileAccess = parseBool(val, cfg.Security.AllowImportFileAccess)
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS"); val != "" {
+		cfg.Security.AllowExportFileAccess = parseBool(val, cfg.Security.AllowExportFileAccess)
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {
@@ -238,6 +282,16 @@ func LoadFromEnvOrFile(filePath string) *Config {
 	}
 
 	return cfg
+}
+
+func applyLegacyFileAccessShorthand(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if cfg.Security.AllowFileAccess {
+		cfg.Security.AllowImportFileAccess = true
+		cfg.Security.AllowExportFileAccess = true
+	}
 }
 
 // IsEnabled checks if a specific function is enabled.
@@ -331,6 +385,8 @@ functions:
 # Security settings
 security:
   allow_dynamic_creation: false
-  allow_file_access: false
+	allow_import_file_access: false
+	allow_export_file_access: false
+	file_access_root: /var/lib/nornicdb/import
   max_collection_size: 10000
 `

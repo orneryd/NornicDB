@@ -204,6 +204,9 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned.inlineEmbeddingTextOptions = e.inlineEmbeddingTextOptions
 	cloned.inlineEmbeddingChunkSize = e.inlineEmbeddingChunkSize
 	cloned.inlineEmbeddingChunkOverlap = e.inlineEmbeddingChunkOverlap
+	cloned.allowLocalAPOCImportFileAccess = e.allowLocalAPOCImportFileAccess
+	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
+	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
 	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
 	cloned.dbManager = e.dbManager
 	cloned.vectorRegistry = e.vectorRegistry
