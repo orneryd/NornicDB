@@ -16,6 +16,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Configuration constants for the vector search pipeline.
@@ -453,7 +454,7 @@ func (p *VectorSearchPipeline) Search(ctx context.Context, query []float32, k in
 	if limit > len(scored) {
 		limit = len(scored)
 	}
-	filtered := make([]ScoredCandidate, 0, limit)
+	filtered := make([]ScoredCandidate, 0, util.SafePreallocCap(limit, len(scored)))
 	for _, s := range scored {
 		if s.Score < minSimilarity {
 			break

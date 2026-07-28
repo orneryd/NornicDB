@@ -1995,7 +1995,7 @@ func (b *BadgerEngine) bootstrapNodeMVCCFromCurrentState(ctx context.Context) er
 }
 
 func (b *BadgerEngine) collectNodeBootstrapBatch(ctx context.Context, start []byte, limit int) ([]*Node, []byte, bool, error) {
-	nodes := make([]*Node, 0, limit)
+	nodes := make([]*Node, 0, util.SafePreallocCap(limit))
 	var lastScanned []byte
 	reachedEnd := true
 	err := b.withView(func(txn *badger.Txn) error {
@@ -2080,7 +2080,7 @@ func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentState(ctx context.Context) er
 }
 
 func (b *BadgerEngine) collectEdgeBootstrapBatch(ctx context.Context, start []byte, limit int) ([]*Edge, []byte, bool, error) {
-	edges := make([]*Edge, 0, limit)
+	edges := make([]*Edge, 0, util.SafePreallocCap(limit))
 	var lastScanned []byte
 	reachedEnd := true
 	err := b.withView(func(txn *badger.Txn) error {

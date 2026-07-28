@@ -69,7 +69,7 @@ class EmbeddingServer: ObservableObject {
     func setAPIKey(_ key: String?) {
         self.apiKey = key
         if let k = key, !k.isEmpty {
-            print("🔐 Embedding server API key configured (\(k.prefix(8))...)")
+			print("🔐 Embedding server API key configured")
         } else {
             print("⚠️  Embedding server API key NOT configured - server will reject all requests!")
         }

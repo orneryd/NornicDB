@@ -42,6 +42,8 @@
 // accessed in the SAME SESSION. That's co-access inference!
 package temporal
 
+import "github.com/orneryd/nornicdb/pkg/util"
+
 import (
 	"sync"
 	"time"
@@ -349,7 +351,7 @@ func (sd *SessionDetector) GetSessionHistory(nodeID string, limit int) []*Sessio
 	}
 
 	// Return most recent first
-	result := make([]*Session, 0, limit)
+	result := make([]*Session, 0, util.SafePreallocCap(limit, len(history)))
 	for i := len(history) - 1; i >= 0 && len(result) < limit; i-- {
 		session := *history[i]
 		session.NodeIDs = make([]string, len(history[i].NodeIDs))

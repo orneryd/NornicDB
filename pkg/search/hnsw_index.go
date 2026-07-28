@@ -546,7 +546,7 @@ func (h *HNSWIndex) searchWithEf(ctx context.Context, query []float32, k int, mi
 	if limit > len(candidates) {
 		limit = len(candidates)
 	}
-	results := make([]ANNResult, 0, limit)
+	results := make([]ANNResult, 0, util.SafePreallocCap(limit, len(candidates)))
 	for i := 0; i < len(candidates) && len(results) < k; i++ {
 		item := candidates[i]
 		score := float32(1.0) - item.dist

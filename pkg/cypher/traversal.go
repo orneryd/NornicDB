@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // VarLengthUnboundedMaxHops is the depth cap applied when a variable-length
@@ -561,7 +562,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return nil, false, nil
 	}
 
-	paths := make([]PathResult, 0, limit)
+	paths := make([]PathResult, 0, util.SafePreallocCap(limit, len(seedNodes)))
 	for _, endNode := range seedNodes {
 		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
 		for _, reversedPath := range reversedPaths {
@@ -663,7 +664,10 @@ func reversePathResult(path PathResult) PathResult {
 }
 
 func topKSeedLimit(limit int) int {
-	seedLimit := limit * 4
+	seedLimit, ok := util.SafeIntProduct(limit, 4)
+	if !ok {
+		seedLimit = int(^uint(0) >> 1)
+	}
 	if seedLimit < 200 {
 		seedLimit = 200
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // GPUKMeansCandidateGen routes queries to the nearest k-means clusters and then
@@ -73,7 +74,7 @@ func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []fl
 		limit = len(results)
 	}
 
-	out := make([]Candidate, 0, limit)
+	out := make([]Candidate, 0, util.SafePreallocCap(limit, len(results)))
 	for i := 0; i < limit; i++ {
 		select {
 		case <-ctx.Done():

@@ -10,6 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu/metal"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 const hnswProgressInterval = 50000
@@ -440,7 +441,7 @@ func (g *hnswBuildGraphSnapshot) seedCandidates(limit int) []uint32 {
 	if g == nil || !g.hasEntryPoint || int(g.entryPoint) >= len(g.vectors) {
 		return nil
 	}
-	out := make([]uint32, 0, limit)
+	out := make([]uint32, 0, util.SafePreallocCap(limit, len(g.vectors)))
 	out = append(out, g.entryPoint)
 	if int(g.entryPoint) < len(g.neighbors) {
 		for _, n := range g.neighbors[g.entryPoint] {

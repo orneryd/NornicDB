@@ -441,6 +441,8 @@ import (
 	"fmt"
 	"sync"
 	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Errors
@@ -820,8 +822,8 @@ func (d *Device) HNSWBuildTopK(
 		return nil, nil, fmt.Errorf("failed to read scores from GPU")
 	}
 
-	allIndices := make([]uint32, 0, int(queryN)*k)
-	allTopkScores := make([]float32, 0, int(queryN)*k)
+	allIndices := make([]uint32, 0, util.SafePreallocProduct(int(queryN), k))
+	allTopkScores := make([]float32, 0, util.SafePreallocProduct(int(queryN), k))
 
 	for qIdx := uint32(0); qIdx < queryN; qIdx++ {
 		rowStart := int(qIdx) * int(frontierN)

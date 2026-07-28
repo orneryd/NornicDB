@@ -62,6 +62,8 @@
 // The Kalman filter LEARNS the trend (velocity) and uses it to predict!
 package temporal
 
+import "github.com/orneryd/nornicdb/pkg/util"
+
 import (
 	"sync"
 	"time"
@@ -759,7 +761,7 @@ func (t *Tracker) GetHotNodes(limit int) []string {
 		}
 	}
 
-	result := make([]string, 0, limit)
+	result := make([]string, 0, util.SafePreallocCap(limit, len(hot)))
 	for i := 0; i < len(hot) && i < limit; i++ {
 		result = append(result, hot[i].id)
 	}
@@ -794,7 +796,7 @@ func (t *Tracker) GetColdNodes(limit int) []string {
 		}
 	}
 
-	result := make([]string, 0, limit)
+	result := make([]string, 0, util.SafePreallocCap(limit, len(cold)))
 	for i := 0; i < len(cold) && i < limit; i++ {
 		result = append(result, cold[i].id)
 	}

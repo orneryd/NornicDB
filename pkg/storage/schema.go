@@ -21,6 +21,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ConstraintType represents the type of constraint.
@@ -2089,7 +2090,7 @@ func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, de
 		return nil
 	}
 
-	out := make([]NodeID, 0, limit)
+	out := make([]NodeID, 0, util.SafePreallocCap(limit))
 	if descending {
 		for i := len(keys) - 1; i >= 0; i-- {
 			k := keys[i]

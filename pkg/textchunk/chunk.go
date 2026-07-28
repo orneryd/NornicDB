@@ -1,6 +1,10 @@
 package textchunk
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/util"
+)
 
 // CountFunc returns the token count for the provided text.
 type CountFunc func(text string) (int, error)
@@ -42,7 +46,7 @@ func ChunkByTokenCount(text string, maxTokens, overlap int, countTokens CountFun
 		return []string{text}, nil
 	}
 
-	chunks := make([]string, 0, totalTokens/maxTokens+1)
+	chunks := make([]string, 0, util.SafePreallocSum(totalTokens/maxTokens, 1))
 	start := 0
 	for start < len(offsets)-1 {
 		end, err := maxFittingChunkEnd(text, offsets, start, maxTokens, countTokens)
@@ -132,7 +136,7 @@ func overlappingChunkStart(text string, offsets []int, chunkStart, chunkEnd, ove
 }
 
 func runeByteOffsets(text string) []int {
-	offsets := make([]int, 0, len(text)+1)
+	offsets := make([]int, 0, util.SafePreallocSum(len(text), 1))
 	for i := range text {
 		offsets = append(offsets, i)
 	}

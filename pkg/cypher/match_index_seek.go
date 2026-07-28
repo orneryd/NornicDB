@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // tryCollectNodesFromIDEquality attempts to satisfy:
@@ -873,7 +874,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 
 	// Over-fetch: grab more candidates than needed to account for WHERE filtering.
 	// Use 4x multiplier with a reasonable ceiling to avoid loading too much.
-	overFetch := limit * 4
+	overFetch, ok := util.SafeIntProduct(limit, 4)
+	if !ok {
+		overFetch = int(^uint(0) >> 1)
+	}
 	if overFetch < 200 {
 		overFetch = 200
 	}
@@ -888,7 +892,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	if hasWhere {
 		whereFilter = e.compileNodeWhereFilter(ctx, nodePattern.variable, whereClause)
 	}
-	nodes := make([]*storage.Node, 0, limit)
+	nodes := make([]*storage.Node, 0, util.SafePreallocCap(limit, len(ids)))
 	for _, id := range ids {
 		node, err := e.storage.GetNode(id)
 		if err != nil || node == nil {

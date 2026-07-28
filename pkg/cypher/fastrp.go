@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Memory constants for streaming thresholds
@@ -50,6 +51,9 @@ const (
 	streamChunkSize = 1000
 	// embeddingChunkSize is batch size for embedding generation
 	embeddingChunkSize = 500
+	// maxFastRPEmbeddingDimension prevents pathological embedding requests from
+	// forcing oversized exact-length allocations.
+	maxFastRPEmbeddingDimension = 8192
 )
 
 // ============================================================================
@@ -433,6 +437,9 @@ func parseFastRPConfig(cypher string) FastRPConfig {
 
 	// Parse embeddingDimension
 	if dim := extractIntArg(cypher, "embeddingDimension"); dim > 0 {
+		if dim > maxFastRPEmbeddingDimension {
+			dim = maxFastRPEmbeddingDimension
+		}
 		config.EmbeddingDimension = dim
 	}
 
@@ -518,7 +525,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 	}
 
 	// Pre-allocate a single buffer for neighbor aggregation to reduce allocations
-	neighborBuffer := make([]float64, dim)
+	neighborBuffer := make([]float64, util.SafePreallocCap(dim, maxFastRPEmbeddingDimension))
 
 	// FastRP propagation iterations
 	for iter := 1; iter < len(weights); iter++ {
@@ -549,7 +556,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 	normalizeEmbeddings(embeddings, dim)
 
 	// Build result map
-	result := make(map[string][]float64, numNodes)
+	result := make(map[string][]float64, util.SafePreallocCap(numNodes))
 	for i, nodeID := range proj.NodeIDs {
 		result[nodeID] = embeddings[i]
 	}

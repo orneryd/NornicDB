@@ -1547,7 +1547,6 @@ class ConfigManager: ObservableObject {
         authSection["password"] = adminPassword
         
         // Auto-generate JWT secret only if empty, then save to Keychain
-        print("💾 Saving JWT secret - current value length: \(jwtSecret.count)")
         if jwtSecret.isEmpty {
             jwtSecret = ConfigManager.generateRandomSecret()
             print("🔑 Auto-generated NEW JWT secret (was empty)")
@@ -1906,8 +1905,8 @@ struct SettingsView: View {
         // Pre-generate embedding API key if Apple Intelligence is being enabled
         // This ensures the key is in Keychain before the server reads it
         if config.useAppleIntelligence && config.embeddingsEnabled {
-            let apiKey = ConfigManager.getAppleIntelligenceAPIKey()
-            print("🔐 Embedding API key ready: \(apiKey.prefix(8))...")
+            _ = ConfigManager.getAppleIntelligenceAPIKey()
+            print("🔐 Embedding API key ready")
         }
         
         DispatchQueue.global(qos: .userInitiated).async {
@@ -2993,8 +2992,8 @@ struct FirstRunWizard: View {
         // Pre-generate embedding API key if Apple Intelligence is enabled
         // This ensures the key is in Keychain before the server reads it
         if config.useAppleIntelligence && config.embeddingsEnabled {
-            let apiKey = ConfigManager.getAppleIntelligenceAPIKey()
-            print("🔐 Embedding API key ready: \(apiKey.prefix(8))...")
+            _ = ConfigManager.getAppleIntelligenceAPIKey()
+            print("🔐 Embedding API key ready")
         }
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

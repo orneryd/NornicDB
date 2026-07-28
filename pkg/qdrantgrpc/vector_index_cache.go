@@ -19,6 +19,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/util"
 	qpb "github.com/qdrant/go-client/qdrant"
 )
 
@@ -205,7 +206,7 @@ func (v *bruteVectorIndex) search(ctx context.Context, query []float32, limit in
 		id    string
 		score float64
 	}
-	top := make([]topItem, 0, limit)
+	top := make([]topItem, 0, util.SafePreallocCap(limit, len(v.vectors)))
 	minIdx := 0
 	minVal := float64(0)
 

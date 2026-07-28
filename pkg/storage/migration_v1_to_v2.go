@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // migrateV1ToV2 walks every node and edge body in the data directory,
@@ -540,7 +541,7 @@ type migrationItem struct {
 // already start with skipFormatByte. Used to find work for a migration
 // pass without holding a read iterator across mutating writes.
 func (b *BadgerEngine) collectBatch(prefix byte, limit int, skipFormatByte byte) ([]migrationItem, error) {
-	out := make([]migrationItem, 0, limit)
+	out := make([]migrationItem, 0, util.SafePreallocCap(limit))
 	err := b.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = []byte{prefix}

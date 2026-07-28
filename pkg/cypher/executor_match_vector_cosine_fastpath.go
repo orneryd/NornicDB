@@ -9,6 +9,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 type parsedSimpleMatchRelationshipPattern struct {
@@ -301,7 +302,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, min(limit, len(nodeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(nodeScores)))
 	nodeCtx := map[string]*storage.Node{varName: nil}
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -443,7 +444,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, min(limit, len(edgeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(edgeScores)))
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
 	for _, hit := range edgeScores {
@@ -600,7 +601,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, min(limit, len(edgeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(edgeScores)))
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
 	scoreExprIsAlias := make([]bool, len(returnItems))
@@ -883,7 +884,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	if err != nil {
 		return nil, false
 	}
-	out := make([]vectorNodeScore, 0, min(limit, len(nodes)))
+	out := make([]vectorNodeScore, 0, util.SafePreallocCap(limit, len(nodes)))
 	for _, node := range nodes {
 		select {
 		case <-ctx.Done():
@@ -1003,7 +1004,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 			Limit:      limit,
 		})
 		if err == nil {
-			out := make([]vectorEdgeScore, 0, len(hits))
+			out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(hits)))
 			for _, hit := range hits {
 				out = append(out, vectorEdgeScore{edgeID: storage.EdgeID(hit.ID), score: hit.Score})
 			}
@@ -1014,7 +1015,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 	if err != nil {
 		return nil, false
 	}
-	out := make([]vectorEdgeScore, 0, min(limit, len(edges)))
+	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(limit, len(edges)))
 	for _, edge := range edges {
 		if targetRelType != "" && edge.Type != targetRelType {
 			continue
@@ -1541,7 +1542,10 @@ func chooseVectorCandidateLimit(limit int, filtered bool) int {
 	if !filtered {
 		return limit
 	}
-	over := limit * 20
+	over, ok := util.SafeIntProduct(limit, 20)
+	if !ok {
+		over = 5000
+	}
 	if over < 200 {
 		over = 200
 	}

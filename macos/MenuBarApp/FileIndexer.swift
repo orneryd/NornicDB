@@ -17,9 +17,10 @@ class IgnorePatternHandler {
     
     struct IgnorePattern {
         let pattern: String
-        let regex: NSRegularExpression?
         let isDirectory: Bool
         let isNegated: Bool
+        let anchoredToRoot: Bool
+        let pathSegments: [String]
         
         init(pattern: String) {
             var p = pattern.trimmingCharacters(in: .whitespaces)
@@ -35,52 +36,115 @@ class IgnorePatternHandler {
             if isDirectory {
                 p = String(p.dropLast())
             }
+
+            self.anchoredToRoot = p.hasPrefix("/")
+            if anchoredToRoot {
+                p = String(p.dropFirst())
+            }
             
             self.pattern = p
-            
-            // Convert gitignore pattern to regex
-            self.regex = IgnorePattern.patternToRegex(p)
-        }
-        
-        static func patternToRegex(_ pattern: String) -> NSRegularExpression? {
-            var regexPattern = pattern
-            
-            // Escape special regex characters except * and ?
-            let escapeChars = [".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]
-            for char in escapeChars {
-                regexPattern = regexPattern.replacingOccurrences(of: char, with: "\\\(char)")
-            }
-            
-            // Convert glob patterns to regex
-            regexPattern = regexPattern.replacingOccurrences(of: "**", with: "<<<DOUBLESTAR>>>")
-            regexPattern = regexPattern.replacingOccurrences(of: "*", with: "[^/]*")
-            regexPattern = regexPattern.replacingOccurrences(of: "<<<DOUBLESTAR>>>", with: ".*")
-            regexPattern = regexPattern.replacingOccurrences(of: "?", with: "[^/]")
-            
-            // Anchor pattern
-            if !pattern.contains("/") {
-                // Match in any directory
-                regexPattern = "(^|.*/)\(regexPattern)(/.*)?$"
-            } else if pattern.hasPrefix("/") {
-                // Match from root only
-                regexPattern = "^\(regexPattern.dropFirst())(/.*)?$"
-            } else {
-                regexPattern = "(^|.*/)\(regexPattern)(/.*)?$"
-            }
-            
-            return try? NSRegularExpression(pattern: regexPattern, options: [])
+
+            self.pathSegments = p.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         }
         
         func matches(_ path: String, isDirectory: Bool) -> Bool {
-            guard let regex = regex else { return false }
-            
             // Directory-only patterns only match directories
             if self.isDirectory && !isDirectory {
                 return false
             }
-            
-            let range = NSRange(path.startIndex..., in: path)
-            return regex.firstMatch(in: path, options: [], range: range) != nil
+
+            let candidateSegments = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            if anchoredToRoot {
+                return IgnorePattern.matchSegments(pathSegments, against: candidateSegments, allowPrefix: false)
+            }
+            if !pattern.contains("/") {
+                for segment in candidateSegments {
+                    if IgnorePattern.matchComponent(pathSegments[0], candidate: segment) {
+                        return true
+                    }
+                }
+                return false
+            }
+            guard candidateSegments.count >= pathSegments.count else {
+                return false
+            }
+            for start in 0...(candidateSegments.count - pathSegments.count) {
+                let suffix = Array(candidateSegments[start...])
+                if IgnorePattern.matchSegments(pathSegments, against: suffix, allowPrefix: true) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        private static func matchSegments(_ patternSegments: [String], against candidateSegments: [String], allowPrefix: Bool) -> Bool {
+            return matchSegments(patternSegments, patternIndex: 0, candidateSegments, candidateIndex: 0, allowPrefix: allowPrefix)
+        }
+
+        private static func matchSegments(_ patternSegments: [String], patternIndex: Int, _ candidateSegments: [String], candidateIndex: Int, allowPrefix: Bool) -> Bool {
+            if patternIndex == patternSegments.count {
+                return allowPrefix || candidateIndex == candidateSegments.count
+            }
+            if candidateIndex > candidateSegments.count {
+                return false
+            }
+
+            let token = patternSegments[patternIndex]
+            if token == "**" {
+                if patternIndex == patternSegments.count - 1 {
+                    return true
+                }
+                for idx in candidateIndex...candidateSegments.count {
+                    if matchSegments(patternSegments, patternIndex: patternIndex + 1, candidateSegments, candidateIndex: idx, allowPrefix: allowPrefix) {
+                        return true
+                    }
+                }
+                return false
+            }
+
+            guard candidateIndex < candidateSegments.count else {
+                return false
+            }
+            guard matchComponent(token, candidate: candidateSegments[candidateIndex]) else {
+                return false
+            }
+            return matchSegments(patternSegments, patternIndex: patternIndex + 1, candidateSegments, candidateIndex: candidateIndex + 1, allowPrefix: allowPrefix)
+        }
+
+        private static func matchComponent(_ pattern: String, candidate: String) -> Bool {
+            let patternChars = Array(pattern)
+            let candidateChars = Array(candidate)
+            var patternIndex = 0
+            var candidateIndex = 0
+            var starPatternIndex: Int? = nil
+            var starCandidateIndex: Int? = nil
+
+            while candidateIndex < candidateChars.count {
+                if patternIndex < patternChars.count,
+                   (patternChars[patternIndex] == "?" || patternChars[patternIndex] == candidateChars[candidateIndex]) {
+                    patternIndex += 1
+                    candidateIndex += 1
+                    continue
+                }
+                if patternIndex < patternChars.count, patternChars[patternIndex] == "*" {
+                    starPatternIndex = patternIndex
+                    patternIndex += 1
+                    starCandidateIndex = candidateIndex
+                    continue
+                }
+                if let starIndex = starPatternIndex, let lastCandidateIndex = starCandidateIndex {
+                    patternIndex = starIndex + 1
+                    starCandidateIndex = lastCandidateIndex + 1
+                    candidateIndex = lastCandidateIndex + 1
+                    continue
+                }
+                return false
+            }
+
+            while patternIndex < patternChars.count && patternChars[patternIndex] == "*" {
+                patternIndex += 1
+            }
+            return patternIndex == patternChars.count
         }
     }
     

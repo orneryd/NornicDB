@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 const ivfpqTrainSeed = 42
@@ -148,7 +149,7 @@ func ivfpqTrainPQCodebooks(ctx context.Context, training [][]float32, centroids 
 	centroidNorm := normalizeCentroids(centroids)
 	segments := make([][]float32, profile.PQSegments)
 	for seg := range segments {
-		segments[seg] = make([]float32, 0, len(training)*subDim)
+		segments[seg] = make([]float32, 0, util.SafePreallocProduct(len(training), subDim))
 	}
 	for _, vec := range training {
 		if err := ctx.Err(); err != nil {
