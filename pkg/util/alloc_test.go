@@ -32,6 +32,15 @@ func TestSafeIntAdd(t *testing.T) {
 	})
 }
 
+func TestSafeIntSum(t *testing.T) {
+	if got, ok := SafeIntSum(1, 2, 3, 4); !ok || got != 10 {
+		t.Fatalf("SafeIntSum(1,2,3,4) = (%d, %v), want (10, true)", got, ok)
+	}
+	if _, ok := SafeIntSum(1, maxIntValue); ok {
+		t.Fatal("expected overflow to be reported")
+	}
+}
+
 func TestSafePreallocCap(t *testing.T) {
 	if got := SafePreallocCap(1000000); got != MaxPreallocHintCap {
 		t.Fatalf("SafePreallocCap(1000000) = %d, want %d", got, MaxPreallocHintCap)

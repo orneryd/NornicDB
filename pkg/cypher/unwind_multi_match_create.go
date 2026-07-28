@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // unwindMultiMatchCreatePlan is the parsed form of the mutation body.
@@ -133,8 +134,8 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	// Collect all nodes and edges across every row, then issue two bulk
 	// storage calls. On Badger+WAL+Async this collapses N*(WAL fsync +
 	// schema/lookup index mutation) to 2 round-trips per UNWIND batch.
-	pendingNodes := make([]*storage.Node, 0, len(items)*len(plan.nodeCreates))
-	pendingEdges := make([]*storage.Edge, 0, len(items)*(len(plan.edgeCreates)+1))
+	pendingNodes := make([]*storage.Node, 0, util.SafePreallocProduct(len(items), len(plan.nodeCreates)))
+	pendingEdges := make([]*storage.Edge, 0, util.SafePreallocProduct(len(items), util.SafePreallocSum(len(plan.edgeCreates), 1)))
 
 	// Deterministic resolution rule (no heuristics): every MATCH in a bulk
 	// batch MUST have a declared schema property index. The index is used as

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // FabricExecutor walks a Fragment tree and dispatches each FragmentExec
@@ -98,7 +100,7 @@ func (e *FabricExecutor) executeExec(ctx context.Context, tx *FabricTransaction,
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 	execParams := params
 	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, len(params)+len(recordBindings))
+		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
 		for k, v := range params {
 			execParams[k] = v
 		}
@@ -225,7 +227,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 	execParams := params
 	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, len(params)+len(recordBindings))
+		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
 		for k, v := range params {
 			execParams[k] = v
 		}
@@ -692,7 +694,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 
 		groupedRows := make(map[string][][]interface{}, len(distinctKeys))
 		executeKeyChunk := func(execCtx context.Context, keys []interface{}) error {
-			batchParams := make(map[string]interface{}, len(params)+1)
+			batchParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 			for k, v := range params {
 				batchParams[k] = v
 			}
@@ -927,7 +929,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 			rewritten.WriteString(") AS ")
 			rewritten.WriteString(outAlias)
 
-			batchParams := make(map[string]interface{}, len(params)+1)
+			batchParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 			for k, v := range params {
 				batchParams[k] = v
 			}
@@ -1127,7 +1129,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 				rewritten.WriteString(" AS ")
 				rewritten.WriteString(item.alias)
 			}
-			batchParams := make(map[string]interface{}, len(params)+1)
+			batchParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 			for k, v := range params {
 				batchParams[k] = v
 			}
@@ -1352,7 +1354,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 
 		groupedRows := make(map[string][][]interface{}, len(distinctKeys))
 		executeKeyChunk := func(execCtx context.Context, keys []interface{}) error {
-			batchParams := make(map[string]interface{}, len(params)+1)
+			batchParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 			for k, v := range params {
 				batchParams[k] = v
 			}
@@ -1414,7 +1416,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 
 					localGrouped := make(map[string][][]interface{})
 					localExec := func(execCtx context.Context, keys []interface{}) error {
-						batchParams := make(map[string]interface{}, len(params)+1)
+						batchParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 						for k, v := range params {
 							batchParams[k] = v
 						}
@@ -2156,7 +2158,7 @@ func bindingsFromParentAndRow(parent map[string]interface{}, columns []string, r
 	if len(parent) == 0 && (len(columns) == 0 || len(row) == 0) {
 		return nil
 	}
-	out := make(map[string]interface{}, len(parent)+len(columns))
+	out := make(map[string]interface{}, util.SafePreallocSum(len(parent), len(columns)))
 	for k, v := range parent {
 		out[k] = v
 	}
@@ -2975,7 +2977,7 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	}
 
 	rewritten := "UNWIND $__fabric_apply_rows AS __fabric_row WITH " + strings.Join(projections, ", ") + " " + trimmed
-	mergedParams := make(map[string]interface{}, len(params)+1)
+	mergedParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 	for k, v := range params {
 		mergedParams[k] = v
 	}
@@ -3623,7 +3625,7 @@ func fragmentContainsWrite(fragment Fragment) bool {
 // combineColumns merges two column lists, deduplicating names.
 func combineColumns(outer, inner []string) []string {
 	seen := make(map[string]bool, len(outer))
-	result := make([]string, 0, len(outer)+len(inner))
+	result := make([]string, 0, util.SafePreallocSum(len(outer), len(inner)))
 	for _, col := range outer {
 		if strings.HasPrefix(col, "__fabric_") {
 			continue

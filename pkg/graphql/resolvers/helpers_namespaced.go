@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Helper methods that route all operations through namespaced storage when dbManager is set.
@@ -274,7 +275,7 @@ func (r *Resolver) getEdgesForNodeViaCypher(ctx context.Context, nodeID string) 
 		return nil, err
 	}
 
-	edges := make([]*nornicdb.GraphEdge, 0, len(outgoingResult.Rows)+len(incomingResult.Rows))
+	edges := make([]*nornicdb.GraphEdge, 0, util.SafePreallocSum(len(outgoingResult.Rows), len(incomingResult.Rows)))
 
 	// Process outgoing edges
 	for _, row := range outgoingResult.Rows {

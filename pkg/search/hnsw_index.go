@@ -134,7 +134,7 @@ func NewHNSWIndex(dimensions int, config HNSWConfig) *HNSWIndex {
 		dimensions:          dimensions,
 		nodeLevel:           make([]uint16, 0, 1024),
 		vecOff:              make([]int32, 0, 1024),
-		neighborsArena:      make([]uint32, 0, 1024*config.M),
+		neighborsArena:      make([]uint32, 0, util.SafePreallocProduct(1024, config.M)),
 		neighborsOff:        make([]int32, 0, 1024),
 		neighborCountsArena: make([]uint16, 0, 1024),
 		neighborCountsOff:   make([]int32, 0, 1024),
@@ -142,7 +142,7 @@ func NewHNSWIndex(dimensions int, config HNSWConfig) *HNSWIndex {
 		internalToID:        make([]string, 0, 1024),
 		deleted:             make([]bool, 0, 1024),
 		liveCount:           0,
-		vectors:             make([]float32, 0, 1024*dimensions),
+		vectors:             make([]float32, 0, util.SafePreallocProduct(1024, dimensions)),
 		maxLevel:            0,
 	}
 	h.queryBufPool.New = func() any {
@@ -152,13 +152,13 @@ func NewHNSWIndex(dimensions int, config HNSWConfig) *HNSWIndex {
 		return &visitedGenState{}
 	}
 	h.heapPool.New = func() any {
-		return &distHeap{items: make([]hnswDistItem, 0, config.EfSearch*2)}
+		return &distHeap{items: make([]hnswDistItem, 0, util.SafePreallocProduct(config.EfSearch, 2))}
 	}
 	h.idsPool.New = func() any {
-		return make([]uint32, 0, config.EfSearch*2)
+		return make([]uint32, 0, util.SafePreallocProduct(config.EfSearch, 2))
 	}
 	h.itemsPool.New = func() any {
-		return make([]hnswDistItem, 0, config.EfSearch*2)
+		return make([]hnswDistItem, 0, util.SafePreallocProduct(config.EfSearch, 2))
 	}
 	return h
 }
@@ -448,7 +448,7 @@ func (h *HNSWIndex) Clear() {
 	// Reset all internal state
 	h.nodeLevel = make([]uint16, 0, 1024)
 	h.vecOff = make([]int32, 0, 1024)
-	h.neighborsArena = make([]uint32, 0, 1024*h.config.M)
+	h.neighborsArena = make([]uint32, 0, util.SafePreallocProduct(1024, h.config.M))
 	h.neighborsOff = make([]int32, 0, 1024)
 	h.neighborCountsArena = make([]uint16, 0, 1024)
 	h.neighborCountsOff = make([]int32, 0, 1024)
@@ -456,7 +456,7 @@ func (h *HNSWIndex) Clear() {
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
 	h.liveCount = 0
-	h.vectors = make([]float32, 0, 1024*h.dimensions)
+	h.vectors = make([]float32, 0, util.SafePreallocProduct(1024, h.dimensions))
 	h.entryPoint = 0
 	h.hasEntryPoint = false
 	h.maxLevel = 0

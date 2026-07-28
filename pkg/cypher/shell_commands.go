@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 func (e *StorageExecutor) preprocessShellCommands(ctx context.Context, cypher string, explicitParams map[string]interface{}) (string, context.Context, *ExecuteResult, error) {
@@ -430,7 +431,7 @@ func (e *StorageExecutor) mergeShellParams(explicitParams map[string]interface{}
 		return explicitParams
 	}
 
-	merged := make(map[string]interface{}, shellLen+len(explicitParams))
+	merged := make(map[string]interface{}, util.SafePreallocSum(shellLen, len(explicitParams)))
 	for key, value := range e.shellParams {
 		merged[key] = value
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 type unwindRelationshipMergeBatchPlan struct {
@@ -601,7 +602,7 @@ func lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*
 }
 
 func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) map[string]interface{} {
-	props := make(map[string]interface{}, len(row)+len(vectorSetters))
+	props := make(map[string]interface{}, util.SafePreallocSum(len(row), len(vectorSetters)))
 	for key, value := range row {
 		props[key] = normalizePropValue(value)
 	}

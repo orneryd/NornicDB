@@ -416,7 +416,15 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 
 	ids := make([]string, 0, chunkSize)
 	vecs := make([][]float32, 0, chunkSize)
-	buf := make([]byte, 4+256+v.dimensions*4)
+	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
+	if !ok {
+		return fmt.Errorf("vector dimensions overflow rebuild buffer size: %d", v.dimensions)
+	}
+	bufLen, ok := util.SafeIntSum(4, 256, vectorBytes)
+	if !ok {
+		return fmt.Errorf("vector rebuild buffer size overflow")
+	}
+	buf := make([]byte, bufLen)
 	for {
 		// Read id length
 		if _, err := io.ReadFull(file, buf[:4]); err != nil {
@@ -426,7 +434,10 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 			return err
 		}
 		idLen := binary.LittleEndian.Uint32(buf[:4])
-		recLen := 4 + int(idLen) + v.dimensions*4
+		recLen, ok := util.SafeIntSum(4, int(idLen), vectorBytes)
+		if !ok {
+			return fmt.Errorf("vector record length overflow for id length %d", idLen)
+		}
 		if recLen > len(buf) {
 			newBuf := make([]byte, recLen)
 			binary.LittleEndian.PutUint32(newBuf[0:4], idLen)

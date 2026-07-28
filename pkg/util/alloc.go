@@ -30,6 +30,19 @@ func SafeIntAdd(a, b int) (int, bool) {
 	return a + b, true
 }
 
+// SafeIntSum adds non-negative ints and reports whether the result fits in int.
+func SafeIntSum(values ...int) (int, bool) {
+	total := 0
+	for _, value := range values {
+		next, ok := SafeIntAdd(total, value)
+		if !ok {
+			return 0, false
+		}
+		total = next
+	}
+	return total, true
+}
+
 // SafePreallocCap bounds slice capacity hints by caller-provided limits and a hard ceiling.
 // It is intended for make(..., 0, cap) sites where correctness does not depend on the exact hint.
 func SafePreallocCap(requested int, bounds ...int) int {

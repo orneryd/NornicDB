@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // pipelineClauseKind enumerates the clause types the pipeline executor
@@ -339,7 +340,7 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 		e.normalizeSetMatchRowsToNodes(result, store)
 		e.normalizeSetMatchRowsToEdges(result, store)
 		for _, resultRow := range result.Rows {
-			newRow := make(pipelineRow, len(row)+len(result.Columns))
+			newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
 			for k, v := range row {
 				newRow[k] = v
 			}
@@ -426,7 +427,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 		// Merge newly-created node bindings into the row so subsequent
 		// pipeline steps can reference them (e.g. CREATE (c)-[:REL]->(o)
 		// where `o` was created by an earlier CREATE in the same pipeline).
-		newRow := make(pipelineRow, len(row)+len(refsNodes))
+		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(refsNodes)))
 		for k, v := range row {
 			newRow[k] = v
 		}
@@ -599,7 +600,7 @@ func (e *StorageExecutor) pipelineApplyUnwind(rows []pipelineRow, clause string)
 			return nil, false
 		}
 		for _, item := range items {
-			newRow := make(pipelineRow, len(row)+1)
+			newRow := make(pipelineRow, util.SafePreallocSum(len(row), 1))
 			for k, v := range row {
 				newRow[k] = v
 			}

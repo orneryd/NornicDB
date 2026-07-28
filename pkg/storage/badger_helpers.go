@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Key encoding helpers
@@ -34,8 +35,7 @@ func mvccSequenceKey() []byte {
 // committed MVCC sequence. The namespace is appended as a length-bounded
 // trailing segment so distinct namespaces hash to distinct keys.
 func mvccNamespaceSequenceKey(namespace string) []byte {
-	out := make([]byte, 0, 2+len(namespace))
-	out = append(out, prefixMVCCMeta, prefixMVCCMetaNamespaceSeq)
+	out := []byte{prefixMVCCMeta, prefixMVCCMetaNamespaceSeq}
 	out = append(out, namespace...)
 	return out
 }
@@ -166,8 +166,7 @@ func extractMVCCLogicalKeyAndVersion(key []byte) ([]byte, MVCCVersion, error) {
 // Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
 func labelIndexKey(label string, nodeNumID uint64) []byte {
 	normalizedLabel := strings.ToLower(label)
-	key := make([]byte, 0, 1+len(normalizedLabel)+1+8)
-	key = append(key, prefixLabelIndex)
+	key := []byte{prefixLabelIndex}
 	key = append(key, []byte(normalizedLabel)...)
 	key = append(key, 0x00) // Separator
 	key = append(key, encodeNumID(nodeNumID)...)
@@ -178,8 +177,7 @@ func labelIndexKey(label string, nodeNumID uint64) []byte {
 // Labels are normalized to lowercase for case-insensitive matching (Neo4j compatible)
 func labelIndexPrefix(label string) []byte {
 	normalizedLabel := strings.ToLower(label)
-	key := make([]byte, 0, 1+len(normalizedLabel)+1)
-	key = append(key, prefixLabelIndex)
+	key := []byte{prefixLabelIndex}
 	key = append(key, []byte(normalizedLabel)...)
 	key = append(key, 0x00)
 	return key
@@ -268,8 +266,7 @@ func mvccIncomingAdjacencyKey(nodeNumID, edgeNumID uint64, version MVCCVersion) 
 // string because it has good shared-prefix compression in the LSM.
 func edgeTypeIndexKey(edgeType string, edgeNumID uint64) []byte {
 	normalizedType := strings.ToLower(edgeType)
-	key := make([]byte, 0, 1+len(normalizedType)+1+8)
-	key = append(key, prefixEdgeTypeIndex)
+	key := []byte{prefixEdgeTypeIndex}
 	key = append(key, []byte(normalizedType)...)
 	key = append(key, 0x00) // Separator
 	key = append(key, encodeNumID(edgeNumID)...)
@@ -280,8 +277,7 @@ func edgeTypeIndexKey(edgeType string, edgeNumID uint64) []byte {
 // Edge types are normalized to lowercase for case-insensitive matching (Neo4j compatible)
 func edgeTypeIndexPrefix(edgeType string) []byte {
 	normalizedType := strings.ToLower(edgeType)
-	key := make([]byte, 0, 1+len(normalizedType)+1)
-	key = append(key, prefixEdgeTypeIndex)
+	key := []byte{prefixEdgeTypeIndex}
 	key = append(key, []byte(normalizedType)...)
 	key = append(key, 0x00)
 	return key
@@ -302,8 +298,7 @@ func edgeTypeIndexPrefix(edgeType string) []byte {
 // edge from the start node.
 func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID uint64) []byte {
 	normalizedType := strings.ToLower(edgeType)
-	key := make([]byte, 0, 1+8+8+len(normalizedType)+1+8)
-	key = append(key, prefixEdgeBetweenIndex)
+	key := []byte{prefixEdgeBetweenIndex}
 	key = append(key, encodeNumID(startNumID)...)
 	key = append(key, encodeNumID(endNumID)...)
 	key = append(key, []byte(normalizedType)...)
@@ -320,8 +315,7 @@ func edgeBetweenIndexKey(startNumID, endNumID uint64, edgeType string, edgeNumID
 // repopulate it. Uses numeric IDs for the same reason edgeBetweenIndexKey does.
 func edgeBetweenHeadKey(startNumID, endNumID uint64, edgeType string) []byte {
 	normalizedType := strings.ToLower(edgeType)
-	key := make([]byte, 0, 1+8+8+len(normalizedType))
-	key = append(key, prefixEdgeBetweenHead)
+	key := []byte{prefixEdgeBetweenHead}
 	key = append(key, encodeNumID(startNumID)...)
 	key = append(key, encodeNumID(endNumID)...)
 	key = append(key, []byte(normalizedType)...)
@@ -695,8 +689,7 @@ const (
 // embeddingKey creates a key for storing a chunk embedding separately.
 // Format: prefix + nodeID + 0x00 + chunkIndex (as bytes)
 func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
-	key := make([]byte, 0, 1+len(nodeID)+1+4)
-	key = append(key, prefixEmbedding)
+	key := []byte{prefixEmbedding}
 	key = append(key, []byte(nodeID)...)
 	key = append(key, 0x00) // Separator
 	// Encode chunk index as 4 bytes (big-endian)
@@ -708,8 +701,7 @@ func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
 // Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
 func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
 	base := embeddingKey(nodeID, chunkIndex)
-	key := make([]byte, 0, len(base)+1+2)
-	key = append(key, base...)
+	key := append([]byte(nil), base...)
 	key = append(key, 0x00)
 	key = append(key, byte(partIndex>>8), byte(partIndex))
 	return key
@@ -717,15 +709,13 @@ func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
 
 func embeddingChunkPartPrefix(nodeID NodeID, chunkIndex int) []byte {
 	base := embeddingKey(nodeID, chunkIndex)
-	prefix := make([]byte, 0, len(base)+1)
-	prefix = append(prefix, base...)
+	prefix := append([]byte(nil), base...)
 	prefix = append(prefix, 0x00)
 	return prefix
 }
 
 func makeEmbeddingShardMarker(partCount int) []byte {
-	marker := make([]byte, 0, len(embeddingShardMarker)+binary.MaxVarintLen64)
-	marker = append(marker, embeddingShardMarker...)
+	marker := append([]byte(nil), embeddingShardMarker...)
 	scratch := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(scratch, uint64(partCount))
 	marker = append(marker, scratch[:n]...)
@@ -758,7 +748,7 @@ func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) (
 		return []embeddingWriteKV{{key: baseKey, val: embData}}, nil
 	}
 	parts := (len(embData) + maxEmbeddingValueBytes - 1) / maxEmbeddingValueBytes
-	kvs := make([]embeddingWriteKV, 0, parts+1)
+	kvs := make([]embeddingWriteKV, 0, util.SafePreallocSum(parts, 1))
 	kvs = append(kvs, embeddingWriteKV{key: baseKey, val: makeEmbeddingShardMarker(parts)})
 	for part := 0; part < parts; part++ {
 		start := part * maxEmbeddingValueBytes
@@ -777,8 +767,7 @@ func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) (
 // schemaKey stores the persisted schema definition for a database namespace.
 // Format: prefixSchema + namespace + 0x00
 func schemaKey(namespace string) []byte {
-	key := make([]byte, 0, 1+len(namespace)+1)
-	key = append(key, prefixSchema)
+	key := []byte{prefixSchema}
 	key = append(key, []byte(namespace)...)
 	key = append(key, 0x00)
 	return key
@@ -787,8 +776,7 @@ func schemaKey(namespace string) []byte {
 // embeddingPrefix returns the prefix for scanning all embeddings for a node.
 // Format: prefix + nodeID + 0x00
 func embeddingPrefix(nodeID NodeID) []byte {
-	key := make([]byte, 0, 1+len(nodeID)+1)
-	key = append(key, prefixEmbedding)
+	key := []byte{prefixEmbedding}
 	key = append(key, []byte(nodeID)...)
 	key = append(key, 0x00)
 	return key
@@ -1097,7 +1085,7 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 			}
 		}
 		if chunkCount > 0 {
-			node.ChunkEmbeddings = make([][]float32, 0, chunkCount)
+			node.ChunkEmbeddings = make([][]float32, 0, util.SafePreallocCap(chunkCount))
 
 			// Load each chunk embedding
 			for i := 0; i < chunkCount; i++ {
@@ -1125,7 +1113,7 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 					if !sharded {
 						return nil, fmt.Errorf("failed to decode embedding chunk %d: %w", i, err)
 					}
-					assembled := make([]byte, 0, partCount*maxEmbeddingValueBytes)
+					assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
 					for part := 0; part < partCount; part++ {
 						partItem, getErr := txn.Get(embeddingChunkPartKey(nodeID, i, part))
 						if getErr != nil {

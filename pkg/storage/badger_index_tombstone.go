@@ -8,9 +8,8 @@ import (
 // Format: [0x17][originalKey]. The original prefix byte is preserved so
 // the read path can reconstruct the original key if needed.
 func indexTombstoneKey(originalIndexKey []byte) []byte {
-	key := make([]byte, 1+len(originalIndexKey))
-	key[0] = prefixIndexTombstone
-	copy(key[1:], originalIndexKey)
+	key := []byte{prefixIndexTombstone}
+	key = append(key, originalIndexKey...)
 	return key
 }
 

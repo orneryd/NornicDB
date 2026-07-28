@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ProcedureMode represents Neo4j-compatible procedure execution mode.
@@ -107,7 +109,7 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 func (r *ProcedureRegistry) List() []ProcedureSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]ProcedureSpec, 0, len(r.builtins)+len(r.user))
+	out := make([]ProcedureSpec, 0, util.SafePreallocSum(len(r.builtins), len(r.user)))
 	for _, p := range r.builtins {
 		out = append(out, p.Spec)
 	}

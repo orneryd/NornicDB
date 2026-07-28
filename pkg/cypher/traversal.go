@@ -1818,11 +1818,21 @@ func (e *StorageExecutor) findPaths(
 		ctx.visited[nextNodeID] = true
 
 		// Recurse with optimized path copying (pre-allocate exact size)
-		newPathNodes := make([]*storage.Node, len(pathNodes)+1)
+		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
+		if !ok {
+			ctx.visited[nextNodeID] = false
+			continue
+		}
+		newPathNodes := make([]*storage.Node, nextNodesLen)
 		copy(newPathNodes, pathNodes)
 		newPathNodes[len(pathNodes)] = nextNode
 
-		newPathEdges := make([]*storage.Edge, len(pathEdges)+1)
+		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
+		if !ok {
+			ctx.visited[nextNodeID] = false
+			continue
+		}
+		newPathEdges := make([]*storage.Edge, nextEdgesLen)
 		copy(newPathEdges, pathEdges)
 		newPathEdges[len(pathEdges)] = edge
 

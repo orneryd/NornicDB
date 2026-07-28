@@ -10,6 +10,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // VectorQuerySpec describes how to resolve embeddings for a Cypher-style vector query.
@@ -150,7 +151,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		id  string
 		vec []float32
 	}
-	candidates := make([]edgeMeta, 0, spec.Limit*2)
+	candidates := make([]edgeMeta, 0, util.SafePreallocProduct(spec.Limit, 2))
 	s.mu.RLock()
 	for edgeID, props := range s.edgePropVector {
 		if spec.Type != "" && s.edgeTypes[edgeID] != spec.Type {
@@ -218,7 +219,10 @@ func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []
 	}
 
 	// Overfetch to keep recall reasonable after applying Cypher precedence rules.
-	overfetch := spec.Limit * 50
+	overfetch, ok := util.SafeIntProduct(spec.Limit, 50)
+	if !ok {
+		overfetch = 20000
+	}
 	if overfetch < 200 {
 		overfetch = 200
 	}
@@ -243,7 +247,7 @@ func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []
 
 	normalizedQuery := vector.Normalize(queryEmbedding)
 
-	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), spec.Limit*2))
+	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
 	meta := s.snapshotVectorQueryCandidateMeta(candidateNodes)
 
 	for nodeID := range candidateNodes {
@@ -488,7 +492,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		id    string
 		score float64
 	}
-	scored := make([]scoredNode, 0, spec.Limit*2)
+	scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // scanOptionalPatternShape counts top-level node groups '(' and relationship
@@ -87,8 +88,8 @@ func ensureLeadingNodeNamed(pattern string) string {
 // relationship bindings.
 func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.Node, relBinds map[string]*storage.Edge) traversalOptRow {
 	out := traversalOptRow{
-		nodes: make(map[string]*storage.Node, len(row.nodes)+len(nodeBinds)),
-		rels:  make(map[string]*storage.Edge, len(row.rels)+len(relBinds)),
+		nodes: make(map[string]*storage.Node, util.SafePreallocSum(len(row.nodes), len(nodeBinds))),
+		rels:  make(map[string]*storage.Edge, util.SafePreallocSum(len(row.rels), len(relBinds))),
 	}
 	for k, v := range row.nodes {
 		out.nodes[k] = v

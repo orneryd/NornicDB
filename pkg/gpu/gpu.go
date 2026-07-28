@@ -153,6 +153,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu/cuda"
 	"github.com/orneryd/nornicdb/pkg/gpu/metal"
 	"github.com/orneryd/nornicdb/pkg/gpu/vulkan"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Errors
@@ -1329,7 +1330,7 @@ func NewEmbeddingIndex(manager *Manager, config *EmbeddingIndexConfig) *Embeddin
 		dimensions:  config.Dimensions,
 		nodeIDs:     make([]string, 0, config.InitialCap),
 		idToIndex:   make(map[string]int, config.InitialCap),
-		cpuVectors:  make([]float32, 0, config.InitialCap*config.Dimensions),
+		cpuVectors:  make([]float32, 0, util.SafePreallocProduct(config.InitialCap, config.Dimensions)),
 		gpuCapacity: config.InitialCap,
 		autoSync:    config.AutoSync,
 		batchThreshold: func() int {
@@ -2450,7 +2451,11 @@ func (ei *EmbeddingIndex) Deserialize(data []byte) error {
 	}
 
 	// Read vectors
-	ei.cpuVectors = make([]float32, count*dims)
+	vectorCount, ok := util.SafeIntProduct(count, dims)
+	if !ok {
+		return fmt.Errorf("embedding vector count overflow: %d * %d", count, dims)
+	}
+	ei.cpuVectors = make([]float32, vectorCount)
 	for i := range ei.cpuVectors {
 		ei.cpuVectors[i] = uint32ToFloat(binary.LittleEndian.Uint32(data[offset:]))
 		offset += 4
