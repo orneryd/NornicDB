@@ -46,12 +46,8 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher st
 
 	// Extract config options
 	batchSize := 1000
-	if bs, ok := config["batchSize"].(float64); ok {
-		batchSize = int(bs)
-	} else if bs, ok := config["batchSize"].(int); ok {
+	if bs, ok := toInt(config["batchSize"]); ok && bs > 0 {
 		batchSize = bs
-	} else if bs, ok := config["batchSize"].(int64); ok {
-		batchSize = int(bs)
 	}
 
 	// Execute the iterate query to get data to process
@@ -177,9 +173,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, cypher str
 
 	// Extract limit from params if present
 	limit := 10000
-	if l, ok := params["limit"].(float64); ok {
-		limit = int(l)
-	} else if l, ok := params["limit"].(int); ok {
+	if l, ok := toInt(params["limit"]); ok && l > 0 {
 		limit = l
 	}
 

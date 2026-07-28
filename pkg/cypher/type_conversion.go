@@ -39,6 +39,8 @@ package cypher
 
 import (
 	"strconv"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // toInt64 converts various numeric types to int64.
@@ -75,7 +77,10 @@ func toInt64(v interface{}) int64 {
 	case int64:
 		return n
 	case float64:
-		return int64(n)
+		if out, ok := util.SafeFloat64ToInt64(n); ok {
+			return out
+		}
+		return 0
 	case string:
 		i, _ := strconv.ParseInt(n, 10, 64)
 		return i

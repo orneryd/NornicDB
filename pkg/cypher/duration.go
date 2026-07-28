@@ -56,6 +56,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // CypherDuration represents a Neo4j-compatible duration type.
@@ -464,7 +466,11 @@ func addDurationToDate(dateVal interface{}, dur *CypherDuration) string {
 	}
 
 	// Add the duration components
-	t = t.AddDate(int(dur.Years), int(dur.Months), int(dur.Days))
+	t = t.AddDate(
+		util.ClampInt64ToInt(dur.Years),
+		util.ClampInt64ToInt(dur.Months),
+		util.ClampInt64ToInt(dur.Days),
+	)
 	t = t.Add(time.Duration(dur.Hours)*time.Hour +
 		time.Duration(dur.Minutes)*time.Minute +
 		time.Duration(dur.Seconds)*time.Second +
@@ -498,7 +504,11 @@ func subtractDurationFromDate(dateVal interface{}, dur *CypherDuration) string {
 	}
 
 	// Subtract the duration components
-	t = t.AddDate(-int(dur.Years), -int(dur.Months), -int(dur.Days))
+	t = t.AddDate(
+		-util.ClampInt64ToInt(dur.Years),
+		-util.ClampInt64ToInt(dur.Months),
+		-util.ClampInt64ToInt(dur.Days),
+	)
 	t = t.Add(-(time.Duration(dur.Hours)*time.Hour +
 		time.Duration(dur.Minutes)*time.Minute +
 		time.Duration(dur.Seconds)*time.Second +

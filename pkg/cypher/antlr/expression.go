@@ -4,12 +4,14 @@ package antlr
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ExpressionEvaluator evaluates expressions from AST nodes
@@ -917,7 +919,9 @@ func convertToType(val interface{}, targetType reflect.Type) reflect.Value {
 	case reflect.Int64:
 		switch v := val.(type) {
 		case float64:
-			return reflect.ValueOf(int64(v))
+			if out, ok := util.SafeFloat64ToInt64(v); ok {
+				return reflect.ValueOf(out)
+			}
 		case int:
 			return reflect.ValueOf(int64(v))
 		case int64:
@@ -926,9 +930,13 @@ func convertToType(val interface{}, targetType reflect.Type) reflect.Value {
 	case reflect.Int:
 		switch v := val.(type) {
 		case float64:
-			return reflect.ValueOf(int(v))
+			if out, ok := util.SafeFloat64ToInt(v); ok {
+				return reflect.ValueOf(out)
+			}
 		case int64:
-			return reflect.ValueOf(int(v))
+			if out, ok := util.SafeInt64ToInt(v); ok {
+				return reflect.ValueOf(out)
+			}
 		case int:
 			return reflect.ValueOf(v)
 		}
@@ -992,11 +1000,19 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 		}
 	case "range":
 		if len(args) >= 2 {
-			start := int(e.toFloat64(args[0]))
-			end := int(e.toFloat64(args[1]))
+			start, ok := util.SafeFloat64ToInt(e.toFloat64(args[0]))
+			if !ok {
+				return nil
+			}
+			end, ok := util.SafeFloat64ToInt(e.toFloat64(args[1]))
+			if !ok {
+				return nil
+			}
 			step := 1
 			if len(args) >= 3 {
-				step = int(e.toFloat64(args[2]))
+				if parsedStep, ok := util.SafeFloat64ToInt(e.toFloat64(args[2])); ok {
+					step = parsedStep
+				}
 			}
 			if step == 0 {
 				step = 1
@@ -1029,16 +1045,25 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 		}
 	case "ceil":
 		if len(args) > 0 {
-			return int64(e.toFloat64(args[0]) + 0.999999999)
+			if out, ok := util.SafeFloat64ToInt64(math.Ceil(e.toFloat64(args[0]))); ok {
+				return out
+			}
+			return int64(0)
 		}
 	case "floor":
 		if len(args) > 0 {
-			return int64(e.toFloat64(args[0]))
+			if out, ok := util.SafeFloat64ToInt64(math.Floor(e.toFloat64(args[0]))); ok {
+				return out
+			}
+			return int64(0)
 		}
 	case "round":
 		if len(args) > 0 {
 			v := e.toFloat64(args[0])
-			return int64(v + 0.5)
+			if out, ok := util.SafeFloat64ToInt64(math.Round(v)); ok {
+				return out
+			}
+			return int64(0)
 		}
 	case "trim":
 		if len(args) > 0 {
@@ -1070,7 +1095,10 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 	case "substring":
 		if len(args) >= 2 {
 			s := fmt.Sprintf("%v", args[0])
-			start := int(e.toFloat64(args[1]))
+			start, ok := util.SafeFloat64ToInt(e.toFloat64(args[1]))
+			if !ok {
+				return ""
+			}
 			if start < 0 {
 				start = 0
 			}
@@ -1078,7 +1106,10 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 				return ""
 			}
 			if len(args) >= 3 {
-				length := int(e.toFloat64(args[2]))
+				length, ok := util.SafeFloat64ToInt(e.toFloat64(args[2]))
+				if !ok || length < 0 {
+					return ""
+				}
 				if start+length > len(s) {
 					length = len(s) - start
 				}
@@ -1089,7 +1120,10 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 	case "left":
 		if len(args) >= 2 {
 			s := fmt.Sprintf("%v", args[0])
-			n := int(e.toFloat64(args[1]))
+			n, ok := util.SafeFloat64ToInt(e.toFloat64(args[1]))
+			if !ok || n < 0 {
+				return ""
+			}
 			if n >= len(s) {
 				return s
 			}
@@ -1098,7 +1132,10 @@ func (e *ExpressionEvaluator) evaluateBuiltInFunction(name string, args []interf
 	case "right":
 		if len(args) >= 2 {
 			s := fmt.Sprintf("%v", args[0])
-			n := int(e.toFloat64(args[1]))
+			n, ok := util.SafeFloat64ToInt(e.toFloat64(args[1]))
+			if !ok || n < 0 {
+				return ""
+			}
 			if n >= len(s) {
 				return s
 			}
@@ -1273,9 +1310,13 @@ func (e *ExpressionEvaluator) toInt64(val interface{}) int64 {
 	case int:
 		return int64(v)
 	case float64:
-		return int64(v)
+		if out, ok := util.SafeFloat64ToInt64(v); ok {
+			return out
+		}
 	case float32:
-		return int64(v)
+		if out, ok := util.SafeFloat64ToInt64(float64(v)); ok {
+			return out
+		}
 	case string:
 		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return i
@@ -1473,8 +1514,8 @@ func (e *ExpressionEvaluator) toNumericOk(val interface{}) (float64, bool) {
 
 // maybeInt64 returns int64 if the float64 is a whole number, otherwise returns float64
 func maybeInt64(f float64) interface{} {
-	if f == float64(int64(f)) {
-		return int64(f)
+	if out, ok := util.SafeFloat64ToInt64(f); ok && f == float64(out) {
+		return out
 	}
 	return f
 }

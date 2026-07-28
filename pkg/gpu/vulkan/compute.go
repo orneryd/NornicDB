@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"sync"
 	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Embedded SPIR-V shader binaries compiled from GLSL
@@ -883,7 +885,11 @@ func (c *ComputeContext) HNSWBuildTopK(frontier, queries *Buffer, scoresBuf, ind
 	// --- Dispatch 2: Per-row top-k ---
 	vkCmdBindPipeline(c.hnswCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, topkPipeline.pipeline)
 	vkCmdBindDescriptorSets(c.hnswCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, topkPipeline.pipelineLayout, 0, 1, &c.hnswTopkDescSet, 0, 0)
-	topkPC := [3]uint32{frontierN, queryN, uint32(k)}
+	k32, ok := util.SafeIntToUint32(k)
+	if !ok {
+		return fmt.Errorf("invalid top-k value: %d", k)
+	}
+	topkPC := [3]uint32{frontierN, queryN, k32}
 	vkCmdPushConstants(c.hnswCmdBuffer, topkPipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, uintptr(unsafe.Pointer(&topkPC[0])))
 	vkCmdDispatch(c.hnswCmdBuffer, (queryN+255)/256, 1, 1)
 

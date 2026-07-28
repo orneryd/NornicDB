@@ -240,18 +240,34 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 		h.vectors = append(h.vectors, vec...)
 		normalized = h.vectors[vecOff : vecOff+h.dimensions]
 		vector.NormalizeInPlace(normalized)
-		h.vecOff = append(h.vecOff, int32(vecOff))
+		vecOff32, ok := util.SafeIntToInt32(vecOff)
+		if !ok {
+			return errHNSWIndexFull
+		}
+		h.vecOff = append(h.vecOff, vecOff32)
 	}
 
-	h.nodeLevel = append(h.nodeLevel, uint16(level))
+	level16, ok := util.SafeIntToUint16(level)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.nodeLevel = append(h.nodeLevel, level16)
 
 	neighborsOff := len(h.neighborsArena)
 	h.neighborsArena = append(h.neighborsArena, make([]uint32, (level+1)*m)...)
-	h.neighborsOff = append(h.neighborsOff, int32(neighborsOff))
+	neighborsOff32, ok := util.SafeIntToInt32(neighborsOff)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.neighborsOff = append(h.neighborsOff, neighborsOff32)
 
 	countsOff := len(h.neighborCountsArena)
 	h.neighborCountsArena = append(h.neighborCountsArena, make([]uint16, level+1)...)
-	h.neighborCountsOff = append(h.neighborCountsOff, int32(countsOff))
+	countsOff32, ok := util.SafeIntToInt32(countsOff)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.neighborCountsOff = append(h.neighborCountsOff, countsOff32)
 	h.internalToID = append(h.internalToID, id)
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
@@ -323,10 +339,10 @@ func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Cand
 	}
 
 	level := h.randomLevel()
-	if len(h.nodeLevel) >= int(^uint32(0)) {
+	internalID, ok := util.SafeIntToUint32(len(h.nodeLevel))
+	if !ok {
 		return errHNSWIndexFull
 	}
-	internalID := uint32(len(h.nodeLevel))
 	m := h.config.M
 	if m <= 0 {
 		return nil
@@ -343,16 +359,32 @@ func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Cand
 		h.vectors = append(h.vectors, vec...)
 		normalized = h.vectors[vecOff : vecOff+h.dimensions]
 		vector.NormalizeInPlace(normalized)
-		h.vecOff = append(h.vecOff, int32(vecOff))
+		vecOff32, ok := util.SafeIntToInt32(vecOff)
+		if !ok {
+			return errHNSWIndexFull
+		}
+		h.vecOff = append(h.vecOff, vecOff32)
 	}
 
-	h.nodeLevel = append(h.nodeLevel, uint16(level))
+	level16, ok := util.SafeIntToUint16(level)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.nodeLevel = append(h.nodeLevel, level16)
 	neighborsOff := len(h.neighborsArena)
 	h.neighborsArena = append(h.neighborsArena, make([]uint32, (level+1)*m)...)
-	h.neighborsOff = append(h.neighborsOff, int32(neighborsOff))
+	neighborsOff32, ok := util.SafeIntToInt32(neighborsOff)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.neighborsOff = append(h.neighborsOff, neighborsOff32)
 	countsOff := len(h.neighborCountsArena)
 	h.neighborCountsArena = append(h.neighborCountsArena, make([]uint16, level+1)...)
-	h.neighborCountsOff = append(h.neighborCountsOff, int32(countsOff))
+	countsOff32, ok := util.SafeIntToInt32(countsOff)
+	if !ok {
+		return errHNSWIndexFull
+	}
+	h.neighborCountsOff = append(h.neighborCountsOff, countsOff32)
 	h.internalToID = append(h.internalToID, id)
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
@@ -976,8 +1008,15 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	)
 
 	for id := range h.nodeLevel {
-		internalID := uint32(id)
-		if int(internalID) < len(h.deleted) && h.deleted[internalID] {
+		internalID, ok := util.SafeIntToUint32(id)
+		if !ok {
+			continue
+		}
+		internalIDInt, ok := util.SafeUint32ToInt(internalID)
+		if !ok {
+			continue
+		}
+		if internalIDInt < len(h.deleted) && h.deleted[internalID] {
 			continue
 		}
 		lvl := int(h.nodeLevel[internalID])
@@ -1327,8 +1366,16 @@ func (h *HNSWIndex) neighborsAtLevelLocked(nodeID uint32, level int) ([]uint32, 
 		return nil, false
 	}
 
-	neighborsBase := int(h.neighborsOff[nodeID]) + level*m
-	countsBase := int(h.neighborCountsOff[nodeID]) + level
+	neighborsBase, ok := util.SafeInt32ToInt(h.neighborsOff[nodeID])
+	if !ok {
+		return nil, false
+	}
+	neighborsBase += level * m
+	countsBase, ok := util.SafeInt32ToInt(h.neighborCountsOff[nodeID])
+	if !ok {
+		return nil, false
+	}
+	countsBase += level
 	if countsBase < 0 || countsBase >= len(h.neighborCountsArena) {
 		return nil, false
 	}
@@ -1359,8 +1406,16 @@ func (h *HNSWIndex) setNeighborsAtLevelLocked(nodeID uint32, level int, neighbor
 		neighbors = neighbors[:m]
 	}
 
-	neighborsBase := int(h.neighborsOff[nodeID]) + level*m
-	countsBase := int(h.neighborCountsOff[nodeID]) + level
+	neighborsBase, ok := util.SafeInt32ToInt(h.neighborsOff[nodeID])
+	if !ok {
+		return
+	}
+	neighborsBase += level * m
+	countsBase, ok := util.SafeInt32ToInt(h.neighborCountsOff[nodeID])
+	if !ok {
+		return
+	}
+	countsBase += level
 	if neighborsBase < 0 || neighborsBase+m > len(h.neighborsArena) {
 		return
 	}
@@ -1369,7 +1424,9 @@ func (h *HNSWIndex) setNeighborsAtLevelLocked(nodeID uint32, level int, neighbor
 	}
 
 	copy(h.neighborsArena[neighborsBase:neighborsBase+len(neighbors)], neighbors)
-	h.neighborCountsArena[countsBase] = uint16(len(neighbors))
+	if neighborCount, ok := util.SafeIntToUint16(len(neighbors)); ok {
+		h.neighborCountsArena[countsBase] = neighborCount
+	}
 }
 
 func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, newNeighborID uint32) {
@@ -1385,8 +1442,16 @@ func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, ne
 		return
 	}
 
-	neighborsBase := int(h.neighborsOff[neighborID]) + level*m
-	countsBase := int(h.neighborCountsOff[neighborID]) + level
+	neighborsBase, ok := util.SafeInt32ToInt(h.neighborsOff[neighborID])
+	if !ok {
+		return
+	}
+	neighborsBase += level * m
+	countsBase, ok := util.SafeInt32ToInt(h.neighborCountsOff[neighborID])
+	if !ok {
+		return
+	}
+	countsBase += level
 	if neighborsBase < 0 || neighborsBase+m > len(h.neighborsArena) {
 		return
 	}
@@ -1397,7 +1462,9 @@ func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, ne
 	cnt := int(h.neighborCountsArena[countsBase])
 	if cnt < m {
 		h.neighborsArena[neighborsBase+cnt] = newNeighborID
-		h.neighborCountsArena[countsBase] = uint16(cnt + 1)
+		if nextCount, ok := util.SafeIntToUint16(cnt + 1); ok {
+			h.neighborCountsArena[countsBase] = nextCount
+		}
 		return
 	}
 
@@ -1407,7 +1474,9 @@ func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, ne
 	all = append(all, newNeighborID)
 	best := h.selectNeighbors(h.vectorAtLocked(neighborID), all, m)
 	copy(h.neighborsArena[neighborsBase:neighborsBase+m], best)
-	h.neighborCountsArena[countsBase] = uint16(min(len(best), m))
+	if bestCount, ok := util.SafeIntToUint16(min(len(best), m)); ok {
+		h.neighborCountsArena[countsBase] = bestCount
+	}
 }
 
 // Heap types for HNSW search

@@ -2100,8 +2100,14 @@ func (ei *EmbeddingIndex) syncToCUDA() error {
 	ei.cudaBuffer = buffer
 
 	// Normalize vectors on GPU for faster cosine similarity
-	n := uint32(len(ei.nodeIDs))
-	dims := uint32(ei.dimensions)
+	n, ok := util.SafeIntToUint32(len(ei.nodeIDs))
+	if !ok {
+		return fmt.Errorf("gpu: node count exceeds uint32 range")
+	}
+	dims, ok := util.SafeIntToUint32(ei.dimensions)
+	if !ok {
+		return fmt.Errorf("gpu: embedding dimensions exceed uint32 range")
+	}
 	if n == 0 || dims == 0 {
 		return nil
 	}
@@ -2163,8 +2169,14 @@ func (ei *EmbeddingIndex) syncToVulkan() error {
 	ei.vulkanBuffer = buffer
 
 	// Normalize vectors on GPU for faster cosine similarity
-	n := uint32(len(ei.nodeIDs))
-	dims := uint32(ei.dimensions)
+	n, ok := util.SafeIntToUint32(len(ei.nodeIDs))
+	if !ok {
+		return fmt.Errorf("gpu: node count exceeds uint32 range")
+	}
+	dims, ok := util.SafeIntToUint32(ei.dimensions)
+	if !ok {
+		return fmt.Errorf("gpu: embedding dimensions exceed uint32 range")
+	}
 
 	// Use GPU compute shader if available, otherwise CPU fallback
 	if ei.vulkanCompute != nil {

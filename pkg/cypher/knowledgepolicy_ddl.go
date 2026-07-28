@@ -1102,11 +1102,11 @@ func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) erro
 			}
 			cfg.VarianceScale = f
 		case "windowsize":
-			n, err := strconv.ParseInt(rawVal, 10, 64)
+			n, err := strconv.Atoi(rawVal)
 			if err != nil {
 				return fmt.Errorf("invalid windowSize: %s", rawVal)
 			}
-			cfg.WindowSize = int(n)
+			cfg.WindowSize = n
 		default:
 			return fmt.Errorf("unknown Kalman config key: %q", key)
 		}

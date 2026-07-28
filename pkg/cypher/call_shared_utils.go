@@ -3,6 +3,8 @@ package cypher
 import (
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
@@ -85,9 +87,9 @@ func toInt(v interface{}) (int, bool) {
 	case int:
 		return t, true
 	case int64:
-		return int(t), true
+		return util.SafeInt64ToInt(t)
 	case float64:
-		return int(t), true
+		return util.SafeFloat64ToInt(t)
 	case string:
 		i, err := strconv.Atoi(strings.TrimSpace(t))
 		return i, err == nil

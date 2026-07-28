@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // QueryNode fetches a single node by ID
@@ -86,7 +87,7 @@ func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int,
 		return len(nodes), nil
 	}
 	stats := r.stats()
-	return int(stats.NodeCount), nil
+	return util.ClampInt64ToInt(stats.NodeCount), nil
 }
 
 // QueryRelationship fetches a single relationship by ID
@@ -166,7 +167,7 @@ func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *str
 		return len(edges), nil
 	}
 	stats := r.stats()
-	return int(stats.EdgeCount), nil
+	return util.ClampInt64ToInt(stats.EdgeCount), nil
 }
 
 // QuerySearch performs a search query
@@ -315,7 +316,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {
-				count = int(cnt)
+				count = util.ClampInt64ToInt(cnt)
 			} else if cnt, ok := result.Rows[0][0].(int); ok {
 				count = cnt
 			}
@@ -331,7 +332,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {
-				count = int(cnt)
+				count = util.ClampInt64ToInt(cnt)
 			} else if cnt, ok := result.Rows[0][0].(int); ok {
 				count = cnt
 			}
@@ -346,8 +347,8 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 	}
 
 	return &models.DatabaseStats{
-		NodeCount:         int(stats.NodeCount),
-		RelationshipCount: int(stats.EdgeCount),
+		NodeCount:         util.ClampInt64ToInt(stats.NodeCount),
+		RelationshipCount: util.ClampInt64ToInt(stats.EdgeCount),
 		Labels:            labelStats,
 		RelationshipTypes: typeStats,
 		EmbeddedNodeCount: embeddedCount,

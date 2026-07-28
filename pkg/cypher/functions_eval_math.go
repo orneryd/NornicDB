@@ -595,8 +595,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			stateJSON, _ := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels).(string)
-			stepsFloat, _ := toFloat64(e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
-			steps := int(stepsFloat)
+			steps, _ := toInt(e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
 			return kalmanPredict(stateJSON, steps)
 		}
 		return nil
@@ -649,8 +648,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			stateJSON, _ := e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[0]), nodes, rels).(string)
-			stepsFloat, _ := toFloat64(e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
-			steps := int(stepsFloat)
+			steps, _ := toInt(e.evaluateExpressionWithContext(ctx, strings.TrimSpace(args[1]), nodes, rels))
 			return kalmanVelocityPredict(stateJSON, steps)
 		}
 		return nil

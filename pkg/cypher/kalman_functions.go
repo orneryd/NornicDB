@@ -104,6 +104,8 @@ package cypher
 import (
 	"encoding/json"
 	"math"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ========================================
@@ -768,7 +770,9 @@ func kalmanAdaptiveInit(configMap map[string]interface{}) string {
 			state.StabilityThreshold = st
 		}
 		if hy, ok := configMap["hysteresis"].(float64); ok {
-			state.Hysteresis = int(hy)
+			if hysteresis, ok := util.SafeFloat64ToInt(hy); ok {
+				state.Hysteresis = hysteresis
+			}
 		}
 		if mode, ok := configMap["initialMode"].(string); ok {
 			if mode == "velocity" {
