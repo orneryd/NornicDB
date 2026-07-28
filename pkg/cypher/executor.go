@@ -408,6 +408,9 @@ type StorageExecutor struct {
 	allowLocalAPOCExportFileAccess bool
 	// allowRemoteAPOCURLAccess gates APOC HTTP(S) fetches. Default deny.
 	allowRemoteAPOCURLAccess bool
+	// apocRemoteURLAllowlist restricts APOC HTTP(S) fetches to explicitly
+	// approved hosts or wildcard suffixes.
+	apocRemoteURLAllowlist []string
 	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
 	// set, local APOC file URLs are normalized and rebased under this root.
 	apocLocalFileAccessRoot string
@@ -500,6 +503,8 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		syntaxValidationCache:          e.syntaxValidationCache,
 		allowLocalAPOCImportFileAccess: e.allowLocalAPOCImportFileAccess,
 		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
+		allowRemoteAPOCURLAccess:       e.allowRemoteAPOCURLAccess,
+		apocRemoteURLAllowlist:         append([]string(nil), e.apocRemoteURLAllowlist...),
 		apocLocalFileAccessRoot:        e.apocLocalFileAccessRoot,
 		// Plan 04-03: propagate the metrics bag + database label through
 		// per-query / per-storage clones so observation chokepoints in
@@ -631,6 +636,7 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 		allowLocalAPOCImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
 		allowLocalAPOCExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
 		allowRemoteAPOCURLAccess:       apocCfg.Security.AllowRemoteURLAccess,
+		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
 	ensureBuiltInProceduresRegistered()
@@ -657,6 +663,11 @@ func (e *StorageExecutor) SetAllowLocalAPOCExportFileAccess(enabled bool) {
 // SetAllowRemoteAPOCURLAccess enables or disables APOC HTTP(S) fetches.
 func (e *StorageExecutor) SetAllowRemoteAPOCURLAccess(enabled bool) {
 	e.allowRemoteAPOCURLAccess = enabled
+}
+
+// SetAPOCRemoteURLAllowlist restricts APOC HTTP(S) fetches to approved hosts.
+func (e *StorageExecutor) SetAPOCRemoteURLAllowlist(hosts []string) {
+	e.apocRemoteURLAllowlist = normalizeAPOCRemoteURLAllowlist(hosts)
 }
 
 // SetAPOCLocalFileAccessRoot sets the local import root used for APOC file URLs.

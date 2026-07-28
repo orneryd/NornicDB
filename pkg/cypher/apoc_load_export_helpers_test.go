@@ -89,6 +89,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
 	e.SetAllowRemoteAPOCURLAccess(true)
+	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
 	ctx := context.Background()
 
 	_, err := e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray()")
@@ -168,6 +169,7 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
 	e.SetAllowRemoteAPOCURLAccess(true)
+	e.SetAPOCRemoteURLAllowlist([]string{"example.com"})
 	origClient := apocRemoteHTTPClient
 	apocRemoteHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -260,6 +262,7 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	exec.SetAllowLocalAPOCFileAccess(true)
 	exec.SetAllowRemoteAPOCURLAccess(true)
+	exec.SetAPOCRemoteURLAllowlist([]string{"example.com"})
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -367,6 +370,21 @@ func TestApocLoadExportHelpers_RemoteURLLoadsDeniedByDefault(t *testing.T) {
 
 	_, err = exec.callApocImportJson(ctx, "CALL apoc.import.json('"+srv.URL+"') YIELD source, nodes, relationships")
 	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+}
+
+func TestApocLoadExportHelpers_RemoteURLLoadsRequireAllowlistedHost(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	exec.SetAllowRemoteAPOCURLAccess(true)
+	ctx := context.Background()
+
+	_, err := exec.loadJsonFromURL("https://example.com/ok")
+	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
+
+	exec.SetAPOCRemoteURLAllowlist([]string{"api.example.com"})
+	_, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('https://example.com/data.csv') YIELD lineNo, list, map")
+	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
 }
 
 func TestApocLoadExportHelpers_LocalFileLoadsDeniedByDefault(t *testing.T) {

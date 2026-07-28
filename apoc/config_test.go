@@ -28,6 +28,13 @@ func TestLoadFromEnv_SplitFileAccessOverridesLegacyShorthand(t *testing.T) {
 	require.True(t, cfg.Security.AllowExportFileAccess)
 }
 
+func TestLoadFromEnv_RemoteURLAllowlistParsesCSV(t *testing.T) {
+	t.Setenv("NORNICDB_APOC_SECURITY_REMOTE_URL_ALLOWLIST", "example.com, *.example.org ,api.internal")
+
+	cfg := LoadFromEnv()
+	require.Equal(t, []string{"example.com", "*.example.org", "api.internal"}, cfg.Security.RemoteURLAllowlist)
+}
+
 func TestLoadFromEnvOrFile_LegacyFileAccessYamlEnablesImportAndExport(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apoc.yaml")

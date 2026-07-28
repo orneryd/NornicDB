@@ -526,6 +526,6 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 
 	default:
 		// Fallback: convert to string
-		return fmt.Sprintf("'%v'", v)
+		return quoteCypherStringLiteral(fmt.Sprintf("%v", v))
 	}
 }

@@ -79,6 +79,10 @@ type SecurityConfig struct {
 	AllowExportFileAccess bool `yaml:"allow_export_file_access"`
 	// AllowRemoteURLAccess permits APOC load/import HTTP(S) fetches.
 	AllowRemoteURLAccess bool `yaml:"allow_remote_url_access"`
+	// RemoteURLAllowlist restricts APOC HTTP(S) fetches to explicitly approved
+	// hosts. Entries are matched against URL hostnames and may be exact names
+	// or wildcard suffixes like "*.example.com".
+	RemoteURLAllowlist []string `yaml:"remote_url_allowlist"`
 	// FileAccessRoot is the local import root used for APOC file URLs.
 	// Empty means local file access, when enabled, is unrestricted.
 	// When set, local file-like inputs are normalized and rebased under that
@@ -113,6 +117,7 @@ func DefaultConfig() *Config {
 			AllowImportFileAccess: false,
 			AllowExportFileAccess: false,
 			AllowRemoteURLAccess:  false,
+			RemoteURLAllowlist:    nil,
 			FileAccessRoot:        "",
 			MaxCollectionSize:     100000,
 		},
@@ -190,6 +195,9 @@ func LoadFromEnv() *Config {
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS"); val != "" {
 		cfg.Security.AllowRemoteURLAccess = parseBool(val, false)
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_REMOTE_URL_ALLOWLIST"); val != "" {
+		cfg.Security.RemoteURLAllowlist = parseCSVList(val)
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {
@@ -286,6 +294,9 @@ func LoadFromEnvOrFile(filePath string) *Config {
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS"); val != "" {
 		cfg.Security.AllowRemoteURLAccess = parseBool(val, cfg.Security.AllowRemoteURLAccess)
 	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_REMOTE_URL_ALLOWLIST"); val != "" {
+		cfg.Security.RemoteURLAllowlist = parseCSVList(val)
+	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {
 			cfg.Security.MaxCollectionSize = size
@@ -303,6 +314,22 @@ func applyLegacyFileAccessShorthand(cfg *Config) {
 		cfg.Security.AllowImportFileAccess = true
 		cfg.Security.AllowExportFileAccess = true
 	}
+}
+
+func parseCSVList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // IsEnabled checks if a specific function is enabled.

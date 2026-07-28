@@ -80,4 +80,6 @@ func TestValueToLiteral_DefaultFallbackBranch(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	got := exec.valueToLiteral(customLiteral{s: "fallback-value"})
 	require.Equal(t, "'fallback-value'", got)
+	got = exec.valueToLiteral(customLiteral{s: "O'Reilly"})
+	require.Equal(t, "'O''Reilly'", got)
 }
