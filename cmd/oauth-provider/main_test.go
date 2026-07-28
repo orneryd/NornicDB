@@ -10,8 +10,19 @@ import (
 	"time"
 )
 
+const testRedirectURI = "http://localhost:3000/callback"
+
+func newTestOAuthProvider(t *testing.T) *OAuthProvider {
+	t.Helper()
+	provider, err := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888", testRedirectURI)
+	if err != nil {
+		t.Fatalf("NewOAuthProvider: %v", err)
+	}
+	return provider
+}
+
 func TestOAuthProvider_Authorize(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	tests := []struct {
 		name           string
@@ -59,6 +70,16 @@ func TestOAuthProvider_Authorize(t *testing.T) {
 			},
 			wantStatus:   http.StatusBadRequest,
 			wantContains: "redirect_uri is required",
+		},
+		{
+			name: "unregistered localhost redirect",
+			queryParams: map[string]string{
+				"response_type": "code",
+				"client_id":     "test-client",
+				"redirect_uri":  "http://localhost:9999/other-callback",
+			},
+			wantStatus:   http.StatusBadRequest,
+			wantContains: "redirect_uri is not registered",
 		},
 	}
 
@@ -113,7 +134,7 @@ func TestValidateLocalRedirectURI(t *testing.T) {
 }
 
 func TestOAuthProvider_ConsentRejectsExternalRedirect(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 	form := url.Values{
 		"client_id":    {"test-client"},
 		"redirect_uri": {"https://example.com/callback"},
@@ -135,7 +156,7 @@ func TestOAuthProvider_ConsentRejectsExternalRedirect(t *testing.T) {
 }
 
 func TestOAuthProvider_Consent(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	redirectURI := "http://localhost:3000/callback"
 	state := "test-state-123"
@@ -211,7 +232,7 @@ func TestOAuthProvider_Consent(t *testing.T) {
 }
 
 func TestOAuthProvider_TokenExchange(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	// Create an authorization code
 	code, err := generateRandomToken(32)
@@ -285,7 +306,7 @@ func TestOAuthProvider_TokenExchange(t *testing.T) {
 }
 
 func TestOAuthProvider_TokenExchange_InvalidCode(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
@@ -315,7 +336,7 @@ func TestOAuthProvider_TokenExchange_InvalidCode(t *testing.T) {
 }
 
 func TestOAuthProvider_TokenExchange_InvalidClient(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	code, err := generateRandomToken(32)
 	if err != nil {
@@ -359,7 +380,7 @@ func TestOAuthProvider_TokenExchange_InvalidClient(t *testing.T) {
 }
 
 func TestOAuthProvider_Userinfo(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	// Create an access token
 	accessToken, err := generateRandomToken(32)
@@ -408,7 +429,7 @@ func TestOAuthProvider_Userinfo(t *testing.T) {
 }
 
 func TestOAuthProvider_Userinfo_InvalidToken(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/oauth2/v1/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -431,7 +452,7 @@ func TestOAuthProvider_Userinfo_InvalidToken(t *testing.T) {
 }
 
 func TestOAuthProvider_Discovery(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
 	w := httptest.NewRecorder()
@@ -461,7 +482,7 @@ func TestOAuthProvider_Discovery(t *testing.T) {
 }
 
 func TestOAuthProvider_Health(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -487,7 +508,7 @@ func TestOAuthProvider_Health(t *testing.T) {
 }
 
 func TestOAuthProvider_TokenExpiration(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	// Create an expired access token
 	accessToken, err := generateRandomToken(32)
@@ -527,7 +548,7 @@ func TestOAuthProvider_TokenExpiration(t *testing.T) {
 }
 
 func TestOAuthProvider_RedirectURIMismatch(t *testing.T) {
-	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	provider := newTestOAuthProvider(t)
 
 	code, err := generateRandomToken(32)
 	if err != nil {

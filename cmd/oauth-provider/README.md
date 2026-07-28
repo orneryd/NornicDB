@@ -120,6 +120,9 @@ NORNICDB_OAUTH_CALLBACK_URL=http://localhost:7474/auth/oauth/callback
    go run ./cmd/oauth-provider
    ```
 
+    The provider registers `http://localhost:7474/auth/oauth/callback` by default.
+    Use `-redirect-uri` to register a different exact local callback URL.
+
 2. **Start NornicDB** with OAuth configuration
 
 3. **Navigate to login page** in NornicDB UI

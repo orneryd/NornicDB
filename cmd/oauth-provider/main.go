@@ -38,6 +38,7 @@ const (
 	defaultClientID     = "nornicdb-local-test"
 	defaultClientSecret = "local-test-secret-123"
 	defaultIssuer       = "http://localhost:8888"
+	defaultRedirectURI  = "http://localhost:7474/auth/oauth/callback"
 )
 
 // User represents a test user in the OAuth provider
@@ -72,10 +73,16 @@ type OAuthProvider struct {
 	clientID     string
 	clientSecret string
 	issuer       string
+	redirectURI  string
+	redirectURL  *url.URL
 }
 
 // NewOAuthProvider creates a new OAuth provider with default test users
-func NewOAuthProvider(clientID, clientSecret, issuer string) *OAuthProvider {
+func NewOAuthProvider(clientID, clientSecret, issuer, redirectURI string) (*OAuthProvider, error) {
+	redirectURL, err := validateLocalRedirectURI(redirectURI)
+	if err != nil {
+		return nil, fmt.Errorf("invalid registered redirect URI: %w", err)
+	}
 	return &OAuthProvider{
 		authCodes:    make(map[string]*AuthCode),
 		accessTokens: make(map[string]*AccessToken),
@@ -105,7 +112,9 @@ func NewOAuthProvider(clientID, clientSecret, issuer string) *OAuthProvider {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		issuer:       issuer,
-	}
+		redirectURI:  redirectURL.String(),
+		redirectURL:  redirectURL,
+	}, nil
 }
 
 // generateRandomToken generates a cryptographically secure random token
@@ -166,13 +175,13 @@ func (p *OAuthProvider) handleAuthorize(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "redirect_uri is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := validateLocalRedirectURI(redirectURI); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if redirectURI != p.redirectURI {
+		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
 		return
 	}
 
 	// Render consent form
-	p.renderConsentForm(w, clientID, redirectURI, state, scope)
+	p.renderConsentForm(w, clientID, p.redirectURI, state, scope)
 }
 
 // renderConsentForm renders the HTML consent form
@@ -300,9 +309,8 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid client_id", http.StatusBadRequest)
 		return
 	}
-	redirectURL, err := validateLocalRedirectURI(redirectURI)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if redirectURI != p.redirectURI {
+		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
 		return
 	}
 
@@ -318,7 +326,7 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.authCodes[authCode] = &AuthCode{
 		ClientID:    clientID,
-		RedirectURI: redirectURI,
+		RedirectURI: p.redirectURI,
 		UserID:      userID,
 		ExpiresAt:   expiresAt,
 	}
@@ -326,7 +334,8 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[OAuth Provider] Generated authorization code")
 
-	// Redirect back to the validated local callback with the authorization response.
+	// Build the response from the provider-owned registered callback, never the submitted URI.
+	redirectURL := *p.redirectURL
 	query := redirectURL.Query()
 	query.Set("code", authCode)
 	query.Set("state", state)
@@ -609,9 +618,13 @@ func main() {
 	clientID := flag.String("client-id", defaultClientID, "OAuth client ID")
 	clientSecret := flag.String("client-secret", defaultClientSecret, "OAuth client secret")
 	issuer := flag.String("issuer", defaultIssuer, "OAuth issuer URL")
+	redirectURI := flag.String("redirect-uri", defaultRedirectURI, "Exact registered OAuth callback URL")
 	flag.Parse()
 
-	provider := NewOAuthProvider(*clientID, *clientSecret, *issuer)
+	provider, err := NewOAuthProvider(*clientID, *clientSecret, *issuer, *redirectURI)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Start cleanup goroutine
 	go provider.cleanupExpiredTokens()
