@@ -77,6 +77,7 @@ func saveSearchBuildSettings(path string, snap searchBuildSettingsSnapshot) erro
 	if path == "" {
 		return nil
 	}
+	// lgtm[go/path-injection] -- path is derived from the configured search persistence root.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

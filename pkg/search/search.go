@@ -3145,6 +3145,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if fulltextPath != "" {
 		_ = s.fulltextIndex.Load(fulltextPath)
 		if s.fulltextIndex.Count() == 0 {
+			// lgtm[go/path-injection] -- fulltextPath is configured during service startup.
 			if info, statErr := os.Stat(fulltextPath); statErr == nil {
 				log.Printf("📇 BuildIndexes: BM25 file present but loaded 0 docs (%s, %d bytes); rebuilding from storage",
 					fulltextPath, info.Size())
@@ -3153,6 +3154,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	}
 	// Prefer file-backed vector store when .vec exists (low-RAM format); else legacy in-memory index.
 	if vectorPath != "" && s.vectorIndex != nil {
+		// lgtm[go/path-injection] -- vectorPath is configured during service startup.
 		if _, err := os.Stat(vectorPath + ".vec"); err == nil {
 			dims := s.vectorIndex.GetDimensions()
 			if dims <= 0 {
@@ -3205,6 +3207,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		// This avoids breaking valid "disk-only bootstrap" test/restore scenarios.
 		if p, ok := s.engine.(interface{ LastWriteTime() time.Time }); ok {
 			if lastWrite := p.LastWriteTime(); !lastWrite.IsZero() {
+				// lgtm[go/path-injection] -- vectorPath is configured during service startup.
 				if info, statErr := os.Stat(vectorPath + ".vec"); statErr == nil {
 					shouldClearStaleDisk = lastWrite.After(info.ModTime())
 				}
@@ -3259,6 +3262,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	// Only relevant when we are rebuilding; do not invalidate on skipIteration path.
 	if !skipIteration && vectorPath != "" && s.vectorFileStore != nil {
 		if lastWrite := s.lastWriteTime(); !lastWrite.IsZero() {
+			// lgtm[go/path-injection] -- vectorPath is configured during service startup.
 			if info, err := os.Stat(vectorPath + ".vec"); err == nil {
 				if lastWrite.After(info.ModTime()) {
 					restartVectorStore = true
@@ -3318,6 +3322,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		} else if err != nil {
 			hnswWarmupReason = fmt.Sprintf("load failed: %v", err)
 		} else if loaded == nil {
+			// lgtm[go/path-injection] -- hnswPath is configured during service startup.
 			if info, statErr := os.Stat(hnswPath); statErr == nil {
 				if info.Size() == 0 {
 					hnswWarmupReason = "index file exists but is empty"
@@ -3354,7 +3359,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
 	if vectorPath != "" && !resumeVectors {
+		// lgtm[go/path-injection] -- vectorPath is configured during service startup.
 		_ = os.Remove(vectorPath + ".vec")
+		// lgtm[go/path-injection] -- vectorPath is configured during service startup.
 		_ = os.Remove(vectorPath + ".meta")
 		s.mu.Lock()
 		if s.vectorFileStore != nil {

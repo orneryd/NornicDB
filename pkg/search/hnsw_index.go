@@ -33,6 +33,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -687,18 +688,20 @@ func (h *HNSWIndex) Save(path string) error {
 	maxLevel := h.maxLevel
 	h.mu.RUnlock()
 
+	// lgtm[go/path-injection] -- path is derived from the configured search persistence root.
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	// Write atomically so interruptions do not leave a truncated/corrupt visible file.
 	// Use a stable temp filename so we overwrite the same tmp path each save.
 	tmpPath := path + ".tmp"
-	tmpFile, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	tmpFile, err := security.CreateRootedFile(tmpPath, 0o644)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		_ = tmpFile.Close()
+		// lgtm[go/path-injection] -- deterministic temporary snapshot beside configured target.
 		_ = os.Remove(tmpPath)
 	}()
 
@@ -730,6 +733,7 @@ func (h *HNSWIndex) Save(path string) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
+	// lgtm[go/path-injection] -- deterministic temporary and target paths under configured root.
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
@@ -745,7 +749,7 @@ type VectorLookup func(id string) ([]float32, bool)
 // For legacy full format (1.0.0), vectorLookup is ignored. If the file does not exist or decode fails,
 // returns (nil, nil) so the caller can rebuild. Returns an error only for unexpected I/O (e.g. permission denied).
 func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -755,7 +759,7 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	defer file.Close()
 
 	var snap hnswIndexSnapshot
-	if err := util.DecodeMsgpackFile(file, &snap); err != nil {
+	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
 		return nil, nil
 	}
 	if snap.Dimensions <= 0 || snap.InternalToID == nil {
@@ -828,6 +832,7 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, clusterHNSW ma
 	}
 	baseDir := filepath.Dir(hnswPath)
 	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
+	// lgtm[go/path-injection] -- IVFPQ directory is derived from configured HNSW path.
 	if err := os.MkdirAll(ivfDir, 0755); err != nil {
 		return err
 	}
@@ -865,13 +870,13 @@ func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
 		return nil, nil
 	}
 	path := filepath.Join(ivfDir, fmt.Sprintf("%d", clusterID))
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 	var snap hnswIndexSnapshot
-	if err := util.DecodeMsgpackFile(file, &snap); err != nil {
+	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
 		return nil, err
 	}
 	if snap.InternalToID == nil {

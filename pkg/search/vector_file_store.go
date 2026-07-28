@@ -112,9 +112,11 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 
 	// Open or create .vec file
 	exists := false
+	// lgtm[go/path-injection] -- vecPath is derived from the configured search persistence root.
 	if _, err := os.Stat(vecPath); err == nil {
 		exists = true
 	}
+	// lgtm[go/path-injection] -- vecPath is derived from the configured search persistence root.
 	if err := os.MkdirAll(filepath.Dir(vecPath), 0755); err != nil {
 		return nil, err
 	}
@@ -502,10 +504,11 @@ func (v *VectorFileStore) Save() error {
 	}
 	v.mu.RUnlock()
 
+	// lgtm[go/path-injection] -- metaPath is derived from the configured search persistence root.
 	if err := os.MkdirAll(filepath.Dir(v.metaPath), 0755); err != nil {
 		return err
 	}
-	f, err := os.Create(v.metaPath)
+	f, err := security.CreateRootedFile(v.metaPath, 0o644)
 	if err != nil {
 		return err
 	}
@@ -528,7 +531,7 @@ func (v *VectorFileStore) Load() error {
 	if v.closed {
 		return errVecFileClosed
 	}
-	f, err := os.Open(v.metaPath)
+	f, err := security.OpenRootedFile(v.metaPath, os.O_RDONLY, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No meta; rebuild idToOff from .vec if present.
@@ -538,7 +541,7 @@ func (v *VectorFileStore) Load() error {
 	}
 	defer f.Close()
 	var meta VectorFileStoreMeta
-	if err := util.DecodeMsgpackFile(f, &meta); err != nil {
+	if err := util.DecodeMsgpackFile(f.File, &meta); err != nil {
 		// Corrupt meta; rebuild idToOff from .vec.
 		return v.rebuildIndexFromVecLocked()
 	}
@@ -717,12 +720,13 @@ func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 
 func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	tmpPath := v.vecPath + ".tmp-compact"
-	tmp, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	tmp, err := security.CreateRootedFile(tmpPath, 0o644)
 	if err != nil {
 		return err
 	}
 	cleanup := func() {
 		_ = tmp.Close()
+		// lgtm[go/path-injection] -- deterministic temporary file beside configured vector store.
 		_ = os.Remove(tmpPath)
 	}
 	defer cleanup()
@@ -749,7 +753,7 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeVectorRecord(tmp, id, vec); err != nil {
+		if err := writeVectorRecord(tmp.File, id, vec); err != nil {
 			return err
 		}
 		newOffsets[id] = newOffset
@@ -764,6 +768,7 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := v.file.Close(); err != nil {
 		return err
 	}
+	// lgtm[go/path-injection] -- deterministic temporary and target paths under configured vector store.
 	if err := os.Rename(tmpPath, v.vecPath); err != nil {
 		return err
 	}

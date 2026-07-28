@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -105,7 +106,7 @@ func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) erro
 }
 
 func (f *FulltextIndexV2) Load(path string) error {
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -115,7 +116,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 	defer file.Close()
 
 	var v2 bm25V2Snapshot
-	if err := util.DecodeMsgpackFile(file, &v2); err == nil && v2.Version != "" &&
+	if err := util.DecodeMsgpackFile(file.File, &v2); err == nil && v2.Version != "" &&
 		searchIndexVersionCompatible(v2.Version, bm25V2FormatVersion, "BM25 V2") {
 		f.applyV2Snapshot(v2)
 		return nil
@@ -124,7 +125,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 	}
 
 	// Fallback: try legacy BM25 V1 file format and migrate to V2 in-memory.
-	fileLegacy, err := os.Open(path)
+	fileLegacy, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -134,7 +135,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 	defer fileLegacy.Close()
 
 	var v1 bm25V1Snapshot
-	if err := util.DecodeMsgpackFile(fileLegacy, &v1); err != nil {
+	if err := util.DecodeMsgpackFile(fileLegacy.File, &v1); err != nil {
 		log.Printf("⚠️ BM25 V2 load: failed decoding %s as legacy snapshot: %v", path, err)
 		f.Clear()
 		return nil

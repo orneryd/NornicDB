@@ -10,6 +10,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -141,7 +142,7 @@ func (f *FulltextIndex) SaveNoCopy(path string) error {
 // missing file) and no error is returned, so the caller can proceed with a full rebuild.
 // Returns an error only for unexpected I/O (e.g. permission denied).
 func (f *FulltextIndex) Load(path string) error {
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // No saved index; caller will rebuild
@@ -151,7 +152,7 @@ func (f *FulltextIndex) Load(path string) error {
 	defer file.Close()
 
 	var snap fulltextIndexSnapshot
-	if err := util.DecodeMsgpackFile(file, &snap); err != nil {
+	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
 		// Corrupt or wrong format; clear index so caller rebuilds
 		f.mu.Lock()
 		f.documents = make(map[string]string)

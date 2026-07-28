@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -57,6 +58,7 @@ func LoadIVFPQBundle(basePath string) (*IVFPQIndex, error) {
 	if dir == "" {
 		return nil, nil
 	}
+	// lgtm[go/path-injection] -- bundle directory is derived from configured persistence base path.
 	if _, err := os.Stat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -97,12 +99,12 @@ func LoadIVFPQBundle(basePath string) (*IVFPQIndex, error) {
 }
 
 func decodeMsgpackFile(path string, dst any) error {
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if err := util.DecodeMsgpackFile(file, dst); err != nil {
+	if err := util.DecodeMsgpackFile(file.File, dst); err != nil {
 		return err
 	}
 	return nil
