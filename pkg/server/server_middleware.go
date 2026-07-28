@@ -88,7 +88,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 					Value:    tokenResp.AccessToken,
 					Path:     "/",
 					HttpOnly: true,
-					Secure:   r.TLS != nil,
+					Secure:   true,
 					SameSite: http.SameSiteLaxMode,
 					MaxAge:   86400 * 7, // 7 days
 				})

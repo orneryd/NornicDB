@@ -43,14 +43,17 @@ func TestWithAuth_BasicAuthSetsJWTTokenCookie(t *testing.T) {
 		t.Fatalf("got status %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
-	found := false
+	var tokenCookie *http.Cookie
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "nornicdb_token" && c.Value != "" {
-			found = true
+			tokenCookie = c
 			break
 		}
 	}
-	if !found {
+	if tokenCookie == nil {
 		t.Fatalf("expected nornicdb_token cookie to be set")
+	}
+	if !tokenCookie.Secure {
+		t.Fatal("expected nornicdb_token cookie to require HTTPS")
 	}
 }

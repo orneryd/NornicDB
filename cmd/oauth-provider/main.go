@@ -117,6 +117,24 @@ func generateRandomToken(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+func validateLocalRedirectURI(rawURI string) (*url.URL, error) {
+	redirectURL, err := url.Parse(rawURI)
+	if err != nil {
+		return nil, fmt.Errorf("invalid redirect_uri: %w", err)
+	}
+	if redirectURL.Scheme != "http" && redirectURL.Scheme != "https" {
+		return nil, fmt.Errorf("invalid redirect_uri scheme")
+	}
+	if redirectURL.Host == "" || redirectURL.User != nil || redirectURL.Fragment != "" {
+		return nil, fmt.Errorf("invalid redirect_uri")
+	}
+	host := strings.ToLower(redirectURL.Hostname())
+	if host != "localhost" && host != "127.0.0.1" && !strings.HasSuffix(host, ".localhost") {
+		return nil, fmt.Errorf("invalid redirect_uri: only localhost is allowed for testing")
+	}
+	return redirectURL, nil
+}
+
 // handleAuthorize handles the OAuth 2.0 authorization endpoint
 // GET /oauth2/v1/authorize
 func (p *OAuthProvider) handleAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +164,10 @@ func (p *OAuthProvider) handleAuthorize(w http.ResponseWriter, r *http.Request) 
 
 	if redirectURI == "" {
 		http.Error(w, "redirect_uri is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := validateLocalRedirectURI(redirectURI); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -274,6 +296,15 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 	userID := r.Form.Get("user_id")
 
 	log.Printf("[OAuth Provider] User consent received: client_id=%s has_redirect=%t", clientID, redirectURI != "")
+	if clientID != p.clientID {
+		http.Error(w, "Invalid client_id", http.StatusBadRequest)
+		return
+	}
+	redirectURL, err := validateLocalRedirectURI(redirectURI)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Generate authorization code
 	authCode, err := generateRandomToken(32)
@@ -295,27 +326,13 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[OAuth Provider] Generated authorization code")
 
-	// Redirect back to app with code
-	redirectURL, err := url.Parse(redirectURI)
-	if err != nil {
-		http.Error(w, "Invalid redirect_uri", http.StatusBadRequest)
-		return
-	}
+	// Redirect back to the validated local callback with the authorization response.
+	query := redirectURL.Query()
+	query.Set("code", authCode)
+	query.Set("state", state)
+	redirectURL.RawQuery = query.Encode()
 
-	redirectURL.RawQuery = url.Values{
-		"code":  []string{authCode},
-		"state": []string{state},
-	}.Encode()
-
-	// Validate redirect URL to prevent open redirect attacks
-	// Only allow http://localhost and http://127.0.0.1 for local testing
-	redirectHost := redirectURL.Hostname()
-	if redirectHost != "localhost" && redirectHost != "127.0.0.1" && !strings.HasSuffix(redirectHost, ".localhost") {
-		http.Error(w, "Invalid redirect_uri: only localhost is allowed for testing", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("[OAuth Provider] Redirecting to validated localhost callback host=%s", redirectHost)
+	log.Printf("[OAuth Provider] Redirecting to validated localhost callback host=%s", redirectURL.Hostname())
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 

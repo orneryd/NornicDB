@@ -89,6 +89,51 @@ func TestOAuthProvider_Authorize(t *testing.T) {
 	}
 }
 
+func TestValidateLocalRedirectURI(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		uri     string
+		wantErr bool
+	}{
+		{name: "localhost http", uri: "http://localhost:3000/callback"},
+		{name: "localhost https", uri: "https://app.localhost/callback"},
+		{name: "loopback", uri: "http://127.0.0.1:7474/callback"},
+		{name: "external host", uri: "https://example.com/callback", wantErr: true},
+		{name: "non HTTP scheme", uri: "javascript:alert(1)", wantErr: true},
+		{name: "userinfo", uri: "https://user@localhost/callback", wantErr: true},
+		{name: "fragment", uri: "http://localhost/callback#token", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := validateLocalRedirectURI(test.uri)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateLocalRedirectURI(%q) error = %v, wantErr %t", test.uri, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestOAuthProvider_ConsentRejectsExternalRedirect(t *testing.T) {
+	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
+	form := url.Values{
+		"client_id":    {"test-client"},
+		"redirect_uri": {"https://example.com/callback"},
+		"state":        {"test-state"},
+		"user_id":      {"user-001"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/v1/authorize/consent", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	provider.handleConsent(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("handleConsent status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if location := w.Header().Get("Location"); location != "" {
+		t.Fatalf("unexpected redirect location: %q", location)
+	}
+}
+
 func TestOAuthProvider_Consent(t *testing.T) {
 	provider := NewOAuthProvider("test-client", "test-secret", "http://localhost:8888")
 

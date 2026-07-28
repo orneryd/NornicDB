@@ -66,8 +66,8 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		Name:     "nornicdb_token",
 		Value:    tokenResp.AccessToken,
 		Path:     "/",
-		HttpOnly: true,                 // Prevent XSS attacks
-		Secure:   isHTTPSRequest(r),    // Secure over direct TLS or trusted proxy TLS
+		HttpOnly: true, // Prevent XSS attacks
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode, // Lax allows normal navigation, prevents CSRF on POST
 		MaxAge:   86400 * 7,            // 7 days
 	})
@@ -82,7 +82,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isHTTPSRequest(r),
+		Secure:   true,
 		MaxAge:   -1, // Delete cookie
 	})
 
@@ -371,7 +371,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    tokenResponse.AccessToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isHTTPSRequest(r),
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400 * 7, // 7 days
 	})
