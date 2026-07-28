@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -153,6 +153,13 @@ func splitQualifiedID(id string) (dbName string, local string, ok bool) {
 		return "", "", false
 	}
 	return dbName, local, true
+}
+
+func searchPersistenceBasePath(dataDir, dbName string) (string, error) {
+	if dbName == "" || dbName == "." || dbName == ".." || strings.ContainsAny(dbName, "/\\\x00") || filepath.IsAbs(dbName) {
+		return "", fmt.Errorf("invalid database name for search persistence: %q", dbName)
+	}
+	return filepath.Join(dataDir, "search", dbName), nil
 }
 
 func (db *DB) defaultDatabaseName() string {
@@ -308,7 +315,10 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// If a rebuild is required (e.g., missing/incompatible artifacts), IVF-HNSW rebuild at startup
 	// can be long on large datasets (~30 minutes for ~1M embeddings on observed hardware).
 	if persistSearchIndexesEnabled {
-		base := filepath.Join(db.config.Database.DataDir, "search", dbName)
+		base, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
+		if err != nil {
+			return nil, err
+		}
 		fulltextFilename := "bm25"
 		if strings.EqualFold(strings.TrimSpace(bm25Engine), search.BM25EngineV2) {
 			fulltextFilename = "bm25.v2"
@@ -434,7 +444,11 @@ func (db *DB) DropSearchServiceState(dbName string) {
 	if db.config == nil || db.config.Database.DataDir == "" {
 		return
 	}
-	_ = os.RemoveAll(filepath.Join(db.config.Database.DataDir, "search", dbName))
+	searchPath, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
+	if err != nil {
+		return
+	}
+	_ = security.RemoveAllRootedPath(searchPath)
 }
 
 // GetDatabaseSearchStatus returns readiness and progress for the database search service.

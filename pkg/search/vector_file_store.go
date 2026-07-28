@@ -14,7 +14,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
@@ -112,12 +111,10 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 
 	// Open or create .vec file
 	exists := false
-	// lgtm[go/path-injection] -- vecPath is derived from the configured search persistence root.
-	if _, err := os.Stat(vecPath); err == nil {
+	if _, err := security.RootedStat(vecPath); err == nil {
 		exists = true
 	}
-	// lgtm[go/path-injection] -- vecPath is derived from the configured search persistence root.
-	if err := os.MkdirAll(filepath.Dir(vecPath), 0755); err != nil {
+	if err := security.EnsureRootedParent(vecPath, 0o755); err != nil {
 		return nil, err
 	}
 
@@ -504,8 +501,7 @@ func (v *VectorFileStore) Save() error {
 	}
 	v.mu.RUnlock()
 
-	// lgtm[go/path-injection] -- metaPath is derived from the configured search persistence root.
-	if err := os.MkdirAll(filepath.Dir(v.metaPath), 0755); err != nil {
+	if err := security.EnsureRootedParent(v.metaPath, 0o755); err != nil {
 		return err
 	}
 	f, err := security.CreateRootedFile(v.metaPath, 0o644)
@@ -726,8 +722,7 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	}
 	cleanup := func() {
 		_ = tmp.Close()
-		// lgtm[go/path-injection] -- deterministic temporary file beside configured vector store.
-		_ = os.Remove(tmpPath)
+		_ = security.RemoveRootedPath(tmpPath)
 	}
 	defer cleanup()
 
@@ -768,8 +763,7 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := v.file.Close(); err != nil {
 		return err
 	}
-	// lgtm[go/path-injection] -- deterministic temporary and target paths under configured vector store.
-	if err := os.Rename(tmpPath, v.vecPath); err != nil {
+	if err := security.RenameRootedFile(tmpPath, v.vecPath); err != nil {
 		return err
 	}
 	reopened, err := security.OpenRootedFile(v.vecPath, os.O_RDWR|os.O_CREATE, 0o644)

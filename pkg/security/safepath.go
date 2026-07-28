@@ -45,6 +45,85 @@ func WriteRootedFile(path string, data []byte, perm os.FileMode) error {
 	return file.Close()
 }
 
+// EnsureRootedParent creates the parent directory of a canonical path through
+// an os.Root capability.
+func EnsureRootedParent(path string, perm os.FileMode) error {
+	root, name, err := openPathRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.MkdirAll(filepath.Dir(name), perm)
+}
+
+// RootedStat returns information about a canonical path through an os.Root capability.
+func RootedStat(path string) (os.FileInfo, error) {
+	root, name, err := openPathRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Stat(name)
+}
+
+// RemoveAllRootedPath removes a canonical path through an os.Root capability.
+func RemoveAllRootedPath(path string) error {
+	root, name, err := openPathRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(name)
+}
+
+// RemoveRootedPath removes a canonical file or empty directory through an
+// os.Root capability.
+func RemoveRootedPath(path string) error {
+	root, name, err := openPathRoot(path)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(name)
+}
+
+// ReadRootedDir reads a canonical directory through an os.Root capability.
+func ReadRootedDir(path string) ([]os.DirEntry, error) {
+	root, name, err := openPathRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	dir, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return dir.ReadDir(-1)
+}
+
+// RenameRootedFile atomically renames canonical paths in the same directory
+// through a single os.Root capability.
+func RenameRootedFile(oldPath, newPath string) error {
+	oldDir, oldName, err := splitCanonicalFilePath(oldPath)
+	if err != nil {
+		return err
+	}
+	newDir, newName, err := splitCanonicalFilePath(newPath)
+	if err != nil {
+		return err
+	}
+	if oldDir != newDir {
+		return fmt.Errorf("rooted rename requires paths in the same directory")
+	}
+	root, err := os.OpenRoot(oldDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Rename(oldName, newName)
+}
+
 // RootedFile retains the root capability for the lifetime of an open file.
 type RootedFile struct {
 	*os.File
@@ -75,4 +154,23 @@ func splitCanonicalFilePath(path string) (string, string, error) {
 	}
 	dir := filepath.Dir(clean)
 	return dir, name, nil
+}
+
+func openPathRoot(path string) (*os.Root, string, error) {
+	if _, _, err := splitCanonicalFilePath(path); err != nil {
+		return nil, "", err
+	}
+	rootPath := "."
+	if filepath.IsAbs(path) {
+		rootPath = filepath.VolumeName(path) + string(filepath.Separator)
+	}
+	name, err := filepath.Rel(rootPath, path)
+	if err != nil {
+		return nil, "", err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
 }

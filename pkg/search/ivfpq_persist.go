@@ -58,8 +58,7 @@ func LoadIVFPQBundle(basePath string) (*IVFPQIndex, error) {
 	if dir == "" {
 		return nil, nil
 	}
-	// lgtm[go/path-injection] -- bundle directory is derived from configured persistence base path.
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := security.RootedStat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}

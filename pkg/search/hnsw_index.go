@@ -688,8 +688,7 @@ func (h *HNSWIndex) Save(path string) error {
 	maxLevel := h.maxLevel
 	h.mu.RUnlock()
 
-	// lgtm[go/path-injection] -- path is derived from the configured search persistence root.
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := security.EnsureRootedParent(path, 0o755); err != nil {
 		return err
 	}
 	// Write atomically so interruptions do not leave a truncated/corrupt visible file.
@@ -701,8 +700,7 @@ func (h *HNSWIndex) Save(path string) error {
 	}
 	defer func() {
 		_ = tmpFile.Close()
-		// lgtm[go/path-injection] -- deterministic temporary snapshot beside configured target.
-		_ = os.Remove(tmpPath)
+		_ = security.RemoveRootedPath(tmpPath)
 	}()
 
 	snap := hnswIndexSnapshot{
@@ -733,8 +731,7 @@ func (h *HNSWIndex) Save(path string) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	// lgtm[go/path-injection] -- deterministic temporary and target paths under configured root.
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := security.RenameRootedFile(tmpPath, path); err != nil {
 		return err
 	}
 	return nil
@@ -832,8 +829,7 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, clusterHNSW ma
 	}
 	baseDir := filepath.Dir(hnswPath)
 	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	// lgtm[go/path-injection] -- IVFPQ directory is derived from configured HNSW path.
-	if err := os.MkdirAll(ivfDir, 0755); err != nil {
+	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ".cluster"), 0o755); err != nil {
 		return err
 	}
 	for cid, idx := range clusterHNSW {
@@ -894,14 +890,9 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	}
 	baseDir := filepath.Dir(hnswPath)
 	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	ivfDirAbs, absErr := filepath.Abs(ivfDir)
-	if absErr != nil {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: resolve path %q: %v", ivfDir, absErr)
-		return nil, nil, nil
-	}
-	entries, err := os.ReadDir(ivfDirAbs)
+	entries, err := security.ReadRootedDir(ivfDir)
 	if err != nil {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDirAbs, err)
+		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDir, err)
 		return nil, nil, nil
 	}
 	var clusterIDs []int
@@ -918,7 +909,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 		}
 	}
 	if len(clusterIDs) == 0 {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDirAbs, len(seenNames), seenNames)
+		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDir, len(seenNames), seenNames)
 		return nil, nil, nil
 	}
 	sort.Ints(clusterIDs)
@@ -930,7 +921,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	centroidCounts := make([]int, maxCID+1)
 
 	for _, cid := range clusterIDs {
-		memberIDs, err := loadIVFClusterMemberIDs(ivfDirAbs, cid)
+		memberIDs, err := loadIVFClusterMemberIDs(ivfDir, cid)
 		if err != nil || len(memberIDs) == 0 {
 			continue
 		}
@@ -967,7 +958,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	}
 
 	if dims == 0 {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDirAbs)
+		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDir)
 		return nil, nil, nil
 	}
 	// Dense slice so centroid index matches cluster IDs (0, 1, 2, ...); RestoreClusteringState expects cid < len(centroids).

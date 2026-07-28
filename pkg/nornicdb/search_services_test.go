@@ -27,6 +27,20 @@ type namespaceListEngine struct {
 	namespaces []string
 }
 
+func TestSearchPersistenceBasePathRejectsInvalidDatabaseNames(t *testing.T) {
+	dataDir := t.TempDir()
+	for _, name := range []string{"", ".", "..", "../escape", "nested/name", `nested\name`, "/absolute", "nul\x00name"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := searchPersistenceBasePath(dataDir, name)
+			require.Error(t, err)
+		})
+	}
+
+	path, err := searchPersistenceBasePath(dataDir, "tenant-1")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dataDir, "search", "tenant-1"), path)
+}
+
 func (e *namespaceListEngine) ListNamespaces() []string {
 	return append([]string(nil), e.namespaces...)
 }
