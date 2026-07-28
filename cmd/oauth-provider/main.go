@@ -613,7 +613,7 @@ func main() {
 	provider.mu.RLock()
 	userList := make([]string, len(provider.users))
 	for i, u := range provider.users {
-		userList[i] = fmt.Sprintf("   • %s / %s - [%s]", u.PreferredUsername, u.Password, strings.Join(u.Roles, ", "))
+		userList[i] = fmt.Sprintf("   • %s - [%s]", u.PreferredUsername, strings.Join(u.Roles, ", "))
 	}
 	provider.mu.RUnlock()
 

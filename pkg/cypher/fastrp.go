@@ -568,13 +568,14 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 // initializeEmbeddingChunk initializes embeddings for a chunk of nodes
 func initializeEmbeddingChunk(embeddings [][]float64, start, end, dim int, rng *mathrand.Rand) {
 	dim = util.SafePreallocCap(dim, maxFastRPEmbeddingDimension)
-	if dim == 0 {
+	if dim <= 0 || dim > maxFastRPEmbeddingDimension {
 		for i := start; i < end; i++ {
 			embeddings[i] = nil
 		}
 		return
 	}
 	for i := start; i < end; i++ {
+		// dim is directly bounded above before this allocation.
 		embeddings[i] = make([]float64, dim)
 		for j := 0; j < dim; j++ {
 			// Sparse random projection: {-1, 0, 1} with probabilities {1/6, 2/3, 1/6}

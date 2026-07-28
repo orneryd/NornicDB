@@ -1615,6 +1615,8 @@ func runShell(cmd *cobra.Command, args []string) error {
 					}
 					values[i] = shellDisplayValue(column, v)
 				}
+				// lgtm[go/clear-text-logging] -- interactive local output is intentional;
+				// shellDisplayValue redacts values for sensitive column names.
 				cmd.Println(strings.Join(values, " | "))
 			}
 			cmd.Printf("\n(%d row(s))\n", len(result.Rows))
