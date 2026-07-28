@@ -479,16 +479,16 @@ func (d *idDictionary) loadFromBadger(db *badger.DB) error {
 
 // nodeForwardKey / edgeForwardKey encode the forward-map lookup key.
 func nodeIDForwardKey(id NodeID) []byte {
-	out := make([]byte, 1+len(id))
+	out := make([]byte, 1)
 	out[0] = prefixIDDictNodeForward
-	copy(out[1:], id)
+	out = append(out, id...)
 	return out
 }
 
 func edgeIDForwardKey(id EdgeID) []byte {
-	out := make([]byte, 1+len(id))
+	out := make([]byte, 1)
 	out[0] = prefixIDDictEdgeForward
-	copy(out[1:], id)
+	out = append(out, id...)
 	return out
 }
 

@@ -1,5 +1,7 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/pkg/util"
+
 // Traversal-seeded OPTIONAL MATCH execution.
 //
 // executeCompoundMatchOptionalMatch routes here when the primary MATCH clause
@@ -192,8 +194,8 @@ func invertOptionalDirection(direction string) string {
 // multiple joined rows.
 func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node, relVar string, edge *storage.Edge) traversalOptRow {
 	out := traversalOptRow{
-		nodes: make(map[string]*storage.Node, len(row.nodes)+1),
-		rels:  make(map[string]*storage.Edge, len(row.rels)+1),
+		nodes: make(map[string]*storage.Node, util.SafePreallocSum(len(row.nodes), 1)),
+		rels:  make(map[string]*storage.Edge, util.SafePreallocSum(len(row.rels), 1)),
 	}
 	for k, v := range row.nodes {
 		out.nodes[k] = v
@@ -230,7 +232,7 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 	rows := make([]traversalOptRow, 0, len(matchResult.Rows))
 	for _, r := range matchResult.Rows {
 		row := traversalOptRow{
-			nodes: make(map[string]*storage.Node, len(matchResult.Columns)),
+			nodes: make(map[string]*storage.Node, util.SafePreallocCap(len(matchResult.Columns))),
 			rels:  make(map[string]*storage.Edge),
 		}
 		for ci, col := range matchResult.Columns {

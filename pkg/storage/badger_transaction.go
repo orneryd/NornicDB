@@ -14,6 +14,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // BadgerTransaction wraps Badger's native transaction with constraint validation.
@@ -1050,7 +1051,7 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 	// pendingNodes / deletedNodes / committed-storage state. A value of
 	// true means "exists and is visible to this tx", false means "not
 	// visible" (deleted or absent).
-	existence := make(map[NodeID]bool, len(edges)*2)
+	existence := make(map[NodeID]bool, util.SafePreallocProduct(len(edges), 2))
 
 	nodeVisible := func(id NodeID) bool {
 		if cached, ok := existence[id]; ok {
@@ -1549,8 +1550,8 @@ func (tx *BadgerTransaction) HasPendingNodeMutations() bool {
 }
 
 func (tx *BadgerTransaction) mergePendingNodesLocked(committed []*Node, includePending func(*Node) bool) []*Node {
-	merged := make([]*Node, 0, len(committed)+len(tx.pendingNodes))
-	seen := make(map[NodeID]struct{}, len(committed)+len(tx.pendingNodes))
+	merged := make([]*Node, 0, util.SafePreallocSum(len(committed), len(tx.pendingNodes)))
+	seen := make(map[NodeID]struct{}, util.SafePreallocSum(len(committed), len(tx.pendingNodes)))
 
 	for _, node := range committed {
 		if node == nil {
@@ -1585,8 +1586,8 @@ func (tx *BadgerTransaction) mergePendingNodesLocked(committed []*Node, includeP
 }
 
 func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includePending func(*Edge) bool) []*Edge {
-	merged := make([]*Edge, 0, len(committed)+len(tx.pendingEdges))
-	seen := make(map[EdgeID]struct{}, len(committed)+len(tx.pendingEdges))
+	merged := make([]*Edge, 0, util.SafePreallocSum(len(committed), len(tx.pendingEdges)))
+	seen := make(map[EdgeID]struct{}, util.SafePreallocSum(len(committed), len(tx.pendingEdges)))
 
 	for _, edge := range committed {
 		if edge == nil {

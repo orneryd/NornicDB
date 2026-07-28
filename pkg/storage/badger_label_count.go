@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 var labelCountReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaLabelCountReady}
@@ -16,7 +17,7 @@ func normalizeCountLabel(label string) string {
 }
 
 func labelCountKey(namespace, label string) []byte {
-	key := make([]byte, 0, 3+len(namespace)+len(label))
+	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(label)))
 	key = append(key, prefixMVCCMeta, prefixMVCCMetaLabelCount)
 	key = append(key, namespace...)
 	key = append(key, 0)

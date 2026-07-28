@@ -57,7 +57,7 @@ const (
 func encodeEdgeCompactHeader(format byte, edge *Edge, startNum, endNum uint64, propsCap int) []byte {
 	typeBytes := []byte(edge.Type)
 	header := 1 + 1 + 8 + 8 + 8 + 8 + 8
-	buf := make([]byte, 0, header+5+len(typeBytes)+propsCap)
+	buf := make([]byte, 0, util.SafePreallocSum(header+5, len(typeBytes), propsCap))
 	buf = append(buf, format)
 
 	var flags byte

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 type temporalRefreshTarget struct {
@@ -74,7 +75,7 @@ func encodeTemporalSortTime(t time.Time) []byte {
 }
 
 func temporalHistoryPrefix(desc temporalIndexDescriptor) []byte {
-	key := make([]byte, 0, 2+len(desc.namespace)+len(desc.label)+len(desc.keyProp)+len(desc.startProp)+len(desc.endProp)+len(desc.keyHash)+6)
+	key := make([]byte, 0, util.SafePreallocSum(2, len(desc.namespace)+len(desc.label)+len(desc.keyProp)+len(desc.startProp)+len(desc.endProp)+len(desc.keyHash), 6))
 	key = append(key, prefixTemporalIndex)
 	key = append(key, []byte(desc.namespace)...)
 	key = append(key, 0x00)
@@ -100,7 +101,7 @@ func temporalHistoryKey(desc temporalIndexDescriptor, start time.Time, nodeID No
 }
 
 func temporalCurrentKey(desc temporalIndexDescriptor) []byte {
-	key := make([]byte, 0, 2+len(desc.namespace)+len(desc.label)+len(desc.keyProp)+len(desc.startProp)+len(desc.endProp)+len(desc.keyHash)+6)
+	key := make([]byte, 0, util.SafePreallocSum(2, len(desc.namespace)+len(desc.label)+len(desc.keyProp)+len(desc.startProp)+len(desc.endProp)+len(desc.keyHash), 6))
 	key = append(key, prefixTemporalHead)
 	key = append(key, []byte(desc.namespace)...)
 	key = append(key, 0x00)
@@ -799,7 +800,7 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 
 func (tx *BadgerTransaction) refreshTemporalCurrentPointers(targets map[string]temporalRefreshTarget) error {
 	now := time.Now().UTC()
-	exclude := make(map[NodeID]struct{}, len(tx.deletedNodes)+len(tx.pendingNodes))
+	exclude := make(map[NodeID]struct{}, util.SafePreallocSum(len(tx.deletedNodes), len(tx.pendingNodes)))
 	for nodeID := range tx.deletedNodes {
 		exclude[nodeID] = struct{}{}
 	}

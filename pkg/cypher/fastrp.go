@@ -562,7 +562,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 	normalizeEmbeddings(embeddings, dim)
 
 	// Build result map
-	result := make(map[string][]float64, util.SafePreallocCap(numNodes))
+	result := make(map[string][]float64, util.SafePreallocCap(len(proj.NodeIDs)))
 	for i, nodeID := range proj.NodeIDs {
 		result[nodeID] = embeddings[i]
 	}
