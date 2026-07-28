@@ -9,12 +9,8 @@ const minIntValue = -maxIntValue - 1
 
 // SafeInt64ToInt converts int64 to int when the value fits.
 func SafeInt64ToInt(v int64) (int, bool) {
-	if strconv.IntSize == 32 {
-		if v < math.MinInt32 || v > math.MaxInt32 {
-			return 0, false
-		}
-	}
-	return int(v), true
+	converted, err := strconv.Atoi(strconv.FormatInt(v, 10))
+	return converted, err == nil
 }
 
 // ClampInt64ToInt converts int64 to int and saturates on overflow.
@@ -81,29 +77,18 @@ func SafeUint32ToInt(v uint32) (int, bool) {
 
 // SafeIntToUint32 converts a non-negative int to uint32 when it fits.
 func SafeIntToUint32(v int) (uint32, bool) {
-	if v < 0 {
+	parsed, err := strconv.ParseUint(strconv.Itoa(v), 10, 32)
+	if err != nil {
 		return 0, false
 	}
-	if strconv.IntSize > 32 {
-		u := uint(v)
-		if u>>32 != 0 {
-			return 0, false
-		}
-		return uint32(u), true
-	}
-	if uint(v)>>32 != 0 {
-		return 0, false
-	}
-	return uint32(v), true
+	return uint32(parsed), true
 }
 
 // SafeIntToUint16 converts a non-negative int to uint16 when it fits.
 func SafeIntToUint16(v int) (uint16, bool) {
-	if v < 0 {
+	parsed, err := strconv.ParseUint(strconv.Itoa(v), 10, 16)
+	if err != nil {
 		return 0, false
 	}
-	if uint(v)>>16 != 0 {
-		return 0, false
-	}
-	return uint16(v), true
+	return uint16(parsed), true
 }

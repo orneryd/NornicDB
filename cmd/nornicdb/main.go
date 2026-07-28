@@ -1602,8 +1602,8 @@ func runShell(cmd *cobra.Command, args []string) error {
 				displayColumns[i] = shellDisplayColumn(col)
 			}
 			// Print header
-			fmt.Println(strings.Join(displayColumns, " | "))
-			fmt.Println(strings.Repeat("-", len(strings.Join(displayColumns, " | "))))
+			cmd.Println(strings.Join(displayColumns, " | "))
+			cmd.Println(strings.Repeat("-", len(strings.Join(displayColumns, " | "))))
 
 			// Print rows
 			for _, row := range result.Rows {
@@ -1615,13 +1615,13 @@ func runShell(cmd *cobra.Command, args []string) error {
 					}
 					values[i] = shellDisplayValue(column, v)
 				}
-				fmt.Println(strings.Join(values, " | "))
+				cmd.Println(strings.Join(values, " | "))
 			}
-			fmt.Printf("\n(%d row(s))\n", len(result.Rows))
+			cmd.Printf("\n(%d row(s))\n", len(result.Rows))
 		} else {
-			fmt.Println("✅ Query executed successfully")
+			cmd.Println("✅ Query executed successfully")
 		}
-		fmt.Println()
+		cmd.Println()
 	}
 
 	if err := scanner.Err(); err != nil {
