@@ -1141,6 +1141,18 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 //
 // This is required so Cypher can do CREATE ... SET r.prop = ... in a single query
 // while using implicit/explicit transactions (writes must remain isolated until commit).
+//
+// Error contract:
+//   - ErrNotFound: the edge does not exist at this transaction's snapshot
+//     and is not live at latest-committed state either (never existed, or a
+//     peer deleted it).
+//   - ErrConflict ("edge <id> changed after transaction start"): the edge is
+//     live at latest-committed state but was committed AFTER this
+//     transaction began, so this transaction cannot update it. This is the
+//     same retryable conflict shape checkEdgeWriteConflict produces at
+//     commit time; callers (and Bolt clients, via
+//     Neo.TransientError.Transaction.Outdated) should retry on a fresh
+//     snapshot.
 func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
@@ -1167,9 +1179,12 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		oldEdge = copyEdge(pending)
 	} else {
 		var err error
-		oldEdge, err = tx.getCommittedEdgeLocked(edge.ID)
+		oldEdge, err = tx.getCommittedEdgeForUpdateLocked(edge.ID)
 		if err == ErrNotFound {
 			return ErrNotFound
+		}
+		if errors.Is(err, ErrConflict) {
+			return err
 		}
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
@@ -2006,6 +2021,55 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 		return nil, ErrNotFound
 	}
 	return edge, err
+}
+
+// getCommittedEdgeForUpdateLocked resolves the committed edge body for a
+// write (UpdateEdge). It behaves exactly like getCommittedEdgeLocked except
+// in one case: when the edge head exists but was committed AFTER this
+// transaction's snapshot (ErrNotVisibleAtSnapshot) and the edge is live at
+// latest-committed state, it returns ErrConflict instead of ErrNotFound.
+//
+// Rationale: MERGE resolves an existing relationship through a
+// latest-committed lookup (GetEdgesBetween), so a peer's post-begin commit
+// of the same relationship IS found — but a snapshot-scoped read here would
+// report the same edge as missing, failing the statement with a hard
+// "not found" that Bolt surfaces as a non-retryable client error. The same
+// interleaving succeeds on Neo4j (MERGE blocks on the relationship lock,
+// re-reads, and applies the SET); its only sanctioned conflict failure is a
+// transient code drivers auto-retry. Classifying this as ErrConflict keeps
+// the existing consumer-pinned wire shape ("edge %s changed after
+// transaction start" -> Neo.TransientError.Transaction.Outdated) that
+// checkEdgeWriteConflict already produces for the same race at commit time —
+// it moves that sanctioned disclosure to statement time, revealing nothing
+// new.
+//
+// The reclassification is tombstone-aware: if the peer DELETED the edge
+// (nothing live at latest-committed state), ErrNotFound remains correct.
+// Read paths (GetEdge) are intentionally untouched — snapshot isolation
+// still hides peer commits from reads.
+func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Edge, error) {
+	if tx.readTS.IsZero() {
+		return tx.getCommittedEdgeLocked(edgeID)
+	}
+	edge, err := tx.engine.GetEdgeVisibleAt(edgeID, tx.readTS)
+	if err != ErrNotVisibleAtSnapshot {
+		return edge, err
+	}
+	_, latestErr := tx.engine.GetEdgeLatestVisible(edgeID)
+	switch {
+	case latestErr == nil:
+		// Live at latest-committed state: a write-write conflict, not a
+		// missing edge. Wire contract: substrings "conflict:" and
+		// "changed after transaction start" are matched by downstream
+		// Bolt classifiers as transient.
+		// See docs/plans/consumer-pinned-error-contract-plan.md §2.2.
+		return nil, fmt.Errorf("%w: edge %s changed after transaction start", ErrConflict, edgeID)
+	case errors.Is(latestErr, ErrNotFound):
+		// Tombstoned or absent at latest-committed state — genuinely gone.
+		return nil, ErrNotFound
+	default:
+		return nil, latestErr
+	}
 }
 
 func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error) {

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Updating a relationship a peer transaction committed after this
+  transaction began is now a retryable transient conflict instead of a hard
+  "not found" error.**
+  Inside an explicit transaction, `MERGE` resolves an existing relationship
+  through a latest-committed lookup, but the property update read the same
+  edge through the transaction's begin-time snapshot. When a peer session
+  MERGEd the same relationship with different property values and committed
+  after the transaction began, the edge was found but not updatable, and
+  `MERGE ... SET` (both the plain and `UNWIND` batch forms) failed with
+  "not found", surfaced over Bolt as the non-retryable
+  `Neo.ClientError.Statement.SyntaxError`. Neo4j succeeds on this exact
+  interleaving (its `MERGE` blocks on the relationship lock, re-reads, and
+  applies the `SET`), so drivers' managed-transaction retry never engages on
+  the NornicDB error. The storage layer now classifies a snapshot-invisible
+  but live edge as the existing conflict shape
+  (`conflict: edge <id> changed after transaction start` →
+  `Neo.TransientError.Transaction.Outdated`) already used for the same race
+  at commit time, so managed transactions (`session.ExecuteWrite`) retry on
+  a fresh snapshot and converge to one relationship with the retrying
+  writer's values. The reclassification is tombstone-aware: an edge the peer
+  actually deleted still reports "not found", and snapshot-isolated reads
+  are unchanged.
+
 ## [v1.2.0] - 7/27/2026
 
 ### Changed
