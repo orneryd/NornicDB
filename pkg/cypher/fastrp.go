@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Memory constants for streaming thresholds
@@ -463,10 +464,10 @@ func parseFastRPConfig(cypher string) FastRPConfig {
 // generateFastRPEmbeddings implements the FastRP algorithm with memory-efficient processing
 // For large graphs, processes embeddings in chunks to avoid memory exhaustion
 func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[string][]float64 {
-	dim := config.EmbeddingDimension
+	dim := util.SafePreallocCap(config.EmbeddingDimension, maxFastRPEmbeddingDimension)
 	numNodes := len(proj.NodeIDs)
 
-	if numNodes == 0 {
+	if numNodes == 0 || dim == 0 {
 		return make(map[string][]float64)
 	}
 
@@ -566,6 +567,13 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 
 // initializeEmbeddingChunk initializes embeddings for a chunk of nodes
 func initializeEmbeddingChunk(embeddings [][]float64, start, end, dim int, rng *mathrand.Rand) {
+	dim = util.SafePreallocCap(dim, maxFastRPEmbeddingDimension)
+	if dim == 0 {
+		for i := start; i < end; i++ {
+			embeddings[i] = nil
+		}
+		return
+	}
 	for i := start; i < end; i++ {
 		embeddings[i] = make([]float64, dim)
 		for j := 0; j < dim; j++ {

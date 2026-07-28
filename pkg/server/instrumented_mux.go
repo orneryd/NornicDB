@@ -50,7 +50,9 @@ import (
 
 // statusRecorder wraps http.ResponseWriter to capture the status code
 // written by the handler. Default = 200 (Go's implicit status when no
-// WriteHeader is called).
+// explicit WriteHeader is called). The wrapper intentionally does not
+// proxy response-body writes so the instrumentation layer does not add
+// its own generic reflected-content sink.
 type statusRecorder struct {
 	http.ResponseWriter
 	status      int
@@ -67,16 +69,6 @@ func (sr *statusRecorder) WriteHeader(code int) {
 		sr.wroteHeader = true
 	}
 	sr.ResponseWriter.WriteHeader(code)
-}
-
-// Write triggers an implicit WriteHeader(200) per net/http semantics —
-// we record the implicit 200 if WriteHeader was not called explicitly.
-func (sr *statusRecorder) Write(b []byte) (int, error) {
-	if !sr.wroteHeader {
-		sr.status = http.StatusOK
-		sr.wroteHeader = true
-	}
-	return sr.ResponseWriter.Write(b)
 }
 
 // statusClass maps an HTTP status code to the closed-enum status_class

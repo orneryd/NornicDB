@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	mathrand "math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,20 @@ func createSocialNetwork(t *testing.T, engine storage.Engine) {
 		}
 		if err := engine.CreateEdge(edge); err != nil {
 			t.Fatalf("Failed to create edge %s->%s: %v", e.from, e.to, err)
+		}
+	}
+}
+
+func TestInitializeEmbeddingChunkCapsOversizedDimensions(t *testing.T) {
+	const oversizedDim = maxFastRPEmbeddingDimension * 2
+	embeddings := make([][]float64, 2)
+	rng := mathrand.New(mathrand.NewSource(42))
+
+	initializeEmbeddingChunk(embeddings, 0, len(embeddings), oversizedDim, rng)
+
+	for i, embedding := range embeddings {
+		if len(embedding) != maxFastRPEmbeddingDimension {
+			t.Fatalf("embedding %d length = %d, want %d", i, len(embedding), maxFastRPEmbeddingDimension)
 		}
 	}
 }
