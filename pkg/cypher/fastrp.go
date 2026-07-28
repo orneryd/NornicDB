@@ -525,7 +525,13 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 	}
 
 	// Pre-allocate a single buffer for neighbor aggregation to reduce allocations
-	neighborBuffer := make([]float64, util.SafePreallocCap(dim, maxFastRPEmbeddingDimension))
+	neighborBufferLen := dim
+	if neighborBufferLen < 0 {
+		neighborBufferLen = 0
+	} else if neighborBufferLen > maxFastRPEmbeddingDimension {
+		neighborBufferLen = maxFastRPEmbeddingDimension
+	}
+	neighborBuffer := make([]float64, neighborBufferLen)
 
 	// FastRP propagation iterations
 	for iter := 1; iter < len(weights); iter++ {

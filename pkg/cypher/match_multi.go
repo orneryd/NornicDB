@@ -1125,7 +1125,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 			return nil, err
 		}
 		hideSystemNodes := shouldHideSystemNodes(store)
-		filtered := make([]*storage.Node, 0, util.SafePreallocCap(limit, len(ids)))
+		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
 			node, getErr := store.GetNode(id)
 			if getErr != nil || node == nil {
@@ -1159,7 +1159,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 
 	if canStream && limit > 0 {
 		// Use streaming with early termination for LIMIT queries
-		nodes = make([]*storage.Node, 0, util.SafePreallocCap(limit))
+		nodes = make([]*storage.Node, 0)
 		var whereFilter FilterFunc
 		if strings.TrimSpace(whereClause) != "" {
 			if fastIN, ok := e.buildBoundInFastFilter(whereVariable, whereClause); ok {

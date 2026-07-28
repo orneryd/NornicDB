@@ -4,8 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // tryFastPathSimpleMatchReturnLimit handles the common low-latency read shape:
@@ -62,7 +60,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, util.SafePreallocCap(limit))
+	rows := make([][]interface{}, 0)
 	if limit == 0 {
 		e.markSimpleMatchLimitFastPathUsed()
 		return &ExecuteResult{Columns: []string{columnName}, Rows: rows, Stats: &QueryStats{}}, true

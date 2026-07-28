@@ -5449,7 +5449,7 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 	}
 
 	// MMR selection
-	selected := make([]rrfResult, 0, util.SafePreallocCap(limit, len(candidates)))
+	selected := make([]rrfResult, 0, util.SafePreallocCap(len(candidates)))
 	remaining := candidates
 
 	for len(selected) < limit && len(remaining) > 0 {

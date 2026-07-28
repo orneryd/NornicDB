@@ -2090,7 +2090,7 @@ func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, de
 		return nil
 	}
 
-	out := make([]NodeID, 0, util.SafePreallocCap(limit))
+	out := make([]NodeID, 0, util.SafePreallocCap(len(keys)))
 	if descending {
 		for i := len(keys) - 1; i >= 0; i-- {
 			k := keys[i]

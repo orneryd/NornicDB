@@ -562,7 +562,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return nil, false, nil
 	}
 
-	paths := make([]PathResult, 0, util.SafePreallocCap(limit, len(seedNodes)))
+	paths := make([]PathResult, 0, util.SafePreallocCap(len(seedNodes)))
 	for _, endNode := range seedNodes {
 		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
 		for _, reversedPath := range reversedPaths {

@@ -302,7 +302,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(nodeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(len(nodeScores)))
 	nodeCtx := map[string]*storage.Node{varName: nil}
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -444,7 +444,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(edgeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
 	for _, hit := range edgeScores {
@@ -601,7 +601,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return nil, false
 	}
 
-	rows := make([][]interface{}, 0, util.SafePreallocCap(limit, len(edgeScores)))
+	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
 	scoreExprIsAlias := make([]bool, len(returnItems))
@@ -884,7 +884,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	if err != nil {
 		return nil, false
 	}
-	out := make([]vectorNodeScore, 0, util.SafePreallocCap(limit, len(nodes)))
+	out := make([]vectorNodeScore, 0, util.SafePreallocCap(len(nodes)))
 	for _, node := range nodes {
 		select {
 		case <-ctx.Done():
@@ -1015,7 +1015,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 	if err != nil {
 		return nil, false
 	}
-	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(limit, len(edges)))
+	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(edges)))
 	for _, edge := range edges {
 		if targetRelType != "" && edge.Type != targetRelType {
 			continue
