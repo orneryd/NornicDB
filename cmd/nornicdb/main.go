@@ -1597,15 +1597,23 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 		// Display results
 		if len(result.Columns) > 0 {
+			displayColumns := make([]string, len(result.Columns))
+			for i, col := range result.Columns {
+				displayColumns[i] = shellDisplayColumn(col)
+			}
 			// Print header
-			fmt.Println(strings.Join(result.Columns, " | "))
-			fmt.Println(strings.Repeat("-", len(strings.Join(result.Columns, " | "))))
+			fmt.Println(strings.Join(displayColumns, " | "))
+			fmt.Println(strings.Repeat("-", len(strings.Join(displayColumns, " | "))))
 
 			// Print rows
 			for _, row := range result.Rows {
 				values := make([]string, len(row))
 				for i, v := range row {
-					values[i] = fmt.Sprintf("%v", v)
+					column := ""
+					if i < len(result.Columns) {
+						column = result.Columns[i]
+					}
+					values[i] = shellDisplayValue(column, v)
 				}
 				fmt.Println(strings.Join(values, " | "))
 			}
@@ -1622,6 +1630,20 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("👋 Goodbye!")
 	return nil
+}
+
+func shellDisplayColumn(name string) string {
+	if observability.IsSensitiveFieldName(name) {
+		return observability.RedactedPlaceholder()
+	}
+	return name
+}
+
+func shellDisplayValue(column string, value interface{}) string {
+	if observability.IsSensitiveFieldName(column) {
+		return observability.RedactedPlaceholder()
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 func runDecaySuppress(cmd *cobra.Command, args []string) error {

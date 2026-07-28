@@ -634,7 +634,7 @@ func main() {
 %s
 
 ✅ Ready to accept OAuth requests!
-`, addr, *clientID, *clientSecret, *issuer, strings.Join(userList, "\n"))
+`, addr, *clientID, "<REDACTED>", *issuer, strings.Join(userList, "\n"))
 
 	fmt.Print(output)
 

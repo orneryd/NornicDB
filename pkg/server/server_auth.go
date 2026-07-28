@@ -744,7 +744,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 					return
 				}
 				if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-					s.log.Warn("role entitlements set failed", "subsystem", "rbac", "role", role, "error", err)
+					s.log.Warn("role entitlements set failed", "subsystem", "rbac", "entitlements_count", len(norm), "error", err)
 					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 					return
 				}

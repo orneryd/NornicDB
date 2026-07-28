@@ -27,6 +27,18 @@ var DefaultRedactKeys = []string{
 // redactedPlaceholder is the value emitted in place of any matched key.
 const redactedPlaceholder = "<REDACTED>"
 
+// RedactedPlaceholder returns the canonical placeholder used for sensitive values.
+func RedactedPlaceholder() string {
+	return redactedPlaceholder
+}
+
+// IsSensitiveFieldName reports whether a field name should be treated as sensitive.
+// Matching is case-insensitive and recognizes common separators such as '.', '_',
+// and '-' so names like client_secret and user.password are caught by the base key set.
+func IsSensitiveFieldName(name string) bool {
+	return isSensitiveKeyName(name, defaultRedactSet())
+}
+
 // redactingHandler walks slog.Attr groups recursively and replaces values
 // of any key matching the redact set with "<REDACTED>". CRLF stripping
 // (LOG-03) happens here as well — the SAME chokepoint applies regardless
@@ -100,7 +112,7 @@ func (h *redactingHandler) Handle(ctx context.Context, r slog.Record) error {
 // redactAttr returns a redacted copy of a. Group attrs recurse; string
 // values get CRLF-stripped (LOG-03); other kinds pass through.
 func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
-	if _, sensitive := h.keys[strings.ToLower(a.Key)]; sensitive {
+	if isSensitiveKeyName(a.Key, h.keys) {
 		return slog.String(a.Key, redactedPlaceholder)
 	}
 	if a.Value.Kind() == slog.KindGroup {
@@ -118,6 +130,25 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 		}
 	}
 	return a
+}
+
+func isSensitiveKeyName(name string, keys map[string]struct{}) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(name))
+	if lowerName == "" {
+		return false
+	}
+	if _, sensitive := keys[lowerName]; sensitive {
+		return true
+	}
+	parts := strings.FieldsFunc(lowerName, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	for _, part := range parts {
+		if _, sensitive := keys[part]; sensitive {
+			return true
+		}
+	}
+	return false
 }
 
 // WithAttrs / WithGroup preserve the redactingHandler wrapper. Note: attrs
