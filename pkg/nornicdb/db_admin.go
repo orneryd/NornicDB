@@ -18,6 +18,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -1349,7 +1350,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to marshal backup: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := security.WriteRootedFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write backup: %w", err)
 	}
 

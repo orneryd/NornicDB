@@ -20,6 +20,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -44,7 +45,7 @@ type VectorFileStore struct {
 
 	mu                sync.RWMutex
 	appendMu          sync.Mutex
-	file              *os.File
+	file              *security.RootedFile
 	syncFile          func(*os.File) error
 	writeRecord       func(*os.File, string, []float32) error
 	idToOff           map[string]int64
@@ -120,7 +121,7 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 
 	flags := os.O_RDWR | os.O_CREATE
 	var err error
-	v.file, err = os.OpenFile(vecPath, flags, 0644)
+	v.file, err = security.OpenRootedFile(vecPath, flags, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +195,7 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	if writeFn == nil {
 		writeFn = writeVectorRecord
 	}
-	if err := writeFn(file, id, normalized); err != nil {
+	if err := writeFn(file.File, id, normalized); err != nil {
 		return err
 	}
 
@@ -644,7 +645,7 @@ func (v *VectorFileStore) Sync() error {
 	if syncFn == nil {
 		return file.Sync()
 	}
-	return syncFn(file)
+	return syncFn(file.File)
 }
 
 // CompactIfNeeded rewrites .vec with only live records when stale entries accumulate.
@@ -766,7 +767,7 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := os.Rename(tmpPath, v.vecPath); err != nil {
 		return err
 	}
-	reopened, err := os.OpenFile(v.vecPath, os.O_RDWR|os.O_CREATE, 0644)
+	reopened, err := security.OpenRootedFile(v.vecPath, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}

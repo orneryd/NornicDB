@@ -488,7 +488,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, cypher stri
 		if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		if err := os.WriteFile(resolvedPath, jsonData, 0644); err != nil {
+		if err := securitypkg.WriteRootedFile(resolvedPath, jsonData, 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -543,7 +543,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 
 	// Write to file if path provided
 	if resolvedPath != "" {
-		if err := os.WriteFile(resolvedPath, jsonData, 0644); err != nil {
+		if err := securitypkg.WriteRootedFile(resolvedPath, jsonData, 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -611,7 +611,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher strin
 		if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
 			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
-		if err := os.WriteFile(resolvedPath, []byte(content), 0644); err != nil {
+		if err := securitypkg.WriteRootedFile(resolvedPath, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -680,7 +680,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 
 	// Write to file if path provided
 	if resolvedPath != "" {
-		if err := os.WriteFile(resolvedPath, []byte(content), 0644); err != nil {
+		if err := securitypkg.WriteRootedFile(resolvedPath, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write file: %w", err)
 		}
 	}

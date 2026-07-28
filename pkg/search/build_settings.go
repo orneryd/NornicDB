@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -53,7 +54,7 @@ func loadSearchBuildSettings(path string) (*searchBuildSettingsSnapshot, error) 
 	if path == "" {
 		return nil, nil
 	}
-	file, err := os.Open(path)
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -63,7 +64,7 @@ func loadSearchBuildSettings(path string) (*searchBuildSettingsSnapshot, error) 
 	defer file.Close()
 
 	var snap searchBuildSettingsSnapshot
-	if err := util.DecodeMsgpackFile(file, &snap); err != nil {
+	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
 		return nil, nil
 	}
 	if snap.FormatVersion != searchBuildSettingsFormatVersion {
@@ -79,7 +80,7 @@ func saveSearchBuildSettings(path string, snap searchBuildSettingsSnapshot) erro
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	f, err := security.CreateRootedFile(path, 0o644)
 	if err != nil {
 		return err
 	}

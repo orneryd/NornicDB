@@ -5,10 +5,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/security"
 )
 
 // Backup creates a backup of the database to the specified file path.
@@ -23,7 +23,7 @@ func (b *BadgerEngine) Backup(path string) error {
 	}
 
 	// Create backup file
-	f, err := os.Create(path)
+	f, err := security.CreateRootedFile(path, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create backup file: %w", err)
 	}

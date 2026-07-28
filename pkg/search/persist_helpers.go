@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -15,7 +16,7 @@ func writeMsgpackSnapshot(path string, snapshot any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	file, err := os.Create(path)
+	file, err := security.CreateRootedFile(path, 0o644)
 	if err != nil {
 		return err
 	}
