@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // discoveryProvider mirrors a single SSO provider entry in the Bolt-port
@@ -113,7 +114,7 @@ func buildDiscoveryResponse(oauthCfg *auth.OAuthConfig, now time.Time) ([]byte, 
 	b.WriteString("\r\n")
 	b.WriteString("\r\n")
 
-	out := make([]byte, 0, b.Len()+bodyLen)
+	out := make([]byte, 0, util.SafePreallocSum(b.Len(), bodyLen))
 	out = append(out, b.String()...)
 	if bodyLen > 0 {
 		out = append(out, body...)

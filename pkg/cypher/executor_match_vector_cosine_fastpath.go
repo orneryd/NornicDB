@@ -746,7 +746,7 @@ func (e *StorageExecutor) getNodeForVectorHit(id storage.NodeID, projectedProps 
 }
 
 func nodeProjectionPropertiesForVectorFastPath(varName string, vectorProp string, returnItems []returnItem, scoreExprIsAlias []bool, preWhereClause string, preWhereNotNullProp string, matchProps map[string]interface{}) ([]string, bool) {
-	props := make(map[string]struct{}, len(matchProps)+len(returnItems))
+	props := make(map[string]struct{}, util.SafePreallocSum(len(matchProps), len(returnItems)))
 	for prop := range matchProps {
 		props[prop] = struct{}{}
 	}

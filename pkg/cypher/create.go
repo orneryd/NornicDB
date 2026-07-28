@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -1975,7 +1976,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					// COUNT(expr) after MATCH...CREATE should be able to see both matched
 					// bindings (from combination) and newly-created bindings (nodeVars).
 					// Using combination alone makes COUNT(newVar) incorrectly return 0.
-					combined := make(map[string]*storage.Node, len(nodeVars)+len(combination))
+					combined := make(map[string]*storage.Node, util.SafePreallocSum(len(nodeVars), len(combination)))
 					for k, v := range nodeVars {
 						combined[k] = v
 					}
@@ -3026,7 +3027,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 			// Create new context with only the WITH variables
 			newNodeContext := make(map[string]*storage.Node)
 			newEdgeContext := make(map[string]*storage.Edge)
-			row := make(pipelineRow, len(nodeContext)+len(edgeContext))
+			row := make(pipelineRow, util.SafePreallocSum(len(nodeContext), len(edgeContext)))
 			for name, node := range nodeContext {
 				row[name] = node
 			}
@@ -3302,7 +3303,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 						continue
 					}
 					for _, matchNode := range idx[cartesianValueKey(baseVal)] {
-						joined := make(map[string]*storage.Node, len(row)+1)
+						joined := make(map[string]*storage.Node, util.SafePreallocSum(len(row), 1))
 						for k, v := range row {
 							joined[k] = v
 						}
@@ -3357,10 +3358,10 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 		if len(rows) == 0 {
 			return []map[string]*storage.Node{}, true
 		}
-		next := make([]map[string]*storage.Node, 0, len(out)*len(rows))
+		next := make([]map[string]*storage.Node, 0, util.SafePreallocProduct(len(out), len(rows)))
 		for _, base := range out {
 			for _, row := range rows {
-				merged := make(map[string]*storage.Node, len(base)+len(row))
+				merged := make(map[string]*storage.Node, util.SafePreallocSum(len(base), len(row)))
 				for k, v := range base {
 					merged[k] = v
 				}

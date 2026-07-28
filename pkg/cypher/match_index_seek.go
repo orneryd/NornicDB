@@ -575,8 +575,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	}
 
 	// Merge values (keep deterministic and duplicate-free).
-	merged := make([]interface{}, 0, len(lvals)+len(rvals))
-	seenVals := make(map[string]struct{}, len(lvals)+len(rvals))
+	merged := make([]interface{}, 0, util.SafePreallocSum(len(lvals), len(rvals)))
+	seenVals := make(map[string]struct{}, util.SafePreallocSum(len(lvals), len(rvals)))
 	for _, v := range append(lvals, rvals...) {
 		if v == nil {
 			continue

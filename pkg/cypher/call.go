@@ -29,6 +29,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // toFloat32Slice is a package-level alias to convert.ToFloat32Slice for internal use.
@@ -826,10 +827,10 @@ func (e *StorageExecutor) executeCallTailSetBased(
 		return res, true
 	}
 
-	prefix := make([]string, 0, 3+len(scalarCols))
+	prefix := make([]string, 0, util.SafePreallocSum(3, len(scalarCols)))
 	prefix = append(prefix, "WITH $__seed_rows AS __seed_rows")
 	prefix = append(prefix, "UNWIND __seed_rows AS __seed")
-	withBindings := make([]string, 0, len(scalarCols)+1)
+	withBindings := make([]string, 0, util.SafePreallocSum(len(scalarCols), 1))
 	withBindings = append(withBindings, "__seed")
 	for _, col := range scalarCols {
 		withBindings = append(withBindings, fmt.Sprintf("__seed.seed_%s AS %s", col, col))
@@ -944,7 +945,7 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 	for _, values := range valueRows {
 		projectedValues := values
 		if !plan.withIdentity {
-			projectedValues = make(map[string]interface{}, len(values)+len(plan.withItems))
+			projectedValues = make(map[string]interface{}, util.SafePreallocSum(len(values), len(plan.withItems)))
 			for key, value := range values {
 				projectedValues[key] = value
 			}
@@ -1041,7 +1042,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 			continue
 		}
 
-		matched := make(map[string]interface{}, len(values)+3)
+		matched := make(map[string]interface{}, util.SafePreallocSum(len(values), 3))
 		for key, value := range values {
 			matched[key] = value
 		}
@@ -2060,7 +2061,7 @@ func (e *StorageExecutor) tryExecuteCallTailVariableLengthMaxLengthFastPath(
 	}
 
 	for _, row := range seed.Rows {
-		values := make(map[string]interface{}, len(seed.Columns)+1)
+		values := make(map[string]interface{}, util.SafePreallocSum(len(seed.Columns), 1))
 		for i, col := range seed.Columns {
 			if i < len(row) {
 				values[col] = row[i]

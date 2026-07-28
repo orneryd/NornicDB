@@ -191,7 +191,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	candidates := make([]traversalOptRow, 0, len(matchResult.Rows))
 	for _, r := range matchResult.Rows {
 		cand := traversalOptRow{
-			nodes: make(map[string]*storage.Node, len(matchResult.Columns)),
+			nodes: make(map[string]*storage.Node, util.SafePreallocCap(len(matchResult.Columns))),
 			rels:  make(map[string]*storage.Edge),
 		}
 		for ci, col := range matchResult.Columns {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ===== CALL {} Subquery Support (Neo4j 4.0+) =====
@@ -1550,7 +1551,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 		batchQuery := fmt.Sprintf("MATCH (%s) WHERE id(%s) IN $__call_in_tx_ids %s", seedVar, seedVar, innerBody)
 		batchParams := map[string]interface{}{"__call_in_tx_ids": ids}
 		if inherited := getParamsFromContext(ctx); inherited != nil {
-			batchParams = make(map[string]interface{}, len(inherited)+1)
+			batchParams = make(map[string]interface{}, util.SafePreallocSum(len(inherited), 1))
 			for key, value := range inherited {
 				batchParams[key] = value
 			}
@@ -2273,7 +2274,7 @@ func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
 		}
 	}
 
-	branches := make([]string, 0, len(seps)+1)
+	branches := make([]string, 0, util.SafePreallocSum(len(seps), 1))
 	start := 0
 	for _, s := range seps {
 		part := strings.TrimSpace(trimmed[start:s.pos])
@@ -3147,7 +3148,7 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 		}
 	}
 
-	rows := make([][]interface{}, 0, len(left.Rows)*len(right.Rows))
+	rows := make([][]interface{}, 0, util.SafePreallocProduct(len(left.Rows), len(right.Rows)))
 	for _, lrow := range left.Rows {
 		for _, rrow := range right.Rows {
 			joined := append([]interface{}{}, lrow...)

@@ -1803,7 +1803,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 
 	for _, row := range matchResult.Rows {
 		rowScope := make(map[string]interface{}, len(parsedWith))
-		nodeScope := make(map[string]*storage.Node, len(parsedWith)+len(matchResult.Columns))
+		nodeScope := make(map[string]*storage.Node, util.SafePreallocSum(len(parsedWith), len(matchResult.Columns)))
 		for i, col := range matchResult.Columns {
 			if i >= len(row) {
 				continue
@@ -2543,7 +2543,7 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	runeLen := len(runes)
 
 	// Build rune-to-byte index mapping for keyword checking
-	runeToByteIndex := make([]int, runeLen+1)
+	runeToByteIndex := make([]int, util.SafePreallocSum(runeLen, 1))
 	byteIdx := 0
 	for ri, r := range runes {
 		runeToByteIndex[ri] = byteIdx

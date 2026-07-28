@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // findStandaloneWithIndex finds the index of a standalone "WITH" keyword
@@ -732,7 +733,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					var mutationResult *ExecuteResult
 					var err error
 					if hasCall {
-						callParams := make(map[string]interface{}, len(params)+1)
+						callParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 						for k, v := range params {
 							callParams[k] = v
 						}
@@ -834,7 +835,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 				var mutationResult *ExecuteResult
 				var err error
 				if useParamExecution {
-					callParams := make(map[string]interface{}, len(params)+1)
+					callParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 					for k, v := range params {
 						callParams[k] = v
 					}
@@ -932,7 +933,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 		if canApplySetBasedUnwindRewrite(normalizedRestQuery, items) {
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalizedRestQuery, variable, "__unwind_items"); ok {
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
-				callParams := make(map[string]interface{}, len(params)+1)
+				callParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 				for k, v := range params {
 					callParams[k] = v
 				}
@@ -967,7 +968,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 
 		for _, item := range items {
 			substitutedQuery := e.replaceVariableInQuery(normalizedRestQuery, variable, item)
-			callParams := make(map[string]interface{}, len(params)+1)
+			callParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 			for k, v := range params {
 				callParams[k] = v
 			}

@@ -65,6 +65,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 func asciiLowerByte(b byte) byte {
@@ -623,19 +624,19 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	leftList, leftIsList := toInterfaceSlice(left)
 	rightList, rightIsList := toInterfaceSlice(right)
 	if leftIsList && rightIsList {
-		out := make([]interface{}, 0, len(leftList)+len(rightList))
+		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), len(rightList)))
 		out = append(out, leftList...)
 		out = append(out, rightList...)
 		return out
 	}
 	if leftIsList {
-		out := make([]interface{}, 0, len(leftList)+1)
+		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), 1))
 		out = append(out, leftList...)
 		out = append(out, right)
 		return out
 	}
 	if rightIsList {
-		out := make([]interface{}, 0, len(rightList)+1)
+		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
 		out = append(out, left)
 		out = append(out, rightList...)
 		return out
