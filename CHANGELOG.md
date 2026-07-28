@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **APOC remote URL loads are now denied by default, and internal Cypher rewrites now reuse the shared escaped-literal path.**
+  `apoc.load.json`, `apoc.load.jsonArray`, `apoc.load.csv`, and
+  `apoc.import.json` no longer issue arbitrary outbound HTTP(S) fetches unless
+  operators explicitly enable `allow_remote_url_access` or
+  `NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS`. The remote fetch path now
+  uses a hardened HTTP client with redirects disabled and rejects hosts that
+  resolve to loopback, private, link-local, multicast, or unspecified
+  addresses. Separately, the `WITH`/subquery/CALL rewrite paths now route
+  string and map literal rendering through the shared escaped Cypher literal
+  helpers instead of ad hoc quoting, closing several executable query
+  interpolation sinks.
 - **Updating a relationship a peer transaction committed after this
   transaction began is now a retryable transient conflict instead of a hard
   "not found" error.**

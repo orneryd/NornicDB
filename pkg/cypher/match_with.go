@@ -755,23 +755,10 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 						if strings.Contains(expr, varName) {
 							var replacement string
 							switch v := varVal.(type) {
-							case []interface{}:
-								parts := make([]string, len(v))
-								for j, elem := range v {
-									switch e := elem.(type) {
-									case string:
-										parts[j] = fmt.Sprintf("'%s'", e)
-									default:
-										parts[j] = fmt.Sprintf("%v", e)
-									}
-								}
-								replacement = "[" + strings.Join(parts, ", ") + "]"
-							case string:
-								replacement = fmt.Sprintf("'%s'", v)
 							case *storage.Node:
 								continue
 							default:
-								replacement = fmt.Sprintf("%v", v)
+								replacement = valueToCypherLiteral(v)
 							}
 							expr = strings.ReplaceAll(expr, varName, replacement)
 							hasSubstitution = true

@@ -16,6 +16,7 @@
 //	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS - Legacy shorthand enabling both import and export file operations
 //	NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS - Allow APOC import/load local file operations (default: false)
 //	NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS - Allow APOC export local file operations (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS - Allow APOC load/import HTTP(S) fetches (default: false)
 //	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT - Rebase local APOC file URLs under this directory when set
 //	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE - Max collection size (default: 100000)
 //
@@ -76,6 +77,8 @@ type SecurityConfig struct {
 	AllowImportFileAccess bool `yaml:"allow_import_file_access"`
 	// AllowExportFileAccess permits APOC export file system operations.
 	AllowExportFileAccess bool `yaml:"allow_export_file_access"`
+	// AllowRemoteURLAccess permits APOC load/import HTTP(S) fetches.
+	AllowRemoteURLAccess bool `yaml:"allow_remote_url_access"`
 	// FileAccessRoot is the local import root used for APOC file URLs.
 	// Empty means local file access, when enabled, is unrestricted.
 	// When set, local file-like inputs are normalized and rebased under that
@@ -109,6 +112,7 @@ func DefaultConfig() *Config {
 			AllowFileAccess:       false,
 			AllowImportFileAccess: false,
 			AllowExportFileAccess: false,
+			AllowRemoteURLAccess:  false,
 			FileAccessRoot:        "",
 			MaxCollectionSize:     100000,
 		},
@@ -139,6 +143,7 @@ func DefaultConfig() *Config {
 //	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS      - Legacy shorthand enabling both import and export file access
 //	NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS - Allow APOC import/load local file access (default: false)
 //	NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS - Allow APOC export local file access (default: false)
+//	NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS - Allow APOC load/import HTTP(S) fetches (default: false)
 //	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT       - Restrict local APOC file URLs to this root when set
 //	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE    - Max collection size (default: 100000)
 //
@@ -182,6 +187,9 @@ func LoadFromEnv() *Config {
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS"); val != "" {
 		cfg.Security.AllowExportFileAccess = parseBool(val, false)
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS"); val != "" {
+		cfg.Security.AllowRemoteURLAccess = parseBool(val, false)
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {
@@ -274,6 +282,9 @@ func LoadFromEnvOrFile(filePath string) *Config {
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS"); val != "" {
 		cfg.Security.AllowExportFileAccess = parseBool(val, cfg.Security.AllowExportFileAccess)
+	}
+	if val := os.Getenv("NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS"); val != "" {
+		cfg.Security.AllowRemoteURLAccess = parseBool(val, cfg.Security.AllowRemoteURLAccess)
 	}
 	if val := os.Getenv("NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE"); val != "" {
 		if size, err := strconv.Atoi(val); err == nil {

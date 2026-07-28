@@ -311,30 +311,10 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 
 			switch v := varVal.(type) {
 			case []interface{}:
-				parts := make([]string, len(v))
-				for j, elem := range v {
-					switch e := elem.(type) {
-					case []interface{}:
-						innerParts := make([]string, len(e))
-						for k, innerElem := range e {
-							switch ie := innerElem.(type) {
-							case string:
-								innerParts[k] = fmt.Sprintf("'%s'", ie)
-							default:
-								innerParts[k] = fmt.Sprintf("%v", ie)
-							}
-						}
-						parts[j] = "[" + strings.Join(innerParts, ", ") + "]"
-					case string:
-						parts[j] = fmt.Sprintf("'%s'", e)
-					default:
-						parts[j] = fmt.Sprintf("%v", e)
-					}
-				}
-				replacement := "[" + strings.Join(parts, ", ") + "]"
+				replacement := valueToCypherLiteral(v)
 				substitutedRemainder = replaceIdentifierOutsideQuotes(substitutedRemainder, varName, replacement)
 			case string:
-				substitutedRemainder = replaceIdentifierOutsideQuotes(substitutedRemainder, varName, fmt.Sprintf("'%s'", v))
+				substitutedRemainder = replaceIdentifierOutsideQuotes(substitutedRemainder, varName, valueToCypherLiteral(v))
 			case map[string]interface{}:
 				substitutedRemainder = replaceIdentifierOutsideQuotes(substitutedRemainder, varName, mapToCypherLiteral(v))
 			case map[interface{}]interface{}:
@@ -475,7 +455,7 @@ func rowHasAggregate(items []returnItem) bool {
 func mapToCypherLiteral(m map[string]interface{}) string {
 	var parts []string
 	for k, v := range m {
-		parts = append(parts, fmt.Sprintf("%s: %s", k, valueToCypherLiteral(v)))
+		parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(k), valueToCypherLiteral(v)))
 	}
 	return "{" + strings.Join(parts, ", ") + "}"
 }
@@ -483,7 +463,7 @@ func mapToCypherLiteral(m map[string]interface{}) string {
 func valueToCypherLiteral(v interface{}) string {
 	switch val := v.(type) {
 	case string:
-		return fmt.Sprintf("'%s'", val)
+		return quoteCypherStringLiteral(val)
 	case bool:
 		if val {
 			return "true"

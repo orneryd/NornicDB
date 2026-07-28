@@ -60,7 +60,7 @@ neural/training/__pycache__
 dist
 macos/build
 data.old/
-swagger-ui
+swagger-ui/
 copilot-data/
 kmeans-test-data
 nornic_vs_qdrant
@@ -83,4 +83,5 @@ metrics-doc-gen
 site
 nornicdb-admin
 !cmd/nornicdb-admin
+!cmd/swagger-ui
 graphify-out

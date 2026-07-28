@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -29,6 +30,69 @@ import (
 const (
 	defaultPort = 8080
 )
+
+var swaggerUIPageTemplate = template.Must(template.New("swagger-ui-page").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>NornicDB API Documentation - Swagger UI</title>
+	<link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui.css" />
+	<style>
+		html {
+			box-sizing: border-box;
+			overflow: -moz-scrollbars-vertical;
+			overflow-y: scroll;
+		}
+		*, *:before, *:after {
+			box-sizing: inherit;
+		}
+		body {
+			margin:0;
+			background: #fafafa;
+		}
+		.swagger-ui .topbar {
+			background-color: #1f2937;
+		}
+		.swagger-ui .topbar .download-url-wrapper {
+			display: none;
+		}
+	</style>
+</head>
+<body>
+	<div id="swagger-ui"></div>
+	<script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-bundle.js"></script>
+	<script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-standalone-preset.js"></script>
+	<script>
+		window.onload = function() {
+			const ui = SwaggerUIBundle({
+	      url: {{ .SpecURLJSON }},
+				dom_id: '#swagger-ui',
+				deepLinking: true,
+				presets: [
+					SwaggerUIBundle.presets.apis,
+					SwaggerUIStandalonePreset
+				],
+				plugins: [
+					SwaggerUIBundle.plugins.DownloadUrl
+				],
+				layout: "StandaloneLayout",
+				validatorUrl: null,
+				tryItOutEnabled: true,
+				supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+				onComplete: function() {
+					const servers = ui.getSystem().specSelectors.specJson().get('servers');
+					if (servers && servers.size > 0) {
+						console.log('Swagger UI loaded. Configure server URL in the top-right dropdown.');
+					}
+				}
+			});
+
+			console.log('Tip: Configure the server URL in the top-right dropdown to point to your NornicDB instance (default: http://localhost:7474)');
+		};
+	</script>
+</body>
+</html>`))
 
 func main() {
 	port := flag.Int("port", defaultPort, "Port to listen on")
@@ -130,79 +194,17 @@ func serveSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	// Remove any potentially dangerous characters from host
 	host = sanitizeHost(host)
 	specURL := fmt.Sprintf("%s://%s/openapi.yaml", scheme, host)
-
-	// JSON encode the URL to safely escape it for JavaScript
-	specURLJSON, _ := json.Marshal(specURL)
-
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NornicDB API Documentation - Swagger UI</title>
-  <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui.css" />
-  <style>
-    html {
-      box-sizing: border-box;
-      overflow: -moz-scrollbars-vertical;
-      overflow-y: scroll;
-    }
-    *, *:before, *:after {
-      box-sizing: inherit;
-    }
-    body {
-      margin:0;
-      background: #fafafa;
-    }
-    .swagger-ui .topbar {
-      background-color: #1f2937;
-    }
-    .swagger-ui .topbar .download-url-wrapper {
-      display: none;
-    }
-  </style>
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-bundle.js"></script>
-  <script src="https://unpkg.com/swagger-ui-dist@5.10.3/swagger-ui-standalone-preset.js"></script>
-  <script>
-    window.onload = function() {
-      const ui = SwaggerUIBundle({
-        url: %s,
-        dom_id: '#swagger-ui',
-        deepLinking: true,
-        presets: [
-          SwaggerUIBundle.presets.apis,
-          SwaggerUIStandalonePreset
-        ],
-        plugins: [
-          SwaggerUIBundle.plugins.DownloadUrl
-        ],
-        layout: "StandaloneLayout",
-        validatorUrl: null,
-        tryItOutEnabled: true,
-        supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
-        onComplete: function() {
-          // Set default server URL to NornicDB instance
-          const servers = ui.getSystem().specSelectors.specJson().get('servers');
-          if (servers && servers.size > 0) {
-            // Update server URL if needed
-            console.log('Swagger UI loaded. Configure server URL in the top-right dropdown.');
-          }
-        }
-      });
-      
-      // Add helpful message
-      console.log('💡 Tip: Configure the server URL in the top-right dropdown to point to your NornicDB instance (default: http://localhost:7474)');
-    };
-  </script>
-</body>
-</html>`, string(specURLJSON))
+	specURLJSON, err := json.Marshal(specURL)
+	if err != nil {
+		http.Error(w, "failed to encode Swagger spec URL", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(html))
+	if err := swaggerUIPageTemplate.Execute(w, struct{ SpecURLJSON template.JS }{SpecURLJSON: template.JS(specURLJSON)}); err != nil {
+		http.Error(w, "failed to render Swagger UI", http.StatusInternalServerError)
+	}
 }
 
 // sanitizeHost removes potentially dangerous characters from host header

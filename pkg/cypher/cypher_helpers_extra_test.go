@@ -280,11 +280,25 @@ func TestCypherHelpers_ClauseAndMapLiterals(t *testing.T) {
 	assert.Equal(t, "v", m["2"])
 
 	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
+	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
 	assert.Equal(t, "true", valueToCypherLiteral(true))
 	assert.Equal(t, "3.5", valueToCypherLiteral(3.5))
 	assert.Equal(t, "null", valueToCypherLiteral(nil))
 	assert.Equal(t, "[1, 'a']", valueToCypherLiteral([]interface{}{1, "a"}))
 	assert.Contains(t, valueToCypherLiteral(map[string]interface{}{"a": 1}), "a: 1")
+}
+
+func TestCypherHelpers_WithRemainderEscapesBoundStringValues(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	res, err := exec.Execute(ctx, "WITH $value AS s UNWIND [s] AS item RETURN item", map[string]interface{}{"value": "x'y"})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Len(t, res.Rows, 1)
+	assert.Equal(t, "x'y", res.Rows[0][0])
 }
 
 func TestCypherHelpers_DurationAndFunctionMatcherHelpers(t *testing.T) {
@@ -3559,6 +3573,7 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {
 	// valueToCypherLiteral/mapToCypherLiteral branches.
 	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
+	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
 	assert.Equal(t, "true", valueToCypherLiteral(true))
 	assert.Equal(t, "null", valueToCypherLiteral(nil))
 	assert.Equal(t, "9", valueToCypherLiteral(9))

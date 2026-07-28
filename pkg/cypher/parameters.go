@@ -334,6 +334,39 @@ func isCompositeParamValue(v interface{}) bool {
 	}
 }
 
+func escapeCypherStringLiteral(raw string) string {
+	escaped := strings.ReplaceAll(raw, "'", "''")
+	escaped = strings.ReplaceAll(escaped, "\\", "\\\\")
+	return escaped
+}
+
+func quoteCypherStringLiteral(raw string) string {
+	return "'" + escapeCypherStringLiteral(raw) + "'"
+}
+
+func isSimpleCypherMapKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	first := key[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !isWordChar(key[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func formatCypherMapKey(key string) string {
+	if isSimpleCypherMapKey(key) {
+		return key
+	}
+	return quoteCypherStringLiteral(key)
+}
+
 // valueToLiteral converts a Go value to a Cypher literal string.
 //
 // This function handles all Go types that can be passed as Cypher parameters,
@@ -370,11 +403,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 
 	switch val := v.(type) {
 	case string:
-		// Escape single quotes by doubling them (Cypher standard)
-		escaped := strings.ReplaceAll(val, "'", "''")
-		// Also escape backslashes
-		escaped = strings.ReplaceAll(escaped, "\\", "\\\\")
-		return fmt.Sprintf("'%s'", escaped)
+		return quoteCypherStringLiteral(val)
 
 	case int:
 		return strconv.FormatInt(int64(val), 10)
@@ -466,7 +495,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 		// Convert map to Cypher map literal: {key1: val1, key2: val2}
 		parts := make([]string, 0, len(val))
 		for k, v := range val {
-			parts = append(parts, fmt.Sprintf("%s: %s", k, e.valueToLiteral(v)))
+			parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(k), e.valueToLiteral(v)))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 
@@ -477,7 +506,7 @@ func (e *StorageExecutor) valueToLiteral(v interface{}) string {
 			if !ok {
 				continue
 			}
-			parts = append(parts, fmt.Sprintf("%s: %s", key, e.valueToLiteral(v)))
+			parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(key), e.valueToLiteral(v)))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 

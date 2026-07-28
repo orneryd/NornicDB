@@ -286,7 +286,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 				if len(args) > 0 {
 					firstArg := strings.TrimSpace(args[0])
 					if node, ok := nodeContext[firstArg]; ok && node != nil {
-						args[0] = fmt.Sprintf("'%s'", node.ID)
+						args[0] = quoteCypherStringLiteral(string(node.ID))
 						result = result[:openParen+1] + strings.Join(args, ", ") + result[closeParen:]
 					}
 				}
@@ -305,7 +305,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 				if len(args) > 0 {
 					firstArg := strings.TrimSpace(args[0])
 					if rel, ok := relContext[firstArg]; ok && rel != nil {
-						args[0] = fmt.Sprintf("'%s'", rel.ID)
+						args[0] = quoteCypherStringLiteral(string(rel.ID))
 						result = result[:openParen+1] + strings.Join(args, ", ") + result[closeParen:]
 					}
 				}
@@ -331,7 +331,7 @@ func callLiteralForBoundValue(value interface{}) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case string:
-		return fmt.Sprintf("'%s'", v)
+		return quoteCypherStringLiteral(v)
 	case int:
 		return fmt.Sprintf("%d", v)
 	case int64:
@@ -671,7 +671,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 										if !isIdentifierReferenced(rewrite, varName) {
 											continue
 										}
-										matchPrefix = append(matchPrefix, fmt.Sprintf("MATCH (%s) WHERE id(%s) = '%s'", varName, varName, n.ID))
+										matchPrefix = append(matchPrefix, fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s", varName, varName, quoteCypherStringLiteral(string(n.ID))))
 									}
 									if len(matchPrefix) > 0 {
 										rewrite = strings.Join(matchPrefix, " ") + " " + rewrite
@@ -938,7 +938,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				if len(requiredPart) >= len("OPTIONAL MATCH") {
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
 				}
-				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = '%s' %s RETURN %s", seedVar, seedVar, seedID, requiredPart, importVar)
+				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
 				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
 				if fallbackErr != nil {
 					return nil, false, fmt.Errorf("failed optional import fallback for %s: %w", importVar, fallbackErr)

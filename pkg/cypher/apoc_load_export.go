@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -22,10 +24,21 @@ import (
 var (
 	errAPOCLocalImportFileAccessDisabled = errors.New("local APOC import file access is disabled")
 	errAPOCLocalExportFileAccessDisabled = errors.New("local APOC export file access is disabled")
+	errAPOCRemoteURLAccessDisabled       = errors.New("remote APOC URL access is disabled")
 	errAPOCFileAuthorityNotAllowed       = errors.New("file URL may not contain an authority section (i.e. it should be 'file:///')")
 	errAPOCFileQueryNotAllowed           = errors.New("file URL may not contain a query component")
 	errAPOCFileFragmentNotAllowed        = errors.New("file URL may not contain a fragment component")
 )
+
+var apocRemoteHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{
+		Proxy: nil,
+	},
+}
 
 func isHTTPSource(path string) bool {
 	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
@@ -45,6 +58,13 @@ func (e *StorageExecutor) ensureLocalAPOCExportFileAccessAllowed() error {
 	}
 	return errAPOCLocalExportFileAccessDisabled
 
+}
+
+func (e *StorageExecutor) ensureRemoteAPOCURLAccessAllowed() error {
+	if e != nil && e.allowRemoteAPOCURLAccess {
+		return nil
+	}
+	return errAPOCRemoteURLAccessDisabled
 }
 
 func (e *StorageExecutor) resolveAPOCLocalImportFilePath(source string) (string, error) {
@@ -127,6 +147,41 @@ func normalizeAPOCImportRelativePath(localPath string) string {
 	return strings.TrimPrefix(cleaned, "/")
 }
 
+func validateAPOCRemoteURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid APOC remote URL: %w", err)
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return nil, fmt.Errorf("unsupported APOC remote URL scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("APOC remote URL host is required")
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("APOC remote URLs may not contain userinfo")
+	}
+	if parsed.Fragment != "" {
+		return nil, fmt.Errorf("APOC remote URLs may not contain fragments")
+	}
+	hostname := parsed.Hostname()
+	if hostname == "" {
+		return nil, fmt.Errorf("APOC remote URL host is required")
+	}
+	ipList, err := net.DefaultResolver.LookupIPAddr(context.Background(), hostname)
+	if err != nil {
+		return nil, fmt.Errorf("resolve APOC remote host: %w", err)
+	}
+	for _, ipAddr := range ipList {
+		if ip := ipAddr.IP; ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+				return nil, fmt.Errorf("APOC remote URL host resolves to a disallowed address")
+			}
+		}
+	}
+	return parsed, nil
+}
+
 // =============================================================================
 // apoc.load.json - Load JSON data
 // =============================================================================
@@ -177,7 +232,18 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, cypher string) (
 }
 
 func (e *StorageExecutor) loadJsonFromURL(url string) (interface{}, error) {
-	resp, err := http.Get(url)
+	if err := e.ensureRemoteAPOCURLAccessAllowed(); err != nil {
+		return nil, err
+	}
+	parsed, err := validateAPOCRemoteURL(url)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := apocRemoteHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +323,18 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 
 	// Load from URL or file
 	if isHTTPSource(urlOrFile) {
-		resp, err := http.Get(urlOrFile)
+		if err := e.ensureRemoteAPOCURLAccessAllowed(); err != nil {
+			return nil, err
+		}
+		parsed, err := validateAPOCRemoteURL(urlOrFile)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := apocRemoteHTTPClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch CSV: %w", err)
 		}

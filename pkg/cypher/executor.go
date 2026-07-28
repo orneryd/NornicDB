@@ -406,6 +406,8 @@ type StorageExecutor struct {
 	// allowLocalAPOCExportFileAccess gates non-HTTP APOC export file writes.
 	// Default deny; enable explicitly via env-backed APOC config or setter.
 	allowLocalAPOCExportFileAccess bool
+	// allowRemoteAPOCURLAccess gates APOC HTTP(S) fetches. Default deny.
+	allowRemoteAPOCURLAccess bool
 	// apocLocalFileAccessRoot mirrors Neo4j's import-directory behavior: when
 	// set, local APOC file URLs are normalized and rebased under this root.
 	apocLocalFileAccessRoot string
@@ -628,6 +630,7 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 		inlineEmbeddingChunkOverlap:    maxInt(runtimeCfg.EmbeddingWorker.ChunkOverlap, 0),
 		allowLocalAPOCImportFileAccess: apocCfg.Security.AllowImportFileAccess || apocCfg.Security.AllowFileAccess,
 		allowLocalAPOCExportFileAccess: apocCfg.Security.AllowExportFileAccess || apocCfg.Security.AllowFileAccess,
+		allowRemoteAPOCURLAccess:       apocCfg.Security.AllowRemoteURLAccess,
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
 	ensureBuiltInProceduresRegistered()
@@ -649,6 +652,11 @@ func (e *StorageExecutor) SetAllowLocalAPOCImportFileAccess(enabled bool) {
 // SetAllowLocalAPOCExportFileAccess enables or disables local-file APOC exports.
 func (e *StorageExecutor) SetAllowLocalAPOCExportFileAccess(enabled bool) {
 	e.allowLocalAPOCExportFileAccess = enabled
+}
+
+// SetAllowRemoteAPOCURLAccess enables or disables APOC HTTP(S) fetches.
+func (e *StorageExecutor) SetAllowRemoteAPOCURLAccess(enabled bool) {
+	e.allowRemoteAPOCURLAccess = enabled
 }
 
 // SetAPOCLocalFileAccessRoot sets the local import root used for APOC file URLs.

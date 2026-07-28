@@ -98,6 +98,7 @@ NORNICDB_APOC_CREATE_ENABLED=false   # Dynamic creation (disable for read-only)
 # Security settings
 NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS=false
 NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS=false
+NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS=false
 NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT=/var/lib/nornicdb/import
 NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE=100000
 ```
@@ -131,11 +132,14 @@ security:
   allow_dynamic_creation: false
   allow_import_file_access: false
   allow_export_file_access: false
+  allow_remote_url_access: false
   file_access_root: /var/lib/nornicdb/import
   max_collection_size: 10000
 ```
 
 `allow_file_access` remains supported as a legacy shorthand that enables both import and export file access, but prefer the split import/export settings for new configurations.
+
+Remote APOC HTTP(S) loads are denied by default even when local file access is enabled. Set `allow_remote_url_access: true` only when callers must fetch trusted public URLs.
 
 ### Docker Compose Example
 

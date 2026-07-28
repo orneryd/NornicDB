@@ -2,16 +2,24 @@ package cypher
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
 
 func TestApocLoadExportHelpers_ExtractLoadArg(t *testing.T) {
 	e := &StorageExecutor{}
@@ -80,6 +88,7 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
+	e.SetAllowRemoteAPOCURLAccess(true)
 	ctx := context.Background()
 
 	_, err := e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray()")
@@ -98,12 +107,23 @@ func TestApocLoadExportHelpers_CallApocLoadJsonArray_Branches(t *testing.T) {
 	assert.Equal(t, "v", obj["k"])
 
 	// URL source branch.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"x":1},{"x":2}]`))
-	}))
-	defer srv.Close()
+	origClient := apocRemoteHTTPClient
+	apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(`[{"x":1},{"x":2}]`)),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() {
+		apocRemoteHTTPClient = origClient
+	})
 
-	res, err = e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('"+srv.URL+"') YIELD value")
+	res, err = e.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('https://example.com/array.json') YIELD value")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
 
@@ -147,26 +167,48 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 	defer eng.Close()
 	e := NewStorageExecutor(eng)
 	e.SetAllowLocalAPOCFileAccess(true)
+	e.SetAllowRemoteAPOCURLAccess(true)
+	origClient := apocRemoteHTTPClient
+	apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/ok":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(`{"x":1,"y":"z"}`)),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			case "/bad":
+				return &http.Response{
+					StatusCode: http.StatusBadGateway,
+					Status:     "502 Bad Gateway",
+					Body:       io.NopCloser(strings.NewReader("boom")),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			default:
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader("not-json")),
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			}
+		}),
+	}
+	t.Cleanup(func() {
+		apocRemoteHTTPClient = origClient
+	})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/ok":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"x":1,"y":"z"}`))
-		case "/bad":
-			http.Error(w, "boom", http.StatusBadGateway)
-		default:
-			_, _ = w.Write([]byte(`not-json`))
-		}
-	}))
-	defer srv.Close()
-
-	data, err := e.loadJsonFromURL(srv.URL + "/ok")
+	data, err := e.loadJsonFromURL("https://example.com/ok")
 	require.NoError(t, err)
 	require.NotNil(t, data)
-	_, err = e.loadJsonFromURL(srv.URL + "/bad")
+	_, err = e.loadJsonFromURL("https://example.com/bad")
 	require.Error(t, err)
-	_, err = e.loadJsonFromURL(srv.URL + "/malformed")
+	_, err = e.loadJsonFromURL("https://example.com/malformed")
 	require.Error(t, err)
 
 	// File loader branches: missing file and malformed JSON.
@@ -217,6 +259,7 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 	exec.SetAllowLocalAPOCFileAccess(true)
+	exec.SetAllowRemoteAPOCURLAccess(true)
 	ctx := context.Background()
 
 	dir := t.TempDir()
@@ -244,12 +287,23 @@ func TestApocLoadExportHelpers_CallApocLoadCsv_OptionsAndSources(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, res.Rows)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("c1,c2\nv1,v2\n"))
-	}))
-	defer srv.Close()
+	origClient := apocRemoteHTTPClient
+	apocRemoteHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader("c1,c2\nv1,v2\n")),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() {
+		apocRemoteHTTPClient = origClient
+	})
 
-	res, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('"+srv.URL+"') YIELD lineNo, list, map")
+	res, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('https://example.com/data.csv') YIELD lineNo, list, map")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "v1", res.Rows[0][2].(map[string]interface{})["c1"])
@@ -288,6 +342,31 @@ func TestApocLoadExportHelpers_CallApocLoadJson_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 42.0, res.Rows[0][0])
+}
+
+func TestApocLoadExportHelpers_RemoteURLLoadsDeniedByDefault(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	eng := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(eng)
+	ctx := context.Background()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"x":1}`))
+	}))
+	defer srv.Close()
+
+	_, err := exec.callApocLoadJson(ctx, "CALL apoc.load.json('"+srv.URL+"') YIELD value")
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocLoadCsv(ctx, "CALL apoc.load.csv('"+srv.URL+"') YIELD lineNo, list, map")
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocLoadJsonArray(ctx, "CALL apoc.load.jsonArray('"+srv.URL+"') YIELD value")
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
+
+	_, err = exec.callApocImportJson(ctx, "CALL apoc.import.json('"+srv.URL+"') YIELD source, nodes, relationships")
+	require.ErrorIs(t, err, errAPOCRemoteURLAccessDisabled)
 }
 
 func TestApocLoadExportHelpers_LocalFileLoadsDeniedByDefault(t *testing.T) {
