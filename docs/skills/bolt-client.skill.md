@@ -37,6 +37,7 @@ NornicDB returns Neo4j-shaped error codes (`Neo.ClientError.*`, `Neo.TransientEr
 | `commit failed: conflict: node <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Optimistic write conflict on a node — another transaction committed first. |
 | `commit failed: conflict: edge <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, for edges. |
 | `commit failed: conflict: node <id> has adjacent edge <eid> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, propagated through an adjacent edge. |
+| `... conflict: edge <id> changed after transaction start` (statement-time, no `commit failed:` prefix) | `Neo.TransientError.Transaction.Outdated` | `MERGE ... SET` on a relationship a peer committed after your transaction began — the edge is live at latest-committed state but invisible to your snapshot. Retry on a fresh transaction converges. |
 | `... waiting for transaction lock` | `Neo.TransientError.Transaction.DeadlockDetected` | Lock contention. |
 | `commit failed: constraint violation: ... already exists` **AND every statement in the group is `MERGE`-shaped** | `Neo.ClientError.Transaction.TransactionCommitFailed` | Two writers raced on the same `MERGE (n {uid:...})`. See "MERGE under concurrent writers" below. |
 
