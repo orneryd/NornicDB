@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 )
@@ -67,28 +68,20 @@ func SafeInt32ToInt(v int32) (int, bool) {
 	return int(v), true
 }
 
-// SafeUint32ToInt converts uint32 to int when the value fits.
-func SafeUint32ToInt(v uint32) (int, bool) {
-	if uint64(v) > uint64(maxIntValue) {
-		return 0, false
-	}
-	return int(v), true
-}
-
 // SafeIntToUint32 converts a non-negative int to uint32 when it fits.
 func SafeIntToUint32(v int) (uint32, bool) {
-	parsed, err := strconv.ParseUint(strconv.Itoa(v), 10, 32)
-	if err != nil {
+	var parsed uint32
+	if _, err := fmt.Sscan(strconv.Itoa(v), &parsed); err != nil {
 		return 0, false
 	}
-	return uint32(parsed), true
+	return parsed, true
 }
 
 // SafeIntToUint16 converts a non-negative int to uint16 when it fits.
 func SafeIntToUint16(v int) (uint16, bool) {
-	parsed, err := strconv.ParseUint(strconv.Itoa(v), 10, 16)
-	if err != nil {
+	var parsed uint16
+	if _, err := fmt.Sscan(strconv.Itoa(v), &parsed); err != nil {
 		return 0, false
 	}
-	return uint16(parsed), true
+	return parsed, true
 }

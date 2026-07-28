@@ -35,10 +35,3 @@ func TestSafeIntToInt32RejectsOverflow(t *testing.T) {
 		t.Fatal("expected overflowing int to fail int32 conversion")
 	}
 }
-
-func TestSafeUint32ToIntFits(t *testing.T) {
-	got, ok := SafeUint32ToInt(42)
-	if !ok || got != 42 {
-		t.Fatalf("SafeUint32ToInt(42) = (%d, %v), want (42, true)", got, ok)
-	}
-}

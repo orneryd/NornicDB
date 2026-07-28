@@ -39,6 +39,10 @@ import (
 
 var errHNSWIndexFull = errors.New("hnsw index full")
 
+func validHNSWIndex(index uint32, length int) bool {
+	return uint64(index) < uint64(length)
+}
+
 // HNSWConfig contains configuration parameters for the HNSW index.
 type HNSWConfig struct {
 	M                         int     // Max connections per node per layer (default: 16)
@@ -202,7 +206,7 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 	if id == "" {
 		return nil
 	}
-	if internalID, ok := h.idToInternal[id]; ok && int(internalID) < len(h.deleted) && !h.deleted[internalID] {
+	if internalID, ok := h.idToInternal[id]; ok && validHNSWIndex(internalID, len(h.deleted)) && !h.deleted[internalID] {
 		// In-place update: overwrite the stored vector without changing the graph
 		// topology. This avoids tombstone growth from hot upsert workloads.
 		// When vectorLookup is set we don't store vectors; fall back to remove+add.
@@ -293,7 +297,7 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 		h.setNeighborsAtLevelLocked(internalID, l, neighbors)
 
 		for _, neighborID := range neighbors {
-			if int(neighborID) >= len(h.nodeLevel) || h.deleted[neighborID] {
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
 				continue
 			}
 			h.insertNeighborAtLevelLocked(neighborID, l, internalID)
@@ -327,7 +331,7 @@ func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Cand
 	if id == "" {
 		return nil
 	}
-	if internalID, ok := h.idToInternal[id]; ok && int(internalID) < len(h.deleted) && !h.deleted[internalID] {
+	if internalID, ok := h.idToInternal[id]; ok && validHNSWIndex(internalID, len(h.deleted)) && !h.deleted[internalID] {
 		off := int(h.vecOff[internalID])
 		if h.vectorLookup == nil && off >= 0 && off+h.dimensions <= len(h.vectors) {
 			dst := h.vectors[off : off+h.dimensions]
@@ -407,7 +411,7 @@ func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Cand
 		neighbors := h.selectNeighbors(normalized, candidates, h.config.M)
 		h.setNeighborsAtLevelLocked(internalID, l, neighbors)
 		for _, neighborID := range neighbors {
-			if int(neighborID) >= len(h.nodeLevel) || h.deleted[neighborID] {
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
 				continue
 			}
 			h.insertNeighborAtLevelLocked(neighborID, l, internalID)
@@ -420,7 +424,7 @@ func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Cand
 	neighbors := h.selectNeighbors(normalized, level0Candidates, h.config.M)
 	h.setNeighborsAtLevelLocked(internalID, 0, neighbors)
 	for _, neighborID := range neighbors {
-		if int(neighborID) >= len(h.nodeLevel) || h.deleted[neighborID] {
+		if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
 			continue
 		}
 		h.insertNeighborAtLevelLocked(neighborID, 0, internalID)
@@ -464,7 +468,7 @@ func (h *HNSWIndex) Remove(id string) {
 	defer h.mu.Unlock()
 
 	internalID, ok := h.idToInternal[id]
-	if !ok || int(internalID) >= len(h.nodeLevel) || h.deleted[internalID] {
+	if !ok || !validHNSWIndex(internalID, len(h.nodeLevel)) || h.deleted[internalID] {
 		return
 	}
 	h.removeLocked(internalID)
@@ -585,10 +589,10 @@ func (h *HNSWIndex) searchWithEf(ctx context.Context, query []float32, k int, mi
 		if score < minSim32 {
 			break // remaining candidates have lower scores
 		}
-		if int(item.id) >= len(h.deleted) || h.deleted[item.id] {
+		if !validHNSWIndex(item.id, len(h.deleted)) || h.deleted[item.id] {
 			continue
 		}
-		if int(item.id) >= len(h.internalToID) {
+		if !validHNSWIndex(item.id, len(h.internalToID)) {
 			continue
 		}
 		results = append(results, ANNResult{
@@ -975,14 +979,14 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 }
 
 func (h *HNSWIndex) removeLocked(internalID uint32) {
-	if int(internalID) >= len(h.nodeLevel) || h.deleted[internalID] {
+	if !validHNSWIndex(internalID, len(h.nodeLevel)) || h.deleted[internalID] {
 		return
 	}
 
 	h.deleted[internalID] = true
 	h.liveCount--
 
-	if int(internalID) < len(h.internalToID) {
+	if validHNSWIndex(internalID, len(h.internalToID)) {
 		delete(h.idToInternal, h.internalToID[internalID])
 	}
 
@@ -1012,11 +1016,7 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 		if !ok {
 			continue
 		}
-		internalIDInt, ok := util.SafeUint32ToInt(internalID)
-		if !ok {
-			continue
-		}
-		if internalIDInt < len(h.deleted) && h.deleted[internalID] {
+		if validHNSWIndex(internalID, len(h.deleted)) && h.deleted[internalID] {
 			continue
 		}
 		lvl := int(h.nodeLevel[internalID])
@@ -1069,7 +1069,7 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 				}
 			}
 			neighborID := neighbors[i]
-			if int(neighborID) >= len(h.nodeLevel) {
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) {
 				continue
 			}
 			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
@@ -1140,7 +1140,7 @@ func (h *HNSWIndex) searchLayerHeap(query []float32, entryID uint32, ef int, lev
 		}
 
 		nodeID := closest.id
-		if int(nodeID) >= len(h.nodeLevel) || h.deleted[nodeID] {
+		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
 		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
@@ -1151,7 +1151,7 @@ func (h *HNSWIndex) searchLayerHeap(query []float32, entryID uint32, ef int, lev
 		// Reverse iteration: order doesn't matter when checking all neighbors
 		for i := len(neighbors) - 1; i >= 0; i-- {
 			neighborID := neighbors[i]
-			if int(neighborID) >= len(h.nodeLevel) || h.deleted[neighborID] {
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
 				continue
 			}
 			if visited.gen[neighborID] == curGen {
@@ -1237,7 +1237,7 @@ func (h *HNSWIndex) searchLayerHeapPooledWithContext(ctx context.Context, query 
 		}
 
 		nodeID := closest.id
-		if int(nodeID) >= len(h.nodeLevel) || h.deleted[nodeID] {
+		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
 		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
@@ -1253,7 +1253,7 @@ func (h *HNSWIndex) searchLayerHeapPooledWithContext(ctx context.Context, query 
 				}
 			}
 			neighborID := neighbors[i]
-			if int(neighborID) >= len(h.nodeLevel) || h.deleted[neighborID] {
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
 				continue
 			}
 			if visited.gen[neighborID] == curGen {
@@ -1300,7 +1300,7 @@ func (h *HNSWIndex) selectNeighbors(query []float32, candidates []uint32, m int)
 	}
 	dists := make([]distNode, 0, min(len(candidates), m*2))
 	for _, cid := range candidates {
-		if int(cid) >= len(h.nodeLevel) || h.deleted[cid] {
+		if !validHNSWIndex(cid, len(h.nodeLevel)) || h.deleted[cid] {
 			continue
 		}
 		dists = append(dists, distNode{
@@ -1337,7 +1337,7 @@ func (h *HNSWIndex) randomLevel() int {
 }
 
 func (h *HNSWIndex) vectorAtLocked(internalID uint32) []float32 {
-	if int(internalID) >= len(h.vecOff) || int(internalID) >= len(h.internalToID) {
+	if !validHNSWIndex(internalID, len(h.vecOff)) || !validHNSWIndex(internalID, len(h.internalToID)) {
 		return nil
 	}
 	off := int(h.vecOff[internalID])
@@ -1355,7 +1355,7 @@ func (h *HNSWIndex) vectorAtLocked(internalID uint32) []float32 {
 }
 
 func (h *HNSWIndex) neighborsAtLevelLocked(nodeID uint32, level int) ([]uint32, bool) {
-	if int(nodeID) >= len(h.neighborsOff) || int(nodeID) >= len(h.neighborCountsOff) {
+	if !validHNSWIndex(nodeID, len(h.neighborsOff)) || !validHNSWIndex(nodeID, len(h.neighborCountsOff)) {
 		return nil, false
 	}
 	if level < 0 || level > int(h.nodeLevel[nodeID]) {
@@ -1391,7 +1391,7 @@ func (h *HNSWIndex) neighborsAtLevelLocked(nodeID uint32, level int) ([]uint32, 
 }
 
 func (h *HNSWIndex) setNeighborsAtLevelLocked(nodeID uint32, level int, neighbors []uint32) {
-	if int(nodeID) >= len(h.neighborsOff) || int(nodeID) >= len(h.neighborCountsOff) {
+	if !validHNSWIndex(nodeID, len(h.neighborsOff)) || !validHNSWIndex(nodeID, len(h.neighborCountsOff)) {
 		return
 	}
 	if level < 0 || level > int(h.nodeLevel[nodeID]) {

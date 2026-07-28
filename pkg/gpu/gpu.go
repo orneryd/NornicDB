@@ -2100,6 +2100,10 @@ func (ei *EmbeddingIndex) syncToCUDA() error {
 	ei.cudaBuffer = buffer
 
 	// Normalize vectors on GPU for faster cosine similarity
+	expected, ok := util.SafeIntProduct(len(ei.nodeIDs), ei.dimensions)
+	if !ok || expected != len(ei.cpuVectors) {
+		return fmt.Errorf("gpu: cpuVectors size mismatch for %d nodes and %d dimensions", len(ei.nodeIDs), ei.dimensions)
+	}
 	n, ok := util.SafeIntToUint32(len(ei.nodeIDs))
 	if !ok {
 		return fmt.Errorf("gpu: node count exceeds uint32 range")
@@ -2110,9 +2114,6 @@ func (ei *EmbeddingIndex) syncToCUDA() error {
 	}
 	if n == 0 || dims == 0 {
 		return nil
-	}
-	if expected := int(n) * int(dims); expected != len(ei.cpuVectors) {
-		return fmt.Errorf("gpu: cpuVectors size mismatch (expected %d floats, got %d)", expected, len(ei.cpuVectors))
 	}
 	if err := ei.cudaDevice.NormalizeVectors(ei.cudaBuffer, n, dims); err != nil {
 		// Non-fatal: we can still search with unnormalized vectors
