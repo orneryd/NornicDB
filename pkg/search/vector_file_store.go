@@ -237,12 +237,27 @@ func (v *VectorFileStore) GetVector(id string) ([]float32, bool) {
 	}
 	// Read record at offset with a one-read fast path:
 	// [idLen(4)][id][vector(dim*4)].
-	buf := make([]byte, 4+v.dimensions*4+256)
+	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
+	if !ok {
+		return nil, false
+	}
+	bufLen, ok := util.SafeIntSum(4, vectorBytes, 256)
+	if !ok {
+		return nil, false
+	}
+	buf := make([]byte, bufLen)
 	if _, err := v.file.ReadAt(buf, off); err != nil && err != io.EOF {
 		return nil, false
 	}
 	idLen := binary.LittleEndian.Uint32(buf[:4])
-	recSize := 4 + int(idLen) + v.dimensions*4
+	idLenInt := int(idLen)
+	if uint32(idLenInt) != idLen {
+		return nil, false
+	}
+	recSize, ok := util.SafeIntSum(4, idLenInt, vectorBytes)
+	if !ok {
+		return nil, false
+	}
 	if recSize > len(buf) {
 		buf = make([]byte, recSize)
 		if _, err := v.file.ReadAt(buf, off); err != nil {
@@ -550,7 +565,15 @@ func (v *VectorFileStore) rebuildIndexFromVecLocked() error {
 	}
 	idToOff := make(map[string]int64)
 	totalRecords := int64(0)
-	buf := make([]byte, 4+256+v.dimensions*4)
+	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
+	if !ok {
+		return fmt.Errorf("vector dimensions overflow rebuild buffer size: %d", v.dimensions)
+	}
+	bufLen, ok := util.SafeIntSum(4, 256, vectorBytes)
+	if !ok {
+		return fmt.Errorf("vector rebuild buffer size overflow")
+	}
+	buf := make([]byte, bufLen)
 	for {
 		offset, err := v.file.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -563,7 +586,14 @@ func (v *VectorFileStore) rebuildIndexFromVecLocked() error {
 			return err
 		}
 		idLen := binary.LittleEndian.Uint32(buf[:4])
-		recLen := 4 + int(idLen) + v.dimensions*4
+		idLenInt := int(idLen)
+		if uint32(idLenInt) != idLen {
+			return fmt.Errorf("vector record id length overflow: %d", idLen)
+		}
+		recLen, ok := util.SafeIntSum(4, idLenInt, vectorBytes)
+		if !ok {
+			return fmt.Errorf("vector record length overflow")
+		}
 		if recLen > len(buf) {
 			newBuf := make([]byte, recLen)
 			binary.LittleEndian.PutUint32(newBuf[0:4], idLen)
@@ -754,7 +784,14 @@ func (v *VectorFileStore) readVectorAtLocked(offset int64) ([]float32, error) {
 		return nil, err
 	}
 	idLen := int(binary.LittleEndian.Uint32(head))
-	recLen := 4 + idLen + v.dimensions*4
+	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
+	if !ok {
+		return nil, fmt.Errorf("vector dimensions overflow record length: %d", v.dimensions)
+	}
+	recLen, ok := util.SafeIntSum(4, idLen, vectorBytes)
+	if !ok {
+		return nil, fmt.Errorf("vector record length overflow")
+	}
 	buf := make([]byte, recLen)
 	if _, err := v.file.ReadAt(buf, offset); err != nil {
 		return nil, err
@@ -773,7 +810,15 @@ func writeVectorRecord(f *os.File, id string, vec []float32) error {
 	if int(idLen) != len(idBytes) {
 		return fmt.Errorf("id too long")
 	}
-	buf := make([]byte, 4+len(idBytes)+len(vec)*4)
+	vectorBytes, ok := util.SafeIntProduct(len(vec), 4)
+	if !ok {
+		return fmt.Errorf("vector size overflow for record %q", id)
+	}
+	bufLen, ok := util.SafeIntSum(4, len(idBytes), vectorBytes)
+	if !ok {
+		return fmt.Errorf("record buffer size overflow for %q", id)
+	}
+	buf := make([]byte, bufLen)
 	binary.LittleEndian.PutUint32(buf[0:4], idLen)
 	copy(buf[4:4+idLen], idBytes)
 	for i := range vec {
