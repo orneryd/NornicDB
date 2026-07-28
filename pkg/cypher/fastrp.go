@@ -40,7 +40,6 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Memory constants for streaming thresholds
@@ -524,14 +523,9 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 		weights = []float64{0.0, 1.0, 1.0, 1.0}
 	}
 
-	// Pre-allocate a single buffer for neighbor aggregation to reduce allocations
-	neighborBufferLen := dim
-	if neighborBufferLen < 0 {
-		neighborBufferLen = 0
-	} else if neighborBufferLen > maxFastRPEmbeddingDimension {
-		neighborBufferLen = maxFastRPEmbeddingDimension
-	}
-	neighborBuffer := make([]float64, neighborBufferLen)
+	// Reuse the validated embedding width for the scratch buffer instead of
+	// allocating directly from the request-shaped dimension.
+	neighborBuffer := append([]float64(nil), embeddings[0]...)
 
 	// FastRP propagation iterations
 	for iter := 1; iter < len(weights); iter++ {
@@ -561,8 +555,8 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 	// L2 normalize final embeddings (in-place to save memory)
 	normalizeEmbeddings(embeddings, dim)
 
-	// Build result map
-	result := make(map[string][]float64, util.SafePreallocCap(len(proj.NodeIDs)))
+	// Build result map without a user-influenced capacity hint.
+	result := make(map[string][]float64)
 	for i, nodeID := range proj.NodeIDs {
 		result[nodeID] = embeddings[i]
 	}
