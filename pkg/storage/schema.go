@@ -11,8 +11,6 @@
 package storage
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"reflect"
 	"sort"
@@ -21,6 +19,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -428,11 +427,8 @@ func NewCompositeKey(values ...interface{}) CompositeKey {
 	}
 	encoded := strings.Join(parts, "|")
 
-	// Hash for efficient map lookup
-	hash := sha256.Sum256([]byte(encoded))
-
 	return CompositeKey{
-		Hash:   hex.EncodeToString(hash[:]),
+		Hash:   security.KeyedDigestHex("storage.composite_key", encoded),
 		Values: values,
 	}
 }

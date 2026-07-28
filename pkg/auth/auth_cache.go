@@ -1,9 +1,10 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/security"
 )
 
 const (
@@ -72,11 +73,11 @@ func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims) {
 }
 
 func basicAuthCacheKeyFromHeader(authHeader string) [32]byte {
-	return sha256.Sum256([]byte(authHeader))
+	return security.KeyedDigest("auth.basic.header", authHeader)
 }
 
 func basicAuthCacheKeyFromCredentials(username, password string) [32]byte {
-	return sha256.Sum256([]byte(username + "\x00" + password))
+	return security.KeyedDigest("auth.basic.credentials", username, password)
 }
 
 func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
@@ -153,7 +154,7 @@ func newTokenCache(maxEntries int, ttl time.Duration) *tokenCache {
 }
 
 func tokenCacheKey(token string) [32]byte {
-	return sha256.Sum256([]byte(token))
+	return security.KeyedDigest("auth.jwt.token", token)
 }
 
 func (c *tokenCache) get(token string) (*JWTClaims, bool) {
