@@ -955,7 +955,7 @@ func (r *RaftReplicator) advanceCommitIndex() {
 			entry := r.log[applyIdx]
 			if entry.Command != nil {
 				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					log.Printf("[Raft %s] Failed to apply entry %d: %v", r.config.NodeID, entry.Index, err)
+					log.Printf("[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
 			}
 		}
@@ -1254,7 +1254,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 			entry := r.log[r.lastApplied]
 			if entry.Command != nil {
 				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					log.Printf("[Raft %s] Failed to apply entry %d: %v", r.config.NodeID, entry.Index, err)
+					log.Printf("[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
 			}
 		}

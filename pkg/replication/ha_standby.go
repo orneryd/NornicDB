@@ -512,7 +512,7 @@ func (r *HAStandbyReplicator) triggerAutoFailover(ctx context.Context) {
 
 	// Promote self
 	if err := r.Promote(ctx); err != nil {
-		log.Printf("[HA Standby] Auto-failover failed: %v", err)
+		log.Printf("[HA Standby] Auto-failover failed")
 		return
 	}
 

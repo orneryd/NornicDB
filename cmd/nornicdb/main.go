@@ -647,7 +647,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		_, err := authenticator.CreateUser(adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
 		if err != nil {
 			// User might already exist
-			fmt.Printf("   ⚠️  Admin user: %v\n", err)
+			fmt.Println("   ⚠️  Admin user setup failed or user already exists")
 		} else {
 			fmt.Printf("   ✅ Admin user created (%s)\n", adminUsername)
 		}
@@ -1180,7 +1180,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println("Authentication:")
 		fmt.Printf("  • Username: %s\n", adminUsername)
-		fmt.Printf("  • Password: %s\n", adminPassword)
+		fmt.Println("  • Password: <redacted>")
 	}
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop")
@@ -1591,7 +1591,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 		// Execute query
 		result, err := executor.Execute(ctx, query, nil)
 		if err != nil {
-			fmt.Printf("❌ Error: %v\n", err)
+			fmt.Println("❌ Query execution failed")
 			continue
 		}
 

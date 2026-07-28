@@ -5554,11 +5554,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	}
 
 	// Log before reranking
-	queryPreview := query
-	if len(queryPreview) > 60 {
-		queryPreview = queryPreview[:57] + "..."
-	}
-	log.Printf("🔄 Reranking %d candidates for query %q (%s)...", len(candidates), queryPreview, reranker.Name())
+	log.Printf("🔄 Reranking %d candidates (query_len=%d reranker=%s)...", len(candidates), len(query), reranker.Name())
 	start := time.Now()
 
 	// Apply Stage-2 reranking.
@@ -5900,11 +5896,8 @@ func (s *Service) maybeLogSearchTiming(query string, resp *SearchResponse, elaps
 		bm25Candidates = resp.Metrics.BM25Candidates
 		fusedCandidates = resp.Metrics.FusedCandidates
 	}
-	queryPreview := strings.TrimSpace(query)
-	if len(queryPreview) > 80 {
-		queryPreview = queryPreview[:77] + "..."
-	}
-	log.Printf("⏱️ Search timing: method=%s cache_hit=%t fallback=%t total_ms=%d vector_ms=%d bm25_ms=%d fusion_ms=%d candidates[v=%d,b=%d,f=%d] returned=%d query=%q",
+	queryLen := len(strings.TrimSpace(query))
+	log.Printf("⏱️ Search timing: method=%s cache_hit=%t fallback=%t total_ms=%d vector_ms=%d bm25_ms=%d fusion_ms=%d candidates[v=%d,b=%d,f=%d] returned=%d query_len=%d",
 		resp.SearchMethod,
 		cacheHit,
 		resp.FallbackTriggered,
@@ -5916,7 +5909,7 @@ func (s *Service) maybeLogSearchTiming(query string, resp *SearchResponse, elaps
 		bm25Candidates,
 		fusedCandidates,
 		resp.Returned,
-		queryPreview)
+		queryLen)
 }
 
 // extractSearchableText extracts text from ALL node properties for full-text indexing.

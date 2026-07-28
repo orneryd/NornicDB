@@ -79,7 +79,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 		// IMPORTANT: Migration is written to avoid deleting legacy records unless the
 		// full copy step succeeds. If we fail here, the user's existing data should
 		// still be intact (though some prefixed copies may have been created).
-		log.Printf("❌ Legacy migration failed; leaving existing database intact. Manual migration required: %v", err)
+		log.Printf("❌ Legacy migration failed; leaving existing database intact. Manual migration required.")
 		log.Printf("ℹ️  Recommended approach: export legacy data and re-import into %q using namespaced IDs, or restore from backup and retry after fixing the underlying error.", m.config.DefaultDatabase)
 		return fmt.Errorf("legacy migration failed; existing data left intact: %w", err)
 	}

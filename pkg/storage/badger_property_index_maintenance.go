@@ -49,9 +49,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 				b.log.Warn("property index insert failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("property", propName),
-					slog.String("node_id", string(node.ID)),
-					slog.String("error", err.Error()))
+					slog.String("property", propName))
 			}
 		}
 	}
@@ -81,9 +79,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 					b.log.Warn("property index delete (old) failed",
 						slog.String("component", "storage"),
 						slog.String("label", label),
-						slog.String("property", propName),
-						slog.String("node_id", string(oldNode.ID)),
-						slog.String("error", err.Error()))
+						slog.String("property", propName))
 				}
 			}
 		}
@@ -98,9 +94,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 				b.log.Warn("property index insert (new) failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("property", propName),
-					slog.String("node_id", string(node.ID)),
-					slog.String("error", err.Error()))
+					slog.String("property", propName))
 			}
 		}
 	}
@@ -154,9 +148,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 				b.log.Warn("property index delete failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("property", propName),
-					slog.String("node_id", string(id)),
-					slog.String("error", err.Error()))
+					slog.String("property", propName))
 			}
 		}
 	}

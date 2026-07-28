@@ -131,8 +131,8 @@ func (p *OAuthProvider) handleAuthorize(w http.ResponseWriter, r *http.Request) 
 	state := r.URL.Query().Get("state")
 	scope := r.URL.Query().Get("scope")
 
-	log.Printf("[OAuth Provider] Authorization request: response_type=%s client_id=%s redirect_uri=%s state=%s scope=%s",
-		responseType, clientID, redirectURI, state, scope)
+	log.Printf("[OAuth Provider] Authorization request: response_type=%s client_id=%s has_redirect=%t has_state=%t scope_len=%d",
+		responseType, clientID, redirectURI != "", state != "", len(scope))
 
 	if responseType != "code" {
 		http.Error(w, "Unsupported response_type. Only \"code\" is supported.", http.StatusBadRequest)
@@ -196,7 +196,7 @@ func (p *OAuthProvider) renderConsentForm(w http.ResponseWriter, clientID, redir
 		<div class="user-info">
 			<strong>Available users:</strong><br>
 			{{range .Users}}
-			• {{.PreferredUsername}} / {{.Password}} - [{{.RolesString}}]<br>
+			• {{.PreferredUsername}} - [{{.RolesString}}]<br>
 			{{end}}
 		</div>
 		
@@ -273,7 +273,7 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 	state := r.Form.Get("state")
 	userID := r.Form.Get("user_id")
 
-	log.Printf("[OAuth Provider] User consent: client_id=%s redirect_uri=%s user_id=%s", clientID, redirectURI, userID)
+	log.Printf("[OAuth Provider] User consent received: client_id=%s has_redirect=%t", clientID, redirectURI != "")
 
 	// Generate authorization code
 	authCode, err := generateRandomToken(32)
@@ -293,7 +293,7 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	p.mu.Unlock()
 
-	log.Printf("[OAuth Provider] Generated auth code: %s...", authCode[:20])
+	log.Printf("[OAuth Provider] Generated authorization code")
 
 	// Redirect back to app with code
 	redirectURL, err := url.Parse(redirectURI)
@@ -315,7 +315,7 @@ func (p *OAuthProvider) handleConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[OAuth Provider] Redirecting to: %s", redirectURL.String())
+	log.Printf("[OAuth Provider] Redirecting to validated localhost callback host=%s", redirectHost)
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
@@ -361,13 +361,7 @@ func (p *OAuthProvider) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize code in logs (never log full authorization codes or tokens)
-	codePreview := "[REDACTED]"
-	if len(code) > 8 {
-		codePreview = code[:8] + "..."
-	} else if len(code) > 0 {
-		codePreview = code + "..."
-	}
-	log.Printf("[OAuth Provider] Token request: grant_type=%s code=%s client_id=%s", grantType, codePreview, clientID)
+	log.Printf("[OAuth Provider] Token request: grant_type=%s client_id=%s has_code=%t", grantType, clientID, code != "")
 
 	if grantType != "authorization_code" {
 		w.Header().Set("Content-Type", "application/json")

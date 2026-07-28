@@ -4,7 +4,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -799,10 +798,6 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 		if err != nil {
 			b.log.Warn("edge-between head lookup failed; falling back to set/legacy scan",
 				"subsystem", "edge_between_index",
-				"start", string(source),
-				"end", string(target),
-				"edge_type", edgeType,
-				slog.Any("error", err),
 			)
 		}
 		if edge != nil {

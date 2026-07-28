@@ -2513,7 +2513,6 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 			recoveryLog.Debug("wal recovery error",
 				"seq", e.Sequence,
 				"operation", e.Operation,
-				slog.Any("error", e.Error),
 			)
 		}
 	}

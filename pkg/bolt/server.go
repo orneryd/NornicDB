@@ -2283,7 +2283,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		s.logRunTiming("ERROR", dbName, query, time.Since(runStart), 0, err)
 		if s.server != nil && s.server.config.LogQueries {
-			s.server.logger().Warn("query error", slog.Any("error", err))
+			s.server.logger().Warn("query error")
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
 		return s.sendFailure(code, msg)
@@ -2353,40 +2353,23 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 		return
 	}
 
-	remoteAddr := "unknown"
-	if s.conn != nil {
-		remoteAddr = s.conn.RemoteAddr().String()
-	}
-	user := "unknown"
-	if s.authResult != nil {
-		user = s.authResult.Username
-	}
-
 	// D-10a: "[BOLT]" bracket dropped (component attribute carries it).
 	// Errors emit at WARN; successful query timing (only fires when
 	// LogQueries=true) emits at DEBUG so it doesn't pollute production
 	// stdout at INFO level.
 	if runErr != nil {
 		attrs := []any{
-			"user", user, "remote", remoteAddr,
 			"database", dbName, "status", status,
 			"rows", rows, "duration", duration,
-			slog.Any("error", runErr),
-		}
-		if includeQuery {
-			attrs = append(attrs, "query", truncateQuery(query, 200))
+			"error", runErr.Error(),
 		}
 		s.server.logger().Warn("run", attrs...)
 		return
 	}
 
 	attrs := []any{
-		"user", user, "remote", remoteAddr,
 		"database", dbName, "status", status,
 		"rows", rows, "duration", duration,
-	}
-	if includeQuery {
-		attrs = append(attrs, "query", truncateQuery(query, 200))
 	}
 	s.server.logger().Debug("run", attrs...)
 }

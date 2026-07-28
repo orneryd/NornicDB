@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	e.logger().Debug("executeCreateDatabase invoked",
 		"subsystem", "create_database",
-		"cypher", cypher)
+		"query_len", len(cypher))
 	if e.dbManager == nil {
 		return nil, fmt.Errorf("database manager not available - CREATE DATABASE requires multi-database support")
 	}
@@ -534,14 +534,11 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	err = e.dbManager.CreateDatabase(dbName)
 	if err != nil {
 		e.logger().Error("CreateDatabase failed",
-			"subsystem", "create_database",
-			"database", dbName,
-			"error", err)
+			"subsystem", "create_database")
 		return nil, fmt.Errorf("failed to create database '%s': %w", dbName, err)
 	}
 	e.logger().Info("CreateDatabase succeeded",
-		"subsystem", "create_database",
-		"database", dbName)
+		"subsystem", "create_database")
 
 	return &ExecuteResult{
 		Columns: []string{"name"},

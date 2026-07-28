@@ -1657,7 +1657,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				dbList = append(dbList, info.Name)
 			}
 			if seedErr := allowlistStore.SeedIfEmpty(ctx, dbList); seedErr != nil {
-				s.log.Warn("failed to seed RBAC allowlist", "subsystem", "rbac", "error", seedErr)
+				s.log.Warn("failed to seed RBAC allowlist", "subsystem", "rbac")
 			}
 			s.allowlistStore = allowlistStore
 		}
@@ -1680,7 +1680,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		// Falls back to plain Load when no yaml overrides are present.
 		yamlOverrides := s.perDBYAMLOverrides
 		if loadErr := dbConfigStore.LoadWithYAMLDefaults(ctx, yamlOverrides); loadErr != nil {
-			s.log.Warn("failed to load per-DB config store", "subsystem", "dbconfig", "error", loadErr)
+			s.log.Warn("failed to load per-DB config store", "subsystem", "dbconfig")
 		} else {
 			s.dbConfigStore = dbConfigStore
 			globalConfig := nornicConfig.LoadFromEnv()

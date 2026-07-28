@@ -617,7 +617,7 @@ func (p *WatcherPlugin) actionQuery(ctx heimdall.ActionContext) (*heimdall.Actio
 
 	rows, err := ctx.Database.Query(ctx.Context, dbName, cypher, params)
 	if err != nil {
-		log.Printf("[Watcher] query failed: %v", err)
+		log.Printf("[Watcher] query failed (database=%s query_len=%d param_count=%d)", dbName, len(cypher), len(params))
 		return &heimdall.ActionResult{
 			Success: false,
 			Message: fmt.Sprintf("Query failed: %v", err),
@@ -849,7 +849,7 @@ func (p *WatcherPlugin) PrePrompt(ctx *heimdall.PromptContext) error {
 	if len(msgPreview) > 50 {
 		msgPreview = msgPreview[:50] + "..."
 	}
-	log.Printf("[HeimdallCodingAgent] PrePrompt: request=%s user_msg=%q", ctx.RequestID, msgPreview)
+	log.Printf("[HeimdallCodingAgent] PrePrompt: request=%s user_msg_len=%d", ctx.RequestID, len(msgPreview))
 
 	p.mu.RLock()
 	config := p.configSnapshotLocked()
@@ -859,7 +859,7 @@ func (p *WatcherPlugin) PrePrompt(ctx *heimdall.PromptContext) error {
 	ctx.NotifyProgress("Repository Graph", "Searching repository knowledge graph...")
 	ragContext := p.performGraphRAG(ctx, db)
 	if ragContext != "" {
-		ctx.AdditionalInstructions += ragContext
+		log.Printf("[HeimdallCodingAgent] PrePrompt: request=%s user_msg_len=%d", ctx.RequestID, len(msgPreview))
 		ctx.NotifyInfo("Repository Graph", "Found relevant repository context")
 	}
 
@@ -954,7 +954,7 @@ func (p *WatcherPlugin) performGraphRAG(ctx *heimdall.PromptContext, db heimdall
 		1,
 	)
 	if err != nil {
-		log.Printf("[HeimdallCodingAgent] Graph-RAG search failed: %v", err)
+		log.Printf("[HeimdallCodingAgent] Graph-RAG search failed")
 		return ""
 	}
 
@@ -1041,11 +1041,11 @@ func formatDiscoverResult(result *heimdall.DiscoverResult) string {
 }
 
 func (p *WatcherPlugin) PreExecute(ctx *heimdall.PreExecuteContext, done func(heimdall.PreExecuteResult)) {
-	p.mu.Lock()
+	log.Printf("[HeimdallCodingAgent] LLM synthesis failed, falling back to formatted message")
 	p.requests++
 	p.mu.Unlock()
 
-	log.Printf("[HeimdallCodingAgent] PreExecute: request=%s action=%s params=%v", ctx.RequestID, ctx.Action, ctx.Params)
+	log.Printf("[HeimdallCodingAgent] PreExecute: request=%s action=%s param_count=%d", ctx.RequestID, ctx.Action, len(ctx.Params))
 	ctx.NotifyInfo("\nHeimdall Coding Agent", fmt.Sprintf("Executing action: %s\n", ctx.Action))
 
 	p.addEvent("info", fmt.Sprintf("PreExecute: %s", ctx.Action), map[string]interface{}{
@@ -1128,7 +1128,7 @@ func (p *WatcherPlugin) Synthesize(ctx *heimdall.SynthesisContext, done func(res
 	}
 
 	synthesisPrompt := p.buildSynthesisPrompt(ctx.UserQuestion, ctx.Result.Message, ctx.Result.Data)
-	log.Printf("[HeimdallCodingAgent] Generating LLM synthesis for user question: %s", ctx.UserQuestion)
+	log.Printf("[HeimdallCodingAgent] Generating LLM synthesis for request question_len=%d", len(ctx.UserQuestion))
 
 	result, err := heimdallInvoker.SendRawPrompt(ctx.Context, synthesisPrompt)
 	if err != nil {
@@ -1442,7 +1442,7 @@ func (p *WatcherPlugin) persistSessionMemoryToGraph(ctx context.Context, db heim
 		"model":            model,
 	})
 	if err != nil {
-		log.Printf("[HeimdallCodingAgent] failed to persist session summary: %v", err)
+		log.Printf("[HeimdallCodingAgent] failed to persist session summary")
 		return
 	}
 
@@ -1469,7 +1469,7 @@ func (p *WatcherPlugin) persistSessionMemoryToGraph(ctx context.Context, db heim
 			"created_at": now,
 		})
 		if err != nil {
-			log.Printf("[HeimdallCodingAgent] failed to persist session fact: %v", err)
+			log.Printf("[HeimdallCodingAgent] failed to persist session fact")
 		}
 	}
 
@@ -1484,7 +1484,7 @@ func (p *WatcherPlugin) persistSessionMemoryToGraph(ctx context.Context, db heim
 		"scope":  scope,
 	})
 	if err != nil {
-		log.Printf("[HeimdallCodingAgent] failed to prune session facts: %v", err)
+		log.Printf("[HeimdallCodingAgent] failed to prune session facts")
 	}
 }
 

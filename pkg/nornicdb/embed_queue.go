@@ -792,10 +792,10 @@ func (ew *EmbedWorker) processNextBatch() bool {
 	if updateErr != nil {
 		// If update failed because node doesn't exist, skip it (already claimed, don't re-queue)
 		if updateErr == storage.ErrNotFound {
-			fmt.Printf("⚠️  Node %s doesn't exist - skipping update to prevent orphaned node\n", node.ID)
+			fmt.Printf("⚠️  Node no longer exists - skipping update to prevent orphaned node\n")
 			return false
 		}
-		fmt.Printf("⚠️  Failed to update node %s: %v\n", node.ID, updateErr)
+		fmt.Printf("⚠️  Failed to update node embedding state; re-queuing for retry\n")
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
 		ew.failed.Add(1)
 		return true // Failed but we tried - continue to next node

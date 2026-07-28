@@ -491,31 +491,14 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 
 	s.slowQueryCount.Add(1)
 
-	// Truncate long queries for logging
-	queryLog := query
-	if len(queryLog) > 500 {
-		queryLog = queryLog[:500] + "..."
-	}
-
 	// Build log message
 	status := "OK"
 	if err != nil {
-		status = fmt.Sprintf("ERROR: %v", err)
+		status = "ERROR"
 	}
 
-	// Format parameters (limit to avoid huge logs)
-	paramStr := ""
-	if len(params) > 0 {
-		paramBytes, _ := json.Marshal(params)
-		if len(paramBytes) > 200 {
-			paramStr = string(paramBytes[:200]) + "..."
-		} else {
-			paramStr = string(paramBytes)
-		}
-	}
-
-	logMsg := fmt.Sprintf("[SLOW QUERY] duration=%v status=%s query=%q params=%s",
-		duration, status, queryLog, paramStr)
+	logMsg := fmt.Sprintf("[SLOW QUERY] duration=%v status=%s query_len=%d param_count=%d",
+		duration, status, len(query), len(params))
 
 	// Log to slow query logger (file-backed *log.Logger) if configured;
 	// otherwise emit via the structured slog stack tagged event=slow_query

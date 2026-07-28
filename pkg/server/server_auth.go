@@ -353,9 +353,9 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle callback using OAuth manager
-	user, token, _, err := s.oauthManager.HandleCallback(code, state)
+	_, token, _, err := s.oauthManager.HandleCallback(code, state)
 	if err != nil {
-		s.log.Warn("oauth callback error", "subsystem", "oauth", "error", err)
+		s.log.Warn("oauth callback error", "subsystem", "oauth")
 		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
 		return
 	}
@@ -376,7 +376,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   86400 * 7, // 7 days
 	})
 
-	s.log.Info("oauth callback: authenticated user", "subsystem", "oauth", "user", user.Username)
+	s.log.Info("oauth callback: authenticated user", "subsystem", "oauth")
 
 	// Redirect to UI
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -940,7 +940,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 		if req.Mappings != nil {
 			for _, m := range *req.Mappings {
 				if err := s.allowlistStore.SaveRoleDatabases(r.Context(), m.Role, m.Databases); err != nil {
-					s.log.Warn("allowlist save role databases failed", "subsystem", "rbac", "role", m.Role, "error", err)
+					s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
 					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 					return
 				}
@@ -951,7 +951,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
-				s.log.Warn("allowlist save role databases failed", "subsystem", "rbac", "role", req.Role, "error", err)
+				s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
 				s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 				return
 			}
@@ -985,7 +985,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {
-			s.log.Warn("privileges PutMatrix failed", "subsystem", "rbac", "error", err)
+			s.log.Warn("privileges PutMatrix failed", "subsystem", "rbac")
 			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
 			return
 		}
