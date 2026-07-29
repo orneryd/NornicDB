@@ -1166,6 +1166,10 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 				whereFilter = fastIN
 			} else if compiled, ok := e.getCompiledSimpleWhere(ctx, whereVariable, whereClause); ok {
 				whereFilter = compiled
+			} else {
+				whereFilter = func(node *storage.Node) bool {
+					return e.evaluateWhere(ctx, node, whereVariable, whereClause)
+				}
 			}
 		}
 		if streamer, ok := store.(storage.StreamingEngine); ok {
@@ -1243,6 +1247,12 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	// Apply property filters
 	if len(properties) > 0 {
 		nodes = e.filterNodesByProperties(nodes, properties)
+	}
+	if strings.TrimSpace(whereClause) != "" {
+		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
+	}
+	if limit > 0 && len(nodes) > limit {
+		nodes = nodes[:limit]
 	}
 
 	return nodes, nil

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cypher `WHERE ... LIMIT` now preserves predicate semantics on non-streaming
+  storage wrappers.**
+  The MATCH fast path could mark a compilable predicate as already evaluated,
+  then fall back to a non-streaming node scan that never applied it. This made
+  predicates such as `n.content CONTAINS "safe to delete"` return unrelated
+  rows when a `LIMIT` was present. The fallback now applies the full WHERE
+  predicate before limiting results, restoring Neo4j's exact-substring
+  semantics for multi-word `CONTAINS` and preventing unsafe false-positive
+  matches from reaching downstream mutations.
 - **MCP `discover` results now use one bounded relevance scale and are ordered
   by the returned `similarity` value.**
   Cross-chunk RRF previously controlled result order while `similarity` exposed
