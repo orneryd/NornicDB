@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **New property-key dictionary entries are now durable before nodes and
+  relationships can reference them.**
+  Property-key metadata was previously persisted in a best-effort transaction
+  after the entity commit, allowing a cleanly acknowledged write to leave an
+  unreopenable store if that metadata write failed. New dictionary tokens are
+  now persisted before entity records commit, persistence errors abort the
+  write, and failed allocations are staged again on retry. This prevents
+  startup failures such as `property key id N not in dictionary` after storing
+  a previously unseen property name.
+- **Automatic snapshot and WAL recovery now works when the data directory is a
+  container bind-mount root.**
+  Linux rejects attempts to rename a mount point with `EBUSY`, which previously
+  trapped standard `-v nornicdb-data:/data` deployments in a restart loop after
+  recovery replay had already succeeded. Auto-recovery now falls back to moving
+  the corrupted store's children into a hidden forensic directory within the
+  mount, then rebuilds the recovered Badger store at the original mount root.
 - **APOC remote URL loads are now denied by default, and internal Cypher rewrites now reuse the shared escaped-literal path.**
   `apoc.load.json`, `apoc.load.jsonArray`, `apoc.load.csv`, and
   `apoc.import.json` no longer issue arbitrary outbound HTTP(S) fetches unless

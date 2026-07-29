@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -339,4 +340,29 @@ func TestRecoverBadgerFromSnapshotAndWAL_PreserveDirRenameFailure(t *testing.T) 
 	require.Contains(t, err.Error(), "failed to preserve corrupted data dir")
 	require.Nil(t, recovered)
 	require.Empty(t, backupDir)
+}
+
+func TestPreserveCorruptedDataDir_FallsBackForMountRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "MANIFEST"), []byte("corrupt"), 0644))
+	require.NoError(t, os.Mkdir(filepath.Join(dataDir, "wal"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "wal", "wal.log"), []byte("replayable"), 0644))
+
+	siblingBackup := dataDir + ".corrupted-test"
+	rename := func(oldPath, newPath string) error {
+		if oldPath == dataDir {
+			return &os.PathError{Op: "rename", Path: oldPath, Err: syscall.EBUSY}
+		}
+		return os.Rename(oldPath, newPath)
+	}
+
+	backupDir, err := preserveCorruptedDataDir(dataDir, siblingBackup, rename)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dataDir, "."+filepath.Base(siblingBackup)), backupDir)
+
+	_, err = os.Stat(dataDir)
+	require.NoError(t, err, "the mount root must remain in place")
+	require.FileExists(t, filepath.Join(backupDir, "MANIFEST"))
+	require.FileExists(t, filepath.Join(backupDir, "wal", "wal.log"))
+	require.NoFileExists(t, filepath.Join(dataDir, "MANIFEST"))
 }

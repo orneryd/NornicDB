@@ -1,11 +1,13 @@
 package nornicdb
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -116,7 +118,7 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 }
 
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
-// snapshot + WAL replay, preserving the original directory by renaming it.
+// snapshot + WAL replay, preserving the original store before rebuilding it.
 func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
 	walDir := filepath.Join(dataDir, "wal")
 	snapshotDir := filepath.Join(dataDir, "snapshots")
@@ -155,9 +157,11 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 		backupDir = fmt.Sprintf("%s.corrupted-%s-%d", strings.TrimRight(dataDir, string(os.PathSeparator)), ts, i)
 	}
 
-	if err := os.Rename(dataDir, backupDir); err != nil {
+	preservedDir, err := preserveCorruptedDataDir(dataDir, backupDir, os.Rename)
+	if err != nil {
 		return nil, "", fmt.Errorf("auto-recover: failed to preserve corrupted data dir (%s → %s): %w", dataDir, backupDir, err)
 	}
+	backupDir = preservedDir
 
 	// Recreate data directory and a fresh Badger store.
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -186,4 +190,62 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 	}
 
 	return newStore, backupDir, nil
+}
+
+type renamePathFunc func(oldPath, newPath string) error
+
+// preserveCorruptedDataDir first attempts to move the complete data directory.
+// Bind-mount roots cannot be renamed on Linux, so EBUSY falls back to moving the
+// directory's children into a hidden preservation directory within the mount.
+func preserveCorruptedDataDir(dataDir, backupDir string, rename renamePathFunc) (string, error) {
+	if err := rename(dataDir, backupDir); err == nil {
+		return backupDir, nil
+	} else if !errors.Is(err, syscall.EBUSY) {
+		return "", err
+	}
+
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("read mount-root data dir: %w", err)
+	}
+
+	base := "." + filepath.Base(backupDir)
+	mountBackupDir := filepath.Join(dataDir, base)
+	for i := 1; ; i++ {
+		if _, statErr := os.Stat(mountBackupDir); os.IsNotExist(statErr) {
+			break
+		} else if statErr != nil {
+			return "", fmt.Errorf("inspect mount-root preserve dir %s: %w", mountBackupDir, statErr)
+		}
+		mountBackupDir = filepath.Join(dataDir, fmt.Sprintf("%s-%d", base, i))
+	}
+	if err := os.Mkdir(mountBackupDir, 0755); err != nil {
+		return "", fmt.Errorf("create mount-root preserve dir %s: %w", mountBackupDir, err)
+	}
+
+	moved := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		source := filepath.Join(dataDir, entry.Name())
+		destination := filepath.Join(mountBackupDir, entry.Name())
+		if err := rename(source, destination); err != nil {
+			rollbackErr := rollbackPreservedChildren(dataDir, mountBackupDir, moved, rename)
+			if rollbackErr != nil {
+				return "", fmt.Errorf("move %s into mount-root preserve dir: %w (rollback failed: %v)", source, err, rollbackErr)
+			}
+			return "", fmt.Errorf("move %s into mount-root preserve dir: %w", source, err)
+		}
+		moved = append(moved, entry.Name())
+	}
+
+	return mountBackupDir, nil
+}
+
+func rollbackPreservedChildren(dataDir, backupDir string, moved []string, rename renamePathFunc) error {
+	for i := len(moved) - 1; i >= 0; i-- {
+		name := moved[i]
+		if err := rename(filepath.Join(backupDir, name), filepath.Join(dataDir, name)); err != nil {
+			return err
+		}
+	}
+	return os.Remove(backupDir)
 }
