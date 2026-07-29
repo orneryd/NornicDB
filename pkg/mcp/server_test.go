@@ -12,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	"github.com/stretchr/testify/require"
@@ -1051,6 +1052,14 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 	discover := result.(DiscoverResult)
 	require.Equal(t, "vector", discover.Method)
 	require.NotEmpty(t, discover.Results, "expected match-node to appear in results")
+	for i, searchResult := range discover.Results {
+		require.GreaterOrEqual(t, searchResult.Similarity, 0.0)
+		require.LessOrEqual(t, searchResult.Similarity, 1.0)
+		if i > 0 {
+			require.GreaterOrEqual(t, discover.Results[i-1].Similarity, searchResult.Similarity,
+				"discover results must be ordered by the client-visible similarity field")
+		}
+	}
 
 	// Locate the match-node similarity in the response.
 	var matchSim float64
@@ -1087,6 +1096,26 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 			"result %q below threshold (sim=%.4f) — min_similarity filter is broken", r.Title, r.Similarity)
 		require.NotEqual(t, "Miss", r.Title, "orthogonal miss-node passed the 0.5 threshold")
 	}
+}
+
+func TestDiscoverResultSimilarityUsesOneBoundedScale(t *testing.T) {
+	vectorHit := discoverResultSimilarity(search.SearchResult{Similarity: 0.92, VectorRank: 1, BM25Rank: 2})
+	lexicalOnlyHit := discoverResultSimilarity(search.SearchResult{Similarity: 49.09, VectorRank: 0, BM25Rank: 1})
+
+	require.InDelta(t, 0.92, vectorHit, 1e-9)
+	require.InDelta(t, 49.09/50.09, lexicalOnlyHit, 1e-9, "raw BM25 scores must be normalized")
+
+	results := []SearchResult{
+		{Title: "unrelated", Similarity: 0.52},
+		{Title: "exact", Similarity: 0.92},
+		{Title: "exact lexical match", Similarity: lexicalOnlyHit},
+	}
+	sortDiscoverResultsBySimilarity(results)
+	require.Equal(t, []string{"exact lexical match", "exact", "unrelated"}, []string{
+		results[0].Title,
+		results[1].Title,
+		results[2].Title,
+	})
 }
 
 func TestHandleDiscover_StorageError(t *testing.T) {

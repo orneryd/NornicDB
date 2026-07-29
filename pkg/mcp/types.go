@@ -121,7 +121,7 @@ type DiscoverParams struct {
 	Query         string   `json:"query"`                    // Required
 	Type          []string `json:"type,omitempty"`           // Optional, filter by types
 	Limit         int      `json:"limit,omitempty"`          // Optional, default: 10
-	MinSimilarity float64  `json:"min_similarity,omitempty"` // Optional, fused score threshold (default: 0)
+	MinSimilarity float64  `json:"min_similarity,omitempty"` // Optional, normalized relevance threshold (default: 0)
 	Depth         int      `json:"depth,omitempty"`          // Optional, default: 1, range: 1-3
 	Database      string   `json:"database,omitempty"`       // Optional, default: configured default database
 }

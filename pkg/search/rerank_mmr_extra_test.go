@@ -91,7 +91,10 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	svc := NewServiceWithDimensions(engine, 2)
 	ctx := context.Background()
 
-	base := []rrfResult{{ID: "nornic:a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2}, {ID: "nornic:b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1}}
+	base := []rrfResult{
+		{ID: "nornic:a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.9},
+		{ID: "nornic:b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8},
+	}
 	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{}, nil, nil))
 	require.Equal(t, []rrfResult{}, svc.applyStage2Rerank(ctx, "query", []rrfResult{}, &SearchOptions{}, nil, &coverageReranker{enabled: true}))
 	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{}, nil, &coverageReranker{enabled: false}))

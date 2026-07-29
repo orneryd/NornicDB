@@ -3209,7 +3209,10 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 	svc.SetReranker(rr) // no-op equality fast path
 
 	// applyStage2Rerank: disabled reranker -> pass through.
-	base := []rrfResult{{ID: "a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2}, {ID: "b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1}}
+	base := []rrfResult{
+		{ID: "a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.95},
+		{ID: "b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.70},
+	}
 	out := svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: false})
 	require.Len(t, out, 2)
 	assert.Equal(t, base[0].ID, out[0].ID)
@@ -3243,6 +3246,7 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, "b", out[0].ID)
 	assert.Equal(t, 2, out[0].VectorRank) // preserved from original map
+	assert.Equal(t, 0.70, out[0].OriginalScore, "reranking must preserve the vector cosine score")
 }
 
 func TestService_RerankCandidatesBranches(t *testing.T) {

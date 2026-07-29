@@ -172,7 +172,7 @@ func getDiscoverTool(defaultDatabase string) Tool {
 			},
 			"min_similarity": map[string]interface{}{
 				"type":        "number",
-				"description": "Minimum score threshold for results. For hybrid/vector search this is a fused rank score (often ~0.01-0.05). Set to 0 to return all.",
+				"description": "Minimum normalized relevance threshold from 0 to 1. Set to 0 to return all.",
 				"default":     0.0,
 				"minimum":     0.0,
 				"maximum":     1.0,

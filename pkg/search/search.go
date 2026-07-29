@@ -5613,15 +5613,17 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			continue
 		}
 		var vectorRank, bm25Rank int
+		originalScore := r.BiScore
 		if original != nil {
 			vectorRank, bm25Rank = original.VectorRank, original.BM25Rank
+			originalScore = original.OriginalScore
 		}
 		rerankedResults = append(rerankedResults, rrfResult{
 			ID:            r.ID,
 			RRFScore:      r.FinalScore, // Use cross-encoder score
 			VectorRank:    vectorRank,
 			BM25Rank:      bm25Rank,
-			OriginalScore: r.BiScore,
+			OriginalScore: originalScore,
 		})
 	}
 

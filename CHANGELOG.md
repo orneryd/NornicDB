@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `discover` results now use one bounded relevance scale and are ordered
+  by the returned `similarity` value.**
+  Cross-chunk RRF previously controlled result order while `similarity` exposed
+  a mixture of cosine and raw BM25 values, so an exact lexical match could carry
+  a score such as `49.09` below unrelated `0.x` results. Vector-backed hits now
+  retain their cosine similarity through stage-2 reranking, lexical-only scores
+  are monotonically normalized to `[0,1]`, and final results are sorted by that
+  same client-visible value. The `min_similarity` tool schema now documents and
+  applies the normalized relevance contract.
 - **New property-key dictionary entries are now durable before nodes and
   relationships can reference them.**
   Property-key metadata was previously persisted in a best-effort transaction
