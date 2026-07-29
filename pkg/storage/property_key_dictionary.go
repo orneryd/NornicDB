@@ -39,10 +39,11 @@ const (
 // propertyKeyDictionary holds the per-namespace forward and reverse
 // indexes for property-key tokenization.
 type propertyKeyDictionary struct {
-	mu      sync.RWMutex
-	forward map[string]map[string]uint64 // namespace -> (name -> id)
-	reverse map[string]map[uint64]string // namespace -> (id -> name)
-	nextID  map[string]*atomic.Uint64    // namespace -> next id
+	mu        sync.RWMutex
+	forward   map[string]map[string]uint64 // namespace -> (name -> id)
+	reverse   map[string]map[uint64]string // namespace -> (id -> name)
+	persisted map[string]map[string]bool   // namespace -> persisted names
+	nextID    map[string]*atomic.Uint64    // namespace -> next id
 
 	// Per-txn staged counter high-water marks and pending forward/
 	// reverse entries, persisted out-of-band of the user transaction at
@@ -57,6 +58,7 @@ func newPropertyKeyDictionary() *propertyKeyDictionary {
 	return &propertyKeyDictionary{
 		forward:           make(map[string]map[string]uint64),
 		reverse:           make(map[string]map[uint64]string),
+		persisted:         make(map[string]map[string]bool),
 		nextID:            make(map[string]*atomic.Uint64),
 		txnCounters:       make(map[*badger.Txn]map[string]uint64),
 		txnPendingForward: make(map[*badger.Txn][]propKeyPersistEntry),
@@ -106,6 +108,7 @@ func (d *propertyKeyDictionary) ensureNamespace(namespace string) {
 	if _, ok := d.forward[namespace]; !ok {
 		d.forward[namespace] = make(map[string]uint64)
 		d.reverse[namespace] = make(map[uint64]string)
+		d.persisted[namespace] = make(map[string]bool)
 		d.nextID[namespace] = &atomic.Uint64{}
 	}
 }
@@ -128,11 +131,10 @@ func (d *propertyKeyDictionary) ensureNamespace(namespace string) {
 // is idempotent because every writer that subsequently reads the same
 // (namespace, name) sees the same id from the map.
 //
-// Durability: the in-memory maps are authoritative for the engine's
-// lifetime; on restart, loadFromBadger rebuilds them from the persisted
-// forward/reverse keys. A crash between commit and persistence loses
-// at most the unflushed window of allocated ids; reconciled at next
-// engine open.
+// Durability: new forward/reverse entries are persisted before entity
+// records that reference them commit. A failed persistence aborts the
+// entity transaction; a later entity-commit failure can leave an
+// unused dictionary entry, which is safe and is not recycled.
 //
 // Lock discipline: reads happen under RLock; allocation upgrades to
 // Lock and re-checks for the concurrent-create race. The losing
@@ -142,7 +144,12 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 	d.mu.RLock()
 	if forward, ok := d.forward[namespace]; ok {
 		if id, ok := forward[name]; ok {
+			persisted := d.persisted[namespace][name]
 			d.mu.RUnlock()
+			if !persisted {
+				d.recordTxnPendingPersist(txn, namespace, name, id)
+				d.recordTxnCounterUse(txn, namespace, id)
+			}
 			return id, nil
 		}
 	}
@@ -151,7 +158,12 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 	d.mu.Lock()
 	d.ensureNamespace(namespace)
 	if id, ok := d.forward[namespace][name]; ok {
+		persisted := d.persisted[namespace][name]
 		d.mu.Unlock()
+		if !persisted {
+			d.recordTxnPendingPersist(txn, namespace, name, id)
+			d.recordTxnCounterUse(txn, namespace, id)
+		}
 		return id, nil
 	}
 	id := d.nextID[namespace].Add(1)
@@ -171,15 +183,20 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 // badger transaction via persistTxnCounters.
 func (d *propertyKeyDictionary) recordTxnPendingPersist(txn *badger.Txn, namespace, name string, id uint64) {
 	d.txnMu.Lock()
+	defer d.txnMu.Unlock()
 	if d.txnPendingForward == nil {
 		d.txnPendingForward = make(map[*badger.Txn][]propKeyPersistEntry)
+	}
+	for _, entry := range d.txnPendingForward[txn] {
+		if entry.namespace == namespace && entry.name == name && entry.id == id {
+			return
+		}
 	}
 	d.txnPendingForward[txn] = append(d.txnPendingForward[txn], propKeyPersistEntry{
 		namespace: namespace,
 		name:      name,
 		id:        id,
 	})
-	d.txnMu.Unlock()
 }
 
 type propKeyPersistEntry struct {
@@ -262,15 +279,15 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 }
 
 // persistTxnCounters writes the staged forward/reverse entries and
-// per-namespace counter keys in a fresh badger transaction. Best
-// effort: the in-memory dictionary is authoritative for the engine's
-// lifetime; a crash before persistence loses at most the unflushed
-// window of allocated property keys, reconciled at next engine open.
-func (d *propertyKeyDictionary) persistTxnCounters(db *badger.DB, drain propKeyTxnDrain) {
-	if db == nil || (len(drain.counters) == 0 && len(drain.pending) == 0) {
-		return
+// per-namespace counter keys in a fresh badger transaction.
+func (d *propertyKeyDictionary) persistTxnCounters(db *badger.DB, drain propKeyTxnDrain) error {
+	if len(drain.counters) == 0 && len(drain.pending) == 0 {
+		return nil
 	}
-	_ = db.Update(func(txn *badger.Txn) error {
+	if db == nil {
+		return fmt.Errorf("property key dictionary persistence requires an open database")
+	}
+	if err := db.Update(func(txn *badger.Txn) error {
 		var idBuf [binary.MaxVarintLen64]byte
 		for _, entry := range drain.pending {
 			n := binary.PutUvarint(idBuf[:], entry.id)
@@ -289,7 +306,16 @@ func (d *propertyKeyDictionary) persistTxnCounters(db *badger.DB, drain propKeyT
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	for _, entry := range drain.pending {
+		d.ensureNamespace(entry.namespace)
+		d.persisted[entry.namespace][entry.name] = true
+	}
+	d.mu.Unlock()
+	return nil
 }
 
 // discardTxnCounters drops staged counter state for a rolled-back txn.
@@ -333,6 +359,7 @@ func (d *propertyKeyDictionary) loadFromBadger(db *badger.DB) error {
 				d.ensureNamespace(namespace)
 				d.forward[namespace][name] = id
 				d.reverse[namespace][id] = name
+				d.persisted[namespace][name] = true
 			}
 			it.Close()
 		}

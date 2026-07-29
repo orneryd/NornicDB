@@ -423,7 +423,6 @@ func (b *BadgerEngine) migrateV1ToV2Nodes() (v1ToV2PassStats, error) {
 		if len(batch) == 0 {
 			break
 		}
-		var batchPropKeyCounters propKeyTxnDrain
 		err = b.withUpdate(func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
@@ -448,13 +447,11 @@ func (b *BadgerEngine) migrateV1ToV2Nodes() (v1ToV2PassStats, error) {
 				}
 				stats.converted++
 			}
-			batchPropKeyCounters = b.propKeyDict.flushTxnCounters(txn)
 			return nil
 		})
 		if err != nil {
 			return stats, err
 		}
-		b.propKeyDict.persistTxnCounters(b.db, batchPropKeyCounters)
 		if b.log != nil && stats.converted-lastLogged >= progressEvery {
 			b.log.Info("v1→v2 nodes progress",
 				"scanned", stats.scanned,
@@ -482,7 +479,6 @@ func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
 		if len(batch) == 0 {
 			break
 		}
-		var batchPropKeyCounters propKeyTxnDrain
 		err = b.withUpdate(func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
@@ -508,13 +504,11 @@ func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
 				}
 				stats.converted++
 			}
-			batchPropKeyCounters = b.propKeyDict.flushTxnCounters(txn)
 			return nil
 		})
 		if err != nil {
 			return stats, err
 		}
-		b.propKeyDict.persistTxnCounters(b.db, batchPropKeyCounters)
 		if b.log != nil && stats.converted-lastLogged >= progressEvery {
 			b.log.Info("v1→v2 edges progress",
 				"scanned", stats.scanned,

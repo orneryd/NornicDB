@@ -1709,16 +1709,20 @@ func (tx *BadgerTransaction) Commit() error {
 		return fmt.Errorf("flushing buffered writes: %w", err)
 	}
 
-	// Stage the monotonic ID-counter and property-key counter
-	// high-water marks for OUT-OF-TXN persistence. Writing them inside
-	// tx.badgerTx would put every node-creating commit on the same
-	// Badger key (idCounterNodeKey / per-namespace propkey counters),
+	// Stage the monotonic ID-counter high-water marks for out-of-txn
+	// persistence and persist new property-key tokens before committing
+	// entity records that reference them. Writing these metadata keys
+	// inside tx.badgerTx would put concurrent commits on shared Badger keys,
 	// causing concurrent commits to race on Badger's optimistic
 	// conflict check and surface "Transaction Conflict" instead of the
 	// genuine commit-time UNIQUE shape. The values are persisted below
-	// via persistCounters / persistTxnCounters in fresh transactions.
+	// via persistCounters in a fresh transaction.
 	idCounterNodeMax, idCounterEdgeMax := tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	propKeyCounters := tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
+	if err := tx.engine.propKeyDict.persistTxnCounters(tx.engine.db, propKeyCounters); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("persisting property key dictionary: %w", err)
+	}
 
 	if err := tx.refreshTemporalCurrentPointers(temporalTargets); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -1731,7 +1735,7 @@ func (tx *BadgerTransaction) Commit() error {
 		return normalizeTransactionCommitError(err)
 	}
 
-	// Persist the namespace's MVCC sequence and the staged ID/propkey
+	// Persist the namespace's MVCC sequence and the staged ID
 	// counters in separate Badger transactions so those high-frequency
 	// shared keys do not participate in the user transaction's
 	// conflict-detection set. Concurrent commits in the same namespace
@@ -1740,7 +1744,6 @@ func (tx *BadgerTransaction) Commit() error {
 		tx.engine.persistMVCCSequence(tx.namespace)
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
-	tx.engine.propKeyDict.persistTxnCounters(tx.engine.db, propKeyCounters)
 
 	// Apply cache/count updates and fire callbacks after commit.
 	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)

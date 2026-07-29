@@ -43,16 +43,18 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 				}
 				return err
 			}
-			// Drain the staged counter high-water marks and any
-			// pending property-key forward/reverse entries so they
-			// can be persisted out-of-band (see flushTxnCounters
-			// doc — these keys cannot ride the user txn or
-			// concurrent writers race on them).
+			// Property-key tokens must be durable before entity bytes can
+			// reference them. Persist them in a separate transaction first;
+			// a later user-transaction failure leaves only harmless orphaned
+			// tokens, matching Neo4j's token-before-entity invariant.
 			if b.idDict != nil {
 				nodeMax, edgeMax = b.idDict.flushTxnCounters(txn)
 			}
 			if b.propKeyDict != nil {
 				propKeyDrain = b.propKeyDict.flushTxnCounters(txn)
+				if err := b.propKeyDict.persistTxnCounters(b.db, propKeyDrain); err != nil {
+					return fmt.Errorf("persisting property key dictionary: %w", err)
+				}
 			}
 			return nil
 		})
@@ -60,9 +62,6 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 	if err == nil {
 		if b.idDict != nil {
 			b.idDict.persistCounters(b.db, nodeMax, edgeMax)
-		}
-		if b.propKeyDict != nil {
-			b.propKeyDict.persistTxnCounters(b.db, propKeyDrain)
 		}
 	}
 	return err

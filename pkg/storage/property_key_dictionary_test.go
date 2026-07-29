@@ -102,6 +102,64 @@ func TestPropertyKeyDict_Lookup_UnknownNamespaceReturnsFalse(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
+	eng := newTestEngine(t)
+	require.NoError(t, eng.db.Close())
+
+	err := eng.propKeyDict.persistTxnCounters(eng.db, propKeyTxnDrain{
+		counters: map[string]uint64{"nornic": 20},
+		pending: []propKeyPersistEntry{{
+			namespace: "nornic",
+			name:      "novelProperty",
+			id:        20,
+		}},
+	})
+	require.Error(t, err)
+}
+
+func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
+	eng := newTestEngine(t)
+	dict := eng.propKeyDict
+
+	firstTxn := eng.db.NewTransaction(true)
+	_, err := dict.resolveOrAllocateInTxn(firstTxn, "nornic", "novelProperty")
+	require.NoError(t, err)
+	drain := dict.flushTxnCounters(firstTxn)
+	firstTxn.Discard()
+	require.Error(t, dict.persistTxnCounters(nil, drain))
+
+	secondTxn := eng.db.NewTransaction(true)
+	_, err = dict.resolveOrAllocateInTxn(secondTxn, "nornic", "novelProperty")
+	require.NoError(t, err)
+	retryDrain := dict.flushTxnCounters(secondTxn)
+	secondTxn.Discard()
+	require.Len(t, retryDrain.pending, 1, "an unpersisted token must be restaged on retry")
+	require.NoError(t, dict.persistTxnCounters(eng.db, retryDrain))
+}
+
+func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	require.NoError(t, err)
+
+	node := &Node{
+		ID:         NodeID("nornic:novel-property-node"),
+		Labels:     []string{"Document"},
+		Properties: map[string]interface{}{"neverBeforeUsedProperty": "value"},
+	}
+	_, err = first.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+
+	second, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, second.Close()) })
+
+	stored, err := second.GetNode(node.ID)
+	require.NoError(t, err)
+	require.Equal(t, "value", stored.Properties["neverBeforeUsedProperty"])
+}
+
 // TestPropertyKeyDict_HydrateFromBadger persists allocations, reopens
 // the engine against the same data dir, and asserts the dictionary
 // rebuilds in-memory state from disk.
@@ -124,7 +182,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	first.propKeyDict.persistTxnCounters(first.db, counters)
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
 	require.NoError(t, first.Close())
 
 	// Reopen — V0 store with no bodies, so the upgrade gate doesn't
@@ -169,7 +227,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	first.propKeyDict.persistTxnCounters(first.db, counters)
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
 
 	// Manually delete the counter key to simulate a partial write.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -219,7 +277,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 		batchedCounters = dict.flushTxnCounters(txn)
 		return nil
 	}))
-	dict.persistTxnCounters(eng.db, batchedCounters)
+	require.NoError(t, dict.persistTxnCounters(eng.db, batchedCounters))
 
 	// Exactly two counter keys should exist.
 	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
@@ -470,7 +528,7 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	first.propKeyDict.persistTxnCounters(first.db, counters)
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
 
 	// Inject malformed keys under both prefixes.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
