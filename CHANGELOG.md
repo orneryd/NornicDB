@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.1] - 7/31/2026
+
 ### Fixed
 
 - **Cypher `WHERE ... LIMIT` now preserves predicate semantics on non-streaming
@@ -43,17 +45,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recovery replay had already succeeded. Auto-recovery now falls back to moving
   the corrupted store's children into a hidden forensic directory within the
   mount, then rebuilds the recovered Badger store at the original mount root.
+- **OAuth browser flows now reject unsafe callback URLs and issue secure
+  authentication cookies.**
+  The local OAuth provider validates callback URLs both before rendering
+  consent and before redirecting, rejecting external hosts, non-HTTP(S)
+  schemes, embedded user information, and fragments. Browser authentication
+  cookies, including sessions created through Basic authentication, are now
+  marked `Secure`, and the OAuth test harness registers callback URLs
+  explicitly instead of accepting arbitrary redirect destinations.
+- **Persistence operations are now confined to their configured filesystem
+  roots.**
+  Search metadata and indexes, vector stores, build snapshots, Badger and JSON
+  backups, and APOC exports now use rooted filesystem capabilities instead of
+  resolving caller-influenced paths and then opening them by absolute path.
+  Non-canonical and traversal paths are rejected at the operation boundary,
+  database names must be a single path component before search artifacts are
+  created or removed, and atomic replacement and cleanup remain inside the
+  configured root.
+- **Untrusted sizes and integer conversions can no longer wrap into unsafe
+  allocations.**
+  Added checked conversion and allocation helpers across Cypher execution,
+  traversal, FastRP, search and vector persistence, storage, temporal indexes,
+  GraphQL, GPU backends, and protocol adapters. User-controlled `LIMIT` and
+  dimension values are no longer used as unchecked capacity hints, serialized
+  vector sizes are validated before allocation, and lossy GPU/HNSW conversions
+  now fail instead of truncating or wrapping.
+- **Credentials and other sensitive values are no longer exposed through
+  routine logs or command output.**
+  Authentication, OAuth, Bolt, storage, search, replication, Heimdall, and the
+  macOS menu-bar paths now omit or redact passwords, API keys, JWTs, query
+  parameters, record contents, and other secret-bearing values. CLI startup
+  output also avoids echoing credentials supplied through flags or connection
+  strings.
+- **Security-sensitive cache and composite-key hashes now use keyed SHA-256.**
+  Authentication cache keys and storage composite-key indexes no longer rely
+  on weaker non-cryptographic hashing, reducing collision and
+  hash-manipulation risk while preserving deterministic lookup within a
+  running process.
+- **Swagger UI bootstrap values are now rendered through safe structured
+  encoding.**
+  Configured OpenAPI and OAuth values are no longer interpolated directly into
+  executable HTML/JavaScript, preventing crafted configuration values from
+  breaking out of their intended context.
+- **The macOS file indexer now treats ignore rules as glob patterns without
+  compiling caller-provided regular expressions.**
+  Direct glob matching removes regex-injection and pathological-expression
+  behavior while preserving the intended ignore-file semantics; related
+  menu-bar logging also no longer prints JWT or API-key details.
+- **GitHub Actions workflows now use least-privilege token permissions.**
+  Default workflow permissions are read-only, with cache write access granted
+  only to the image-build jobs that require it.
 - **APOC remote URL loads are now denied by default, and internal Cypher rewrites now reuse the shared escaped-literal path.**
   `apoc.load.json`, `apoc.load.jsonArray`, `apoc.load.csv`, and
   `apoc.import.json` no longer issue arbitrary outbound HTTP(S) fetches unless
   operators explicitly enable `allow_remote_url_access` or
-  `NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS`. The remote fetch path now
-  uses a hardened HTTP client with redirects disabled and rejects hosts that
-  resolve to loopback, private, link-local, multicast, or unspecified
-  addresses. Separately, the `WITH`/subquery/CALL rewrite paths now route
-  string and map literal rendering through the shared escaped Cypher literal
-  helpers instead of ad hoc quoting, closing several executable query
-  interpolation sinks.
+  `NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS`, and explicitly allow the
+  destination host. The remote fetch path now uses a hardened HTTP client with
+  redirects disabled and rejects hosts that resolve to loopback, private,
+  link-local, multicast, or unspecified addresses. Separately, the
+  `WITH`/subquery/CALL rewrite paths now route string and map literal rendering
+  through the shared escaped Cypher literal helpers instead of ad hoc quoting,
+  closing several executable query interpolation sinks.
 - **Updating a relationship a peer transaction committed after this
   transaction began is now a retryable transient conflict instead of a hard
   "not found" error.**
