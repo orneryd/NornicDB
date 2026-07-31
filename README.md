@@ -37,9 +37,6 @@
   <a href="#comparison">Comparison</a> •
   <a href="#contributors">Contributors</a>
 </p>
-
-[![oosmetrics](https://api.oosmetrics.com/api/v1/badge/achievement/1367fd54-bef6-4ad9-be15-d7557c5f2940.svg)](https://oosmetrics.com/repo/orneryd/NornicDB)
-
 ## Quick Start
 
 ```bash
