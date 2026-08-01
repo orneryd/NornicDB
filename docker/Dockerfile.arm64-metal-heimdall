@@ -34,7 +34,7 @@ FROM ${LLAMA_CPU_IMAGE} AS llama
 # =============================================================================
 # Stage 3: Go build
 # =============================================================================
-FROM golang:1.26.4-bookworm AS builder
+FROM golang:1.26.5-bookworm AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
