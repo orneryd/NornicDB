@@ -7,7 +7,7 @@ require (
 	github.com/99designs/gqlgen v0.17.94
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/dgraph-io/badger/v4 v4.9.4
-	github.com/ebitengine/purego v0.10.1
+	github.com/ebitengine/purego v0.10.2
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.23.0
 	github.com/gorilla/websocket v1.5.3
