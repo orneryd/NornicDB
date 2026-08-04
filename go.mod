@@ -14,7 +14,7 @@ require (
 	github.com/hashicorp/go-kms-wrapping/v2 v2.0.23
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.15
-	github.com/hybridgroup/yzma v1.20.0
+	github.com/hybridgroup/yzma v1.21.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
@@ -70,7 +70,7 @@ require (
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/aws/aws-sdk-go v1.55.5 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.4 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.7 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.12 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.12 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.20 // indirect
