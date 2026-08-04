@@ -1579,36 +1579,41 @@ func decodePackStreamList(data []byte, offset int) ([]any, int, error) {
 	startOffset := offset
 	offset++
 
-	var size int
+	var size uint64
 
 	// Tiny list (0x90-0x9F)
 	if marker >= 0x90 && marker <= 0x9F {
-		size = int(marker - 0x90)
+		size = uint64(marker - 0x90)
 	} else if marker == 0xD4 { // LIST8
 		if offset >= len(data) {
 			return nil, 0, fmt.Errorf("incomplete LIST8")
 		}
-		size = int(data[offset])
+		size = uint64(data[offset])
 		offset++
 	} else if marker == 0xD5 { // LIST16
 		if offset+1 >= len(data) {
 			return nil, 0, fmt.Errorf("incomplete LIST16")
 		}
-		size = int(data[offset])<<8 | int(data[offset+1])
+		size = uint64(data[offset])<<8 | uint64(data[offset+1])
 		offset += 2
 	} else if marker == 0xD6 { // LIST32
 		if offset+3 >= len(data) {
 			return nil, 0, fmt.Errorf("incomplete LIST32")
 		}
-		size = int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+		size = uint64(data[offset])<<24 | uint64(data[offset+1])<<16 | uint64(data[offset+2])<<8 | uint64(data[offset+3])
 		offset += 4
 	} else {
 		return nil, 0, fmt.Errorf("not a list marker: 0x%02X", marker)
 	}
 
-	result := make([]any, size)
+	if size > uint64(len(data)-offset) {
+		return nil, 0, fmt.Errorf("list data out of bounds")
+	}
 
-	for i := 0; i < size; i++ {
+	validatedSize := int(size)
+	result := make([]any, validatedSize)
+
+	for i := 0; i < validatedSize; i++ {
 		value, n, err := decodePackStreamValue(data, offset)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decode list item %d: %w", i, err)

@@ -1654,6 +1654,25 @@ func TestDecodePackStreamList(t *testing.T) {
 	}
 }
 
+func TestDecodePackStreamListRejectsImpossibleLIST32BeforeAllocation(t *testing.T) {
+	maliciousList := []byte{0xD6, 0xFF, 0xFF, 0xFF, 0xFF}
+
+	t.Run("direct", func(t *testing.T) {
+		_, _, err := decodePackStreamList(maliciousList, 0)
+		if err == nil || err.Error() != "list data out of bounds" {
+			t.Fatalf("expected list bounds error, got %v", err)
+		}
+	})
+
+	t.Run("nested in HELLO extra map", func(t *testing.T) {
+		data := append([]byte{0xA1, 0x81, 'x'}, maliciousList...)
+		_, _, err := decodePackStreamMap(data, 0)
+		if err == nil || err.Error() != "failed to decode map value for key x: list data out of bounds" {
+			t.Fatalf("expected nested list bounds error, got %v", err)
+		}
+	})
+}
+
 // =============================================================================
 // Tests for parseRunMessage
 // =============================================================================
