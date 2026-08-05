@@ -2853,6 +2853,11 @@ func (s *Session) handleCommit(data []byte) error {
 		return s.sendFailure("Neo.ClientError.Transaction.TransactionNotFound",
 			"No transaction to commit")
 	}
+	committedDatabase := s.txDatabase
+	hadWrites := true
+	if reporter, ok := s.executor.(pendingTransactionWriteReporter); ok {
+		hadWrites = reporter.HasPendingTransactionWrites()
+	}
 
 	// If executor supports transactions, commit
 	if txExec, ok := s.executor.(TransactionalExecutor); ok {
@@ -2869,6 +2874,9 @@ func (s *Session) handleCommit(data []byte) error {
 			s.txHasNonMergeWrite = false
 			return s.sendFailure(code, message)
 		}
+	}
+	if hadWrites {
+		s.invalidateCommittedWriteCaches(committedDatabase)
 	}
 
 	s.inTransaction = false
@@ -3589,6 +3597,12 @@ func (a *transactionalBoltQueryExecutorAdapter) Execute(ctx context.Context, que
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.boltQueryExecutorAdapter.Execute(ctx, query, params)
+}
+
+func (a *transactionalBoltQueryExecutorAdapter) HasPendingTransactionWrites() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.executor != nil && a.executor.HasPendingTransactionWrites()
 }
 
 func (a *transactionalBoltQueryExecutorAdapter) BeginTransaction(ctx context.Context, _ map[string]any) error {

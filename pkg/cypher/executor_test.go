@@ -24,6 +24,19 @@ func TestNewStorageExecutor(t *testing.T) {
 	assert.NotNil(t, exec.storage)
 }
 
+func TestInvalidateCommittedWriteCaches(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	query := "MATCH (n:Repository) RETURN n"
+	exec.cache.Put(query, nil, &ExecuteResult{Rows: [][]interface{}{{"stale"}}}, time.Minute)
+	exec.nodeLookupCache["Repository:id=repository"] = &storage.Node{ID: "repository"}
+
+	exec.InvalidateCommittedWriteCaches()
+
+	_, found := exec.cache.Get(query, nil)
+	assert.False(t, found)
+	assert.Empty(t, exec.nodeLookupCache)
+}
+
 func TestCloneWithStorageSharesNodeLookupCacheLock(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")

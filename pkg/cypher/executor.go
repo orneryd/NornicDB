@@ -692,6 +692,17 @@ func (e *StorageExecutor) ClearQueryCaches() {
 	cacheMu.Unlock()
 }
 
+// InvalidateCommittedWriteCaches evicts cached graph state after a write was
+// committed by another executor sharing the same storage engine. Transaction-
+// scoped Bolt executors use this to keep the long-lived read executor coherent
+// without discarding its immutable analysis and plan caches.
+func (e *StorageExecutor) InvalidateCommittedWriteCaches() {
+	if e.cache != nil {
+		e.cache.Invalidate()
+	}
+	e.invalidateNodeLookupCache()
+}
+
 // InvalidateEntityCaches evicts targeted cache entries affected by a specific entity state change.
 func (e *StorageExecutor) InvalidateEntityCaches(entityID string, tokens []string) {
 	if e.cache != nil && len(tokens) > 0 {
