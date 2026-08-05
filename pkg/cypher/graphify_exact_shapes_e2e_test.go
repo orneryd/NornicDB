@@ -209,10 +209,11 @@ func TestGraphifyExactShape_ToCypher_EdgeMatchMerge_ConfidenceVariants(t *testin
 		stmt := fmt.Sprintf(`MATCH (a {id: 'a.py::Foo'}), (b {id: 'b.py::Bar'}) MERGE (a)-[:CALLS {confidence: '%s'}]->(b);`, conf)
 		f.run(t, stmt, nil)
 	}
-	// Idempotent MERGE: count stays at 1 across all three statements (same
-	// (start, end, type) triple, only the SET-less property changes).
+	// Relationship properties are part of the MERGE pattern, so the three
+	// confidence identities remain distinct. Repeating any one statement is
+	// idempotent for that exact pattern.
 	cnt := f.run(t, "MATCH ({id:'a.py::Foo'})-[e:CALLS]->({id:'b.py::Bar'}) RETURN count(e)", nil)
-	require.Equal(t, int64(1), graphifyToInt64(t, cnt.Rows[0][0]))
+	require.Equal(t, int64(3), graphifyToInt64(t, cnt.Rows[0][0]))
 }
 
 // ============================================================================

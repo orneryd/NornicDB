@@ -2040,8 +2040,13 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		return result, nil
 	}
 
-	// Check if relationship exists
-	existingEdge := store.GetEdgeBetween(startNode.ID, endNode.ID, relType)
+	// Cypher relationship properties inside the MERGE pattern are identity
+	// fields. Scan the bounded endpoint pair so same-type relationships with
+	// different property identities remain distinct.
+	existingEdge, err := findRelationshipForMerge(store, startNode.ID, endNode.ID, relType, relProps)
+	if err != nil {
+		return nil, fmt.Errorf("find relationship for MERGE: %w", err)
+	}
 
 	var edge *storage.Edge
 	if existingEdge != nil {
@@ -2049,25 +2054,18 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	} else {
 		// Create new relationship
 		edge = &storage.Edge{
-			ID:         storage.EdgeID(e.generateID()),
+			ID:         e.newRelationshipMergeEdgeID(startNode.ID, endNode.ID, relType, relProps),
 			Type:       relType,
 			StartNode:  startNode.ID,
 			EndNode:    endNode.ID,
 			Properties: relProps,
 		}
-		err := store.CreateEdge(edge)
-		if err != nil {
-			// If already exists error, ignore it (MERGE semantics)
-			if err == storage.ErrAlreadyExists {
-				// Try to find the existing edge again
-				existingEdge = store.GetEdgeBetween(startNode.ID, endNode.ID, relType)
-				if existingEdge != nil {
-					edge = existingEdge
-				}
-			} else {
-				return nil, fmt.Errorf("failed to create relationship: %w", err)
-			}
-		} else {
+		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, relProps)
+		if createErr != nil {
+			return nil, fmt.Errorf("failed to create relationship: %w", createErr)
+		}
+		edge = createdEdge
+		if created {
 			result.Stats.RelationshipsCreated = 1
 			e.notifyEdgeMutated(string(edge.ID))
 		}
@@ -3251,7 +3249,9 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 		afterColon := relContent[colonIdx+1:]
 		if braceIdx := strings.Index(afterColon, "{"); braceIdx > 0 {
 			relType = strings.TrimSpace(afterColon[:braceIdx])
-			// Parse properties (simplified)
+			if braceEnd := strings.LastIndex(afterColon, "}"); braceEnd > braceIdx {
+				relProps = e.parseProperties(ctx, afterColon[braceIdx:braceEnd+1])
+			}
 		} else {
 			relType = strings.TrimSpace(afterColon)
 		}
@@ -3277,28 +3277,33 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 		return fmt.Errorf("end node variable '%s' not in context (available: %v)", endVar, getKeys(nodeContext))
 	}
 
-	// Check if relationship already exists
-	edges, _ := store.GetOutgoingEdges(startNode.ID)
-	for _, edge := range edges {
-		if edge.Type == relType && edge.EndNode == endNode.ID {
-			// Relationship already exists
-			return nil
-		}
+	// Check the complete relationship pattern, including its identity
+	// properties, rather than collapsing every same-pair/type relationship.
+	existing, err := findRelationshipForMerge(store, startNode.ID, endNode.ID, relType, relProps)
+	if err != nil {
+		return fmt.Errorf("find relationship for MERGE segment: %w", err)
+	}
+	if existing != nil {
+		return nil
 	}
 
 	// Create the relationship
 	edge := &storage.Edge{
-		ID:         storage.EdgeID(e.generateID()),
+		ID:         e.newRelationshipMergeEdgeID(startNode.ID, endNode.ID, relType, relProps),
 		Type:       relType,
 		StartNode:  startNode.ID,
 		EndNode:    endNode.ID,
 		Properties: relProps,
 	}
 
-	if err := store.CreateEdge(edge); err != nil {
+	createdEdge, created, err := createRelationshipForMerge(e, store, edge, relProps)
+	if err != nil {
 		return err
 	}
-	e.notifyEdgeMutated(string(edge.ID))
+	if !created {
+		return nil
+	}
+	e.notifyEdgeMutated(string(createdEdge.ID))
 	return nil
 }
 

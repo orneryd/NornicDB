@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Relationship `MERGE` now includes properties from the pattern in its
+  identity.**
+  NornicDB previously matched relationships by start node, end node, and type
+  only. Two assertions such as `[:BUILT_FROM {scope_id: ...}]` between the
+  same nodes therefore collapsed into one relationship, and deleting one
+  scope could remove the other scope's evidence. Plain and `UNWIND` relationship
+  merges now match the complete property pattern. Concurrent writers of the
+  same property identity use one deterministic storage key and converge after
+  the existing transient-conflict retry, while different identities remain
+  independent.
+
 ## [v1.2.1] - 7/31/2026
 
 ### Fixed

@@ -1196,11 +1196,12 @@ type unwindMergeChainWherePlan struct {
 }
 
 type unwindMergeChainRelationshipPlan struct {
-	fromVar        string
-	toVar          string
-	relVar         string
-	relType        string
-	setAssignments []unwindSimpleSetAssignment
+	fromVar          string
+	toVar            string
+	relVar           string
+	relType          string
+	matchAssignments []unwindSimpleSetAssignment
+	setAssignments   []unwindSimpleSetAssignment
 }
 
 type unwindMergeChainStep struct {
@@ -1629,6 +1630,19 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	relInner := strings.TrimSpace(afterFrom[openBracket+1 : closeBracket])
+	var matchAssignments []unwindSimpleSetAssignment
+	if propsStart := strings.Index(relInner, "{"); propsStart >= 0 {
+		propsEnd := strings.LastIndex(relInner, "}")
+		if propsEnd <= propsStart || strings.TrimSpace(relInner[propsEnd+1:]) != "" {
+			return unwindMergeChainRelationshipPlan{}, false
+		}
+		var ok bool
+		matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(relInner[propsStart+1 : propsEnd])
+		if !ok {
+			return unwindMergeChainRelationshipPlan{}, false
+		}
+		relInner = strings.TrimSpace(relInner[:propsStart])
+	}
 	var relVar string
 	var relType string
 	switch {
@@ -1664,7 +1678,13 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if !isSimpleIdentifier(relType) || !isSimpleIdentifier(toVar) {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	return unwindMergeChainRelationshipPlan{fromVar: fromVar, toVar: toVar, relVar: relVar, relType: relType}, true
+	return unwindMergeChainRelationshipPlan{
+		fromVar:          fromVar,
+		toVar:            toVar,
+		relVar:           relVar,
+		relType:          relType,
+		matchAssignments: matchAssignments,
+	}, true
 }
 
 func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar string) ([]string, bool) {
@@ -2056,7 +2076,7 @@ func applyUnwindMergeChainEdgeSetAssignment(
 		}
 		return changed, nil
 	}
-	val := resolveValue(assignment.expr, rowValues)
+	val := normalizePropValue(resolveValue(assignment.expr, rowValues))
 	if cur, exists := edge.Properties[assignment.prop]; !exists || !reflect.DeepEqual(cur, val) {
 		edge.Properties[assignment.prop] = val
 		return true, nil
@@ -2142,57 +2162,48 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 		notified[key] = struct{}{}
 		e.notifyNodeMutated(key)
 	}
-	applyRelationshipAssignments := func(edge *storage.Edge, assignments []unwindSimpleSetAssignment, values map[string]interface{}) bool {
-		if edge.Properties == nil {
-			edge.Properties = map[string]interface{}{}
-		}
+	applyRelationshipAssignments := func(
+		edge *storage.Edge,
+		assignments []unwindSimpleSetAssignment,
+		values map[string]interface{},
+	) (bool, error) {
 		needsUpdate := false
 		for _, assignment := range assignments {
-			val := resolveBatchValue(assignment.expr, values)
-			if cur, exists := edge.Properties[assignment.prop]; !exists || !reflect.DeepEqual(canonicalUnwindMergeValue(cur), canonicalUnwindMergeValue(val)) {
-				edge.Properties[assignment.prop] = val
-				needsUpdate = true
+			changed, err := applyUnwindMergeChainEdgeSetAssignment(edge, assignment, values, resolveBatchValue)
+			if err != nil {
+				return false, err
 			}
+			needsUpdate = needsUpdate || changed
 		}
-		return needsUpdate
-	}
-	createRelationship := func(edge *storage.Edge) (*storage.Edge, bool, error) {
-		const maxCreateAttempts = 3
-		for attempt := 0; attempt < maxCreateAttempts; attempt++ {
-			if err := store.CreateEdge(edge); err != nil {
-				if err != storage.ErrAlreadyExists {
-					return nil, false, fmt.Errorf("UNWIND MERGE chain relationship create failed: %w", err)
-				}
-				if existing := store.GetEdgeBetween(edge.StartNode, edge.EndNode, edge.Type); existing != nil {
-					return existing, false, nil
-				}
-				edge.ID = storage.EdgeID(e.generateID())
-				continue
-			}
-			return edge, true, nil
-		}
-		return nil, false, fmt.Errorf("UNWIND MERGE chain relationship create failed after %d edge ID collisions", maxCreateAttempts)
-	}
-	relationshipKey := func(startID, endID storage.NodeID, edgeType string) string {
-		return string(startID) + "\x00" + edgeType + "\x00" + string(endID)
+		return needsUpdate, nil
 	}
 	// findRelationship prefers the batch-local relationship cache and only
 	// falls back to committed storage when both endpoints predate this batch.
-	findRelationship := func(fromNode, toNode *storage.Node, edgeType string) (*storage.Edge, string) {
-		key := relationshipKey(fromNode.ID, toNode.ID, edgeType)
+	findRelationship := func(
+		fromNode, toNode *storage.Node,
+		edgeType string,
+		matchProps map[string]interface{},
+	) (*storage.Edge, string, error) {
+		if relationshipMergeIdentityContainsNaN(matchProps) {
+			return nil, "nan:" + e.generateID(), nil
+		}
+		key := relationshipMergeIdentityKey(fromNode.ID, toNode.ID, edgeType, matchProps)
 		if relationshipKnown[key] {
-			return relationshipCache[key], key
+			return relationshipCache[key], key, nil
 		}
 		_, fromCreated := batchCreatedNodes[fromNode.ID]
 		_, toCreated := batchCreatedNodes[toNode.ID]
 		if fromCreated || toCreated {
 			relationshipKnown[key] = true
-			return nil, key
+			return nil, key, nil
 		}
-		edge := store.GetEdgeBetween(fromNode.ID, toNode.ID, edgeType)
+		edge, err := findRelationshipForMerge(store, fromNode.ID, toNode.ID, edgeType, matchProps)
+		if err != nil {
+			return nil, "", err
+		}
 		relationshipCache[key] = edge
 		relationshipKnown[key] = true
-		return edge, key
+		return edge, key, nil
 	}
 
 	processedRows := 0
@@ -2349,20 +2360,29 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				skipRow = true
 				break
 			}
-			edge, relKey := findRelationship(fromNode, toNode, relPlan.relType)
+			matchProps := make(map[string]interface{}, len(relPlan.matchAssignments))
+			for _, assignment := range relPlan.matchAssignments {
+				matchProps[assignment.prop] = normalizePropValue(resolveBatchValue(assignment.expr, rowValues))
+			}
+			edge, relKey, err := findRelationship(fromNode, toNode, relPlan.relType, matchProps)
+			if err != nil {
+				return nil, true, fmt.Errorf("UNWIND MERGE chain relationship lookup failed: %w", err)
+			}
 			relationshipChanged := false
 			if edge == nil {
 				edge = &storage.Edge{
-					ID:         storage.EdgeID(e.generateID()),
+					ID:         e.newRelationshipMergeEdgeID(fromNode.ID, toNode.ID, relPlan.relType, matchProps),
 					Type:       relPlan.relType,
 					StartNode:  fromNode.ID,
 					EndNode:    toNode.ID,
-					Properties: map[string]interface{}{},
+					Properties: cloneNodePropertiesMap(matchProps),
 				}
-				applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues)
-				createdEdge, created, err := createRelationship(edge)
+				if _, err := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues); err != nil {
+					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", err)
+				}
+				createdEdge, created, err := createRelationshipForMerge(e, store, edge, matchProps)
 				if err != nil {
-					return nil, true, err
+					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship create failed: %w", err)
 				}
 				edge = createdEdge
 				relationshipCache[relKey] = edge
@@ -2370,20 +2390,33 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 				if created {
 					result.Stats.RelationshipsCreated++
 					relationshipChanged = true
-				} else if applyRelationshipAssignments(createdEdge, relPlan.setAssignments, rowValues) {
+				} else if changed, assignErr := applyRelationshipAssignments(createdEdge, relPlan.setAssignments, rowValues); assignErr != nil {
+					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", assignErr)
+				} else if changed {
 					if err := store.UpdateEdge(createdEdge); err != nil {
 						return nil, true, fmt.Errorf("UNWIND MERGE chain relationship update failed: %w", err)
 					}
 					relationshipCache[relKey] = createdEdge
 					relationshipChanged = true
 				}
-			} else if applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues) {
+			} else if changed, assignErr := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues); assignErr != nil {
+				return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", assignErr)
+			} else if changed {
 				if err := store.UpdateEdge(edge); err != nil {
 					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship update failed: %w", err)
 				}
 				relationshipCache[relKey] = edge
 				relationshipChanged = true
 			}
+			// SET may change a property that participated in the MERGE pattern.
+			// Do not let a later row reuse an edge that no longer matches that
+			// identity; the next row must evaluate MERGE against the new state.
+			if relationshipMatchesMergePattern(edge, relPlan.relType, matchProps) {
+				relationshipCache[relKey] = edge
+			} else {
+				relationshipCache[relKey] = nil
+			}
+			relationshipKnown[relKey] = true
 			if relationshipChanged {
 				e.notifyEdgeMutated(string(edge.ID))
 				notifyOnce(fromNode.ID)
@@ -2823,7 +2856,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			return nil
 		}
 		edge := &storage.Edge{
-			ID:         storage.EdgeID(e.generateID()),
+			ID:         e.newRelationshipMergeEdgeID(from.ID, to.ID, relType, nil),
 			Type:       relType,
 			StartNode:  from.ID,
 			EndNode:    to.ID,
