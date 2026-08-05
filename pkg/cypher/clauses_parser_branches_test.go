@@ -50,6 +50,15 @@ func TestParseUnwindMergeRelationshipClause_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "r", plan.relVar)
 
+	plan, ok = parseUnwindMergeRelationshipClause("MERGE (n)-[r:REL {}]->(m)")
+	require.True(t, ok)
+	require.Equal(t, "r", plan.relVar)
+	require.Empty(t, plan.matchAssignments)
+	plan, ok = parseUnwindMergeRelationshipClause("MERGE (n)-[:REL {}]->(m)")
+	require.True(t, ok)
+	require.Empty(t, plan.relVar)
+	require.Empty(t, plan.matchAssignments)
+
 	_, ok = parseUnwindMergeRelationshipClause("CREATE (n)-[:REL]->(m)")
 	require.False(t, ok)
 	_, ok = parseUnwindMergeRelationshipClause("MERGE n-[:REL]->(m)")

@@ -1636,10 +1636,13 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 		if propsEnd <= propsStart || strings.TrimSpace(relInner[propsEnd+1:]) != "" {
 			return unwindMergeChainRelationshipPlan{}, false
 		}
-		var ok bool
-		matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(relInner[propsStart+1 : propsEnd])
-		if !ok {
-			return unwindMergeChainRelationshipPlan{}, false
+		matchProperties := strings.TrimSpace(relInner[propsStart+1 : propsEnd])
+		if matchProperties != "" {
+			var ok bool
+			matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(matchProperties)
+			if !ok {
+				return unwindMergeChainRelationshipPlan{}, false
+			}
 		}
 		relInner = strings.TrimSpace(relInner[:propsStart])
 	}
