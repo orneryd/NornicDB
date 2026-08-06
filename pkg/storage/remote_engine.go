@@ -793,24 +793,33 @@ func (r *RemoteEngine) DeleteNode(id NodeID) error {
 }
 
 func (r *RemoteEngine) CreateEdge(edge *Edge) error {
+	if edge == nil {
+		return ErrInvalidData
+	}
 	props := map[string]interface{}{}
 	for k, v := range edge.Properties {
 		props[k] = v
 	}
-	if edge.ID != "" {
-		props["id"] = string(edge.ID)
+	params := map[string]interface{}{
+		"start": string(edge.StartNode),
+		"end":   string(edge.EndNode),
+		"props": props,
 	}
 	stmt := fmt.Sprintf(
 		"MATCH (a),(b) WHERE a.id = $start AND b.id = $end CREATE (a)-[r:%s]->(b) SET r += $props RETURN r",
 		quoteIdent(edge.Type),
 	)
+	if edge.ID != "" {
+		props["id"] = string(edge.ID)
+		params["id"] = string(edge.ID)
+		stmt = fmt.Sprintf(
+			"MATCH (a),(b) WHERE a.id = $start AND b.id = $end MERGE (a)-[r:%s {id: $id}]->(b) SET r += $props RETURN r",
+			quoteIdent(edge.Type),
+		)
+	}
 	ctx, cancel := defaultCtx()
 	defer cancel()
-	rows, err := r.transport.query(ctx, stmt, map[string]interface{}{
-		"start": string(edge.StartNode),
-		"end":   string(edge.EndNode),
-		"props": props,
-	})
+	rows, err := r.transport.query(ctx, stmt, params)
 	if err != nil {
 		return err
 	}
