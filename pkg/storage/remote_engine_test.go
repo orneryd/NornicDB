@@ -519,7 +519,7 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(0)}}, nil)}, nil
 			}
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
-		case strings.Contains(stmt, "CREATE (a)-[r"):
+		case strings.Contains(stmt, "MERGE (a)-[r"):
 			if params["start"] == "missing" {
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
 			}
