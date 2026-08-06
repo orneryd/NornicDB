@@ -500,6 +500,10 @@ func registerProcedureWithCypher(proc PluginProcedure) {
 	switch strings.ToUpper(proc.Mode) {
 	case "WRITE":
 		mode = cypher.ProcedureModeWrite
+	case "SCHEMA":
+		mode = cypher.ProcedureModeSchema
+	case "ADMIN":
+		mode = cypher.ProcedureModeAdmin
 	case "DBMS":
 		mode = cypher.ProcedureModeDBMS
 	}

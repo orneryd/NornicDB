@@ -28,7 +28,7 @@ This document describes the current procedure runtime in NornicDB, including:
   - canonical `name`
   - `signature`
   - `description`
-  - `mode` (`READ`, `WRITE`, `DBMS`)
+  - `mode` (`READ`, `WRITE`, `SCHEMA`, `ADMIN`, `DBMS`)
   - `worksOnSystem`
   - argument cardinality (`minArgs`, `maxArgs`)
 
@@ -51,6 +51,8 @@ DROP PROCEDURE nornic.touchUser
 
 - `CREATE PROCEDURE` and `DROP PROCEDURE` are rejected inside an active explicit transaction.
 - Procedure mode validation is enforced at create/compile time (for example, `MODE READ` cannot contain write operations).
+- Procedure modes are authorization contracts for Bolt callers: `WRITE` requires the `write` entitlement, `SCHEMA` requires `schema`, and `ADMIN` or `DBMS` requires `admin`. `READ` requires `read`.
+- Dynamic statements run by procedures inherit the invoking caller's effective entitlements. A query supplied through a parameter cannot bypass the caller's write, schema, or admin permissions.
 
 ## Startup Precompile and Persistence
 

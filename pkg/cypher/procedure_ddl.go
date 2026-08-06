@@ -20,7 +20,7 @@ const (
 )
 
 var (
-	createProcedurePattern = regexp.MustCompile(`(?is)^CREATE\s+(OR\s+REPLACE\s+)?PROCEDURE\s+([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\((.*?)\)\s+MODE\s+(READ|WRITE|DBMS)\s+AS\s+(.+)$`)
+	createProcedurePattern = regexp.MustCompile(`(?is)^CREATE\s+(OR\s+REPLACE\s+)?PROCEDURE\s+([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\((.*?)\)\s+MODE\s+(READ|WRITE|SCHEMA|ADMIN|DBMS)\s+AS\s+(.+)$`)
 	dropProcedurePattern   = regexp.MustCompile(`(?is)^DROP\s+PROCEDURE\s+([a-zA-Z_][a-zA-Z0-9_\.]*)\s*$`)
 )
 
@@ -183,7 +183,7 @@ func parseProcedureArgNames(raw string) ([]string, error) {
 func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRecord) (ProcedureSpec, ProcedureHandler, persistedProcedureRecord, error) {
 	mode := ProcedureMode(strings.ToUpper(record.Mode))
 	switch mode {
-	case ProcedureModeRead, ProcedureModeWrite, ProcedureModeDBMS:
+	case ProcedureModeRead, ProcedureModeWrite, ProcedureModeSchema, ProcedureModeAdmin, ProcedureModeDBMS:
 	default:
 		return ProcedureSpec{}, nil, record, fmt.Errorf("invalid procedure mode: %s", record.Mode)
 	}

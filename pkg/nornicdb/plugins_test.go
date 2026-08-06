@@ -450,7 +450,7 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 		})
 		require.Equal(t, before, len(cypher.ListRegisteredProcedures()))
 
-		name := "cov.proc." + strings.ReplaceAll(t.Name(), "/", "_") + "." + time.Now().Format("150405")
+		name := "cov.proc." + strings.ReplaceAll(t.Name(), "/", "_") + ".p" + time.Now().Format("150405")
 		registerProcedureWithCypher(PluginProcedure{
 			Name:          name,
 			Signature:     name + "()",
@@ -463,6 +463,19 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 			},
 		})
 		require.Greater(t, len(cypher.ListRegisteredProcedures()), before)
+
+		schemaName := name + ".schema"
+		registerProcedureWithCypher(PluginProcedure{
+			Name:      schemaName,
+			Signature: schemaName + "()",
+			Mode:      "SCHEMA",
+			Handler: func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error) {
+				return &cypher.ExecuteResult{}, nil
+			},
+		})
+		procedure, found := cypher.RegisteredProcedureForCall("CALL " + schemaName + "()")
+		require.True(t, found)
+		require.Equal(t, cypher.ProcedureModeSchema, procedure.Mode)
 	})
 
 	t.Run("loadHeimdallPlugin reflection and validation branches", func(t *testing.T) {

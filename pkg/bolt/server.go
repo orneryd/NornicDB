@@ -2145,20 +2145,22 @@ func (s *Session) handleRun(data []byte) error {
 	defer s.clearActiveRun()
 	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
 
-	// Classify query type once (used for auth and deferred flush)
+	// Resolve registered procedure modes in addition to preserving the existing
+	// Cypher classification. Procedure arguments can hide a mutation from the
+	// outer query text, so keyword matching alone is not an authorization boundary.
+	requirements := cypher.QueryPermissionRequirements(query)
+	isWrite := requirements.Write
+	isSchema := requirements.Schema
+	isAdmin := requirements.Admin
 	upperQuery := strings.ToUpper(query)
-	isWrite := strings.Contains(upperQuery, "CREATE") ||
-		strings.Contains(upperQuery, "DELETE") ||
-		strings.Contains(upperQuery, "SET ") ||
-		strings.Contains(upperQuery, "MERGE") ||
-		strings.Contains(upperQuery, "REMOVE ")
-	isSchema := strings.Contains(upperQuery, "INDEX") ||
-		strings.Contains(upperQuery, "CONSTRAINT")
 
 	// Check permissions based on query type (use canonical entitlement IDs from auth)
 	if s.authResult != nil {
 		if isSchema && !s.authResult.HasPermission(string(auth.PermSchema)) {
 			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Schema operations require schema permission")
+		}
+		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) {
+			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Admin operations require admin permission")
 		}
 		if isWrite && !s.authResult.HasPermission(string(auth.PermWrite)) {
 			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Write operations require write permission")
@@ -2166,6 +2168,11 @@ func (s *Session) handleRun(data []byte) error {
 		if !s.authResult.HasPermission(string(auth.PermRead)) {
 			return s.sendFailure("Neo.ClientError.Security.Forbidden", "Read operations require read permission")
 		}
+	}
+	if s.authResult != nil {
+		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
+			return s.authResult.HasPermission(permission)
+		})
 	}
 
 	// Log query if enabled
@@ -2377,6 +2384,10 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 func mapBoltQueryError(err error) (code, message string) {
 	if err == nil {
 		return "Neo.ClientError.Statement.SyntaxError", ""
+	}
+	var permissionDenied *cypher.PermissionDeniedError
+	if errors.As(err, &permissionDenied) {
+		return "Neo.ClientError.Security.Forbidden", permissionDenied.Error()
 	}
 	msg := err.Error()
 	if strings.HasPrefix(msg, "Neo.") {

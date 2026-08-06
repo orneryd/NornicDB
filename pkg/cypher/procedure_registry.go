@@ -14,9 +14,11 @@ import (
 type ProcedureMode string
 
 const (
-	ProcedureModeRead  ProcedureMode = "READ"
-	ProcedureModeWrite ProcedureMode = "WRITE"
-	ProcedureModeDBMS  ProcedureMode = "DBMS"
+	ProcedureModeRead   ProcedureMode = "READ"
+	ProcedureModeWrite  ProcedureMode = "WRITE"
+	ProcedureModeSchema ProcedureMode = "SCHEMA"
+	ProcedureModeAdmin  ProcedureMode = "ADMIN"
+	ProcedureModeDBMS   ProcedureMode = "DBMS"
 )
 
 // ProcedureParam defines one procedure argument in canonical metadata.

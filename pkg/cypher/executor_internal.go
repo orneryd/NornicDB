@@ -25,6 +25,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if cypher == "" {
 		return nil, fmt.Errorf("empty query")
 	}
+	if err := AuthorizeQuery(ctx, cypher); err != nil {
+		return nil, err
+	}
 
 	if useDB, remaining, hasUse, err := parseLeadingUseClause(cypher); hasUse || err != nil {
 		if err != nil {

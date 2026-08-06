@@ -95,11 +95,11 @@ These apply server-wide and are assigned to roles by default (built-in roles) or
 | ID | Name | What It Controls |
 |---|---|---|
 | `read` | Read | Cypher MATCH, search, metrics, status, Bifrost/GraphQL reads, MCP reads |
-| `write` | Write | Cypher CREATE/DELETE/SET/MERGE, embed triggers, search rebuild, GraphQL mutations |
+| `write` | Write | Cypher CREATE/DELETE/SET/MERGE, registered `MODE WRITE` procedures, embed triggers, search rebuild, GraphQL mutations |
 | `create` | Create | Resource creation operations |
 | `delete` | Delete | Delete operations (e.g. GDPR delete) |
-| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system admin |
-| `schema` | Schema | CREATE/DROP INDEX and CONSTRAINT via Bolt |
+| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system administration, registered `MODE ADMIN` and `MODE DBMS` procedures |
+| `schema` | Schema | CREATE/DROP INDEX and CONSTRAINT via Bolt, registered `MODE SCHEMA` procedures |
 | `user_manage` | User Management | Create, update, delete user accounts (distinct from admin) |
 
 ### Per-Database Entitlements
