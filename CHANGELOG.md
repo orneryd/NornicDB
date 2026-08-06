@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.2] - 8/6/2026
+
+### Security
+
+- **Bolt now authorizes registered procedures by their declared mode.**
+  A caller with only `read` permission could previously invoke a `WRITE`
+  procedure when its mutation was supplied dynamically, because Bolt classified
+  only outer-query keywords. `WRITE`, `SCHEMA`, `ADMIN`, and `DBMS` procedures
+  now require their corresponding entitlements before execution. Dynamic nested
+  statements inherit the invoking caller's permissions, closing the same bypass
+  for parameterized APOC execution in both autocommit and explicit transactions.
+- **Bolt rejects malformed PackStream lists before allocating their declared
+  size.** `LIST8`, `LIST16`, and `LIST32` headers are validated against the
+  remaining payload, preventing unauthenticated peers from using an oversized
+  list declaration during `HELLO` decoding to request an attacker-controlled
+  memory allocation.
+- **Updated AWS SDK dependencies for published security advisories.**
+
 ### Fixed
 
 - **Relationship `MERGE` now includes properties from the pattern in its
@@ -19,6 +37,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same property identity use one deterministic storage key and converge after
   the existing transient-conflict retry, while different identities remain
   independent.
+- **Remote relationship `MERGE` now converges on the deterministic edge ID.**
+  Remote storage previously translated edge creation to Cypher `CREATE`, which
+  could insert duplicate relationships when property-aware `MERGE` retries
+  targeted the same generated identity. ID-bearing remote edges now use an
+  identity-bearing relationship `MERGE`; legacy empty-ID edge creation retains
+  its existing `CREATE` behavior.
+- **Empty property maps in relationship `MERGE` patterns are accepted.**
+  `MERGE (a)-[:TYPE {}]->(b)` now has the same behavior as an unqualified
+  relationship pattern instead of failing parser validation.
+- **Bolt's committed-write cache now invalidates from the transaction's
+  authoritative operation count.** This prevents a query result cached before
+  a committed transaction from being reused after that transaction has changed
+  graph state, including writes executed through paths that are not reliably
+  identified by outer-query keyword scanning.
 
 ## [v1.2.1] - 7/31/2026
 
