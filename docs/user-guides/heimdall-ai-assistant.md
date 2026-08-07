@@ -82,7 +82,7 @@ For local GGUF instead of OpenAI, use `NORNICDB_HEIMDALL_PROVIDER=local` (or omi
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `NORNICDB_HEIMDALL_ENABLED` | `false` | Enable/disable the AI assistant |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, or `openai` |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, `openai`, `vllm`, or `litellm` |
 | `NORNICDB_HEIMDALL_API_URL` | (see below) | API base URL for ollama/openai |
 | `NORNICDB_HEIMDALL_API_KEY` | (empty) | API key for OpenAI (required when provider=openai) |
 | `NORNICDB_HEIMDALL_MODEL` | `qwen3-0.6b-instruct` | Model name (GGUF file, Ollama model, or OpenAI model) |
@@ -110,6 +110,7 @@ Heimdall supports the same BYOM/ollama/OpenAI style as the embedding subsystem:
 - **local**: `NORNICDB_HEIMDALL_PROVIDER=local` (or unset), `NORNICDB_HEIMDALL_MODEL`, `NORNICDB_MODELS_DIR`, `NORNICDB_HEIMDALL_GPU_LAYERS`, etc.
 - **ollama**: `NORNICDB_HEIMDALL_PROVIDER=ollama`, optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:11434`), optional `NORNICDB_HEIMDALL_MODEL` (e.g. `llama3.2`).
 - **openai**: `NORNICDB_HEIMDALL_PROVIDER=openai`, `NORNICDB_HEIMDALL_API_KEY` (required), optional `NORNICDB_HEIMDALL_API_URL` and `NORNICDB_HEIMDALL_MODEL` (default `gpt-4o-mini`).
+- **litellm**: `NORNICDB_HEIMDALL_PROVIDER=litellm`, `NORNICDB_HEIMDALL_MODEL` (required — a model/alias served by your proxy, e.g. `gpt-4o` or `anthropic/claude-sonnet-4-20250514`), optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:4000`) and `NORNICDB_HEIMDALL_API_KEY` (the proxy master/virtual key; omit for a proxy without auth). Routes chat through a [LiteLLM](https://github.com/BerriAI/litellm) gateway that fronts 100+ providers behind one OpenAI-compatible endpoint.
 
 **YAML examples:**
 
