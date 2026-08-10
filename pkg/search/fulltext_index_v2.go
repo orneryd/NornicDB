@@ -446,6 +446,17 @@ func (f *FulltextIndexV2) calculateIDFLocked(df int) float64 {
 	return idf
 }
 
+// TermIDF returns the current corpus IDF for a normalized lexical term.
+func (f *FulltextIndexV2) TermIDF(term string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	state, ok := f.termIndex[term]
+	if !ok {
+		return 0
+	}
+	return state.IDF
+}
+
 func (f *FulltextIndexV2) insertLexiconTermLocked(term string) {
 	i := sort.SearchStrings(f.lexicon, term)
 	if i < len(f.lexicon) && f.lexicon[i] == term {

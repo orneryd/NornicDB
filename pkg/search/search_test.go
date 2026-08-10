@@ -596,19 +596,17 @@ func TestFulltextIndex_UpdateAvgDocLengthBranches(t *testing.T) {
 	idx.mu.Unlock()
 }
 
-// TestAdaptiveRRFConfig tests adaptive RRF configuration.
+// TestAdaptiveRRFConfig verifies the recall-oriented production RRF policy.
 func TestAdaptiveRRFConfig(t *testing.T) {
-	// Short query - should favor BM25
+	// Short, medium, and long queries use the same validated weights.
 	shortOpts := GetAdaptiveRRFConfig("docker")
-	assert.Equal(t, 0.5, shortOpts.VectorWeight)
-	assert.Equal(t, 1.5, shortOpts.BM25Weight)
+	assert.Equal(t, 1.0, shortOpts.VectorWeight)
+	assert.Equal(t, 1.0, shortOpts.BM25Weight)
 
-	// Long query - should favor vector
 	longOpts := GetAdaptiveRRFConfig("how do I configure docker containers for production deployment")
-	assert.Equal(t, 1.5, longOpts.VectorWeight)
-	assert.Equal(t, 0.5, longOpts.BM25Weight)
+	assert.Equal(t, 1.0, longOpts.VectorWeight)
+	assert.Equal(t, 1.0, longOpts.BM25Weight)
 
-	// Medium query - should be balanced
 	medOpts := GetAdaptiveRRFConfig("configure docker production")
 	assert.Equal(t, 1.0, medOpts.VectorWeight)
 	assert.Equal(t, 1.0, medOpts.BM25Weight)

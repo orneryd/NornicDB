@@ -470,6 +470,13 @@ func (f *FulltextIndex) calculateIDF(term string) float64 {
 	return idf
 }
 
+// TermIDF returns the current corpus IDF for a normalized lexical term.
+func (f *FulltextIndex) TermIDF(term string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.calculateIDF(term)
+}
+
 // updateAvgDocLength sets avgDocLength from totalDocLength and docCount (O(1)).
 // Caller must hold f.mu and ensure totalDocLength is correct.
 func (f *FulltextIndex) updateAvgDocLength() {

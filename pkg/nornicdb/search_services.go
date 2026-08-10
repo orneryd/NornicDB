@@ -266,6 +266,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		dims = 1024
 	}
 	svc := search.NewServiceWithDimensionsAndBM25Engine(storageEngine, dims, bm25Engine)
+	svc.SetPassageResolver(&queryExpansionPassageResolver{db: db, engine: storageEngine})
 	svc.SetDefaultMinSimilarity(minSim)
 	// Per-DB master switches: pull from the resolver and seed the service.
 	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.

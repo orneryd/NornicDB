@@ -525,6 +525,20 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 
 // CreateNode creates a new node.
 func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
+	return db.createNode(ctx, generateID(), labels, properties, false)
+}
+
+// CreateNodeWithID creates a new node with caller-provided stable identity.
+// It is useful for idempotent imports where retrying the same logical record
+// must not create a duplicate physical node.
+func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, properties map[string]interface{}) (*Node, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("node ID must not be empty")
+	}
+	return db.createNode(ctx, id, labels, properties, true)
+}
+
+func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -533,8 +547,14 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 	storageEngine := db.storage
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
+	if rejectExisting {
+		if _, err := storageEngine.GetNode(storage.NodeID(id)); err == nil {
+			return nil, fmt.Errorf("node %q already exists", id)
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return nil, err
+		}
+	}
 
-	id := generateID()
 	now := time.Now()
 
 	// Encrypt sensitive fields before storage (PHI/PII protection)
@@ -938,6 +958,18 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 // The queryEmbedding should be pre-computed by the caller.
 // This is the primary search method for semantic search with ranking fusion.
 func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []float32, labels []string, limit int) ([]*SearchResult, error) {
+	opts := search.GetAdaptiveRRFConfig(query)
+	opts.Limit = limit
+	if len(labels) > 0 {
+		opts.Types = labels
+	}
+	return db.HybridSearchWithOptions(ctx, query, queryEmbedding, opts)
+}
+
+// HybridSearchWithOptions performs hybrid search using caller-supplied search options.
+// It is intended for callers that need reproducible retrieval settings, such as
+// offline benchmark runners.
+func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -950,11 +982,8 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 		return nil, fmt.Errorf("search service not initialized")
 	}
 
-	// Get adaptive search options based on query
-	opts := search.GetAdaptiveRRFConfig(query)
-	opts.Limit = limit
-	if len(labels) > 0 {
-		opts.Types = labels
+	if opts == nil {
+		opts = search.GetAdaptiveRRFConfig(query)
 	}
 
 	// Execute RRF hybrid search with the caller's pre-computed embedding

@@ -152,6 +152,7 @@ type bm25Index interface {
 	PhraseSearch(query string, limit int) []indexResult
 	GetDocument(id string) (string, bool)
 	LexicalSeedDocIDs(maxTerms, perTerm int) []string
+	TermIDF(term string) float64
 	Clear()
 	Count() int
 	Save(path string) error
@@ -200,6 +201,7 @@ func (disabledBM25Index) Search(string, int) []indexResult       { return nil }
 func (disabledBM25Index) PhraseSearch(string, int) []indexResult { return nil }
 func (disabledBM25Index) GetDocument(string) (string, bool)      { return "", false }
 func (disabledBM25Index) LexicalSeedDocIDs(int, int) []string    { return nil }
+func (disabledBM25Index) TermIDF(string) float64                 { return 0 }
 func (disabledBM25Index) Clear()                                 {}
 func (disabledBM25Index) Count() int                             { return 0 }
 func (disabledBM25Index) Save(string) error                      { return nil }
@@ -384,6 +386,7 @@ func searchCacheKey(query string, opts *SearchOptions) string {
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
 		strings.Join(filterParts, ";"),
+		queryExpansionCacheKeySuffix(),
 	}, "\x00")
 }
 
@@ -466,10 +469,11 @@ type Service struct {
 	vectorIndex     *VectorIndex
 	vectorFileStore *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
 	// Primary BM25 implementation used by the live search pipeline.
-	fulltextIndex bm25Index
-	bm25Engine    string
-	reranker      Reranker
-	mu            sync.RWMutex
+	fulltextIndex   bm25Index
+	bm25Engine      string
+	reranker        Reranker
+	passageResolver PassageResolver
+	mu              sync.RWMutex
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu        sync.Mutex
@@ -615,6 +619,13 @@ type Service struct {
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
+}
+
+// PassageResolver reconstructs the exact text represented by vector hits.
+// It belongs to the embedding owner because source reconstruction must use the
+// same text construction and chunking configuration as indexing.
+type PassageResolver interface {
+	ResolvePassages(context.Context, []ExpansionSource) ([]ExpansionSource, error)
 }
 
 type strategyMode int
@@ -801,6 +812,17 @@ func (s *Service) SetRuntimeStrategyTransitionsEnabled(enabled bool) {
 		return
 	}
 	s.runtimeStrategyTransitions.Store(enabled)
+}
+
+// SetPassageResolver installs the optional exact-passage resolver used by
+// dense-seeded query expansion. A nil resolver keeps expansion fail-open.
+func (s *Service) SetPassageResolver(resolver PassageResolver) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.passageResolver = resolver
+	s.mu.Unlock()
 }
 
 // RuntimeStrategyTransitionsEnabled reports whether live write-triggered ANN
@@ -3858,6 +3880,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	s.mu.RLock()
 	reranker := s.reranker
 	fulltextIndex := s.fulltextIndex
+	passageResolver := s.passageResolver
 	s.mu.RUnlock()
 
 	// Get more candidates for better fusion
@@ -3884,11 +3907,28 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
 
-	// Step 2: BM25 full-text search (skip if no full-text index; ranks will have vector only)
+	// Step 2: Optionally enrich only the BM25 query from exact semantic passages.
+	// The original query remains the vector/reranker/response query.
+	bm25Query := query
+	if fulltextIndex != nil && passageResolver != nil && queryExpansionEnabled() {
+		config := queryExpansionConfigFromEnv()
+		sources := expansionSourcesFromScored(scored, config.SourceTopK)
+		if len(sources) > 0 {
+			if passages, err := passageResolver.ResolvePassages(ctx, sources); err == nil && len(passages) > 0 {
+				config.IDF = fulltextIndex.TermIDF
+				expander := NewDensePRFDiceExpander(config)
+				if expansion, err := expander.Expand(ctx, query, passages); err == nil && len(expansion.Terms) > 0 {
+					bm25Query = query + " " + strings.Join(expansion.Terms, " ")
+				}
+			}
+		}
+	}
+
+	// Step 3: BM25 full-text search (skip if no full-text index; ranks will have vector only)
 	bm25Start := time.Now()
 	var bm25Results []indexResult
 	if fulltextIndex != nil {
-		bm25Results = fulltextIndex.Search(query, bm25CandidateLimit)
+		bm25Results = fulltextIndex.Search(bm25Query, bm25CandidateLimit)
 	}
 	bm25Ms := int(time.Since(bm25Start).Milliseconds())
 
@@ -6355,66 +6395,15 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 	return results
 }
 
-// GetAdaptiveRRFConfig returns optimized RRF weights based on query characteristics.
+// GetAdaptiveRRFConfig returns the production RRF configuration for a query.
 //
-// This function analyzes the query and adjusts weights to favor the search method
-// most likely to perform well:
-//
-//   - Short queries (1-2 words): Favor BM25 keyword matching
-//     Example: "python" or "graph database"
-//     Weights: Vector=0.5, BM25=1.5
-//
-//   - Long queries (6+ words): Favor vector semantic understanding
-//     Example: "How do I implement a distributed consensus algorithm?"
-//     Weights: Vector=1.5, BM25=0.5
-//
-//   - Medium queries (3-5 words): Balanced approach
-//     Example: "machine learning algorithms"
-//     Weights: Vector=1.0, BM25=1.0
-//
-// Why this works:
-//   - Short queries lack context → keywords more reliable
-//   - Long queries have semantic meaning → embeddings capture intent better
-//
-// Example:
-//
-//	// Automatic adaptation
-//	query1 := "database"
-//	opts1 := search.GetAdaptiveRRFConfig(query1)
-//	fmt.Printf("Short query weights: V=%.1f, B=%.1f\n",
-//		opts1.VectorWeight, opts1.BM25Weight)
-//	// Output: V=0.5, B=1.5 (favors keywords)
-//
-//	query2 := "What are the best practices for scaling graph databases?"
-//	opts2 := search.GetAdaptiveRRFConfig(query2)
-//	fmt.Printf("Long query weights: V=%.1f, B=%.1f\n",
-//		opts2.VectorWeight, opts2.BM25Weight)
-//	// Output: V=1.5, B=0.5 (favors semantics)
-//
-// Returns SearchOptions with adapted weights. Other options (Limit, MinSimilarity)
-// are set to defaults.
+// Equal lexical and vector weights are the recall-oriented default. The former
+// word-count heuristic over-emphasized vectors for long queries, which reduced
+// recall in controlled hybrid retrieval evaluation. The query argument remains
+// part of the API for future policies that are validated across benchmarks.
 func GetAdaptiveRRFConfig(query string) *SearchOptions {
-	words := strings.Fields(query)
-	wordCount := len(words)
-
-	opts := DefaultSearchOptions()
-
-	// Short queries (1-2 words): Emphasize keyword matching
-	if wordCount <= 2 {
-		opts.VectorWeight = 0.5
-		opts.BM25Weight = 1.5
-		return opts
-	}
-
-	// Long queries (6+ words): Emphasize semantic understanding
-	if wordCount >= 6 {
-		opts.VectorWeight = 1.5
-		opts.BM25Weight = 0.5
-		return opts
-	}
-
-	// Medium queries: Balanced
-	return opts
+	_ = query
+	return DefaultSearchOptions()
 }
 
 // Helper types
