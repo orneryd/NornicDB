@@ -274,6 +274,7 @@ nav:
           - HTTP Optimization Options: performance/http-optimization-options.md
           - HTTP/2 Implementation: performance/http2-implementation.md
           - Hybrid Query Benchmarks: performance/hybrid-query-benchmarks.md
+          - Retrieval Recall Benchmark: performance/retrieval-recall-benchmark.md
           - Single-Request Benchmark: performance/single-request-benchmark.md
           - Max Concurrent Streams Comparison: performance/maxconcurrentstreams-comparison.md
           - Search Performance: performance/searching.md

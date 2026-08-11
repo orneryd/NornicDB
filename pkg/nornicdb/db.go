@@ -2013,6 +2013,28 @@ func (db *DB) PendingEmbeddingsCount() int {
 	return 0
 }
 
+// WaitForEmbeddings waits for the durable pending-embedding queue to drain.
+// Callers that need a complete vector corpus before search should invoke this
+// after triggering embedding work and before building or evaluating an index.
+func (db *DB) WaitForEmbeddings(ctx context.Context) error {
+	if db.embedQueue == nil {
+		return fmt.Errorf("auto-embed not enabled")
+	}
+	db.embedQueue.TriggerImmediate()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if db.PendingEmbeddingsCount() == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // EmbeddingCountCached returns total embeddings from already-initialized search services only.
 // Unlike EmbeddingCount(), this does not create services and therefore avoids startup/path contention.
 func (db *DB) EmbeddingCountCached() int {

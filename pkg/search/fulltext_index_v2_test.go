@@ -320,6 +320,16 @@ func TestFulltextIndexV2_LexicalSeedDocIDs(t *testing.T) {
 	}
 }
 
+func TestFulltextIndexV2LexicalSeedMinimumDocumentFrequency(t *testing.T) {
+	t.Setenv("NORNICDB_BM25_IDF_MIN_DOC_FREQ", "3")
+	idx := NewFulltextIndexV2()
+	idx.Index("d1", "shared rareone")
+	idx.Index("d2", "shared raretwo")
+	idx.Index("d3", "shared rarethree")
+
+	require.Equal(t, []string{"d1", "d2", "d3"}, idx.LexicalSeedDocIDs(10, 10))
+}
+
 // ---------------------------------------------------------------------------
 // BM25 V2 – PhraseSearch determinism
 // ---------------------------------------------------------------------------

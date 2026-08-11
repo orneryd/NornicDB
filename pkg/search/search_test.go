@@ -1760,6 +1760,16 @@ func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
 	assert.Equal(t, 0, idx.Count())
 }
 
+func TestFulltextIndexLexicalSeedMinimumDocumentFrequency(t *testing.T) {
+	t.Setenv("NORNICDB_BM25_IDF_MIN_DOC_FREQ", "3")
+	idx := NewFulltextIndex()
+	idx.Index("d1", "shared rareone")
+	idx.Index("d2", "shared raretwo")
+	idx.Index("d3", "shared rarethree")
+
+	require.ElementsMatch(t, []string{"d1", "d2", "d3"}, idx.LexicalSeedDocIDs(10, 10))
+}
+
 func TestConvertGobToMsgpack_FilesAndDirectory(t *testing.T) {
 	root := t.TempDir()
 	dbDir := filepath.Join(root, "tenant_a")

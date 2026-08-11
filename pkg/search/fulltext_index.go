@@ -10,6 +10,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -511,7 +512,7 @@ func (f *FulltextIndex) LexicalSeedDocIDs(maxTerms, docsPerTerm int) []string {
 	terms := make([]termEntry, 0, len(f.invertedIndex))
 	for term, postings := range f.invertedIndex {
 		df := len(postings)
-		if df < 2 {
+		if df < lexicalSeedMinDocumentFrequency() {
 			continue
 		}
 		idf := f.calculateIDF(term)
@@ -556,6 +557,14 @@ func (f *FulltextIndex) LexicalSeedDocIDs(maxTerms, docsPerTerm int) []string {
 	}
 	f.mu.RUnlock()
 	return out
+}
+
+func lexicalSeedMinDocumentFrequency() int {
+	minFrequency := envutil.GetInt("NORNICDB_BM25_IDF_MIN_DOC_FREQ", 2)
+	if minFrequency < 1 {
+		return 1
+	}
+	return minFrequency
 }
 
 // tokenize splits text into lowercase tokens.

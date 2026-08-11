@@ -2,6 +2,9 @@
 
 **Complete guide to NornicDB's multi-method search architecture.**
 
+For a reproducible BEIR evaluation of BM25 and RRF recall, see the
+[Retrieval Recall Benchmark](retrieval-recall-benchmark.md).
+
 ---
 
 ## 🎯 Overview
@@ -91,7 +94,7 @@ Layer 2:        [●]─[●]──────────────[●]─[
 Layer 1:    [●]─[●]─[●]─[●]───[●]─[●]─[●]─[●]
             │ │ │ │ │ │ │    │ │ │ │ │ │ │ │
 Layer 0: [●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]  ← All documents
-         
+
          ● = Document node (with embedding vector)
          ─ = Connection (learned during index build)
 ```
@@ -104,11 +107,11 @@ Layer 0: [●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]-[●]  ← All do
 
 **Parameters:**
 
-| Parameter | Default | Impact |
-|-----------|---------|--------|
-| `M` | 16 | Max connections per layer (larger = more thorough, slower build) |
-| `efConstruction` | 200 | Candidate pool size during build (larger = better index, slower build) |
-| `efSearch` | 100 | Candidate pool size during search (larger = more accurate, slower search) |
+| Parameter        | Default | Impact                                                                    |
+| ---------------- | ------- | ------------------------------------------------------------------------- |
+| `M`              | 16      | Max connections per layer (larger = more thorough, slower build)          |
+| `efConstruction` | 200     | Candidate pool size during build (larger = better index, slower build)    |
+| `efSearch`       | 100     | Candidate pool size during search (larger = more accurate, slower search) |
 
 ### GPU-Assisted HNSW Construction
 
@@ -122,9 +125,9 @@ go test ./pkg/search -bench 'BenchmarkHNSWBuildCPUVsAcceleratedCandidates|Benchm
 
 Reference result on an Apple M3 Max for `BenchmarkHNSWBuildCPUVsAcceleratedCandidatesLarge1024D`:
 
-| Path | Time |
-| --- | ---: |
-| CPU HNSW build | `1.45 s/op` |
+| Path                   |        Time |
+| ---------------------- | ----------: |
+| CPU HNSW build         | `1.45 s/op` |
 | Metal graph-beam build | `0.93 s/op` |
 
 `BenchmarkHNSWBuildFromVectorFileStore` auto-detects the first `*.vec`/`*.meta` vector store under `./data`. To pin a specific store:
@@ -171,6 +174,7 @@ Memory Bandwidth:      Large vectors  ~16 GB/s   ~110-130 GB/s 7-8x
 - **Compilation**: vek32 functions compiled with -ffast-math for maximum speed
 
 Check your SIMD capabilities:
+
 ```go
 info := simd.Info()
 if info.Accelerated {
@@ -180,12 +184,12 @@ if info.Accelerated {
 
 ### Advantages & Limitations
 
-| Aspect | ✅ Strength | ❌ Limitation |
-|--------|-----------|-------------|
-| **Semantic Match** | Captures meaning, not just keywords | May miss exact keyword matches |
-| **Speed** | O(log N) with HNSW + SIMD acceleration | Requires pre-computed embeddings |
-| **Scalability** | Handles millions of vectors with SIMD boost | Memory footprint grows with dimensions |
-| **Accuracy** | Great for similarity ranking | Can return "close but wrong" results |
+| Aspect             | ✅ Strength                                 | ❌ Limitation                          |
+| ------------------ | ------------------------------------------- | -------------------------------------- |
+| **Semantic Match** | Captures meaning, not just keywords         | May miss exact keyword matches         |
+| **Speed**          | O(log N) with HNSW + SIMD acceleration      | Requires pre-computed embeddings       |
+| **Scalability**    | Handles millions of vectors with SIMD boost | Memory footprint grows with dimensions |
+| **Accuracy**       | Great for similarity ranking                | Can return "close but wrong" results   |
 
 ---
 
@@ -252,12 +256,12 @@ Term          Documents with frequency
 
 ### Advantages & Limitations
 
-| Aspect | ✅ Strength | ❌ Limitation |
-|--------|-----------|-------------|
-| **Keyword Matching** | Exact term matching guaranteed | Misses semantic variations |
-| **Speed** | Very fast (inverted index O(log N)) | Must build index upfront |
-| **Predictability** | Reproducible, interpretable | Can't understand context |
-| **Maturity** | Proven, used in Lucene/Elasticsearch | Over-matches on stop words |
+| Aspect               | ✅ Strength                          | ❌ Limitation              |
+| -------------------- | ------------------------------------ | -------------------------- |
+| **Keyword Matching** | Exact term matching guaranteed       | Misses semantic variations |
+| **Speed**            | Very fast (inverted index O(log N))  | Must build index upfront   |
+| **Predictability**   | Reproducible, interpretable          | Can't understand context   |
+| **Maturity**         | Proven, used in Lucene/Elasticsearch | Over-matches on stop words |
 
 ### Search index persistence
 
@@ -438,12 +442,12 @@ Compare: cosine_similarity(query_vec, doc_vec) = 0.94
 
 ### Supported Models
 
-| Model | Provider | Speed | Accuracy | Cost |
-|-------|----------|-------|----------|------|
-| ms-marco-MiniLM-L-6-v2 | HuggingFace | Fast | Good | Free |
-| e5-large-v2-reranker | EmbedRank | Slow | Excellent | Free |
-| rerank-3.5 | Cohere | Moderate | Excellent | $$ |
-| rankgpt-3.5-turbo | OpenAI | Slow | Perfect | $$$$ |
+| Model                  | Provider    | Speed    | Accuracy  | Cost |
+| ---------------------- | ----------- | -------- | --------- | ---- |
+| ms-marco-MiniLM-L-6-v2 | HuggingFace | Fast     | Good      | Free |
+| e5-large-v2-reranker   | EmbedRank   | Slow     | Excellent | Free |
+| rerank-3.5             | Cohere      | Moderate | Excellent | $$   |
+| rankgpt-3.5-turbo      | OpenAI      | Slow     | Perfect   | $$$$ |
 
 ### Decision Logic
 
@@ -532,7 +536,7 @@ Operations:
   Add: 4 × (result += ...)
   ───────────────────────
   Total: 8 operations
-  
+
 CPU Cycles: ~16 cycles (with dependencies)
 ```
 
@@ -544,15 +548,15 @@ b = [5.0, 6.0, 7.0, 8.0]
 
 Dot Product (SIMD approach):
   Registers hold 8 × float32 each (256-bit AVX2):
-  
+
   a_vec = [1.0, 2.0, 3.0, 4.0, ...]  (8 values)
   b_vec = [5.0, 6.0, 7.0, 8.0, ...]  (8 values)
-  
+
   VMULPS: a_vec × b_vec in ONE instruction
     → [5.0, 12.0, 21.0, 32.0, ...]
-  
+
   VHADDPS: Horizontal sum → single result in ONE instruction
-  
+
 CPU Cycles: ~3 cycles (massive parallelism!)
 
 Speedup: 16 cycles / 3 cycles ≈ 5-10x faster
@@ -622,12 +626,12 @@ Vector Size    Bandwidth
 
 **Summary:**
 
-| Operation | Speedup Range | Best Use Case |
-|-----------|---------------|---------------|
-| Dot Product | **6.2x - 12.2x** | Similarity search, HNSW indexing |
+| Operation          | Speedup Range    | Best Use Case                       |
+| ------------------ | ---------------- | ----------------------------------- |
+| Dot Product        | **6.2x - 12.2x** | Similarity search, HNSW indexing    |
 | Euclidean Distance | **4.9x - 12.4x** | K-means clustering, spatial queries |
-| Norm (L2) | **4.2x - 8.1x** | Vector normalization |
-| Cosine Similarity | **2.6x - 3.9x** | Text/semantic similarity |
+| Norm (L2)          | **4.2x - 8.1x**  | Vector normalization                |
+| Cosine Similarity  | **2.6x - 3.9x**  | Text/semantic similarity            |
 
 ### Platform-Specific Implementations
 
@@ -637,12 +641,12 @@ Vector Size    Bandwidth
 CPU Requirements:
   - Intel: Haswell (2013+) or newer
   - AMD: Zen+ (2017+) or newer
-  
+
 vek32 Instructions:
   VMULPS    - Multiply 8 × float32 in parallel
   VFMADD    - Fused multiply-add (a*b + c)
   VHADDPS   - Horizontal sum
-  
+
 Performance:
   - 8-way parallelism (256-bit registers)
   - 6-12x speedup on vector operations (measured)
@@ -655,12 +659,12 @@ Performance:
 CPU Requirements:
   - Apple Silicon (M1/M2/M3+)
   - ARM servers with NEON support
-  
+
 vek32 Instructions:
   FMUL      - Multiply 4 × float32 in parallel
   FMLA      - Fused multiply-add
   FADDP     - Parallel add
-  
+
 Performance:
   - 4-way parallelism (128-bit registers)
   - 4-8x speedup expected on ARM64
@@ -688,16 +692,16 @@ Without SIMD (scalar Go):
   - Norm B: 369ns
   - Division + sqrt: 200ns
   - Total: ~1.3µs per pair
-  
+
   For 1000 similarity searches: 1.3ms
 
 With SIMD (AVX2 vek32):
   - All operations accelerated via vek32
   - Effective speedup: ~1.6-2.0x
   - Total: ~0.7µs per pair
-  
+
   For 1000 similarity searches: 0.7ms
-  
+
 Speedup: 1.3ms / 0.7ms ≈ 1.9x faster
 ```
 
@@ -709,12 +713,12 @@ HNSW Search (1M vectors, 1000 queries):
   2. Compare against candidate vectors
      → CosineSimilarity() [SIMD-accelerated via vek32]
   3. Keep top-K
-  
+
 RRF Fusion:
   1. Score each candidate
   2. Rank candidates
   3. Select top-K for reranking
-  
+
 Impact:
   Standard (pure Go): ~500ms to search 1M vectors
   SIMD (vek32): ~50ms to search 1M vectors
@@ -777,7 +781,7 @@ K-means partitions data into K clusters by iteratively:
 ```
 Iteration 0 (Random starts):
  ┌─────────────────────────┐
- │ ●    ●    ●             │  3 centroids 
+ │ ●    ●    ●             │  3 centroids
  │  ● ●  ● ●  ● ●          │  scattered randomly
  │   ●   ●    ●●●          │
  └─────────────────────────┘
@@ -820,16 +824,16 @@ Query: [0.12, -0.45, 0.23, ..., 0.08]
 1. Find K nearest CENTROIDS:
    - 100 centroids × CosineSimilarity = 0.2ms
    - Return top 3 centroids
-   
+
 2. Search within those 3 clusters:
    - Each cluster ~333K vectors
    - But search within ~1% of data: 333K × 3 = 1M vectors... WAIT!
-   
+
    Actually: If K=100 clusters:
    - Average cluster size: 1M / 100 = 10K vectors
    - Search top 3 clusters: 3 × 10K = 30K vectors
    - 30K << 1M, so 30x-50x speedup!
-   
+
    Latency: ~5-10ms
 ```
 
@@ -857,7 +861,7 @@ Algorithm:
    - Calculate distance to nearest existing centroid for each point
    - Pick point with probability ∝ (distance²)
    - Add as new centroid
-   
+
 Benefit: Avoids poor local minima
 Quality: ~2x better final clustering
 Speed: Slower initialization (~100ms for 10K points)
@@ -912,7 +916,7 @@ Monitoring:
   if (centroid_drift > threshold) {
     trigger_clustering()    // Adapt to new data
   }
-  
+
 Example:
   Initial clusters: 100 (aligned with data)
   Add 50K new embeddings    (10% of dataset)
@@ -977,30 +981,30 @@ Exploratory/fuzzy    5+        Need diverse results
 ```yaml
 k_means_clustering:
   enabled: true
-  
+
   # Cluster count
-  num_clusters: 0           # 0 = auto-detect with elbow method
+  num_clusters: 0 # 0 = auto-detect with elbow method
   # Or fixed:
   # num_clusters: 100
-  
+
   # Convergence
-  max_iterations: 100       # Stop after 100 iterations
-  tolerance: 0.0001         # Stop when drift < 0.0001
-  
+  max_iterations: 100 # Stop after 100 iterations
+  tolerance: 0.0001 # Stop when drift < 0.0001
+
   # Initialization
-  init_method: "kmeans++"   # Use k-means++ (better) or "random" (faster)
-  
+  init_method: "kmeans++" # Use k-means++ (better) or "random" (faster)
+
   # Auto-clustering triggers
-  cluster_interval: "15m"   # Re-cluster every 15 minutes
-  drift_threshold: 0.1      # Re-cluster if centroids drift >10%
-  
+  cluster_interval: "15m" # Re-cluster every 15 minutes
+  drift_threshold: 0.1 # Re-cluster if centroids drift >10%
+
   # Constraints
-  min_cluster_size: 10      # Merge tiny clusters
-  
+  min_cluster_size: 10 # Merge tiny clusters
+
 # Search behavior
 vector_search:
   use_clustered_search: true
-  clusters_to_search: 3      # Search top 3 clusters
+  clusters_to_search: 3 # Search top 3 clusters
 ```
 
 ### Performance Trade-Offs
@@ -1097,7 +1101,7 @@ User Query: "best machine learning frameworks for production"
    └─→ OpenAI / BGE / Local LLM
    └─→ Produces: [0.12, -0.45, 0.23, ..., 0.08] (1536 dim)
        Latency: 200-800ms (depends on provider)
-       
+
        │
        ▼
 2. HNSW VECTOR SEARCH (pkg/search - HNSWIndex)
@@ -1106,7 +1110,7 @@ User Query: "best machine learning frameworks for production"
    └─→ Produces: [Doc1, Doc2, Doc3, ...] with similarity scores
        Latency: 1-5ms (1M vectors)
        Returns: Top-100 candidates
-       
+
        │
        ▼
 3. BM25 FULL-TEXT (pkg/search - FulltextIndex)
@@ -1116,7 +1120,7 @@ User Query: "best machine learning frameworks for production"
    └─→ Produces: [Doc3, Doc1, Doc5, ...] with BM25 scores
        Latency: 5-20ms (1M documents)
        Returns: Top-100 candidates
-       
+
        │
        ▼
 4. RRF FUSION (pkg/search - Search.Fuse)
@@ -1125,7 +1129,7 @@ User Query: "best machine learning frameworks for production"
    └─→ Produces: [Doc1, Doc3, Doc2, ...] with RRF scores
        Latency: <1ms
        Returns: Top-100 fused results
-       
+
        │
        ▼
 5. CROSS-ENCODER RERANKING (Optional, pkg/search)
@@ -1135,14 +1139,14 @@ User Query: "best machine learning frameworks for production"
        └─→ Produces: [Doc1, Doc2, Doc5, ...] reranked
            Latency: 500-1500ms
            Returns: Top-10 final results
-       
+
        │
        ▼
 6. RESPONSE (pkg/search - SearchResponse)
    └─→ Format results with all metadata
    └─→ Include metrics (timings, scores, ranks)
    └─→ Return to client
-       
+
 TOTAL LATENCY (without reranking): ~200-1000ms
 TOTAL LATENCY (with reranking): ~700-2500ms
 ```
@@ -1199,14 +1203,14 @@ Q: Critical relevance required?
 
 ### Use Case Guide
 
-| Use Case | Method | Reason |
-|----------|--------|--------|
-| **Full-text search** (e.g., logging) | BM25 | Exact term matching |
-| **Semantic search** (e.g., "find papers on topic X") | Vector HNSW | Meaning matters |
-| **General-purpose search** (web, docs) | RRF | Best of both |
-| **High-stakes ranking** (search ads, hiring) | RRF + Cross-encoder | Maximum accuracy |
-| **Real-time autocomplete** | BM25 prefix | Speed critical |
-| **Fuzzy/typo-tolerant** | Vector + Phonetic | Error tolerance |
+| Use Case                                             | Method              | Reason              |
+| ---------------------------------------------------- | ------------------- | ------------------- |
+| **Full-text search** (e.g., logging)                 | BM25                | Exact term matching |
+| **Semantic search** (e.g., "find papers on topic X") | Vector HNSW         | Meaning matters     |
+| **General-purpose search** (web, docs)               | RRF                 | Best of both        |
+| **High-stakes ranking** (search ads, hiring)         | RRF + Cross-encoder | Maximum accuracy    |
+| **Real-time autocomplete**                           | BM25 prefix         | Speed critical      |
+| **Fuzzy/typo-tolerant**                              | Vector + Phonetic   | Error tolerance     |
 
 ---
 
@@ -1218,18 +1222,18 @@ These are measured on a live `translations` dataset (February 2026), using `POST
 
 #### Embedding-query path (best collected)
 
-| Scenario | Samples | p50 | p95 | p99 | Mean |
-|---|---:|---:|---:|---:|---:|
-| Sequential varied queries | 120 | 11.28ms | 25.84ms | 34.05ms | 14.49ms |
-| Concurrent varied queries (8 workers) | 120 | 76.36ms | 87.41ms | 100.07ms | 76.34ms |
+| Scenario                              | Samples |     p50 |     p95 |      p99 |    Mean |
+| ------------------------------------- | ------: | ------: | ------: | -------: | ------: |
+| Sequential varied queries             |     120 | 11.28ms | 25.84ms |  34.05ms | 14.49ms |
+| Concurrent varied queries (8 workers) |     120 | 76.36ms | 87.41ms | 100.07ms | 76.34ms |
 
 Server diagnostics for this path showed `embed_total` as the dominant component while `search_total` stayed in microseconds.
 
 #### Fulltext-only path (best collected)
 
-| Scenario | Samples | p50 | p95 | p99 | Mean |
-|---|---:|---:|---:|---:|---:|
-| Sequential varied queries | 40 | 0.57ms | 2.77ms | 94.90ms* | 4.44ms |
+| Scenario                  | Samples |    p50 |    p95 |       p99 |   Mean |
+| ------------------------- | ------: | -----: | -----: | --------: | -----: |
+| Sequential varied queries |      40 | 0.57ms | 2.77ms | 94.90ms\* | 4.44ms |
 
 Observed handler diagnostics:
 
@@ -1287,10 +1291,11 @@ HNSW scales logarithmically; BM25 scales linearly. RRF helps by combining both s
 vector_search:
   enabled: true
   hnsw:
-    m: 16              # Max connections (8-32)
-    ef_construction: 200  # Build thoroughness (100-500)
-    ef_search: 100     # Search depth (50-200)
-  
+    m: 16 # Max connections (8-32)
+    ef_construction: 200 # Build thoroughness (100-500)
+    ef_search: 100 # Search depth (50-200)
+
+
   # Trade-off:
   # - Larger M/efConstruction = better quality, slower build
   # - Larger efSearch = more accurate, slower search
@@ -1301,17 +1306,17 @@ vector_search:
 ```yaml
 fulltext_search:
   enabled: true
-  
+
   # Priority properties get extra weight
   priority_properties:
     - content
     - title
     - description
-  
+
   # BM25 parameters (rarely need adjustment)
   bm25:
-    k1: 1.2    # Term frequency saturation
-    b: 0.75    # Length normalization
+    k1: 1.2 # Term frequency saturation
+    b: 0.75 # Length normalization
 ```
 
 ### RRF Parameters
@@ -1319,10 +1324,10 @@ fulltext_search:
 ```yaml
 rrf_fusion:
   enabled: true
-  k: 60           # Constant (higher = more balanced)
+  k: 60 # Constant (higher = more balanced)
   vector_weight: 1.0
   bm25_weight: 1.0
-  
+
   # Fallback if one method fails
   fallback_enabled: true
 ```
@@ -1334,8 +1339,8 @@ cross_encoder:
   enabled: true
   api_url: "https://api.cohere.com/rerank"
   model: "rerank-3.5"
-  top_k: 100      # Re-score top-100 from RRF
-  threshold: 0.5  # Minimum score to include
+  top_k: 100 # Re-score top-100 from RRF
+  threshold: 0.5 # Minimum score to include
 ```
 
 ---
@@ -1361,11 +1366,11 @@ results, err := service.Search(ctx, query, embedding, opts)
 opts := search.SearchOptions{
   Limit: 10,
   Threshold: 0.7,
-  
+
   VectorSearch: true,
   FulltextSearch: true,
   UseReranking: true,
-  
+
   IncludeMetrics: true,  // Include timing info
 }
 ```
@@ -1380,7 +1385,7 @@ type SearchResponse struct {
   TotalCandidates   int           // Before filtering
   SearchMethod      string        // "vector", "fulltext", "hybrid"
   FallbackTriggered bool          // True if primary failed
-  
+
   Metrics: {
     VectorSearchTimeMs: 5,
     BM25SearchTimeMs: 20,
@@ -1397,18 +1402,22 @@ type SearchResponse struct {
 ### Common Problems
 
 **Q: Vector search returns irrelevant results**
+
 - A: Vector model may not fit your domain. Consider fine-tuned embeddings (e.g., BGE for Chinese text)
 - Test with: `simd.Info()` to verify SIMD is accelerated
 
 **Q: BM25 is too strict (no results)**
+
 - A: Query has rare terms. Enable fuzzy matching or expand query with synonyms
 
 **Q: RRF still missing relevant documents**
+
 - A: Documents missing from both indices. Check:
   - Vector index built? `svc.BuildIndexes(ctx)`
   - Full-text indexed? `svc.Index(docID, text)`
 
 **Q: Search is slow (>1000ms)**
+
 - A: Profile with metrics enabled:
   ```go
   resp.Metrics.VectorSearchTimeMs   // Fast? Check SIMD

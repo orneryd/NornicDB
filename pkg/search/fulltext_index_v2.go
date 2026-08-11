@@ -361,7 +361,7 @@ func (f *FulltextIndexV2) LexicalSeedDocIDs(maxTerms, docsPerTerm int) []string 
 	terms := make([]termEntry, 0, len(f.termIndex))
 	for term, st := range f.termIndex {
 		df := len(st.Postings)
-		if df < 2 {
+		if df < lexicalSeedMinDocumentFrequency() {
 			continue
 		}
 		idf := st.IDF

@@ -12,6 +12,7 @@ This section contains benchmark evidence, profiling guides, and tuning playbooks
 ## Benchmark and Analysis Reports
 
 - Hybrid query benchmarks: [hybrid-query-benchmarks.md](hybrid-query-benchmarks.md)
+- Reproducible BEIR retrieval recall benchmark: [retrieval-recall-benchmark.md](retrieval-recall-benchmark.md)
 - HTTP API vs Neo4j measurements: [http-api-vs-neo4j.md](http-api-vs-neo4j.md)
 - Single-request benchmark: [single-request-benchmark.md](single-request-benchmark.md)
 - Aggregated test results: [test-results.md](test-results.md)

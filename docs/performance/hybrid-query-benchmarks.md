@@ -35,12 +35,12 @@ Remote environment:
 
 ## Local Results
 
-| Workload       | Transport |   Throughput |    Mean |     P50 |     P95 |     P99 |     Max |
-| -------------- | --------- | -----------: | ------: | ------: | ------: | ------: | ------: |
-| Vector only    | HTTP      | 19,342 req/s |  511 us |  470 us |  750 us |  869 us | 1.02 ms |
-| Vector only    | Bolt      | 22,309 req/s |  444 us |  428 us |  629 us |  814 us |  968 us |
-| Vector + 1 hop | HTTP      | 11,523 req/s |  859 us |  699 us | 1.54 ms | 3.46 ms | 4.71 ms |
-| Vector + 1 hop | Bolt      | 13,291 req/s |  747 us |  637 us | 1.29 ms | 3.24 ms | 4.47 ms |
+| Workload       | Transport |   Throughput |   Mean |    P50 |     P95 |     P99 |     Max |
+| -------------- | --------- | -----------: | -----: | -----: | ------: | ------: | ------: |
+| Vector only    | HTTP      | 19,342 req/s | 511 us | 470 us |  750 us |  869 us | 1.02 ms |
+| Vector only    | Bolt      | 22,309 req/s | 444 us | 428 us |  629 us |  814 us |  968 us |
+| Vector + 1 hop | HTTP      | 11,523 req/s | 859 us | 699 us | 1.54 ms | 3.46 ms | 4.71 ms |
+| Vector + 1 hop | Bolt      | 13,291 req/s | 747 us | 637 us | 1.29 ms | 3.24 ms | 4.47 ms |
 
 ## Traversal queries
 
@@ -127,5 +127,6 @@ curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
 ## Related Reading
 
 - [Benchmarks vs Neo4j](benchmarks-vs-neo4j.md)
+- [Retrieval Recall Benchmark](retrieval-recall-benchmark.md)
 - [Graph-RAG: Typical Distributed vs NornicDB In-Memory](../architecture/graph-rag-nornicdb-comparison.md)
 - [Canonical Graph + Mutation Log Guide](../user-guides/canonical-graph-ledger.md)
