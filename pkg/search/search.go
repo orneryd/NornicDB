@@ -6355,66 +6355,15 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 	return results
 }
 
-// GetAdaptiveRRFConfig returns optimized RRF weights based on query characteristics.
+// GetAdaptiveRRFConfig returns the production RRF configuration for a query.
 //
-// This function analyzes the query and adjusts weights to favor the search method
-// most likely to perform well:
-//
-//   - Short queries (1-2 words): Favor BM25 keyword matching
-//     Example: "python" or "graph database"
-//     Weights: Vector=0.5, BM25=1.5
-//
-//   - Long queries (6+ words): Favor vector semantic understanding
-//     Example: "How do I implement a distributed consensus algorithm?"
-//     Weights: Vector=1.5, BM25=0.5
-//
-//   - Medium queries (3-5 words): Balanced approach
-//     Example: "machine learning algorithms"
-//     Weights: Vector=1.0, BM25=1.0
-//
-// Why this works:
-//   - Short queries lack context → keywords more reliable
-//   - Long queries have semantic meaning → embeddings capture intent better
-//
-// Example:
-//
-//	// Automatic adaptation
-//	query1 := "database"
-//	opts1 := search.GetAdaptiveRRFConfig(query1)
-//	fmt.Printf("Short query weights: V=%.1f, B=%.1f\n",
-//		opts1.VectorWeight, opts1.BM25Weight)
-//	// Output: V=0.5, B=1.5 (favors keywords)
-//
-//	query2 := "What are the best practices for scaling graph databases?"
-//	opts2 := search.GetAdaptiveRRFConfig(query2)
-//	fmt.Printf("Long query weights: V=%.1f, B=%.1f\n",
-//		opts2.VectorWeight, opts2.BM25Weight)
-//	// Output: V=1.5, B=0.5 (favors semantics)
-//
-// Returns SearchOptions with adapted weights. Other options (Limit, MinSimilarity)
-// are set to defaults.
+// Equal lexical and vector weights are the recall-oriented default. The former
+// word-count heuristic over-emphasized vectors for long queries, which reduced
+// recall in controlled hybrid retrieval evaluation. The query argument remains
+// part of the API for future policies that are validated across benchmarks.
 func GetAdaptiveRRFConfig(query string) *SearchOptions {
-	words := strings.Fields(query)
-	wordCount := len(words)
-
-	opts := DefaultSearchOptions()
-
-	// Short queries (1-2 words): Emphasize keyword matching
-	if wordCount <= 2 {
-		opts.VectorWeight = 0.5
-		opts.BM25Weight = 1.5
-		return opts
-	}
-
-	// Long queries (6+ words): Emphasize semantic understanding
-	if wordCount >= 6 {
-		opts.VectorWeight = 1.5
-		opts.BM25Weight = 0.5
-		return opts
-	}
-
-	// Medium queries: Balanced
-	return opts
+	_ = query
+	return DefaultSearchOptions()
 }
 
 // Helper types

@@ -52,6 +52,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/textchunk"
 )
 
 // Embedder generates vector embeddings from text.
@@ -480,7 +482,12 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 }
 
 func (e *OllamaEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
-	return []string{text}, nil
+	// Ollama does not expose its tokenizer through the embedding API. Counting
+	// UTF-8 bytes is a conservative upper bound that keeps requests below the
+	// configured cap while reusing the canonical chunking implementation.
+	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, func(value string) (int, error) {
+		return len(value), nil
+	})
 }
 
 // Dimensions returns the expected embedding dimensions.

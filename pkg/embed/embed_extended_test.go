@@ -25,12 +25,17 @@ func TestCachedEmbedder_ChunkText(t *testing.T) {
 
 func TestOllamaEmbedder_ChunkText(t *testing.T) {
 	e := NewOllama(nil)
-	chunks, err := e.ChunkText("some text", 512, 50)
+	chunks, err := e.ChunkText("some text", 4, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chunks) != 1 || chunks[0] != "some text" {
-		t.Errorf("Expected [\"some text\"], got %v", chunks)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks, got %v", chunks)
+	}
+	for _, chunk := range chunks {
+		if len(chunk) > 4 {
+			t.Errorf("chunk exceeds byte cap: %q", chunk)
+		}
 	}
 }
 
