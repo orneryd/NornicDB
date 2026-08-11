@@ -9,6 +9,7 @@ import (
 
 func TestCompute(t *testing.T) {
 	metrics := Compute([]string{"d2", "noise", "d1", "d3"}, map[string]int{"d1": 3, "d2": 1, "d3": 2})
+	assert.Equal(t, 1.0, metrics.RecallAt10)
 	assert.Equal(t, 1.0, metrics.RecallAt100)
 	assert.Equal(t, 1.0, metrics.MRRAt10)
 	assert.InDelta(t, (1+2.0/3+3.0/4)/3, metrics.MAPAt100, 0.000001)

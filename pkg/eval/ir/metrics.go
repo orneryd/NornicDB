@@ -5,6 +5,7 @@ import "math"
 
 // Metrics is the standard metric set used by retrieval benchmarks.
 type Metrics struct {
+	RecallAt10  float64 `json:"recall_at_10"`
 	RecallAt100 float64 `json:"recall_at_100"`
 	NDCGAt10    float64 `json:"ndcg_at_10"`
 	MRRAt10     float64 `json:"mrr_at_10"`
@@ -15,6 +16,7 @@ type Metrics struct {
 // Results are ordered document IDs; qrels maps document ID to its relevance grade.
 func Compute(results []string, qrels map[string]int) Metrics {
 	return Metrics{
+		RecallAt10:  recallAt(results, qrels, 10),
 		RecallAt100: recallAt(results, qrels, 100),
 		NDCGAt10:    ndcgAt(results, qrels, 10),
 		MRRAt10:     mrrAt(results, qrels, 10),

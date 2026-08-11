@@ -88,6 +88,38 @@ term to participate in BM25 lexical seed selection. It defaults to `2`, matching
 the previous hard-coded behavior; values below `1` are treated as `1`. This is a
 clustering seed control, not a BM25 rank-score formula or a query-expansion rule.
 
+`NORNICDB_HNSW_LEXICAL_SEED_ENABLED=false` disables BM25-selected passage
+ordering during HNSW construction. It defaults to `true`; changing it invalidates
+the persisted HNSW build settings, so compare fresh graph builds rather than two
+runs against one persisted graph. GPU-assisted construction can vary between
+fresh builds, so use multiple independent pairs before changing a production
+default.
+
+### Large-Corpus Construction Result
+
+On a separate Caremark-derived corpus with just over 1 million embedding chunks,
+BM25 lexical seeding reduced `fast` HNSW construction time from about 27 minutes
+to about 10 minutes: a 2.7x speedup. Both builds used `M=16`,
+`efConstruction=100`, and up to 2,048 seed passages (`256` high-IDF terms times
+`8` passages per term); the test reported no recall or graph-quality loss.
+
+This is a construction-throughput result, not a claim that seeding improves
+SciFact retrieval quality. At SciFact's 20,488 vectors, the same setup does not
+show a meaningful recall improvement and is too small to reproduce the
+large-corpus traversal-work saving. See [the full 1M construction
+measurement](https://github.com/orneryd/NornicDB/discussions/22) for its corpus
+and timing methodology.
+
+For a CPU-only construction comparison, set both switches on a fresh data
+directory and change only the lexical-seeding value between runs:
+
+```sh
+NORNICDB_HNSW_BUILD_GPU_ENABLED=false \
+NORNICDB_HNSW_LEXICAL_SEED_ENABLED=false \
+NORNICDB_VECTOR_ANN_QUALITY=accurate \
+bin/recall-bench run --mode rrf ...
+```
+
 Use paired bootstrap comparison when choosing a profile:
 
 ```sh
@@ -114,3 +146,15 @@ The BM25 profile also measured MRR@10 `0.56161` and MAP@100 `0.55487`.
 The equal-weight production default was selected because it improved the
 controlled SciFact recall result over the previous word-count heuristic. Repeat
 the protocol on additional BEIR datasets before treating it as a universal rule.
+
+### CPU Fast HNSW Seeding Check
+
+Ten independent paired SciFact builds used the `fast` preset (`M=16`,
+`efConstruction=100`, `efSearch=50`) with CPU-only construction, equal RRF
+weights, and the same 300-query manifest. The seeded and unseeded graph builds
+were recreated from the same embedded corpus for every pair.
+
+| Observed     | Recall@10 | Recall@100 | nDCG@10 |
+| ------------ | --------: | ---------: | ------: |
+| Seeded run   |   0.78622 |    0.94100 | 0.66995 |
+| Unseeded run |   0.75622 |    0.93767 | 0.64659 |

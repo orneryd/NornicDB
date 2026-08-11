@@ -117,10 +117,11 @@ func (s *Service) composeVectorBuildSettings() string {
 
 func (s *Service) composeHNSWBuildSettings() string {
 	hcfg := HNSWConfigFromEnv()
-	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d",
+	lexicalSeeding := envutil.GetBoolStrict("NORNICDB_HNSW_LEXICAL_SEED_ENABLED", true)
+	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t;lexical_seeding=%t",
 		hnswSettingsSchemaVersion,
 		hnswIndexFormatVersionGraphOnly,
-		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch)
+		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild, lexicalSeeding)
 }
 
 func (s *Service) composeRoutingBuildSettings() string {

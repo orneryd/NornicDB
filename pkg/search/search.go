@@ -4917,7 +4917,7 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 }
 
 func (s *Service) hnswLexicalSeedNodeSet(ft bm25Index) map[string]struct{} {
-	if ft == nil {
+	if ft == nil || !envutil.GetBoolStrict("NORNICDB_HNSW_LEXICAL_SEED_ENABLED", true) {
 		return nil
 	}
 	maxTerms := envutil.GetInt("NORNICDB_HNSW_LEXICAL_SEED_MAX_TERMS", 256)

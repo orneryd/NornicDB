@@ -141,11 +141,12 @@ func Evaluate(qrels Qrels, run map[string][]string) Metrics {
 	total := Metrics{}
 	for queryID, judgments := range qrels {
 		metrics := Compute(run[queryID], judgments)
+		total.RecallAt10 += metrics.RecallAt10
 		total.RecallAt100 += metrics.RecallAt100
 		total.NDCGAt10 += metrics.NDCGAt10
 		total.MRRAt10 += metrics.MRRAt10
 		total.MAPAt100 += metrics.MAPAt100
 	}
 	count := float64(len(qrels))
-	return Metrics{RecallAt100: total.RecallAt100 / count, NDCGAt10: total.NDCGAt10 / count, MRRAt10: total.MRRAt10 / count, MAPAt100: total.MAPAt100 / count}
+	return Metrics{RecallAt10: total.RecallAt10 / count, RecallAt100: total.RecallAt100 / count, NDCGAt10: total.NDCGAt10 / count, MRRAt10: total.MRRAt10 / count, MAPAt100: total.MAPAt100 / count}
 }

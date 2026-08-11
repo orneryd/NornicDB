@@ -18,6 +18,7 @@ type Comparison struct {
 	Baseline      Metrics  `json:"baseline"`
 	Candidate     Metrics  `json:"candidate"`
 	AbsoluteDelta Metrics  `json:"absolute_delta"`
+	RecallAt10CI  Interval `json:"recall_at_10_ci_95"`
 	RecallAt100CI Interval `json:"recall_at_100_ci_95"`
 	NDCGAt10CI    Interval `json:"ndcg_at_10_ci_95"`
 }
@@ -45,36 +46,42 @@ func Compare(qrels Qrels, baseline, candidate map[string][]string, seed uint64, 
 	baselineMetrics := averageMetrics(baselinePerQuery)
 	candidateMetrics := averageMetrics(candidatePerQuery)
 	delta := subtractMetrics(candidateMetrics, baselineMetrics)
-	recallDeltas, ndcgDeltas := bootstrapDeltas(baselinePerQuery, candidatePerQuery, seed, resamples)
+	recallAt10Deltas, recallAt100Deltas, ndcgDeltas := bootstrapDeltas(baselinePerQuery, candidatePerQuery, seed, resamples)
 	return Comparison{
 		Queries:       len(queryIDs),
 		Baseline:      baselineMetrics,
 		Candidate:     candidateMetrics,
 		AbsoluteDelta: delta,
-		RecallAt100CI: percentileInterval(recallDeltas),
+		RecallAt10CI:  percentileInterval(recallAt10Deltas),
+		RecallAt100CI: percentileInterval(recallAt100Deltas),
 		NDCGAt10CI:    percentileInterval(ndcgDeltas),
 	}, nil
 }
 
-func bootstrapDeltas(baseline, candidate []Metrics, seed uint64, resamples int) ([]float64, []float64) {
+func bootstrapDeltas(baseline, candidate []Metrics, seed uint64, resamples int) ([]float64, []float64, []float64) {
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
-	recallDeltas := make([]float64, resamples)
+	recallAt10Deltas := make([]float64, resamples)
+	recallAt100Deltas := make([]float64, resamples)
 	ndcgDeltas := make([]float64, resamples)
 	for sample := 0; sample < resamples; sample++ {
-		baselineRecall, candidateRecall := 0.0, 0.0
+		baselineRecallAt10, candidateRecallAt10 := 0.0, 0.0
+		baselineRecallAt100, candidateRecallAt100 := 0.0, 0.0
 		baselineNDCG, candidateNDCG := 0.0, 0.0
 		for draw := 0; draw < len(baseline); draw++ {
 			index := rng.IntN(len(baseline))
-			baselineRecall += baseline[index].RecallAt100
-			candidateRecall += candidate[index].RecallAt100
+			baselineRecallAt10 += baseline[index].RecallAt10
+			candidateRecallAt10 += candidate[index].RecallAt10
+			baselineRecallAt100 += baseline[index].RecallAt100
+			candidateRecallAt100 += candidate[index].RecallAt100
 			baselineNDCG += baseline[index].NDCGAt10
 			candidateNDCG += candidate[index].NDCGAt10
 		}
 		count := float64(len(baseline))
-		recallDeltas[sample] = (candidateRecall - baselineRecall) / count
+		recallAt10Deltas[sample] = (candidateRecallAt10 - baselineRecallAt10) / count
+		recallAt100Deltas[sample] = (candidateRecallAt100 - baselineRecallAt100) / count
 		ndcgDeltas[sample] = (candidateNDCG - baselineNDCG) / count
 	}
-	return recallDeltas, ndcgDeltas
+	return recallAt10Deltas, recallAt100Deltas, ndcgDeltas
 }
 
 func averageMetrics(metrics []Metrics) Metrics {
@@ -83,17 +90,18 @@ func averageMetrics(metrics []Metrics) Metrics {
 	}
 	total := Metrics{}
 	for _, metric := range metrics {
+		total.RecallAt10 += metric.RecallAt10
 		total.RecallAt100 += metric.RecallAt100
 		total.NDCGAt10 += metric.NDCGAt10
 		total.MRRAt10 += metric.MRRAt10
 		total.MAPAt100 += metric.MAPAt100
 	}
 	count := float64(len(metrics))
-	return Metrics{RecallAt100: total.RecallAt100 / count, NDCGAt10: total.NDCGAt10 / count, MRRAt10: total.MRRAt10 / count, MAPAt100: total.MAPAt100 / count}
+	return Metrics{RecallAt10: total.RecallAt10 / count, RecallAt100: total.RecallAt100 / count, NDCGAt10: total.NDCGAt10 / count, MRRAt10: total.MRRAt10 / count, MAPAt100: total.MAPAt100 / count}
 }
 
 func subtractMetrics(left, right Metrics) Metrics {
-	return Metrics{RecallAt100: left.RecallAt100 - right.RecallAt100, NDCGAt10: left.NDCGAt10 - right.NDCGAt10, MRRAt10: left.MRRAt10 - right.MRRAt10, MAPAt100: left.MAPAt100 - right.MAPAt100}
+	return Metrics{RecallAt10: left.RecallAt10 - right.RecallAt10, RecallAt100: left.RecallAt100 - right.RecallAt100, NDCGAt10: left.NDCGAt10 - right.NDCGAt10, MRRAt10: left.MRRAt10 - right.MRRAt10, MAPAt100: left.MAPAt100 - right.MAPAt100}
 }
 
 func percentileInterval(values []float64) Interval {

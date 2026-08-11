@@ -2386,8 +2386,6 @@ func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
 func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 
-	t.Setenv("NORNICDB_HNSW_LEXICAL_SEED_MAX_TERMS", "0")
-	t.Setenv("NORNICDB_HNSW_LEXICAL_SEED_PER_TERM", "0")
 	require.Nil(t, svc.hnswLexicalSeedNodeSet(nil))
 
 	ft := &seedOverrideFulltext{
@@ -2400,6 +2398,9 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	_, okB := seedSet["doc-b"]
 	require.True(t, okA)
 	require.True(t, okB)
+	t.Setenv("NORNICDB_HNSW_LEXICAL_SEED_ENABLED", "false")
+	require.Nil(t, svc.hnswLexicalSeedNodeSet(ft))
+	t.Setenv("NORNICDB_HNSW_LEXICAL_SEED_ENABLED", "true")
 
 	// Error branch when neither vector store nor in-memory vector index is available.
 	svc.mu.Lock()

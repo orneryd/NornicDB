@@ -56,6 +56,17 @@ func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
 	require.False(t, strings.Contains(routing, "kmeans_seed="))
 }
 
+func TestComposeHNSWBuildSettingsIncludesLexicalSeedMode(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=true")
+	require.Contains(t, svc.composeHNSWBuildSettings(), "lexical_seeding=true")
+
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+	t.Setenv("NORNICDB_HNSW_LEXICAL_SEED_ENABLED", "false")
+	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=false")
+	require.Contains(t, svc.composeHNSWBuildSettings(), "lexical_seeding=false")
+}
+
 func TestComposeStrategyBuildSettings_CompressedIncludesFingerprint(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 	t.Setenv("NORNICDB_VECTOR_IVF_LISTS", "64")
