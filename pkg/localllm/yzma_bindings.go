@@ -275,6 +275,13 @@ func DefaultOptions(modelPath string) Options {
 	}
 }
 
+// DefaultRerankerOptions returns options for classifier-head GGUF rerankers.
+func DefaultRerankerOptions(modelPath string) Options {
+	opts := DefaultOptions(modelPath)
+	opts.Features.PoolingType = 4
+	return opts
+}
+
 // LoadModel loads a GGUF model for embedding generation.
 //
 // The model is loaded using yzma's FFI bindings. GPU acceleration is

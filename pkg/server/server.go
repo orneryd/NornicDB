@@ -1341,7 +1341,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				"note", "server starts immediately; reranking available after model loads")
 
 			go func() {
-				opts := localllm.DefaultOptions(modelPath)
+				opts := localllm.DefaultRerankerOptions(modelPath)
 				opts.GPULayers = -1
 				// Apply rerank context features from config
 				if config.Features != nil {

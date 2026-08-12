@@ -54,6 +54,24 @@ func TestDefaultOptions(t *testing.T) {
 	}
 }
 
+func TestDefaultRerankerOptions(t *testing.T) {
+	opts := DefaultRerankerOptions("/tmp/reranker.gguf")
+	if opts.ModelPath != "/tmp/reranker.gguf" {
+		t.Fatalf("ModelPath = %q", opts.ModelPath)
+	}
+	if opts.Features.PoolingType != 4 {
+		t.Fatalf("PoolingType = %d, want rank pooling (4)", opts.Features.PoolingType)
+	}
+	if opts.Features.AttentionType != 1 {
+		t.Fatalf("AttentionType = %d, want non-causal (1)", opts.Features.AttentionType)
+	}
+
+	opts.Features.PoolingType = 3
+	if opts.Features.PoolingType != 3 {
+		t.Fatal("reranker pooling override was not retained")
+	}
+}
+
 func TestResolveEmbeddingContextAndBatch(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -322,6 +340,26 @@ func TestRerankerModelSafeBranches(t *testing.T) {
 	}
 	if got := sigmoid32(-2); got <= 0 || got >= 0.5 {
 		t.Fatalf("sigmoid32(-2) = %f, want (0, 0.5)", got)
+	}
+
+	score, err := rerankerScoreFromOutput([]float32{0})
+	if err != nil || math.Abs(float64(score-0.5)) > 1e-6 {
+		t.Fatalf("rerankerScoreFromOutput scalar = (%f, %v), want (0.5, nil)", score, err)
+	}
+	if _, err := rerankerScoreFromOutput(nil); err == nil {
+		t.Fatal("expected empty reranker output error")
+	}
+	if _, err := rerankerScoreFromOutput([]float32{0.1, 0.2}); err == nil {
+		t.Fatal("expected non-scalar reranker output error")
+	}
+	if got := modelOutputDimensions(4, 1024, 1); got != 1 {
+		t.Fatalf("rank model output dimensions = %d, want 1", got)
+	}
+	if got := modelOutputDimensions(1, 1024, 1); got != 1024 {
+		t.Fatalf("embedding model output dimensions = %d, want 1024", got)
+	}
+	if got := formatRerankPrompt("Query: {query}\nDocument: {document}", "what?", "answer"); got != "Query: what?\nDocument: answer" {
+		t.Fatalf("formatRerankPrompt = %q", got)
 	}
 }
 

@@ -189,6 +189,59 @@ int tokenize(struct llama_model* model, const char* text, int text_len, int32_t*
     return llama_tokenize(vocab, text, text_len, tokens, max_tokens, 1, 1);
 }
 
+const char* get_rerank_template(struct llama_model* model) {
+	return llama_model_chat_template(model, "rerank");
+}
+
+int tokenize_rerank_pair(struct llama_model* model,
+						 const char* query, int query_len,
+						 const char* document, int document_len,
+						 int32_t* tokens, int max_tokens) {
+	const struct llama_vocab* vocab = llama_model_get_vocab(model);
+	int query_count = llama_tokenize(vocab, query, query_len, NULL, 0, 0, 1);
+	int document_count = llama_tokenize(vocab, document, document_len, NULL, 0, 0, 1);
+	query_count = query_count < 0 ? -query_count : query_count;
+	document_count = document_count < 0 ? -document_count : document_count;
+
+	const bool add_bos = llama_vocab_get_add_bos(vocab);
+	const bool add_eos = llama_vocab_get_add_eos(vocab);
+	const bool add_sep = llama_vocab_get_add_sep(vocab);
+	const int required = query_count + document_count + (add_bos ? 1 : 0) +
+						 (add_eos ? 2 : 0) + (add_sep ? 1 : 0);
+	if (required > max_tokens) {
+		return -required;
+	}
+
+	int offset = 0;
+	if (add_bos) {
+		tokens[offset++] = llama_vocab_bos(vocab);
+	}
+	if (query_count > 0) {
+		const int written = llama_tokenize(vocab, query, query_len, tokens + offset, max_tokens - offset, 0, 1);
+		if (written < 0) return written;
+		offset += written;
+	}
+	llama_token eos = llama_vocab_eos(vocab);
+	if (eos == LLAMA_TOKEN_NULL) {
+		eos = llama_vocab_sep(vocab);
+	}
+	if (add_eos) {
+		tokens[offset++] = eos;
+	}
+	if (add_sep) {
+		tokens[offset++] = llama_vocab_sep(vocab);
+	}
+	if (document_count > 0) {
+		const int written = llama_tokenize(vocab, document, document_len, tokens + offset, max_tokens - offset, 0, 1);
+		if (written < 0) return written;
+		offset += written;
+	}
+	if (add_eos) {
+		tokens[offset++] = eos;
+	}
+	return offset;
+}
+
 // Generate embedding with GPU acceleration
 int embed(struct llama_context* ctx, int32_t* tokens, int n_tokens, float* out, int n_embd) {
     // Clear memory before each embedding (not persistent for embeddings)
@@ -230,6 +283,11 @@ int embed(struct llama_context* ctx, int32_t* tokens, int n_tokens, float* out, 
 // Get embedding dimensions
 int get_n_embd(struct llama_model* model) {
     return llama_model_n_embd(model);
+}
+
+// Get classification-head output dimensions for rank pooling.
+int get_n_cls_out(struct llama_model* model) {
+	return (int) llama_model_n_cls_out(model);
 }
 
 // Get model training context size from metadata.
@@ -553,12 +611,14 @@ import (
 // but operations are serialized internally via mutex to prevent race conditions
 // with the underlying C context.
 type Model struct {
-	model     *C.struct_llama_model
-	ctx       *C.struct_llama_context
-	dims      int
-	maxTokens int
-	modelDesc string
-	mu        sync.Mutex
+	model          *C.struct_llama_model
+	ctx            *C.struct_llama_context
+	dims           int
+	outputDims     int
+	maxTokens      int
+	modelDesc      string
+	rerankTemplate string
+	mu             sync.Mutex
 }
 
 // Options configures model loading and inference.
@@ -628,6 +688,14 @@ func DefaultOptions(modelPath string) Options {
 	}
 }
 
+// DefaultRerankerOptions returns options for classifier-head GGUF rerankers.
+// Rank pooling attaches the model's classification head and returns its logits.
+func DefaultRerankerOptions(modelPath string) Options {
+	opts := DefaultOptions(modelPath)
+	opts.Features.PoolingType = 4
+	return opts
+}
+
 func resolveEmbeddingContextAndBatch(opts Options, modelCtxTrain int) (ctxSize, batchSize int) {
 	if opts.ContextSize > 0 {
 		ctxSize = opts.ContextSize
@@ -658,6 +726,13 @@ func resolveEmbeddingContextAndBatch(opts Options, modelCtxTrain int) (ctxSize, 
 		batchSize = ctxSize
 	}
 	return ctxSize, batchSize
+}
+
+func modelOutputDimensions(poolingType, embeddingDims, classifierDims int) int {
+	if poolingType == 4 && classifierDims > 0 {
+		return classifierDims
+	}
+	return embeddingDims
 }
 
 // LoadModel loads a GGUF model for embedding generation.
@@ -711,12 +786,19 @@ func LoadModel(opts Options) (*Model, error) {
 		effectiveCtx = ctxSize
 	}
 
+	embeddingDims := int(C.get_n_embd(model))
+	rerankTemplate := ""
+	if template := C.get_rerank_template(model); template != nil {
+		rerankTemplate = C.GoString(template)
+	}
 	return &Model{
-		model:     model,
-		ctx:       ctx,
-		dims:      int(C.get_n_embd(model)),
-		maxTokens: effectiveCtx,
-		modelDesc: opts.ModelPath, // Use path as description
+		model:          model,
+		ctx:            ctx,
+		dims:           embeddingDims,
+		outputDims:     modelOutputDimensions(f.PoolingType, embeddingDims, int(C.get_n_cls_out(model))),
+		maxTokens:      effectiveCtx,
+		modelDesc:      opts.ModelPath, // Use path as description
+		rerankTemplate: rerankTemplate,
 	}, nil
 }
 
@@ -788,8 +870,12 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 
 	// Generate embedding (GPU-accelerated on Metal/CUDA)
-	emb := make([]float32, m.dims)
-	result := C.embed(m.ctx, (*C.int)(&tokens[0]), n, (*C.float)(&emb[0]), C.int(m.dims))
+	outputDims := m.outputDims
+	if outputDims < 1 {
+		outputDims = m.dims
+	}
+	emb := make([]float32, outputDims)
+	result := C.embed(m.ctx, (*C.int)(&tokens[0]), n, (*C.float)(&emb[0]), C.int(outputDims))
 	if result != 0 {
 		return nil, fmt.Errorf("embedding generation failed (code: %d)", result)
 	}
@@ -841,12 +927,6 @@ func (m *Model) countTokensLocked(text string) (int, error) {
 }
 
 // EmbedRaw returns the pooled output from the model without normalizing.
-// Used by RerankerModel: when the GGUF outputs a single relevance logit (n_embd=1),
-// emb[0] is the logit to pass through sigmoid. When n_embd>1 (e.g. 1024), the GGUF
-// may be an embedding-style export without a classification head; emb[0] is then
-// the first component of the [CLS] vector, which is not the true relevance score
-// and can cluster around ~0.5 after sigmoid. Prefer a reranker GGUF that outputs
-// 1 dimension (relevance logit).
 func (m *Model) EmbedRaw(ctx context.Context, text string) ([]float32, error) {
 	if text == "" {
 		return nil, nil
@@ -876,10 +956,50 @@ func (m *Model) EmbedRaw(ctx context.Context, text string) ([]float32, error) {
 	if n == 0 {
 		return nil, fmt.Errorf("text produced no tokens")
 	}
-	emb := make([]float32, m.dims)
-	result := C.embed(m.ctx, (*C.int)(&tokens[0]), n, (*C.float)(&emb[0]), C.int(m.dims))
+	outputDims := m.outputDims
+	if outputDims < 1 {
+		outputDims = m.dims
+	}
+	emb := make([]float32, outputDims)
+	result := C.embed(m.ctx, (*C.int)(&tokens[0]), n, (*C.float)(&emb[0]), C.int(outputDims))
 	if result != 0 {
 		return nil, fmt.Errorf("embedding generation failed (code: %d)", result)
+	}
+	return emb, nil
+}
+
+func (m *Model) embedRerankPairRaw(ctx context.Context, query, document string) ([]float32, error) {
+	if query == "" && document == "" {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	cQuery := C.CString(query)
+	defer C.free(unsafe.Pointer(cQuery))
+	cDocument := C.CString(document)
+	defer C.free(unsafe.Pointer(cDocument))
+	tokenCap := m.maxTokens
+	if tokenCap < 1 {
+		tokenCap = defaultEmbeddingContextCap
+	}
+	tokens := make([]C.int, tokenCap)
+	n := C.tokenize_rerank_pair(m.model, cQuery, C.int(len(query)), cDocument, C.int(len(document)), &tokens[0], C.int(tokenCap))
+	if n < 0 {
+		return nil, fmt.Errorf("reranker tokenization overflow: requires %d tokens, limit %d", -int(n), tokenCap)
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("reranker pair produced no tokens")
+	}
+	emb := make([]float32, m.outputDims)
+	result := C.embed(m.ctx, (*C.int)(&tokens[0]), n, (*C.float)(&emb[0]), C.int(m.outputDims))
+	if result != 0 {
+		return nil, fmt.Errorf("reranker inference failed (code: %d)", result)
 	}
 	return emb, nil
 }
@@ -957,14 +1077,11 @@ func (m *Model) Close() error {
 // RERANKER (BGE-style: query + document → single relevance score)
 // ============================================================================
 //
-// RerankerModel uses the same BERT-style encoder as embedding models but is
-// configured for classification/reranking: input "query \n\n document" is
-// encoded and the model output (single dimension or first logit) is interpreted
-// as a relevance score. Used for Stage-2 search reranking.
+// RerankerModel uses the same encoder as embedding models but is configured for
+// rank pooling and requires one classifier output.
 
 // RerankerModel wraps a GGUF model for reranking (query, document) pairs.
-// It uses the embedding path: encode "query \n\n document" and treat the
-// output as a relevance score (1-dim or first element with sigmoid).
+// It encodes the query and document as a model-specific classification pair.
 type RerankerModel struct {
 	model *Model
 }
@@ -977,34 +1094,48 @@ func LoadRerankerModel(opts Options) (*RerankerModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	if model.outputDims != 1 {
+		_ = model.Close()
+		return nil, fmt.Errorf("reranker requires a single classifier output, got %d dimensions with pooling type %d", model.outputDims, opts.Features.PoolingType)
+	}
 	return &RerankerModel{model: model}, nil
 }
 
 // Score returns a relevance score in [0, 1] for the (query, document) pair.
-// Input format is "query \n\n document" (BGE-style). We use EmbedRaw (no
-// normalization) so that when the GGUF outputs a single relevance logit (dims=1),
-// we get the true logit; normalizing would turn it into ±1 and distort scores.
-// Thread-safe: serialized via the underlying Model mutex.
 func (r *RerankerModel) Score(ctx context.Context, query, document string) (float32, error) {
 	if r == nil || r.model == nil {
 		return 0, fmt.Errorf("reranker model not loaded")
 	}
-	combined := query + "\n\n" + document
-	emb, err := r.model.EmbedRaw(ctx, combined)
+	var emb []float32
+	var err error
+	if r.model.rerankTemplate != "" {
+		emb, err = r.model.EmbedRaw(ctx, formatRerankPrompt(r.model.rerankTemplate, query, document))
+	} else {
+		emb, err = r.model.embedRerankPairRaw(ctx, query, document)
+	}
 	if err != nil {
 		return 0, err
 	}
-	if len(emb) == 0 {
-		return 0, fmt.Errorf("reranker returned empty embedding")
+	score, err := rerankerScoreFromOutput(emb)
+	if err != nil {
+		return 0, err
 	}
-	// Reranker GGUF should output 1 dim (relevance logit). If dims>1 we're using
-	// the embedding-style pooled [CLS] and first component is not the true logit.
-	logit := emb[0]
-	score := sigmoid32(logit)
 	if os.Getenv("NORNICDB_RERANK_DEBUG") == "1" {
-		log.Printf("[rerank] dims=%d raw_logit=%.4f score=%.4f", len(emb), logit, score)
+		log.Printf("[rerank] dims=%d raw_logit=%.4f score=%.4f", len(emb), emb[0], score)
 	}
 	return score, nil
+}
+
+func formatRerankPrompt(template, query, document string) string {
+	prompt := strings.ReplaceAll(template, "{query}", query)
+	return strings.ReplaceAll(prompt, "{document}", document)
+}
+
+func rerankerScoreFromOutput(output []float32) (float32, error) {
+	if len(output) != 1 {
+		return 0, fmt.Errorf("reranker must return exactly one relevance logit, got %d dimensions", len(output))
+	}
+	return sigmoid32(output[0]), nil
 }
 
 // sigmoid32 maps a logit to (0, 1) in a numerically stable way.

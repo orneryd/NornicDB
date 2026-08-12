@@ -896,7 +896,7 @@ type FeatureFlagsConfig struct {
 	// Env: NORNICDB_RERANK_CTX_TYPE
 	RerankCtxType int
 	// RerankPoolingType sets the pooling strategy for rerank model.
-	// 1=mean, 2=cls, 3=last, 4=rank.
+	// 1=mean, 2=cls, 3=last, 4=rank (default).
 	// Env: NORNICDB_RERANK_POOLING_TYPE
 	RerankPoolingType int
 	// RerankAttentionType sets the attention masking mode for rerank model.

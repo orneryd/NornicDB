@@ -11,10 +11,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/eval/ir"
+	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
@@ -39,6 +42,52 @@ type databaseRetriever struct {
 	vectorWeight float64
 	bm25Weight   float64
 	minRRFScore  float64
+	reranker     *benchmarkRerankConfig
+	progress     *benchmarkProgress
+}
+
+type benchmarkRerankConfig struct {
+	scorer      search.RerankScorer
+	topK        int
+	maxDocChars int
+	timeout     time.Duration
+	progress    *benchmarkProgress
+}
+
+type benchmarkProgress struct {
+	started       time.Time
+	lastCandidate time.Time
+	interval      time.Duration
+	completed     int
+	total         int
+}
+
+func newBenchmarkProgress(total int, interval time.Duration) *benchmarkProgress {
+	now := time.Now()
+	return &benchmarkProgress{started: now, lastCandidate: now, interval: interval, total: total}
+}
+
+func (p *benchmarkProgress) candidate(done, total int) {
+	if p == nil || p.interval <= 0 || time.Since(p.lastCandidate) < p.interval {
+		return
+	}
+	p.lastCandidate = time.Now()
+	fmt.Fprintf(os.Stderr, "rerank progress: query %d/%d candidate %d/%d elapsed=%s\n",
+		p.completed+1, p.total, done, total, time.Since(p.started).Round(time.Second))
+}
+
+func (p *benchmarkProgress) queryComplete() {
+	if p == nil {
+		return
+	}
+	p.completed++
+	elapsed := time.Since(p.started)
+	remaining := time.Duration(0)
+	if p.completed > 0 && p.completed < p.total {
+		remaining = time.Duration(float64(elapsed) * float64(p.total-p.completed) / float64(p.completed))
+	}
+	fmt.Fprintf(os.Stderr, "benchmark progress: queries=%d/%d elapsed=%s eta=%s\n",
+		p.completed, p.total, elapsed.Round(time.Second), remaining.Round(time.Second))
 }
 
 func (r databaseRetriever) Retrieve(ctx context.Context, query string, topK int) ([]ir.RunResult, error) {
@@ -68,7 +117,21 @@ func (r databaseRetriever) Retrieve(ctx context.Context, query string, topK int)
 	if err != nil {
 		return nil, err
 	}
-	runResults := make([]ir.RunResult, 0, len(results))
+	runResults, err := benchmarkRunResults(ctx, query, results, r.reranker)
+	if err == nil {
+		r.progress.queryComplete()
+	}
+	return runResults, err
+}
+
+func benchmarkRunResults(ctx context.Context, query string, results []*nornicdb.SearchResult, reranker *benchmarkRerankConfig) ([]ir.RunResult, error) {
+	type candidate struct {
+		documentID string
+		content    string
+		score      float64
+	}
+	candidates := make([]candidate, 0, len(results))
+	seen := make(map[string]struct{}, len(results))
 	for index, result := range results {
 		if result == nil || result.Node == nil {
 			return nil, fmt.Errorf("search result %d has no node", index)
@@ -77,7 +140,52 @@ func (r databaseRetriever) Retrieve(ctx context.Context, query string, topK int)
 		if !ok || beirID == "" {
 			return nil, fmt.Errorf("search result %d is missing beir_id", index)
 		}
-		runResults = append(runResults, ir.RunResult{DocumentID: beirID, Score: result.Score})
+		if _, exists := seen[beirID]; exists {
+			return nil, fmt.Errorf("search result %d contains duplicate BEIR document %q", index, beirID)
+		}
+		seen[beirID] = struct{}{}
+		title, _ := result.Node.Properties["title"].(string)
+		text, _ := result.Node.Properties["text"].(string)
+		content := strings.TrimSpace(strings.TrimSpace(title) + "\n\n" + strings.TrimSpace(text))
+		candidates = append(candidates, candidate{documentID: beirID, content: content, score: result.Score})
+	}
+	if reranker != nil {
+		if reranker.scorer == nil {
+			return nil, fmt.Errorf("reranker scorer is required")
+		}
+		limit := reranker.topK
+		if limit < 1 || limit > len(candidates) {
+			limit = len(candidates)
+		}
+		for index := 0; index < limit; index++ {
+			document := candidates[index].content
+			if reranker.maxDocChars > 0 && len(document) > reranker.maxDocChars {
+				document = document[:reranker.maxDocChars]
+			}
+			scoreCtx := ctx
+			cancel := func() {}
+			if reranker.timeout > 0 {
+				scoreCtx, cancel = context.WithTimeout(ctx, reranker.timeout)
+			}
+			score, err := reranker.scorer.Score(scoreCtx, query, document)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("rerank document %q: %w", candidates[index].documentID, err)
+			}
+			candidates[index].score = float64(score)
+			reranker.progress.candidate(index+1, limit)
+		}
+		sort.SliceStable(candidates[:limit], func(left, right int) bool {
+			return candidates[left].score > candidates[right].score
+		})
+	}
+	runResults := make([]ir.RunResult, len(candidates))
+	for index, candidate := range candidates {
+		score := candidate.score
+		if reranker != nil {
+			score = float64(len(candidates) - index)
+		}
+		runResults[index] = ir.RunResult{DocumentID: candidate.documentID, Score: score}
 	}
 	return runResults, nil
 }
@@ -203,6 +311,13 @@ func runRetrieval(args []string) {
 	embeddingModel := flags.String("embedding-model", "bge-m3:latest", "Embedding model")
 	embeddingURL := flags.String("embedding-url", "http://localhost:11434", "Embedding API URL")
 	embeddingDim := flags.Int("embedding-dim", 1024, "Embedding vector dimensions")
+	rerankerProvider := flags.String("reranker-provider", "none", "Reranker provider: none or local-gguf")
+	rerankerModel := flags.String("reranker-model", "", "Path to a local GGUF reranker model")
+	rerankerPoolingType := flags.Int("reranker-pooling-type", 4, "llama.cpp pooling type for local GGUF reranking; 4 selects the rank head")
+	rerankTopK := flags.Int("rerank-top-k", 100, "Number of first-stage documents to rerank")
+	rerankerMaxDocChars := flags.Int("reranker-max-doc-chars", 32000, "Maximum document characters passed to the reranker")
+	rerankerTimeout := flags.Duration("reranker-timeout", 30*time.Second, "Maximum time for each reranker score")
+	progressInterval := flags.Duration("progress-interval", 5*time.Second, "Progress interval during a long reranker query; 0 disables candidate progress")
 	_ = flags.Parse(args)
 	if *dataDir == "" || *queriesPath == "" || *manifestPath == "" || *outputPath == "" {
 		fmt.Fprintln(os.Stderr, "run requires --data-dir, --queries, --manifest, and --output")
@@ -228,6 +343,18 @@ func runRetrieval(args []string) {
 	}
 	if *rrfK < 0 || *vectorWeight < 0 || *bm25Weight < 0 {
 		fmt.Fprintln(os.Stderr, "RRF overrides must not be negative")
+		os.Exit(2)
+	}
+	if *rerankerProvider != "none" && *rerankerProvider != "local-gguf" {
+		fmt.Fprintln(os.Stderr, "reranker-provider must be none or local-gguf")
+		os.Exit(2)
+	}
+	if *rerankerProvider == "local-gguf" && *rerankerModel == "" {
+		fmt.Fprintln(os.Stderr, "reranker-provider local-gguf requires --reranker-model")
+		os.Exit(2)
+	}
+	if *rerankerPoolingType < 1 || *rerankerPoolingType > 4 || *rerankTopK < 1 || *rerankTopK > *topK || *rerankerMaxDocChars < 1 || *rerankerTimeout <= 0 || *progressInterval < 0 {
+		fmt.Fprintln(os.Stderr, "reranker limits and timeout must be positive, and rerank-top-k must not exceed top-k")
 		os.Exit(2)
 	}
 	manifest, err := readManifest(*manifestPath)
@@ -256,6 +383,36 @@ func runRetrieval(args []string) {
 		fmt.Fprintln(os.Stderr, "configure embedder:", err)
 		os.Exit(1)
 	}
+	var rerankConfig *benchmarkRerankConfig
+	var rerankerModelCloser io.Closer
+	if *rerankerProvider == "local-gguf" {
+		modelOptions := localllm.DefaultRerankerOptions(*rerankerModel)
+		modelOptions.Features.PoolingType = *rerankerPoolingType
+		model, loadErr := localllm.LoadRerankerModel(modelOptions)
+		if loadErr != nil {
+			fmt.Fprintln(os.Stderr, "load reranker:", loadErr)
+			os.Exit(1)
+		}
+		rerankerModelCloser = model
+		healthCtx, cancel := context.WithTimeout(context.Background(), *rerankerTimeout)
+		_, healthErr := model.Score(healthCtx, "health", "check")
+		cancel()
+		if healthErr != nil {
+			_ = model.Close()
+			fmt.Fprintln(os.Stderr, "validate reranker:", healthErr)
+			os.Exit(1)
+		}
+		rerankConfig = &benchmarkRerankConfig{scorer: model, topK: *rerankTopK, maxDocChars: *rerankerMaxDocChars, timeout: *rerankerTimeout}
+	}
+	if rerankerModelCloser != nil {
+		defer rerankerModelCloser.Close()
+	}
+	progress := newBenchmarkProgress(len(manifest.QueryIDs), *progressInterval)
+	if rerankConfig != nil {
+		rerankConfig.progress = progress
+		fmt.Fprintf(os.Stderr, "benchmark workload: %d queries x %d candidates = %d serialized reranker scores\n",
+			len(manifest.QueryIDs), *rerankTopK, len(manifest.QueryIDs)**rerankTopK)
+	}
 	if err := os.MkdirAll(filepath.Dir(*outputPath), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "create run directory:", err)
 		os.Exit(1)
@@ -266,7 +423,7 @@ func runRetrieval(args []string) {
 		fmt.Fprintln(os.Stderr, "create run:", err)
 		os.Exit(1)
 	}
-	stats, runErr := ir.RunManifest(context.Background(), manifest, queries, databaseRetriever{db: db, mode: *mode, rrfPreset: *rrfPreset, rrfK: *rrfK, vectorWeight: *vectorWeight, bm25Weight: *bm25Weight, minRRFScore: *minRRFScore}, *topK, *tag, output)
+	stats, runErr := ir.RunManifest(context.Background(), manifest, queries, databaseRetriever{db: db, mode: *mode, rrfPreset: *rrfPreset, rrfK: *rrfK, vectorWeight: *vectorWeight, bm25Weight: *bm25Weight, minRRFScore: *minRRFScore, reranker: rerankConfig, progress: progress}, *topK, *tag, output)
 	closeErr := output.Close()
 	if runErr != nil {
 		_ = os.Remove(temporary)
@@ -283,13 +440,19 @@ func runRetrieval(args []string) {
 		os.Exit(1)
 	}
 	writeJSON(struct {
-		Dataset  string `json:"dataset"`
-		Queries  int64  `json:"queries"`
-		Mode     string `json:"mode"`
-		RunPath  string `json:"run_path"`
-		TopK     int    `json:"top_k"`
-		Manifest string `json:"manifest_sha256"`
-	}{manifest.Dataset, stats.Queries, *mode, *outputPath, *topK, manifest.SHA256}, "")
+		Dataset             string `json:"dataset"`
+		Queries             int64  `json:"queries"`
+		Mode                string `json:"mode"`
+		RunPath             string `json:"run_path"`
+		TopK                int    `json:"top_k"`
+		Manifest            string `json:"manifest_sha256"`
+		Reranker            string `json:"reranker"`
+		RerankerModel       string `json:"reranker_model,omitempty"`
+		RerankerPoolingType int    `json:"reranker_pooling_type,omitempty"`
+		RerankTopK          int    `json:"rerank_top_k,omitempty"`
+		RerankerMaxDocChars int    `json:"reranker_max_doc_chars,omitempty"`
+		RerankerTimeout     string `json:"reranker_timeout,omitempty"`
+	}{manifest.Dataset, stats.Queries, *mode, *outputPath, *topK, manifest.SHA256, *rerankerProvider, *rerankerModel, *rerankerPoolingType, *rerankTopK, *rerankerMaxDocChars, rerankerTimeout.String()}, "")
 }
 
 func readManifest(path string) (ir.QueryManifest, error) {

@@ -97,7 +97,7 @@ default.
 
 ### Large-Corpus Construction Result
 
-On a separate Caremark-derived corpus with just over 1 million embedding chunks,
+On a separate corpus with just over 1 million embedding chunks,
 BM25 lexical seeding reduced `fast` HNSW construction time from about 27 minutes
 to about 10 minutes: a 2.7x speedup. Both builds used `M=16`,
 `efConstruction=100`, and up to 2,048 seed passages (`256` high-IDF terms times
@@ -127,6 +127,28 @@ bin/recall-bench compare --qrels bench-data/beir/scifact/qrels/test.tsv \
   --baseline bench-data/runs/scifact-baseline.trec \
   --candidate bench-data/runs/scifact-candidate.trec
 ```
+
+For a leaderboard-comparable document-level run with the local BGE reranker,
+rerank all 100 exact hybrid candidates. Rank pooling reads the GGUF classifier
+head and the command aborts if the model does not return one relevance logit.
+
+```sh
+NORNICDB_VECTOR_CPU_BRUTE_MAX_N=25000 bin/recall-bench run --mode rrf \
+  --data-dir bench-data/nornic/scifact \
+  --queries bench-data/beir/scifact/queries.jsonl \
+  --manifest bench-data/runs/scifact-test-manifest.json \
+  --embedding-provider ollama --embedding-model bge-m3:latest --embedding-dim 1024 \
+  --rrf-preset default --min-rrf-score 0 \
+  --reranker-provider local-gguf \
+  --reranker-model models/bge-reranker-v2-m3.gguf \
+  --reranker-pooling-type 4 --rerank-top-k 100 \
+  --reranker-max-doc-chars 32000 --reranker-timeout 30s \
+  --tag nornic-exact-bge-rerank \
+  --output bench-data/runs/scifact-exact-bge-rerank.trec
+```
+
+The TREC run contains unique official BEIR document IDs. Internal embedding
+chunks are collapsed to their parent document before RRF and reranking.
 
 ## Recorded SciFact Results
 

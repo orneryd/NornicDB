@@ -51,13 +51,18 @@ When reranking is **enabled**, the server loads the configured reranker at start
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NORNICDB_SEARCH_RERANK_ENABLED` | `false` | Enable Stage-2 reranking for vector/hybrid search |
-| `NORNICDB_SEARCH_RERANK_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, `openai`, or `http` |
-| `NORNICDB_SEARCH_RERANK_MODEL` | (see below) | For **local**: GGUF filename (e.g. `bge-reranker-v2-m3-Q4_K_M.gguf`). For **API**: model name/id (e.g. `rerank-english-v3.0`) |
-| `NORNICDB_SEARCH_RERANK_API_URL` | (see below) | Rerank API endpoint for non-local providers (required when provider ≠ local; default for `ollama`: `http://localhost:11434/rerank`) |
-| `NORNICDB_SEARCH_RERANK_API_KEY` | (empty) | API key for authenticated providers (e.g. Cohere, OpenAI) |
+| Variable                          | Default     | Description                                                                                                                         |
+| --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `NORNICDB_SEARCH_RERANK_ENABLED`  | `false`     | Enable Stage-2 reranking for vector/hybrid search                                                                                   |
+| `NORNICDB_SEARCH_RERANK_PROVIDER` | `local`     | Backend: `local` (GGUF), `ollama`, `openai`, or `http`                                                                              |
+| `NORNICDB_SEARCH_RERANK_MODEL`    | (see below) | For **local**: GGUF filename (e.g. `bge-reranker-v2-m3-Q4_K_M.gguf`). For **API**: model name/id (e.g. `rerank-english-v3.0`)       |
+| `NORNICDB_SEARCH_RERANK_API_URL`  | (see below) | Rerank API endpoint for non-local providers (required when provider ≠ local; default for `ollama`: `http://localhost:11434/rerank`) |
+| `NORNICDB_SEARCH_RERANK_API_KEY`  | (empty)     | API key for authenticated providers (e.g. Cohere, OpenAI)                                                                           |
+
+Local GGUF rerankers default to llama.cpp rank pooling (`4`), non-causal
+attention (`1`), and disabled flash attention (`0`). Override these with
+`NORNICDB_RERANK_POOLING_TYPE`, `NORNICDB_RERANK_ATTENTION_TYPE`, and
+`NORNICDB_RERANK_FLASH_ATTN` when a model requires different context settings.
 
 Models directory for **local** provider: `NORNICDB_MODELS_DIR` (default `./models`). Download the default reranker with:
 
@@ -70,10 +75,10 @@ make download-bge-reranker
 ```yaml
 search_rerank:
   enabled: true
-  provider: local   # local | ollama | openai | http
-  model: bge-reranker-v2-m3-Q4_K_M.gguf   # GGUF filename (local) or API model name
-  api_url: ""       # For ollama/openai/http (e.g. https://api.cohere.ai/v1/rerank)
-  api_key: ""       # For Cohere, OpenAI, etc.
+  provider: local # local | ollama | openai | http
+  model: bge-reranker-v2-m3-Q4_K_M.gguf # GGUF filename (local) or API model name
+  api_url: "" # For ollama/openai/http (e.g. https://api.cohere.ai/v1/rerank)
+  api_key: "" # For Cohere, OpenAI, etc.
 ```
 
 ### Local GGUF (BGE-Reranker-v2-m3)
@@ -109,14 +114,14 @@ NORNICDB_HEIMDALL_ENABLED=true \
 
 #### GGUF output dimension and quantization
 
-- **Output dimension:** NornicDB expects the reranker GGUF to output a **single relevance logit** (1 dimension). The code uses that value with sigmoid to get a score in [0,1]. Some GGUF conversions export the reranker as a 1024-dim pooled embedding (same as BGE-M3); in that case the first component is *not* the true relevance score and all results can cluster around ~0.5. Prefer a GGUF that was built for **reranking** (classification head → 1-dim logit), e.g. from [gpustack/bge-reranker-v2-m3-GGUF](https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF) or similar.
+- **Output dimension:** NornicDB requires the reranker GGUF to expose a **single relevance logit** through rank pooling. Model loading fails if the selected pooling mode does not return exactly one classifier output; NornicDB never substitutes the first coordinate of a pooled embedding. The logit is mapped through sigmoid to a score in [0,1].
 - **Quantization:** Reranker GGUFs are commonly quantized (Q4_K_M, Q8_0, F16). Q4_K_M is typical for CPU/small GPU; Q8_0 or F16 for higher accuracy. The default `make download-bge-reranker` target uses a Q4_K_M variant.
 
 #### Debugging flat or poor rerank scores
 
 If every result has the same score (e.g. 0.49) or ordering is worse than with reranking off:
 
-1. **Check model output dimension:** Set `NORNICDB_RERANK_DEBUG=1` and run a search. Logs will show `dims=...`, `raw_logit=...`, and `score=...` per candidate. If `dims=1024`, the GGUF is an embedding-style export (pooled [CLS]) and the "score" is just the first component of that vector, not the true relevance logit; try a reranker GGUF that outputs 1 dimension.
+1. **Check model output dimension:** Set `NORNICDB_RERANK_DEBUG=1` and run a search. Logs show `dims=1`, `raw_logit`, and `score` per candidate. A non-scalar classifier head is rejected during model loading with its selected pooling type in the error.
 2. **Fallback:** When the reranker produces nearly identical scores (range &lt; 0.05), NornicDB automatically falls back to RRF order and scores so search quality matches "reranking off" until you fix the model or config.
 
 ### External Providers (ollama / openai / http)
@@ -179,19 +184,25 @@ svc.SetReranker(search.NewCrossEncoder(&search.CrossEncoderConfig{
 }))
 ```
 
-For **local GGUF**, use `search.NewLocalReranker(localllm.RerankerModel, config)`; the standard server does this automatically when `NORNICDB_SEARCH_RERANK_ENABLED=true` and `NORNICDB_SEARCH_RERANK_PROVIDER=local`.
+For **local GGUF**, load the model with `localllm.DefaultRerankerOptions`, then pass it to `search.NewLocalReranker`. The options expose context size, batch size, threads, GPU layers, context type, pooling type, attention type, and flash attention. The standard server does this automatically when `NORNICDB_SEARCH_RERANK_ENABLED=true` and `NORNICDB_SEARCH_RERANK_PROVIDER=local`.
+
+```go
+opts := localllm.DefaultRerankerOptions("models/bge-reranker-v2-m3.gguf")
+opts.Features.PoolingType = 4 // Override only when the model requires it.
+model, err := localllm.LoadRerankerModel(opts)
+```
 
 ## CrossEncoderConfig Options (HTTP/API)
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `Enabled` | `false` | Enable cross-encoder reranking |
-| `APIURL` | `http://localhost:8081/rerank` | Reranking service endpoint |
-| `APIKey` | `""` | Authentication token (if required) |
-| `Model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Model name |
-| `TopK` | `100` | How many candidates to rerank |
-| `Timeout` | `30s` | Request timeout |
-| `MinScore` | `0.0` | Minimum score threshold |
+| Option     | Default                                | Description                        |
+| ---------- | -------------------------------------- | ---------------------------------- |
+| `Enabled`  | `false`                                | Enable cross-encoder reranking     |
+| `APIURL`   | `http://localhost:8081/rerank`         | Reranking service endpoint         |
+| `APIKey`   | `""`                                   | Authentication token (if required) |
+| `Model`    | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Model name                         |
+| `TopK`     | `100`                                  | How many candidates to rerank      |
+| `Timeout`  | `30s`                                  | Request timeout                    |
+| `MinScore` | `0.0`                                  | Minimum score threshold            |
 
 ## Supported Reranking Services
 
@@ -239,9 +250,9 @@ The cross-encoder integration supports multiple response formats:
 ```json
 {
   "results": [
-    {"index": 0, "relevance_score": 0.95},
-    {"index": 2, "relevance_score": 0.82},
-    {"index": 1, "relevance_score": 0.71}
+    { "index": 0, "relevance_score": 0.95 },
+    { "index": 2, "relevance_score": 0.82 },
+    { "index": 1, "relevance_score": 0.71 }
   ]
 }
 ```
@@ -259,8 +270,8 @@ The cross-encoder integration supports multiple response formats:
 ```json
 {
   "rankings": [
-    {"index": 0, "score": 0.95},
-    {"index": 2, "score": 0.82}
+    { "index": 0, "score": 0.95 },
+    { "index": 2, "score": 0.82 }
   ]
 }
 ```
@@ -269,21 +280,23 @@ The cross-encoder integration supports multiple response formats:
 
 ### Latency Trade-offs
 
-| Method | Latency | Accuracy |
-|--------|---------|----------|
-| Vector only | ~5ms | Good |
-| RRF Hybrid | ~10ms | Better |
-| RRF + Cross-Encoder | ~50-200ms | Best |
+| Method              | Latency   | Accuracy |
+| ------------------- | --------- | -------- |
+| Vector only         | ~5ms      | Good     |
+| RRF Hybrid          | ~10ms     | Better   |
+| RRF + Cross-Encoder | ~50-200ms | Best     |
 
 ### When to Use
 
 ✅ **Use cross-encoder when:**
+
 - Accuracy is more important than latency
 - Users are willing to wait for better results
 - Search volume is low to moderate
 - High-stakes decisions based on search
 
 ❌ **Skip cross-encoder when:**
+
 - Low latency is critical (<50ms)
 - High query volume (>1000 QPS)
 - Results are "good enough" with bi-encoders
@@ -353,13 +366,13 @@ No error is returned to the caller - the search continues with best-effort resul
 
 ## Popular Reranker Models
 
-| Model | Provider | Quality | Speed |
-|-------|----------|---------|-------|
-| `bge-reranker-v2-m3-Q4_K_M.gguf` | Local (default) | Excellent | Medium |
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace TEI | Good | Fast |
-| `cross-encoder/ms-marco-TinyBERT-L-6` | HuggingFace TEI | Good | Fastest |
-| `BAAI/bge-reranker-base` | TEI / HTTP | Better | Medium |
-| `Cohere rerank-english-v3.0` | Cohere API | Best | API |
+| Model                                  | Provider        | Quality   | Speed   |
+| -------------------------------------- | --------------- | --------- | ------- |
+| `bge-reranker-v2-m3-Q4_K_M.gguf`       | Local (default) | Excellent | Medium  |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace TEI | Good      | Fast    |
+| `cross-encoder/ms-marco-TinyBERT-L-6`  | HuggingFace TEI | Good      | Fastest |
+| `BAAI/bge-reranker-base`               | TEI / HTTP      | Better    | Medium  |
+| `Cohere rerank-english-v3.0`           | Cohere API      | Best      | API     |
 
 ## Related Documentation
 

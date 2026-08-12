@@ -579,57 +579,57 @@ Runtime transition behavior:
 
 By default, `NORNICDB_VECTOR_CPU_BRUTE_MAX_N=0`, so CPU brute-force is opt-in and HNSW is active regardless of dataset size. To opt into exact CPU brute-force below a threshold, set `NORNICDB_VECTOR_CPU_BRUTE_MAX_N` to that vector count.
 
-| Variable                                       | Default  | Description                                                                                                                                       |
-| ---------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Strategy thresholds**                        |          |                                                                                                                                                   |
-| `NORNICDB_VECTOR_CPU_BRUTE_MAX_N`              | `0`      | Max vector count to use CPU brute-force exact search. `0` disables automatic CPU brute-force so HNSW is the default.                              |
-| `NORNICDB_VECTOR_GPU_BRUTE_MIN_N`              | `5000`   | Min vector count to use GPU brute-force (exact search).                                                                                           |
-| `NORNICDB_VECTOR_GPU_BRUTE_MAX_N`              | `15000`  | Max vector count for GPU brute-force; above this, HNSW is preferred by default.                                                                   |
-| `NORNICDB_VECTOR_IVF_HNSW_ENABLED`             | `false`  | When clustered, use IVF-HNSW (per-cluster HNSW) when available. Disabled by default.                                                              |
-| `NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE`    | `200`    | Min cluster size to build a cluster HNSW index.                                                                                                   |
-| `NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS`        | `1024`   | Max number of clusters for IVF-HNSW.                                                                                                              |
-| **Hybrid lexical-semantic routing**            |          |                                                                                                                                                   |
-| `NORNICDB_VECTOR_ROUTING_MODE`                 | `hybrid` | Cluster routing mode: `hybrid` (lexical+semantic) or `semantic` (centroid-only).                                                                  |
-| `NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM`         | `0.7`    | Weight for semantic (centroid) routing score.                                                                                                     |
-| `NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX`         | `0.3`    | Weight for lexical (BM25-term profile) routing score.                                                                                             |
-| `NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS` | `64`     | Number of high-value terms kept per cluster lexical profile.                                                                                      |
-| **K-means clustering**                         |          |                                                                                                                                                   |
-| `NORNICDB_KMEANS_NUM_CLUSTERS`                 | (auto)   | Number of clusters. Unset or 0 = **auto** from dataset size at run time (√(n/2), clamped 10–8192). Set to a positive value to fix K (e.g. `500`). |
-| `NORNICDB_KMEANS_MAX_ITERATIONS`               | `5`      | Max k-means iterations (early stop when stable). Minimum is clamped to 5.                                                                         |
-| `NORNICDB_KMEANS_SEED_MAX_TERMS`               | `256`    | Max BM25 high-IDF terms used to build seed candidates when always-on lexical seeding is attempted.                                                |
-| `NORNICDB_KMEANS_SEED_DOCS_PER_TERM`           | `1`      | Max seed docs selected per term when always-on lexical seeding is attempted.                                                                      |
-| **HNSW index (quality preset)**                |          |                                                                                                                                                   |
-| `NORNICDB_VECTOR_ANN_QUALITY`                  | `fast`   | Preset: `fast` \| `balanced` \| `accurate` \| `compressed`. See tables below.                                                                     |
-| `NORNICDB_VECTOR_HNSW_M`                       | (preset) | Max connections per node (e.g. 16 or 32). Overrides preset.                                                                                       |
-| `NORNICDB_VECTOR_HNSW_EF_CONSTRUCTION`         | (preset) | Candidate list size during index build. Overrides preset.                                                                                         |
-| `NORNICDB_VECTOR_HNSW_EF_SEARCH`               | (preset) | Candidate list size during search; higher = better recall, slower. Overrides preset.                                                              |
-| `NORNICDB_VECTOR_PQ_SEGMENTS`                  | `16`     | Compressed mode only. Number of PQ segments (`dimensions` must be divisible by this).                                                             |
-| `NORNICDB_VECTOR_PQ_BITS`                      | `8`      | Compressed mode only. Bits per PQ code (currently clamped to 4-8).                                                                                |
-| `NORNICDB_VECTOR_IVFPQ_NPROBE`                 | `16`     | Compressed mode only. Number of IVF lists probed per query.                                                                                       |
-| `NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`            | `200`    | Compressed mode only. Max candidates sent to exact rerank.                                                                                        |
-| `NORNICDB_VECTOR_IVFPQ_TRAINING_SAMPLE_MAX`    | `200000` | Compressed mode only. Maximum vectors sampled for IVFPQ training.                                                                                 |
-| **HNSW Metal (GPU)**                           |          |                                                                                                                                                   |
-| `NORNICDB_VECTOR_HNSW_METAL_MIN_CANDIDATES`    | `0`      | If greater than 0, use Metal for HNSW search when candidate count meets threshold. `0` = disabled.                                                |
-| **HNSW build acceleration**                    |          |                                                                                                                                                   |
-| `NORNICDB_HNSW_BUILD_GPU_ENABLED`              | `true`   | Attempt GPU-assisted HNSW construction on supported hosts. Falls back to CPU if the accelerator is unavailable or fails.                          |
-| `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE`           | `2048`   | Number of vectors processed per construction batch.                                                                                               |
-| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`          | `128`    | Number of nearest candidates requested from the accelerator per vector before CPU graph linking.                                                  |
-| `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION`   | `fp32`   | Distance precision for GPU build candidate search.                                                                                                |
-| `NORNICDB_HNSW_BUILD_GPU_BEAM_WIDTH`           | `64`     | Metal graph-beam width for approximate layer-0 construction candidate search.                                                                     |
-| `NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS`           | `2`      | Metal graph-beam expansion rounds before CPU graph linking.                                                                                       |
-| `NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX`       | `4096`   | Maximum graph-expanded candidate union scored per query group.                                                                                    |
-| `NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP`     | `512`    | Number of construction queries grouped into one graph-beam candidate search.                                                                      |
+| Variable                                       | Default  | Description                                                                                                                                                                 |
+| ---------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Strategy thresholds**                        |          |                                                                                                                                                                             |
+| `NORNICDB_VECTOR_CPU_BRUTE_MAX_N`              | `0`      | Max vector count to use CPU brute-force exact search. `0` disables automatic CPU brute-force so HNSW is the default.                                                        |
+| `NORNICDB_VECTOR_GPU_BRUTE_MIN_N`              | `5000`   | Min vector count to use GPU brute-force (exact search).                                                                                                                     |
+| `NORNICDB_VECTOR_GPU_BRUTE_MAX_N`              | `15000`  | Max vector count for GPU brute-force; above this, HNSW is preferred by default.                                                                                             |
+| `NORNICDB_VECTOR_IVF_HNSW_ENABLED`             | `false`  | When clustered, use IVF-HNSW (per-cluster HNSW) when available. Disabled by default.                                                                                        |
+| `NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE`    | `200`    | Min cluster size to build a cluster HNSW index.                                                                                                                             |
+| `NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS`        | `1024`   | Max number of clusters for IVF-HNSW.                                                                                                                                        |
+| **Hybrid lexical-semantic routing**            |          |                                                                                                                                                                             |
+| `NORNICDB_VECTOR_ROUTING_MODE`                 | `hybrid` | Cluster routing mode: `hybrid` (lexical+semantic) or `semantic` (centroid-only).                                                                                            |
+| `NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM`         | `0.7`    | Weight for semantic (centroid) routing score.                                                                                                                               |
+| `NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX`         | `0.3`    | Weight for lexical (BM25-term profile) routing score.                                                                                                                       |
+| `NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS` | `64`     | Number of high-value terms kept per cluster lexical profile.                                                                                                                |
+| **K-means clustering**                         |          |                                                                                                                                                                             |
+| `NORNICDB_KMEANS_NUM_CLUSTERS`                 | (auto)   | Number of clusters. Unset or 0 = **auto** from dataset size at run time (√(n/2), clamped 10–8192). Set to a positive value to fix K (e.g. `500`).                           |
+| `NORNICDB_KMEANS_MAX_ITERATIONS`               | `5`      | Max k-means iterations (early stop when stable). Minimum is clamped to 5.                                                                                                   |
+| `NORNICDB_KMEANS_SEED_MAX_TERMS`               | `256`    | Max BM25 high-IDF terms used to build seed candidates when always-on lexical seeding is attempted.                                                                          |
+| `NORNICDB_KMEANS_SEED_DOCS_PER_TERM`           | `1`      | Max seed docs selected per term when always-on lexical seeding is attempted.                                                                                                |
+| **HNSW index (quality preset)**                |          |                                                                                                                                                                             |
+| `NORNICDB_VECTOR_ANN_QUALITY`                  | `fast`   | Preset: `fast` \| `balanced` \| `accurate` \| `compressed`. See tables below.                                                                                               |
+| `NORNICDB_VECTOR_HNSW_M`                       | (preset) | Max connections per node (e.g. 16 or 32). Overrides preset.                                                                                                                 |
+| `NORNICDB_VECTOR_HNSW_EF_CONSTRUCTION`         | (preset) | Candidate list size during index build. Overrides preset.                                                                                                                   |
+| `NORNICDB_VECTOR_HNSW_EF_SEARCH`               | (preset) | Candidate list size during search; higher = better recall, slower. Overrides preset.                                                                                        |
+| `NORNICDB_VECTOR_PQ_SEGMENTS`                  | `16`     | Compressed mode only. Number of PQ segments (`dimensions` must be divisible by this).                                                                                       |
+| `NORNICDB_VECTOR_PQ_BITS`                      | `8`      | Compressed mode only. Bits per PQ code (currently clamped to 4-8).                                                                                                          |
+| `NORNICDB_VECTOR_IVFPQ_NPROBE`                 | `16`     | Compressed mode only. Number of IVF lists probed per query.                                                                                                                 |
+| `NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`            | `200`    | Compressed mode only. Max candidates sent to exact rerank.                                                                                                                  |
+| `NORNICDB_VECTOR_IVFPQ_TRAINING_SAMPLE_MAX`    | `200000` | Compressed mode only. Maximum vectors sampled for IVFPQ training.                                                                                                           |
+| **HNSW Metal (GPU)**                           |          |                                                                                                                                                                             |
+| `NORNICDB_VECTOR_HNSW_METAL_MIN_CANDIDATES`    | `0`      | If greater than 0, use Metal for HNSW search when candidate count meets threshold. `0` = disabled.                                                                          |
+| **HNSW build acceleration**                    |          |                                                                                                                                                                             |
+| `NORNICDB_HNSW_BUILD_GPU_ENABLED`              | `true`   | Attempt GPU-assisted HNSW construction on supported hosts. Falls back to CPU if the accelerator is unavailable or fails.                                                    |
+| `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE`           | `2048`   | Number of vectors processed per construction batch.                                                                                                                         |
+| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`          | `128`    | Number of nearest candidates requested from the accelerator per vector before CPU graph linking.                                                                            |
+| `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION`   | `fp32`   | Distance precision for GPU build candidate search.                                                                                                                          |
+| `NORNICDB_HNSW_BUILD_GPU_BEAM_WIDTH`           | `64`     | Metal graph-beam width for approximate layer-0 construction candidate search.                                                                                               |
+| `NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS`           | `2`      | Metal graph-beam expansion rounds before CPU graph linking.                                                                                                                 |
+| `NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX`       | `4096`   | Maximum graph-expanded candidate union scored per query group.                                                                                                              |
+| `NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP`     | `512`    | Number of construction queries grouped into one graph-beam candidate search.                                                                                                |
 | `NORNICDB_HNSW_LEXICAL_SEED_ENABLED`           | `true`   | Prioritize BM25-selected passages during HNSW construction. A 1M-chunk test measured 2.7x faster construction without a reported quality loss; changing this rebuilds HNSW. |
-| `NORNICDB_HNSW_LEXICAL_SEED_MAX_TERMS`         | `256`    | Maximum high-IDF BM25 terms used to select HNSW seed passages.                                                                                    |
-| `NORNICDB_HNSW_LEXICAL_SEED_PER_TERM`          | `8`      | Maximum passages selected per HNSW seed term.                                                                                                     |
-| **HNSW maintenance**                           |          |                                                                                                                                                   |
-| `NORNICDB_HNSW_MAINT_INTERVAL_MS`              | `30000`  | Interval (ms) for HNSW maintenance (tombstone checks).                                                                                            |
-| `NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC`       | `60`     | Min interval between HNSW rebuilds (seconds).                                                                                                     |
-| `NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO`        | `0.50`   | Rebuild when tombstone ratio exceeds this.                                                                                                        |
-| `NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR`  | `2.0`    | Max tombstone overhead before rebuild.                                                                                                            |
-| `NORNICDB_HNSW_REBUILD_ENABLED`                | `true`   | Enable periodic HNSW rebuilds when tombstone ratio is high.                                                                                       |
-| **Index persistence**                          |          |                                                                                                                                                   |
-| `NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC`      | `30`     | Debounce delay (seconds) before writing BM25/vector indexes to disk after updates.                                                                |
+| `NORNICDB_HNSW_LEXICAL_SEED_MAX_TERMS`         | `256`    | Maximum high-IDF BM25 terms used to select HNSW seed passages.                                                                                                              |
+| `NORNICDB_HNSW_LEXICAL_SEED_PER_TERM`          | `8`      | Maximum passages selected per HNSW seed term.                                                                                                                               |
+| **HNSW maintenance**                           |          |                                                                                                                                                                             |
+| `NORNICDB_HNSW_MAINT_INTERVAL_MS`              | `30000`  | Interval (ms) for HNSW maintenance (tombstone checks).                                                                                                                      |
+| `NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC`       | `60`     | Min interval between HNSW rebuilds (seconds).                                                                                                                               |
+| `NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO`        | `0.50`   | Rebuild when tombstone ratio exceeds this.                                                                                                                                  |
+| `NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR`  | `2.0`    | Max tombstone overhead before rebuild.                                                                                                                                      |
+| `NORNICDB_HNSW_REBUILD_ENABLED`                | `true`   | Enable periodic HNSW rebuilds when tombstone ratio is high.                                                                                                                 |
+| **Index persistence**                          |          |                                                                                                                                                                             |
+| `NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC`      | `30`     | Debounce delay (seconds) before writing BM25/vector indexes to disk after updates.                                                                                          |
 
 **HNSW quality presets:**
 
@@ -856,9 +856,9 @@ Stage-2 reranking improves vector/hybrid search by re-scoring top candidates wit
 | Variable                         | Default | Description                                     |
 | -------------------------------- | ------- | ----------------------------------------------- |
 | `NORNICDB_RERANK_CTX_TYPE`       | `0`     | Context type: 0=default, 1=MTP                  |
-| `NORNICDB_RERANK_POOLING_TYPE`   | `1`     | Pooling: 1=mean, 2=cls, 3=last, 4=rank          |
+| `NORNICDB_RERANK_POOLING_TYPE`   | `4`     | Pooling: 1=mean, 2=cls, 3=last, 4=rank          |
 | `NORNICDB_RERANK_ATTENTION_TYPE` | `1`     | Attention: 0=causal, 1=non-causal               |
-| `NORNICDB_RERANK_FLASH_ATTN`     | `-1`    | Flash attention: -1=auto, 0=disabled, 1=enabled |
+| `NORNICDB_RERANK_FLASH_ATTN`     | `0`     | Flash attention: -1=auto, 0=disabled, 1=enabled |
 
 Local models live in `NORNICDB_MODELS_DIR` (default `./models`). Download the default reranker with `make download-bge-reranker`.
 

@@ -50,6 +50,13 @@ func DefaultOptions(modelPath string) Options {
 	}
 }
 
+// DefaultRerankerOptions returns options for classifier-head GGUF rerankers.
+func DefaultRerankerOptions(modelPath string) Options {
+	opts := DefaultOptions(modelPath)
+	opts.Features.PoolingType = 4
+	return opts
+}
+
 // LoadModel returns an error on unsupported platforms.
 func LoadModel(opts Options) (*Model, error) {
 	return nil, errNotSupported
