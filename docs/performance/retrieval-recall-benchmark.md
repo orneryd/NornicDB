@@ -169,6 +169,44 @@ The equal-weight production default was selected because it improved the
 controlled SciFact recall result over the previous word-count heuristic. Repeat
 the protocol on additional BEIR datasets before treating it as a universal rule.
 
+### Native BGE Reranker: 174-Query Partial Run
+
+A native `bge-reranker-v2-m3.gguf` Every completed query has exactly 100
+unique official BEIR document IDs.
+
+| Profile                         |   Recall@10 |  Recall@100 |     nDCG@10 |      MRR@10 |     MAP@100 |
+| ------------------------------- | ----------: | ----------: | ----------: | ----------: | ----------: |
+| Exact equal RRF, no reranker    |     0.78793 |     0.93563 |     0.67043 |     0.64404 |     0.63486 |
+| Exact equal RRF + native BGE-M3 | **0.82510** | **0.93563** | **0.72292** | **0.69447** | **0.69215** |
+| Absolute change                 |    +0.03716 |    +0.00000 |    +0.05248 |    +0.05042 |    +0.05729 |
+
+Reranking does not change Recall@100 because it only reorders the same 100
+candidates. It moves more relevant documents into the first 10 results and
+substantially improves their ordering.
+
+#### Comparison with published BEIR references
+
+BEIR's official metric for cross-system comparison is nDCG@10. Published
+SciFact reference results provide useful context:
+
+| Published system                      | SciFact nDCG@10 |
+| ------------------------------------- | --------------: |
+| BEIR 2021 BM25                        |           0.665 |
+| BEIR 2021 ColBERT                     |           0.671 |
+| BEIR 2021 BM25 + MiniLM cross-encoder |           0.688 |
+| BEIR 2024 SPLADE reference            |           0.699 |
+| NornicDB native BGE-M3,               |           0.723 |
+| BEIR 2024 Contriever + SPLADE hybrid  |           0.734 |
+
+On this partial sample, NornicDB is 2.39 nDCG points above the published SPLADE
+reference and 0.011 points below the published Contriever + SPLADE hybrid. This
+is competitive evidence, not an official leaderboard placement: NornicDB's row
+uses BGE-M3 retrieval plus reranking rather than the reference systems' models, and NornicDB's document-chunk aggregation.
+
+Sources: the [original BEIR results](https://arxiv.org/abs/2104.08663) and the
+[2024 reproducible reference systems and official leaderboard
+paper](https://arxiv.org/abs/2306.07471).
+
 ### CPU Fast HNSW Seeding Check
 
 Ten independent paired SciFact builds used the `fast` preset (`M=16`,
