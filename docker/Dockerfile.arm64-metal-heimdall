@@ -14,7 +14,7 @@
 # This is a "batteries included" deployment - no additional model downloads required.
 # Heimdall provides: anomaly detection, runtime diagnosis, and memory curation via Bifrost chat.
 
-ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10069
+ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10411
 
 # =============================================================================
 # Stage 1: UI

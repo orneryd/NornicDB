@@ -1,8 +1,8 @@
 # llama.cpp CUDA static library builder
 # Build once, reuse forever - saves ~15 min on every NornicDB build
 #
-# Build: docker build -f docker/Dockerfile.llama-cuda -t timothyswt/llama-cuda-libs:b10069 .
-# Push:  docker push timothyswt/llama-cuda-libs:b10069
+# Build: docker build -f docker/Dockerfile.llama-cuda -t timothyswt/llama-cuda-libs:b10411 .
+# Push:  docker push timothyswt/llama-cuda-libs:b10411
 
 ARG CUDA_VERSION=12.6.0
 
@@ -11,7 +11,7 @@ FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git ca-certificates && rm -rf /var/lib/apt/lists/*
 
-ARG LLAMA_VERSION=b10069
+ARG LLAMA_VERSION=b10411
 ARG LLAMA_BUILD_JOBS=2
 WORKDIR /llama
 RUN git clone --depth 1 --branch ${LLAMA_VERSION} https://github.com/ggerganov/llama.cpp.git . && \

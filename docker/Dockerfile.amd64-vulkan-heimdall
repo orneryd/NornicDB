@@ -9,7 +9,7 @@
 # Headless (no UI):
 #         docker build -f docker/Dockerfile.amd64-vulkan-heimdall --build-arg HEADLESS=true -t nornicdb-amd64-vulkan-heimdall-headless .
 
-ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10069
+ARG LLAMA_CPU_IMAGE=timothyswt/llama-cpu-libs:b10411
 
 # =============================================================================
 # Stage 1: UI (skipped in headless mode)

@@ -7,7 +7,7 @@
 # For local builds, use: .\scripts\build-llama-cuda.ps1
 #
 # Build (requires Windows container mode):
-#   docker build -f docker/Dockerfile.llama-cuda-windows -t timothyswt/llama-cuda-libs-windows:b10069 .
+#   docker build -f docker/Dockerfile.llama-cuda-windows -t timothyswt/llama-cuda-libs-windows:b10411 .
 #
 # For GitHub Actions:
 #   See .github/workflows/build-llama-windows.yml
@@ -28,7 +28,7 @@ RUN choco install -y git cmake ninja visualstudio2022buildtools --package-parame
 # Note: CUDA Toolkit must be pre-installed on the host or use NVIDIA's CUDA Windows container image
 # For CI, consider using: mcr.microsoft.com/dotnet/framework/sdk with manual CUDA install
 
-ARG LLAMA_VERSION=b10069
+ARG LLAMA_VERSION=b10411
 ARG CUDA_VERSION=12.6
 
 WORKDIR C:\\llama
