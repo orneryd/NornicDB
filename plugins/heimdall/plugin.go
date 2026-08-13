@@ -1041,7 +1041,7 @@ func formatDiscoverResult(result *heimdall.DiscoverResult) string {
 }
 
 func (p *WatcherPlugin) PreExecute(ctx *heimdall.PreExecuteContext, done func(heimdall.PreExecuteResult)) {
-	log.Printf("[HeimdallCodingAgent] LLM synthesis failed, falling back to formatted message")
+	p.mu.Lock()
 	p.requests++
 	p.mu.Unlock()
 

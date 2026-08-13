@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/stretchr/testify/assert"
@@ -95,6 +96,29 @@ func (m *memoryDBRouter) Discover(ctx context.Context, database string, query st
 // TestWatcherPlugin_Interface verifies plugin implements HeimdallPlugin
 func TestWatcherPlugin_Interface(t *testing.T) {
 	var _ heimdall.HeimdallPlugin = &WatcherPlugin{}
+}
+
+func TestWatcherPlugin_PreExecuteContinuesAndCountsRequest(t *testing.T) {
+	p := &WatcherPlugin{}
+	resultCh := make(chan heimdall.PreExecuteResult, 1)
+	ctx := &heimdall.PreExecuteContext{
+		Context:   context.Background(),
+		RequestID: "request-1",
+		Action:    "heimdall_watcher_status",
+		Params:    map[string]interface{}{},
+	}
+
+	p.PreExecute(ctx, func(result heimdall.PreExecuteResult) {
+		resultCh <- result
+	})
+
+	select {
+	case result := <-resultCh:
+		assert.True(t, result.Continue)
+	case <-time.After(time.Second):
+		t.Fatal("PreExecute did not invoke its callback")
+	}
+	assert.Equal(t, int64(1), p.Metrics()["requests"])
 }
 
 // TestWatcherPlugin_Identity tests identity methods
