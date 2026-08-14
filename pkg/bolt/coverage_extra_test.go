@@ -242,6 +242,7 @@ func TestBoltCoverage_ReadMessageAndProcessMessage(t *testing.T) {
 		session := newTestSession(conn, &mockExecutor{})
 		session.inTransaction = true
 		session.txMetadata = map[string]any{"tx": "meta"}
+		primeTestTransactionLifecycle(t, session)
 		session.lastResult = &QueryResult{Rows: [][]any{{"row"}}}
 		session.resultIndex = 4
 
@@ -1062,6 +1063,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				session := newTestSession(serverConn, txExec)
 				session.inTransaction = true
 				session.txMetadata = map[string]any{"db": "graph"}
+				primeTestTransactionLifecycle(t, session)
 
 				done := make(chan error, 1)
 				go func() { done <- session.handleRollback(nil) }()
@@ -1074,9 +1076,16 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 					require.NoError(t, err)
 					assert.Equal(t, tc.expectCode, code)
 				}
-				require.NoError(t, <-done)
-				assert.False(t, session.inTransaction)
-				assert.Nil(t, session.txMetadata)
+				handlerErr := <-done
+				if tc.rollbackErr == nil {
+					require.NoError(t, handlerErr)
+					assert.False(t, session.inTransaction)
+					assert.Nil(t, session.txMetadata)
+				} else {
+					require.Error(t, handlerErr)
+					assert.True(t, session.inTransaction)
+					assert.NotNil(t, session.txMetadata)
+				}
 				assert.Equal(t, 1, txExec.rollbackCalls)
 			})
 		}
@@ -1319,6 +1328,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.authenticated = true
 			session.inTransaction = true
+			primeTestTransactionLifecycle(t, session)
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "reader", Permissions: []string{"read", "write", "schema"}}
 
 			done = make(chan error, 1)

@@ -671,6 +671,7 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleCommit(nil)
 		if err != nil {
@@ -713,15 +714,15 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleCommit(nil)
-		if err != nil {
-			t.Fatalf("handleCommit should not return Go error: %v", err)
+		if err == nil {
+			t.Fatal("handleCommit must fail the connection closed on an uncertain commit outcome")
 		}
 
-		// Transaction state should still be cleared
-		if session.inTransaction {
-			t.Error("transaction state should be cleared even on error")
+		if !session.inTransaction {
+			t.Error("unknown backend ownership must remain fail-closed on commit error")
 		}
 	})
 
@@ -732,10 +733,11 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleCommit(nil)
-		if err != nil {
-			t.Fatalf("handleCommit should not return Go error: %v", err)
+		if err == nil {
+			t.Fatal("handleCommit must fail the connection closed on an uncertain commit conflict")
 		}
 
 		code := failureCodeFromResponse(t, conn.writeData)
@@ -751,6 +753,7 @@ func TestHandleRollbackWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleRollback(nil)
 		if err != nil {
@@ -788,6 +791,7 @@ func TestHandleResetWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleReset(nil)
 		if err != nil {
@@ -840,6 +844,7 @@ func TestTransactionWithNonTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleCommit(nil)
 		if err != nil {
@@ -856,6 +861,7 @@ func TestTransactionWithNonTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		err := session.handleRollback(nil)
 		if err != nil {
