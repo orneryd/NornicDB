@@ -35,6 +35,9 @@ func testBoltRejectsWriteModeProcedure(t *testing.T, inTransaction bool) {
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	session.authenticated = true
 	session.inTransaction = inTransaction
+	if inTransaction {
+		primeTestTransactionLifecycle(t, session)
+	}
 	session.authResult = &BoltAuthResult{
 		Authenticated: true,
 		Username:      "viewer",

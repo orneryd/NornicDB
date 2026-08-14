@@ -29,6 +29,7 @@ func TestBoltCommitInvalidatesSharedCachesOnlyAfterSuccessfulWrites(t *testing.T
 		session.baseExec = executor
 		session.inTransaction = true
 		session.txHasMerge = true
+		primeTestTransactionLifecycle(t, session)
 
 		require.NoError(t, session.handleCommit(nil))
 		require.Equal(t, 1, executor.invalidationCalls)
@@ -39,6 +40,7 @@ func TestBoltCommitInvalidatesSharedCachesOnlyAfterSuccessfulWrites(t *testing.T
 		session := newTestSession(&mockConn{}, executor)
 		session.baseExec = executor
 		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
 
 		require.NoError(t, session.handleCommit(nil))
 		require.Zero(t, executor.invalidationCalls)
@@ -51,8 +53,9 @@ func TestBoltCommitInvalidatesSharedCachesOnlyAfterSuccessfulWrites(t *testing.T
 		session.baseExec = executor
 		session.inTransaction = true
 		session.txHasMerge = true
+		primeTestTransactionLifecycle(t, session)
 
-		require.NoError(t, session.handleCommit(nil))
+		require.Error(t, session.handleCommit(nil))
 		require.Zero(t, executor.invalidationCalls)
 	})
 }

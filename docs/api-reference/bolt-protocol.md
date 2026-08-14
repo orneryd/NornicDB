@@ -85,6 +85,63 @@ This is the “message layer” (handshake/query/streaming), included here for c
 - `COMMIT` (0x12)
 - `ROLLBACK` (0x13)
 
+These messages provide atomic storage transactions when the server uses its
+database-manager path or a `SessionExecutorFactory` that returns a distinct
+`TransactionalExecutor` for each connection. A directly supplied
+`TransactionalExecutor` is supported only with `MaxConnections: 1`; cleanup
+failure or uncertain commit failure quarantines it against sequential reuse.
+Multi-connection servers reject `BEGIN` for a shared raw executor. With a plain
+`QueryExecutor`, NornicDB acknowledges transaction-control messages for wire
+compatibility, but each `RUN` is auto-committed and a later `ROLLBACK` cannot
+undo it.
+
+### Explicit transaction lifetime
+
+`BEGIN` accepts Neo4j's `tx_timeout` metadata field as a signed PackStream
+long containing milliseconds, or `null`. Matching Neo4j 5.26, a missing,
+`null`, zero, or negative value leaves the transaction without a
+client-configured deadline. Positive values larger than Go's duration range
+are accepted and saturated to the largest runtime duration. Other wire types
+are rejected before NornicDB allocates a storage transaction.
+
+For a positive timeout, the lifetime clock starts when the validated `BEGIN`
+is admitted to backend allocation and includes that allocation, idle time, and
+every subsequent `RUN`. A backend that accepts `BEGIN` after the deadline still
+receives a `SUCCESS` for `BEGIN`; NornicDB immediately owns rollback and the
+next transaction operation reports the timeout. When the deadline expires,
+NornicDB cancels an active query and rolls the transaction back. A later
+`COMMIT` fails with
+`Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration`. The
+session then ignores messages until `RESET`, matching Neo4j's failed-state
+recovery behavior.
+
+`COMMIT` and timeout processing arbitrate a single terminal owner: a commit
+that starts first may complete, while a timeout that starts first prevents the
+commit. `ROLLBACK`, `RESET`, `GOODBYE`, and connection loss also roll back an
+active transaction exactly once. Cleanup uses a five-second request context
+that is not canceled with the connection. The session lifecycle owns operation
+admission for every supported per-session `TransactionalExecutor`. If an
+active `RUN` or deferred explicit-transaction result flush is admitted when the
+deadline expires, that owner performs the pending Badger/WAL rollback before
+the session responds or processes another message. `RESET` and connection
+teardown wait for the cleanup completion handoff. An admitted backend that ignores
+context stays synchronously owned rather than being abandoned in a cleanup
+goroutine, so the five-second request context is not a hard wall-clock bound for
+that backend.
+If rollback errors or panics, or a commit returns an uncertain error, NornicDB
+does not claim storage release. It closes the connection, suppresses deferred
+flush, and quarantines a directly supplied single-connection executor.
+Timeout responses are sent only after owned cleanup completes; cleanup failure
+closes the connection instead of reporting a reusable timeout state. A failed
+deferred `PULL`/`DISCARD` flush marks the explicit transaction failed until
+`RESET` rolls it back. Every explicit terminal path discards unconsumed result
+state, and only `CommitTransaction`—not a later legacy flush—owns commit
+durability.
+Idle expiry rolls back before invoking its completion diagnostic. The separate
+cleanup-request diagnostic is emitted only when an active executor operation
+must own the handoff, preventing an unresponsive observer from delaying idle
+cleanup.
+
 **Query execution**
 - `RUN` (0x10)
 - `PULL` (0x3F)

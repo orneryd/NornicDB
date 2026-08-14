@@ -294,6 +294,15 @@ public class NornicDBExample {
 
 ### Transaction Support
 
+This example is atomic when the Bolt server is configured through
+`NewWithDatabaseManager` or a `SessionExecutorFactory` that returns a distinct
+`TransactionalExecutor` for each connection. A directly supplied
+`TransactionalExecutor` is supported only when `MaxConnections` is exactly
+one; cleanup failure or uncertain commit failure quarantines it against reuse.
+Multi-connection servers reject `BEGIN` for a shared raw executor. A plain
+`QueryExecutor` acknowledges transaction-control messages for protocol
+compatibility, but each `RUN` remains auto-committed and cannot be rolled back.
+
 ```python
 from neo4j import GraphDatabase
 
@@ -467,6 +476,45 @@ Client                              Server
   │◄─ SUCCESS ────────────────────────┤
 ```
 
+`BEGIN` may include `tx_timeout`, a signed PackStream long measured in
+milliseconds, or `null`. Matching Neo4j 5.26, missing, `null`, zero, and
+negative values disable the client deadline; positive values beyond Go's
+duration range are accepted and saturated. The lifetime clock starts when a
+validated `BEGIN` is admitted to backend allocation, so allocation time, idle
+time, and active `RUN` work all count. If a backend accepts `BEGIN` after the
+deadline, `BEGIN` still succeeds, then NornicDB immediately owns rollback and
+the next transaction operation reports the timeout. Expiry cancels an active
+query, rolls the storage transaction back, and makes a later `COMMIT` fail with Neo4j's
+`Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration` status.
+An absent, `null`, zero, or negative timeout does not schedule expiry.
+
+Every explicit transaction has one terminal owner. `COMMIT` stops a pending
+deadline before entering storage; timeout, `ROLLBACK`, `RESET`, `GOODBYE`, and
+connection loss otherwise use the same exactly-once rollback path. Cleanup
+uses a five-second request context independent of connection cancellation. The
+session lifecycle owns operation admission for every supported per-session
+`TransactionalExecutor`. If a timeout cancels an active `RUN` or expires during
+a deferred explicit-transaction result flush, that operation performs the
+pending Badger/WAL rollback before the session responds or processes another
+message. `RESET` and connection teardown wait for that completion handoff. An
+admitted backend that does not
+honor the request context remains synchronously owned rather than being
+abandoned in a leaked cleanup goroutine, so the five seconds is cooperative
+rather than a hard wall-clock bound for such an implementation.
+If rollback errors or panics, or a commit returns an uncertain error, NornicDB
+does not claim that storage was released: it closes the connection, suppresses
+deferred flush, and quarantines a directly supplied single-connection executor.
+Timeout responses wait for owned cleanup; cleanup failure closes the connection
+instead of exposing a reusable timeout state. A deferred `PULL`/`DISCARD` flush
+error marks the explicit transaction failed until `RESET` rolls it back.
+Explicit terminal paths discard unconsumed result state, and
+`CommitTransaction` alone owns successful commit durability—rolled-back or
+committed writes are never sent through a later legacy flush.
+Idle expiry performs rollback before invoking its completion diagnostic; the
+separate cleanup-request diagnostic is emitted only for an active executor
+operation handoff, so an unresponsive logging callback cannot delay idle
+cleanup.
+
 ## Compatibility
 
 ### Supported Drivers
@@ -484,9 +532,8 @@ Client                              Server
 ### Known Limitations
 
 1. **No User Authentication**: Currently accepts all connections (Phase 2)
-2. **No Real Transactions**: BEGIN/COMMIT work but don't enforce atomicity yet (Phase 4)
-3. **No Cluster Routing**: Single-node only (future enhancement)
-4. **No Streaming Large Results**: Buffered in memory (optimization needed)
+2. **No Cluster Routing**: Single-node only (future enhancement)
+3. **No Streaming Large Results**: Buffered in memory (optimization needed)
 
 ## Roadmap
 
@@ -501,12 +548,13 @@ Client                              Server
 - [x] Integration tests
 - [x] Stress tests
 - [x] Command-line server
+- [x] Atomic explicit transactions with timeout and disconnect cleanup through
+      the database-manager or per-connection `TransactionalExecutor` path
 
 ### In Progress 🔄
 
 - [ ] Schema management (constraints, indexes) - See Phase 2
 - [ ] Built-in procedures (vector, fulltext, apoc) - See Phase 3
-- [ ] Real transaction support - See Phase 4
 
 ### Planned 📋
 

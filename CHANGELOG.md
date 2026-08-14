@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bolt explicit transactions now enforce the client-configured lifetime and
+  own one cleanup attempt on every terminal path through the database-manager or
+  per-connection `TransactionalExecutor` path.** Per-connection executors come
+  from `NewWithDatabaseManager` or a `SessionExecutorFactory` that returns a
+  distinct `TransactionalExecutor` for every connection. A directly supplied
+  `TransactionalExecutor` remains supported only with `MaxConnections: 1` and
+  is quarantined after any cleanup failure or uncertain commit failure.
+  Multi-connection servers now reject `BEGIN` for a shared raw executor;
+  integrations must migrate to a factory. Plain `QueryExecutor` servers retain their
+  documented per-`RUN` auto-commit behavior. `BEGIN` validates
+  `tx_timeout` as a PackStream long or `null` before allocating a storage
+  transaction. Matching Neo4j 5.26, missing, `null`, zero, and negative values
+  disable the client deadline, while huge positive values saturate instead of
+  failing. A positive lifetime starts when validated `BEGIN` reaches backend
+  allocation, so slow allocation consumes the deadline; storage acceptance
+  still receives `BEGIN` success before timeout failure on the next operation. Expiry
+  cancels an active `RUN`; expiry during an admitted deferred result flush is
+  likewise handed to that operation. The session lifecycle then rolls back
+  once after the operation releases transaction ownership, before responding,
+  without polling an adapter lock or overlapping custom executors. Cleanup uses
+  an uncancelled five-second
+  request context, while a backend that ignores context remains synchronously
+  owned instead of being abandoned. It
+  returns Neo4j's transaction-timeout status instead of allowing a later
+  `COMMIT`. `RESET`, `ROLLBACK`, `GOODBYE`, and connection loss use the same
+  exactly-once rollback arbitration, including persistent Badger/WAL-backed
+  transactions. Successful cleanup releases storage ownership; cleanup errors,
+  panics, and uncertain commit outcomes fail the connection closed rather than
+  claiming release or allowing unsafe reuse. Timeout responses wait for owned
+  cleanup, deferred explicit `PULL`/`DISCARD` flush errors require `RESET`, and
+  every terminal path discards pending result/flush state so only
+  `CommitTransaction` owns commit durability.
+
 ## [v1.2.2] - 8/6/2026
 
 ### Security

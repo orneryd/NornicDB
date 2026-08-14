@@ -15,8 +15,9 @@ import (
 func TestStartSessionSpan(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 	otel.SetTracerProvider(tp)
-	defer otel.SetTracerProvider(nil)
 
 	ctx, span := startSessionSpan("127.0.0.1:54321")
 	require.NotNil(t, ctx)
@@ -31,8 +32,9 @@ func TestStartSessionSpan(t *testing.T) {
 func TestStartMessageSpan_NilCtx(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 	otel.SetTracerProvider(tp)
-	defer otel.SetTracerProvider(nil)
 
 	ctx, span := startMessageSpan(nil, "run")
 	require.NotNil(t, ctx)
@@ -47,8 +49,9 @@ func TestStartMessageSpan_NilCtx(t *testing.T) {
 func TestExtractTraceparent(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 	otel.SetTracerProvider(tp)
-	defer otel.SetTracerProvider(nil)
 
 	// Create a parent span and extract its traceparent header value.
 	parentCtx, parentSpan := tp.Tracer("test").Start(context.Background(), "parent")
