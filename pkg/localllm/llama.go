@@ -102,8 +102,8 @@ struct llama_model* load_model_with_options(const char* path, int n_gpu_layers, 
 
     struct llama_model_params params = llama_model_default_params();
 
-    // Memory mapping for low memory usage
-    params.use_mmap = 1;
+	// Memory mapping for low memory usage.
+	params.load_mode = LLAMA_LOAD_MODE_MMAP;
 
     // Device selection - NULL means use all available devices
     // (present in modern llama.cpp releases, explicit for clarity)
