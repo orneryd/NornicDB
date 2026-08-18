@@ -826,6 +826,7 @@ func (s *Session) handleBegin(data []byte) error {
 	txParent = extractTraceparent(txParent, metadata)
 
 	txExec, _ := s.executor.(TransactionalExecutor)
+	s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)
 	if err := s.txLifecycle.begin(
 		txParent,
 		txTimeout,

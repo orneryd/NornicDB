@@ -51,20 +51,22 @@ const (
 type transactionLifecycle struct {
 	mu sync.Mutex
 
-	state           transactionLifecycleState
-	ctx             context.Context
-	cancel          context.CancelFunc
-	cleanupBase     context.Context
-	timer           *time.Timer
-	executor        TransactionalExecutor
-	startedAt       time.Time
-	database        string
-	observe         func(transactionTerminalReason, string, time.Duration, error)
-	operationActive bool
-	cleanupPending  bool
-	cleanupDone     chan struct{}
-	cleanupErr      error
-	afterFunc       func(time.Duration, func()) *time.Timer
+	state                   transactionLifecycleState
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	cleanupBase             context.Context
+	timer                   *time.Timer
+	executor                TransactionalExecutor
+	startedAt               time.Time
+	database                string
+	observe                 func(transactionTerminalReason, string, time.Duration, error)
+	operationActive         bool
+	cleanupPending          bool
+	cleanupDone             chan struct{}
+	cleanupErr              error
+	afterFunc               func(time.Duration, func()) *time.Timer
+	generation              uint64
+	onTimeoutCleanupFailure func(error)
 }
 
 // begin claims lifecycle ownership before backend allocation and publishes an
@@ -87,6 +89,8 @@ func (l *transactionLifecycle) begin(
 		return errors.New("an explicit transaction is already active")
 	}
 	l.state = transactionStateBeginning
+	l.generation++
+	generation := l.generation
 	l.mu.Unlock()
 
 	startedAt := time.Now()
@@ -100,8 +104,8 @@ func (l *transactionLifecycle) begin(
 		beginErr = txCtx.Err()
 	}
 	if beginErr != nil || beginPanic != nil {
-		cleanupErr := rollbackWithCleanupDeadline(parent, executor)
 		cancel()
+		cleanupErr := rollbackWithCleanupDeadline(parent, executor)
 		l.mu.Lock()
 		if cleanupErr != nil {
 			l.state = transactionStateDefunct
@@ -152,7 +156,7 @@ func (l *transactionLifecycle) begin(
 		if l.afterFunc != nil {
 			afterFunc = l.afterFunc
 		}
-		l.timer = afterFunc(remaining, l.expire)
+		l.timer = afterFunc(remaining, func() { l.expireGeneration(generation) })
 	} else {
 		l.timer = nil
 	}
@@ -160,7 +164,7 @@ func (l *transactionLifecycle) begin(
 	if expired {
 		cancel()
 		err := rollbackWithCleanupDeadline(parent, executor)
-		l.completeTimeoutCleanup(startedAt, database, observe, err)
+		l.completeTimeoutCleanup(startedAt, database, observe, err, false)
 		if err != nil {
 			_ = l.finishTimedOut(transactionTerminalTimeout)
 			return fmt.Errorf("expired BEGIN cleanup failed: %w", err)
@@ -220,7 +224,7 @@ func (l *transactionLifecycle) finishOperation() error {
 	l.mu.Unlock()
 
 	err := rollbackWithCleanupDeadline(cleanupBase, executor)
-	l.completeTimeoutCleanup(startedAt, database, observe, err)
+	l.completeTimeoutCleanup(startedAt, database, observe, err, true)
 	if err != nil {
 		return err
 	}
@@ -374,7 +378,14 @@ func (l *transactionLifecycle) rollback(reason transactionTerminalReason) error 
 // executor operation inherits the single pending cleanup attempt.
 func (l *transactionLifecycle) expire() {
 	l.mu.Lock()
-	if l.state != transactionStateActive {
+	generation := l.generation
+	l.mu.Unlock()
+	l.expireGeneration(generation)
+}
+
+func (l *transactionLifecycle) expireGeneration(generation uint64) {
+	l.mu.Lock()
+	if l.state != transactionStateActive || l.generation != generation {
 		l.mu.Unlock()
 		return
 	}
@@ -407,7 +418,7 @@ func (l *transactionLifecycle) expire() {
 		return
 	}
 	err := rollbackWithCleanupDeadline(cleanupBase, executor)
-	l.completeTimeoutCleanup(startedAt, database, observe, err)
+	l.completeTimeoutCleanup(startedAt, database, observe, err, true)
 }
 
 // completeTimeoutCleanup publishes one timeout cleanup result and releases all
@@ -417,6 +428,7 @@ func (l *transactionLifecycle) completeTimeoutCleanup(
 	database string,
 	observe func(transactionTerminalReason, string, time.Duration, error),
 	cleanupErr error,
+	notifyFailure bool,
 ) {
 	l.mu.Lock()
 	if l.state != transactionStateTimingOut {
@@ -431,12 +443,22 @@ func (l *transactionLifecycle) completeTimeoutCleanup(
 	l.cleanupBase = nil
 	l.observe = nil
 	done := l.cleanupDone
+	onFailure := l.onTimeoutCleanupFailure
 	if done != nil {
 		close(done)
 	}
 	l.mu.Unlock()
 
+	if cleanupErr != nil && notifyFailure {
+		notifyTransactionCleanupFailure(onFailure, cleanupErr)
+	}
 	observeTransactionLifecycle(observe, transactionTerminalTimeout, database, time.Since(startedAt), cleanupErr)
+}
+
+func (l *transactionLifecycle) setTimeoutCleanupFailureHandler(handler func(error)) {
+	l.mu.Lock()
+	l.onTimeoutCleanupFailure = handler
+	l.mu.Unlock()
 }
 
 // finishTimedOut terminalizes successful timeout cleanup or makes its failure
