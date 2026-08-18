@@ -111,6 +111,25 @@ WHERE rel.evidence_source = 'does-not-match'`,
 	}
 }
 
+func TestBoundRelationshipDelete_EmptySingleClauseRelationshipDeleteSkipsImplicitCommit(t *testing.T) {
+	exec := seedBoundDeleteFixture(t, 100)
+	ctx := context.Background()
+
+	result, err := exec.Execute(ctx, `
+MATCH (r:MissingRationale)-[rel:EXPLAINS]->()
+WHERE r.repo_id IN $ids AND rel.evidence_source IN $sources
+DELETE rel`, map[string]interface{}{
+		"ids":     []string{"repository:missing"},
+		"sources": []string{"generated"},
+	})
+	require.NoError(t, err)
+	require.Zero(t, result.Stats.RelationshipsDeleted)
+
+	verify, err := exec.Execute(ctx, "MATCH ()-[rel:DEPLOYS_FROM]->() RETURN count(rel)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 100, verify.Rows[0][0])
+}
+
 // TestBoundRelationshipDelete_LimitStopsAtRowCount covers the WITH <rel> LIMIT n
 // path: with two qualifying edges and LIMIT 1, exactly one is deleted.
 func TestBoundRelationshipDelete_LimitStopsAtRowCount(t *testing.T) {
