@@ -115,6 +115,21 @@ func (s *Session) markTransactionCleanupFailed() {
 	}
 }
 
+// failClosedTransactionCleanup is safe to call from the timeout goroutine. It
+// avoids session protocol fields, quarantines shared storage ownership, and
+// interrupts the connection so teardown can join cleanup on the session loop.
+func (s *Session) failClosedTransactionCleanup(_ error) {
+	if s.rawTransactionExecutor && s.server != nil {
+		s.server.rawTransactionExecutorPoisoned.Store(true)
+	}
+	if s.connCancel != nil {
+		s.connCancel()
+	}
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
+}
+
 // clearExplicitTransactionState discards pending results and deferred Flush so
 // a completed terminal path cannot persist stale transaction work later.
 func (s *Session) clearExplicitTransactionState() {

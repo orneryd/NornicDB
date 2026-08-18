@@ -75,3 +75,13 @@ func observeTransactionLifecycle(
 	}()
 	observe(reason, database, duration, err)
 }
+
+func notifyTransactionCleanupFailure(notify func(error), err error) {
+	if notify == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	notify(err)
+}

@@ -139,11 +139,88 @@ type panicRollbackExecutor struct {
 	rollbackCalls atomic.Int64
 }
 
+type beginFailureCancellationExecutor struct {
+	mockExecutor
+	beginCtx context.Context
+}
+
+func (e *beginFailureCancellationExecutor) BeginTransaction(ctx context.Context, _ map[string]any) error {
+	e.beginCtx = ctx
+	return errors.New("forced BEGIN failure")
+}
+
+func (e *beginFailureCancellationExecutor) CommitTransaction(context.Context) error { return nil }
+
+func (e *beginFailureCancellationExecutor) RollbackTransaction(context.Context) error {
+	if e.beginCtx != nil && e.beginCtx.Err() != nil {
+		return nil
+	}
+	return errors.New("rollback started before BEGIN context cancellation")
+}
+
 func (e *panicRollbackExecutor) BeginTransaction(context.Context, map[string]any) error { return nil }
 func (e *panicRollbackExecutor) CommitTransaction(context.Context) error                { return nil }
 func (e *panicRollbackExecutor) RollbackTransaction(context.Context) error {
 	e.rollbackCalls.Add(1)
 	panic("rollback panic")
+}
+
+func TestTransactionLifecycleStaleTimerCannotExpireReusedLifecycle(t *testing.T) {
+	var callbacks []func()
+	lifecycle := &transactionLifecycle{
+		afterFunc: func(_ time.Duration, callback func()) *time.Timer {
+			callbacks = append(callbacks, callback)
+			return nil
+		},
+	}
+	executor := &sharedSingleTransactionExecutor{}
+	require.NoError(t, lifecycle.begin(context.Background(), time.Hour, "nornic", executor, nil, nil))
+	require.Len(t, callbacks, 1)
+	require.NoError(t, lifecycle.rollback(transactionTerminalRollback))
+
+	require.NoError(t, lifecycle.begin(context.Background(), time.Hour, "nornic", executor, nil, nil))
+	require.Len(t, callbacks, 2)
+	callbacks[0]()
+
+	_, err := lifecycle.claimOperation()
+	require.NoError(t, err, "stale timer from the first transaction expired the second transaction")
+	require.NoError(t, lifecycle.finishOperation())
+	require.NoError(t, lifecycle.rollback(transactionTerminalRollback))
+}
+
+func TestTransactionLifecycleFailedBeginCancelsBeforeRollback(t *testing.T) {
+	executor := &beginFailureCancellationExecutor{}
+	lifecycle := &transactionLifecycle{}
+
+	err := lifecycle.begin(context.Background(), 0, "nornic", executor, nil, nil)
+	require.ErrorContains(t, err, "forced BEGIN failure")
+	require.NotContains(t, err.Error(), "rollback cleanup failed")
+}
+
+func TestBoltIdleTimeoutCleanupFailureImmediatelyClosesAndQuarantines(t *testing.T) {
+	executor := &failingRollbackTransactionalExecutor{
+		rollbackErr:     errors.New("forced idle timeout cleanup failure"),
+		rollbackStarted: make(chan struct{}),
+	}
+	server := New(&Config{
+		Port:            0,
+		MaxConnections:  1,
+		ReadBufferSize:  8192,
+		WriteBufferSize: 8192,
+	}, executor)
+	port := startBoltTestServer(t, server)
+	conn := openBoltTestConn(t, port)
+	beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(25)})
+
+	requireBoltConnectionClosed(t, conn)
+	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
+		time.Second, time.Millisecond)
+	require.True(t, server.rawTransactionExecutorPoisoned.Load())
+	select {
+	case <-executor.rollbackStarted:
+	default:
+		t.Fatal("idle timeout did not attempt rollback")
+	}
 }
 
 func TestBoltTimeoutCannotAutocommitRunWaitingBeforeAdapterAdmission(t *testing.T) {
