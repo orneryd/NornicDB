@@ -182,7 +182,7 @@ func requireBoltConnectionClosed(t *testing.T, conn net.Conn) {
 	}
 }
 
-func TestBoltResetClosesConnectionAfterTimeoutCleanupFailure(t *testing.T) {
+func TestBoltTimeoutCleanupFailureClosesConnectionWithoutReset(t *testing.T) {
 	tests := []struct {
 		name          string
 		rollbackErr   error
@@ -209,7 +209,6 @@ func TestBoltResetClosesConnectionAfterTimeoutCleanupFailure(t *testing.T) {
 				t.Fatal("timeout cleanup did not attempt rollback")
 			}
 
-			require.NoError(t, SendReset(t, conn))
 			requireBoltConnectionClosed(t, conn)
 		})
 	}
