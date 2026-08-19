@@ -264,7 +264,7 @@ func DefaultConfig() Config {
 		Enabled:          false, // Heimdall disabled by default (opt-in)
 		BifrostEnabled:   false, // Bifrost follows Heimdall state
 		ModelsDir:        "",    // Empty = use NORNICDB_MODELS_DIR env var
-		Model:            "qwen3-0.6b-instruct",
+		Model:            "",    // Provider applies its own default; local uses qwen3-0.6b-instruct
 		Provider:         "local",
 		APIURL:           "",
 		APIKey:           "",
@@ -310,6 +310,7 @@ type FeatureFlagsSource interface {
 //   - When Heimdall is enabled, Bifrost is automatically enabled
 //   - Bifrost cannot be enabled independently (requires Heimdall)
 //   - Heimdall is disabled by default (opt-in feature)
+//   - Model defaults are provider-specific and applied by the provider
 //   - Uses NORNICDB_MODELS_DIR for model location (same as embedder)
 func ConfigFromFeatureFlags(flags FeatureFlagsSource) Config {
 	cfg := DefaultConfig()
