@@ -726,6 +726,14 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 		return e.evaluateWhereOnComputedRow(ctx, left, values) || e.evaluateWhereOnComputedRow(ctx, right, values)
 	}
 
+	// Handle a bare label test such as `n:Workload` or `n:A:B`. It carries no
+	// comparison operator, so without this branch it falls through to the
+	// pass-through at the end of this function and admits every row -- the
+	// filter is silently not applied.
+	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
+		return withWhereNodeHasAllLabels(values[variable], labels)
+	}
+
 	// Handle comparison operators
 	for _, op := range []string{">=", "<=", "<>", "!=", "=", ">", "<"} {
 		if idx := strings.Index(whereClause, op); idx > 0 {

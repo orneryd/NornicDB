@@ -200,6 +200,16 @@ func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereC
 		return e.parseValue(ctx, expr), false
 	}
 
+	// A function call anywhere in the predicate has to go to the general
+	// evaluator before the string-surgery branches below see it: they resolve
+	// operands by locating a dot, and the dot inside `coalesce(a.name, 'X')`
+	// makes them look up a variable named "coalesce(a".
+	if strings.Contains(whereClause, "(") {
+		nodeCtx, edgeCtx := withWhereValueContext(values)
+		return evaluateExpressionBoolWithContext(e, ctx,
+			substituteWithWhereLabelTests(whereClause, values), nodeCtx, edgeCtx)
+	}
+
 	// Handle IS NULL / IS NOT NULL
 	if strings.Contains(upperClause, " IS NOT NULL") {
 		idx := strings.Index(upperClause, " IS NOT NULL")
@@ -212,6 +222,24 @@ func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereC
 		varName := strings.TrimSpace(whereClause[:idx])
 		val, exists := resolveValue(varName)
 		return !exists || val == nil
+	}
+
+	// Predicates this function cannot decompose by string surgery -- label
+	// tests (n:Label), boolean combinations, and any expression containing a
+	// function call -- are handed to the general expression evaluator, which
+	// already understands them. Splitting `toUpper(w.name) = 'X'` on "=" and
+	// resolving the left side by looking for a dot finds the dot *inside* the
+	// call and looks up a variable named "toUpper(w", which never resolves.
+	if variable, labels, ok := parseWithWhereLabelTest(whereClause); ok {
+		return withWhereNodeHasAllLabels(values[variable], labels)
+	}
+	if withWhereNeedsFullEvaluator(whereClause) {
+		nodeCtx, edgeCtx := withWhereValueContext(values)
+		// Label tests are resolved here and substituted as boolean literals so
+		// that combinations like `n:A OR n:B` work. The general evaluator
+		// handles the booleans but does not accept the `var:Label` form.
+		resolved := substituteWithWhereLabelTests(whereClause, values)
+		return evaluateExpressionBoolWithContext(e, ctx, resolved, nodeCtx, edgeCtx)
 	}
 
 	// Handle comparison operators
@@ -241,7 +269,196 @@ func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereC
 		}
 	}
 
-	return true // No recognized condition, include all
+	// A predicate none of the paths above recognised falls through as a
+	// pass-through, which is long-standing behaviour pinned by
+	// TestEvaluateWithWhereCondition_DirectBranches. It is worth knowing that
+	// this makes an unsupported filter behave as no filter at all rather than
+	// as an error; the label-test and function-call paths above exist because
+	// two such predicates were reaching here and silently admitting every row.
+	return true
+}
+
+// withWhereNeedsFullEvaluator reports whether a WITH-attached WHERE predicate
+// has to go through the general expression evaluator rather than this
+// function's operator splitting. Function calls break the split because the
+// call's own parentheses and dots confuse left/right resolution; label tests
+// and boolean combinations have no operator to split on at all.
+func withWhereNeedsFullEvaluator(whereClause string) bool {
+	if strings.ContainsAny(whereClause, "(") {
+		return true
+	}
+	upper := strings.ToUpper(whereClause)
+	for _, tok := range []string{" AND ", " OR ", " XOR ", "NOT "} {
+		if strings.Contains(upper, tok) {
+			return true
+		}
+	}
+	// A bare label test such as `n:Workload` or `n:A:B`.
+	return withWhereIsLabelTest(whereClause)
+}
+
+// parseWithWhereLabelTest splits a bare label test such as `n:Workload` or
+// `n:A:B` into its variable and required labels. Label tests carry no
+// comparison operator, so operator splitting never sees them, and the general
+// expression evaluator does not accept the `var:Label` form either -- it has to
+// be evaluated here.
+func parseWithWhereLabelTest(whereClause string) (string, []string, bool) {
+	if !withWhereIsLabelTest(whereClause) {
+		return "", nil, false
+	}
+	parts := strings.Split(strings.TrimSpace(whereClause), ":")
+	if len(parts) < 2 {
+		return "", nil, false
+	}
+	variable := strings.TrimSpace(parts[0])
+	labels := make([]string, 0, len(parts)-1)
+	for _, part := range parts[1:] {
+		labels = append(labels, strings.TrimSpace(part))
+	}
+	return variable, labels, true
+}
+
+// withWhereNodeHasAllLabels reports whether a bound value is a node carrying
+// every required label. Cypher's `n:A:B` is a conjunction, so every label must
+// be present; a value that is not a node cannot satisfy a label test.
+func withWhereNodeHasAllLabels(value interface{}, required []string) bool {
+	node, ok := value.(*storage.Node)
+	if !ok || node == nil {
+		return false
+	}
+	for _, want := range required {
+		found := false
+		for _, have := range node.Labels {
+			if have == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// withWhereIsLabelTest reports whether the predicate is a bare label test,
+// which carries no comparison operator and so is invisible to operator
+// splitting.
+func withWhereIsLabelTest(whereClause string) bool {
+	trimmed := strings.TrimSpace(whereClause)
+	if !strings.Contains(trimmed, ":") {
+		return false
+	}
+	if strings.ContainsAny(trimmed, "<>=!'\"") {
+		return false
+	}
+	for _, part := range strings.Split(trimmed, ":") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// substituteWithWhereLabelTests replaces every `var:Label` test in a predicate
+// with the boolean literal it evaluates to, so a predicate combining label
+// tests with AND/OR/NOT can be handed to the general expression evaluator,
+// which understands the boolean operators but not the label-test form.
+//
+// Only tokens shaped exactly like an identifier followed by one or more
+// `:Label` segments are rewritten, and only outside string literals, so a colon
+// inside quoted text or a map literal is left alone.
+func substituteWithWhereLabelTests(whereClause string, values map[string]interface{}) string {
+	var out strings.Builder
+	inSingle, inDouble := false, false
+	i := 0
+	for i < len(whereClause) {
+		c := whereClause[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		}
+		if inSingle || inDouble {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if !isWithWhereIdentStart(c) || (i > 0 && isWithWhereIdentPart(whereClause[i-1])) {
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		j := i
+		for j < len(whereClause) && isWithWhereIdentPart(whereClause[j]) {
+			j++
+		}
+		if j >= len(whereClause) || whereClause[j] != ':' {
+			out.WriteString(whereClause[i:j])
+			i = j
+			continue
+		}
+		variable := whereClause[i:j]
+		labels := []string{}
+		k := j
+		for k < len(whereClause) && whereClause[k] == ':' {
+			k++
+			start := k
+			for k < len(whereClause) && isWithWhereIdentPart(whereClause[k]) {
+				k++
+			}
+			if start == k {
+				labels = nil
+				break
+			}
+			labels = append(labels, whereClause[start:k])
+		}
+		if len(labels) == 0 {
+			out.WriteString(whereClause[i:j])
+			i = j
+			continue
+		}
+		if withWhereNodeHasAllLabels(values[variable], labels) {
+			out.WriteString("true")
+		} else {
+			out.WriteString("false")
+		}
+		i = k
+	}
+	return out.String()
+}
+
+func isWithWhereIdentStart(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func isWithWhereIdentPart(c byte) bool {
+	return isWithWhereIdentStart(c) || (c >= '0' && c <= '9')
+}
+
+// withWhereValueContext splits the computed WITH values into the node and edge
+// maps the general expression evaluator expects. Non-graph values (scalars,
+// lists, aggregates) are not representable in those maps and are left out; a
+// predicate over them is handled by this function's own operator paths.
+func withWhereValueContext(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
+	nodeCtx := make(map[string]*storage.Node)
+	edgeCtx := make(map[string]*storage.Edge)
+	for name, val := range values {
+		switch v := val.(type) {
+		case *storage.Node:
+			nodeCtx[name] = v
+		case *storage.Edge:
+			edgeCtx[name] = v
+		}
+	}
+	return nodeCtx, edgeCtx
 }
 
 // filterNodesByWhereClause filters nodes based on a WHERE clause condition.
