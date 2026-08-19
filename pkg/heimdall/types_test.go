@@ -12,7 +12,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	assert.False(t, cfg.Enabled, "Should be disabled by default")
 	assert.Empty(t, cfg.ModelsDir, "ModelsDir empty - reads NORNICDB_MODELS_DIR at runtime")
-	assert.Equal(t, "qwen3-0.6b-instruct", cfg.Model)
+	assert.Empty(t, cfg.Model, "Model default is provider-specific")
 	assert.Equal(t, 1024, cfg.MaxTokens)
 	assert.Equal(t, float32(0.5), cfg.Temperature)
 	assert.Equal(t, -1, cfg.GPULayers, "Should be auto (-1) by default")

@@ -816,15 +816,15 @@ Watch logs for:
 
 ## Heimdall AI Assistant
 
-Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, and **openai** providers—matching the embedding subsystem style.
+Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **vllm**, and **litellm** chat providers.
 
 | Variable                     | Default     | Description                                                       |
 | ---------------------------- | ----------- | ----------------------------------------------------------------- |
 | `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                           |
 | `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `vllm`, or `litellm`        |
-| `NORNICDB_HEIMDALL_API_URL`  | (see below) | API base URL for ollama/openai (ollama: `http://localhost:11434`) |
-| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | API key for OpenAI (required when provider=openai)                |
-| `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Model name (GGUF file, Ollama model, or OpenAI model)             |
+| `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
+| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI; optional LiteLLM master/virtual key or vLLM key |
+| `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias |
 
 **Advanced llama.cpp context features** (local provider only, most models work with defaults):
 

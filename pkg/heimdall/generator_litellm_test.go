@@ -50,6 +50,32 @@ func TestNewLiteLLMGeneratorRequiresModel(t *testing.T) {
 	assert.Contains(t, err.Error(), "requires NORNICDB_HEIMDALL_MODEL")
 }
 
+func TestLiteLLMProductionConfigRequiresExplicitModel(t *testing.T) {
+	flags := &MockFeatureFlags{
+		enabled:  true,
+		provider: "litellm",
+	}
+
+	cfg := ConfigFromFeatureFlags(flags)
+	assert.Empty(t, cfg.Model)
+	_, err := newLiteLLMGenerator(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires NORNICDB_HEIMDALL_MODEL")
+}
+
+func TestLiteLLMProductionConfigPreservesModelAlias(t *testing.T) {
+	flags := &MockFeatureFlags{
+		enabled:  true,
+		provider: "litellm",
+		model:    "team-chat",
+	}
+
+	cfg := ConfigFromFeatureFlags(flags)
+	gen, err := newLiteLLMGenerator(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "team-chat", gen.(*liteLLMGenerator).model)
+}
+
 // TestLiteLLMGeneratorRoundTrip drives Generate against a stub OpenAI-compatible
 // server (as a LiteLLM proxy would present), asserting the request shape and the
 // Authorization header, and that the response is parsed back.
