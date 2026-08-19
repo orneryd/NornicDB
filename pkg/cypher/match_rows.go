@@ -306,10 +306,9 @@ func parseWithWhereLabelTest(whereClause string) (string, []string, bool) {
 	if !withWhereIsLabelTest(whereClause) {
 		return "", nil, false
 	}
+	// withWhereIsLabelTest has already established there is at least one colon
+	// with a non-empty segment either side, so Split yields two or more parts.
 	parts := strings.Split(strings.TrimSpace(whereClause), ":")
-	if len(parts) < 2 {
-		return "", nil, false
-	}
 	variable := strings.TrimSpace(parts[0])
 	labels := make([]string, 0, len(parts)-1)
 	for _, part := range parts[1:] {
