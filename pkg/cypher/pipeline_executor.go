@@ -487,34 +487,119 @@ func (e *StorageExecutor) pipelineApplyWith(rows []pipelineRow, clause string) (
 		return rows, true
 	}
 
-	// Detect a simple `count(*)` / `count(var)` aggregation — in that case
-	// WITH collapses the whole row stream into one row carrying the count.
-	aggregateOnly := true
-	countAlias := ""
+	type withProjection struct {
+		expr        string
+		alias       string
+		aggregate   bool
+		collect     bool
+		distinct    bool
+		collectExpr string
+	}
+	projections := make([]withProjection, 0, len(items))
+	hasAggregate := false
 	for _, rawItem := range items {
 		item := strings.TrimSpace(rawItem)
-		if item == "{}" {
+		if item == "" || item == "{}" {
 			continue
 		}
-		upper := strings.ToUpper(item)
-		asIdx := strings.Index(upper, " AS ")
-		expr := item
-		alias := ""
-		if asIdx > 0 {
-			expr = strings.TrimSpace(item[:asIdx])
-			alias = strings.TrimSpace(item[asIdx+4:])
+		expr, alias := parseProjectionExprAlias(item)
+		if expr == "" || alias == "" {
+			return nil, false
 		}
-		exprUpper := strings.ToUpper(expr)
-		if strings.HasPrefix(exprUpper, "COUNT(") && strings.HasSuffix(expr, ")") {
-			if countAlias == "" && alias != "" {
-				countAlias = alias
+		projection := withProjection{expr: expr, alias: alias}
+		upperExpr := strings.ToUpper(expr)
+		if strings.HasPrefix(upperExpr, "COUNT(") && strings.HasSuffix(expr, ")") {
+			if !strings.Contains(strings.ToUpper(item), " AS ") {
+				return nil, false
 			}
-			continue
+			projection.aggregate = true
+			hasAggregate = true
 		}
-		aggregateOnly = false
+		if strings.HasPrefix(upperExpr, "COLLECT(") && strings.HasSuffix(expr, ")") {
+			if !strings.Contains(strings.ToUpper(item), " AS ") {
+				return nil, false
+			}
+			projection.aggregate = true
+			projection.collect = true
+			projection.collectExpr = strings.TrimSpace(expr[len("collect(") : len(expr)-1])
+			if strings.HasPrefix(strings.ToUpper(projection.collectExpr), "DISTINCT ") {
+				projection.distinct = true
+				projection.collectExpr = strings.TrimSpace(projection.collectExpr[len("distinct "):])
+			}
+			if projection.collectExpr == "" {
+				return nil, false
+			}
+			hasAggregate = true
+		}
+		projections = append(projections, projection)
 	}
-	if aggregateOnly && countAlias != "" {
-		return []pipelineRow{{countAlias: int64(len(rows))}}, true
+	if hasAggregate {
+		type aggregateGroup struct {
+			first pipelineRow
+			rows  []pipelineRow
+		}
+		groups := make(map[string]*aggregateGroup)
+		groupOrder := make([]string, 0)
+		for _, row := range rows {
+			keyParts := make([]string, 0, len(projections))
+			for _, projection := range projections {
+				if projection.aggregate {
+					continue
+				}
+				value, ok := projectFromRow(row, projection.expr)
+				if !ok {
+					return nil, false
+				}
+				keyParts = append(keyParts, pipelineValueKey(value))
+			}
+			key := strings.Join(keyParts, "\x1f")
+			group, exists := groups[key]
+			if !exists {
+				group = &aggregateGroup{first: row}
+				groups[key] = group
+				groupOrder = append(groupOrder, key)
+			}
+			group.rows = append(group.rows, row)
+		}
+
+		out := make([]pipelineRow, 0, len(groupOrder))
+		for _, key := range groupOrder {
+			group := groups[key]
+			newRow := pipelineRow{}
+			for _, projection := range projections {
+				if !projection.aggregate {
+					value, ok := projectFromRow(group.first, projection.expr)
+					if !ok {
+						return nil, false
+					}
+					newRow[projection.alias] = value
+					continue
+				}
+				if !projection.collect {
+					newRow[projection.alias] = int64(len(group.rows))
+					continue
+				}
+				values := make([]interface{}, 0, len(group.rows))
+				seen := make(map[string]struct{})
+				for _, row := range group.rows {
+					value, ok := projectFromRow(row, projection.collectExpr)
+					if !ok {
+						return nil, false
+					}
+					if projection.distinct {
+						valueKey := pipelineValueKey(value)
+						if _, exists := seen[valueKey]; exists {
+							continue
+						}
+						seen[valueKey] = struct{}{}
+					}
+					values = append(values, value)
+				}
+				newRow[projection.alias] = values
+			}
+			out = append(out, newRow)
+		}
+		return out, true
 	}
 
 	out := make([]pipelineRow, 0, len(rows))
@@ -542,7 +627,16 @@ func (e *StorageExecutor) pipelineApplyWith(rows []pipelineRow, clause string) (
 				continue
 			}
 
-			// 2. Property access (var.prop).
+			// 2. List subscript (values[0]).
+			if value, matched, ok := pipelineListSubscript(row, expr); matched {
+				if !ok {
+					return nil, false
+				}
+				newRow[alias] = value
+				continue
+			}
+
+			// 3. Property access (var.prop).
 			if dot := strings.Index(expr, "."); dot > 0 {
 				base := strings.TrimSpace(expr[:dot])
 				field := strings.TrimSpace(expr[dot+1:])
@@ -558,7 +652,7 @@ func (e *StorageExecutor) pipelineApplyWith(rows []pipelineRow, clause string) (
 				}
 			}
 
-			// 3. Literal scalar (number, quoted string, bool, null). Covers
+			// 4. Literal scalar (number, quoted string, bool, null). Covers
 			// `WITH 42 AS x` and the post-$param-substitution form like
 			// `WITH 'hi' AS note`.
 			if val, lit := parseLiteralScalarForPipeline(expr); lit {
@@ -704,6 +798,14 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	if val, ok := row[expr]; ok {
 		return val, true
 	}
+	upperExpr := strings.ToUpper(expr)
+	if strings.HasPrefix(upperExpr, "SIZE(") && strings.HasSuffix(expr, ")") {
+		value, ok := projectFromRow(row, strings.TrimSpace(expr[len("size("):len(expr)-1]))
+		if !ok {
+			return nil, false
+		}
+		return int64(len(toAnySlice(value))), true
+	}
 	if dot := strings.Index(expr, "."); dot > 0 {
 		base := strings.TrimSpace(expr[:dot])
 		field := strings.TrimSpace(expr[dot+1:])
@@ -723,6 +825,42 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 		return v, true
 	}
 	return nil, false
+}
+
+func pipelineValueKey(value interface{}) string {
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity != nil {
+			return "node:" + string(entity.ID)
+		}
+	case *storage.Edge:
+		if entity != nil {
+			return "edge:" + string(entity.ID)
+		}
+	}
+	return fmt.Sprintf("%T:%#v", value, value)
+}
+
+func pipelineListSubscript(row pipelineRow, expr string) (interface{}, bool, bool) {
+	open := strings.LastIndex(expr, "[")
+	if open <= 0 || !strings.HasSuffix(expr, "]") {
+		return nil, false, false
+	}
+	base := strings.TrimSpace(expr[:open])
+	indexText := strings.TrimSpace(expr[open+1 : len(expr)-1])
+	index, err := strconv.Atoi(indexText)
+	if err != nil || index < 0 {
+		return nil, true, false
+	}
+	value, exists := row[base]
+	if !exists {
+		return nil, true, false
+	}
+	items := toAnySlice(value)
+	if index >= len(items) {
+		return nil, true, true
+	}
+	return items[index], true, true
 }
 
 // ---- helpers ----

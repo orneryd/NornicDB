@@ -300,6 +300,11 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	}
 
 	if isStandaloneWith {
+		if countKeywordOccurrences(upper, "WITH") > 1 {
+			if pipelineResult, ok, err := e.executePipeline(ctx, cypher); ok || err != nil {
+				return pipelineResult, err
+			}
+		}
 		// Has standalone WITH clause - delegate to special handler
 		return e.executeMatchWithClause(ctx, cypher)
 	}

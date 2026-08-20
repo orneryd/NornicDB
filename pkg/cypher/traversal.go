@@ -2304,6 +2304,15 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		return e.evaluateWhereOnPath(ctx, left, pathCtx) || e.evaluateWhereOnPath(ctx, right, pathCtx)
 	}
 
+	if hasSubqueryPattern(whereClause, notExistsSubqueryRe) {
+		subquery := e.extractSubquery(whereClause, "NOT EXISTS")
+		return !e.pathSubqueryMatches(ctx, pathCtx, subquery)
+	}
+	if hasSubqueryPattern(whereClause, existsSubqueryRe) {
+		subquery := e.extractSubquery(whereClause, "EXISTS")
+		return e.pathSubqueryMatches(ctx, pathCtx, subquery)
+	}
+
 	// Handle NOT prefix (before operators so "->" in NOT (n)-[:X]->() is not parsed as ">")
 	if strings.HasPrefix(upperClause, "NOT ") {
 		inner := strings.TrimSpace(whereClause[4:])
@@ -2317,7 +2326,10 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 		rightExpr := strings.TrimSpace(whereClause[inIdx+4:])
 
 		leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
-		rightVal := e.parseValue(ctx, rightExpr)
+		rightVal := e.evaluateExpressionWithPathContext(ctx, rightExpr, pathCtx)
+		if rightVal == nil {
+			rightVal = e.parseValue(ctx, rightExpr)
+		}
 		items, ok := toInterfaceSlice(rightVal)
 		if !ok {
 			return false
@@ -2355,7 +2367,10 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 			rightExpr := strings.TrimSpace(whereClause[idx+len(op):])
 
 			leftVal := e.evaluateExpressionWithPathContext(ctx, leftExpr, pathCtx)
-			rightVal := e.evaluatePathValue(rightExpr)
+			rightVal := e.evaluateExpressionWithPathContext(ctx, rightExpr, pathCtx)
+			if rightVal == nil {
+				rightVal = e.evaluatePathValue(rightExpr)
+			}
 
 			return e.compareValues(leftVal, rightVal, op)
 		}
@@ -2398,6 +2413,79 @@ func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause s
 	}
 
 	return true // Default: pass through
+}
+
+func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathContext, subquery string) bool {
+	subquery = strings.TrimSpace(subquery)
+	if !hasPrefixFold(subquery, "MATCH ") {
+		return false
+	}
+	pattern := strings.TrimSpace(subquery[len("MATCH"):])
+	innerWhere := ""
+	if whereIdx := findKeywordIndex(pattern, "WHERE"); whereIdx > 0 {
+		innerWhere = strings.TrimSpace(pattern[whereIdx+5:])
+		pattern = strings.TrimSpace(pattern[:whereIdx])
+	}
+
+	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+		matches := e.parseTraversalPattern(ctx, pattern)
+		if matches == nil {
+			return false
+		}
+		var paths []PathResult
+		if seed := outer.nodes[matches.StartNode.variable]; seed != nil {
+			if matches.IsChained && len(matches.Segments) > 1 {
+				paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
+			} else {
+				paths = e.traverseFromNode(ctx, seed, matches)
+			}
+		} else {
+			paths = e.traverseGraph(ctx, matches)
+		}
+		for _, path := range paths {
+			inner := e.buildPathContext(path, matches)
+			for name, node := range outer.nodes {
+				if _, exists := inner.nodes[name]; !exists {
+					inner.nodes[name] = node
+				}
+			}
+			for name, rel := range outer.rels {
+				if _, exists := inner.rels[name]; !exists {
+					inner.rels[name] = rel
+				}
+			}
+			if innerWhere == "" || e.evaluateWhereOnPath(ctx, innerWhere, inner) {
+				return true
+			}
+		}
+		return false
+	}
+
+	nodePattern := e.parseNodePattern(ctx, pattern)
+	if nodePattern.variable == "" && len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
+		return false
+	}
+	nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+	if err != nil {
+		return false
+	}
+	if len(nodePattern.properties) > 0 {
+		nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+	}
+	for _, node := range nodes {
+		inner := outer
+		inner.nodes = make(map[string]*storage.Node, len(outer.nodes)+1)
+		for name, outerNode := range outer.nodes {
+			inner.nodes[name] = outerNode
+		}
+		if nodePattern.variable != "" {
+			inner.nodes[nodePattern.variable] = node
+		}
+		if innerWhere == "" || e.evaluateWhereOnPath(ctx, innerWhere, inner) {
+			return true
+		}
+	}
+	return false
 }
 
 // evaluatePathValue parses a literal value from a WHERE clause expression.

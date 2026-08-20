@@ -2997,9 +2997,24 @@ func (e *StorageExecutor) checkSubqueryMatch(ctx context.Context, node *storage.
 		pattern = strings.TrimSpace(pattern[:loc[0]])
 	}
 
-	// Check if pattern references our variable
+	// An uncorrelated node-pattern subquery does not reference the outer
+	// variable, but it still determines EXISTS/NOT EXISTS for every outer row.
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		return false
+		if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") {
+			return false
+		}
+		nodePattern := e.parseNodePattern(ctx, pattern)
+		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
+			return false
+		}
+		nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
+		if err != nil {
+			return false
+		}
+		if len(nodePattern.properties) > 0 {
+			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+		}
+		return len(nodes) > 0
 	}
 
 	// Check for chained relationship pattern (e.g., (p)-[:KNOWS]->()-[:KNOWS]->())

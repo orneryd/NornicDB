@@ -750,7 +750,11 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
-				paths = e.traverseFromNode(ctx, boundStartNode, matches)
+				if matches.IsChained && len(matches.Segments) > 1 {
+					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+				} else {
+					paths = e.traverseFromNode(ctx, boundStartNode, matches)
+				}
 			} else {
 				paths = e.traverseGraph(ctx, matches)
 			}
