@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -711,6 +712,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 // evaluateWhereOnComputedRow evaluates a WHERE condition on computed values
 func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	whereClause = strings.TrimSpace(whereClause)
+	upperClause := strings.ToUpper(whereClause)
 
 	// Handle AND
 	if idx := strings.Index(strings.ToUpper(whereClause), " AND "); idx > 0 {
@@ -724,6 +726,15 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 		left := whereClause[:idx]
 		right := whereClause[idx+4:]
 		return e.evaluateWhereOnComputedRow(ctx, left, values) || e.evaluateWhereOnComputedRow(ctx, right, values)
+	}
+
+	if strings.HasSuffix(upperClause, " IS NOT NULL") {
+		expr := strings.TrimSpace(whereClause[:len(whereClause)-len(" IS NOT NULL")])
+		return e.evaluateExpressionFromValues(expr, values) != nil
+	}
+	if strings.HasSuffix(upperClause, " IS NULL") {
+		expr := strings.TrimSpace(whereClause[:len(whereClause)-len(" IS NULL")])
+		return e.evaluateExpressionFromValues(expr, values) == nil
 	}
 
 	// Handle a bare label test such as `n:Workload` or `n:A:B`. It carries no
@@ -833,6 +844,31 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 
 	// Handle function calls
 	if strings.Contains(expr, "(") && strings.Contains(expr, ")") {
+		if name, inner, ok := parseFunctionCallWS(expr); ok &&
+			(strings.EqualFold(name, "toLower") || strings.EqualFold(name, "toUpper")) {
+			nodeCtx, edgeCtx := withWhereValueContext(values)
+			functionCtx := cypherfn.Context{
+				Nodes: nodeCtx,
+				Rels:  edgeCtx,
+				Eval: func(argExpr string) (interface{}, error) {
+					value := e.evaluateExpressionFromValues(argExpr, values)
+					if literal, ok := value.(string); ok && literal == strings.TrimSpace(argExpr) {
+						if parsed, parsedOK := parseLiteralValueFromComputedRow(argExpr); parsedOK {
+							value = parsed
+						}
+					}
+					return value, nil
+				},
+				Now: time.Now,
+			}
+			if value, found, err := cypherfn.EvaluateFunction(name, e.splitFunctionArgs(inner), functionCtx); found {
+				if err != nil {
+					return nil
+				}
+				return value
+			}
+		}
+
 		if isFunctionCall(expr, "datetime") {
 			inner := strings.TrimSpace(expr[9 : len(expr)-1])
 			if inner == "" {

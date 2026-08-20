@@ -205,9 +205,8 @@ func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereC
 	// operands by locating a dot, and the dot inside `coalesce(a.name, 'X')`
 	// makes them look up a variable named "coalesce(a".
 	if strings.Contains(whereClause, "(") {
-		nodeCtx, edgeCtx := withWhereValueContext(values)
-		return evaluateExpressionBoolWithContext(e, ctx,
-			substituteWithWhereLabelTests(whereClause, values), nodeCtx, edgeCtx)
+		return e.evaluateWhereOnComputedRow(ctx,
+			substituteWithWhereLabelTests(whereClause, values), values)
 	}
 
 	// Handle IS NULL / IS NOT NULL
