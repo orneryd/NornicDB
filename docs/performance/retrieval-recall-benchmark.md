@@ -169,7 +169,7 @@ The equal-weight production default was selected because it improved the
 controlled SciFact recall result over the previous word-count heuristic. Repeat
 the protocol on additional BEIR datasets before treating it as a universal rule.
 
-### Native BGE Reranker: 174-Query Partial Run
+### Native BGE Reranker
 
 A native `bge-reranker-v2-m3.gguf` Every completed query has exactly 100
 unique official BEIR document IDs.

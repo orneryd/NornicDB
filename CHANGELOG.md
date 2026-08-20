@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.3] - 8/20/2026
+
+### Added
+
+- **Heimdall can now use LiteLLM as a chat provider.** This adds LiteLLM
+  provider configuration and incorporates review feedback for reliable
+  provider initialization and request handling.
+- **Added a reproducible BEIR retrieval-recall benchmark with recorded SciFact
+  results.** Using the official 300 test qrels and `bge-m3:latest` at 1,024
+  dimensions:
+
+  | Retrieval profile                        | Recall@100 | nDCG@10 |
+  | ---------------------------------------- | ---------: | ------: |
+  | BM25 V2                                  |    0.88422 | 0.59974 |
+  | Accurate HNSW, equal RRF weights         |    0.93767 | 0.65534 |
+  | Exact CPU brute force, equal RRF weights |    0.94433 | 0.67932 |
+
+  Native BGE-M3 reranking over the same candidates was measured:
+
+  | Profile                            | Recall@100 |  nDCG@10 |   MRR@10 |  MAP@100 |
+  | ---------------------------------- | ---------: | -------: | -------: | -------: |
+  | Exact equal RRF, no reranker       |    0.93563 |  0.67043 |  0.64404 |  0.63486 |
+  | Exact equal RRF with native BGE-M3 |    0.93563 |  0.72292 |  0.69447 |  0.69215 |
+  | Absolute change                    |    0.00000 | +0.05248 | +0.05042 | +0.05729 |
+
+  Reranking preserves Recall@100 because it reorders the same candidates.
+  These are configuration-specific measurements, not leaderboard claims.
+
+### Changed
+
+- **Updated llama.cpp to b10411.** The llama integration now also accepts
+  `LLAMA_LOAD_MODE_MMAP` for configuring model loading.
+- **Restored configurable local and remote reranking.** GGUF rerankers support
+  rank pooling and classifier output dimensions, query-document pairs use model
+  templates or separator tokens, invalid non-scalar outputs are rejected, and
+  pooling, attention, context, flash-attention, and provider settings remain
+  configurable across local, Ollama, OpenAI, and HTTP providers.
+- **Improved hybrid retrieval recall and oversized Ollama embedding handling.**
+  Hybrid retrieval uses equal RRF weights across query lengths, and oversized
+  Ollama embedding input is chunked through the shared chunker before provider
+  evaluation.
+
 ### Fixed
 
 - **Bolt explicit transactions now enforce the client-configured lifetime and
@@ -41,6 +83,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup, deferred explicit `PULL`/`DISCARD` flush errors require `RESET`, and
   every terminal path discards pending result/flush state so only
   `CommitTransaction` owns commit durability.
+- **Empty Cypher deletes no longer perform unnecessary commit work.**
+- **Heimdall watcher execution again acquires its pre-execution mutex.**
+- **`WITH`-attached Cypher predicates now evaluate label tests and function
+  calls correctly.** Label conjunctions, boolean combinations, function calls,
+  and null predicates are evaluated against the bound row rather than silently
+  passing through or resolving function operands incorrectly.
+- **Cypher now preserves bindings across aggregate, traversal, and subquery
+  paths.** Correlated relationship matches retain rows for `collect(DISTINCT
+...)`; list subscripts preserve node bindings through a subsequent `WITH`;
+  relationship list properties work with `IN`; compound multi-hop patterns use
+  previously bound anchors; and correlated `EXISTS` / `NOT EXISTS` evaluate
+  inner predicates with their outer bindings.
 
 ## [v1.2.2] - 8/6/2026
 
