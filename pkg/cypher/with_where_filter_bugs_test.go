@@ -74,6 +74,35 @@ func TestBug_WithAttachedWhereFunctionCallEvaluatesNull(t *testing.T) {
 		"toUpper on a bound variable must evaluate; Neo4j 5 returns 1")
 }
 
+func TestBug_WithAttachedWhereFunctionCallOnComputedValues(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	setupWithWhereFixture(t, store)
+
+	t.Run("function result is null after path traversal", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (f:Function)-[*1..2]->(impacted)
+			WITH impacted WHERE coalesce(impacted.id, 'X') IS NULL
+			RETURN count(*) AS c`, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.EqualValues(t, 0, result.Rows[0][0],
+			"a non-null coalesce result must not pass IS NULL; Neo4j 5 returns 0")
+	})
+
+	t.Run("function consumes a scalar WITH alias", func(t *testing.T) {
+		result, err := exec.Execute(ctx, `
+			MATCH (w:Workload)
+			WITH w.name AS name WHERE toUpper(name) = 'CHECKOUT'
+			RETURN count(*) AS c`, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.EqualValues(t, 1, result.Rows[0][0],
+			"functions in a WITH-attached WHERE must retain scalar aliases; Neo4j 5 returns 1")
+	})
+}
+
 // A disjunction of label tests in a WITH-attached WHERE is the shape real
 // traversal whitelists use. Neo4j 5 returns 2 here (the Workload and the
 // CloudAction), not 3.
