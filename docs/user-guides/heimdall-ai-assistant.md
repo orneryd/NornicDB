@@ -82,10 +82,10 @@ For local GGUF instead of OpenAI, use `NORNICDB_HEIMDALL_PROVIDER=local` (or omi
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `NORNICDB_HEIMDALL_ENABLED` | `false` | Enable/disable the AI assistant |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, or `openai` |
-| `NORNICDB_HEIMDALL_API_URL` | (see below) | API base URL for ollama/openai |
-| `NORNICDB_HEIMDALL_API_KEY` | (empty) | API key for OpenAI (required when provider=openai) |
-| `NORNICDB_HEIMDALL_MODEL` | `qwen3-0.6b-instruct` | Model name (GGUF file, Ollama model, or OpenAI model) |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local` | Backend: `local` (GGUF), `ollama`, `openai`, `vllm`, or `litellm` |
+| `NORNICDB_HEIMDALL_API_URL` | (see below) | Provider API base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
+| `NORNICDB_HEIMDALL_API_KEY` | (empty) | Required for OpenAI; optional LiteLLM master or virtual key; optional for vLLM |
+| `NORNICDB_HEIMDALL_MODEL` | (varies) | Local GGUF name (default `qwen3-0.6b-instruct`), Ollama/OpenAI/vLLM model name, or LiteLLM proxy model alias |
 | `NORNICDB_MODELS_DIR` | `/app/models` | Directory containing GGUF models (local only) |
 | `NORNICDB_HEIMDALL_GPU_LAYERS` | `-1` | GPU layers (-1 = auto, local only) |
 | `NORNICDB_HEIMDALL_CONTEXT_SIZE` | `8192` | Context window (tokens, local only) |
@@ -95,21 +95,25 @@ For local GGUF instead of OpenAI, use `NORNICDB_HEIMDALL_PROVIDER=local` (or omi
 
 For detailed information about context handling and token budgets, see [Heimdall Context & Tokens](./heimdall-context.md). For **Qwen3 0.6B instruct**, defaults use temperature 0.5, top_p 0.8, top_k 20 and explicit "do not repeat" instructions in the system prompt to avoid repeated lines. When using **Ollama or OpenAI**, you can safely increase token budgets (e.g. 32K or 128K context); that guide includes example env values.
 
-### Provider: local / ollama / openai
+### Providers: local / Ollama / OpenAI / vLLM / LiteLLM
 
-Heimdall supports the same BYOM/ollama/OpenAI style as the embedding subsystem:
+Heimdall supports local GGUF inference and four remote chat providers:
 
 | Provider | Description | API URL default | API key |
 |----------|-------------|-----------------|---------|
 | **local** | Load a GGUF model from `NORNICDB_MODELS_DIR` (BYOM). | N/A | N/A |
 | **ollama** | Use Ollama’s `/api/chat`; no API key. | `http://localhost:11434` | Not used |
 | **openai** | Use OpenAI (or compatible) chat completions API. | `https://api.openai.com` | **Required** |
+| **vllm** | Use vLLM's OpenAI-compatible chat completions API. | `http://localhost:8000` | Optional |
+| **litellm** | Use a LiteLLM proxy model alias through its OpenAI-compatible API. | `http://localhost:4000` | Optional master or virtual key |
 
 **Environment variables by provider:**
 
 - **local**: `NORNICDB_HEIMDALL_PROVIDER=local` (or unset), `NORNICDB_HEIMDALL_MODEL`, `NORNICDB_MODELS_DIR`, `NORNICDB_HEIMDALL_GPU_LAYERS`, etc.
 - **ollama**: `NORNICDB_HEIMDALL_PROVIDER=ollama`, optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:11434`), optional `NORNICDB_HEIMDALL_MODEL` (e.g. `llama3.2`).
 - **openai**: `NORNICDB_HEIMDALL_PROVIDER=openai`, `NORNICDB_HEIMDALL_API_KEY` (required), optional `NORNICDB_HEIMDALL_API_URL` and `NORNICDB_HEIMDALL_MODEL` (default `gpt-4o-mini`).
+- **vllm**: `NORNICDB_HEIMDALL_PROVIDER=vllm`, `NORNICDB_HEIMDALL_MODEL` (required), optional `NORNICDB_HEIMDALL_API_URL` (default `http://localhost:8000`) and `NORNICDB_HEIMDALL_API_KEY`.
+- **litellm**: `NORNICDB_HEIMDALL_PROVIDER=litellm`, `NORNICDB_HEIMDALL_MODEL` (required - the user-facing `model_name` alias served by your proxy, e.g. `gpt-4o` or `team-chat`), optional `NORNICDB_HEIMDALL_API_URL` (proxy root URL without `/v1`, default `http://localhost:4000`) and `NORNICDB_HEIMDALL_API_KEY` (the proxy master/virtual key; omit for a proxy without auth). Routes chat through a [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) gateway using its OpenAI-compatible `/v1/chat/completions` endpoint.
 
 **YAML examples:**
 
@@ -134,6 +138,14 @@ heimdall:
   api_url: "https://api.openai.com"
   api_key: "sk-..."
   model: gpt-4o-mini
+
+# LiteLLM proxy
+heimdall:
+  enabled: true
+  provider: litellm
+  api_url: "http://localhost:4000"
+  api_key: "sk-litellm-key" # Omit when proxy authentication is disabled
+  model: team-chat          # model_name alias configured on the proxy
 ```
 
 ### OpenAI with larger context (defaults + 128K)

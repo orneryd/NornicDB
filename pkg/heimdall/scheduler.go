@@ -32,12 +32,12 @@ type Manager struct {
 	lastUsed     time.Time
 }
 
-// heimdallProviderFactories maps provider name to constructor (openai, ollama).
-// Populated by init() in generator_openai.go and generator_ollama.go so scheduler
+// heimdallProviderFactories maps remote provider names to constructors.
+// Populated by init() in generator provider files so scheduler
 // does not reference those packages' constructors directly (avoids linter/IDE undefined errors).
 var heimdallProviderFactories = make(map[string]func(Config) (Generator, error))
 
-// RegisterHeimdallProvider registers a remote provider (openai, ollama). Called from generator_* init().
+// RegisterHeimdallProvider registers a remote Heimdall provider. Called from generator_* init().
 func RegisterHeimdallProvider(name string, factory func(Config) (Generator, error)) {
 	heimdallProviderFactories[name] = factory
 }
@@ -45,10 +45,12 @@ func RegisterHeimdallProvider(name string, factory func(Config) (Generator, erro
 // NewManager creates an SLM manager using BYOM configuration.
 // Returns nil if SLM feature is disabled.
 //
-// Provider selection (matches embeddings: local / ollama / openai / vllm):
+// Heimdall provider selection:
 //   - openai: Use OpenAI (or compatible) chat API; requires NORNICDB_HEIMDALL_API_KEY.
 //   - ollama: Use Ollama /api/chat; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:11434.
 //   - vllm: Use vLLM's OpenAI-compatible API; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:8000.
+//   - litellm: Use a LiteLLM proxy (OpenAI-compatible gateway to 100+ providers);
+//     NORNICDB_HEIMDALL_API_URL defaults to http://localhost:4000.
 //   - local or empty: Load GGUF from NORNICDB_MODELS_DIR (BYOM).
 func NewManager(cfg Config) (*Manager, error) {
 	if !cfg.Enabled {

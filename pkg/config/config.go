@@ -1892,7 +1892,7 @@ func LoadDefaults() *Config {
 	config.Features.TopologyABTestEnabled = false
 	config.Features.TopologyABTestPercentage = 50
 	config.Features.HeimdallEnabled = false
-	config.Features.HeimdallModel = "qwen3-0.6b-instruct"
+	config.Features.HeimdallModel = ""
 	config.Features.HeimdallProvider = "local"
 	config.Features.HeimdallAPIURL = ""
 	config.Features.HeimdallAPIKey = ""

@@ -44,6 +44,9 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Database.ReadOnly {
 		t.Error("expected ReadOnly to be false by default")
 	}
+	if cfg.Features.HeimdallModel != "" {
+		t.Errorf("expected provider-specific Heimdall model default, got %q", cfg.Features.HeimdallModel)
+	}
 	if cfg.Database.TransactionTimeout != 30*time.Second {
 		t.Errorf("expected tx timeout 30s, got %v", cfg.Database.TransactionTimeout)
 	}
