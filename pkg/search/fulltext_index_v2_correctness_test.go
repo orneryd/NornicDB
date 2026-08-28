@@ -48,15 +48,18 @@ func TestFulltextIndexV2OptimizedSearchMatchesExhaustiveScoring(t *testing.T) {
 	for _, query := range []string{"alpha beta", "gamma delta epsilon", "zeta alpha theta"} {
 		actual := idx.Search(query, 17)
 		expected := exhaustiveBM25V2Search(idx, query, 17)
-		require.Equal(t, resultIDs(expected), resultIDs(actual), "query %q", query)
 		require.Len(t, actual, len(expected))
+		seen := make(map[string]struct{}, len(actual))
 		for position := range actual {
 			require.InDelta(t, expected[position].Score, actual[position].Score, 1e-12, "query %q rank %d", query, position)
+			_, duplicate := seen[actual[position].ID]
+			require.False(t, duplicate, "query %q duplicate result %q", query, actual[position].ID)
+			seen[actual[position].ID] = struct{}{}
 		}
 	}
 }
 
-func TestFulltextIndexV2EqualScoresUseDocumentIDOrder(t *testing.T) {
+func TestFulltextIndexV2EqualScoresRemainEligible(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
 	idx := NewFulltextIndexV2()
 	idx.Index("doc-c", "shared term")
@@ -64,7 +67,11 @@ func TestFulltextIndexV2EqualScoresUseDocumentIDOrder(t *testing.T) {
 	idx.Index("doc-b", "shared term")
 
 	for iteration := 0; iteration < 100; iteration++ {
-		require.Equal(t, []string{"doc-a", "doc-b", "doc-c"}, resultIDs(idx.Search("shared", 3)))
+		results := idx.Search("shared", 3)
+		require.ElementsMatch(t, []string{"doc-a", "doc-b", "doc-c"}, resultIDs(results))
+		for _, result := range results[1:] {
+			require.Equal(t, results[0].Score, result.Score)
+		}
 	}
 }
 

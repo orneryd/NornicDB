@@ -301,10 +301,10 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		}
 	}
 
-	top := topKFromScoresWithIDs(scores, limit, f.docNumToID)
+	top := topKFromScores(scores, limit)
 	out := make([]indexResult, 0, len(top))
 	for _, s := range top {
-		docID := s.id
+		docID := f.docNumToID[s.docNum]
 		if docID == "" {
 			continue
 		}
@@ -513,14 +513,13 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 
 type scoredDoc struct {
 	docNum uint32
-	id     string
 	score  float64
 }
 
 type minScoreHeap []scoredDoc
 
 func (h minScoreHeap) Len() int            { return len(h) }
-func (h minScoreHeap) Less(i, j int) bool  { return scoredDocWorse(h[i], h[j]) }
+func (h minScoreHeap) Less(i, j int) bool  { return h[i].score < h[j].score }
 func (h minScoreHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
 func (h *minScoreHeap) Push(x interface{}) { *h = append(*h, x.(scoredDoc)) }
 func (h *minScoreHeap) Pop() interface{} {
@@ -541,9 +540,8 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
 			continue
 		}
-		candidate := scoredDoc{docNum: docNum, score: score}
-		if scoredDocBetter(candidate, h[0]) {
-			h[0] = candidate
+		if score > h[0].score {
+			h[0] = scoredDoc{docNum: docNum, score: score}
 			heap.Fix(&h, 0)
 		}
 	}
@@ -554,26 +552,17 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 }
 
 func topKFromScores(scores map[uint32]float64, k int) []scoredDoc {
-	return topKFromScoresWithIDs(scores, k, nil)
-}
-
-func topKFromScoresWithIDs(scores map[uint32]float64, k int, docNumToID []string) []scoredDoc {
 	if k <= 0 || len(scores) == 0 {
 		return nil
 	}
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
-		id := ""
-		if int(docNum) < len(docNumToID) {
-			id = docNumToID[docNum]
-		}
-		candidate := scoredDoc{docNum: docNum, id: id, score: score}
 		if len(h) < k {
-			heap.Push(&h, candidate)
+			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
 			continue
 		}
-		if scoredDocBetter(candidate, h[0]) {
-			h[0] = candidate
+		if score > h[0].score {
+			h[0] = scoredDoc{docNum: docNum, score: score}
 			heap.Fix(&h, 0)
 		}
 	}
@@ -582,26 +571,6 @@ func topKFromScoresWithIDs(scores map[uint32]float64, k int, docNumToID []string
 		out[i] = heap.Pop(&h).(scoredDoc)
 	}
 	return out
-}
-
-func scoredDocWorse(left, right scoredDoc) bool {
-	if left.score != right.score {
-		return left.score < right.score
-	}
-	if left.id != right.id {
-		return left.id > right.id
-	}
-	return left.docNum > right.docNum
-}
-
-func scoredDocBetter(left, right scoredDoc) bool {
-	if left.score != right.score {
-		return left.score > right.score
-	}
-	if left.id != right.id {
-		return left.id < right.id
-	}
-	return left.docNum < right.docNum
 }
 
 func minInt(a, b int) int {
