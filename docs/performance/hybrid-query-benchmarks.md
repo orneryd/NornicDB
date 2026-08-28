@@ -6,74 +6,76 @@ The goal is not to claim a universal leaderboard result. The goal is to show wha
 
 ## Summary
 
-- **Full RRF retrieval** stayed in sub-millisecond to low-millisecond territory locally, depending on transport.
-- **Full RRF retrieval + one-hop graph traversal** added a small incremental cost locally.
+- **Full RRF retrieval** averaged 19.47 ms over Bolt and 20.40 ms over HTTP on the production-scale fixture.
+- **Full RRF retrieval + one-hop graph traversal** averaged 20.00 ms over Bolt and 20.28 ms over HTTP.
 - **Remote latency tracked client-to-server RTT**, which means end-to-end latency became network-bound rather than database-bound.
 
 ## Test Setup
 
-| Item          | Value                                        |
-| ------------- | -------------------------------------------- |
-| Nodes         | 67,280                                       |
-| Edges         | 40,921                                       |
-| Embeddings    | 67,298                                       |
-| Vector index  | HNSW, CPU-only                               |
-| Request count | 800 per query type                           |
-| Query types   | Vector top-k; Vector top-k + 1-hop traversal |
+| Item                     | Value                                         |
+| ------------------------ | --------------------------------------------- |
+| Nodes                    | 300,825                                       |
+| Deterministic edges      | 1,000,000                                     |
+| Stored embeddings        | 221,625                                       |
+| Embedding dimensions     | 1,024                                         |
+| Model                    | Local BGE-M3 GGUF with Metal GPU offload      |
+| Vector index             | HNSW                                          |
+| Request count            | 800 per query shape and transport             |
+| Query shapes             | Full RRF retrieval; Full RRF retrieval + hop |
 
 Local environment:
 
 - Apple M3 Max
 - 64 GB RAM
-- Native macOS installer
+- Source build with the `localllm` tag
 
-Remote environment:
+Historical remote environment:
 
 - GCP
 - 8 vCPU
 - 32 GB RAM
 
-## Verified Full-RRF Regression Run
+## Verified 200k-Embedding Full-RRF Run
 
-Run on 2026-08-28 at revision `5408494199ef` using the self-contained E2E traversal fixture:
+Run on 2026-08-28 at revision `c27fff0fbfd2` using the real BGE-M3 fixture in
+`data/test-200kembed`. The writable data directory was cloned from that source
+before mutation. The benchmark waited for the search readiness endpoint to
+report `ready` and verified the node and edge counts before measuring.
 
-| Item                    |                             Value |
-| ----------------------- | --------------------------------: |
-| Nodes                   |                             2,715 |
-| Edges                   |                             2,706 |
-| Indexed root embeddings |                                 9 |
-| Vector dimensions       |                                 3 |
-| Measured requests       | 800 per query shape and transport |
-| Warmup requests         |  10 per query shape and transport |
+The server used no search-result or embedding cache and had zero background
+embedding workers. Every request used a unique query cache key, so every sample
+executed vector retrieval, BM25 retrieval, and RRF fusion. Each response
+asserted `search_method = rrf_hybrid`, a positive RRF score, at least one source
+rank, and `fallback_triggered = false`; the hop shape also required a neighbor.
 
-Every request used a unique query cache key so the measured samples executed vector retrieval, BM25 retrieval, and RRF rather than returning a cached search response. Every response asserted:
-
-- `search_method = rrf_hybrid`
-- `vector_rank > 0`
-- `bm25_rank > 0`
-- `rrf_score > 0`
-- `fallback_triggered = false`
-- the expected root node, plus the expected neighbor for the one-hop shape
-
-| Workload                   | Transport |  Throughput |    Mean |     P50 |     P95 |     P99 |     Max |
-| -------------------------- | --------- | ----------: | ------: | ------: | ------: | ------: | ------: |
-| Full RRF retrieval         | HTTP      | 3,201 req/s |  312 us |  275 us |  380 us |  502 us | 4.50 ms |
-| Full RRF retrieval         | Bolt      |   947 req/s | 1.06 ms |  983 us | 1.27 ms | 1.91 ms | 5.07 ms |
-| Full RRF retrieval + 1 hop | HTTP      | 1,901 req/s |  525 us |  487 us |  650 us |  755 us | 4.87 ms |
-| Full RRF retrieval + 1 hop | Bolt      |   610 req/s | 1.64 ms | 1.52 ms | 2.13 ms | 4.75 ms | 6.43 ms |
+| Workload                   | Transport | Throughput |     Min |    Mean |     P50 |     P95 |     P99 |     Max |
+| -------------------------- | --------- | ---------: | ------: | ------: | ------: | ------: | ------: | ------: |
+| Full RRF retrieval         | Bolt      | 51.357 ops/s | 18.445 ms | 19.468 ms | 19.272 ms | 21.130 ms | 23.400 ms | 24.363 ms |
+| Full RRF retrieval         | HTTP      | 49.011 ops/s | 18.668 ms | 20.401 ms | 19.549 ms | 23.963 ms | 32.526 ms | 39.108 ms |
+| Full RRF retrieval + 1 hop | Bolt      | 50.005 ops/s | 18.636 ms | 19.995 ms | 19.604 ms | 22.509 ms | 25.352 ms | 30.784 ms |
+| Full RRF retrieval + 1 hop | HTTP      | 49.312 ops/s | 18.794 ms | 20.276 ms | 19.719 ms | 22.851 ms | 31.073 ms | 42.243 ms |
 
 Reproduce the focused run:
 
 ```bash
-NORNICDB_TRAVERSAL_RRF_ONLY=1 \
-NORNICDB_TRAVERSAL_MATRIX_ITERS=800 \
-NORNICDB_TRAVERSAL_MATRIX_MIN_SAMPLES=800 \
-NORNICDB_TRAVERSAL_MATRIX_WARMUP=10 \
+NORNICDB_LARGE_RRF_E2E=1 \
+NORNICDB_LARGE_RRF_HTTP_ADDR=127.0.0.1:17474 \
+NORNICDB_LARGE_RRF_BOLT_ADDR=127.0.0.1:17687 \
+NORNICDB_LARGE_RRF_DATABASE=translations \
+NORNICDB_LARGE_RRF_EDGES=1000000 \
+NORNICDB_LARGE_RRF_WARMUP=3 \
+NORNICDB_LARGE_RRF_ITERS=800 \
 go test -tags=e2e ./testing/e2e \
-  -run '^TestVectorTraversalShapeMatrix_BoltVsHTTP$' -count=1 -v
+  -run '^TestLargeDatasetRRFRoundTrip_BoltVsHTTP$' -count=1 -v
 ```
 
-The following local and remote tables are historical measurements from the larger 67K-node direct-vector workload. They are retained for comparison and should not be compared as before/after measurements with the self-contained full-RRF fixture.
+The address variables attach the test to an already configured benchmark server.
+Omit them to let the test copy-on-write clone `data/test-200kembed`, build the
+local-embedding binary, and manage the server itself.
+
+The following local and remote tables are historical measurements from a
+separate 67K-node direct-vector workload. They use a different retrieval path
+and are not before/after measurements for the full-RRF run.
 
 ## Historical Local Direct-Vector Results
 
@@ -112,7 +114,7 @@ Client-to-server latency was about **110 ms**.
 | Vector only    | Remote GCP  | 110.7 ms |
 | Vector + 1 hop | Remote GCP  | 112.9 ms |
 
-The practical result is straightforward: once local compute for hybrid retrieval is in low single-digit milliseconds, network RTT dominates the user-visible latency budget.
+The practical result is straightforward: even with about 20 ms of local full-RRF compute, a 110 ms network RTT dominates the user-visible latency budget.
 
 ## Why This Matters
 

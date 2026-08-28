@@ -157,18 +157,30 @@ The following corrected measurements use the official 300 test qrels and
 claim of leaderboard parity: public BEIR leaderboards commonly report nDCG@10
 and differ in models, chunking, and indexing.
 
-| Retrieval profile                               | Recall@100 | nDCG@10 |
-| ----------------------------------------------- | ---------: | ------: |
-| BM25 V2, historical 32-prefix baseline          |    0.88422 | 0.59974 |
-| BM25 V2, exact Unicode title/text projection    |    0.88256 | 0.66345 |
-| HNSW accurate, equal RRF weights                |    0.93767 | 0.65534 |
-| Exact CPU brute force, equal RRF weights        |    0.94433 | 0.67932 |
-| Exact CPU brute force, previous adaptive policy |    0.92600 | 0.67321 |
+| Retrieval profile                                    | Recall@10 | Recall@100 | nDCG@10 |  MRR@10 | MAP@100 |
+| ---------------------------------------------------- | --------: | ---------: | ------: | ------: | ------: |
+| BM25 V2, historical 32-prefix baseline               |         - |    0.88422 | 0.59974 |       - |       - |
+| BM25 V2, exact Unicode title/text projection         |   0.78761 |    0.88256 | 0.66345 | 0.63089 | 0.62315 |
+| HNSW accurate, equal RRF weights (historical)        |         - |    0.93767 | 0.65534 |       - |       - |
+| Exact CPU, previous adaptive policy                  |   0.79233 |    0.92600 | 0.67321 | 0.64384 | 0.63588 |
+| Exact CPU, current adaptive bounded overfetch        |   0.80167 |    0.93933 | 0.68762 | 0.66305 | 0.65247 |
+| Exact CPU, fixed-depth equal RRF zero-floor baseline |   0.79622 |    0.94433 | 0.68178 | 0.65674 | 0.64624 |
+| Exact CPU, current fixed-depth equal RRF zero-floor  |   0.80167 |    0.94433 | 0.68785 | 0.66332 | 0.65281 |
 
-The exact Unicode BM25 profile measured Recall@10 `0.78761`, MRR@10 `0.63089`, and MAP@100 `0.62315`. Against the historical prefix-expanded profile, paired-bootstrap nDCG@10 improved by `0.06371` (95% CI `+0.04315..+0.08541`). Recall@100 changed by `-0.00167` (95% CI `-0.02000..+0.01500`), which is not statistically significant.
-The equal-weight production default was selected because it improved the
-controlled SciFact recall result over the previous word-count heuristic. Repeat
-the protocol on additional BEIR datasets before treating it as a universal rule.
+The optimized BM25 scorer reproduced the exact Unicode profile with no metric
+change. Equal-score ordering changed for 28 pairs, but aggregate metrics across
+all 300 queries were unchanged and the run contained 30,000 unique
+query-document rows.
+
+Against the previous adaptive policy, the current production policy changed
+Recall@10 by `+0.00933`, Recall@100 by `+0.01333`, nDCG@10 by `+0.01440`,
+MRR@10 by `+0.01921`, and MAP@100 by `+0.01659`. Its paired-bootstrap 95%
+confidence intervals cross zero for Recall@10 (`-0.01917..+0.03767`),
+Recall@100 (`-0.01000..+0.03667`), and nDCG@10
+(`-0.00084..+0.02967`). The fixed-depth control likewise has an nDCG@10
+interval of `-0.00687..+0.01886`. These are positive point estimates, not
+statistically significant improvements on 300 SciFact queries. Repeat the
+protocol on additional BEIR datasets before treating the policy as universal.
 
 ### Native BGE Reranker
 

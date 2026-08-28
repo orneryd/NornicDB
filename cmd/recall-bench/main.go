@@ -64,9 +64,9 @@ type benchmarkProgress struct {
 }
 
 func benchmarkConfig() *config.Config {
-	benchmarkConfig := nornicdb.DefaultConfig()
-	benchmarkConfig.Memory.SearchBM25Properties = []string{"title", "text"}
-	return benchmarkConfig
+	cfg := nornicdb.DefaultConfig()
+	cfg.Memory.SearchBM25Properties = []string{"title", "text"}
+	return cfg
 }
 
 func newBenchmarkProgress(total int, interval time.Duration) *benchmarkProgress {
