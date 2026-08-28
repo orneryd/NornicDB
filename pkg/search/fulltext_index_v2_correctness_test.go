@@ -75,6 +75,16 @@ func TestFulltextIndexV2EqualScoresRemainEligible(t *testing.T) {
 	}
 }
 
+func TestFulltextIndexV2PooledScoresDoNotLeakAcrossQueries(t *testing.T) {
+	idx := NewFulltextIndexV2()
+	idx.Index("alpha", "alpha alpha")
+	idx.Index("beta", "beta beta")
+
+	require.Equal(t, []string{"alpha"}, resultIDs(idx.Search("alpha", 1)))
+	require.Equal(t, []string{"beta"}, resultIDs(idx.Search("beta", 1)))
+	require.Equal(t, []string{"alpha"}, resultIDs(idx.Search("alpha", 1)))
+}
+
 func TestFulltextIndexV2MatchesCanonicallyEquivalentUnicode(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
 	idx := NewFulltextIndexV2()

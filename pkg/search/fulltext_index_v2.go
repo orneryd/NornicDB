@@ -1,8 +1,8 @@
 package search
 
 import (
-	"container/heap"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +47,7 @@ type FulltextIndexV2 struct {
 	version          uint64
 	persistedVersion uint64
 	queryPlanCache   sync.Map
+	scoreScratchPool sync.Pool
 
 	maxPrefixExpansions int
 	minPrefixLength     int
@@ -262,16 +263,15 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		return nil
 	}
 
-	queryTerms := tokenize(query)
-	if len(queryTerms) == 0 {
-		return nil
-	}
-
 	var weightedTerms []weightedTermPostings
 	if cached, ok := f.queryPlanCache.Load(query); ok && cached.(bm25QueryPlan).version == f.version {
 		plan := cached.(bm25QueryPlan)
 		weightedTerms = plan.terms
 	} else {
+		queryTerms := tokenize(query)
+		if len(queryTerms) == 0 {
+			return nil
+		}
 		weightedTerms = f.expandAndWeightTermsLocked(queryTerms)
 		if len(weightedTerms) == 0 {
 			return nil
@@ -287,21 +287,29 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		return nil
 	}
 
-	scores := make(map[uint32]float64, 512)
+	scratch := f.getScoreScratch()
+	lengthNormOffset := bm25K1 * (1 - bm25B)
+	lengthNormScale := bm25K1 * bm25B / f.avgDocLength
 	for _, wt := range weightedTerms {
+		termScale := wt.weight * wt.idf * (bm25K1 + 1)
 		for _, p := range wt.postings {
 			docLen := f.docLengths[p.DocNum]
 			if docLen == 0 {
 				continue
 			}
+			if scratch.generations[p.DocNum] != scratch.generation {
+				scratch.generations[p.DocNum] = scratch.generation
+				scratch.scores[p.DocNum] = 0
+				scratch.touched = append(scratch.touched, p.DocNum)
+			}
 			tf := float64(p.TF)
-			numerator := tf * (bm25K1 + 1)
-			denominator := tf + bm25K1*(1-bm25B+bm25B*(float64(docLen)/f.avgDocLength))
-			scores[p.DocNum] += wt.weight * wt.idf * (numerator / denominator)
+			denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+			scratch.scores[p.DocNum] += termScale * tf / denominator
 		}
 	}
 
-	top := topKFromScores(scores, limit)
+	top := topKFromDenseScores(scratch.scores, scratch.touched, limit, scratch.top)
+	scratch.top = top
 	out := make([]indexResult, 0, len(top))
 	for _, s := range top {
 		docID := f.docNumToID[s.docNum]
@@ -311,6 +319,7 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		out = append(out, indexResult{ID: docID, Score: s.score})
 	}
 
+	f.putScoreScratch(scratch)
 	return out
 }
 
@@ -467,6 +476,41 @@ type bm25QueryPlan struct {
 	terms   []weightedTermPostings
 }
 
+type bm25ScoreScratch struct {
+	scores      []float64
+	generations []uint32
+	touched     []uint32
+	top         minScoreHeap
+	generation  uint32
+}
+
+func (f *FulltextIndexV2) getScoreScratch() *bm25ScoreScratch {
+	var scratch *bm25ScoreScratch
+	if pooled := f.scoreScratchPool.Get(); pooled != nil {
+		scratch = pooled.(*bm25ScoreScratch)
+	} else {
+		scratch = &bm25ScoreScratch{}
+	}
+	if cap(scratch.scores) < len(f.docLengths) {
+		scratch.scores = make([]float64, len(f.docLengths))
+		scratch.generations = make([]uint32, len(f.docLengths))
+	} else {
+		scratch.scores = scratch.scores[:len(f.docLengths)]
+		scratch.generations = scratch.generations[:len(f.docLengths)]
+	}
+	scratch.generation++
+	if scratch.generation == 0 {
+		clear(scratch.generations)
+		scratch.generation = 1
+	}
+	scratch.touched = scratch.touched[:0]
+	return scratch
+}
+
+func (f *FulltextIndexV2) putScoreScratch(scratch *bm25ScoreScratch) {
+	f.scoreScratchPool.Put(scratch)
+}
+
 func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
 	termWeights := make(map[string]float64, len(queryTerms))
 	for _, term := range queryTerms {
@@ -518,16 +562,53 @@ type scoredDoc struct {
 
 type minScoreHeap []scoredDoc
 
-func (h minScoreHeap) Len() int            { return len(h) }
-func (h minScoreHeap) Less(i, j int) bool  { return h[i].score < h[j].score }
-func (h minScoreHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *minScoreHeap) Push(x interface{}) { *h = append(*h, x.(scoredDoc)) }
-func (h *minScoreHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
+func pushMinScore(h minScoreHeap, candidate scoredDoc) minScoreHeap {
+	h = append(h, candidate)
+	child := len(h) - 1
+	for child > 0 {
+		parent := (child - 1) / 2
+		if h[parent].score <= h[child].score {
+			break
+		}
+		h[parent], h[child] = h[child], h[parent]
+		child = parent
+	}
+	return h
+}
+
+func replaceMinScore(h minScoreHeap, candidate scoredDoc) {
+	h[0] = candidate
+	parent := 0
+	for {
+		left := parent*2 + 1
+		if left >= len(h) {
+			return
+		}
+		smallest := left
+		right := left + 1
+		if right < len(h) && h[right].score < h[left].score {
+			smallest = right
+		}
+		if h[parent].score <= h[smallest].score {
+			return
+		}
+		h[parent], h[smallest] = h[smallest], h[parent]
+		parent = smallest
+	}
+}
+
+func sortScoreHeapDescending(h minScoreHeap) []scoredDoc {
+	slices.SortFunc(h, func(left, right scoredDoc) int {
+		switch {
+		case left.score > right.score:
+			return -1
+		case left.score < right.score:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return h
 }
 
 func topKMinScore(scores map[uint32]float64, k int) float64 {
@@ -537,12 +618,11 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
 		if len(h) < k {
-			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
+			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
 			continue
 		}
 		if score > h[0].score {
-			h[0] = scoredDoc{docNum: docNum, score: score}
-			heap.Fix(&h, 0)
+			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
 		}
 	}
 	if len(h) < k {
@@ -558,19 +638,37 @@ func topKFromScores(scores map[uint32]float64, k int) []scoredDoc {
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
 		if len(h) < k {
-			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
+			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
 			continue
 		}
 		if score > h[0].score {
-			h[0] = scoredDoc{docNum: docNum, score: score}
-			heap.Fix(&h, 0)
+			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
 		}
 	}
-	out := make([]scoredDoc, len(h))
-	for i := len(h) - 1; i >= 0; i-- {
-		out[i] = heap.Pop(&h).(scoredDoc)
+	return sortScoreHeapDescending(h)
+}
+
+func topKFromDenseScores(scores []float64, touched []uint32, k int, h minScoreHeap) []scoredDoc {
+	if k <= 0 || len(touched) == 0 {
+		return nil
 	}
-	return out
+	heapCapacity := minInt(k, len(touched))
+	if cap(h) < heapCapacity {
+		h = make(minScoreHeap, 0, heapCapacity)
+	} else {
+		h = h[:0]
+	}
+	for _, docNum := range touched {
+		score := scores[docNum]
+		if len(h) < k {
+			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
+			continue
+		}
+		if score > h[0].score {
+			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
+		}
+	}
+	return sortScoreHeapDescending(h)
 }
 
 func minInt(a, b int) int {
