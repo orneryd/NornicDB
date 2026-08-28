@@ -92,6 +92,28 @@ func TestAdaptiveVectorSearchStopsAtConfiguredCap(t *testing.T) {
 	require.Equal(t, 1, stats.retries)
 }
 
+func TestAdaptiveVectorSearchAppliesIVFPQRerankCapAtServiceLayer(t *testing.T) {
+	index := &IVFPQIndex{
+		profile:      IVFPQProfile{Dimensions: 1, NProbe: 1, RerankTopK: 2},
+		centroids:    [][]float32{{1}},
+		centroidNorm: [][]float32{{1}},
+		codebooks: []ivfpqCodebook{
+			{SubDim: 1, Codeword: [][]float32{{0}, {1}}},
+		},
+		lists: []ivfpqList{
+			{IDs: []string{"doc-1", "doc-2", "doc-3"}, CodeSize: 1, Codes: []byte{1, 1, 1}},
+		},
+	}
+	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 1)
+	pipeline := NewVectorSearchPipeline(NewIVFPQCandidateGen(index, 1), &IdentityExactScorer{})
+	opts := adaptiveOverfetchTestOptions(3)
+
+	results, _, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1}, opts, nil)
+
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+}
+
 func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 	index := &recordingBM25Index{results: []indexResult{
 		{ID: "skip", Score: 1.0},
@@ -123,6 +145,36 @@ func TestAdaptiveBM25SearchStopsWhenSourceIsExhausted(t *testing.T) {
 	require.Equal(t, []int{2}, index.limits)
 	require.Len(t, results, 1)
 	require.Zero(t, stats.retries)
+}
+
+func TestFullTextSearchOnlyUsesAdaptiveWidening(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	service := NewServiceWithDimensions(engine, 2)
+	for _, node := range []*storage.Node{
+		{ID: "nornic:skip", Labels: []string{"Other"}},
+		{ID: "nornic:doc-1", Labels: []string{"Doc"}},
+		{ID: "nornic:doc-2", Labels: []string{"Doc"}},
+		{ID: "nornic:doc-3", Labels: []string{"Doc"}},
+	} {
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+	}
+	index := &recordingBM25Index{results: []indexResult{
+		{ID: "nornic:skip", Score: 1.0},
+		{ID: "nornic:doc-1", Score: 0.9},
+		{ID: "nornic:doc-2", Score: 0.8},
+		{ID: "nornic:doc-3", Score: 0.7},
+	}}
+	service.fulltextIndex = index
+	opts := adaptiveOverfetchTestOptions(2)
+	opts.Types = []string{"Doc"}
+
+	response, err := service.fullTextSearchOnly(context.Background(), "query", opts)
+
+	require.NoError(t, err)
+	require.Equal(t, []int{2, 4}, index.limits)
+	require.Equal(t, 1, response.Metrics.BM25OverfetchRetries)
+	require.Equal(t, 4, response.Metrics.BM25RawCandidates)
 }
 
 func TestVectorQueryNodesIndexedUsesAdaptiveWidening(t *testing.T) {

@@ -4161,6 +4161,24 @@ func resolveAdaptiveOverfetch(opts *SearchOptions) adaptiveOverfetchConfig {
 	}
 }
 
+func resolveVectorAdaptiveOverfetch(opts *SearchOptions, pipeline *VectorSearchPipeline) adaptiveOverfetchConfig {
+	if pipeline == nil {
+		return resolveAdaptiveOverfetch(opts)
+	}
+	generator, ok := pipeline.candidateGen.(*IVFPQCandidateGen)
+	if !ok || generator.index == nil || generator.index.profile.RerankTopK <= 0 {
+		return resolveAdaptiveOverfetch(opts)
+	}
+	if opts == nil {
+		opts = DefaultSearchOptions()
+	}
+	effective := *opts
+	if effective.MaxCandidateLimit <= 0 || generator.index.profile.RerankTopK < effective.MaxCandidateLimit {
+		effective.MaxCandidateLimit = generator.index.profile.RerankTopK
+	}
+	return resolveAdaptiveOverfetch(&effective)
+}
+
 func (s *Service) adaptiveVectorSearch(
 	ctx context.Context,
 	pipeline *VectorSearchPipeline,
@@ -4171,7 +4189,7 @@ func (s *Service) adaptiveVectorSearch(
 	if opts == nil {
 		opts = DefaultSearchOptions()
 	}
-	config := resolveAdaptiveOverfetch(opts)
+	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
 	var stats vectorOverfetchStats
 	for {
@@ -6015,13 +6033,17 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 		}, nil
 	}
 	bm25Start := time.Now()
-	results := ft.Search(query, opts.Limit*2)
-	bm25Ms := int(time.Since(bm25Start).Milliseconds())
-
 	seenOrphans := make(map[string]bool)
-	if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-		results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) []indexResult {
+		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		}
+		return results
+	})
+	if err != nil {
+		return nil, err
 	}
+	bm25Ms := int(time.Since(bm25Start).Milliseconds())
 
 	searchResults := s.enrichIndexResults(ctx, results, opts.Limit, seenOrphans)
 	// Full-text only: set bm25_rank from position (1-based), vector_rank = 0
@@ -6041,9 +6063,11 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 		FallbackTriggered: true,
 		Message:           "Full-text BM25 search (vector search unavailable or returned no results)",
 		Metrics: &SearchMetrics{
-			BM25SearchTimeMs: bm25Ms,
-			TotalTimeMs:      totalMs,
-			BM25Candidates:   len(results),
+			BM25SearchTimeMs:     bm25Ms,
+			TotalTimeMs:          totalMs,
+			BM25Candidates:       len(results),
+			BM25RawCandidates:    bm25Stats.rawCandidates,
+			BM25OverfetchRetries: bm25Stats.retries,
 		},
 	}, nil
 }
