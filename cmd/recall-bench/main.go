@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/eval/ir"
 	"github.com/orneryd/nornicdb/pkg/localllm"
@@ -60,6 +61,12 @@ type benchmarkProgress struct {
 	interval      time.Duration
 	completed     int
 	total         int
+}
+
+func benchmarkConfig() *config.Config {
+	benchmarkConfig := nornicdb.DefaultConfig()
+	benchmarkConfig.Memory.SearchBM25Properties = []string{"title", "text"}
+	return benchmarkConfig
 }
 
 func newBenchmarkProgress(total int, interval time.Duration) *benchmarkProgress {
@@ -373,7 +380,7 @@ func runRetrieval(args []string) {
 		fmt.Fprintln(os.Stderr, "read queries:", err)
 		os.Exit(1)
 	}
-	db, err := nornicdb.Open(*dataDir, nil)
+	db, err := nornicdb.Open(*dataDir, benchmarkConfig())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open database:", err)
 		os.Exit(1)
@@ -505,7 +512,7 @@ func runIngest(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	config := nornicdb.DefaultConfig()
+	config := benchmarkConfig()
 	config.EmbeddingWorker.ChunkSize = *embeddingChunkSize
 	config.EmbeddingWorker.ChunkOverlap = *embeddingChunkOverlap
 	db, err := nornicdb.Open(*dataDir, config)

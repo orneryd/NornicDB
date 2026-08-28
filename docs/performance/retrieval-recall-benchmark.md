@@ -159,12 +159,13 @@ and differ in models, chunking, and indexing.
 
 | Retrieval profile                               | Recall@100 | nDCG@10 |
 | ----------------------------------------------- | ---------: | ------: |
-| BM25 V2                                         |    0.88422 | 0.59974 |
+| BM25 V2, historical 32-prefix baseline          |    0.88422 | 0.59974 |
+| BM25 V2, exact Unicode title/text projection    |    0.88256 | 0.66345 |
 | HNSW accurate, equal RRF weights                |    0.93767 | 0.65534 |
 | Exact CPU brute force, equal RRF weights        |    0.94433 | 0.67932 |
 | Exact CPU brute force, previous adaptive policy |    0.92600 | 0.67321 |
 
-The BM25 profile also measured MRR@10 `0.56161` and MAP@100 `0.55487`.
+The exact Unicode BM25 profile measured Recall@10 `0.78761`, MRR@10 `0.63089`, and MAP@100 `0.62315`. Against the historical prefix-expanded profile, paired-bootstrap nDCG@10 improved by `0.06371` (95% CI `+0.04315..+0.08541`). Recall@100 changed by `-0.00167` (95% CI `-0.02000..+0.01500`), which is not statistically significant.
 The equal-weight production default was selected because it improved the
 controlled SciFact recall result over the previous word-count heuristic. Repeat
 the protocol on additional BEIR datasets before treating it as a universal rule.

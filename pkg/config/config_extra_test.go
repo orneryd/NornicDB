@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -53,6 +54,24 @@ func TestApplyEnvVars_FlashAttentionAllowsZeroOverride(t *testing.T) {
 	assert.Equal(t, 0, cfg.Memory.EmbeddingFlashAttn)
 	assert.Equal(t, 0, cfg.Features.HeimdallFlashAttn)
 	assert.Equal(t, 0, cfg.Features.RerankFlashAttn)
+}
+
+func TestLoadFromEnv_BM25Properties(t *testing.T) {
+	t.Setenv("NORNICDB_SEARCH_BM25_PROPERTIES", " title, text, ,summary ")
+
+	cfg := LoadFromEnv()
+
+	require.Equal(t, []string{"title", "text", "summary"}, cfg.Memory.SearchBM25Properties)
+}
+
+func TestLoadFromFile_BM25Properties(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nornicdb.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("search:\n  bm25_properties: [title, text]\n"), 0o600))
+
+	cfg, err := LoadFromFile(path)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"title", "text"}, cfg.Memory.SearchBM25Properties)
 }
 
 // ============================================================================

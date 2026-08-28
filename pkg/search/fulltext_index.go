@@ -13,12 +13,15 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // BM25 parameters (standard values)
 const (
-	bm25K1 = 1.2  // Term frequency saturation
-	bm25B  = 0.75 // Length normalization
+	bm25K1              = 1.2  // Term frequency saturation
+	bm25B               = 0.75 // Length normalization
+	bm25AnalyzerVersion = "unicode-nfkc-casefold-v1"
 )
 
 // FulltextIndex provides BM25-based full-text search.
@@ -61,7 +64,7 @@ func NewFulltextIndex() *FulltextIndex {
 // fulltextIndexFormatVersion is the semver written into saved index files (Qdrant-style).
 // On load, if the file's version is not equal to this, the file is not loaded (caller rebuilds).
 // If the file was written by a newer version, we log and skip so the user can upgrade.
-const fulltextIndexFormatVersion = "1.0.0"
+const fulltextIndexFormatVersion = "1.1.0"
 
 // fulltextIndexSnapshot is the serializable form of the BM25 index (no mutex).
 type fulltextIndexSnapshot struct {
@@ -567,48 +570,14 @@ func lexicalSeedMinDocumentFrequency() int {
 	return minFrequency
 }
 
-// tokenize splits text into lowercase tokens.
-// Removes punctuation and common stop words.
+// tokenize splits canonically equivalent Unicode text into exact terms.
 func tokenize(text string) []string {
-	// Convert to lowercase
-	text = strings.ToLower(text)
+	text = cases.Fold().String(norm.NFKC.String(text))
 
-	// Split on non-alphanumeric characters
 	words := strings.FieldsFunc(text, func(c rune) bool {
-		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
+		return !unicode.IsLetter(c) && !unicode.IsDigit(c) && !unicode.IsMark(c)
 	})
-
-	// Filter stop words and short tokens
-	var tokens []string
-	for _, word := range words {
-		if len(word) < 2 {
-			continue
-		}
-		if isStopWord(word) {
-			continue
-		}
-		tokens = append(tokens, word)
-	}
-
-	return tokens
-}
-
-// isStopWord checks if a word is a common stop word.
-// This is a minimal list focused on truly generic words.
-// Technical terms like "learning", "query", etc. are deliberately NOT filtered.
-var stopWords = map[string]bool{
-	"a": true, "an": true, "and": true, "are": true, "as": true,
-	"at": true, "be": true, "by": true, "for": true, "from": true,
-	"has": true, "have": true, "he": true, "in": true, "is": true,
-	"it": true, "its": true, "of": true, "on": true, "or": true,
-	"that": true, "the": true, "to": true, "was": true, "were": true,
-	"with": true, "this": true, "but": true, "they": true,
-	"we": true, "you": true, "your": true, "my": true, "their": true,
-	"been": true, "do": true, "does": true, "did": true,
-}
-
-func isStopWord(word string) bool {
-	return stopWords[word]
+	return words
 }
 
 // PhraseSearch searches for an exact phrase match.

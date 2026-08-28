@@ -44,6 +44,12 @@ func TestDatabaseRetrieverRRFOptions(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestBenchmarkConfigProjectsCanonicalContentFields(t *testing.T) {
+	config := benchmarkConfig()
+
+	require.Equal(t, []string{"title", "text"}, config.Memory.SearchBM25Properties)
+}
+
 func TestBenchmarkRunResultsCanonicalDocumentRerank(t *testing.T) {
 	results := []*nornicdb.SearchResult{
 		{Node: &nornicdb.Node{Properties: map[string]any{"beir_id": "doc-1", "title": "First", "text": "lower"}}, Score: 0.9},

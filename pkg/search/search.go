@@ -468,8 +468,10 @@ type Service struct {
 	// Primary BM25 implementation used by the live search pipeline.
 	fulltextIndex bm25Index
 	bm25Engine    string
-	reranker      Reranker
-	mu            sync.RWMutex
+	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
+	fulltextProperties []string
+	reranker           Reranker
+	mu                 sync.RWMutex
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu        sync.Mutex
@@ -5158,8 +5160,8 @@ func envFloat(key string, fallback float64) float64 {
 	return v
 }
 
-// bm25SettingsEquivalent treats legacy BM25 format version as compatible when schema/props match.
-// This avoids unnecessary fulltext rebuilds during one-time migration from legacy bm25 to bm25.v2.
+// bm25SettingsEquivalent treats V1 BM25 as migration-compatible only when its
+// schema, property projection, and analyzer match the current V2 settings.
 func bm25SettingsEquivalent(saved, current, currentFormat string) bool {
 	if saved == current {
 		return true
@@ -5183,11 +5185,15 @@ func bm25SettingsEquivalent(saved, current, currentFormat string) bool {
 	if savedKV["schema"] == "" || currentKV["schema"] == "" {
 		return false
 	}
-	if savedKV["schema"] != currentKV["schema"] || savedKV["props"] != currentKV["props"] {
+	if savedKV["schema"] != currentKV["schema"] ||
+		savedKV["props"] != currentKV["props"] ||
+		savedKV["analyzer"] == "" ||
+		savedKV["analyzer"] != currentKV["analyzer"] {
 		return false
 	}
-	// Treat BM25 format 1.0.0 and current V2 format as equivalent for rebuild gating.
-	return savedKV["format"] == "1.0.0" && currentKV["format"] == currentFormat && currentFormat == bm25V2FormatVersion
+	return savedKV["format"] == fulltextIndexFormatVersion &&
+		currentKV["format"] == currentFormat &&
+		currentFormat == bm25V2FormatVersion
 }
 
 func envDurationMs(key string, fallbackMs int) time.Duration {
@@ -5927,6 +5933,19 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 	// The storage engine (AsyncEngine) makes copies during iteration to
 	// prevent concurrent modification issues.
 
+	properties := s.FulltextProperties()
+	if len(properties) > 0 {
+		parts := make([]string, 0, len(properties))
+		for _, property := range properties {
+			if value, ok := node.Properties[property]; ok {
+				if text := propertyToString(value); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+
 	var parts []string
 
 	// 1. Add labels first (important for type-based search)
@@ -5957,6 +5976,36 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// SetFulltextProperties limits BM25 indexing to the ordered property values.
+// An empty list preserves the default behavior of indexing labels and all properties.
+// Configure this before building indexes.
+func (s *Service) SetFulltextProperties(properties []string) {
+	seen := make(map[string]struct{}, len(properties))
+	normalized := make([]string, 0, len(properties))
+	for _, property := range properties {
+		property = strings.TrimSpace(property)
+		if property == "" {
+			continue
+		}
+		if _, exists := seen[property]; exists {
+			continue
+		}
+		seen[property] = struct{}{}
+		normalized = append(normalized, property)
+	}
+	s.mu.Lock()
+	s.fulltextProperties = normalized
+	s.mu.Unlock()
+}
+
+// FulltextProperties returns the configured ordered BM25 property allowlist.
+func (s *Service) FulltextProperties() []string {
+	s.mu.RLock()
+	properties := append([]string(nil), s.fulltextProperties...)
+	s.mu.RUnlock()
+	return properties
 }
 
 // propertyToString converts any property value to a searchable string.
