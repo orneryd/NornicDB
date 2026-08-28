@@ -41,6 +41,26 @@ func TestIVFPQIndex_SearchApprox(t *testing.T) {
 	require.GreaterOrEqual(t, out[0].Score, out[len(out)-1].Score)
 }
 
+func TestIVFPQIndexSearchApproxHonorsRequestedDepthOverLegacyRerankCap(t *testing.T) {
+	idx := &IVFPQIndex{
+		profile:      IVFPQProfile{Dimensions: 1, NProbe: 2, RerankTopK: 1},
+		centroids:    [][]float32{{1}, {1}},
+		centroidNorm: [][]float32{{1}, {1}},
+		codebooks: []ivfpqCodebook{
+			{SubDim: 1, Codeword: [][]float32{{0}, {1}}},
+		},
+		lists: []ivfpqList{
+			{IDs: []string{"doc-1"}, CodeSize: 1, Codes: []byte{1}},
+			{IDs: []string{"doc-2"}, CodeSize: 1, Codes: []byte{1}},
+		},
+	}
+
+	out, err := idx.SearchApprox(context.Background(), []float32{1}, 2, -1, 2)
+
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+}
+
 func TestIVFPQ_InternalHelpersAndScratch(t *testing.T) {
 	codebooks := []ivfpqCodebook{
 		{SubDim: 1, Codeword: [][]float32{{0.1}, {0.9}}},

@@ -33,9 +33,6 @@ func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, m
 	}
 
 	totalLimit := boundCandidateLimit(k)
-	if i.profile.RerankTopK > 0 && totalLimit > i.profile.RerankTopK {
-		totalLimit = i.profile.RerankTopK
-	}
 	if totalLimit <= 0 {
 		return []Candidate{}, nil
 	}
