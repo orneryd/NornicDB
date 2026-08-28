@@ -3869,39 +3869,54 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		bm25CandidateLimit = 20
 	}
 
-	// Step 1: Vector search
+	ctx = withQueryText(ctx, query)
+	indexStart := time.Now()
+	type bm25RetrievalResult struct {
+		results  []indexResult
+		duration time.Duration
+	}
+	bm25ResultCh := make(chan bm25RetrievalResult, 1)
+	go func() {
+		bm25Start := time.Now()
+		var results []indexResult
+		if fulltextIndex != nil {
+			results = fulltextIndex.Search(query, bm25CandidateLimit)
+		}
+		bm25ResultCh <- bm25RetrievalResult{
+			results:  results,
+			duration: time.Since(bm25Start),
+		}
+	}()
+
+	// Step 1: Vector search, concurrent with BM25 retrieval.
 	vectorStart := time.Now()
 	var vectorResults []indexResult
-	ctx = withQueryText(ctx, query)
 	pipeline, pipelineErr := s.getOrCreateVectorPipeline(ctx)
-	if pipelineErr != nil {
-		return nil, pipelineErr
-	}
-	scored, searchErr := pipeline.Search(ctx, embedding, vectorCandidateLimit, opts.GetMinSimilarity(0.5))
-	if searchErr != nil {
-		return nil, searchErr
-	}
-	for _, r := range scored {
-		vectorResults = append(vectorResults, indexResult{ID: r.ID, Score: r.Score})
+	if pipelineErr == nil {
+		var scored []ScoredCandidate
+		scored, pipelineErr = pipeline.Search(ctx, embedding, vectorCandidateLimit, opts.GetMinSimilarity(0.5))
+		if pipelineErr == nil {
+			for _, r := range scored {
+				vectorResults = append(vectorResults, indexResult{ID: r.ID, Score: r.Score})
+			}
+		}
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
 
-	// Step 2: BM25 full-text search (skip if no full-text index; ranks will have vector only)
-	bm25Start := time.Now()
-	var bm25Results []indexResult
-	if fulltextIndex != nil {
-		bm25Results = fulltextIndex.Search(query, bm25CandidateLimit)
+	// Step 2: Always join BM25 before returning or touching shared post-processing state.
+	bm25Result := <-bm25ResultCh
+	bm25Results := bm25Result.results
+	bm25Ms := int(bm25Result.duration.Milliseconds())
+	if pipelineErr != nil {
+		return nil, pipelineErr
 	}
-	bm25Ms := int(time.Since(bm25Start).Milliseconds())
 
 	// Plan 04-05-05: observe combined vector+bm25 wall-clock as the
-	// "index" stage per AllowedSearchStages. Both lookups execute
-	// sequentially today; combining them at observation cadence captures
-	// the joint stage budget for capacity planning. Per-index micro-detail
-	// remains in the SearchMetrics struct response payload (vectorMs +
-	// bm25Ms separately).
+	// "index" stage per AllowedSearchStages. Per-index micro-detail remains
+	// in the SearchMetrics response payload while this duration records the
+	// parallel branch wall time.
 	s.observeSearchStage(ctx, "hybrid", "index",
-		time.Since(vectorStart)) // vectorStart→bm25End wall clock
+		time.Since(indexStart))
 
 	// Collapse vector IDs back to unique node IDs.
 	vectorResults = collapseIndexResultsByNodeID(vectorResults)
