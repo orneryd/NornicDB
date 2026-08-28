@@ -89,7 +89,7 @@ const minRefreshOnEmptyInterval = 30 * time.Second
 // EmbedWorkerConfig holds configuration for the embedding worker.
 type EmbedWorkerConfig struct {
 	// Worker settings
-	NumWorkers   int           // Number of concurrent workers (default: 1, use more for network/parallel processing)
+	NumWorkers   int           // Number of concurrent workers (default: 1, 0 disables background workers)
 	ScanInterval time.Duration // How often to scan for nodes without embeddings (default: 5s)
 	BatchDelay   time.Duration // Delay between processing nodes (default: 500ms)
 	MaxRetries   int           // Max retry attempts per node (default: 3)
@@ -141,7 +141,7 @@ func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
 
 // NewEmbedWorker creates a new async embedding worker pool.
 // If embedder is nil, the worker will wait for SetEmbedder() to be called.
-// NumWorkers controls how many concurrent workers process embeddings in parallel.
+// NumWorkers controls how many concurrent workers process embeddings in parallel; zero disables them.
 // Use more workers for network-based embedders (OpenAI, etc.) or when you have
 // multiple GPUs/CPUs available for local embedding generation.
 func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *EmbedWorkerConfig) *EmbedWorker {
@@ -149,8 +149,7 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
 		config = DefaultEmbedWorkerConfig()
 	}
 
-	// Ensure at least 1 worker
-	if config.NumWorkers < 1 {
+	if config.NumWorkers < 0 {
 		config.NumWorkers = 1
 	}
 	if config.EmbedBatchSize < 1 {
@@ -197,14 +196,13 @@ func (ew *EmbedWorker) StartWorkers() {
 	}
 	ew.workersStarted = true
 	numWorkers := ew.config.NumWorkers
-	if numWorkers < 1 {
-		numWorkers = 1
-	}
 	for i := 0; i < numWorkers; i++ {
 		ew.wg.Add(1)
 		go ew.worker()
 	}
-	if numWorkers > 1 {
+	if numWorkers == 0 {
+		fmt.Println("🧠 Embed queue workers disabled (configured workers=0)")
+	} else if numWorkers > 1 {
 		fmt.Printf("🧠 Started %d embedding workers for parallel processing\n", numWorkers)
 	} else {
 		fmt.Println("🧠 Embed queue workers started (after DB warmup)")

@@ -506,19 +506,30 @@ func TestSearchCacheKeyAndMinSimilarityHelpers(t *testing.T) {
 	optsB := DefaultSearchOptions()
 	optsB.Types = []string{"memory", "todo"} // different order, same semantic key
 
-	keyA := searchCacheKey("hello", optsA)
-	keyB := searchCacheKey("hello", optsB)
+	keyA := searchCacheKey("hello", []float32{0.1, 0.2}, optsA)
+	keyB := searchCacheKey("hello", []float32{0.1, 0.2}, optsB)
 	require.Equal(t, keyA, keyB)
 
-	keyNil := searchCacheKey("hello", nil)
+	keyNil := searchCacheKey("hello", nil, nil)
 	require.NotEmpty(t, keyNil)
 	require.NotEqual(t, keyA, keyNil)
+	require.NotEqual(t, keyA, searchCacheKey("hello", []float32{0.1, 0.3}, optsA))
 
 	ms := 0.42
 	optsA.MinSimilarity = &ms
 	require.Equal(t, 0.42, optsA.GetMinSimilarity(0.1))
 	optsA.MinSimilarity = nil
 	require.Equal(t, 0.1, optsA.GetMinSimilarity(0.1))
+}
+
+func TestSearchResultCacheCanBeDisabled(t *testing.T) {
+	t.Setenv(EnvSearchResultCacheEnabled, "false")
+	disabled := NewService(storage.NewMemoryEngine())
+	require.Nil(t, disabled.resultCache)
+
+	t.Setenv(EnvSearchResultCacheEnabled, "true")
+	enabled := NewService(storage.NewMemoryEngine())
+	require.NotNil(t, enabled.resultCache)
 }
 
 func TestSearchBM25EngineHelpers(t *testing.T) {
@@ -737,22 +748,25 @@ func TestSearchService_BuildIndexes_ContextCanceled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestVectorOverfetchLimitBoundaries(t *testing.T) {
+func TestResolveAdaptiveOverfetchBoundaries(t *testing.T) {
 	cases := []struct {
-		limit int
-		want  int
+		limit       int
+		wantTarget  int
+		wantInitial int
 	}{
-		{limit: 0, want: 20},     // default when unset/invalid
-		{limit: -5, want: 20},    // default when negative
-		{limit: 1, want: 50},     // minimum floor
-		{limit: 5, want: 50},     // minimum floor
-		{limit: 100, want: 1000}, // normal scale
-		{limit: 500, want: 5000}, // hard cap
-		// Overflow-safe path: limit*10 wraps, function clamps defensively.
-		{limit: int(^uint(0) >> 1), want: 5000},
+		{limit: 0, wantTarget: 20, wantInitial: 30},
+		{limit: -5, wantTarget: 20, wantInitial: 30},
+		{limit: 1, wantTarget: 20, wantInitial: 30},
+		{limit: 100, wantTarget: 200, wantInitial: 300},
+		{limit: 5000, wantTarget: MaxCandidates, wantInitial: MaxCandidates},
+		{limit: int(^uint(0) >> 1), wantTarget: MaxCandidates, wantInitial: MaxCandidates},
 	}
 	for _, tc := range cases {
-		require.Equal(t, tc.want, vectorOverfetchLimit(tc.limit))
+		opts := DefaultSearchOptions()
+		opts.Limit = tc.limit
+		config := resolveAdaptiveOverfetch(opts)
+		require.Equal(t, tc.wantTarget, config.target)
+		require.Equal(t, tc.wantInitial, config.initialLimit)
 	}
 }
 

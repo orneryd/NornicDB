@@ -67,7 +67,7 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	// exact cluster search (which still benefits from centroid routing).
 	for _, cid := range clusterIDs {
 		if g.getClusterHNSW(cid) == nil {
-			results, err := g.clusterIndex.SearchWithClusters(query, calculateCandidateLimit(k), len(clusterIDs))
+			results, err := g.clusterIndex.SearchWithClusters(query, boundCandidateLimit(k), len(clusterIDs))
 			if err != nil {
 				return nil, err
 			}
@@ -83,11 +83,8 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		}
 	}
 
-	totalLimit := calculateCandidateLimit(k)
-	perCluster := totalLimit / len(clusterIDs)
-	if perCluster < 50 {
-		perCluster = 50
-	}
+	totalLimit := boundCandidateLimit(k)
+	perCluster := (totalLimit + len(clusterIDs) - 1) / len(clusterIDs)
 
 	best := make(map[string]float64, totalLimit)
 	for _, cid := range clusterIDs {
@@ -115,5 +112,8 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		out = append(out, Candidate{ID: id, Score: score})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	if len(out) > totalLimit {
+		out = out[:totalLimit]
+	}
 	return out, nil
 }

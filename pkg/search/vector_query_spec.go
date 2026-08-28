@@ -209,6 +209,13 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 }
 
 func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string) ([]VectorQueryHit, error) {
+	opts := DefaultSearchOptions()
+	opts.Limit = spec.Limit
+	opts.CandidateTarget = spec.Limit
+	return s.vectorQueryNodesIndexedWithOptions(ctx, queryEmbedding, spec, vectorName, opts)
+}
+
+func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, opts *SearchOptions) ([]VectorQueryHit, error) {
 	if s.EmbeddingCount() == 0 {
 		return nil, nil
 	}
@@ -218,34 +225,61 @@ func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []
 		return nil, err
 	}
 
-	// Overfetch to keep recall reasonable after applying Cypher precedence rules.
-	overfetch, ok := util.SafeIntProduct(spec.Limit, 50)
-	if !ok {
-		overfetch = 20000
+	resolved := DefaultSearchOptions()
+	if opts != nil {
+		copy := *opts
+		resolved = &copy
 	}
-	if overfetch < 200 {
-		overfetch = 200
+	resolved.Limit = spec.Limit
+	if resolved.CandidateTarget <= 0 {
+		resolved.CandidateTarget = spec.Limit
 	}
-	if overfetch > 20000 {
-		overfetch = 20000
+	minSimilarity := -1.0
+	resolved.MinSimilarity = &minSimilarity
+	normalizedQuery := vector.Normalize(queryEmbedding)
+
+	var supplement []vectorQueryScoredNode
+	if spec.Property != "" {
+		supplement, err = s.exactPropertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Preserve full cosine range [-1, 1] so Cypher expression semantics can
-	// represent both nearest and farthest ordering correctly.
-	scored, err := pipeline.Search(ctx, queryEmbedding, overfetch, -1.0)
+	var postProcessErr error
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, func(candidates []indexResult) []indexResult {
+		if postProcessErr != nil {
+			return nil
+		}
+		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement)
+		postProcessErr = processErr
+		return processed
+	})
 	if err != nil {
 		if errors.Is(err, ErrDimensionMismatch) {
 			return nil, nil
 		}
 		return nil, err
 	}
-
-	candidateNodes := make(map[string]struct{}, len(scored))
-	for _, r := range scored {
-		candidateNodes[normalizeVectorResultIDToNodeID(r.ID)] = struct{}{}
+	if postProcessErr != nil {
+		return nil, postProcessErr
 	}
 
-	normalizedQuery := vector.Normalize(queryEmbedding)
+	hits := make([]VectorQueryHit, 0, min(len(results), spec.Limit))
+	for _, result := range results {
+		hits = append(hits, VectorQueryHit{ID: result.ID, Score: result.Score})
+		if len(hits) >= spec.Limit {
+			break
+		}
+	}
+	return hits, nil
+}
+
+func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode) ([]indexResult, error) {
+	candidateNodes := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
+	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
 	meta := s.snapshotVectorQueryCandidateMeta(candidateNodes)
@@ -322,23 +356,15 @@ func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []
 	}
 
 	if spec.Property != "" {
-		supplement, err := s.exactPropertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property)
-		if err != nil {
-			return nil, err
-		}
 		out = append(out, supplement...)
 	}
 	out = collapseScoredNodesByID(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].score > out[j].score })
-	if len(out) > spec.Limit {
-		out = out[:spec.Limit]
+	results := make([]indexResult, 0, len(out))
+	for _, result := range out {
+		results = append(results, indexResult{ID: result.id, Score: result.score})
 	}
-
-	hits := make([]VectorQueryHit, 0, len(out))
-	for _, r := range out {
-		hits = append(hits, VectorQueryHit{ID: r.id, Score: r.score})
-	}
-	return hits, nil
+	return results, nil
 }
 
 type vectorQueryScoredNode struct {

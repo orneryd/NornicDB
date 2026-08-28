@@ -167,33 +167,34 @@ func sequentialHybridReference(
 	opts *SearchOptions,
 ) (sequentialHybridReferenceResult, error) {
 	ctx := withQueryText(context.Background(), query)
-	vectorLimit := vectorOverfetchLimit(opts.Limit)
-	bm25Limit := max(opts.Limit*2, 20)
-
 	pipeline, err := svc.getOrCreateVectorPipeline(ctx)
 	if err != nil {
 		return sequentialHybridReferenceResult{}, err
 	}
-	scored, err := pipeline.Search(ctx, embedding, vectorLimit, opts.GetMinSimilarity(0.5))
+	seenOrphans := make(map[string]bool)
+	vectorResults, _, err := svc.adaptiveVectorSearch(ctx, pipeline, embedding, opts, func(results []indexResult) []indexResult {
+		results = svc.filterDecayedCandidates(results)
+		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+			results = svc.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		}
+		return results
+	})
 	if err != nil {
 		return sequentialHybridReferenceResult{}, err
 	}
-	vectorResults := make([]indexResult, 0, len(scored))
-	for _, result := range scored {
-		vectorResults = append(vectorResults, indexResult{ID: result.ID, Score: result.Score})
-	}
-	vectorResults = collapseIndexResultsByNodeID(vectorResults)
 
 	var bm25Results []indexResult
 	if svc.fulltextIndex != nil {
-		bm25Results = svc.fulltextIndex.Search(query, bm25Limit)
-	}
-	vectorResults = svc.filterDecayedCandidates(vectorResults)
-	bm25Results = svc.filterDecayedCandidates(bm25Results)
-	seenOrphans := make(map[string]bool)
-	if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-		vectorResults = svc.filterByTypeAndProperties(ctx, vectorResults, opts.Types, opts.Filters, seenOrphans)
-		bm25Results = svc.filterByTypeAndProperties(ctx, bm25Results, opts.Types, opts.Filters, seenOrphans)
+		bm25Results, _, err = svc.adaptiveBM25Search(ctx, svc.fulltextIndex, query, opts, func(results []indexResult) []indexResult {
+			results = svc.filterDecayedCandidates(results)
+			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+				results = svc.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+			}
+			return results
+		})
+		if err != nil {
+			return sequentialHybridReferenceResult{}, err
+		}
 	}
 	fusedResults := svc.fuseRRF(vectorResults, bm25Results, opts)
 	results := svc.enrichResults(ctx, fusedResults, opts.Limit, seenOrphans)

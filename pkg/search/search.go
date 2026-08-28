@@ -94,8 +94,10 @@ package search
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"math"
 	"os"
@@ -141,8 +143,11 @@ const (
 	// EnvSearchLogTimings enables per-query timing logs for search stages.
 	// When true, logs vector/BM25/fusion/total timing to help identify bottlenecks.
 	EnvSearchLogTimings = "NORNICDB_SEARCH_LOG_TIMINGS"
-	BM25EngineV1        = "v1"
-	BM25EngineV2        = "v2"
+	// EnvSearchResultCacheEnabled controls caching of complete Search responses.
+	// Disable it for benchmarks that must execute every retrieval stage.
+	EnvSearchResultCacheEnabled = "NORNICDB_SEARCH_RESULT_CACHE_ENABLED"
+	BM25EngineV1                = "v1"
+	BM25EngineV2                = "v2"
 )
 
 type bm25Index interface {
@@ -253,13 +258,17 @@ type SearchResponse struct {
 
 // SearchMetrics contains timing and statistics.
 type SearchMetrics struct {
-	VectorSearchTimeMs int `json:"vector_search_time_ms"`
-	BM25SearchTimeMs   int `json:"bm25_search_time_ms"`
-	FusionTimeMs       int `json:"fusion_time_ms"`
-	TotalTimeMs        int `json:"total_time_ms"`
-	VectorCandidates   int `json:"vector_candidates"`
-	BM25Candidates     int `json:"bm25_candidates"`
-	FusedCandidates    int `json:"fused_candidates"`
+	VectorSearchTimeMs     int `json:"vector_search_time_ms"`
+	BM25SearchTimeMs       int `json:"bm25_search_time_ms"`
+	FusionTimeMs           int `json:"fusion_time_ms"`
+	TotalTimeMs            int `json:"total_time_ms"`
+	VectorCandidates       int `json:"vector_candidates"`
+	VectorRawCandidates    int `json:"vector_raw_candidates"`
+	VectorOverfetchRetries int `json:"vector_overfetch_retries"`
+	BM25Candidates         int `json:"bm25_candidates"`
+	BM25RawCandidates      int `json:"bm25_raw_candidates"`
+	BM25OverfetchRetries   int `json:"bm25_overfetch_retries"`
+	FusedCandidates        int `json:"fused_candidates"`
 }
 
 // SearchOptions configures the search behavior.
@@ -279,6 +288,15 @@ type SearchOptions struct {
 	VectorWeight float64 // Weight for vector results (default: 1.0)
 	BM25Weight   float64 // Weight for BM25 results (default: 1.0)
 	MinRRFScore  float64 // Minimum RRF score threshold (default: 0.01)
+
+	// Adaptive candidate retrieval. CandidateTarget is the unique-node depth
+	// requested from each retrieval branch; 0 derives max(Limit*2, 20).
+	AdaptiveOverfetch     bool
+	CandidateTarget       int
+	InitialOverfetchRatio float64
+	MaxOverfetchRatio     float64
+	OverfetchGrowthFactor float64
+	MaxCandidateLimit     int
 
 	// MMR (Maximal Marginal Relevance) diversification
 	// When enabled, results are re-ranked to balance relevance with diversity
@@ -301,17 +319,22 @@ type SearchOptions struct {
 // DefaultSearchOptions returns sensible defaults.
 func DefaultSearchOptions() *SearchOptions {
 	return &SearchOptions{
-		Limit:          50,
-		MinSimilarity:  nil, // nil = use service default or 0.5 fallback
-		RRFK:           60,
-		VectorWeight:   1.0,
-		BM25Weight:     1.0,
-		MinRRFScore:    0.01,
-		MMREnabled:     false,
-		MMRLambda:      0.7, // Balanced: 70% relevance, 30% diversity
-		RerankEnabled:  false,
-		RerankTopK:     100,
-		RerankMinScore: 0.0,
+		Limit:                 50,
+		MinSimilarity:         nil, // nil = use service default or 0.5 fallback
+		RRFK:                  60,
+		VectorWeight:          1.0,
+		BM25Weight:            1.0,
+		MinRRFScore:           0.01,
+		AdaptiveOverfetch:     true,
+		InitialOverfetchRatio: 1.5,
+		MaxOverfetchRatio:     10,
+		OverfetchGrowthFactor: 2,
+		MaxCandidateLimit:     5000,
+		MMREnabled:            false,
+		MMRLambda:             0.7, // Balanced: 70% relevance, 30% diversity
+		RerankEnabled:         false,
+		RerankTopK:            100,
+		RerankMinScore:        0.0,
 	}
 }
 
@@ -351,10 +374,16 @@ func newSearchResultCache(maxSize int, ttl time.Duration) *searchResultCache {
 	}
 }
 
-// searchCacheKey builds a deterministic key for query + options (same inputs => same key).
-func searchCacheKey(query string, opts *SearchOptions) string {
+// searchCacheKey builds a deterministic key for query, embedding, and options.
+func searchCacheKey(query string, embedding []float32, opts *SearchOptions) string {
 	if opts == nil {
 		opts = DefaultSearchOptions()
+	}
+	embeddingHash := fnv.New64a()
+	var floatBytes [4]byte
+	for _, value := range embedding {
+		binary.LittleEndian.PutUint32(floatBytes[:], math.Float32bits(value))
+		_, _ = embeddingHash.Write(floatBytes[:])
 	}
 	typesCopy := make([]string, len(opts.Types))
 	copy(typesCopy, opts.Types)
@@ -376,6 +405,8 @@ func searchCacheKey(query string, opts *SearchOptions) string {
 
 	return strings.Join([]string{
 		query,
+		strconv.Itoa(len(embedding)),
+		strconv.FormatUint(embeddingHash.Sum64(), 16),
 		strconv.Itoa(opts.Limit),
 		strings.Join(typesCopy, "|"),
 		strconv.FormatBool(opts.RerankEnabled),
@@ -383,6 +414,12 @@ func searchCacheKey(query string, opts *SearchOptions) string {
 		strconv.FormatBool(opts.MMREnabled),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
+		strconv.FormatBool(opts.AdaptiveOverfetch),
+		strconv.Itoa(opts.CandidateTarget),
+		strconv.FormatFloat(opts.InitialOverfetchRatio, 'g', -1, 64),
+		strconv.FormatFloat(opts.MaxOverfetchRatio, 'g', -1, 64),
+		strconv.FormatFloat(opts.OverfetchGrowthFactor, 'g', -1, 64),
+		strconv.Itoa(opts.MaxCandidateLimit),
 		strings.Join(filterParts, ";"),
 	}, "\x00")
 }
@@ -762,6 +799,10 @@ func NewServiceWithDimensions(engine storage.Engine, dimensions int) *Service {
 func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int, bm25Engine string) *Service {
 	fulltextIndex, selectedBM25Engine := newBM25Index(bm25Engine)
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	var resultCache *searchResultCache
+	if envutil.GetBoolStrict(EnvSearchResultCacheEnabled, true) {
+		resultCache = newSearchResultCache(1000, 5*time.Minute)
+	}
 	svc := &Service{
 		engine:                     engine,
 		vectorIndex:                NewVectorIndex(dimensions),
@@ -776,7 +817,7 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 		edgeTypes:                  make(map[string]string, 1024),
 		edgePropVector:             make(map[string]map[string][]float32, 1024),
 		clusterLexicalProfiles:     make(map[int]map[string]float64),
-		resultCache:                newSearchResultCache(1000, 5*time.Minute), // same order as Cypher query cache
+		resultCache:                resultCache,
 		lifecycleCtx:               lifecycleCtx,
 		lifecycleCancel:            lifecycleCancel,
 	}
@@ -3787,7 +3828,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
-	cacheKey := searchCacheKey(query, opts)
+	cacheKey := searchCacheKey(query, embedding, opts)
 	if s.resultCache != nil {
 		if cached := s.resultCache.Get(cacheKey); cached != nil {
 			s.maybeLogSearchTiming(query, cached, time.Since(start), true)
@@ -3862,44 +3903,47 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	fulltextIndex := s.fulltextIndex
 	s.mu.RUnlock()
 
-	// Get more candidates for better fusion
-	vectorCandidateLimit := vectorOverfetchLimit(opts.Limit)
-	bm25CandidateLimit := opts.Limit * 2
-	if bm25CandidateLimit < 20 {
-		bm25CandidateLimit = 20
-	}
-
 	ctx = withQueryText(ctx, query)
 	indexStart := time.Now()
 	type bm25RetrievalResult struct {
 		results  []indexResult
+		stats    vectorOverfetchStats
 		duration time.Duration
+		err      error
 	}
 	bm25ResultCh := make(chan bm25RetrievalResult, 1)
+	bm25SeenOrphans := make(map[string]bool)
 	go func() {
 		bm25Start := time.Now()
-		var results []indexResult
-		if fulltextIndex != nil {
-			results = fulltextIndex.Search(query, bm25CandidateLimit)
-		}
+		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) []indexResult {
+			results = s.filterDecayedCandidates(results)
+			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+				results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, bm25SeenOrphans)
+			}
+			return results
+		})
 		bm25ResultCh <- bm25RetrievalResult{
 			results:  results,
+			stats:    stats,
 			duration: time.Since(bm25Start),
+			err:      err,
 		}
 	}()
 
 	// Step 1: Vector search, concurrent with BM25 retrieval.
 	vectorStart := time.Now()
 	var vectorResults []indexResult
+	var vectorStats vectorOverfetchStats
+	seenOrphans := make(map[string]bool)
 	pipeline, pipelineErr := s.getOrCreateVectorPipeline(ctx)
 	if pipelineErr == nil {
-		var scored []ScoredCandidate
-		scored, pipelineErr = pipeline.Search(ctx, embedding, vectorCandidateLimit, opts.GetMinSimilarity(0.5))
-		if pipelineErr == nil {
-			for _, r := range scored {
-				vectorResults = append(vectorResults, indexResult{ID: r.ID, Score: r.Score})
+		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, func(results []indexResult) []indexResult {
+			results = s.filterDecayedCandidates(results)
+			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+				results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
 			}
-		}
+			return results
+		})
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
 
@@ -3910,6 +3954,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	if pipelineErr != nil {
 		return nil, pipelineErr
 	}
+	if bm25Result.err != nil {
+		return nil, bm25Result.err
+	}
+	for id := range bm25SeenOrphans {
+		seenOrphans[id] = true
+	}
 
 	// Plan 04-05-05: observe combined vector+bm25 wall-clock as the
 	// "index" stage per AllowedSearchStages. Per-index micro-detail remains
@@ -3917,22 +3967,6 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	// parallel branch wall time.
 	s.observeSearchStage(ctx, "hybrid", "index",
 		time.Since(indexStart))
-
-	// Collapse vector IDs back to unique node IDs.
-	vectorResults = collapseIndexResultsByNodeID(vectorResults)
-
-	seenOrphans := make(map[string]bool)
-
-	// Step 3: Filter decayed candidates first (cheap, no storage reads).
-	vectorResults = s.filterDecayedCandidates(vectorResults)
-	bm25Results = s.filterDecayedCandidates(bm25Results)
-
-	// Step 3b: Filter by type and/or property values in a single BatchGetNodes pass
-	// to avoid redundant per-candidate storage reads.
-	if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-		vectorResults = s.filterByTypeAndProperties(ctx, vectorResults, opts.Types, opts.Filters, seenOrphans)
-		bm25Results = s.filterByTypeAndProperties(ctx, bm25Results, opts.Types, opts.Filters, seenOrphans)
-	}
 
 	// Step 4: Fuse with RRF
 	fusionStart := time.Now()
@@ -3988,13 +4022,17 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		SearchMethod:    searchMethod,
 		Message:         message,
 		Metrics: &SearchMetrics{
-			VectorSearchTimeMs: vectorMs,
-			BM25SearchTimeMs:   bm25Ms,
-			FusionTimeMs:       fusionMs,
-			TotalTimeMs:        totalMs,
-			VectorCandidates:   len(vectorResults),
-			BM25Candidates:     len(bm25Results),
-			FusedCandidates:    len(fusedResults),
+			VectorSearchTimeMs:     vectorMs,
+			BM25SearchTimeMs:       bm25Ms,
+			FusionTimeMs:           fusionMs,
+			TotalTimeMs:            totalMs,
+			VectorCandidates:       len(vectorResults),
+			VectorRawCandidates:    vectorStats.rawCandidates,
+			VectorOverfetchRetries: vectorStats.retries,
+			BM25Candidates:         len(bm25Results),
+			BM25RawCandidates:      bm25Result.stats.rawCandidates,
+			BM25OverfetchRetries:   bm25Result.stats.retries,
+			FusedCandidates:        len(fusedResults),
 		},
 	}, nil
 }
@@ -4028,31 +4066,26 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 		return nil, fmt.Errorf("vector search requires embedding")
 	}
 
-	candidateLimit := vectorOverfetchLimit(opts.Limit)
-
 	// Use unified vector search pipeline
 	pipeline, err := s.getOrCreateVectorPipeline(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vector pipeline: %w", err)
 	}
 
-	scored, err := pipeline.Search(ctx, embedding, candidateLimit, opts.GetMinSimilarity(0.5))
+	seenOrphans := make(map[string]bool)
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, func(results []indexResult) []indexResult {
+		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		}
+		return results
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to SearchCandidate
-	candidates := make([]SearchCandidate, len(scored))
-	for i, s := range scored {
-		candidates[i] = SearchCandidate{ID: s.ID, Score: s.Score}
-	}
-
-	candidates = collapseCandidatesByNodeID(candidates)
-
-	seenOrphans := make(map[string]bool)
-	// Apply type filters
-	if len(opts.Types) > 0 {
-		candidates = s.filterCandidatesByType(ctx, candidates, opts.Types, seenOrphans)
+	candidates := make([]SearchCandidate, len(results))
+	for index := range results {
+		candidates[index] = SearchCandidate{ID: results[index].ID, Score: results[index].Score}
 	}
 
 	if len(candidates) > opts.Limit && opts.Limit > 0 {
@@ -4062,28 +4095,150 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 	return candidates, nil
 }
 
-func vectorOverfetchLimit(limit int) int {
-	// Vector IDs in the index may represent:
-	// - node IDs (main embedding)
-	// - chunk IDs ("nodeID-chunk-i")
-	// - named embedding IDs ("nodeID-named-name")
-	//
-	// We overfetch and then collapse back to unique node IDs.
-	if limit <= 0 {
-		return 20
+type adaptiveOverfetchConfig struct {
+	target       int
+	initialLimit int
+	maxLimit     int
+	growthFactor float64
+	adaptive     bool
+}
+
+type vectorOverfetchStats struct {
+	rawCandidates int
+	retries       int
+}
+
+func resolveAdaptiveOverfetch(opts *SearchOptions) adaptiveOverfetchConfig {
+	if opts == nil {
+		opts = DefaultSearchOptions()
 	}
-	over := limit * 10
-	if over < limit {
-		over = limit
+	maxCandidateLimit := opts.MaxCandidateLimit
+	if maxCandidateLimit <= 0 {
+		maxCandidateLimit = MaxCandidates
 	}
-	// Keep worst-case work bounded for brute-force paths.
-	if over > 5000 {
-		return 5000
+	if maxCandidateLimit > MaxCandidates {
+		maxCandidateLimit = MaxCandidates
 	}
-	if over < 50 {
-		return 50
+	target := opts.CandidateTarget
+	if target <= 0 {
+		if opts.Limit <= 0 {
+			target = 20
+		} else if opts.Limit >= maxCandidateLimit/2 {
+			target = maxCandidateLimit
+		} else {
+			target = opts.Limit * 2
+		}
+		if target < 20 {
+			target = 20
+		}
 	}
-	return over
+	if target > maxCandidateLimit {
+		target = maxCandidateLimit
+	}
+	initialRatio := opts.InitialOverfetchRatio
+	if initialRatio < 1 {
+		initialRatio = 1
+	}
+	maxRatio := opts.MaxOverfetchRatio
+	if maxRatio < initialRatio {
+		maxRatio = initialRatio
+	}
+	growthFactor := opts.OverfetchGrowthFactor
+	if growthFactor <= 1 {
+		growthFactor = 2
+	}
+	initialLimit := min(int(math.Ceil(float64(target)*initialRatio)), maxCandidateLimit)
+	maxLimit := min(int(math.Ceil(float64(target)*maxRatio)), maxCandidateLimit)
+	if maxLimit < initialLimit {
+		maxLimit = initialLimit
+	}
+	return adaptiveOverfetchConfig{
+		target:       target,
+		initialLimit: initialLimit,
+		maxLimit:     maxLimit,
+		growthFactor: growthFactor,
+		adaptive:     opts.AdaptiveOverfetch,
+	}
+}
+
+func (s *Service) adaptiveVectorSearch(
+	ctx context.Context,
+	pipeline *VectorSearchPipeline,
+	embedding []float32,
+	opts *SearchOptions,
+	postProcess func([]indexResult) []indexResult,
+) ([]indexResult, vectorOverfetchStats, error) {
+	if opts == nil {
+		opts = DefaultSearchOptions()
+	}
+	config := resolveAdaptiveOverfetch(opts)
+	requestLimit := config.initialLimit
+	var stats vectorOverfetchStats
+	for {
+		scored, err := pipeline.Search(ctx, embedding, requestLimit, opts.GetMinSimilarity(0.5))
+		if err != nil {
+			return nil, stats, err
+		}
+		stats.rawCandidates = len(scored)
+		results := make([]indexResult, 0, len(scored))
+		for _, result := range scored {
+			results = append(results, indexResult{ID: result.ID, Score: result.Score})
+		}
+		results = collapseIndexResultsByNodeID(results)
+		if postProcess != nil {
+			results = postProcess(results)
+		}
+		if len(results) >= config.target {
+			return results[:config.target], stats, nil
+		}
+		if !config.adaptive || requestLimit >= config.maxLimit || len(scored) < requestLimit {
+			return results, stats, nil
+		}
+		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
+		if nextLimit <= requestLimit {
+			nextLimit = requestLimit + 1
+		}
+		requestLimit = min(nextLimit, config.maxLimit)
+		stats.retries++
+	}
+}
+
+func (s *Service) adaptiveBM25Search(
+	ctx context.Context,
+	index bm25Index,
+	query string,
+	opts *SearchOptions,
+	postProcess func([]indexResult) []indexResult,
+) ([]indexResult, vectorOverfetchStats, error) {
+	if index == nil {
+		return nil, vectorOverfetchStats{}, nil
+	}
+	config := resolveAdaptiveOverfetch(opts)
+	requestLimit := config.initialLimit
+	var stats vectorOverfetchStats
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, err
+		}
+		rawResults := index.Search(query, requestLimit)
+		stats.rawCandidates = len(rawResults)
+		results := rawResults
+		if postProcess != nil {
+			results = postProcess(results)
+		}
+		if len(results) >= config.target {
+			return results[:config.target], stats, nil
+		}
+		if !config.adaptive || requestLimit >= config.maxLimit || len(rawResults) < requestLimit {
+			return results, stats, nil
+		}
+		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
+		if nextLimit <= requestLimit {
+			nextLimit = requestLimit + 1
+		}
+		requestLimit = min(nextLimit, config.maxLimit)
+		stats.retries++
+	}
 }
 
 func normalizeVectorResultIDToNodeID(id string) string {
@@ -5770,14 +5925,15 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	if pipelineErr != nil {
 		return nil, pipelineErr
 	}
-	scored, searchErr := pipeline.Search(ctx, embedding, vectorOverfetchLimit(opts.Limit), opts.GetMinSimilarity(0.5))
+	seenOrphans := make(map[string]bool)
+	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, func(results []indexResult) []indexResult {
+		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
+			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		}
+		return results
+	})
 	if searchErr != nil {
 		return nil, searchErr
-	}
-
-	var results []indexResult
-	for _, r := range scored {
-		results = append(results, indexResult{ID: r.ID, Score: r.Score})
 	}
 	searchMethod := "vector"
 	message := "Vector similarity search (cosine)"
@@ -5811,14 +5967,6 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 			searchMethod, len(results), time.Since(searchStart))
 	}
 
-	// Collapse vector IDs back to unique node IDs.
-	results = collapseIndexResultsByNodeID(results)
-
-	seenOrphans := make(map[string]bool)
-	if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-		results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
-	}
-
 	searchResults := s.enrichIndexResults(ctx, results, opts.Limit, seenOrphans)
 	// Vector-only: set vector_rank from position (1-based), bm25_rank = 0
 	for i := range searchResults {
@@ -5836,9 +5984,11 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 		SearchMethod:    searchMethod,
 		Message:         message,
 		Metrics: &SearchMetrics{
-			VectorSearchTimeMs: vectorMs,
-			TotalTimeMs:        totalMs,
-			VectorCandidates:   len(results),
+			VectorSearchTimeMs:     vectorMs,
+			TotalTimeMs:            totalMs,
+			VectorCandidates:       len(results),
+			VectorRawCandidates:    vectorStats.rawCandidates,
+			VectorOverfetchRetries: vectorStats.retries,
 		},
 	}, nil
 }

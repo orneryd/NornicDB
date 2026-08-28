@@ -267,29 +267,19 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		return nil
 	}
 
-	var (
-		weightedTerms []weightedTermPostings
-		suffixUpper   []float64
-	)
+	var weightedTerms []weightedTermPostings
 	if cached, ok := f.queryPlanCache.Load(query); ok && cached.(bm25QueryPlan).version == f.version {
 		plan := cached.(bm25QueryPlan)
 		weightedTerms = plan.terms
-		suffixUpper = plan.suffixUpper
 	} else {
 		weightedTerms = f.expandAndWeightTermsLocked(queryTerms)
 		if len(weightedTerms) == 0 {
 			return nil
 		}
-		sort.Slice(weightedTerms, func(i, j int) bool { return weightedTerms[i].upperBound > weightedTerms[j].upperBound })
-		suffixUpper = make([]float64, len(weightedTerms)+1)
-		for i := len(weightedTerms) - 1; i >= 0; i-- {
-			suffixUpper[i] = suffixUpper[i+1] + weightedTerms[i].upperBound
-		}
 		if len(query) <= 256 {
 			f.queryPlanCache.Store(query, bm25QueryPlan{
-				version:     f.version,
-				terms:       weightedTerms,
-				suffixUpper: suffixUpper,
+				version: f.version,
+				terms:   weightedTerms,
 			})
 		}
 	}
@@ -298,8 +288,7 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 	}
 
 	scores := make(map[uint32]float64, 512)
-	minCompetitive := 0.0
-	for i, wt := range weightedTerms {
+	for _, wt := range weightedTerms {
 		for _, p := range wt.postings {
 			docLen := f.docLengths[p.DocNum]
 			if docLen == 0 {
@@ -309,18 +298,6 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 			numerator := tf * (bm25K1 + 1)
 			denominator := tf + bm25K1*(1-bm25B+bm25B*(float64(docLen)/f.avgDocLength))
 			scores[p.DocNum] += wt.weight * wt.idf * (numerator / denominator)
-		}
-
-		if len(scores) > limit*4 {
-			minCompetitive = topKMinScore(scores, limit)
-			remainingUpper := suffixUpper[i+1]
-			if minCompetitive > 0 && remainingUpper > 0 {
-				for docNum, score := range scores {
-					if score+remainingUpper < minCompetitive {
-						delete(scores, docNum)
-					}
-				}
-			}
 		}
 	}
 
@@ -480,16 +457,14 @@ func (f *FulltextIndexV2) removeLexiconTermLocked(term string) {
 }
 
 type weightedTermPostings struct {
-	postings   []bm25Posting
-	idf        float64
-	weight     float64
-	upperBound float64
+	postings []bm25Posting
+	idf      float64
+	weight   float64
 }
 
 type bm25QueryPlan struct {
-	version     uint64
-	terms       []weightedTermPostings
-	suffixUpper []float64
+	version uint64
+	terms   []weightedTermPostings
 }
 
 func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
@@ -528,10 +503,9 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 			continue
 		}
 		terms = append(terms, weightedTermPostings{
-			postings:   st.Postings,
-			idf:        st.IDF,
-			weight:     weight,
-			upperBound: upper,
+			postings: st.Postings,
+			idf:      st.IDF,
+			weight:   weight,
 		})
 	}
 	return terms

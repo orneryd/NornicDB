@@ -420,6 +420,52 @@ func TestCountDistinct(t *testing.T) {
 	})
 }
 
+func TestBug_TraversalCountDistinctNode(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"CREATE (:Entity {id: 'a'})",
+		"CREATE (:Entity {id: 'b'})",
+		"CREATE (:Entity {id: 'c'})",
+		"MATCH (a:Entity {id: 'a'}), (b:Entity {id: 'b'}) CREATE (a)-[:LINK]->(b)",
+		"MATCH (a:Entity {id: 'a'}), (c:Entity {id: 'c'}) CREATE (a)-[:LINK]->(c)",
+		"MATCH (b:Entity {id: 'b'}), (c:Entity {id: 'c'}) CREATE (b)-[:LINK]->(c)",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+	}
+
+	result, err := exec.Execute(ctx, "MATCH (source)-[:LINK]->() RETURN count(DISTINCT source), count(source), count(source.missing)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2), int64(3), int64(0)}}, result.Rows)
+}
+
+func TestBug_TraversalRepeatedEndpointVariableRequiresSelfLoop(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	for _, query := range []string{
+		"CREATE (:Entity {id: 'a'})",
+		"CREATE (:Entity {id: 'b'})",
+		"MATCH (a:Entity {id: 'a'}), (b:Entity {id: 'b'}) CREATE (a)-[:LINK]->(b)",
+		"MATCH (a:Entity {id: 'a'}) CREATE (a)-[:LINK]->(a)",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+	}
+
+	result, err := exec.Execute(ctx, "MATCH (node)-[:LINK]->(node) RETURN count(*)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+
+	grouped, err := exec.Execute(ctx, "MATCH (node)-[:LINK]->(node) RETURN node.id, count(*)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a", int64(1)}}, grouped.Rows)
+}
+
 // TestCollectDistinct tests COLLECT(DISTINCT) aggregation
 func TestCollectDistinct(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)

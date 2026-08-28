@@ -69,7 +69,7 @@ func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []fl
 		return []Candidate{}, nil
 	}
 
-	limit := calculateCandidateLimit(k)
+	limit := boundCandidateLimit(k)
 	if limit > len(results) {
 		limit = len(results)
 	}

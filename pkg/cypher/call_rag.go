@@ -188,6 +188,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if limit, ok := toInt(req["limit"]); ok && limit > 0 {
 		opts.Limit = limit
 	}
+	applyAdaptiveCandidateOptions(opts, req)
 	if types := toStringSlice(firstPresent(req, "types", "labels")); len(types) > 0 {
 		opts.Types = types
 	}
@@ -253,6 +254,27 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	return result, nil
+}
+
+func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]interface{}) {
+	if value, ok := toBool(firstPresent(req, "adaptiveOverfetch", "adaptive_overfetch")); ok {
+		opts.AdaptiveOverfetch = value
+	}
+	if value, ok := toInt(firstPresent(req, "candidateTarget", "candidate_target")); ok && value > 0 {
+		opts.CandidateTarget = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "initialOverfetchRatio", "initial_overfetch_ratio")); ok && value >= 1 {
+		opts.InitialOverfetchRatio = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "maxOverfetchRatio", "max_overfetch_ratio")); ok && value >= 1 {
+		opts.MaxOverfetchRatio = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "overfetchGrowthFactor", "overfetch_growth_factor")); ok && value > 1 {
+		opts.OverfetchGrowthFactor = value
+	}
+	if value, ok := toInt(firstPresent(req, "maxCandidateLimit", "max_candidate_limit")); ok && value > 0 {
+		opts.MaxCandidateLimit = value
+	}
 }
 
 func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, procName string) (map[string]interface{}, error) {

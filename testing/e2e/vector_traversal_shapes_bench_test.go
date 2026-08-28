@@ -57,6 +57,7 @@ func TestVectorTraversalShapeMatrix_BoltVsHTTP(t *testing.T) {
 
 	benchCfg := traversalBenchConfigFromEnv()
 	var stopServer func()
+	var localServer *serverProc
 	if benchCfg.httpAddr == "" {
 		repoRoot := mustRepoRoot(t)
 		dataDir := t.TempDir()
@@ -67,6 +68,7 @@ func TestVectorTraversalShapeMatrix_BoltVsHTTP(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		proc := startNornicDB(t, ctx, binPath, dataDir, httpPort, boltPort, grpcPort)
+		localServer = proc
 		stopServer = func() {
 			cancel()
 			proc.stop(t)
@@ -78,7 +80,7 @@ func TestVectorTraversalShapeMatrix_BoltVsHTTP(t *testing.T) {
 		defer stopServer()
 	}
 
-	waitTCP(t, benchCfg.httpAddr, 30*time.Second)
+	waitTraversalTCP(t, benchCfg.httpAddr, 30*time.Second, localServer)
 	waitTCP(t, benchCfg.boltAddr, 30*time.Second)
 
 	httpClient := newTraversalHTTPClient(benchCfg.httpUser, benchCfg.httpPass)
@@ -89,6 +91,11 @@ func TestVectorTraversalShapeMatrix_BoltVsHTTP(t *testing.T) {
 	seedVectorTraversalFixtureE2E(t, driver, benchCfg.indexName, httpClient, benchCfg.httpAddr)
 	waitForEmbeddingQueueDrainE2E(t, httpClient, benchCfg.httpAddr, "before benchmark")
 	rootIDs := fetchTraversalRootIDsE2E(t, driver)
+	boltSession := driver.NewSession(context.Background(), neo4j.SessionConfig{
+		AccessMode:   neo4j.AccessModeRead,
+		DatabaseName: dbName,
+	})
+	defer func() { _ = boltSession.Close(context.Background()) }()
 
 	fanouts := parseFanoutsEnv("NORNICDB_TRAVERSAL_FANOUTS", []int{1, 2, 3})
 	requestedIterations := envInt("NORNICDB_TRAVERSAL_MATRIX_ITERS", 0)
@@ -112,6 +119,89 @@ func TestVectorTraversalShapeMatrix_BoltVsHTTP(t *testing.T) {
 	pathCap := envInt("NORNICDB_TRAVERSAL_PATH_CAP", 5)
 
 	rows := make([]traversalTableRow, 0, 128)
+	rrfRequestSequence := 0
+	nextRRFParams := func() map[string]any {
+		rrfRequestSequence++
+		return map[string]any{"request": map[string]any{
+			"query":     fmt.Sprintf("chain baseline benchmark%d", rrfRequestSequence),
+			"embedding": []any{0.95, 0.05, 0.0},
+			"limit":     int64(5),
+			"types":     []any{"OriginalText"},
+		}}
+	}
+	rrfSpecs := []struct {
+		name      string
+		query     string
+		assertRow func(t *testing.T, row []any)
+	}{
+		{
+			name: "rrf_retrieval",
+			query: `
+CALL db.retrieve($request)
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+RETURN elementId(node) AS nodeID, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+ORDER BY rrf_score DESC
+LIMIT 1
+`,
+			assertRow: func(t *testing.T, row []any) {
+				require.Len(t, row, 7)
+				require.Equal(t, normalizeElementIDE2E(rootIDs["chain-root"]), normalizeElementIDE2E(fmt.Sprintf("%v", row[0])))
+				require.Positive(t, rowAsFloat64E2E(t, row[2]), "RRF score must be populated")
+				require.Positive(t, rowAsInt64(t, row[3]), "vector branch must contribute")
+				require.Positive(t, rowAsInt64(t, row[4]), "BM25 branch must contribute")
+				require.Equal(t, "rrf_hybrid", row[5])
+				require.Equal(t, false, row[6])
+			},
+		},
+		{
+			name: "rrf_retrieval_1hop",
+			query: `
+CALL db.retrieve($request)
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+MATCH (node)-[:BENCH_HOP]->(neighbor:BenchmarkHop)
+RETURN elementId(node) AS nodeID, elementId(neighbor) AS neighborID, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+ORDER BY rrf_score DESC
+LIMIT 1
+`,
+			assertRow: func(t *testing.T, row []any) {
+				require.Len(t, row, 8)
+				require.Equal(t, normalizeElementIDE2E(rootIDs["chain-root"]), normalizeElementIDE2E(fmt.Sprintf("%v", row[0])))
+				require.NotEmpty(t, normalizeElementIDE2E(fmt.Sprintf("%v", row[1])))
+				require.Positive(t, rowAsFloat64E2E(t, row[3]), "RRF score must be populated")
+				require.Positive(t, rowAsInt64(t, row[4]), "vector branch must contribute")
+				require.Positive(t, rowAsInt64(t, row[5]), "BM25 branch must contribute")
+				require.Equal(t, "rrf_hybrid", row[6])
+				require.Equal(t, false, row[7])
+			},
+		},
+	}
+	for _, spec := range rrfSpecs {
+		boltSummary, err := runSerialBench(warmupIterations, iterations, func(ctx context.Context) error {
+			row, err := runBoltSingleRow(ctx, boltSession, spec.query, nextRRFParams())
+			if err != nil {
+				return err
+			}
+			spec.assertRow(t, row)
+			return nil
+		})
+		require.NoError(t, err, "shape=%s protocol=bolt", spec.name)
+		rows = append(rows, summarizeTableRow(spec.name, "-", 0, "bolt", boltSummary))
+
+		httpSummary, err := runSerialBench(warmupIterations, iterations, func(ctx context.Context) error {
+			row, err := neo4jHTTPCommitSingleRow(ctx, httpClient, benchCfg.httpAddr, dbName, spec.query, nextRRFParams())
+			if err != nil {
+				return err
+			}
+			spec.assertRow(t, row)
+			return nil
+		})
+		require.NoError(t, err, "shape=%s protocol=http", spec.name)
+		rows = append(rows, summarizeTableRow(spec.name, "-", 0, "http", httpSummary))
+	}
+	if os.Getenv("NORNICDB_TRAVERSAL_RRF_ONLY") == "1" {
+		reportTraversalRows(reportf, rows)
+		return
+	}
 
 	shapeSpecs := []struct {
 		name      string
@@ -208,7 +298,7 @@ LIMIT $topK
 			for depth := 1; depth <= 6; depth++ {
 				query, params, expectedNodeID := spec.queryFor(depth, fanout, pathCap)
 				boltSummary, err := runSerialBench(warmupIterations, iterations, func(ctx context.Context) error {
-					row, err := runBoltSingleRow(ctx, driver, query, params)
+					row, err := runBoltSingleRow(ctx, boltSession, query, params)
 					if err != nil {
 						return err
 					}
@@ -232,6 +322,28 @@ LIMIT $topK
 		}
 	}
 
+	reportTraversalRows(reportf, rows)
+}
+
+func waitTraversalTCP(t *testing.T, addr string, timeout time.Duration, server *serverProc) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if tcpReachable(addr, 250*time.Millisecond) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if server != nil && server.logf != nil {
+		_ = server.logf.Sync()
+		if logBytes, err := os.ReadFile(server.logf.Name()); err == nil {
+			t.Logf("local E2E server log:\n%s", logBytes)
+		}
+	}
+	t.Fatalf("timeout waiting for %s", addr)
+}
+
+func reportTraversalRows(reportf func(string, ...any), rows []traversalTableRow) {
 	reportf("| shape | fanout | depth | protocol | samples | throughput_ops_s | min_ms | mean_ms | p50_ms | p95_ms | p99_ms | max_ms |")
 	reportf("| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, row := range rows {
@@ -240,7 +352,7 @@ LIMIT $topK
 
 	reportf("")
 	reportf("| Transport | Throughput | Mean | P50 | P95 | P99 | Max |")
-	reportf("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	reportf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, protocol := range []string{"http", "bolt"} {
 		agg := summarizeTransport(rows, protocol)
 		reportf("| %s | %s ops/s | %s ms | %s ms | %s ms | %s ms | %s ms |", strings.ToUpper(protocol), formatFloatRange(agg.opsPerSec), formatFloatRange(agg.meanMS), formatFloatRange(agg.p50MS), formatFloatRange(agg.p95MS), formatFloatRange(agg.p99MS), formatFloatRange(agg.maxMS))
@@ -338,23 +450,18 @@ func isTraversalWriteConflictE2E(err error) bool {
 		strings.Contains(message, "commit failed: conflict:")
 }
 
-func runBoltSingleRow(ctx context.Context, driver neo4j.DriverWithContext, query string, params map[string]any) ([]any, error) {
-	sess := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer func() { _ = sess.Close(ctx) }()
-	out, err := sess.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		res, err := tx.Run(ctx, query, params)
-		if err != nil {
-			return nil, err
-		}
-		if !res.Next(ctx) {
-			return nil, res.Err()
-		}
-		return append([]any{}, res.Record().Values...), res.Err()
-	})
+func runBoltSingleRow(ctx context.Context, session neo4j.SessionWithContext, query string, params map[string]any) ([]any, error) {
+	result, err := session.Run(ctx, query, params)
 	if err != nil {
 		return nil, err
 	}
-	row, _ := out.([]any)
+	if !result.Next(ctx) {
+		return nil, result.Err()
+	}
+	row := append([]any{}, result.Record().Values...)
+	if _, err := result.Consume(ctx); err != nil {
+		return nil, err
+	}
 	return row, nil
 }
 
@@ -792,6 +899,27 @@ func rowAsInt64(t *testing.T, value any) int64 {
 		return int64(typed)
 	case json.Number:
 		v, err := typed.Int64()
+		require.NoError(t, err)
+		return v
+	default:
+		t.Fatalf("unexpected numeric type %T (%v)", value, value)
+		return 0
+	}
+}
+
+func rowAsFloat64E2E(t *testing.T, value any) float64 {
+	t.Helper()
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case json.Number:
+		v, err := typed.Float64()
 		require.NoError(t, err)
 		return v
 	default:

@@ -57,9 +57,6 @@ func TestIVFPQIndex_ScratchAndLimitMoreBranches(t *testing.T) {
 	idx.putScratch(nil)
 	idx.putScratch(&ivfpqScratch{})
 
-	// candidate-limit branches.
-	require.Equal(t, 1, ivfpqCandidateLimit(-5, 0, 1))
-	require.GreaterOrEqual(t, ivfpqCandidateLimit(1, 1, 0), 16)
 }
 
 func syncPoolZero() sync.Pool {

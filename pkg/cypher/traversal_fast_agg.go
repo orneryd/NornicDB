@@ -17,6 +17,9 @@ func (e *StorageExecutor) tryFastRelationshipAggregations(matches *TraversalMatc
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
+	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
+		return nil, false, nil
+	}
 
 	if matches.IsChained {
 		return e.tryFastChainedRelationshipAggregation(matches, returnItems)

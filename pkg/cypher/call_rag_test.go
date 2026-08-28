@@ -76,6 +76,25 @@ func TestCallDbRetrieveAndRerank(t *testing.T) {
 	require.GreaterOrEqual(t, len(rretrieveRes.Rows), 1)
 }
 
+func TestApplyAdaptiveCandidateOptions(t *testing.T) {
+	opts := search.DefaultSearchOptions()
+	applyAdaptiveCandidateOptions(opts, map[string]interface{}{
+		"adaptive_overfetch":      false,
+		"candidateTarget":         int64(75),
+		"initial_overfetch_ratio": 2.0,
+		"maxOverfetchRatio":       8.0,
+		"overfetch_growth_factor": 1.5,
+		"maxCandidateLimit":       int64(1200),
+	})
+
+	require.False(t, opts.AdaptiveOverfetch)
+	require.Equal(t, 75, opts.CandidateTarget)
+	require.Equal(t, 2.0, opts.InitialOverfetchRatio)
+	require.Equal(t, 8.0, opts.MaxOverfetchRatio)
+	require.Equal(t, 1.5, opts.OverfetchGrowthFactor)
+	require.Equal(t, 1200, opts.MaxCandidateLimit)
+}
+
 func TestCallDbInfer(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(newTestMemoryEngine(t))

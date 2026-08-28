@@ -512,7 +512,7 @@ type ServerConfig struct {
 //   - NORNICDB_EMBED_MAX_RETRIES: Max retry attempts per node (default: 3)
 //   - NORNICDB_EMBED_CHUNK_SIZE: Max tokens per chunk (default: 8192)
 //   - NORNICDB_EMBED_CHUNK_OVERLAP: Tokens to overlap between chunks (default: 50)
-//   - NORNICDB_EMBED_WORKER_NUM_WORKERS: Number of concurrent embedding workers (default: 1)
+//   - NORNICDB_EMBED_WORKER_NUM_WORKERS: Number of concurrent embedding workers (default: 1, 0 disables workers)
 //   - NORNICDB_EMBEDDING_PROPERTIES_INCLUDE: Comma-separated property keys to use for embedding text (empty = all)
 //   - NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE: Comma-separated property keys to exclude from embedding text
 //   - NORNICDB_EMBEDDING_INCLUDE_LABELS: Whether to prepend node labels to embedding text (default: true)
@@ -2449,8 +2449,10 @@ func applyEnvVars(config *Config) error {
 	}
 
 	// Embedding worker settings
-	if v := getEnvInt("NORNICDB_EMBED_WORKER_NUM_WORKERS", 0); v > 0 {
-		config.EmbeddingWorker.NumWorkers = v
+	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_WORKER_NUM_WORKERS", "")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			config.EmbeddingWorker.NumWorkers = v
+		}
 	}
 	if v := getEnvDuration("NORNICDB_EMBED_SCAN_INTERVAL", 0); v > 0 {
 		config.EmbeddingWorker.ScanInterval = v

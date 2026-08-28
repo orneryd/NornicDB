@@ -37,6 +37,7 @@ func TestIVFPQCandidateGen_SearchCandidates(t *testing.T) {
 	cands, err := gen.SearchCandidates(context.Background(), []float32{0, 0, 1, 0, 0, 0, 0, 0}, 20, -1)
 	require.NoError(t, err)
 	require.NotEmpty(t, cands)
+	require.LessOrEqual(t, len(cands), 20, "candidate generators must honor the adaptive caller's requested depth")
 }
 
 func TestIVFPQCandidateGen_DefaultNProbeAndNilIndex(t *testing.T) {

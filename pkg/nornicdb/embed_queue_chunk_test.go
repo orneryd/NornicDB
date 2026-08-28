@@ -32,6 +32,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -83,6 +84,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -154,6 +156,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -222,6 +225,7 @@ func TestChunkEmbeddingSearch(t *testing.T) {
 	require.NoError(t, err)
 
 	config := &EmbedWorkerConfig{
+		NumWorkers:   1,
 		ScanInterval: time.Hour,
 		BatchDelay:   10 * time.Millisecond,
 		MaxRetries:   1,
@@ -313,6 +317,7 @@ func TestChunkEmbeddingRemoval(t *testing.T) {
 	require.NoError(t, err)
 
 	config := &EmbedWorkerConfig{
+		NumWorkers:   1,
 		ScanInterval: time.Hour,
 		BatchDelay:   10 * time.Millisecond,
 		MaxRetries:   1,
