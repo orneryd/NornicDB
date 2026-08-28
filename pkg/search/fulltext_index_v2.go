@@ -6,12 +6,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 )
 
 const (
-	bm25V2FormatVersion = "2.0.0"
+	bm25V2FormatVersion = "2.1.0"
 	bm25PrefixWeight    = 0.8
 )
 
@@ -45,15 +46,27 @@ type FulltextIndexV2 struct {
 
 	version          uint64
 	persistedVersion uint64
-	queryPlanCache   map[string]bm25QueryPlan
+	queryPlanCache   sync.Map
+
+	maxPrefixExpansions int
+	minPrefixLength     int
 }
 
 func NewFulltextIndexV2() *FulltextIndexV2 {
+	maxPrefixExpansions := envutil.GetInt("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", 0)
+	if maxPrefixExpansions < 0 {
+		maxPrefixExpansions = 0
+	}
+	minPrefixLength := envutil.GetInt("NORNICDB_BM25_PREFIX_MIN_LEN", 3)
+	if minPrefixLength < 1 {
+		minPrefixLength = 1
+	}
 	return &FulltextIndexV2{
-		documents:      make(map[string]string),
-		docIDToNum:     make(map[string]uint32),
-		termIndex:      make(map[string]*bm25TermState),
-		queryPlanCache: make(map[string]bm25QueryPlan),
+		documents:           make(map[string]string),
+		docIDToNum:          make(map[string]uint32),
+		termIndex:           make(map[string]*bm25TermState),
+		maxPrefixExpansions: maxPrefixExpansions,
+		minPrefixLength:     minPrefixLength,
 	}
 }
 
@@ -65,7 +78,7 @@ func (f *FulltextIndexV2) IsDirty() bool {
 
 func (f *FulltextIndexV2) markDirtyLocked() {
 	f.version++
-	f.queryPlanCache = make(map[string]bm25QueryPlan)
+	f.queryPlanCache.Clear()
 }
 
 func (f *FulltextIndexV2) markPersisted(version uint64) {
@@ -258,7 +271,8 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		weightedTerms []weightedTermPostings
 		suffixUpper   []float64
 	)
-	if plan, ok := f.queryPlanCache[query]; ok && plan.version == f.version {
+	if cached, ok := f.queryPlanCache.Load(query); ok && cached.(bm25QueryPlan).version == f.version {
+		plan := cached.(bm25QueryPlan)
 		weightedTerms = plan.terms
 		suffixUpper = plan.suffixUpper
 	} else {
@@ -272,11 +286,11 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 			suffixUpper[i] = suffixUpper[i+1] + weightedTerms[i].upperBound
 		}
 		if len(query) <= 256 {
-			f.queryPlanCache[query] = bm25QueryPlan{
+			f.queryPlanCache.Store(query, bm25QueryPlan{
 				version:     f.version,
 				terms:       weightedTerms,
 				suffixUpper: suffixUpper,
-			}
+			})
 		}
 	}
 	if len(weightedTerms) == 0 {
@@ -310,10 +324,10 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		}
 	}
 
-	top := topKFromScores(scores, limit)
+	top := topKFromScoresWithIDs(scores, limit, f.docNumToID)
 	out := make([]indexResult, 0, len(top))
 	for _, s := range top {
-		docID := f.docNumToID[s.docNum]
+		docID := s.id
 		if docID == "" {
 			continue
 		}
@@ -479,19 +493,10 @@ type bm25QueryPlan struct {
 }
 
 func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
-	maxPrefixExpansions := envutil.GetInt("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", 32)
-	if maxPrefixExpansions < 0 {
-		maxPrefixExpansions = 0
-	}
-	minPrefixLen := envutil.GetInt("NORNICDB_BM25_PREFIX_MIN_LEN", 3)
-	if minPrefixLen < 1 {
-		minPrefixLen = 1
-	}
-
 	termWeights := make(map[string]float64, len(queryTerms))
 	for _, term := range queryTerms {
 		termWeights[term] += 1.0
-		if len(term) < minPrefixLen || maxPrefixExpansions == 0 {
+		if utf8.RuneCountInString(term) < f.minPrefixLength || f.maxPrefixExpansions == 0 {
 			continue
 		}
 		start := sort.SearchStrings(f.lexicon, term)
@@ -506,7 +511,7 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 			}
 			termWeights[candidate] += bm25PrefixWeight
 			added++
-			if added >= maxPrefixExpansions {
+			if added >= f.maxPrefixExpansions {
 				break
 			}
 		}
@@ -534,13 +539,14 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 
 type scoredDoc struct {
 	docNum uint32
+	id     string
 	score  float64
 }
 
 type minScoreHeap []scoredDoc
 
 func (h minScoreHeap) Len() int            { return len(h) }
-func (h minScoreHeap) Less(i, j int) bool  { return h[i].score < h[j].score }
+func (h minScoreHeap) Less(i, j int) bool  { return scoredDocWorse(h[i], h[j]) }
 func (h minScoreHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
 func (h *minScoreHeap) Push(x interface{}) { *h = append(*h, x.(scoredDoc)) }
 func (h *minScoreHeap) Pop() interface{} {
@@ -561,8 +567,9 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
 			continue
 		}
-		if score > h[0].score {
-			h[0] = scoredDoc{docNum: docNum, score: score}
+		candidate := scoredDoc{docNum: docNum, score: score}
+		if scoredDocBetter(candidate, h[0]) {
+			h[0] = candidate
 			heap.Fix(&h, 0)
 		}
 	}
@@ -573,17 +580,26 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 }
 
 func topKFromScores(scores map[uint32]float64, k int) []scoredDoc {
+	return topKFromScoresWithIDs(scores, k, nil)
+}
+
+func topKFromScoresWithIDs(scores map[uint32]float64, k int, docNumToID []string) []scoredDoc {
 	if k <= 0 || len(scores) == 0 {
 		return nil
 	}
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
+		id := ""
+		if int(docNum) < len(docNumToID) {
+			id = docNumToID[docNum]
+		}
+		candidate := scoredDoc{docNum: docNum, id: id, score: score}
 		if len(h) < k {
-			heap.Push(&h, scoredDoc{docNum: docNum, score: score})
+			heap.Push(&h, candidate)
 			continue
 		}
-		if score > h[0].score {
-			h[0] = scoredDoc{docNum: docNum, score: score}
+		if scoredDocBetter(candidate, h[0]) {
+			h[0] = candidate
 			heap.Fix(&h, 0)
 		}
 	}
@@ -592,6 +608,26 @@ func topKFromScores(scores map[uint32]float64, k int) []scoredDoc {
 		out[i] = heap.Pop(&h).(scoredDoc)
 	}
 	return out
+}
+
+func scoredDocWorse(left, right scoredDoc) bool {
+	if left.score != right.score {
+		return left.score < right.score
+	}
+	if left.id != right.id {
+		return left.id > right.id
+	}
+	return left.docNum > right.docNum
+}
+
+func scoredDocBetter(left, right scoredDoc) bool {
+	if left.score != right.score {
+		return left.score > right.score
+	}
+	if left.id != right.id {
+		return left.id < right.id
+	}
+	return left.docNum < right.docNum
 }
 
 func minInt(a, b int) int {

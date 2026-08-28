@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BM25 V2 now defaults to exact, language-neutral Unicode retrieval.** Text
+  is normalized with NFKC and Unicode case folding without default English
+  stopwords or stemming. Bounded prefix matching remains available through
+  `NORNICDB_BM25_PREFIX_MAX_EXPANSIONS`, but is disabled by default. Query-plan
+  caching is race-safe, equal scores use stable document-ID ordering, and
+  configured BM25 property projections are recorded with the analyzer in
+  persisted build settings so incompatible indexes rebuild automatically.
+  `NORNICDB_SEARCH_BM25_PROPERTIES` provides the property allowlist, while the
+  BEIR benchmark now indexes only `title` and `text`. On the official 300-query
+  SciFact run, nDCG@10 improved from `0.59974` to `0.66345` and Recall@10 from
+  `0.74200` to `0.78761`. Ten-run in-memory benchmarks measured about 67% lower
+  common-query latency and 85% fewer allocations than the previous 32-prefix
+  default.
+
 ## [v1.2.3] - 8/20/2026
 
 ### Added

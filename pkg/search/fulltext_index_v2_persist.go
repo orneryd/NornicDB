@@ -197,6 +197,7 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	}
 	f.version = 1
 	f.persistedVersion = 1
+	f.queryPlanCache.Clear()
 	f.mu.Unlock()
 }
 

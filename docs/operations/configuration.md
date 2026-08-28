@@ -186,12 +186,15 @@ Configuration values for these flags resolve through a fixed ladder, lowest → 
 
 In all other directions: per-DB overrides win over global, in both directions. An override of `true` turns on a globally-disabled index; an override of `false` turns off a globally-enabled one. Same for warming. The "always wins" guarantee is what makes the multi-tenant story work (one DB needs search, the rest don't).
 
-| Key                              | Type    | Default   | Meaning                                                                                                                                                                                                                                 |
-| -------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                 |
-| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                            |
-| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever. |
-| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                   |
+| Key                               | Type    | Default   | Meaning                                                                                                                                                                                                                                 |
+| --------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NORNICDB_SEARCH_BM25_ENABLED`    | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                 |
+| `NORNICDB_SEARCH_BM25_WARMING`    | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                            |
+| `NORNICDB_SEARCH_BM25_PROPERTIES` | list    | empty     | Comma-separated property allowlist for BM25 indexing. Empty indexes labels and all properties. Changing this value rebuilds persisted BM25 data.                                                                                        |
+| `NORNICDB_SEARCH_VECTOR_ENABLED`  | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever. |
+| `NORNICDB_SEARCH_VECTOR_WARMING`  | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                   |
+
+BM25 uses language-neutral NFKC normalization, Unicode case folding, and exact tokens by default. `NORNICDB_BM25_PREFIX_MAX_EXPANSIONS` optionally enables bounded prefix matching for every BM25 query term; its default is `0` (disabled). Enable it only when partial-token matching is required. `NORNICDB_BM25_PREFIX_MIN_LEN` (default `3`) sets the minimum Unicode character count for terms eligible for expansion.
 
 Behavior summary (all combinations supported):
 
@@ -818,13 +821,13 @@ Watch logs for:
 
 Heimdall is the cognitive guardian and AI chat assistant. It supports **local** (GGUF BYOM), **ollama**, **openai**, **vllm**, and **litellm** chat providers.
 
-| Variable                     | Default     | Description                                                       |
-| ---------------------------- | ----------- | ----------------------------------------------------------------- |
-| `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                           |
-| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `vllm`, or `litellm`        |
+| Variable                     | Default     | Description                                                                                                                                                  |
+| ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                                                                                                                      |
+| `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `vllm`, or `litellm`                                                                                                   |
 | `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. Defaults: Ollama `http://localhost:11434`, OpenAI `https://api.openai.com`, vLLM `http://localhost:8000`, LiteLLM `http://localhost:4000` |
-| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI; optional LiteLLM master/virtual key or vLLM key |
-| `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias |
+| `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI; optional LiteLLM master/virtual key or vLLM key                                                                                         |
+| `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias                                                                       |
 
 **Advanced llama.cpp context features** (local provider only, most models work with defaults):
 

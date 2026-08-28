@@ -11,15 +11,15 @@ import (
 func TestFulltextIndex_IndexAndBatchEdgeBranches(t *testing.T) {
 	idx := NewFulltextIndex()
 
-	// Index with only stop words should not create a document.
-	idx.Index("doc-stop", "the and an")
+	// Index with no Unicode terms should not create a document.
+	idx.Index("doc-empty", "! -- ...")
 	require.Equal(t, 0, idx.Count())
 
 	// Seed one doc, then batch-update through mixed edge cases.
 	idx.Index("doc-1", "hello world")
 	idx.IndexBatch(nil) // no-op branch
 	idx.IndexBatch([]FulltextBatchEntry{
-		{ID: "doc-1", Text: "the and an"}, // remove existing, then skip empty tokens
+		{ID: "doc-1", Text: "! -- ..."}, // remove existing, then skip empty tokens
 		{ID: "", Text: "ignored empty id"},
 		{ID: "doc-2", Text: "alpha beta beta"},
 	})
@@ -67,8 +67,8 @@ func TestFulltextIndex_SearchPrefixAndGuardBranches(t *testing.T) {
 
 	// Empty index and empty-token query guards.
 	require.Nil(t, idx.Search("anything", 10))
-	idx.Index("doc-stop", "the and an")
-	require.Nil(t, idx.Search("the and", 10))
+	idx.Index("doc-empty", "! -- ...")
+	require.Nil(t, idx.Search("! --", 10))
 
 	// Prefix-match and result limiting path.
 	idx.Index("doc-1", "searchablealice content")

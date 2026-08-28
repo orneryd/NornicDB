@@ -267,6 +267,9 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	svc := search.NewServiceWithDimensionsAndBM25Engine(storageEngine, dims, bm25Engine)
 	svc.SetDefaultMinSimilarity(minSim)
+	if db.config != nil {
+		svc.SetFulltextProperties(db.config.Memory.SearchBM25Properties)
+	}
 	// Per-DB master switches: pull from the resolver and seed the service.
 	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.
 	bm25On, vectorOn, bm25Warming, vectorWarming := db.resolveSearchFlags(dbName)

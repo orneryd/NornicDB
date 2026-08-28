@@ -173,16 +173,14 @@ func TestFulltextIndex_Tokenization(t *testing.T) {
 
 	t.Logf("Tokens: %v", tokens)
 
-	// Should lowercase, remove punctuation, filter stop words
+	// Should case-fold, remove punctuation, and preserve exact language-neutral terms.
 	assert.Contains(t, tokens, "hello")
 	assert.Contains(t, tokens, "world")
 	assert.Contains(t, tokens, "test")
 	assert.Contains(t, tokens, "123")
-
-	// Should NOT contain stop words
-	assert.NotContains(t, tokens, "this")
-	assert.NotContains(t, tokens, "is")
-	assert.NotContains(t, tokens, "a")
+	assert.Contains(t, tokens, "this")
+	assert.Contains(t, tokens, "is")
+	assert.Contains(t, tokens, "a")
 }
 
 // TestRRFFusion tests Reciprocal Rank Fusion algorithm.
@@ -2172,15 +2170,20 @@ func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {
 	assert.True(t, vectorIDInSeedNodeSet("a", map[string]struct{}{"a": {}}))
 	assert.False(t, vectorIDInSeedNodeSet("b", map[string]struct{}{"a": {}}))
 
-	current := "schema=node;props=title,text;format=2.0.0"
+	current := "schema=2;format=" + bm25V2FormatVersion + ";analyzer=" + bm25AnalyzerVersion + ";props=title,text"
 	assert.True(t, bm25SettingsEquivalent(current, current, bm25V2FormatVersion))
 	assert.True(t, bm25SettingsEquivalent(
-		"schema=node;props=title,text;format=1.0.0",
+		"schema=2;format="+fulltextIndexFormatVersion+";analyzer="+bm25AnalyzerVersion+";props=title,text",
 		current,
 		bm25V2FormatVersion,
 	))
 	assert.False(t, bm25SettingsEquivalent(
-		"schema=node;props=title;format=1.0.0",
+		"schema=2;format="+fulltextIndexFormatVersion+";analyzer="+bm25AnalyzerVersion+";props=title",
+		current,
+		bm25V2FormatVersion,
+	))
+	assert.False(t, bm25SettingsEquivalent(
+		"schema=2;format=1.0.0;props=title,text",
 		current,
 		bm25V2FormatVersion,
 	))
