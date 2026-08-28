@@ -21,9 +21,9 @@
 //
 // Stage mapping per CONTEXT D-15b / MET-13 closed enum
 // AllowedSearchStages = {embed, index, fuse}:
-//   - index: vector + BM25 lookup (combined; the two indexes execute in
-//     parallel-ish at observation cadence — capacity-planning wants the
-//     joint stage budget, not per-index micro-detail)
+//   - index: vector + BM25 lookup (launch-to-join wall time while the two
+//     indexes execute concurrently; capacity planning wants the joint stage
+//     budget, while response metrics retain each branch's duration)
 //   - fuse:  RRF + MMR + rerank
 //   - embed: NOT observed here (the embedder call lives in pkg/embed and
 //     is already covered by nornicdb_embed_duration_seconds — Plan

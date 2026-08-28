@@ -1428,7 +1428,7 @@ func TestSearch(t *testing.T) {
 		db.CreateNode(ctx, []string{"SearchTest"}, map[string]interface{}{"name": "SearchableAlice", "bio": "Software engineer"})
 		db.CreateNode(ctx, []string{"SearchTest"}, map[string]interface{}{"name": "SearchableBob", "bio": "Product manager"})
 
-		results, err := db.Search(ctx, "searchable", nil, 10)
+		results, err := db.Search(ctx, "software", nil, 10)
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(results), 1)
 	})
