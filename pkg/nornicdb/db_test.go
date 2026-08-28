@@ -1739,7 +1739,7 @@ func TestHybridSearch_ErrorBranches(t *testing.T) {
 		require.Contains(t, err.Error(), "search service not initialized")
 	})
 
-	t.Run("handles canceled context without panic", func(t *testing.T) {
+	t.Run("propagates canceled context without panic", func(t *testing.T) {
 		db, err := Open("", DefaultConfig())
 		require.NoError(t, err)
 		defer db.Close()
@@ -1747,8 +1747,8 @@ func TestHybridSearch_ErrorBranches(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 		results, err := db.HybridSearch(canceledCtx, "missing", make([]float32, 1024), nil, 10)
-		require.NoError(t, err)
-		require.NotNil(t, results)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, results)
 	})
 }
 

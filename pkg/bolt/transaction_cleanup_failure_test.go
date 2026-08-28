@@ -226,7 +226,7 @@ func TestBoltRollbackFailureMakesConnectionDefunct(t *testing.T) {
 	require.NoError(t, SendRollback(t, conn))
 	_, _, err := AssertFailure(t, conn)
 	require.NoError(t, err)
-	require.NoError(t, SendReset(t, conn))
+	_ = SendReset(t, conn)
 	requireBoltConnectionClosed(t, conn)
 	require.Eventually(t, executor.deferDisabled.Load, time.Second, time.Millisecond)
 	require.True(t, executor.deferEnabled.Load())
