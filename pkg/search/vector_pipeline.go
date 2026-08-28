@@ -26,10 +26,6 @@ const (
 	// opts into CPU brute-force for datasets below that threshold.
 	NSmallMax = 0
 
-	// CandidateMultiplier determines how many candidates to generate relative to k.
-	// Formula: C = max(k * CandidateMultiplier, 200)
-	CandidateMultiplier = 20
-
 	// MaxCandidates is the hard cap on candidate set size.
 	MaxCandidates = 5000
 )
@@ -116,8 +112,7 @@ func NewBruteForceCandidateGen(vectorIndex *VectorIndex) *BruteForceCandidateGen
 
 // SearchCandidates generates candidates using brute-force search.
 func (b *BruteForceCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
-	// For brute-force, we generate more candidates than k to allow for filtering
-	candidateLimit := calculateCandidateLimit(k)
+	candidateLimit := boundCandidateLimit(k)
 
 	results, err := b.vectorIndex.Search(ctx, query, candidateLimit, minSimilarity)
 	if err != nil {
@@ -157,7 +152,7 @@ func (b *FileStoreBruteForceCandidateGen) SearchCandidates(ctx context.Context, 
 	default:
 	}
 
-	candidateLimit := calculateCandidateLimit(k)
+	candidateLimit := boundCandidateLimit(k)
 	normalizedQuery := vector.Normalize(query)
 	initialCap := candidateLimit
 	if initialCap > 1024 {
@@ -209,8 +204,7 @@ func NewHNSWCandidateGen(hnswIndex *HNSWIndex) *HNSWCandidateGen {
 
 // SearchCandidates generates candidates using HNSW approximate search.
 func (h *HNSWCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
-	// For HNSW, we generate more candidates than k for exact reranking
-	candidateLimit := calculateCandidateLimit(k)
+	candidateLimit := boundCandidateLimit(k)
 	resultLimit := candidateLimit
 	searchBeam := h.hnswIndex.config.EfSearch
 	if searchBeam < resultLimit {
@@ -350,7 +344,7 @@ func (g *GPUBruteForceCandidateGen) SearchCandidates(ctx context.Context, query 
 		}
 	}
 
-	candidateLimit := calculateCandidateLimit(k)
+	candidateLimit := boundCandidateLimit(k)
 	results, err := g.embeddingIndex.Search(query, candidateLimit)
 	if err != nil {
 		return nil, err
@@ -384,18 +378,11 @@ func (i *IdentityExactScorer) ScoreCandidates(ctx context.Context, query []float
 	return scored, nil
 }
 
-// calculateCandidateLimit calculates the number of candidates to generate.
-//
-// Formula: C = max(k * CandidateMultiplier, 200) capped by MaxCandidates
-func calculateCandidateLimit(k int) int {
-	candidateLimit := k * CandidateMultiplier
-	if candidateLimit < 200 {
-		candidateLimit = 200
+func boundCandidateLimit(k int) int {
+	if k <= 0 {
+		return 0
 	}
-	if candidateLimit > MaxCandidates {
-		candidateLimit = MaxCandidates
-	}
-	return candidateLimit
+	return min(k, MaxCandidates)
 }
 
 // VectorSearchPipeline implements the unified vector search pipeline.

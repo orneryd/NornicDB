@@ -88,7 +88,7 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 		return nil, fmt.Errorf("cluster search failed: query dimensions %d != index dimensions %d", len(query), dims)
 	}
 
-	candidateLimit := calculateCandidateLimit(limit)
+	candidateLimit := boundCandidateLimit(limit)
 	clusterIDs := []int(nil)
 	if k.clusterSelector != nil {
 		clusterIDs = k.clusterSelector(ctx, query, k.numClustersToSearch)

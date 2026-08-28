@@ -38,12 +38,22 @@ func TestEmbedWorker_StartWorkers_NumWorkersBranches(t *testing.T) {
 		})
 	}
 
-	t.Run("num workers less than one defaults to one", func(t *testing.T) {
+	t.Run("zero workers disables worker pool", func(t *testing.T) {
 		w := newWorker(0)
 		t.Cleanup(func() { w.Close() })
 
 		w.StartWorkers()
 		require.True(t, w.workersStarted)
+		require.Zero(t, w.config.NumWorkers)
+	})
+
+	t.Run("negative worker count defaults to one", func(t *testing.T) {
+		w := newWorker(-1)
+		t.Cleanup(func() { w.Close() })
+
+		w.StartWorkers()
+		require.True(t, w.workersStarted)
+		require.Equal(t, 1, w.config.NumWorkers)
 	})
 
 	t.Run("num workers greater than one starts worker pool", func(t *testing.T) {

@@ -328,6 +328,15 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause)
 		}
 	}
+	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
+		filtered := paths[:0]
+		for _, path := range paths {
+			if len(path.Nodes) > 1 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
+				filtered = append(filtered, path)
+			}
+		}
+		paths = filtered
+	}
 
 	// Pre-compute upper-case expressions and aggregation flags ONCE for all items
 	// This avoids repeated strings.ToUpper() calls in loops (major performance win)
@@ -371,7 +380,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
-					row[i] = int64(len(paths))
+					row[i] = e.aggregatePathCount(ctx, paths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
 					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInner(item.expr))
@@ -445,7 +454,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 				// Aggregation function - aggregate over this group
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
-					row[i] = int64(len(groupPaths))
+					row[i] = e.aggregatePathCount(ctx, groupPaths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
 					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInner(item.expr))
@@ -945,6 +954,36 @@ func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathR
 		return nil
 	}
 	return best
+}
+
+func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string) int64 {
+	inner := strings.TrimSpace(extractFuncInner(expr))
+	if inner == "*" {
+		return int64(len(paths))
+	}
+	distinct := false
+	if strings.HasPrefix(strings.ToUpper(inner), "DISTINCT ") {
+		distinct = true
+		inner = trimDistinctPrefix(inner)
+	}
+	seen := make(map[string]struct{}, len(paths))
+	var count int64
+	for _, path := range paths {
+		pathContext := e.buildPathContext(path, matches)
+		value := e.evaluateExpressionWithPathContext(ctx, inner, pathContext)
+		if value == nil {
+			continue
+		}
+		if distinct {
+			key := joinedValueKey(value)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		count++
+	}
+	return count
 }
 
 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {

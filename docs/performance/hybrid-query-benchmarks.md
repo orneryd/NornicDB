@@ -6,8 +6,8 @@ The goal is not to claim a universal leaderboard result. The goal is to show wha
 
 ## Summary
 
-- **Vector-only** queries stayed in sub-millisecond to low-millisecond territory locally, depending on transport.
-- **Vector + one-hop graph traversal** added a small incremental cost locally.
+- **Full RRF retrieval** stayed in sub-millisecond to low-millisecond territory locally, depending on transport.
+- **Full RRF retrieval + one-hop graph traversal** added a small incremental cost locally.
 - **Remote latency tracked client-to-server RTT**, which means end-to-end latency became network-bound rather than database-bound.
 
 ## Test Setup
@@ -33,7 +33,49 @@ Remote environment:
 - 8 vCPU
 - 32 GB RAM
 
-## Local Results
+## Verified Full-RRF Regression Run
+
+Run on 2026-08-28 at revision `5408494199ef` using the self-contained E2E traversal fixture:
+
+| Item                    |                             Value |
+| ----------------------- | --------------------------------: |
+| Nodes                   |                             2,715 |
+| Edges                   |                             2,706 |
+| Indexed root embeddings |                                 9 |
+| Vector dimensions       |                                 3 |
+| Measured requests       | 800 per query shape and transport |
+| Warmup requests         |  10 per query shape and transport |
+
+Every request used a unique query cache key so the measured samples executed vector retrieval, BM25 retrieval, and RRF rather than returning a cached search response. Every response asserted:
+
+- `search_method = rrf_hybrid`
+- `vector_rank > 0`
+- `bm25_rank > 0`
+- `rrf_score > 0`
+- `fallback_triggered = false`
+- the expected root node, plus the expected neighbor for the one-hop shape
+
+| Workload                   | Transport |  Throughput |    Mean |     P50 |     P95 |     P99 |     Max |
+| -------------------------- | --------- | ----------: | ------: | ------: | ------: | ------: | ------: |
+| Full RRF retrieval         | HTTP      | 3,201 req/s |  312 us |  275 us |  380 us |  502 us | 4.50 ms |
+| Full RRF retrieval         | Bolt      |   947 req/s | 1.06 ms |  983 us | 1.27 ms | 1.91 ms | 5.07 ms |
+| Full RRF retrieval + 1 hop | HTTP      | 1,901 req/s |  525 us |  487 us |  650 us |  755 us | 4.87 ms |
+| Full RRF retrieval + 1 hop | Bolt      |   610 req/s | 1.64 ms | 1.52 ms | 2.13 ms | 4.75 ms | 6.43 ms |
+
+Reproduce the focused run:
+
+```bash
+NORNICDB_TRAVERSAL_RRF_ONLY=1 \
+NORNICDB_TRAVERSAL_MATRIX_ITERS=800 \
+NORNICDB_TRAVERSAL_MATRIX_MIN_SAMPLES=800 \
+NORNICDB_TRAVERSAL_MATRIX_WARMUP=10 \
+go test -tags=e2e ./testing/e2e \
+  -run '^TestVectorTraversalShapeMatrix_BoltVsHTTP$' -count=1 -v
+```
+
+The following local and remote tables are historical measurements from the larger 67K-node direct-vector workload. They are retained for comparison and should not be compared as before/after measurements with the self-contained full-RRF fixture.
+
+## Historical Local Direct-Vector Results
 
 | Workload       | Transport |   Throughput |   Mean |    P50 |     P95 |     P99 |     Max |
 | -------------- | --------- | -----------: | -----: | -----: | ------: | ------: | ------: |
@@ -61,7 +103,7 @@ Remote environment:
 
 > Bolt is nearly zero allocation. this was under concurrent load with mixed http and bolt queries. The tail latency spikes are from GC calls from hitting the http path at the same time. Bolt is far more efficient than HTTP for tail latency.
 
-## Remote Results
+## Historical Remote Direct-Vector Results
 
 Client-to-server latency was about **110 ms**.
 
@@ -90,9 +132,9 @@ NornicDB keeps that inside one execution engine. The benchmark does not prove ev
 - Remote throughput is **latency-bound**, not compute-bound.
 - These numbers are useful for query-shape comparison, not as a blanket claim for every graph or vector workload.
 
-## Verification Queries
+## Full-RRF Verification Queries
 
-Vector-only:
+Full RRF retrieval:
 
 ```bash
 curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
@@ -100,15 +142,15 @@ curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
   -d '{
     "statements":[
       {
-        "statement":"CALL db.index.vector.queryNodes('\''idx_original_text'\'', $topK, $text) YIELD node, score RETURN node.originalText AS originalText, score ORDER BY score DESC LIMIT $topK",
-        "parameters":{"text":"get it delivered","topK":5},
+        "statement":"CALL db.retrieve($request) YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered RETURN node.originalText AS originalText, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered ORDER BY rrf_score DESC LIMIT 5",
+        "parameters":{"request":{"query":"chain baseline","embedding":[0.95,0.05,0.0],"limit":5,"types":["OriginalText"]}},
         "resultDataContents":["row"]
       }
     ]
   }'
 ```
 
-Vector + one-hop graph traversal:
+Full RRF retrieval + one-hop graph traversal:
 
 ```bash
 curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
@@ -116,8 +158,8 @@ curl -s -u "$NORNIC_USERNAME:$NORNIC_PASSWORD" "$ENDPOINT" \
   -d '{
     "statements":[
       {
-        "statement":"CALL db.index.vector.queryNodes('\''idx_original_text'\'', $topK, $text) YIELD node, score MATCH (node:OriginalText)-[:TRANSLATES_TO]->(t:TranslatedText) WHERE t.language = $targetLang RETURN node.originalText AS originalText, score, t.language AS language, coalesce(t.auditedText, t.translatedText) AS translatedText ORDER BY score DESC, language LIMIT $topK",
-        "parameters":{"text":"get it delivered","topK":5,"targetLang":"es"},
+        "statement":"CALL db.retrieve($request) YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered MATCH (node)-[:BENCH_HOP]->(neighbor:BenchmarkHop) RETURN node.originalText AS originalText, elementId(neighbor) AS neighborID, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered ORDER BY rrf_score DESC LIMIT 5",
+        "parameters":{"request":{"query":"chain baseline","embedding":[0.95,0.05,0.0],"limit":5,"types":["OriginalText"]}},
         "resultDataContents":["row"]
       }
     ]

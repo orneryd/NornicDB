@@ -49,6 +49,14 @@ type matchClauseSpec struct {
 	label    string
 	propName string
 	rowField string // row.<rowField>
+	byID     bool
+}
+
+func (m matchClauseSpec) batchKey() nodeBatchMatchKey {
+	if m.byID {
+		return nodeBatchMatchKey{label: m.label, prop: "\x00elementId:" + m.rowField}
+	}
+	return nodeBatchMatchKey{label: m.label, prop: m.propName}
 }
 
 // createNodeSpec represents `CREATE (variable:Label {...})`. Properties may
@@ -144,6 +152,9 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	// If no index exists, refuse the fast path and let the caller fall back.
 	schema := store.GetSchema()
 	for _, m := range plan.matches {
+		if m.byID {
+			continue
+		}
 		if schema == nil || !schema.HasPropertyIndex(m.label, m.propName) {
 			return nil, false, nil
 		}
@@ -173,7 +184,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	// stored property both hash to the same key).
 	batchIndex := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(plan.matches))
 	for _, m := range plan.matches {
-		key := nodeBatchMatchKey{label: m.label, prop: m.propName}
+		key := m.batchKey()
 		if _, seen := batchIndex[key]; seen {
 			continue
 		}
@@ -188,6 +199,25 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		}
 		if len(distinct) == 0 {
 			batchIndex[key] = map[string]*storage.Node{}
+			continue
+		}
+		if m.byID {
+			idx := make(map[string]*storage.Node, len(distinct))
+			for k, value := range distinct {
+				elementID, ok := value.(string)
+				if !ok {
+					continue
+				}
+				lookupID := strings.TrimSpace(elementID)
+				if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
+					lookupID = parts[2]
+				}
+				node, err := store.GetNode(storage.NodeID(lookupID))
+				if err == nil && node != nil && (m.label == "" || nodeHasAnyLabel(node, []string{m.label})) {
+					idx[k] = node
+				}
+			}
+			batchIndex[key] = idx
 			continue
 		}
 		// One PropertyIndexLookup per distinct row value + one GetNode per
@@ -313,7 +343,7 @@ func (e *StorageExecutor) planUnwindMultiMatchCreateRowIndexed(
 		if !ok {
 			return nil
 		}
-		key := nodeBatchMatchKey{label: m.label, prop: m.propName}
+		key := m.batchKey()
 		idx, ok := batchIndex[key]
 		if !ok {
 			return fmt.Errorf("internal: missing batch index for %s.%s", m.label, m.propName)
@@ -455,6 +485,37 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
 	body = strings.TrimPrefix(body, "match")
 	body = strings.TrimSpace(body)
+	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
+		pattern := strings.TrimSpace(body[:whereIdx])
+		whereExpr := strings.TrimSpace(body[whereIdx+len("WHERE"):])
+		if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
+			return matchClauseSpec{}, false
+		}
+		inner := strings.TrimSpace(pattern[1 : len(pattern)-1])
+		parts := strings.SplitN(inner, ":", 2)
+		varName := strings.TrimSpace(parts[0])
+		label := ""
+		if len(parts) == 2 {
+			label = strings.TrimSpace(parts[1])
+		}
+		if !isSimpleIdentifier(varName) || (label != "" && !isSimpleIdentifier(label)) {
+			return matchClauseSpec{}, false
+		}
+		equals := strings.SplitN(whereExpr, "=", 2)
+		if len(equals) != 2 || !strings.EqualFold(strings.TrimSpace(equals[0]), "elementId("+varName+")") {
+			return matchClauseSpec{}, false
+		}
+		right := strings.TrimSpace(equals[1])
+		dot := strings.Index(right, ".")
+		if dot <= 0 || strings.TrimSpace(right[:dot]) != unwindVar {
+			return matchClauseSpec{}, false
+		}
+		rowField := strings.TrimSpace(right[dot+1:])
+		if !isSimpleIdentifier(rowField) {
+			return matchClauseSpec{}, false
+		}
+		return matchClauseSpec{variable: varName, label: label, rowField: rowField, byID: true}, true
+	}
 	if !strings.HasPrefix(body, "(") {
 		return matchClauseSpec{}, false
 	}

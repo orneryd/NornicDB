@@ -210,6 +210,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   0,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -241,6 +242,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -316,6 +318,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 
 		// Create worker and process
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -371,6 +374,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -969,6 +973,7 @@ func TestLargeContentEmbedding(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -1053,6 +1058,7 @@ func TestEmbedWorkerMicroBatching(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:     1,
 			ScanInterval:   time.Hour,
 			BatchDelay:     10 * time.Millisecond,
 			MaxRetries:     1,
@@ -1105,6 +1111,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 		}
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   1 * time.Millisecond,
 			MaxRetries:   1,
@@ -1152,6 +1159,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 		require.NoError(t, err)
 
 		worker := NewEmbedWorker(embedder, engine, &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: 5 * time.Second,
 			BatchDelay:   1 * time.Millisecond,
 			MaxRetries:   1,
@@ -1200,6 +1208,7 @@ func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour, // Long interval so ticker doesn't interfere
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -1264,6 +1273,7 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -1334,6 +1344,7 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -1399,6 +1410,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   10 * time.Millisecond,
 			MaxRetries:   1,
@@ -1493,6 +1505,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 		require.NoError(t, err)
 
 		config := &EmbedWorkerConfig{
+			NumWorkers:   1,
 			ScanInterval: time.Hour,
 			BatchDelay:   1 * time.Millisecond, // Fast processing
 			MaxRetries:   1,
@@ -2062,11 +2075,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []storage.NodeID{"n4", "n4"}, qe.marked)
 	})
 
-	t.Run("startWorkers guards closed and starts one worker when numWorkers<1", func(t *testing.T) {
+	t.Run("startWorkers guards closed and accepts disabled worker pool", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		cfg := &EmbedWorkerConfig{
-			NumWorkers:       0, // triggers minimum worker fallback branch
+			NumWorkers:       0,
 			ScanInterval:     20 * time.Millisecond,
 			BatchDelay:       time.Millisecond,
 			MaxRetries:       1,

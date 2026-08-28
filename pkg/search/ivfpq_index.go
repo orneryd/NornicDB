@@ -32,12 +32,12 @@ func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, m
 		return []Candidate{}, nil
 	}
 
-	totalLimit := ivfpqCandidateLimit(k, nprobe, i.profile.RerankTopK)
-	if totalLimit < k {
-		totalLimit = k
+	totalLimit := boundCandidateLimit(k)
+	if i.profile.RerankTopK > 0 && totalLimit > i.profile.RerankTopK {
+		totalLimit = i.profile.RerankTopK
 	}
 	if totalLimit <= 0 {
-		totalLimit = 1
+		return []Candidate{}, nil
 	}
 	scratch := i.getScratch(totalLimit)
 	defer i.putScratch(scratch)
@@ -214,30 +214,6 @@ func (h *candidateMinHeap) down(i int) {
 func (h *candidateMinHeap) toSortedDescending() []Candidate {
 	sort.Slice(h.data, func(i, j int) bool { return h.data[i].Score > h.data[j].Score })
 	return h.data
-}
-
-func ivfpqCandidateLimit(k, nprobe, rerankTopK int) int {
-	if nprobe <= 0 {
-		nprobe = 1
-	}
-	// Compressed path keeps a tighter rerank window than generic pipeline defaults
-	// to reduce exact re-score IO cost while preserving stable top-k quality.
-	limit := k * 2
-	probeWindow := nprobe * 6
-	if probeWindow > limit {
-		limit = probeWindow
-	}
-	if limit < 16 {
-		limit = 16
-	}
-	maxPipelineLimit := calculateCandidateLimit(k)
-	if limit > maxPipelineLimit {
-		limit = maxPipelineLimit
-	}
-	if rerankTopK > 0 && rerankTopK < limit {
-		limit = rerankTopK
-	}
-	return limit
 }
 
 func (i *IVFPQIndex) initScratchPool() {

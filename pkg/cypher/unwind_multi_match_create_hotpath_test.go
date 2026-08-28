@@ -100,6 +100,36 @@ CREATE (s)-[:SUPPLIES]->(p)`
 	require.Equal(t, int64(50), supplies.Rows[0][0])
 }
 
+func TestUnwindMultiMatchCreate_ElementIDEndpointsHitsBatchPath(t *testing.T) {
+	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	exec := testutil.SetupTestExecutorWithStore(t, store)
+	ctx := context.Background()
+
+	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Entity"}})
+	require.NoError(t, err)
+	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Entity"}})
+	require.NoError(t, err)
+
+	query := `
+UNWIND $rows AS row
+MATCH (source) WHERE elementId(source) = row.sourceID
+MATCH (target) WHERE elementId(target) = row.targetID
+CREATE (source)-[:BENCH_ENTITY_LINK]->(target)
+RETURN count(source) AS created`
+	rows := []any{
+		map[string]any{"sourceID": string(leftID), "targetID": string(rightID)},
+		map[string]any{"sourceID": string(rightID), "targetID": string(leftID)},
+	}
+	result, err := exec.Execute(ctx, query, map[string]any{"rows": rows})
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{int64(2)}}, result.Rows)
+	require.True(t, exec.LastHotPathTrace().UnwindMultiMatchCreateBatch)
+
+	count, err := exec.Execute(ctx, "MATCH ()-[r:BENCH_ENTITY_LINK]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count.Rows[0][0])
+}
+
 func TestNorthwindSeeder_ProductsIncompleteIndexedMatchBucketKeepsFastPath(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
 	store := storage.NewNamespacedEngine(baseStore, "test")

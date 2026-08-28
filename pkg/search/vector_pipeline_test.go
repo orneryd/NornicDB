@@ -180,22 +180,23 @@ func TestVectorSearchPipeline_Timeout(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
-func TestCalculateCandidateLimit(t *testing.T) {
+func TestBoundCandidateLimit(t *testing.T) {
 	tests := []struct {
 		name     string
 		k        int
 		expected int
 	}{
-		{"small k", 5, 200},         // min(5*20, 200) = 200
-		{"medium k", 20, 400},       // 20*20 = 400
-		{"large k", 100, 2000},      // 100*20 = 2000
-		{"very large k", 500, 5000}, // capped at MaxCandidates
-		{"zero k", 0, 200},          // min(0*20, 200) = 200
+		{"small k", 5, 5},
+		{"medium k", 20, 20},
+		{"large k", 100, 100},
+		{"very large k", 5001, MaxCandidates},
+		{"zero k", 0, 0},
+		{"negative k", -1, 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateCandidateLimit(tt.k)
+			result := boundCandidateLimit(tt.k)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
