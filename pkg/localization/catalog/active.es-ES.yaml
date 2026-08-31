@@ -28,6 +28,33 @@
 - id: qdrant.collection_name_required
   description: Error de validación de Qdrant gRPC cuando falta collection_name.
   other: se requiere collection_name
+- id: qdrant.field_required
+  description: Error de validación de Qdrant gRPC cuando falta un campo. Field es un identificador que no se traduce.
+  other: "se requiere {{.Field}}"
+- id: qdrant.fields_required
+  description: Error de validación de Qdrant gRPC cuando faltan campos o valores. Fields no se traduce.
+  other: "se requieren {{.Fields}}"
+- id: qdrant.database_access_denied
+  description: Error de autorización de Qdrant gRPC cuando no se permite acceder a una base de datos.
+  other: 'no se permite el acceso a la base de datos "{{.Name}}"'
+- id: qdrant.database_write_denied
+  description: Error de autorización de Qdrant gRPC cuando no se permite escribir en una base de datos.
+  other: 'no se permite escribir en la base de datos "{{.Name}}"'
+- id: qdrant.permission_denied
+  description: Error de autorización de Qdrant gRPC cuando faltan permisos para un método RPC.
+  other: permiso denegado
+- id: qdrant.authentication_required
+  description: Error de autenticación de Qdrant gRPC cuando faltan credenciales. Cause no se traduce.
+  other: "se requiere autenticación: {{.Cause}}"
+- id: qdrant.invalid_or_expired_token
+  description: Error de autenticación de Qdrant gRPC cuando el token no es válido.
+  other: token no válido o caducado
+- id: qdrant.collection_not_found
+  description: Error de Qdrant gRPC cuando no existe una colección.
+  other: 'no se encontró la colección "{{.Name}}"'
+- id: qdrant.snapshot_not_found
+  description: Error de Qdrant gRPC cuando no existe una instantánea.
+  other: 'no se encontró la instantánea "{{.Name}}"'
 - id: localization.items_processed
   description: Mensaje de progreso con el numero de elementos procesados.
   one: "{{.Count}} elemento procesado"
@@ -50,6 +77,24 @@
 - id: database.not_found
   description: Error de búsqueda de base de datos.
   other: "La base de datos '{{.Name}}' no existe"
+- id: server.database_not_found
+  description: Respuesta HTTP y Neo4j cuando no existe la base de datos solicitada.
+  other: "No se encontró la base de datos '{{.Name}}'"
+- id: security.database_access_denied
+  description: Respuesta de autorización cuando no se permite acceder a una base de datos.
+  other: "No se permite el acceso a la base de datos '{{.Name}}'."
+- id: security.database_write_denied
+  description: Respuesta de autorización cuando no se permite escribir en una base de datos.
+  other: "No se permite escribir en la base de datos '{{.Name}}'."
+- id: server.authentication_not_configured
+  description: Respuesta HTTP cuando los servicios de autenticación no están disponibles.
+  other: autenticación no configurada
+- id: server.not_authenticated
+  description: Respuesta HTTP cuando la solicitud no tiene un usuario autenticado.
+  other: sin autenticar
+- id: server.user_not_found
+  description: Respuesta HTTP cuando no existe el usuario solicitado.
+  other: usuario no encontrado
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

@@ -288,12 +288,12 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 	claimsViewer := &auth.JWTClaims{Roles: []string{string(auth.RoleViewer)}}
 	claimsAdmin := &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}
 
-	err = srv.authorizeMethod("/qdrant.Points/Search", claimsViewer)
+	err = srv.authorizeMethod(context.Background(), "/qdrant.Points/Search", claimsViewer)
 	require.Error(t, err)
-	err = srv.authorizeMethod("/qdrant.Points/Search", claimsAdmin)
+	err = srv.authorizeMethod(context.Background(), "/qdrant.Points/Search", claimsAdmin)
 	require.NoError(t, err)
 
-	err = srv.authorizeMethod("/qdrant.Unknown/Method", claimsAdmin)
+	err = srv.authorizeMethod(context.Background(), "/qdrant.Unknown/Method", claimsAdmin)
 	require.Error(t, err)
 }
 

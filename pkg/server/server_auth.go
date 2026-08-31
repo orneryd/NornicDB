@@ -22,7 +22,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.auth == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		s.writeAuthenticationNotConfigured(w, r)
 		return
 	}
 
@@ -105,14 +105,14 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if s.auth == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		s.writeAuthenticationNotConfigured(w, r)
 		return
 	}
 
 	// Get the authenticated user's claims
 	claims := getClaims(r)
 	if claims == nil {
-		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -407,7 +407,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.auth.GetUserByID(claims.Sub)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+		s.writeUserNotFound(w, r)
 		return
 	}
 
@@ -465,14 +465,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.auth == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		s.writeAuthenticationNotConfigured(w, r)
 		return
 	}
 
 	// Get authenticated user
 	claims := getClaims(r)
 	if claims == nil {
-		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -492,7 +492,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// Fallback to subject if username not in claims
 		user, err := s.auth.GetUserByID(claims.Sub)
 		if err != nil {
-			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			s.writeUserNotFound(w, r)
 			return
 		}
 		username = user.Username
@@ -520,14 +520,14 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.auth == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "authentication not configured", nil)
+		s.writeAuthenticationNotConfigured(w, r)
 		return
 	}
 
 	// Get authenticated user
 	claims := getClaims(r)
 	if claims == nil {
-		s.writeError(w, http.StatusUnauthorized, "not authenticated", ErrUnauthorized)
+		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -547,7 +547,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		// Fallback to subject if username not in claims
 		user, err := s.auth.GetUserByID(claims.Sub)
 		if err != nil {
-			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			s.writeUserNotFound(w, r)
 			return
 		}
 		username = user.Username
@@ -613,7 +613,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		user, err := s.auth.GetUser(username)
 		if err != nil {
-			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			s.writeUserNotFound(w, r)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, user)
@@ -652,7 +652,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		if err := s.auth.DeleteUser(username); err != nil {
-			s.writeError(w, http.StatusNotFound, "user not found", ErrNotFound)
+			s.writeUserNotFound(w, r)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})

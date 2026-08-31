@@ -68,7 +68,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.CollectionName)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
 
 	// Create snapshot directory for this collection
@@ -84,7 +84,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	store, _, err := s.collections.Open(ctx, req.CollectionName)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.CollectionName)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
 	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
@@ -143,7 +143,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.CollectionName)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
 
 	// List snapshots in collection directory
@@ -208,19 +208,19 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 	}
 
 	if req.GetSnapshotName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "snapshot_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"))
 	}
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.CollectionName)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
 
 	// Delete snapshot file
 	snapshotPath := filepath.Join(s.snapshotDir, "collections", req.CollectionName, req.SnapshotName)
 	if err := os.Remove(snapshotPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, status.Errorf(codes.NotFound, "snapshot %q not found", req.SnapshotName)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
 		}
 		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
 	}
@@ -357,14 +357,14 @@ func (s *SnapshotsService) DeleteFull(ctx context.Context, req *qpb.DeleteFullSn
 	start := time.Now()
 
 	if req.GetSnapshotName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "snapshot_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"))
 	}
 
 	// Delete snapshot file
 	snapshotPath := filepath.Join(s.snapshotDir, "full", req.SnapshotName)
 	if err := os.Remove(snapshotPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, status.Errorf(codes.NotFound, "snapshot %q not found", req.SnapshotName)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
 		}
 		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
 	}

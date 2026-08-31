@@ -31,6 +31,33 @@
 - id: qdrant.collection_name_required
   description: Qdrant gRPC validation error when the collection_name field is empty.
   other: collection_name is required
+- id: qdrant.field_required
+  description: Qdrant gRPC validation error when a request field is empty. Field is a machine field identifier and must not be translated.
+  other: "{{.Field}} is required"
+- id: qdrant.fields_required
+  description: Qdrant gRPC validation error when plural request fields or values are empty. Fields is a machine identifier or phrase and must not be translated.
+  other: "{{.Fields}} are required"
+- id: qdrant.database_access_denied
+  description: Qdrant gRPC authorization error when the principal cannot access a database. Name is the database identifier.
+  other: 'access to database "{{.Name}}" is not allowed'
+- id: qdrant.database_write_denied
+  description: Qdrant gRPC authorization error when the principal cannot write to a database. Name is the database identifier.
+  other: 'write on database "{{.Name}}" is not allowed'
+- id: qdrant.permission_denied
+  description: Qdrant gRPC authorization error when the principal lacks permission for an RPC method.
+  other: permission denied
+- id: qdrant.authentication_required
+  description: Qdrant gRPC authentication error when credentials are missing. Cause is diagnostic text and must not be translated.
+  other: "authentication required: {{.Cause}}"
+- id: qdrant.invalid_or_expired_token
+  description: Qdrant gRPC authentication error when a bearer token cannot be accepted.
+  other: invalid or expired token
+- id: qdrant.collection_not_found
+  description: Qdrant gRPC lookup error when a collection does not exist. Name is the collection identifier.
+  other: 'collection "{{.Name}}" not found'
+- id: qdrant.snapshot_not_found
+  description: Qdrant gRPC lookup error when a snapshot does not exist. Name is the snapshot identifier.
+  other: 'snapshot "{{.Name}}" not found'
 - id: localization.items_processed
   description: Test and shared progress message reporting a processed item count.
   one: "{{.Count}} item processed"
@@ -53,6 +80,24 @@
 - id: database.not_found
   description: Database lookup failure. Name is the requested database identifier.
   other: "Database '{{.Name}}' does not exist"
+- id: server.database_not_found
+  description: Legacy HTTP and Neo4j response when the requested database does not exist. Name is the database identifier.
+  other: "Database '{{.Name}}' not found"
+- id: security.database_access_denied
+  description: Authorization response when the principal cannot access a database. Name is the database identifier.
+  other: "Access to database '{{.Name}}' is not allowed."
+- id: security.database_write_denied
+  description: Authorization response when the principal cannot write to a database. Name is the database identifier.
+  other: "Write on database '{{.Name}}' is not allowed."
+- id: server.authentication_not_configured
+  description: HTTP response when authentication services are unavailable or disabled.
+  other: authentication not configured
+- id: server.not_authenticated
+  description: HTTP response when a request has no authenticated principal.
+  other: not authenticated
+- id: server.user_not_found
+  description: HTTP response when the requested user does not exist or cannot be disclosed.
+  other: user not found
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required

@@ -238,8 +238,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	claims := getClaims(r)
 	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -249,15 +248,14 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	// Rebuild is a write to the database; require ResolvedAccess.Write for this DB.
 	if !s.getResolvedAccess(claims, dbName).Write {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Write on database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseWriteDenied(w, r, dbName)
 		return
 	}
 
 	// Get namespaced storage for the specified database
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, dbName)
 		return
 	}
 
@@ -344,8 +342,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -358,7 +355,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
 		s.log.Warn("search: storage lookup failed", "subsystem", "search", "db", dbName, "error", err)
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, dbName)
 		return
 	}
 
@@ -730,8 +727,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -743,7 +739,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	// Get namespaced storage for the specified database
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Database '%s' not found", dbName), ErrNotFound)
+		s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, dbName)
 		return
 	}
 
