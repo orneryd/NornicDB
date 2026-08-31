@@ -1986,7 +1986,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 
 	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
 	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "transaction not found")
+		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 
@@ -2029,7 +2029,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
 	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "transaction not found")
+		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 
@@ -2080,7 +2080,7 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 
 	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, getClaims(r)))
 	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "transaction not found")
+		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 

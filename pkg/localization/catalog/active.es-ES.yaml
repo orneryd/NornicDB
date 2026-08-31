@@ -16,6 +16,9 @@
 - id: server.method_get_or_post_required
   description: Respuesta HTTP para un endpoint que acepta solicitudes GET o POST.
   other: se requiere GET o POST
+- id: server.method_get_or_put_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET o PUT.
+  other: se requiere GET o PUT
 - id: server.method_not_allowed
   description: Respuesta HTTP cuando un endpoint no acepta el método de la solicitud.
   other: método no permitido
@@ -101,6 +104,15 @@
 - id: server.user_not_found
   description: Respuesta HTTP cuando no existe el usuario solicitado.
   other: usuario no encontrado
+- id: server.transaction_not_found
+  description: Respuesta HTTP de Neo4j cuando no existe la transacción solicitada.
+  other: transacción no encontrada
+- id: server.request_field_required
+  description: Respuesta HTTP cuando falta un campo. Field es un identificador que no se traduce.
+  other: "se requiere {{.Field}}"
+- id: server.not_found
+  description: Respuesta HTTP genérica de Neo4j cuando no se encuentra una ruta o recurso.
+  other: no encontrado
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

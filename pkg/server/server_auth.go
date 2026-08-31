@@ -766,7 +766,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or PUT required", ErrMethodNotAllowed)
+		s.writeGetOrPutRequired(w, r)
 	}
 }
 
@@ -789,7 +789,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.TrimSpace(req.Name) == "" {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "name is required")
+			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
 			return
 		}
 		if err := s.roleStore.CreateRole(r.Context(), req.Name); err != nil {
@@ -833,7 +833,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		newName := strings.TrimSpace(req.Name)
 		if newName == "" {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "name is required")
+			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
 			return
 		}
 		if err := s.roleStore.RenameRole(r.Context(), roleName, newName); err != nil {
@@ -947,7 +947,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			if req.Role == "" {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "role is required")
+				s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "role")
 				return
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
@@ -959,7 +959,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or PUT required", ErrMethodNotAllowed)
+		s.writeGetOrPutRequired(w, r)
 	}
 }
 
@@ -991,6 +991,6 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or PUT required", ErrMethodNotAllowed)
+		s.writeGetOrPutRequired(w, r)
 	}
 }

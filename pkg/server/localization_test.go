@@ -120,6 +120,20 @@ func TestLocalizedGetRequiredPreservesContracts(t *testing.T) {
 	})
 }
 
+func TestLocalizedGetOrPutRequiredPreservesHTTPContract(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set("Accept-Language", "es-ES")
+	response := httptest.NewRecorder()
+	server.localizationMiddleware(http.HandlerFunc(server.writeGetOrPutRequired)).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+	require.Contains(t, response.Body.String(), "se requiere GET o PUT")
+	require.Equal(t, "GET or PUT required", localization.GetOrPutRequired().Fallback)
+}
+
 func TestLocalizedDatabaseAccessDeniedPreservesNeo4jContract(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
@@ -226,4 +240,74 @@ func TestLocalizedMethodNotAllowedPreservesResponseContracts(t *testing.T) {
 		require.Equal(t, "Neo.ClientError.General.BadRequest", body.Errors[0].Code)
 		require.Equal(t, "método no permitido", body.Errors[0].Message)
 	})
+}
+
+func TestLocalizedTransactionNotFoundPreservesNeo4jContract(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set("Accept-Language", "es-ES")
+	response := httptest.NewRecorder()
+	server.localizationMiddleware(http.HandlerFunc(server.writeNeo4jTransactionNotFound)).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+	var body TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Request.Invalid", body.Errors[0].Code)
+	require.Equal(t, "transacción no encontrada", body.Errors[0].Message)
+	require.Equal(t, "transaction not found", localization.TransactionNotFound().Fallback)
+}
+
+func TestLocalizedRequestFieldRequiredPreservesContracts(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	t.Run("HTTP", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.writeRequestFieldRequired(w, r, "node_ids")
+		})).ServeHTTP(response, request)
+		require.Equal(t, http.StatusBadRequest, response.Code)
+		require.Contains(t, response.Body.String(), "se requiere node_ids")
+	})
+	t.Run("Neo4j", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
+		})).ServeHTTP(response, request)
+		var body TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Equal(t, "Neo.ClientError.Request.InvalidFormat", body.Errors[0].Code)
+		require.Equal(t, "se requiere name", body.Errors[0].Message)
+		require.Equal(t, "name is required", localization.RequestFieldRequired("name").Fallback)
+	})
+}
+
+func TestLocalizedNotFoundPreservesCallerCode(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	for _, code := range []string{"Neo.ClientError.Request.Invalid", "Neo.ClientError.General.BadRequest"} {
+		t.Run(code, func(t *testing.T) {
+			server := &Server{localizer: manager}
+			request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+			request.Header.Set("Accept-Language", "es-ES")
+			response := httptest.NewRecorder()
+			server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server.writeNeo4jNotFound(w, r, code)
+			})).ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusNotFound, response.Code)
+			var body TransactionResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, code, body.Errors[0].Code)
+			require.Equal(t, "no encontrado", body.Errors[0].Message)
+		})
+	}
 }

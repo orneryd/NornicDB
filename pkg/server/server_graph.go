@@ -113,7 +113,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
 	if len(req.NodeIDs) == 0 {
-		s.writeError(w, http.StatusBadRequest, "node_ids is required", ErrBadRequest)
+		s.writeRequestFieldRequired(w, r, "node_ids")
 		return
 	}
 	if strings.TrimSpace(req.AsOf) != "" {
@@ -206,7 +206,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
 	if len(req.NodeIDs) == 0 {
-		s.writeError(w, http.StatusBadRequest, "node_ids is required", ErrBadRequest)
+		s.writeRequestFieldRequired(w, r, "node_ids")
 		return
 	}
 	if len(req.NodeIDs) > maxGraphTemporalDiffNodeIDs {
@@ -256,7 +256,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
 	if len(req.NodeIDs) == 0 {
-		s.writeError(w, http.StatusBadRequest, "node_ids is required", ErrBadRequest)
+		s.writeRequestFieldRequired(w, r, "node_ids")
 		return
 	}
 	if len(req.NodeIDs) > maxGraphTemporalDiffNodeIDs {
@@ -264,7 +264,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.AsOf) == "" {
-		s.writeError(w, http.StatusBadRequest, "as_of is required", ErrBadRequest)
+		s.writeRequestFieldRequired(w, r, "as_of")
 		return
 	}
 
