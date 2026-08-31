@@ -13,9 +13,15 @@
 - id: server.method_post_required
   description: HTTP response for an endpoint that only accepts POST requests.
   other: POST required
+- id: server.method_get_required
+  description: HTTP response for an endpoint that only accepts GET requests.
+  other: GET required
 - id: server.method_get_or_post_required
   description: HTTP response for an endpoint that accepts GET or POST requests.
   other: GET or POST required
+- id: server.method_not_allowed
+  description: HTTP response when an endpoint does not accept the request method.
+  other: method not allowed
 - id: request.body_read_failed
   description: HTTP response when the server cannot read the request body.
   other: failed to read request body

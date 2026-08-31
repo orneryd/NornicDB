@@ -49,6 +49,27 @@ func TestLocalizedInvalidRequestBody(t *testing.T) {
 	}
 }
 
+func TestLocalizedNeo4jInvalidRequestBodyPreservesCode(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	handler := server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set("Accept-Language", "es-ES")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	var body TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Request.InvalidFormat", body.Errors[0].Code)
+	require.Equal(t, "cuerpo de solicitud no válido", body.Errors[0].Message)
+}
+
 func TestLocalizedPostRequiredPreservesNeo4jCode(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
@@ -70,6 +91,33 @@ func TestLocalizedPostRequiredPreservesNeo4jCode(t *testing.T) {
 	require.Len(t, body.Errors, 1)
 	require.Equal(t, "Neo.ClientError.Request.Invalid", body.Errors[0].Code)
 	require.Equal(t, "se requiere POST", body.Errors[0].Message)
+}
+
+func TestLocalizedGetRequiredPreservesContracts(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	t.Run("HTTP", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(server.writeGetRequired)).ServeHTTP(response, request)
+		require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+		require.Contains(t, response.Body.String(), "se requiere GET")
+	})
+	t.Run("Neo4j", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
+		})).ServeHTTP(response, request)
+		var body TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Equal(t, "Neo.ClientError.General.BadRequest", body.Errors[0].Code)
+		require.Equal(t, "se requiere GET", body.Errors[0].Message)
+	})
 }
 
 func TestLocalizedDatabaseAccessDeniedPreservesNeo4jContract(t *testing.T) {
@@ -149,4 +197,33 @@ func TestLocalizedHTTPAuthenticationResponsesPreserveStatus(t *testing.T) {
 			require.Equal(t, float64(test.status), body["code"])
 		})
 	}
+}
+
+func TestLocalizedMethodNotAllowedPreservesResponseContracts(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	t.Run("HTTP", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(server.writeMethodNotAllowed)).ServeHTTP(response, request)
+		require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Equal(t, "método no permitido", body["message"])
+	})
+	t.Run("Neo4j", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
+		})).ServeHTTP(response, request)
+		var body TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Equal(t, "Neo.ClientError.General.BadRequest", body.Errors[0].Code)
+		require.Equal(t, "método no permitido", body.Errors[0].Message)
+	})
 }

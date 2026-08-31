@@ -19,7 +19,9 @@ const (
 	MessageCatalogEntryMissing   MessageID = "localization.catalog_entry_missing"
 	MessageInvalidRequestBody    MessageID = "server.invalid_request_body"
 	MessagePostRequired          MessageID = "server.method_post_required"
+	MessageGetRequired           MessageID = "server.method_get_required"
 	MessageGetOrPostRequired     MessageID = "server.method_get_or_post_required"
+	MessageMethodNotAllowed      MessageID = "server.method_not_allowed"
 	MessageRequestBodyReadFailed MessageID = "request.body_read_failed"
 	MessageMCPParseError         MessageID = "mcp.parse_error"
 	MessageMCPMethodNotFound     MessageID = "mcp.method_not_found"
@@ -86,9 +88,19 @@ func PostRequired() Message {
 	return Message{ID: MessagePostRequired, Fallback: "POST required"}
 }
 
+// GetRequired identifies an endpoint that only accepts GET requests.
+func GetRequired() Message {
+	return Message{ID: MessageGetRequired, Fallback: "GET required"}
+}
+
 // GetOrPostRequired identifies an endpoint that accepts GET or POST requests.
 func GetOrPostRequired() Message {
 	return Message{ID: MessageGetOrPostRequired, Fallback: "GET or POST required"}
+}
+
+// MethodNotAllowed identifies a request using an unsupported HTTP method.
+func MethodNotAllowed() Message {
+	return Message{ID: MessageMethodNotAllowed, Fallback: "method not allowed"}
 }
 
 // RequestBodyReadFailed identifies an unreadable HTTP request body.

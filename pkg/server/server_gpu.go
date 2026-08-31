@@ -13,7 +13,7 @@ import (
 
 func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "GET required", ErrMethodNotAllowed)
+		s.writeGetRequired(w, r)
 		return
 	}
 

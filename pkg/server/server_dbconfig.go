@@ -17,7 +17,7 @@ import (
 // GET /admin/databases/config/keys
 func (s *Server) handleDbConfigKeys(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "method not allowed")
+		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
 	keys := dbconfig.AllowedKeys()
@@ -55,7 +55,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPut:
 			s.handlePutDbConfig(w, r, dbName)
 		default:
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "method not allowed")
+			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 		}
 	case parts[1] == "mvcc" || strings.HasPrefix(parts[1], "mvcc/"):
 		s.handleDbLifecyclePrefix(w, r, dbName, parts[1])
@@ -86,7 +86,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	switch suffix {
 	case "mvcc", "mvcc/status":
 		if r.Method != http.MethodGet {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "GET required")
+			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		status := lce.LifecycleStatus()
@@ -147,7 +147,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		s.writeJSON(w, http.StatusOK, status)
 	case "mvcc/debt":
 		if r.Method != http.MethodGet {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "GET required")
+			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		provider, ok := storageEngine.(storage.MVCCLifecycleDebtEngine)
