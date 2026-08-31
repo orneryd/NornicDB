@@ -639,6 +639,12 @@ func TestLoadFromEnv_EmbeddingWorkerNumWorkers(t *testing.T) {
 	if cfg.EmbeddingWorker.NumWorkers != 0 {
 		t.Errorf("expected NumWorkers 0 to disable workers, got %d", cfg.EmbeddingWorker.NumWorkers)
 	}
+
+	os.Setenv("NORNICDB_EMBED_WORKER_NUM_WORKERS", "-1")
+	cfg = LoadFromEnv()
+	if cfg.EmbeddingWorker.NumWorkers != 1 {
+		t.Errorf("expected negative NumWorkers to retain default 1, got %d", cfg.EmbeddingWorker.NumWorkers)
+	}
 }
 
 func TestLoadFromEnv_MemoryNamespacedEnvVars(t *testing.T) {

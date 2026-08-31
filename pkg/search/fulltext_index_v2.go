@@ -12,8 +12,13 @@ import (
 )
 
 const (
-	bm25V2FormatVersion = "2.1.0"
-	bm25PrefixWeight    = 0.8
+	bm25V2FormatVersion        = "2.1.0"
+	bm25PrefixWeight           = 0.8
+	bm25SparseMinDocSlots      = 100_000
+	bm25DenseMinPostingVisits  = 4096
+	bm25DenseDensityDivisor    = 8
+	bm25MaxPooledDenseDocSlots = 1 << 20
+	bm25MaxPooledSparseScores  = 4096
 )
 
 type bm25Posting struct {
@@ -33,9 +38,10 @@ type FulltextIndexV2 struct {
 
 	documents map[string]string
 
-	docIDToNum map[string]uint32
-	docNumToID []string
-	docLengths []uint32
+	docIDToNum         map[string]uint32
+	docNumToID         []string
+	docLengths         []uint32
+	docIDsLexicalByNum bool
 
 	termIndex map[string]*bm25TermState
 	lexicon   []string
@@ -66,6 +72,7 @@ func NewFulltextIndexV2() *FulltextIndexV2 {
 		documents:           make(map[string]string),
 		docIDToNum:          make(map[string]uint32),
 		termIndex:           make(map[string]*bm25TermState),
+		docIDsLexicalByNum:  true,
 		maxPrefixExpansions: maxPrefixExpansions,
 		minPrefixLength:     minPrefixLength,
 	}
@@ -113,6 +120,7 @@ func (f *FulltextIndexV2) Clear() {
 	f.docIDToNum = make(map[string]uint32)
 	f.docNumToID = nil
 	f.docLengths = nil
+	f.docIDsLexicalByNum = true
 	f.termIndex = make(map[string]*bm25TermState)
 	f.lexicon = nil
 	f.docCount = 0
@@ -148,6 +156,14 @@ func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 		docNum, ok := f.docIDToNum[e.ID]
 		if !ok {
 			docNum = uint32(len(f.docNumToID))
+			if f.docIDsLexicalByNum {
+				for previous := len(f.docNumToID) - 1; previous >= 0; previous-- {
+					if previousID := f.docNumToID[previous]; previousID != "" {
+						f.docIDsLexicalByNum = previousID < e.ID
+						break
+					}
+				}
+			}
 			f.docIDToNum[e.ID] = docNum
 			f.docNumToID = append(f.docNumToID, e.ID)
 			f.docLengths = append(f.docLengths, 0)
@@ -287,28 +303,62 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		return nil
 	}
 
-	scratch := f.getScoreScratch()
+	postingVisits := 0
+	for _, weightedTerm := range weightedTerms {
+		postingVisits += len(weightedTerm.postings)
+	}
+	useDenseScores := shouldUseDenseBM25Scores(len(f.docLengths), postingVisits)
+	scratch := f.getScoreScratch(useDenseScores, postingVisits)
 	lengthNormOffset := bm25K1 * (1 - bm25B)
 	lengthNormScale := bm25K1 * bm25B / f.avgDocLength
-	for _, wt := range weightedTerms {
-		termScale := wt.weight * wt.idf * (bm25K1 + 1)
-		for _, p := range wt.postings {
-			docLen := f.docLengths[p.DocNum]
-			if docLen == 0 {
-				continue
+	denseTouchedAfterFirstTerm := 0
+	if useDenseScores {
+		for termIndex, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
+					continue
+				}
+				if scratch.generations[p.DocNum] != scratch.generation {
+					scratch.generations[p.DocNum] = scratch.generation
+					scratch.scores[p.DocNum] = 0
+					scratch.touched = append(scratch.touched, p.DocNum)
+				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.scores[p.DocNum] += termScale * tf / denominator
 			}
-			if scratch.generations[p.DocNum] != scratch.generation {
-				scratch.generations[p.DocNum] = scratch.generation
-				scratch.scores[p.DocNum] = 0
-				scratch.touched = append(scratch.touched, p.DocNum)
+			if termIndex == 0 {
+				denseTouchedAfterFirstTerm = len(scratch.touched)
 			}
-			tf := float64(p.TF)
-			denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
-			scratch.scores[p.DocNum] += termScale * tf / denominator
+		}
+	} else {
+		for _, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
+					continue
+				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.sparseScores[p.DocNum] += termScale * tf / denominator
+			}
 		}
 	}
 
-	top := topKFromDenseScores(scratch.scores, scratch.touched, limit, scratch.top)
+	var top []scoredDoc
+	var tieDocIDs []string
+	if !f.docIDsLexicalByNum {
+		tieDocIDs = f.docNumToID
+	}
+	if useDenseScores {
+		ascendingLexicalCandidates := tieDocIDs == nil && denseTouchedAfterFirstTerm == len(scratch.touched)
+		top = topKFromDenseScores(scratch.scores, scratch.touched, tieDocIDs, ascendingLexicalCandidates, limit, scratch.top)
+	} else {
+		top = topKFromSparseScores(scratch.sparseScores, tieDocIDs, limit, scratch.top)
+	}
 	scratch.top = top
 	out := make([]indexResult, 0, len(top))
 	for _, s := range top {
@@ -477,37 +527,64 @@ type bm25QueryPlan struct {
 }
 
 type bm25ScoreScratch struct {
-	scores      []float64
-	generations []uint32
-	touched     []uint32
-	top         minScoreHeap
-	generation  uint32
+	scores       []float64
+	generations  []uint32
+	touched      []uint32
+	sparseScores map[uint32]float64
+	top          minScoreHeap
+	generation   uint32
 }
 
-func (f *FulltextIndexV2) getScoreScratch() *bm25ScoreScratch {
+func shouldUseDenseBM25Scores(docSlots, postingVisits int) bool {
+	return docSlots < bm25SparseMinDocSlots ||
+		postingVisits >= bm25DenseMinPostingVisits &&
+			postingVisits >= (docSlots+bm25DenseDensityDivisor-1)/bm25DenseDensityDivisor
+}
+
+func (f *FulltextIndexV2) getScoreScratch(dense bool, postingVisits int) *bm25ScoreScratch {
 	var scratch *bm25ScoreScratch
 	if pooled := f.scoreScratchPool.Get(); pooled != nil {
 		scratch = pooled.(*bm25ScoreScratch)
 	} else {
 		scratch = &bm25ScoreScratch{}
 	}
-	if cap(scratch.scores) < len(f.docLengths) {
-		scratch.scores = make([]float64, len(f.docLengths))
-		scratch.generations = make([]uint32, len(f.docLengths))
+	if dense {
+		if cap(scratch.scores) < len(f.docLengths) {
+			scratch.scores = make([]float64, len(f.docLengths))
+			scratch.generations = make([]uint32, len(f.docLengths))
+		} else {
+			scratch.scores = scratch.scores[:len(f.docLengths)]
+			scratch.generations = scratch.generations[:len(f.docLengths)]
+		}
+		scratch.generation++
+		if scratch.generation == 0 {
+			clear(scratch.generations)
+			scratch.generation = 1
+		}
+		scratch.touched = scratch.touched[:0]
+		scratch.sparseScores = nil
 	} else {
-		scratch.scores = scratch.scores[:len(f.docLengths)]
-		scratch.generations = scratch.generations[:len(f.docLengths)]
+		scratch.scores = nil
+		scratch.generations = nil
+		scratch.touched = nil
+		if scratch.sparseScores == nil {
+			scratch.sparseScores = make(map[uint32]float64, minInt(postingVisits, bm25MaxPooledSparseScores))
+		} else {
+			clear(scratch.sparseScores)
+		}
 	}
-	scratch.generation++
-	if scratch.generation == 0 {
-		clear(scratch.generations)
-		scratch.generation = 1
-	}
-	scratch.touched = scratch.touched[:0]
 	return scratch
 }
 
 func (f *FulltextIndexV2) putScoreScratch(scratch *bm25ScoreScratch) {
+	if cap(scratch.scores) > bm25MaxPooledDenseDocSlots {
+		scratch.scores = nil
+		scratch.generations = nil
+		scratch.touched = nil
+	}
+	if len(scratch.sparseScores) > bm25MaxPooledSparseScores {
+		scratch.sparseScores = nil
+	}
 	f.scoreScratchPool.Put(scratch)
 }
 
@@ -562,12 +639,23 @@ type scoredDoc struct {
 
 type minScoreHeap []scoredDoc
 
-func pushMinScore(h minScoreHeap, candidate scoredDoc) minScoreHeap {
+func pushMinScore(h minScoreHeap, candidate scoredDoc, docIDs []string) minScoreHeap {
 	h = append(h, candidate)
 	child := len(h) - 1
+	if len(docIDs) == 0 {
+		for child > 0 {
+			parent := (child - 1) / 2
+			if !scoredDocNumRanksBefore(h[parent], h[child]) {
+				break
+			}
+			h[parent], h[child] = h[child], h[parent]
+			child = parent
+		}
+		return h
+	}
 	for child > 0 {
 		parent := (child - 1) / 2
-		if h[parent].score <= h[child].score {
+		if !scoredDocRanksBefore(h[parent], h[child], docIDs) {
 			break
 		}
 		h[parent], h[child] = h[child], h[parent]
@@ -576,9 +664,27 @@ func pushMinScore(h minScoreHeap, candidate scoredDoc) minScoreHeap {
 	return h
 }
 
-func replaceMinScore(h minScoreHeap, candidate scoredDoc) {
+func replaceMinScore(h minScoreHeap, candidate scoredDoc, docIDs []string) {
 	h[0] = candidate
 	parent := 0
+	if len(docIDs) == 0 {
+		for {
+			left := parent*2 + 1
+			if left >= len(h) {
+				return
+			}
+			smallest := left
+			right := left + 1
+			if right < len(h) && scoredDocNumRanksBefore(h[left], h[right]) {
+				smallest = right
+			}
+			if !scoredDocNumRanksBefore(h[parent], h[smallest]) {
+				return
+			}
+			h[parent], h[smallest] = h[smallest], h[parent]
+			parent = smallest
+		}
+	}
 	for {
 		left := parent*2 + 1
 		if left >= len(h) {
@@ -586,10 +692,10 @@ func replaceMinScore(h minScoreHeap, candidate scoredDoc) {
 		}
 		smallest := left
 		right := left + 1
-		if right < len(h) && h[right].score < h[left].score {
+		if right < len(h) && scoredDocRanksBefore(h[left], h[right], docIDs) {
 			smallest = right
 		}
-		if h[parent].score <= h[smallest].score {
+		if !scoredDocRanksBefore(h[parent], h[smallest], docIDs) {
 			return
 		}
 		h[parent], h[smallest] = h[smallest], h[parent]
@@ -597,18 +703,52 @@ func replaceMinScore(h minScoreHeap, candidate scoredDoc) {
 	}
 }
 
-func sortScoreHeapDescending(h minScoreHeap) []scoredDoc {
+func sortScoreHeapDescending(h minScoreHeap, docIDs []string) []scoredDoc {
+	if len(docIDs) == 0 {
+		slices.SortFunc(h, func(left, right scoredDoc) int {
+			switch {
+			case scoredDocNumRanksBefore(left, right):
+				return -1
+			case scoredDocNumRanksBefore(right, left):
+				return 1
+			default:
+				return 0
+			}
+		})
+		return h
+	}
 	slices.SortFunc(h, func(left, right scoredDoc) int {
 		switch {
-		case left.score > right.score:
+		case scoredDocRanksBefore(left, right, docIDs):
 			return -1
-		case left.score < right.score:
+		case scoredDocRanksBefore(right, left, docIDs):
 			return 1
 		default:
 			return 0
 		}
 	})
 	return h
+}
+
+func scoredDocNumRanksBefore(left, right scoredDoc) bool {
+	if left.score != right.score {
+		return left.score > right.score
+	}
+	return left.docNum < right.docNum
+}
+
+func scoredDocRanksBefore(left, right scoredDoc, docIDs []string) bool {
+	if left.score != right.score {
+		return left.score > right.score
+	}
+	if int(left.docNum) < len(docIDs) && int(right.docNum) < len(docIDs) {
+		leftID := docIDs[left.docNum]
+		rightID := docIDs[right.docNum]
+		if leftID != rightID {
+			return leftID < rightID
+		}
+	}
+	return left.docNum < right.docNum
 }
 
 func topKMinScore(scores map[uint32]float64, k int) float64 {
@@ -618,11 +758,12 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 	h := make(minScoreHeap, 0, k)
 	for docNum, score := range scores {
 		if len(h) < k {
-			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
+			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score}, nil)
 			continue
 		}
-		if score > h[0].score {
-			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
+		candidate := scoredDoc{docNum: docNum, score: score}
+		if scoredDocRanksBefore(candidate, h[0], nil) {
+			replaceMinScore(h, candidate, nil)
 		}
 	}
 	if len(h) < k {
@@ -632,23 +773,34 @@ func topKMinScore(scores map[uint32]float64, k int) float64 {
 }
 
 func topKFromScores(scores map[uint32]float64, k int) []scoredDoc {
+	return topKFromSparseScores(scores, nil, k, nil)
+}
+
+func topKFromSparseScores(scores map[uint32]float64, docIDs []string, k int, h minScoreHeap) []scoredDoc {
 	if k <= 0 || len(scores) == 0 {
 		return nil
 	}
-	h := make(minScoreHeap, 0, k)
+	heapCapacity := minInt(k, len(scores))
+	if cap(h) < heapCapacity {
+		h = make(minScoreHeap, 0, heapCapacity)
+	} else {
+		h = h[:0]
+	}
 	for docNum, score := range scores {
+		candidate := scoredDoc{docNum: docNum, score: score}
 		if len(h) < k {
-			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
+			h = pushMinScore(h, candidate, docIDs)
 			continue
 		}
-		if score > h[0].score {
-			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
+		if len(docIDs) == 0 && scoredDocNumRanksBefore(candidate, h[0]) ||
+			len(docIDs) != 0 && scoredDocRanksBefore(candidate, h[0], docIDs) {
+			replaceMinScore(h, candidate, docIDs)
 		}
 	}
-	return sortScoreHeapDescending(h)
+	return sortScoreHeapDescending(h, docIDs)
 }
 
-func topKFromDenseScores(scores []float64, touched []uint32, k int, h minScoreHeap) []scoredDoc {
+func topKFromDenseScores(scores []float64, touched []uint32, docIDs []string, ascendingLexicalCandidates bool, k int, h minScoreHeap) []scoredDoc {
 	if k <= 0 || len(touched) == 0 {
 		return nil
 	}
@@ -661,14 +813,20 @@ func topKFromDenseScores(scores []float64, touched []uint32, k int, h minScoreHe
 	for _, docNum := range touched {
 		score := scores[docNum]
 		if len(h) < k {
-			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score})
+			h = pushMinScore(h, scoredDoc{docNum: docNum, score: score}, docIDs)
 			continue
 		}
 		if score > h[0].score {
-			replaceMinScore(h, scoredDoc{docNum: docNum, score: score})
+			replaceMinScore(h, scoredDoc{docNum: docNum, score: score}, docIDs)
+		} else if !ascendingLexicalCandidates && score == h[0].score {
+			if len(docIDs) == 0 && docNum < h[0].docNum {
+				replaceMinScore(h, scoredDoc{docNum: docNum, score: score}, docIDs)
+			} else if len(docIDs) != 0 && scoredDocRanksBefore(scoredDoc{docNum: docNum, score: score}, h[0], docIDs) {
+				replaceMinScore(h, scoredDoc{docNum: docNum, score: score}, docIDs)
+			}
 		}
 	}
-	return sortScoreHeapDescending(h)
+	return sortScoreHeapDescending(h, docIDs)
 }
 
 func minInt(a, b int) int {

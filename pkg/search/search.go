@@ -144,7 +144,7 @@ const (
 	// When true, logs vector/BM25/fusion/total timing to help identify bottlenecks.
 	EnvSearchLogTimings = "NORNICDB_SEARCH_LOG_TIMINGS"
 	// EnvSearchResultCacheEnabled controls caching of complete Search responses.
-	// Disable it for benchmarks that must execute every retrieval stage.
+	// Disable it when callers require every request to execute the retrieval pipeline.
 	EnvSearchResultCacheEnabled = "NORNICDB_SEARCH_RESULT_CACHE_ENABLED"
 	BM25EngineV1                = "v1"
 	BM25EngineV2                = "v2"

@@ -22,7 +22,7 @@ The parallel region is deliberately narrow:
 3. Join both branches and handle errors.
 4. Continue existing post-processing sequentially.
 
-Decay filtering, storage-backed type/property filtering, orphan tracking, RRF, MMR, reranking, result enrichment, and response assembly remain outside the parallel region. These stages mutate shared slices, maps, or response state and are not part of this optimization.
+Decay filtering and storage-backed type/property filtering run inside branch-local adaptive-overfetch callbacks and may execute concurrently. Each branch owns its result slice and orphan map; orphan state is merged only after both branches join. RRF, MMR, reranking, result enrichment, and response assembly remain outside the parallel region.
 
 ## Non-Negotiable Constraints
 

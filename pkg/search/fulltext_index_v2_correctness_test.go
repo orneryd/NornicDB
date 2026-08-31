@@ -59,20 +59,83 @@ func TestFulltextIndexV2OptimizedSearchMatchesExhaustiveScoring(t *testing.T) {
 	}
 }
 
-func TestFulltextIndexV2EqualScoresRemainEligible(t *testing.T) {
+func TestFulltextIndexV2EqualScoresUseDocumentIDOrder(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
+	lexical := NewFulltextIndexV2()
+	lexical.Index("doc-a", "shared term")
+	lexical.Index("doc-b", "shared term")
+	lexical.Index("doc-c", "shared term")
+	require.True(t, lexical.docIDsLexicalByNum)
+	require.Equal(t, []string{"doc-a"}, resultIDs(lexical.Search("shared", 1)))
+
 	idx := NewFulltextIndexV2()
 	idx.Index("doc-c", "shared term")
 	idx.Index("doc-a", "shared term")
 	idx.Index("doc-b", "shared term")
+	require.False(t, idx.docIDsLexicalByNum)
 
 	for iteration := 0; iteration < 100; iteration++ {
+		require.Equal(t, []string{"doc-a"}, resultIDs(idx.Search("shared", 1)))
 		results := idx.Search("shared", 3)
-		require.ElementsMatch(t, []string{"doc-a", "doc-b", "doc-c"}, resultIDs(results))
+		require.Equal(t, []string{"doc-a", "doc-b", "doc-c"}, resultIDs(results))
 		for _, result := range results[1:] {
 			require.Equal(t, results[0].Score, result.Score)
 		}
 	}
+}
+
+func TestDocIDsAreLexicalByNumber(t *testing.T) {
+	require.True(t, docIDsAreLexicalByNumber([]string{"doc-a", "", "doc-b"}))
+	require.False(t, docIDsAreLexicalByNumber([]string{"doc-c", "doc-a", "doc-b"}))
+}
+
+func TestFulltextIndexV2LoadDerivesDocumentIDOrder(t *testing.T) {
+	path := t.TempDir() + "/bm25"
+	idx := NewFulltextIndexV2()
+	idx.Index("doc-c", "shared")
+	idx.Index("doc-a", "shared")
+	require.NoError(t, idx.Save(path))
+
+	loaded := NewFulltextIndexV2()
+	require.NoError(t, loaded.Load(path))
+	require.False(t, loaded.docIDsLexicalByNum)
+	require.Equal(t, []string{"doc-a"}, resultIDs(loaded.Search("shared", 1)))
+}
+
+func TestFulltextIndexV2RareQueryUsesSparseScratch(t *testing.T) {
+	idx := NewFulltextIndexV2()
+	idx.docCount = 100_000
+	idx.avgDocLength = 1
+	idx.docLengths = make([]uint32, idx.docCount)
+	idx.docLengths[0] = 1
+	idx.docNumToID = []string{"rare-document"}
+	idx.termIndex["rare"] = &bm25TermState{
+		Postings: []bm25Posting{{DocNum: 0, TF: 1}},
+		IDF:      1,
+	}
+
+	require.Equal(t, []string{"rare-document"}, resultIDs(idx.Search("rare", 1)))
+
+	require.False(t, shouldUseDenseBM25Scores(len(idx.docLengths), 1))
+	scratch := idx.getScoreScratch(false, 1)
+	require.Zero(t, cap(scratch.scores), "rare queries must not allocate corpus-sized score arrays")
+	require.Zero(t, cap(scratch.generations), "rare queries must not allocate corpus-sized generation arrays")
+	idx.putScoreScratch(scratch)
+}
+
+func TestFulltextIndexV2AdaptiveScratchPolicy(t *testing.T) {
+	require.False(t, shouldUseDenseBM25Scores(10_000_000, 1))
+	require.False(t, shouldUseDenseBM25Scores(100_000, bm25DenseMinPostingVisits-1))
+	require.True(t, shouldUseDenseBM25Scores(100_000, 12_500))
+
+	idx := NewFulltextIndexV2()
+	idx.docLengths = make([]uint32, bm25MaxPooledDenseDocSlots+1)
+	scratch := idx.getScoreScratch(true, len(idx.docLengths))
+	require.Len(t, scratch.scores, len(idx.docLengths))
+	idx.putScoreScratch(scratch)
+	require.Nil(t, scratch.scores)
+	require.Nil(t, scratch.generations)
+	require.Nil(t, scratch.touched)
 }
 
 func TestFulltextIndexV2PooledScoresDoNotLeakAcrossQueries(t *testing.T) {
