@@ -2089,6 +2089,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		}
 		worker := NewEmbedWorker(newMockEmbedder(), engine, cfg)
 		defer worker.Close()
+		require.Zero(t, worker.config.NumWorkers)
 
 		worker.closed.Store(true)
 		worker.StartWorkers()

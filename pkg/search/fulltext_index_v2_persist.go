@@ -182,6 +182,7 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.docIDToNum = s.DocIDToNum
 	f.docNumToID = s.DocNumToID
 	f.docLengths = s.DocLengths
+	f.docIDsLexicalByNum = docIDsAreLexicalByNumber(s.DocNumToID)
 	f.termIndex = s.TermIndex
 	f.lexicon = s.Lexicon
 	f.avgDocLength = s.AvgDocLength
@@ -221,6 +222,7 @@ func (f *FulltextIndexV2) migrateFromV1Snapshot(v1 bm25V1Snapshot) {
 	f.docIDToNum = make(map[string]uint32, len(docIDs))
 	f.docNumToID = make([]string, len(docIDs))
 	f.docLengths = make([]uint32, len(docIDs))
+	f.docIDsLexicalByNum = true
 
 	var total int64
 	for i, id := range docIDs {
@@ -270,4 +272,18 @@ func (f *FulltextIndexV2) migrateFromV1Snapshot(v1 bm25V1Snapshot) {
 	sort.Strings(f.lexicon)
 	f.markDirtyLocked()
 	f.persistedVersion = f.version
+}
+
+func docIDsAreLexicalByNumber(docIDs []string) bool {
+	previous := ""
+	for _, id := range docIDs {
+		if id == "" {
+			continue
+		}
+		if previous != "" && previous >= id {
+			return false
+		}
+		previous = id
+	}
+	return true
 }

@@ -1429,10 +1429,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Start embed queue workers after warmup so they don't compete with index build on startup.
-		if db.embedQueue != nil && db.embedWorkerConfig.NumWorkers > 0 {
+		if db.embedQueue != nil {
 			db.embedQueue.StartWorkers()
-		} else if db.embedQueue != nil {
-			log.Printf("🧠 Embed queue workers disabled (configured workers=0)")
 		}
 	})
 
