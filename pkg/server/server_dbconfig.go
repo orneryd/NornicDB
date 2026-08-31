@@ -30,7 +30,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin/databases/")
 	if path == "" || path == "config/keys" {
 		// config/keys is handled by handleDbConfigKeys
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.General.BadRequest", "not found")
+		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
 	parts := strings.SplitN(path, "/", 2)
@@ -40,7 +40,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) != 2 {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.General.BadRequest", "not found")
+		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
 	switch {
@@ -60,7 +60,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	case parts[1] == "mvcc" || strings.HasPrefix(parts[1], "mvcc/"):
 		s.handleDbLifecyclePrefix(w, r, dbName, parts[1])
 	default:
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.General.BadRequest", "not found")
+		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 	}
 }
 
@@ -178,7 +178,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			"keys":     keys,
 		})
 	default:
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.General.BadRequest", "not found")
+		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 	}
 }
 

@@ -19,6 +19,9 @@
 - id: server.method_get_or_post_required
   description: Expanded pseudo-locale GET or POST method response.
   other: "[!! GET or POST required !!]"
+- id: server.method_get_or_put_required
+  description: Expanded pseudo-locale GET or PUT method response.
+  other: "[!! GET or PUT required !!]"
 - id: server.method_not_allowed
   description: Expanded pseudo-locale unsupported HTTP method response.
   other: "[!! method not allowed !!]"
@@ -104,6 +107,15 @@
 - id: server.user_not_found
   description: Expanded pseudo-locale user lookup response.
   other: "[!! user not found !!]"
+- id: server.transaction_not_found
+  description: Expanded pseudo-locale transaction lookup response.
+  other: "[!! transaction not found !!]"
+- id: server.request_field_required
+  description: Expanded pseudo-locale required request field response.
+  other: "[!! {{.Field}} is required !!]"
+- id: server.not_found
+  description: Expanded pseudo-locale generic lookup response.
+  other: "[!! not found !!]"
 - id: search.searcher_required
   description: Expanded pseudo-locale missing searcher error.
   other: "[!! searcher is required !!]"

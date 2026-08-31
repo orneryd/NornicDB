@@ -16,7 +16,7 @@ import (
 
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "not found")
+		s.writeNeo4jNotFound(w, r, "Neo.ClientError.Request.Invalid")
 		return
 	}
 

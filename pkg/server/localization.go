@@ -74,6 +74,10 @@ func (s *Server) writeGetOrPostRequired(w http.ResponseWriter, r *http.Request) 
 	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.GetOrPostRequired(), ErrMethodNotAllowed)
 }
 
+func (s *Server) writeGetOrPutRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.GetOrPutRequired(), ErrMethodNotAllowed)
+}
+
 func (s *Server) writeMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.MethodNotAllowed(), ErrMethodNotAllowed)
 }
@@ -113,4 +117,20 @@ func (s *Server) writeNotAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeUserNotFound(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusNotFound, localization.UserNotFound(), ErrNotFound)
+}
+
+func (s *Server) writeNeo4jTransactionNotFound(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Request.Invalid", localization.TransactionNotFound())
+}
+
+func (s *Server) writeRequestFieldRequired(w http.ResponseWriter, r *http.Request, field string) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestFieldRequired(field), ErrBadRequest)
+}
+
+func (s *Server) writeNeo4jRequestFieldRequired(w http.ResponseWriter, r *http.Request, code, field string) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, code, localization.RequestFieldRequired(field))
+}
+
+func (s *Server) writeNeo4jNotFound(w http.ResponseWriter, r *http.Request, code string) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, code, localization.NotFound())
 }

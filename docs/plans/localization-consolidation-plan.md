@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,921
-occurrences and 4,639 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,903
+occurrences and 4,634 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 192 HTTP occurrences, 137 to 68 gRPC occurrences,
+counts changed from 290 to 174 HTTP occurrences, 137 to 68 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -139,7 +139,8 @@ Implemented:
   including database lookup and access/write authorization failures, common
   HTTP authentication responses, and Qdrant validation, authentication, and
   direct not-found responses. Shared HTTP/Neo4j invalid-body, method-not-allowed,
-  and GET-required responses also render through catalog IDs.
+  GET-required, transaction lookup, GET-or-PUT, required-field, and generic
+  not-found responses also render through catalog IDs.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 

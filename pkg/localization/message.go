@@ -21,6 +21,7 @@ const (
 	MessagePostRequired          MessageID = "server.method_post_required"
 	MessageGetRequired           MessageID = "server.method_get_required"
 	MessageGetOrPostRequired     MessageID = "server.method_get_or_post_required"
+	MessageGetOrPutRequired      MessageID = "server.method_get_or_put_required"
 	MessageMethodNotAllowed      MessageID = "server.method_not_allowed"
 	MessageRequestBodyReadFailed MessageID = "request.body_read_failed"
 	MessageMCPParseError         MessageID = "mcp.parse_error"
@@ -49,6 +50,9 @@ const (
 	MessageAuthNotConfigured     MessageID = "server.authentication_not_configured"
 	MessageHTTPNotAuthenticated  MessageID = "server.not_authenticated"
 	MessageUserNotFound          MessageID = "server.user_not_found"
+	MessageTransactionNotFound   MessageID = "server.transaction_not_found"
+	MessageRequestFieldRequired  MessageID = "server.request_field_required"
+	MessageNotFound              MessageID = "server.not_found"
 	MessageSearcherRequired      MessageID = "search.searcher_required"
 	MessageRequestRequired       MessageID = "request.required"
 	MessageQueryRequired         MessageID = "search.query_required"
@@ -96,6 +100,11 @@ func GetRequired() Message {
 // GetOrPostRequired identifies an endpoint that accepts GET or POST requests.
 func GetOrPostRequired() Message {
 	return Message{ID: MessageGetOrPostRequired, Fallback: "GET or POST required"}
+}
+
+// GetOrPutRequired identifies an endpoint that accepts GET or PUT requests.
+func GetOrPutRequired() Message {
+	return Message{ID: MessageGetOrPutRequired, Fallback: "GET or PUT required"}
 }
 
 // MethodNotAllowed identifies a request using an unsupported HTTP method.
@@ -285,6 +294,25 @@ func HTTPNotAuthenticated() Message {
 // UserNotFound identifies an HTTP user lookup failure.
 func UserNotFound() Message {
 	return Message{ID: MessageUserNotFound, Fallback: "user not found"}
+}
+
+// TransactionNotFound identifies an HTTP transaction lookup failure.
+func TransactionNotFound() Message {
+	return Message{ID: MessageTransactionNotFound, Fallback: "transaction not found"}
+}
+
+// RequestFieldRequired identifies a missing HTTP request field.
+func RequestFieldRequired(field string) Message {
+	return Message{
+		ID:       MessageRequestFieldRequired,
+		Fallback: field + " is required",
+		Data:     map[string]any{"Field": field},
+	}
+}
+
+// NotFound identifies a generic HTTP resource lookup failure.
+func NotFound() Message {
+	return Message{ID: MessageNotFound, Fallback: "not found"}
 }
 
 // SearcherRequired identifies missing search-service configuration.

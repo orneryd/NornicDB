@@ -19,6 +19,9 @@
 - id: server.method_get_or_post_required
   description: HTTP response for an endpoint that accepts GET or POST requests.
   other: GET or POST required
+- id: server.method_get_or_put_required
+  description: HTTP response for an endpoint that accepts GET or PUT requests.
+  other: GET or PUT required
 - id: server.method_not_allowed
   description: HTTP response when an endpoint does not accept the request method.
   other: method not allowed
@@ -104,6 +107,15 @@
 - id: server.user_not_found
   description: HTTP response when the requested user does not exist or cannot be disclosed.
   other: user not found
+- id: server.transaction_not_found
+  description: Neo4j HTTP response when the requested transaction does not exist or is not owned by the caller.
+  other: transaction not found
+- id: server.request_field_required
+  description: HTTP validation response when a request field is empty. Field is a machine field identifier and must not be translated.
+  other: "{{.Field}} is required"
+- id: server.not_found
+  description: Generic Neo4j HTTP response when a route or resource cannot be found.
+  other: not found
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required
