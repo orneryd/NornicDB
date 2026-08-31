@@ -1118,7 +1118,7 @@ func stripCypherComments(query string) string {
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
 	var req TransactionRequest
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 		return
 	}
 

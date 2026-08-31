@@ -13,9 +13,15 @@
 - id: server.method_post_required
   description: Expanded pseudo-locale POST method response.
   other: "[!! POST required !!]"
+- id: server.method_get_required
+  description: Expanded pseudo-locale GET method response.
+  other: "[!! GET required !!]"
 - id: server.method_get_or_post_required
   description: Expanded pseudo-locale GET or POST method response.
   other: "[!! GET or POST required !!]"
+- id: server.method_not_allowed
+  description: Expanded pseudo-locale unsupported HTTP method response.
+  other: "[!! method not allowed !!]"
 - id: request.body_read_failed
   description: Expanded pseudo-locale unreadable request response.
   other: "[!! failed to read request body !!]"

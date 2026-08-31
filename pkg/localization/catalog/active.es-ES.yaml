@@ -10,9 +10,15 @@
 - id: server.method_post_required
   description: Respuesta HTTP para un endpoint que solo acepta solicitudes POST.
   other: se requiere POST
+- id: server.method_get_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes GET.
+  other: se requiere GET
 - id: server.method_get_or_post_required
   description: Respuesta HTTP para un endpoint que acepta solicitudes GET o POST.
   other: se requiere GET o POST
+- id: server.method_not_allowed
+  description: Respuesta HTTP cuando un endpoint no acepta el método de la solicitud.
+  other: método no permitido
 - id: request.body_read_failed
   description: Respuesta HTTP cuando no se puede leer el cuerpo de la solicitud.
   other: no se pudo leer el cuerpo de la solicitud

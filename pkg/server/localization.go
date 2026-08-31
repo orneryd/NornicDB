@@ -54,12 +54,32 @@ func (s *Server) writeInvalidRequestBody(w http.ResponseWriter, r *http.Request)
 	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.InvalidRequestBody(), ErrBadRequest)
 }
 
+func (s *Server) writeNeo4jInvalidRequestBody(w http.ResponseWriter, r *http.Request, code string) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, code, localization.InvalidRequestBody())
+}
+
 func (s *Server) writePostRequired(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PostRequired(), ErrMethodNotAllowed)
 }
 
+func (s *Server) writeGetRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.GetRequired(), ErrMethodNotAllowed)
+}
+
+func (s *Server) writeNeo4jGetRequired(w http.ResponseWriter, r *http.Request, code string) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusMethodNotAllowed, code, localization.GetRequired())
+}
+
 func (s *Server) writeGetOrPostRequired(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.GetOrPostRequired(), ErrMethodNotAllowed)
+}
+
+func (s *Server) writeMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.MethodNotAllowed(), ErrMethodNotAllowed)
+}
+
+func (s *Server) writeNeo4jMethodNotAllowed(w http.ResponseWriter, r *http.Request, code string) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusMethodNotAllowed, code, localization.MethodNotAllowed())
 }
 
 func (s *Server) writeNeo4jPostRequired(w http.ResponseWriter, r *http.Request, code string) {

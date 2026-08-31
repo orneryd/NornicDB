@@ -297,7 +297,7 @@ func isHTTPSRequest(r *http.Request) bool {
 // GET /auth/oauth/redirect
 func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed", ErrMethodNotAllowed)
+		s.writeMethodNotAllowed(w, r)
 		return
 	}
 
@@ -323,7 +323,7 @@ func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 // GET /auth/oauth/callback
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed", ErrMethodNotAllowed)
+		s.writeMethodNotAllowed(w, r)
 		return
 	}
 
@@ -384,7 +384,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed", ErrMethodNotAllowed)
+		s.writeMethodNotAllowed(w, r)
 		return
 	}
 
@@ -665,7 +665,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 // handleEntitlements serves GET /auth/entitlements. Returns the canonical list of entitlements (global + per-database) for UI and docs.
 func (s *Server) handleEntitlements(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "GET required", ErrMethodNotAllowed)
+		s.writeGetRequired(w, r)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, auth.AllEntitlements())
@@ -707,7 +707,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 			} `json:"mappings"`
 		}
 		if err := s.readJSON(r, &body); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 			return
 		}
 		validEntitlementIDs := make(map[string]struct{})
@@ -785,7 +785,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 		}
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 			return
 		}
 		if strings.TrimSpace(req.Name) == "" {
@@ -828,7 +828,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 		}
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 			return
 		}
 		newName := strings.TrimSpace(req.Name)
@@ -934,7 +934,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			} `json:"mappings"`
 		}
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 			return
 		}
 		if req.Mappings != nil {
@@ -981,7 +981,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			Write    bool   `json:"write"`
 		}
 		if err := s.readJSON(r, &entries); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "invalid request body")
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 			return
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {

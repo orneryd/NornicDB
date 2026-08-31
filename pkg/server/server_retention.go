@@ -259,7 +259,7 @@ func (s *Server) handleRetentionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "GET required", ErrMethodNotAllowed)
+		s.writeGetRequired(w, r)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
