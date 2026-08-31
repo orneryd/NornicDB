@@ -12,20 +12,52 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"golang.org/x/text/language"
 )
+
+// sendLocalizedRunFailure sends a localized RUN failure response.
+func (s *Session) sendLocalizedRunFailure(code string, message localization.Message) error {
+	return s.sendRunFailure(code, s.localize(message))
+}
+
+func (s *Session) localize(message localization.Message) string {
+	if s.server == nil || s.server.config == nil || s.server.config.Localizer == nil {
+		if message.Fallback != "" {
+			return message.Fallback
+		}
+		return string(message.ID)
+	}
+	ctx := context.Background()
+	if s.language != language.Und {
+		match := s.server.config.Localizer.Resolve("bolt", s.language)
+		ctx = localization.WithPreferences(ctx, match.Tag)
+	}
+	text, _, err := s.server.config.Localizer.Render(ctx, message)
+	if err != nil {
+		return message.Fallback
+	}
+	return text
+}
 
 // handleRun handles the RUN message (execute Cypher).
 func (s *Session) handleRun(data []byte) error {
 	// Check authentication
 	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
-		return s.sendRunFailure("Neo.ClientError.Security.Unauthorized", "Not authenticated")
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
 	if err != nil {
 		return s.sendRunFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse RUN message: %v", err))
+	}
+	s.language = language.Und
+	if requestedLocale, ok := metadata["locale"].(string); ok {
+		if tag, localeErr := localization.NormalizeLanguage(requestedLocale); localeErr == nil && tag != language.Und {
+			s.language = tag
+		}
 	}
 
 	// Store metadata for potential use (bookmarks, tx_timeout, etc.)
@@ -85,16 +117,16 @@ func (s *Session) handleRun(data []byte) error {
 	// Check permissions based on query type (use canonical entitlement IDs from auth)
 	if s.authResult != nil {
 		if isSchema && !s.authResult.HasPermission(string(auth.PermSchema)) {
-			return s.sendRunFailure("Neo.ClientError.Security.Forbidden", "Schema operations require schema permission")
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
 		}
 		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) {
-			return s.sendRunFailure("Neo.ClientError.Security.Forbidden", "Admin operations require admin permission")
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
 		}
 		if isWrite && !s.authResult.HasPermission(string(auth.PermWrite)) {
-			return s.sendRunFailure("Neo.ClientError.Security.Forbidden", "Write operations require write permission")
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.WritePermissionRequired())
 		}
 		if !s.authResult.HasPermission(string(auth.PermRead)) {
-			return s.sendRunFailure("Neo.ClientError.Security.Forbidden", "Read operations require read permission")
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.ReadPermissionRequired())
 		}
 	}
 	// Log query if enabled
@@ -150,7 +182,7 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	if s.server != nil && s.server.dbManager != nil && dbName != "" && !constituentAwareExists(s.server.dbManager, dbName) {
 		return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
-			fmt.Sprintf("Database '%s' does not exist", dbName))
+			s.localize(localization.DatabaseNotFound(dbName)))
 	}
 	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
 	var mode auth.DatabaseAccessMode

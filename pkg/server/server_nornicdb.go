@@ -41,7 +41,7 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 //   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 // handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
 func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
 	}
 
@@ -299,7 +299,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -312,7 +312,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 
@@ -703,7 +703,7 @@ func runEmbedWithTimeout(parent context.Context, timeout time.Duration, fn func(
 
 func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -714,7 +714,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 

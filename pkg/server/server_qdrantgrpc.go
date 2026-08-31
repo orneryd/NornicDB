@@ -48,6 +48,7 @@ func (s *Server) startQdrantGRPC() error {
 	baseStorage := s.db.GetBaseStorageForManager()
 
 	cfg := qdrantgrpc.DefaultConfig()
+	cfg.Localizer = s.localizer
 	if features.QdrantGRPCListenAddr != "" {
 		cfg.ListenAddr = features.QdrantGRPCListenAddr
 	}
@@ -111,6 +112,7 @@ func (s *Server) startQdrantGRPC() error {
 			DefaultDatabase: dbName,
 			MaxLimit:        cfg.MaxTopK,
 			RerankEnabled:   rerankEnabled,
+			Localizer:       s.localizer,
 		},
 		func(ctx context.Context, query string) ([]float32, error) {
 			return s.db.EmbedQuery(ctx, query)

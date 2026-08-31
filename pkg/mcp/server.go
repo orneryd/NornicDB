@@ -57,9 +57,11 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"golang.org/x/text/language"
 )
 
 const cypherMutationConflictRetries = 5
@@ -75,9 +77,10 @@ type Embedder interface {
 
 // Server implements the MCP protocol for NornicDB.
 type Server struct {
-	db     *nornicdb.DB
-	config *ServerConfig
-	embed  Embedder
+	db        *nornicdb.DB
+	config    *ServerConfig
+	embed     Embedder
+	localizer *localization.Manager
 
 	// HTTP server
 	httpServer *http.Server
@@ -137,6 +140,8 @@ type ServerConfig struct {
 	EmbeddingDimensions int `yaml:"embedding_dimensions"`
 	// Embedder is the embedding service (set externally if needed)
 	Embedder Embedder `yaml:"-"`
+	// Localizer renders public protocol messages. Nil preserves source English.
+	Localizer *localization.Manager `yaml:"-"`
 
 	// DatabaseScopedExecutor returns an executor and node getter for the given database name.
 	// When set, MCP tool calls that include a database in context (e.g. from the agentic loop)
@@ -178,10 +183,11 @@ func NewServer(db *nornicdb.DB, config *ServerConfig) *Server {
 	}
 
 	s := &Server{
-		db:       db,
-		config:   config,
-		embed:    config.Embedder,
-		handlers: make(map[string]ToolHandler),
+		db:        db,
+		config:    config,
+		embed:     config.Embedder,
+		localizer: config.Localizer,
+		handlers:  make(map[string]ToolHandler),
 	}
 
 	// Register all tool handlers
@@ -234,11 +240,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.started = time.Now()
 
 	// MCP endpoints
-	mux.HandleFunc("/mcp", s.handleMCP)
-	mux.HandleFunc("/mcp/initialize", s.handleInitialize)
-	mux.HandleFunc("/mcp/tools/list", s.handleListTools)
-	mux.HandleFunc("/mcp/tools/call", s.handleCallTool)
-	mux.HandleFunc("/mcp/health", s.handleHealth)
+	mux.HandleFunc("/mcp", s.localizedHandler(s.handleMCP))
+	mux.HandleFunc("/mcp/initialize", s.localizedHandler(s.handleInitialize))
+	mux.HandleFunc("/mcp/tools/list", s.localizedHandler(s.handleListTools))
+	mux.HandleFunc("/mcp/tools/call", s.localizedHandler(s.handleCallTool))
+	mux.HandleFunc("/mcp/health", s.localizedHandler(s.handleHealth))
 }
 
 // ServeHTTP implements http.Handler for routing MCP requests.
@@ -247,6 +253,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.started.IsZero() {
 		s.started = time.Now()
 	}
+	r = s.withLocalization(r)
 
 	switch r.URL.Path {
 	case "/mcp":
@@ -343,7 +350,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 // handleMCP is the main MCP JSON-RPC endpoint.
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required")
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PostRequired())
 		return
 	}
 
@@ -357,12 +364,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, s.config.MaxRequestSize))
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "failed to read request body")
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestBodyReadFailed())
 		return
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
-		s.writeJSONRPCError(w, nil, -32700, "Parse error", err.Error())
+		s.writeLocalizedJSONRPCError(w, r, nil, -32700, localization.MCPParseError(), err.Error())
 		return
 	}
 
@@ -391,12 +398,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		s.writeJSONRPCError(w, req.ID, -32601, "Method not found", req.Method)
+		s.writeLocalizedJSONRPCError(w, r, req.ID, -32601, localization.MCPMethodNotFound(), req.Method)
 		return
 	}
 
 	if rpcErr != nil {
-		s.writeJSONRPCError(w, req.ID, -32000, "Tool execution failed", rpcErr.Error())
+		s.writeLocalizedJSONRPCError(w, r, req.ID, -32000, localization.MCPToolExecutionFailed(), rpcErr.Error())
 		return
 	}
 
@@ -406,14 +413,14 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 // handleInitialize handles the initialize request.
 func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required")
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PostRequired())
 		return
 	}
 
 	var req InitRequest
 	body, err := io.ReadAll(io.LimitReader(r.Body, s.config.MaxRequestSize))
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "failed to read request body")
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestBodyReadFailed())
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -433,7 +440,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 // handleListTools returns the list of available tools.
 func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required")
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.GetOrPostRequired())
 		return
 	}
 
@@ -444,14 +451,14 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 // handleCallTool executes a tool.
 func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required")
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PostRequired())
 		return
 	}
 
 	var req CallToolRequest
 	body, err := io.ReadAll(io.LimitReader(r.Body, s.config.MaxRequestSize))
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "failed to read request body")
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestBodyReadFailed())
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -1836,6 +1843,49 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) 
 
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	s.writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (s *Server) localizedHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		next(w, s.withLocalization(r))
+	}
+}
+
+func (s *Server) withLocalization(r *http.Request) *http.Request {
+	if s.localizer == nil || len(localization.PreferencesFromContext(r.Context())) > 0 {
+		return r
+	}
+	preferences, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
+	if err != nil || len(preferences) == 0 {
+		return r
+	}
+	match := s.localizer.Resolve("http", preferences...)
+	return r.WithContext(localization.WithPreferences(r.Context(), match.Tag))
+}
+
+func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
+	if s.localizer == nil {
+		return message.Fallback, language.AmericanEnglish
+	}
+	text, tag, err := s.localizer.Render(ctx, message)
+	if err != nil {
+		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
+	}
+	return text, tag
+}
+
+func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message) {
+	text, tag := s.renderMessage(r.Context(), message)
+	w.Header().Set("Content-Language", tag.String())
+	w.Header().Add("Vary", "Accept-Language")
+	s.writeError(w, status, text)
+}
+
+func (s *Server) writeLocalizedJSONRPCError(w http.ResponseWriter, r *http.Request, id interface{}, code int, message localization.Message, data string) {
+	text, tag := s.renderMessage(r.Context(), message)
+	w.Header().Set("Content-Language", tag.String())
+	w.Header().Add("Vary", "Accept-Language")
+	s.writeJSONRPCError(w, id, code, text, data)
 }
 
 func (s *Server) writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {

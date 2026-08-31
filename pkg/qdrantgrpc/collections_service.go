@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +16,7 @@ type CollectionsService struct {
 	collections CollectionStore
 	vecIndex    *vectorIndexCache
 	checker     DatabaseAccessChecker // optional; when set, enforces per-database (per-collection) RBAC
+	localizer   *localization.Manager
 }
 
 // NewCollectionsService creates a new Collections service.
@@ -37,7 +39,7 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -85,7 +87,7 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -182,7 +184,7 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -210,7 +212,7 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -234,7 +236,7 @@ func (s *CollectionsService) CollectionExists(ctx context.Context, req *qpb.Coll
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err

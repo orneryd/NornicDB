@@ -755,6 +755,15 @@ compliance:
   breach_notify_webhook: ""
 
 # =============================================================================
+# LOCALIZATION
+# =============================================================================
+localization:
+  # Process-default language. "auto" uses the OS preferred language list.
+  # Env: NORNICDB_LANGUAGE
+  # Examples: en-US, es-ES, pt-BR, zh-Hant
+  language: auto
+
+# =============================================================================
 # LOGGING CONFIGURATION
 # Docs: https://github.com/orneryd/nornicdb/docs/operations/logging.md
 # =============================================================================

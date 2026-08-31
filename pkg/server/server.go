@@ -190,6 +190,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -469,6 +470,9 @@ type Config struct {
 	// once all consumers are updated to pass an explicit logger via
 	// observability.Provider.Logger().
 	Logger *slog.Logger
+
+	// Localizer renders human-readable boundary messages. Nil uses en-US.
+	Localizer *localization.Manager
 }
 
 // DefaultConfig returns Neo4j-compatible default server configuration.
@@ -622,6 +626,8 @@ type Server struct {
 	// carries component attribution. NEVER nil after New() returns
 	// (discard-fallback handler installed when cfg.Logger == nil).
 	log *slog.Logger
+
+	localizer *localization.Manager
 
 	// MCP server for LLM tool interface
 	mcpServer *mcp.Server
@@ -996,6 +1002,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if config.Logger == nil {
 		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if config.Localizer == nil {
+		var err error
+		config.Localizer, err = localization.NewManager(nil, config.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("initialize localization: %w", err)
+		}
+	}
 
 	// Note: GPU status is logged in main.go during GPU manager initialization
 	// This avoids duplicate logs and provides more detailed information
@@ -1011,6 +1024,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		mcpConfig.EmbeddingModel = config.EmbeddingModel
 		mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions
 		mcpConfig.DefaultNodeLabel = globalConfig.Memory.DefaultNodeLabel
+		mcpConfig.Localizer = config.Localizer
 		mcpServer = mcp.NewServer(db, mcpConfig)
 	} else {
 		config.Logger.With("component", "server").Info("mcp server disabled via configuration")
@@ -1068,6 +1082,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		dbManager:          dbManager,
 		auth:               authenticator,
 		log:                config.Logger.With("component", "server"),
+		localizer:          config.Localizer,
 		mcpServer:          mcpServer,
 		graphqlHandler:     graphql.NewHandler(db, dbManager),
 		basicAuthCache:     auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),

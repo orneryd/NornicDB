@@ -17,7 +17,7 @@ import (
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -34,7 +34,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 
@@ -100,7 +100,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // and are not stored - they are validated by signature on each request.
 func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 
@@ -460,7 +460,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 // handleChangePassword allows users to change their own password.
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -482,7 +482,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 
@@ -537,7 +537,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 
@@ -579,7 +579,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 
@@ -597,7 +597,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusCreated, user)
 
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required", ErrMethodNotAllowed)
+		s.writeGetOrPostRequired(w, r)
 	}
 }
 
@@ -625,7 +625,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 
@@ -806,7 +806,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusCreated, map[string]string{"name": strings.ToLower(strings.TrimSpace(req.Name))})
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required", ErrMethodNotAllowed)
+		s.writeGetOrPostRequired(w, r)
 	}
 }
 

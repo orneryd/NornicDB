@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -71,7 +72,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -221,7 +222,7 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -268,7 +269,7 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -313,7 +314,7 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -350,7 +351,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -461,7 +462,7 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -549,7 +550,7 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -598,7 +599,7 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -639,7 +640,7 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -678,7 +679,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -750,7 +751,7 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -814,7 +815,7 @@ func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoi
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -848,7 +849,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -897,7 +898,7 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -930,7 +931,7 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -1015,7 +1016,7 @@ func (s *PointsService) CreateFieldIndex(ctx context.Context, req *qpb.CreateFie
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -1039,7 +1040,7 @@ func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFie
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -1068,7 +1069,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err

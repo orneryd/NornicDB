@@ -874,7 +874,7 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	case len(remaining) == 0:
 		// POST /db/{dbName}/tx - open new transaction
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
 		s.handleOpenTransaction(w, r, dbName)
@@ -882,7 +882,7 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	case remaining[0] == "commit" && len(remaining) == 1:
 		// POST /db/{dbName}/tx/commit - implicit transaction
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
 		s.handleImplicitTransaction(w, r, dbName)
@@ -902,7 +902,7 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	case len(remaining) == 2 && remaining[1] == "commit":
 		// POST /db/{dbName}/tx/{txId}/commit
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
 		txID := remaining[0]

@@ -94,7 +94,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		s.writeJSON(w, http.StatusOK, status)
 	case "mvcc/prune":
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		if err := lce.TriggerPruneNow(r.Context()); err != nil {
@@ -104,21 +104,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "prune triggered", "database": dbName})
 	case "mvcc/pause":
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.PauseLifecycle()
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "lifecycle paused", "database": dbName})
 	case "mvcc/resume":
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.ResumeLifecycle()
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "lifecycle resumed", "database": dbName})
 	case "mvcc/schedule":
 		if r.Method != http.MethodPost {
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.General.BadRequest", "POST required")
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		scheduler, ok := storageEngine.(storage.MVCCLifecycleScheduleEngine)
