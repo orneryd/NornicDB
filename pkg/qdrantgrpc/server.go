@@ -232,12 +232,12 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	}
 	mode := s.databaseAccessModeResolver(roles)
 	if mode == nil || !mode.CanAccessDatabase(database) {
-		return status.Errorf(codes.PermissionDenied, "access to database %q is not allowed", database)
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
 	if write && s.resolvedAccessResolver != nil {
 		ra := s.resolvedAccessResolver(roles, database)
 		if !ra.Write {
-			return status.Errorf(codes.PermissionDenied, "write on database %q is not allowed", database)
+			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
 		}
 	}
 	return nil
@@ -447,11 +447,11 @@ func (s *Server) IsRunning() bool {
 	return s.started
 }
 
-func (s *Server) authorizeMethod(fullMethod string, claims *auth.JWTClaims) error {
+func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims *auth.JWTClaims) error {
 	required, ok := requiredPermissionForMethod(fullMethod)
 	if !ok {
 		// Default-deny: unknown method should not be allowed implicitly.
-		return status.Errorf(codes.PermissionDenied, "permission denied")
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
 	}
 	if s.config != nil && s.config.MethodPermissions != nil {
 		if key, ok := methodKey(fullMethod); ok {
@@ -463,7 +463,7 @@ func (s *Server) authorizeMethod(fullMethod string, claims *auth.JWTClaims) erro
 	if hasPermissionFromClaims(claims, required) {
 		return nil
 	}
-	return status.Errorf(codes.PermissionDenied, "permission denied")
+	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
 }
 
 // unaryAuthInterceptor authenticates unary gRPC requests.
@@ -485,7 +485,7 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 			if strings.HasPrefix(authHeader, "Basic ") {
 				claims, err = s.handleBasicAuth(ctx, authHeader)
 				if err == nil {
-					if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 						return nil, err
 					}
 					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
@@ -499,17 +499,17 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Unauthenticated, "authentication required: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return nil, status.Errorf(codes.Unauthenticated, "invalid or expired token")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
 	}
 
 	// Add claims to context for use in handlers
-	if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
@@ -536,7 +536,7 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 			if strings.HasPrefix(authHeader, "Basic ") {
 				claims, err = s.handleBasicAuth(ctx, authHeader)
 				if err == nil {
-					if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 						return err
 					}
 					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
@@ -550,17 +550,17 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return status.Errorf(codes.Unauthenticated, "authentication required: %v", err)
+		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return status.Errorf(codes.Unauthenticated, "invalid or expired token")
+		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
 	}
 
 	// Add claims to context for use in handlers
-	if err := s.authorizeMethod(info.FullMethod, claims); err != nil {
+	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)

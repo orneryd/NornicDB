@@ -50,7 +50,7 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 	var distance qpb.Distance
 
 	if req.VectorsConfig == nil {
-		return nil, status.Error(codes.InvalidArgument, "vectors_config is required")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors_config"))
 	}
 
 	switch cfg := req.VectorsConfig.Config.(type) {
@@ -220,7 +220,7 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 
 	// Verify collection exists
 	if !s.collections.Exists(req.CollectionName) {
-		return nil, status.Errorf(codes.NotFound, "collection %q not found", req.CollectionName)
+		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
 
 	// NornicDB manages HNSW/optimizer parameters automatically

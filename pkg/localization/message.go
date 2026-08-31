@@ -1,5 +1,7 @@
 package localization
 
+import "strconv"
+
 // MessageID is a stable, language-independent catalog key.
 type MessageID string
 
@@ -23,6 +25,15 @@ const (
 	MessageMCPMethodNotFound     MessageID = "mcp.method_not_found"
 	MessageMCPToolFailed         MessageID = "mcp.tool_execution_failed"
 	MessageQdrantCollectionName  MessageID = "qdrant.collection_name_required"
+	MessageQdrantFieldRequired   MessageID = "qdrant.field_required"
+	MessageQdrantFieldsRequired  MessageID = "qdrant.fields_required"
+	MessageQdrantDatabaseDenied  MessageID = "qdrant.database_access_denied"
+	MessageQdrantDatabaseWrite   MessageID = "qdrant.database_write_denied"
+	MessageQdrantPermission      MessageID = "qdrant.permission_denied"
+	MessageQdrantAuthRequired    MessageID = "qdrant.authentication_required"
+	MessageQdrantInvalidToken    MessageID = "qdrant.invalid_or_expired_token"
+	MessageQdrantCollectionMiss  MessageID = "qdrant.collection_not_found"
+	MessageQdrantSnapshotMiss    MessageID = "qdrant.snapshot_not_found"
 	MessageItemsProcessed        MessageID = "localization.items_processed"
 	MessageNotAuthenticated      MessageID = "security.not_authenticated"
 	MessageSchemaPermission      MessageID = "security.schema_permission_required"
@@ -30,6 +41,12 @@ const (
 	MessageWritePermission       MessageID = "security.write_permission_required"
 	MessageReadPermission        MessageID = "security.read_permission_required"
 	MessageDatabaseNotFound      MessageID = "database.not_found"
+	MessageHTTPDatabaseNotFound  MessageID = "server.database_not_found"
+	MessageDatabaseAccessDenied  MessageID = "security.database_access_denied"
+	MessageDatabaseWriteDenied   MessageID = "security.database_write_denied"
+	MessageAuthNotConfigured     MessageID = "server.authentication_not_configured"
+	MessageHTTPNotAuthenticated  MessageID = "server.not_authenticated"
+	MessageUserNotFound          MessageID = "server.user_not_found"
 	MessageSearcherRequired      MessageID = "search.searcher_required"
 	MessageRequestRequired       MessageID = "request.required"
 	MessageQueryRequired         MessageID = "search.query_required"
@@ -99,6 +116,79 @@ func QdrantCollectionNameRequired() Message {
 	return Message{ID: MessageQdrantCollectionName, Fallback: "collection_name is required"}
 }
 
+// QdrantFieldRequired identifies a missing Qdrant request field.
+func QdrantFieldRequired(field string) Message {
+	return Message{
+		ID:       MessageQdrantFieldRequired,
+		Fallback: field + " is required",
+		Data:     map[string]any{"Field": field},
+	}
+}
+
+// QdrantFieldsRequired identifies missing plural Qdrant request fields or values.
+func QdrantFieldsRequired(fields string) Message {
+	return Message{
+		ID:       MessageQdrantFieldsRequired,
+		Fallback: fields + " are required",
+		Data:     map[string]any{"Fields": fields},
+	}
+}
+
+// QdrantDatabaseAccessDenied identifies a Qdrant database authorization failure.
+func QdrantDatabaseAccessDenied(name string) Message {
+	return Message{
+		ID:       MessageQdrantDatabaseDenied,
+		Fallback: "access to database " + strconv.Quote(name) + " is not allowed",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// QdrantDatabaseWriteDenied identifies a Qdrant database write authorization failure.
+func QdrantDatabaseWriteDenied(name string) Message {
+	return Message{
+		ID:       MessageQdrantDatabaseWrite,
+		Fallback: "write on database " + strconv.Quote(name) + " is not allowed",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// QdrantPermissionDenied identifies a Qdrant method authorization failure.
+func QdrantPermissionDenied() Message {
+	return Message{ID: MessageQdrantPermission, Fallback: "permission denied"}
+}
+
+// QdrantAuthenticationRequired identifies a missing Qdrant authentication credential.
+func QdrantAuthenticationRequired(cause string) Message {
+	return Message{
+		ID:       MessageQdrantAuthRequired,
+		Fallback: "authentication required: " + cause,
+		Data:     map[string]any{"Cause": cause},
+	}
+}
+
+// QdrantInvalidOrExpiredToken identifies a rejected Qdrant bearer token.
+func QdrantInvalidOrExpiredToken() Message {
+	return Message{ID: MessageQdrantInvalidToken, Fallback: "invalid or expired token"}
+}
+
+// QdrantCollectionNotFound identifies a missing Qdrant collection.
+func QdrantCollectionNotFound(name string) Message {
+	return Message{
+		ID:       MessageQdrantCollectionMiss,
+		Fallback: "collection " + strconv.Quote(name) + " not found",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// QdrantSnapshotNotFound identifies a missing Qdrant snapshot.
+func QdrantSnapshotNotFound(name string) Message {
+	return Message{
+		ID:       MessageQdrantSnapshotMiss,
+		Fallback: "snapshot " + strconv.Quote(name) + " not found",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
 // ItemsProcessed demonstrates locale-aware plural selection.
 func ItemsProcessed(count int) Message {
 	return Message{
@@ -141,6 +231,48 @@ func DatabaseNotFound(name string) Message {
 		Fallback: "Database '" + name + "' does not exist",
 		Data:     map[string]any{"Name": name},
 	}
+}
+
+// HTTPDatabaseNotFound identifies the legacy HTTP/Neo4j database lookup response.
+func HTTPDatabaseNotFound(name string) Message {
+	return Message{
+		ID:       MessageHTTPDatabaseNotFound,
+		Fallback: "Database '" + name + "' not found",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// DatabaseAccessDenied identifies an authorization failure for a database.
+func DatabaseAccessDenied(name string) Message {
+	return Message{
+		ID:       MessageDatabaseAccessDenied,
+		Fallback: "Access to database '" + name + "' is not allowed.",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// DatabaseWriteDenied identifies an authorization failure for writing to a database.
+func DatabaseWriteDenied(name string) Message {
+	return Message{
+		ID:       MessageDatabaseWriteDenied,
+		Fallback: "Write on database '" + name + "' is not allowed.",
+		Data:     map[string]any{"Name": name},
+	}
+}
+
+// AuthenticationNotConfigured identifies an unavailable HTTP authentication service.
+func AuthenticationNotConfigured() Message {
+	return Message{ID: MessageAuthNotConfigured, Fallback: "authentication not configured"}
+}
+
+// HTTPNotAuthenticated identifies an unauthenticated HTTP request.
+func HTTPNotAuthenticated() Message {
+	return Message{ID: MessageHTTPNotAuthenticated, Fallback: "not authenticated"}
+}
+
+// UserNotFound identifies an HTTP user lookup failure.
+func UserNotFound() Message {
+	return Message{ID: MessageUserNotFound, Fallback: "user not found"}
 }
 
 // SearcherRequired identifies missing search-service configuration.

@@ -81,7 +81,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
 	}
 	if len(req.GetPoints()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "points are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
 	}
 	if len(req.GetPoints()) > s.config.MaxBatchPoints {
 		return nil, status.Errorf(codes.InvalidArgument, "too many points: %d > %d", len(req.GetPoints()), s.config.MaxBatchPoints)
@@ -95,7 +95,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 	nodeIDs := make([]storage.NodeID, 0, len(req.Points))
 	for _, point := range req.Points {
 		if point == nil || point.Id == nil {
-			return nil, status.Error(codes.InvalidArgument, "point id is required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("point id"))
 		}
 		nodeIDs = append(nodeIDs, pointIDToNodeID(point.Id))
 	}
@@ -113,7 +113,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		nodeID := nodeIDs[i]
 
 		if point.Vectors == nil {
-			return nil, status.Error(codes.InvalidArgument, "vectors are required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"))
 		}
 		vecNames, vecs, err := extractVectors(point.Vectors)
 		if err != nil {
@@ -228,7 +228,7 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 		return nil, err
 	}
 	if len(req.GetIds()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "ids are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"))
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -275,7 +275,7 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 		return nil, err
 	}
 	if req.Points == nil {
-		return nil, status.Error(codes.InvalidArgument, "points selector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -357,7 +357,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "vector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
@@ -556,7 +556,7 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 		return nil, err
 	}
 	if req.Payload == nil {
-		return nil, status.Error(codes.InvalidArgument, "payload is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("payload"))
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -605,7 +605,7 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 		return nil, err
 	}
 	if len(req.GetKeys()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "keys are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("keys"))
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -646,7 +646,7 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 		return nil, err
 	}
 	if req.Points == nil {
-		return nil, status.Error(codes.InvalidArgument, "points selector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
 	store, _, err := s.openCollection(ctx, req.CollectionName)
@@ -688,7 +688,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
 	}
 	if len(req.GetPoints()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "points are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
@@ -760,10 +760,10 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
 	}
 	if req.PointsSelector == nil {
-		return nil, status.Error(codes.InvalidArgument, "points_selector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points_selector"))
 	}
 	if req.Vectors == nil || len(req.Vectors.Names) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "vectors.names is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors.names"))
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
@@ -821,7 +821,7 @@ func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoi
 		return nil, err
 	}
 	if len(req.GetSearchPoints()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "search_points are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"))
 	}
 
 	results := make([]*qpb.BatchResult, 0, len(req.SearchPoints))
@@ -904,7 +904,7 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 		return nil, err
 	}
 	if len(req.GetRecommendPoints()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "recommend_points are required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("recommend_points"))
 	}
 
 	results := make([]*qpb.BatchResult, 0, len(req.RecommendPoints))
@@ -937,10 +937,10 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 		return nil, err
 	}
 	if len(req.GetVector()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "vector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
 	}
 	if req.GroupBy == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_by is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("group_by"))
 	}
 
 	groupLimit := int(req.Limit)
@@ -1022,7 +1022,7 @@ func (s *PointsService) CreateFieldIndex(ctx context.Context, req *qpb.CreateFie
 		return nil, err
 	}
 	if req.FieldName == "" {
-		return nil, status.Error(codes.InvalidArgument, "field_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"))
 	}
 
 	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
@@ -1046,7 +1046,7 @@ func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFie
 		return nil, err
 	}
 	if req.FieldName == "" {
-		return nil, status.Error(codes.InvalidArgument, "field_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"))
 	}
 
 	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
@@ -1146,17 +1146,17 @@ func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoint
 
 func (s *PointsService) vectorFromInput(ctx context.Context, collection string, using string, in *qpb.VectorInput) ([]float32, error) {
 	if in == nil {
-		return nil, status.Error(codes.InvalidArgument, "vector input is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector input"))
 	}
 	switch v := in.Variant.(type) {
 	case *qpb.VectorInput_Dense:
 		if v.Dense == nil || len(v.Dense.Data) == 0 {
-			return nil, status.Error(codes.InvalidArgument, "dense vector is required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector"))
 		}
 		return v.Dense.Data, nil
 	case *qpb.VectorInput_Id:
 		if v.Id == nil {
-			return nil, status.Error(codes.InvalidArgument, "id is required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("id"))
 		}
 		store, _, err := s.openCollection(ctx, collection)
 		if err != nil {
@@ -1174,7 +1174,7 @@ func (s *PointsService) vectorFromInput(ctx context.Context, collection string, 
 		return emb, nil
 	case *qpb.VectorInput_Document:
 		if v.Document == nil || v.Document.Text == "" {
-			return nil, status.Error(codes.InvalidArgument, "document.text is required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("document.text"))
 		}
 		if s.config.EmbedQuery == nil {
 			return nil, status.Error(codes.FailedPrecondition, "text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery")
@@ -1271,7 +1271,7 @@ func (s *PointsService) recommendQueryVector(
 
 func (s *PointsService) vectorFromVector(ctx context.Context, v *qpb.Vector) ([]float32, error) {
 	if v == nil {
-		return nil, status.Error(codes.InvalidArgument, "vector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
 	}
 	if dense := v.GetDense(); dense != nil && len(dense.Data) > 0 {
 		return dense.Data, nil
@@ -1548,7 +1548,7 @@ func resolvePointIDs(sel *qpb.PointsSelector) ([]*qpb.PointId, error) {
 
 func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage.Engine, sel *qpb.PointsSelector) ([]storage.NodeID, error) {
 	if sel == nil {
-		return nil, status.Error(codes.InvalidArgument, "points selector is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
 	switch opt := sel.PointsSelectorOneOf.(type) {

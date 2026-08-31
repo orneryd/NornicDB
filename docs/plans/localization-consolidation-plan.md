@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the initial boundary migration contains 9,005
-occurrences and 4,659 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,937
+occurrences and 4,641 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 234 HTTP occurrences, 137 to 110 gRPC occurrences,
+counts changed from 290 to 208 HTTP occurrences, 137 to 68 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -135,7 +135,10 @@ Implemented:
 - Environment, YAML, OS-preference, context, HTTP, gRPC, and Bolt locale
   resolution with deterministic English fallback.
 - Localized error boundaries for the initial HTTP, MCP JSON-RPC, Bolt,
-  Nornic gRPC, and Qdrant gRPC message families while preserving machine codes.
+  Nornic gRPC, and Qdrant gRPC message families while preserving machine codes,
+  including database lookup and access/write authorization failures, common
+  HTTP authentication responses, and Qdrant validation, authentication, and
+  direct not-found responses.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 

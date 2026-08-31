@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -628,15 +629,13 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 	// Check if database exists (also accepts dotted composite.alias references).
 	// This is a fast lookup in the DatabaseManager's metadata.
 	if !s.dbManager.ExistsOrIsConstituent(dbName) {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Database.DatabaseNotFound",
-			fmt.Sprintf("Database '%s' not found", dbName))
+		s.writeNeo4jDatabaseNotFound(w, r, dbName)
 		return
 	}
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 
@@ -856,8 +855,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 	response := map[string]interface{}{
@@ -1170,7 +1168,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(effectiveDbName) {
 			response.Errors = append(response.Errors, QueryError{
 				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: fmt.Sprintf("Access to database '%s' is not allowed.", effectiveDbName),
+				Message: s.localizedText(w, r, localization.DatabaseAccessDenied(effectiveDbName)),
 			})
 			hasError = true
 			continue
@@ -1189,7 +1187,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 			if !s.getResolvedAccess(claims, effectiveDbName).Write {
 				response.Errors = append(response.Errors, QueryError{
 					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: fmt.Sprintf("Write on database '%s' is not allowed.", effectiveDbName),
+					Message: s.localizedText(w, r, localization.DatabaseWriteDenied(effectiveDbName)),
 				})
 				hasError = true
 				continue
@@ -1201,7 +1199,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		if !s.dbManager.ExistsOrIsConstituent(effectiveDbName) {
 			response.Errors = append(response.Errors, QueryError{
 				Code:    "Neo.ClientError.Database.DatabaseNotFound",
-				Message: fmt.Sprintf("Database '%s' not found", effectiveDbName),
+				Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(effectiveDbName)),
 			})
 			hasError = true
 			continue
@@ -1379,7 +1377,7 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 			Results: []QueryResult{},
 			Errors: []QueryError{{
 				Code:    "Neo.ClientError.Security.Forbidden",
-				Message: fmt.Sprintf("Access to database '%s' is not allowed.", dbName),
+				Message: s.localizedText(w, r, localization.DatabaseAccessDenied(dbName)),
 			}},
 		}
 		s.writeJSON(w, http.StatusOK, resp)
@@ -1393,7 +1391,7 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 				Results: []QueryResult{},
 				Errors: []QueryError{{
 					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: fmt.Sprintf("Write on database '%s' is not allowed.", dbName),
+					Message: s.localizedText(w, r, localization.DatabaseWriteDenied(dbName)),
 				}},
 			}
 			s.writeJSON(w, http.StatusOK, resp)
@@ -1407,7 +1405,7 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 			Results: []QueryResult{},
 			Errors: []QueryError{{
 				Code:    "Neo.ClientError.Database.DatabaseNotFound",
-				Message: fmt.Sprintf("Database '%s' not found", dbName),
+				Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(dbName)),
 			}},
 		}
 		s.writeJSON(w, http.StatusNotFound, resp)
@@ -1910,8 +1908,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 
@@ -1945,7 +1942,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 				Results: make([]QueryResult, 0),
 				Errors: []QueryError{{
 					Code:    "Neo.ClientError.Database.DatabaseNotFound",
-					Message: fmt.Sprintf("Database '%s' not found", dbName),
+					Message: s.localizedText(w, r, localization.HTTPDatabaseNotFound(dbName)),
 				}},
 			}
 			s.writeJSON(w, http.StatusNotFound, response)
@@ -1983,8 +1980,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	claims := getClaims(r)
 	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 
@@ -2018,8 +2014,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 
@@ -2079,8 +2074,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 

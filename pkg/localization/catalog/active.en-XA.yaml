@@ -31,6 +31,33 @@
 - id: qdrant.collection_name_required
   description: Expanded pseudo-locale Qdrant collection-name validation error.
   other: "[!! collection_name is required !!]"
+- id: qdrant.field_required
+  description: Expanded pseudo-locale Qdrant required-field validation error.
+  other: "[!! {{.Field}} is required !!]"
+- id: qdrant.fields_required
+  description: Expanded pseudo-locale Qdrant required-fields validation error.
+  other: "[!! {{.Fields}} are required !!]"
+- id: qdrant.database_access_denied
+  description: Expanded pseudo-locale Qdrant database authorization failure.
+  other: '[!! access to database "{{.Name}}" is not allowed !!]'
+- id: qdrant.database_write_denied
+  description: Expanded pseudo-locale Qdrant database write authorization failure.
+  other: '[!! write on database "{{.Name}}" is not allowed !!]'
+- id: qdrant.permission_denied
+  description: Expanded pseudo-locale Qdrant method authorization failure.
+  other: "[!! permission denied !!]"
+- id: qdrant.authentication_required
+  description: Expanded pseudo-locale Qdrant missing-credential failure.
+  other: "[!! authentication required: {{.Cause}} !!]"
+- id: qdrant.invalid_or_expired_token
+  description: Expanded pseudo-locale Qdrant invalid-token failure.
+  other: "[!! invalid or expired token !!]"
+- id: qdrant.collection_not_found
+  description: Expanded pseudo-locale Qdrant collection lookup failure.
+  other: '[!! collection "{{.Name}}" not found !!]'
+- id: qdrant.snapshot_not_found
+  description: Expanded pseudo-locale Qdrant snapshot lookup failure.
+  other: '[!! snapshot "{{.Name}}" not found !!]'
 - id: localization.items_processed
   description: Expanded pseudo-locale plural test.
   one: "[!! {{.Count}} item processed !!]"
@@ -53,6 +80,24 @@
 - id: database.not_found
   description: Expanded pseudo-locale database lookup failure.
   other: "[!! Database '{{.Name}}' does not exist !!]"
+- id: server.database_not_found
+  description: Expanded pseudo-locale legacy HTTP database lookup failure.
+  other: "[!! Database '{{.Name}}' not found !!]"
+- id: security.database_access_denied
+  description: Expanded pseudo-locale database authorization failure.
+  other: "[!! Access to database '{{.Name}}' is not allowed. !!]"
+- id: security.database_write_denied
+  description: Expanded pseudo-locale database write authorization failure.
+  other: "[!! Write on database '{{.Name}}' is not allowed. !!]"
+- id: server.authentication_not_configured
+  description: Expanded pseudo-locale unavailable authentication response.
+  other: "[!! authentication not configured !!]"
+- id: server.not_authenticated
+  description: Expanded pseudo-locale unauthenticated HTTP response.
+  other: "[!! not authenticated !!]"
+- id: server.user_not_found
+  description: Expanded pseudo-locale user lookup response.
+  other: "[!! user not found !!]"
 - id: search.searcher_required
   description: Expanded pseudo-locale missing searcher error.
   other: "[!! searcher is required !!]"
