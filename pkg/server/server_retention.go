@@ -43,7 +43,7 @@ func (s *Server) handleRetentionPolicies(w http.ResponseWriter, r *http.Request)
 	case http.MethodPost:
 		var policy retention.Policy
 		if err := s.readJSON(r, &policy); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 		if err := rm.AddPolicy(&policy); err != nil {
@@ -52,7 +52,7 @@ func (s *Server) handleRetentionPolicies(w http.ResponseWriter, r *http.Request)
 		}
 		s.writeJSON(w, http.StatusCreated, policy)
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required", ErrMethodNotAllowed)
+		s.writeGetOrPostRequired(w, r)
 	}
 }
 
@@ -78,7 +78,7 @@ func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Reques
 	case http.MethodPut:
 		var policy retention.Policy
 		if err := s.readJSON(r, &policy); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 		policy.ID = id
@@ -104,7 +104,7 @@ func (s *Server) handleRetentionPolicyDefaults(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 	loaded := 0
@@ -143,7 +143,7 @@ func (s *Server) handleRetentionHolds(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var hold retention.LegalHold
 		if err := s.readJSON(r, &hold); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 		if err := rm.PlaceLegalHold(&hold); err != nil {
@@ -152,7 +152,7 @@ func (s *Server) handleRetentionHolds(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusCreated, hold)
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required", ErrMethodNotAllowed)
+		s.writeGetOrPostRequired(w, r)
 	}
 }
 
@@ -191,7 +191,7 @@ func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request)
 			SubjectEmail string `json:"subject_email"`
 		}
 		if err := s.readJSON(r, &req); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+			s.writeInvalidRequestBody(w, r)
 			return
 		}
 		erasureReq, err := rm.CreateErasureRequest(req.SubjectID, req.SubjectEmail)
@@ -201,7 +201,7 @@ func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request)
 		}
 		s.writeJSON(w, http.StatusCreated, erasureReq)
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET or POST required", ErrMethodNotAllowed)
+		s.writeGetOrPostRequired(w, r)
 	}
 }
 
@@ -211,7 +211,7 @@ func (s *Server) handleRetentionProcessErasure(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -246,7 +246,7 @@ func (s *Server) handleRetentionSweep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 	s.db.RunRetentionSweep(r.Context())

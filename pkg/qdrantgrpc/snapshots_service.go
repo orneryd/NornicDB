@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -59,7 +60,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -200,7 +201,7 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "collection_name is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err

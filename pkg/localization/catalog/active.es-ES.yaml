@@ -1,0 +1,67 @@
+- id: localization.os_language_undetected
+  description: Aviso de inicio cuando no se puede detectar el idioma del sistema operativo.
+  other: "No se pudo determinar el idioma del sistema operativo; se usará inglés (Estados Unidos)"
+- id: localization.language_pack_missing
+  description: Aviso cuando el paquete de idioma solicitado no está disponible.
+  other: "El paquete de idioma {{.RequestedLanguage}} no está disponible; se usará {{.ResolvedLanguage}} (origen: {{.Source}})"
+- id: server.invalid_request_body
+  description: Respuesta HTTP para un cuerpo de solicitud no válido.
+  other: cuerpo de solicitud no válido
+- id: server.method_post_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes POST.
+  other: se requiere POST
+- id: server.method_get_or_post_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET o POST.
+  other: se requiere GET o POST
+- id: request.body_read_failed
+  description: Respuesta HTTP cuando no se puede leer el cuerpo de la solicitud.
+  other: no se pudo leer el cuerpo de la solicitud
+- id: mcp.parse_error
+  description: Error JSON-RPC para un documento de solicitud MCP no válido.
+  other: Error de análisis
+- id: mcp.method_not_found
+  description: Error JSON-RPC para un método MCP no compatible.
+  other: Método no encontrado
+- id: mcp.tool_execution_failed
+  description: Error JSON-RPC cuando falla una herramienta MCP.
+  other: Error de ejecución de herramienta
+- id: qdrant.collection_name_required
+  description: Error de validación de Qdrant gRPC cuando falta collection_name.
+  other: se requiere collection_name
+- id: localization.items_processed
+  description: Mensaje de progreso con el numero de elementos procesados.
+  one: "{{.Count}} elemento procesado"
+  other: "{{.Count}} elementos procesados"
+- id: security.not_authenticated
+  description: Error de Bolt cuando la autenticación no se ha completado.
+  other: Sin autenticar
+- id: security.schema_permission_required
+  description: Error de autorización para operaciones de esquema.
+  other: Las operaciones de esquema requieren permiso de esquema
+- id: security.admin_permission_required
+  description: Error de autorización para operaciones administrativas.
+  other: Las operaciones administrativas requieren permiso de administrador
+- id: security.write_permission_required
+  description: Error de autorización para operaciones de escritura.
+  other: Las operaciones de escritura requieren permiso de escritura
+- id: security.read_permission_required
+  description: Error de autorización para operaciones de lectura.
+  other: Las operaciones de lectura requieren permiso de lectura
+- id: database.not_found
+  description: Error de búsqueda de base de datos.
+  other: "La base de datos '{{.Name}}' no existe"
+- id: search.searcher_required
+  description: Error de configuración cuando falta el servicio de búsqueda.
+  other: se requiere un servicio de búsqueda
+- id: request.required
+  description: Error de validación cuando falta la solicitud.
+  other: se requiere una solicitud
+- id: search.query_required
+  description: Error de validación cuando falta la consulta.
+  other: se requiere una consulta
+- id: search.query_chunk_failed
+  description: Error al dividir la consulta.
+  other: "no se pudo dividir la consulta: {{.Cause}}"
+- id: search.failed
+  description: Error de ejecución de búsqueda.
+  other: "búsqueda fallida: {{.Cause}}"

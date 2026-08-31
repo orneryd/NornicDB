@@ -62,7 +62,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGPUEnable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) handleGPUEnable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGPUDisable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -117,7 +117,7 @@ func (s *Server) handleGPUDisable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
@@ -128,7 +128,7 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 

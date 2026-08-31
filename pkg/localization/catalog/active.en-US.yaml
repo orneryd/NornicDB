@@ -1,0 +1,70 @@
+- id: localization.os_language_undetected
+  description: Bootstrap warning emitted when the operating system language cannot be detected.
+  other: "Unable to determine the operating system language; using English (United States)"
+- id: localization.language_pack_missing
+  description: Warning emitted once when a requested language pack is unavailable.
+  other: "Language pack {{.RequestedLanguage}} is unavailable; using {{.ResolvedLanguage}} (source: {{.Source}})"
+- id: localization.catalog_entry_missing
+  description: Warning emitted when a translation is missing from an installed language pack.
+  other: "Message {{.MessageID}} is unavailable in {{.Language}}; using English (United States)"
+- id: server.invalid_request_body
+  description: HTTP response for a malformed or unreadable request body.
+  other: invalid request body
+- id: server.method_post_required
+  description: HTTP response for an endpoint that only accepts POST requests.
+  other: POST required
+- id: server.method_get_or_post_required
+  description: HTTP response for an endpoint that accepts GET or POST requests.
+  other: GET or POST required
+- id: request.body_read_failed
+  description: HTTP response when the server cannot read the request body.
+  other: failed to read request body
+- id: mcp.parse_error
+  description: JSON-RPC error message for an invalid MCP request document.
+  other: Parse error
+- id: mcp.method_not_found
+  description: JSON-RPC error message for an unsupported MCP method.
+  other: Method not found
+- id: mcp.tool_execution_failed
+  description: JSON-RPC error message for an MCP tool execution failure.
+  other: Tool execution failed
+- id: qdrant.collection_name_required
+  description: Qdrant gRPC validation error when the collection_name field is empty.
+  other: collection_name is required
+- id: localization.items_processed
+  description: Test and shared progress message reporting a processed item count.
+  one: "{{.Count}} item processed"
+  other: "{{.Count}} items processed"
+- id: security.not_authenticated
+  description: Bolt failure returned when authentication has not completed.
+  other: Not authenticated
+- id: security.schema_permission_required
+  description: Authorization failure for schema operations.
+  other: Schema operations require schema permission
+- id: security.admin_permission_required
+  description: Authorization failure for administrator operations.
+  other: Admin operations require admin permission
+- id: security.write_permission_required
+  description: Authorization failure for write operations.
+  other: Write operations require write permission
+- id: security.read_permission_required
+  description: Authorization failure for read operations.
+  other: Read operations require read permission
+- id: database.not_found
+  description: Database lookup failure. Name is the requested database identifier.
+  other: "Database '{{.Name}}' does not exist"
+- id: search.searcher_required
+  description: gRPC service configuration error when no search implementation is supplied.
+  other: searcher is required
+- id: request.required
+  description: Protocol validation error when a request payload is missing.
+  other: request is required
+- id: search.query_required
+  description: Search validation error when the query is empty.
+  other: query is required
+- id: search.query_chunk_failed
+  description: Search query chunking failure. Cause is diagnostic text from the underlying component.
+  other: "failed to chunk query: {{.Cause}}"
+- id: search.failed
+  description: Search execution failure. Cause is diagnostic text from the underlying component.
+  other: "search: {{.Cause}}"

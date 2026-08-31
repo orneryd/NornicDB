@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
 )
 
 // =============================================================================
@@ -321,6 +323,34 @@ func TestHandleMCP_UnknownMethod(t *testing.T) {
 	if resp["error"] == nil {
 		t.Error("Expected error for unknown method")
 	}
+}
+
+func TestMCPLocalizedJSONRPCErrorPreservesCodeAndData(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	config := DefaultServerConfig()
+	config.Localizer = manager
+	server := NewServer(nil, config)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":7,"method":"unknown","params":{}}`))
+	request.Header.Set("Accept-Language", "es-ES")
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "es-ES", response.Header().Get("Content-Language"))
+	require.Contains(t, response.Header().Values("Vary"), "Accept-Language")
+	var body struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    string `json:"data"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, -32601, body.Error.Code)
+	require.Equal(t, "Método no encontrado", body.Error.Message)
+	require.Equal(t, "unknown", body.Error.Data)
 }
 
 func TestServerRouteAndWrapperHelpers(t *testing.T) {

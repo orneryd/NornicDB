@@ -140,12 +140,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/text/language"
 )
 
 var boltTxWriteAnalyzer = cypher.NewQueryAnalyzer(256)
@@ -550,6 +552,9 @@ type Config struct {
 	// already includes "credentials", so per-call scrubbing is not
 	// required in pkg/bolt.
 	Logger *slog.Logger
+
+	// Localizer renders human-readable Bolt failures. Nil preserves en-US.
+	Localizer *localization.Manager
 
 	// TLSConfig, when non-nil, enables TLS-on-first-byte sniffing on the
 	// Bolt port. Mirrors Neo4j's sslContext + requiresEncryption pattern:
@@ -1390,6 +1395,7 @@ type Session struct {
 
 	// Database context (from HELLO message)
 	database string // Database name for this session (defaults to default database)
+	language language.Tag
 
 	// Authentication state
 	authenticated bool            // Whether HELLO auth succeeded

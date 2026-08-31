@@ -1,0 +1,70 @@
+- id: localization.os_language_undetected
+  description: Expanded pseudo-locale bootstrap warning.
+  other: "[!! Unable to determine the operating system language; using English (United States) !!]"
+- id: localization.language_pack_missing
+  description: Expanded pseudo-locale missing-pack warning.
+  other: "[!! Language pack {{.RequestedLanguage}} is unavailable; using {{.ResolvedLanguage}} (source: {{.Source}}) !!]"
+- id: localization.catalog_entry_missing
+  description: Expanded pseudo-locale missing-entry warning.
+  other: "[!! Message {{.MessageID}} is unavailable in {{.Language}}; using English (United States) !!]"
+- id: server.invalid_request_body
+  description: Expanded pseudo-locale invalid request response.
+  other: "[!! invalid request body !!]"
+- id: server.method_post_required
+  description: Expanded pseudo-locale POST method response.
+  other: "[!! POST required !!]"
+- id: server.method_get_or_post_required
+  description: Expanded pseudo-locale GET or POST method response.
+  other: "[!! GET or POST required !!]"
+- id: request.body_read_failed
+  description: Expanded pseudo-locale unreadable request response.
+  other: "[!! failed to read request body !!]"
+- id: mcp.parse_error
+  description: Expanded pseudo-locale JSON-RPC parse error.
+  other: "[!! Parse error !!]"
+- id: mcp.method_not_found
+  description: Expanded pseudo-locale JSON-RPC method error.
+  other: "[!! Method not found !!]"
+- id: mcp.tool_execution_failed
+  description: Expanded pseudo-locale MCP tool failure.
+  other: "[!! Tool execution failed !!]"
+- id: qdrant.collection_name_required
+  description: Expanded pseudo-locale Qdrant collection-name validation error.
+  other: "[!! collection_name is required !!]"
+- id: localization.items_processed
+  description: Expanded pseudo-locale plural test.
+  one: "[!! {{.Count}} item processed !!]"
+  other: "[!! {{.Count}} items processed !!]"
+- id: security.not_authenticated
+  description: Expanded pseudo-locale authentication failure.
+  other: "[!! Not authenticated !!]"
+- id: security.schema_permission_required
+  description: Expanded pseudo-locale schema authorization failure.
+  other: "[!! Schema operations require schema permission !!]"
+- id: security.admin_permission_required
+  description: Expanded pseudo-locale administrator authorization failure.
+  other: "[!! Admin operations require admin permission !!]"
+- id: security.write_permission_required
+  description: Expanded pseudo-locale write authorization failure.
+  other: "[!! Write operations require write permission !!]"
+- id: security.read_permission_required
+  description: Expanded pseudo-locale read authorization failure.
+  other: "[!! Read operations require read permission !!]"
+- id: database.not_found
+  description: Expanded pseudo-locale database lookup failure.
+  other: "[!! Database '{{.Name}}' does not exist !!]"
+- id: search.searcher_required
+  description: Expanded pseudo-locale missing searcher error.
+  other: "[!! searcher is required !!]"
+- id: request.required
+  description: Expanded pseudo-locale missing request error.
+  other: "[!! request is required !!]"
+- id: search.query_required
+  description: Expanded pseudo-locale missing query error.
+  other: "[!! query is required !!]"
+- id: search.query_chunk_failed
+  description: Expanded pseudo-locale chunking error.
+  other: "[!! failed to chunk query: {{.Cause}} !!]"
+- id: search.failed
+  description: Expanded pseudo-locale search error.
+  other: "[!! search: {{.Cause}} !!]"

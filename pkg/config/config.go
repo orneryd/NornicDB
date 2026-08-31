@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"gopkg.in/yaml.v3"
 )
@@ -119,6 +120,9 @@ type Config struct {
 	// Logging
 	Logging LoggingConfig
 
+	// Localization controls the process-default language.
+	Localization LocalizationConfig
+
 	// Observability holds telemetry config (metrics, tracing, pprof).
 	// Phase 1 introduces this; Phase 2 wires slog from Logging.
 	Observability observability.ObservabilityConfig
@@ -132,6 +136,9 @@ type Config struct {
 	// yaml:"-" / json:"-" because it is a runtime-only handle that must
 	// not appear in YAML/JSON config payloads.
 	Logger *slog.Logger `yaml:"-" json:"-"`
+
+	// Localizer is initialized by the main binary after logging is available.
+	Localizer *localization.Manager `yaml:"-" json:"-"`
 
 	// PerDBOverrides carries the yaml-declared `databases:` map (loaded
 	// from LoadFromFile). The server applies these to dbconfig.Store at
@@ -770,6 +777,12 @@ type LoggingConfig struct {
 	SlowQueryLogFile string
 }
 
+// LocalizationConfig controls process-default message localization.
+type LocalizationConfig struct {
+	// Language is a BCP 47 tag or "auto" to use operating-system preferences.
+	Language string
+}
+
 // FeatureFlagsConfig holds all feature flags for experimental/optional features.
 // Centralized location for all feature toggles in NornicDB.
 type FeatureFlagsConfig struct {
@@ -1226,6 +1239,9 @@ func LoadFromEnv() *Config {
 //
 // Returns nil if configuration is valid, or an error describing the problem.
 func (c *Config) Validate() error {
+	if _, err := localization.NormalizeLanguage(c.Localization.Language); err != nil {
+		return fmt.Errorf("localization.language: %w", err)
+	}
 	if c.Auth.Enabled {
 		if c.Auth.InitialUsername == "" {
 			return fmt.Errorf("authentication enabled but no username provided")
@@ -1634,6 +1650,10 @@ type YAMLConfig struct {
 		SlowQueryThreshold string `yaml:"slow_query_threshold"`
 	} `yaml:"logging"`
 
+	Localization struct {
+		Language string `yaml:"language"`
+	} `yaml:"localization"`
+
 	// Observability configuration (Phase 1 — OBS-02)
 	Observability struct {
 		Metrics struct {
@@ -1882,6 +1902,9 @@ func LoadDefaults() *Config {
 	config.Logging.Output = "stdout"
 	config.Logging.QueryLogEnabled = false
 	config.Logging.SlowQueryThreshold = 5 * time.Second
+
+	// Localization defaults to the operating system's preferred language.
+	config.Localization.Language = localization.AutoLanguage
 
 	// Observability defaults (Phase 1 — OBS-02)
 	config.Observability = observability.DefaultConfig()
@@ -2598,6 +2621,16 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvDuration("NORNICDB_SLOW_QUERY_THRESHOLD", 0); v > 0 {
 		config.Logging.SlowQueryThreshold = v
+	}
+	if v, exists := os.LookupEnv(localization.EnvLanguage); exists {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			v = localization.AutoLanguage
+		}
+		if _, err := localization.NormalizeLanguage(v); err != nil {
+			return fmt.Errorf("%s: %w", localization.EnvLanguage, err)
+		}
+		config.Localization.Language = v
 	}
 
 	// Observability settings (Phase 1 — OBS-02).
@@ -3560,6 +3593,14 @@ func LoadFromFile(configPath string) (*Config, error) {
 		if d, err := time.ParseDuration(yamlCfg.Logging.SlowQueryThreshold); err == nil {
 			config.Logging.SlowQueryThreshold = d
 		}
+	}
+
+	// === Localization Settings ===
+	if yamlCfg.Localization.Language != "" {
+		if _, err := localization.NormalizeLanguage(yamlCfg.Localization.Language); err != nil {
+			return nil, fmt.Errorf("localization.language: %w", err)
+		}
+		config.Localization.Language = yamlCfg.Localization.Language
 	}
 
 	// === Observability Settings (Phase 1 — OBS-02) ===

@@ -35,6 +35,25 @@ export NORNICDB_CONFIG=/config/nornicdb.yaml
 
 ## Core Configuration
 
+### Localization
+
+NornicDB uses the operating system's ordered language preferences by default:
+
+```yaml
+localization:
+  language: auto
+```
+
+Set `NORNICDB_LANGUAGE` to override YAML and OS detection for the process
+default. Use canonical BCP 47 tags such as `en-US`, `es-ES`, `pt-BR`, or
+`zh-Hant`. Common POSIX forms such as `en_US.UTF-8` are accepted and normalized.
+
+Precedence is command-line override (when available), `NORNICDB_LANGUAGE`, YAML,
+OS preferences, then the embedded `en-US` source catalog. Request protocols may
+select a supported language for an individual response through
+`Accept-Language` or equivalent metadata. Missing language packs and individual
+keys fall back to `en-US` and emit bounded structured warnings.
+
 ## Retention Policies Opt-In
 
 Runtime retention enforcement is disabled by default. Enable it explicitly with `compliance.retention_enabled: true` or `NORNICDB_RETENTION_ENABLED=true`.

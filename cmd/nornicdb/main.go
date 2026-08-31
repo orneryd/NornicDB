@@ -28,6 +28,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
@@ -541,11 +542,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if earlyLogErr != nil {
 		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
 	}
+	processPreferences, err := localization.ResolveProcessPreferences(cfg.Localization.Language)
+	if err != nil {
+		return fmt.Errorf("resolve localization preferences: %w", err)
+	}
+	localizer, err := localization.NewManager(processPreferences.Preferences, earlyLogger)
+	if err != nil {
+		return fmt.Errorf("initialize localization: %w", err)
+	}
+	localization.LogProcessFallback(earlyLogger, processPreferences, localizer.Match(processPreferences.Preferences...))
 	// Phase 2 D-01 storage threading: assign the slog logger into nornicdb.Config
 	// so storage ctors (BadgerEngine, AsyncEngine, WAL) inherit it through
 	// the field-literal threading inside nornicdb.Open (BadgerOptions{Logger: ...},
 	// AsyncEngineConfig{Logger: ...}, WALConfig.SlogLogger).
 	dbConfig.Logger = earlyLogger
+	dbConfig.Localizer = localizer
 	// earlyWriterRef is reused below by observability.New so the same
 	// underlying io.Writer flushes during Provider.Shutdown (D-09a).
 
@@ -707,6 +718,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// later, since obs.New stores this reference). nil-safe: pkg/server.New
 	// installs a discard fallback if Logger is nil.
 	serverConfig.Logger = logger
+	serverConfig.Localizer = localizer
 
 	// Phase 2 D-04d: thread the canonical pkg/config.LoggingConfig snapshot
 	// into the server. SlowQueryThreshold + SlowQueryLogFile readers in
@@ -754,6 +766,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// records emitted by the Bolt server flow through the production
 	// 4-layer recovering -> mandatory -> redact -> json handler stack.
 	boltConfig.Logger = logger
+	boltConfig.Localizer = localizer
 	if !noAuth && authenticator != nil {
 		boltAuth := bolt.NewAuthenticatorAdapter(authenticator)
 		boltAuth.SetGetEffectivePermissions(httpServer.GetEffectivePermissions)

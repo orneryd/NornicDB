@@ -3,11 +3,15 @@ package nornicgrpc
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	gen "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"golang.org/x/text/language"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -35,6 +39,7 @@ type Service struct {
 	embedQuery EmbedQueryFunc
 	chunkQuery ChunkQueryFunc
 	searcher   Searcher
+	localizer  *localization.Manager
 }
 
 type Config struct {
@@ -42,12 +47,21 @@ type Config struct {
 	MaxLimit        int
 	// RerankEnabled enables Stage-2 reranking for search when a reranker is configured.
 	RerankEnabled bool
+	// Localizer renders human-readable status errors. Nil uses en-US.
+	Localizer *localization.Manager
 }
 
 // NewService creates a NornicDB-native search service.
 func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc, searcher Searcher) (*Service, error) {
 	if searcher == nil {
-		return nil, status.Error(codes.InvalidArgument, "searcher is required")
+		return nil, status.Error(codes.InvalidArgument, localization.SearcherRequired().Fallback)
+	}
+	if cfg.Localizer == nil {
+		var err error
+		cfg.Localizer, err = localization.NewManager(nil, nil)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "initialize localization: %v", err)
+		}
 	}
 	if cfg.MaxLimit <= 0 {
 		cfg.MaxLimit = 1000
@@ -62,6 +76,7 @@ func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc
 		embedQuery:      embedQuery,
 		chunkQuery:      chunkQuery,
 		searcher:        searcher,
+		localizer:       cfg.Localizer,
 	}, nil
 }
 
@@ -69,10 +84,10 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 	start := time.Now()
 
 	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
+		return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.RequestRequired())
 	}
 	if req.Query == "" {
-		return nil, status.Error(codes.InvalidArgument, "query is required")
+		return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.QueryRequired())
 	}
 
 	limit := int(req.Limit)
@@ -114,7 +129,7 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if s.chunkQuery != nil {
 			queryChunks, err = s.chunkQuery(ctx, req.Query)
 			if err != nil {
-				return nil, status.Errorf(codes.InvalidArgument, "failed to chunk query: %v", err)
+				return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.QueryChunkFailed(err))
 			}
 		}
 		if len(queryChunks) > maxQueryChunks {
@@ -211,10 +226,10 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 	if resp == nil {
 		resp, err = s.searcher.Search(ctx, req.Query, nil, opts)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "search: %v", err)
+			return nil, s.localizedStatus(ctx, codes.Internal, localization.SearchFailed(err))
 		}
 	} else if err != nil {
-		return nil, status.Errorf(codes.Internal, "search: %v", err)
+		return nil, s.localizedStatus(ctx, codes.Internal, localization.SearchFailed(err))
 	}
 
 	out := make([]*gen.SearchHit, 0, len(resp.Results))
@@ -238,4 +253,23 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		Message:           resp.Message,
 		TimeSeconds:       time.Since(start).Seconds(),
 	}, nil
+}
+
+func (s *Service) localizedStatus(ctx context.Context, code codes.Code, message localization.Message) error {
+	preferences := []language.Tag(nil)
+	if incoming, ok := metadata.FromIncomingContext(ctx); ok {
+		values := incoming.Get("accept-language")
+		if len(values) > 0 {
+			preferences, _, _ = language.ParseAcceptLanguage(strings.Join(values, ","))
+		}
+	}
+	if len(preferences) > 0 {
+		match := s.localizer.Resolve("grpc", preferences...)
+		ctx = localization.WithPreferences(ctx, match.Tag)
+	}
+	text, _, err := s.localizer.Render(ctx, message)
+	if err != nil {
+		text = message.Fallback
+	}
+	return status.Error(code, text)
 }

@@ -79,6 +79,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -89,6 +90,9 @@ import (
 type Config struct {
 	// ListenAddr is the address to listen on (e.g., ":6334")
 	ListenAddr string
+
+	// Localizer renders public protocol messages. Nil preserves source English.
+	Localizer *localization.Manager
 
 	// AllowVectorMutations controls whether Qdrant points operations are allowed to
 	// directly set/update/delete stored vectors.
@@ -378,6 +382,7 @@ func (s *Server) Start() error {
 		checker = nil // no per-DB RBAC when resolvers not set
 	}
 	collectionsService := NewCollectionsService(s.collections, s.vecIndex, checker)
+	collectionsService.localizer = s.config.Localizer
 	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
 
 	pointsService := NewPointsService(s.config, s.collections, s.searchService, s.vecIndex, checker)

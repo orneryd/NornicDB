@@ -320,6 +320,7 @@ func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 	handler = s.loggingMiddleware(handler)
 	handler = s.recoveryMiddleware(handler)
 	handler = s.metricsMiddleware(handler)
+	handler = s.localizationMiddleware(handler)
 	// Base path middleware runs FIRST (outermost) to strip prefix before routing
 	handler = s.basePathMiddleware(handler)
 

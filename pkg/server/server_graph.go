@@ -102,13 +102,13 @@ func normalizeGraphNodeIDs(ids []string) []string {
 
 func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
 	var req graphRequest
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
@@ -150,13 +150,13 @@ func (s *Server) handleGraphExpand(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
 	var req graphRequest
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 	if strings.TrimSpace(req.SourceNodeID) == "" || strings.TrimSpace(req.TargetNodeID) == "" {
@@ -195,13 +195,13 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
 	var req graphRequest
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
@@ -245,13 +245,13 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "POST required", ErrMethodNotAllowed)
+		s.writePostRequired(w, r)
 		return
 	}
 
 	var req graphRequest
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body", ErrBadRequest)
+		s.writeInvalidRequestBody(w, r)
 		return
 	}
 	req.NodeIDs = normalizeGraphNodeIDs(req.NodeIDs)
