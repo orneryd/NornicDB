@@ -127,6 +127,33 @@
 - id: heimdall.generation_failed
   description: Error de generación de respuesta de Heimdall. Cause no se traduce.
   other: "Error de generación: {{.Cause}}"
+- id: retention.manager_disabled
+  description: Respuesta HTTP cuando el subsistema de retención no está disponible.
+  other: el administrador de retención está deshabilitado
+- id: retention.policy_id_required
+  description: Respuesta HTTP cuando falta el ID de una política de retención.
+  other: se requiere el id de la política
+- id: retention.hold_id_required
+  description: Respuesta HTTP cuando falta el ID de una retención legal.
+  other: se requiere el id de la retención legal
+- id: retention.erasure_id_required
+  description: Respuesta HTTP cuando falta el ID de una solicitud de borrado.
+  other: se requiere el id de borrado
+- id: server.method_delete_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes DELETE.
+  other: se requiere DELETE
+- id: gdpr.own_data_export_only
+  description: Respuesta HTTP cuando un usuario intenta exportar datos de otro usuario.
+  other: solo puede exportar sus propios datos
+- id: gdpr.confirmation_required
+  description: Respuesta HTTP cuando no se confirma una solicitud destructiva.
+  other: se requiere confirmación
+- id: gdpr.own_data_delete_only
+  description: Respuesta HTTP cuando un usuario intenta eliminar datos de otro usuario.
+  other: solo puede eliminar sus propios datos
+- id: gdpr.legal_hold_prevents_deletion
+  description: Respuesta HTTP cuando una retención legal impide eliminar datos del usuario.
+  other: los datos del usuario están sujetos a retención legal y no se pueden eliminar
 - id: localization.items_processed
   description: Mensaje de progreso con el numero de elementos procesados.
   one: "{{.Count}} elemento procesado"

@@ -130,6 +130,33 @@
 - id: heimdall.generation_failed
   description: Plain-text Heimdall response generation failure. Cause is diagnostic text and must not be translated.
   other: "Generation error: {{.Cause}}"
+- id: retention.manager_disabled
+  description: HTTP response when the retention subsystem is unavailable.
+  other: retention manager is disabled
+- id: retention.policy_id_required
+  description: HTTP validation response when a retention policy ID is missing.
+  other: policy id required
+- id: retention.hold_id_required
+  description: HTTP validation response when a legal-hold ID is missing.
+  other: hold id required
+- id: retention.erasure_id_required
+  description: HTTP validation response when an erasure-request ID is missing.
+  other: erasure id required
+- id: server.method_delete_required
+  description: HTTP response for an endpoint that only accepts DELETE requests.
+  other: DELETE required
+- id: gdpr.own_data_export_only
+  description: HTTP authorization response when a non-admin user attempts to export another user's data.
+  other: can only export own data
+- id: gdpr.confirmation_required
+  description: HTTP validation response when a destructive GDPR request is not confirmed.
+  other: confirmation required
+- id: gdpr.own_data_delete_only
+  description: HTTP authorization response when a non-admin user attempts to delete another user's data.
+  other: can only delete own data
+- id: gdpr.legal_hold_prevents_deletion
+  description: HTTP conflict response when a legal hold protects user data from deletion.
+  other: user data is under legal hold and cannot be deleted
 - id: localization.items_processed
   description: Test and shared progress message reporting a processed item count.
   one: "{{.Count}} item processed"

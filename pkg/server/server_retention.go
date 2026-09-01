@@ -22,17 +22,17 @@ func (s *Server) registerRetentionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/retention/status", s.withAuth(s.handleRetentionStatus, auth.PermAdmin))
 }
 
-func (s *Server) retentionManagerOr503(w http.ResponseWriter) *retention.Manager {
+func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *retention.Manager {
 	rm := s.db.GetRetentionManager()
 	if rm == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "retention manager is disabled", ErrServiceUnavailable)
+		s.writeRetentionManagerDisabled(w, r)
 		return nil
 	}
 	return rm
 }
 
 func (s *Server) handleRetentionPolicies(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
@@ -57,13 +57,13 @@ func (s *Server) handleRetentionPolicies(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		s.writeError(w, http.StatusBadRequest, "policy id required", ErrBadRequest)
+		s.writeRetentionPolicyIDRequired(w, r)
 		return
 	}
 
@@ -99,7 +99,7 @@ func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleRetentionPolicyDefaults(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Server) handleRetentionPolicyDefaults(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleRetentionHolds(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
@@ -157,17 +157,17 @@ func (s *Server) handleRetentionHolds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRetentionHoldByID(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		s.writeError(w, http.StatusBadRequest, "hold id required", ErrBadRequest)
+		s.writeRetentionHoldIDRequired(w, r)
 		return
 	}
 	if r.Method != http.MethodDelete {
-		s.writeError(w, http.StatusMethodNotAllowed, "DELETE required", ErrMethodNotAllowed)
+		s.writeDeleteRequired(w, r)
 		return
 	}
 	if err := rm.ReleaseLegalHold(id); err != nil {
@@ -178,7 +178,7 @@ func (s *Server) handleRetentionHoldByID(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
@@ -206,7 +206,7 @@ func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRetentionProcessErasure(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}
@@ -216,7 +216,7 @@ func (s *Server) handleRetentionProcessErasure(w http.ResponseWriter, r *http.Re
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		s.writeError(w, http.StatusBadRequest, "erasure id required", ErrBadRequest)
+		s.writeRetentionErasureIDRequired(w, r)
 		return
 	}
 	request, err := rm.GetErasureRequest(id)
@@ -242,7 +242,7 @@ func (s *Server) handleRetentionProcessErasure(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleRetentionSweep(w http.ResponseWriter, r *http.Request) {
-	if s.retentionManagerOr503(w) == nil {
+	if s.retentionManagerOr503(w, r) == nil {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -254,7 +254,7 @@ func (s *Server) handleRetentionSweep(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRetentionStatus(w http.ResponseWriter, r *http.Request) {
-	rm := s.retentionManagerOr503(w)
+	rm := s.retentionManagerOr503(w, r)
 	if rm == nil {
 		return
 	}

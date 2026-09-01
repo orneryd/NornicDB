@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,845
-occurrences and 4,611 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,836
+occurrences and 4,602 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 139 HTTP occurrences, 137 to 44 gRPC occurrences,
+counts changed from 290 to 130 HTTP occurrences, 137 to 44 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -159,6 +159,11 @@ Implemented:
 - The exact-duplicate review report currently contains no repeated HTTP, Bolt,
   gRPC, or JSON-RPC families; remaining public messages require semantic rather
   than exact-duplicate migration.
+- Server boundary helpers preserve source-English fallback text even when a
+  manager is not injected, rather than exposing internal message IDs.
+- Retention availability, policy/hold/erasure validation, DELETE method, GDPR
+  ownership, confirmation, and legal-hold responses now localize at the HTTP
+  boundary while retaining their existing status and error classifications.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 
