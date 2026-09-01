@@ -85,3 +85,18 @@
 - id: server.log.authentication_disabled
   description: Server startup warning when authentication is disabled.
   other: authentication disabled
+- id: server.log.ui_initialization_failed
+  description: Server startup warning when browser UI assets cannot be initialized. Error remains structured diagnostic text.
+  other: UI initialization failed
+- id: server.log.ui_enabled
+  description: Server startup log when browser UI routes are registered.
+  other: UI browser enabled
+- id: server.log.rate_limit_enabled
+  description: Server startup log when per-IP request rate limiting is enabled.
+  other: rate limiting enabled
+- id: server.log.graphql_enabled
+  description: Server startup log after GraphQL routes are registered.
+  other: graphql API enabled
+- id: server.log.heimdall_disabled
+  description: Server startup log when the Heimdall AI assistant is disabled.
+  other: heimdall AI assistant disabled

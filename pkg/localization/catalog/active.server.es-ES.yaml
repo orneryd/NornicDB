@@ -85,3 +85,18 @@
 - id: server.log.authentication_disabled
   description: Advertencia de inicio cuando la autenticación está deshabilitada.
   other: autenticación deshabilitada
+- id: server.log.ui_initialization_failed
+  description: Advertencia de inicio cuando no se pueden inicializar los recursos de la UI. Error no se traduce.
+  other: error al inicializar la UI
+- id: server.log.ui_enabled
+  description: Registro de inicio cuando se registran las rutas de la UI.
+  other: navegador de UI habilitado
+- id: server.log.rate_limit_enabled
+  description: Registro de inicio cuando está habilitada la limitación de solicitudes por IP.
+  other: limitación de solicitudes habilitada
+- id: server.log.graphql_enabled
+  description: Registro de inicio después de registrar las rutas de GraphQL.
+  other: API GraphQL habilitada
+- id: server.log.heimdall_disabled
+  description: Registro de inicio cuando el asistente de IA Heimdall está deshabilitado.
+  other: asistente de IA Heimdall deshabilitado
