@@ -1930,7 +1930,7 @@ func (s *Session) handleHello(data []byte) error {
 			}
 			if !cookieAuthed {
 				if !s.server.config.AllowAnonymous {
-					return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required")
+					return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltAuthenticationRequired())
 				}
 				s.authenticated = true
 				s.authResult = &BoltAuthResult{
@@ -1949,7 +1949,7 @@ func (s *Session) handleHello(data []byte) error {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
 				s.server.logger().Warn("auth failed", "scheme", "basic", "principal", principal, "remote", remoteAddr, slog.Any("error", err))
-				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Invalid credentials")
+				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidCredentials())
 			}
 			s.authenticated = true
 			s.authResult = result
@@ -1963,7 +1963,7 @@ func (s *Session) handleHello(data []byte) error {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
 				s.server.logger().Warn("auth failed", "scheme", "bearer", "remote", remoteAddr, slog.Any("error", err))
-				return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Invalid or expired token")
+				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidOrExpiredToken())
 			}
 			s.authenticated = true
 			s.authResult = result
@@ -1971,11 +1971,11 @@ func (s *Session) handleHello(data []byte) error {
 				s.forwardedAuthHeader = "Bearer " + credentials
 			}
 		} else {
-			return s.sendFailure("Neo.ClientError.Security.Unauthorized", fmt.Sprintf("Unsupported auth scheme: %s", scheme))
+			return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltUnsupportedAuthScheme(scheme))
 		}
 	} else if s.server != nil && s.server.config.RequireAuth {
 		// Auth required but no authenticator configured - reject all
-		return s.sendFailure("Neo.ClientError.Security.Unauthorized", "Authentication required but not configured")
+		return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltAuthenticationNotConfigured())
 	} else {
 		// No auth configured - allow all (development mode, canonical role from auth)
 		s.authenticated = true
@@ -1998,8 +1998,7 @@ func (s *Session) handleHello(data []byte) error {
 	// Use constituentAwareExists to accept dotted composite.alias references.
 	if dbName != "" && s.server != nil && s.server.dbManager != nil {
 		if !constituentAwareExists(s.server.dbManager, dbName) {
-			return s.sendFailure("Neo.ClientError.Database.DatabaseNotFound",
-				fmt.Sprintf("Database '%s' does not exist", dbName))
+			return s.sendLocalizedFailure("Neo.ClientError.Database.DatabaseNotFound", localization.DatabaseNotFound(dbName))
 		}
 	}
 

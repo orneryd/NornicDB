@@ -137,6 +137,36 @@
 - id: server.temporal_graph_diff_unsupported
   description: Respuesta HTTP cuando el motor de almacenamiento no admite diferencias temporales del grafo.
   other: el motor de almacenamiento configurado no admite diferencias temporales del grafo
+- id: security.no_authentication_provided
+  description: Respuesta de autenticación HTTP de Neo4j cuando no se proporcionan credenciales.
+  other: No se proporcionó autenticación
+- id: security.insufficient_permissions
+  description: Respuesta de autorización HTTP de Neo4j cuando faltan permisos.
+  other: permisos insuficientes
+- id: server.internal_error
+  description: Respuesta HTTP genérica después de un fallo inesperado sin detalles internos.
+  other: error interno del servidor
+- id: bolt.authentication_required
+  description: Error de Bolt HELLO cuando se requiere autenticación y faltan credenciales.
+  other: Se requiere autenticación
+- id: bolt.invalid_credentials
+  description: Error de Bolt HELLO cuando se rechazan las credenciales básicas.
+  other: Credenciales no válidas
+- id: bolt.invalid_or_expired_token
+  description: Error de Bolt HELLO cuando se rechaza un token.
+  other: Token no válido o caducado
+- id: bolt.authentication_not_configured
+  description: Error de Bolt HELLO cuando se requiere autenticación pero no está configurada.
+  other: Se requiere autenticación, pero no está configurada
+- id: bolt.unsupported_auth_scheme
+  description: Error de Bolt HELLO para un esquema de autenticación no compatible. Scheme no se traduce.
+  other: "Esquema de autenticación no compatible: {{.Scheme}}"
+- id: bolt.database_not_found_with_cause
+  description: Error de Bolt al buscar una base de datos. Name y Cause no se traducen.
+  other: "No se encontró la base de datos '{{.Name}}': {{.Cause}}"
+- id: bolt.no_transaction_to_commit
+  description: Error de Bolt COMMIT cuando la sesión no tiene una transacción activa.
+  other: No hay ninguna transacción que confirmar
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

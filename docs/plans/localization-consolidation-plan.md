@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,884
-occurrences and 4,628 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,882
+occurrences and 4,629 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 155 HTTP occurrences, 137 to 68 gRPC occurrences,
+counts changed from 290 to 152 HTTP occurrences, 137 to 68 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -142,7 +142,11 @@ Implemented:
   GET-required, transaction lookup, GET-or-PUT, required-field, and generic
   not-found responses also render through catalog IDs. GPU manager, temporal
   graph capability, multi-method, OAuth configuration, and invalid-JSON
-  responses are catalog-backed as well.
+  responses are catalog-backed as well. Central HTTP authentication,
+  authorization, and panic-recovery responses now localize at middleware
+  boundaries. Bolt HELLO authentication, RUN database access/write failures,
+  database lookup diagnostics, and commit-without-transaction failures use the
+  session/process locale while preserving Neo4j error codes.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 

@@ -140,6 +140,36 @@
 - id: server.temporal_graph_diff_unsupported
   description: Expanded pseudo-locale temporal graph diff capability response.
   other: "[!! temporal graph diff is not supported by the configured storage engine !!]"
+- id: security.no_authentication_provided
+  description: Expanded pseudo-locale missing authentication response.
+  other: "[!! No authentication provided !!]"
+- id: security.insufficient_permissions
+  description: Expanded pseudo-locale insufficient permission response.
+  other: "[!! insufficient permissions !!]"
+- id: server.internal_error
+  description: Expanded pseudo-locale generic internal server response.
+  other: "[!! internal server error !!]"
+- id: bolt.authentication_required
+  description: Expanded pseudo-locale Bolt missing authentication failure.
+  other: "[!! Authentication required !!]"
+- id: bolt.invalid_credentials
+  description: Expanded pseudo-locale Bolt invalid credential failure.
+  other: "[!! Invalid credentials !!]"
+- id: bolt.invalid_or_expired_token
+  description: Expanded pseudo-locale Bolt invalid token failure.
+  other: "[!! Invalid or expired token !!]"
+- id: bolt.authentication_not_configured
+  description: Expanded pseudo-locale Bolt unavailable authentication failure.
+  other: "[!! Authentication required but not configured !!]"
+- id: bolt.unsupported_auth_scheme
+  description: Expanded pseudo-locale Bolt unsupported authentication scheme failure.
+  other: "[!! Unsupported auth scheme: {{.Scheme}} !!]"
+- id: bolt.database_not_found_with_cause
+  description: Expanded pseudo-locale Bolt database lookup failure with diagnostic detail.
+  other: "[!! Database '{{.Name}}' not found: {{.Cause}} !!]"
+- id: bolt.no_transaction_to_commit
+  description: Expanded pseudo-locale Bolt commit-without-transaction failure.
+  other: "[!! No transaction to commit !!]"
 - id: search.searcher_required
   description: Expanded pseudo-locale missing searcher error.
   other: "[!! searcher is required !!]"

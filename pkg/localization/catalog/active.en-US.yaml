@@ -140,6 +140,36 @@
 - id: server.temporal_graph_diff_unsupported
   description: HTTP response when the configured storage engine cannot compute a temporal graph diff.
   other: temporal graph diff is not supported by the configured storage engine
+- id: security.no_authentication_provided
+  description: Neo4j HTTP authentication response when no credentials are supplied.
+  other: No authentication provided
+- id: security.insufficient_permissions
+  description: Neo4j HTTP authorization response when the authenticated principal lacks permission.
+  other: insufficient permissions
+- id: server.internal_error
+  description: Generic HTTP response after an unexpected server failure. It must not disclose internal details.
+  other: internal server error
+- id: bolt.authentication_required
+  description: Bolt HELLO failure when authentication is required but credentials are absent.
+  other: Authentication required
+- id: bolt.invalid_credentials
+  description: Bolt HELLO failure when basic credentials are rejected.
+  other: Invalid credentials
+- id: bolt.invalid_or_expired_token
+  description: Bolt HELLO failure when a bearer token is rejected.
+  other: Invalid or expired token
+- id: bolt.authentication_not_configured
+  description: Bolt HELLO failure when authentication is required but no authenticator is configured.
+  other: Authentication required but not configured
+- id: bolt.unsupported_auth_scheme
+  description: Bolt HELLO failure for an unsupported authentication scheme. Scheme is the protocol identifier and must not be translated.
+  other: "Unsupported auth scheme: {{.Scheme}}"
+- id: bolt.database_not_found_with_cause
+  description: Bolt database lookup failure. Name is the database identifier and Cause is diagnostic text; neither is translated.
+  other: "Database '{{.Name}}' not found: {{.Cause}}"
+- id: bolt.no_transaction_to_commit
+  description: Bolt COMMIT failure when the session has no active transaction.
+  other: No transaction to commit
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required

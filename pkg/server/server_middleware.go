@@ -100,7 +100,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 				s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "basic_auth", "duration", time.Since(start), "error", err)
 			}
 		} else {
-			s.writeNeo4jError(w, http.StatusUnauthorized, "Neo.ClientError.Security.Unauthorized", "No authentication provided")
+			s.writeNeo4jNoAuthenticationProvided(w, r)
 			return
 		}
 
@@ -115,7 +115,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 		if !hasPermission(s, claims.Roles, requiredPerm) {
 			s.logAudit(r, claims.Sub, "access_denied", false,
 				fmt.Sprintf("required permission: %s", requiredPerm))
-			s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", "insufficient permissions")
+			s.writeNeo4jInsufficientPermissions(w, r)
 			return
 		}
 
@@ -332,7 +332,7 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 				}
 
 				s.errorCount.Add(1)
-				s.writeError(w, http.StatusInternalServerError, "internal server error", ErrInternalError)
+				s.writeInternalServerError(w, r)
 			}
 		}()
 
