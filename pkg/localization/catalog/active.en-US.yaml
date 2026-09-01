@@ -109,6 +109,27 @@
 - id: qdrant.snapshot_delete_failed
   description: Qdrant gRPC snapshot deletion failure. Cause is diagnostic text and must not be translated.
   other: "failed to delete snapshot: {{.Cause}}"
+- id: heimdall.method_not_allowed
+  description: Plain-text Heimdall HTTP response when an endpoint does not accept the request method.
+  other: Method not allowed
+- id: heimdall.invalid_request_body
+  description: Plain-text Heimdall HTTP response for a malformed request body.
+  other: Invalid request body
+- id: heimdall.streaming_not_supported
+  description: Plain-text Heimdall HTTP response when the response writer cannot stream SSE data.
+  other: Streaming not supported
+- id: heimdall.bifrost_not_enabled
+  description: Plain-text Heimdall HTTP response when the Bifrost event service is unavailable.
+  other: Bifrost not enabled
+- id: heimdall.query_parameter_required
+  description: Plain-text Heimdall autocomplete validation response when the query parameter is empty.
+  other: query parameter required
+- id: heimdall.autocomplete_failed
+  description: Plain-text Heimdall autocomplete failure. Cause is diagnostic text and must not be translated.
+  other: "Autocomplete error: {{.Cause}}"
+- id: heimdall.generation_failed
+  description: Plain-text Heimdall response generation failure. Cause is diagnostic text and must not be translated.
+  other: "Generation error: {{.Cause}}"
 - id: localization.items_processed
   description: Test and shared progress message reporting a processed item count.
   one: "{{.Count}} item processed"

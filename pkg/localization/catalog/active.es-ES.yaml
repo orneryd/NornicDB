@@ -106,6 +106,27 @@
 - id: qdrant.snapshot_delete_failed
   description: Error de Qdrant gRPC al eliminar una instantánea. Cause no se traduce.
   other: "no se pudo eliminar la instantánea: {{.Cause}}"
+- id: heimdall.method_not_allowed
+  description: Respuesta HTTP de texto de Heimdall cuando no se acepta el método de la solicitud.
+  other: Método no permitido
+- id: heimdall.invalid_request_body
+  description: Respuesta HTTP de texto de Heimdall para un cuerpo de solicitud no válido.
+  other: Cuerpo de solicitud no válido
+- id: heimdall.streaming_not_supported
+  description: Respuesta HTTP de texto de Heimdall cuando no se puede transmitir por SSE.
+  other: Transmisión no compatible
+- id: heimdall.bifrost_not_enabled
+  description: Respuesta HTTP de texto de Heimdall cuando Bifrost no está disponible.
+  other: Bifrost no está habilitado
+- id: heimdall.query_parameter_required
+  description: Respuesta de validación de autocompletado cuando falta el parámetro query.
+  other: se requiere el parámetro query
+- id: heimdall.autocomplete_failed
+  description: Error de autocompletado de Heimdall. Cause no se traduce.
+  other: "Error de autocompletado: {{.Cause}}"
+- id: heimdall.generation_failed
+  description: Error de generación de respuesta de Heimdall. Cause no se traduce.
+  other: "Error de generación: {{.Cause}}"
 - id: localization.items_processed
   description: Mensaje de progreso con el numero de elementos procesados.
   one: "{{.Count}} elemento procesado"

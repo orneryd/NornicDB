@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"golang.org/x/text/language"
 )
 
 // Handler provides HTTP endpoints for Bifrost chat.
@@ -30,6 +32,7 @@ type Handler struct {
 	database       DatabaseRouter
 	metrics        MetricsReader
 	inMemoryRunner InMemoryToolRunner // optional: e.g. MCP store/recall/discover for agentic loop
+	localizer      *localization.Manager
 }
 
 var leakedChatTemplateMarker = regexp.MustCompile(`(?s)<\|im_(?:start|end)\|>`)
@@ -216,8 +219,45 @@ func (h *Handler) SetInMemoryToolRunner(runner InMemoryToolRunner) {
 	h.inMemoryRunner = runner
 }
 
+// SetLocalizer sets the immutable message catalog used for HTTP responses.
+func (h *Handler) SetLocalizer(manager *localization.Manager) {
+	h.localizer = manager
+}
+
+func (h *Handler) writeLocalizedError(w http.ResponseWriter, r *http.Request, message localization.Message, status int) {
+	h.writeLocalizedContextError(w, h.localizationContext(r), message, status)
+}
+
+func (h *Handler) localizationContext(r *http.Request) context.Context {
+	ctx := r.Context()
+	if h.localizer == nil || len(localization.PreferencesFromContext(ctx)) > 0 {
+		return ctx
+	}
+	preferences, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
+	if err == nil && len(preferences) > 0 {
+		match := h.localizer.Resolve("http", preferences...)
+		return localization.WithPreferences(ctx, match.Tag)
+	}
+	return ctx
+}
+
+func (h *Handler) writeLocalizedContextError(w http.ResponseWriter, ctx context.Context, message localization.Message, status int) {
+	text := message.Fallback
+	tag := language.AmericanEnglish
+	if h.localizer != nil {
+		if rendered, resolved, err := h.localizer.Render(ctx, message); err == nil {
+			text = rendered
+			tag = resolved
+		}
+	}
+	w.Header().Set("Content-Language", tag.String())
+	w.Header().Add("Vary", "Accept-Language")
+	http.Error(w, text, status)
+}
+
 // ServeHTTP routes requests to appropriate handlers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(h.localizationContext(r))
 	switch {
 	case r.URL.Path == "/api/bifrost/status":
 		h.handleStatus(w, r)
@@ -240,7 +280,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // GET /api/bifrost/status
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -271,7 +311,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -297,13 +337,13 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 // and system events from Heimdall and its plugins.
 func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Verify Bifrost is enabled
 	if h.bifrost == nil {
-		http.Error(w, "Bifrost not enabled", http.StatusServiceUnavailable)
+		h.writeLocalizedError(w, r, localization.HeimdallBifrostNotEnabled(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -315,7 +355,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		h.writeLocalizedError(w, r, localization.HeimdallStreamingNotSupported(), http.StatusInternalServerError)
 		return
 	}
 
@@ -365,7 +405,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 //	}
 func (h *Handler) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -375,12 +415,12 @@ func (h *Handler) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		h.writeLocalizedError(w, r, localization.HeimdallInvalidRequestBody(), http.StatusBadRequest)
 		return
 	}
 
 	if req.Query == "" {
-		http.Error(w, "query parameter required", http.StatusBadRequest)
+		h.writeLocalizedError(w, r, localization.HeimdallQueryParameterRequired(), http.StatusBadRequest)
 		return
 	}
 
@@ -398,7 +438,7 @@ func (h *Handler) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 
 	result, err := ExecuteAction("heimdall_autocomplete_suggest", ctx)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Autocomplete error: %v", err), http.StatusInternalServerError)
+		h.writeLocalizedError(w, r, localization.HeimdallAutocompleteFailed(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -622,13 +662,13 @@ func (h *Handler) sendCancellationResponse(w http.ResponseWriter, requestID, pha
 //  6. PostExecute hook - plugins can log/update state
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		h.writeLocalizedError(w, r, localization.HeimdallInvalidRequestBody(), http.StatusBadRequest)
 		return
 	}
 
@@ -1055,7 +1095,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 	}
 	finalResponse, err := h.runAgenticLoop(ctx, lifecycle, systemPrompt, lifecycle.promptCtx.UserMessage, params)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Generation error: %v", err), http.StatusInternalServerError)
+		h.writeLocalizedContextError(w, ctx, localization.HeimdallGenerationFailed(err), http.StatusInternalServerError)
 		return
 	}
 	if lifecycle.compatMode {
@@ -1119,7 +1159,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		h.writeLocalizedContextError(w, ctx, localization.HeimdallStreamingNotSupported(), http.StatusInternalServerError)
 		return
 	}
 
@@ -1206,7 +1246,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		h.writeLocalizedContextError(w, ctx, localization.HeimdallStreamingNotSupported(), http.StatusInternalServerError)
 		return
 	}
 
