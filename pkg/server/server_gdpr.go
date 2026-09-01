@@ -33,7 +33,7 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 	// User can only export own data unless admin
 	claims := getClaims(r)
 	if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
-		s.writeError(w, http.StatusForbidden, "can only export own data", ErrForbidden)
+		s.writeGDPROwnDataExportOnly(w, r)
 		return
 	}
 
@@ -74,21 +74,20 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !req.Confirm {
-		s.writeError(w, http.StatusBadRequest, "confirmation required", ErrBadRequest)
+		s.writeGDPRConfirmationRequired(w, r)
 		return
 	}
 
 	// User can only delete own data unless admin
 	claims := getClaims(r)
 	if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
-		s.writeError(w, http.StatusForbidden, "can only delete own data", ErrForbidden)
+		s.writeGDPROwnDataDeleteOnly(w, r)
 		return
 	}
 
 	if rm := s.db.GetRetentionManager(); rm != nil {
 		if rm.IsUnderLegalHold(req.UserID, "") {
-			s.writeError(w, http.StatusConflict,
-				"user data is under legal hold and cannot be deleted", ErrForbidden)
+			s.writeGDPRLegalHoldPreventsDeletion(w, r)
 			return
 		}
 

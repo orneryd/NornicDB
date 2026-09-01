@@ -49,6 +49,20 @@ func TestLocalizedInvalidRequestBody(t *testing.T) {
 	}
 }
 
+func TestLocalizedHelperWithoutManagerUsesEnglishFallback(t *testing.T) {
+	server := &Server{}
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	response := httptest.NewRecorder()
+
+	server.writeInvalidRequestBody(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, "invalid request body", body["message"])
+	require.Equal(t, "en-US", response.Header().Get("Content-Language"))
+}
+
 func TestLocalizedNeo4jInvalidRequestBodyPreservesCode(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
@@ -446,4 +460,41 @@ func TestLocalizedMiddlewareResponsesPreserveContracts(t *testing.T) {
 	}
 	require.Equal(t, "No authentication provided", localization.NoAuthenticationProvided().Fallback)
 	require.Equal(t, "insufficient permissions", localization.InsufficientPermissions().Fallback)
+}
+
+func TestLocalizedDataGovernanceResponsesPreserveStatus(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		status  int
+		message string
+		write   func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{name: "retention disabled", status: http.StatusServiceUnavailable, message: "el administrador de retención está deshabilitado", write: (*Server).writeRetentionManagerDisabled},
+		{name: "policy id", status: http.StatusBadRequest, message: "se requiere el id de la política", write: (*Server).writeRetentionPolicyIDRequired},
+		{name: "hold id", status: http.StatusBadRequest, message: "se requiere el id de la retención legal", write: (*Server).writeRetentionHoldIDRequired},
+		{name: "erasure id", status: http.StatusBadRequest, message: "se requiere el id de borrado", write: (*Server).writeRetentionErasureIDRequired},
+		{name: "delete method", status: http.StatusMethodNotAllowed, message: "se requiere DELETE", write: (*Server).writeDeleteRequired},
+		{name: "own export", status: http.StatusForbidden, message: "solo puede exportar sus propios datos", write: (*Server).writeGDPROwnDataExportOnly},
+		{name: "confirmation", status: http.StatusBadRequest, message: "se requiere confirmación", write: (*Server).writeGDPRConfirmationRequired},
+		{name: "own delete", status: http.StatusForbidden, message: "solo puede eliminar sus propios datos", write: (*Server).writeGDPROwnDataDeleteOnly},
+		{name: "legal hold", status: http.StatusConflict, message: "los datos del usuario están sujetos a retención legal y no se pueden eliminar", write: (*Server).writeGDPRLegalHoldPreventsDeletion},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{localizer: manager}
+			request := httptest.NewRequest(http.MethodPost, "/", nil)
+			request.Header.Set("Accept-Language", "es-ES")
+			response := httptest.NewRecorder()
+			server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				test.write(server, w, r)
+			})).ServeHTTP(response, request)
+
+			require.Equal(t, test.status, response.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, test.message, body["message"])
+		})
+	}
 }

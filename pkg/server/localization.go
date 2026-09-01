@@ -25,6 +25,9 @@ func (s *Server) localizationMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
 	if s.localizer == nil {
+		if message.Fallback != "" {
+			return message.Fallback, language.AmericanEnglish
+		}
 		return string(message.ID), language.AmericanEnglish
 	}
 	text, tag, err := s.localizer.Render(ctx, message)
@@ -177,4 +180,40 @@ func (s *Server) writeNeo4jInsufficientPermissions(w http.ResponseWriter, r *htt
 
 func (s *Server) writeInternalServerError(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusInternalServerError, localization.InternalServerError(), ErrInternalError)
+}
+
+func (s *Server) writeRetentionManagerDisabled(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusServiceUnavailable, localization.RetentionManagerDisabled(), ErrServiceUnavailable)
+}
+
+func (s *Server) writeRetentionPolicyIDRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RetentionPolicyIDRequired(), ErrBadRequest)
+}
+
+func (s *Server) writeRetentionHoldIDRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RetentionHoldIDRequired(), ErrBadRequest)
+}
+
+func (s *Server) writeRetentionErasureIDRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RetentionErasureIDRequired(), ErrBadRequest)
+}
+
+func (s *Server) writeDeleteRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.DeleteRequired(), ErrMethodNotAllowed)
+}
+
+func (s *Server) writeGDPROwnDataExportOnly(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusForbidden, localization.GDPROwnDataExportOnly(), ErrForbidden)
+}
+
+func (s *Server) writeGDPRConfirmationRequired(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.GDPRConfirmationRequired(), ErrBadRequest)
+}
+
+func (s *Server) writeGDPROwnDataDeleteOnly(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusForbidden, localization.GDPROwnDataDeleteOnly(), ErrForbidden)
+}
+
+func (s *Server) writeGDPRLegalHoldPreventsDeletion(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusConflict, localization.GDPRLegalHoldPreventsDeletion(), ErrForbidden)
 }

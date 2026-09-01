@@ -58,6 +58,15 @@ const (
 	MessageHeimdallQueryRequired        MessageID = "heimdall.query_parameter_required"
 	MessageHeimdallAutocompleteFailed   MessageID = "heimdall.autocomplete_failed"
 	MessageHeimdallGenerationFailed     MessageID = "heimdall.generation_failed"
+	MessageRetentionDisabled            MessageID = "retention.manager_disabled"
+	MessageRetentionPolicyIDRequired    MessageID = "retention.policy_id_required"
+	MessageRetentionHoldIDRequired      MessageID = "retention.hold_id_required"
+	MessageRetentionErasureIDRequired   MessageID = "retention.erasure_id_required"
+	MessageDeleteRequired               MessageID = "server.method_delete_required"
+	MessageGDPROwnExportOnly            MessageID = "gdpr.own_data_export_only"
+	MessageGDPRConfirmationRequired     MessageID = "gdpr.confirmation_required"
+	MessageGDPROwnDeleteOnly            MessageID = "gdpr.own_data_delete_only"
+	MessageGDPRLegalHold                MessageID = "gdpr.legal_hold_prevents_deletion"
 	MessageItemsProcessed               MessageID = "localization.items_processed"
 	MessageNotAuthenticated             MessageID = "security.not_authenticated"
 	MessageSchemaPermission             MessageID = "security.schema_permission_required"
@@ -408,6 +417,51 @@ func HeimdallGenerationFailed(cause error) Message {
 		Fallback: "Generation error: " + causeText,
 		Data:     map[string]any{"Cause": causeText},
 	}
+}
+
+// RetentionManagerDisabled identifies an unavailable retention subsystem.
+func RetentionManagerDisabled() Message {
+	return Message{ID: MessageRetentionDisabled, Fallback: "retention manager is disabled"}
+}
+
+// RetentionPolicyIDRequired identifies a missing retention policy ID.
+func RetentionPolicyIDRequired() Message {
+	return Message{ID: MessageRetentionPolicyIDRequired, Fallback: "policy id required"}
+}
+
+// RetentionHoldIDRequired identifies a missing legal-hold ID.
+func RetentionHoldIDRequired() Message {
+	return Message{ID: MessageRetentionHoldIDRequired, Fallback: "hold id required"}
+}
+
+// RetentionErasureIDRequired identifies a missing erasure-request ID.
+func RetentionErasureIDRequired() Message {
+	return Message{ID: MessageRetentionErasureIDRequired, Fallback: "erasure id required"}
+}
+
+// DeleteRequired identifies an endpoint that only accepts DELETE requests.
+func DeleteRequired() Message {
+	return Message{ID: MessageDeleteRequired, Fallback: "DELETE required"}
+}
+
+// GDPROwnDataExportOnly identifies an attempt to export another user's data.
+func GDPROwnDataExportOnly() Message {
+	return Message{ID: MessageGDPROwnExportOnly, Fallback: "can only export own data"}
+}
+
+// GDPRConfirmationRequired identifies an unconfirmed destructive request.
+func GDPRConfirmationRequired() Message {
+	return Message{ID: MessageGDPRConfirmationRequired, Fallback: "confirmation required"}
+}
+
+// GDPROwnDataDeleteOnly identifies an attempt to delete another user's data.
+func GDPROwnDataDeleteOnly() Message {
+	return Message{ID: MessageGDPROwnDeleteOnly, Fallback: "can only delete own data"}
+}
+
+// GDPRLegalHoldPreventsDeletion identifies data protected by a legal hold.
+func GDPRLegalHoldPreventsDeletion() Message {
+	return Message{ID: MessageGDPRLegalHold, Fallback: "user data is under legal hold and cannot be deleted"}
 }
 
 // ItemsProcessed demonstrates locale-aware plural selection.

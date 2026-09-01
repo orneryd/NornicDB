@@ -130,6 +130,33 @@
 - id: heimdall.generation_failed
   description: Expanded pseudo-locale generation failure.
   other: "[!! Generation error: {{.Cause}} !!]"
+- id: retention.manager_disabled
+  description: Expanded pseudo-locale unavailable retention subsystem response.
+  other: "[!! retention manager is disabled !!]"
+- id: retention.policy_id_required
+  description: Expanded pseudo-locale missing policy ID response.
+  other: "[!! policy id required !!]"
+- id: retention.hold_id_required
+  description: Expanded pseudo-locale missing hold ID response.
+  other: "[!! hold id required !!]"
+- id: retention.erasure_id_required
+  description: Expanded pseudo-locale missing erasure ID response.
+  other: "[!! erasure id required !!]"
+- id: server.method_delete_required
+  description: Expanded pseudo-locale DELETE method response.
+  other: "[!! DELETE required !!]"
+- id: gdpr.own_data_export_only
+  description: Expanded pseudo-locale own-data export authorization response.
+  other: "[!! can only export own data !!]"
+- id: gdpr.confirmation_required
+  description: Expanded pseudo-locale confirmation validation response.
+  other: "[!! confirmation required !!]"
+- id: gdpr.own_data_delete_only
+  description: Expanded pseudo-locale own-data deletion authorization response.
+  other: "[!! can only delete own data !!]"
+- id: gdpr.legal_hold_prevents_deletion
+  description: Expanded pseudo-locale legal-hold conflict response.
+  other: "[!! user data is under legal hold and cannot be deleted !!]"
 - id: localization.items_processed
   description: Expanded pseudo-locale plural test.
   one: "[!! {{.Count}} item processed !!]"
