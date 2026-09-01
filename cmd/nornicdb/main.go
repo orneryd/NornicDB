@@ -959,8 +959,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// K8s autodetect (KUBERNETES_SERVICE_HOST + non-empty SA-token) > default
 	// false. The helper logs the outcome via the injected slog logger
 	// (Phase 2 D-08 plumbing — LOG-09 compliant, no slog.Default).
-	cfg.Observability.Metrics.TenantLabelsEnabled = observability.ResolveAndLogTenantLabels(
-		cfg.Observability.Metrics.TenantLabelsExplicit, logger,
+	cfg.Observability.Metrics.TenantLabelsEnabled = observability.ResolveAndLogTenantLabelsLocalized(
+		cfg.Observability.Metrics.TenantLabelsExplicit, localizer, logger,
 	)
 
 	// Phase 5 / Plan 05-04: plumb the unified prometheus registry to the

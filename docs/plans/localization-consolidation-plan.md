@@ -635,15 +635,22 @@ bounded line widths.
 
 ### Phase 5: Logs And Native Messages
 
-Status: in progress. `pkg/localization` now defines typed log events with
-stable event IDs, catalog-backed prose, and structured `slog.Attr` fields. The
-server composition boundary uses this contract for MCP-disabled startup,
-remote-credential key fallback, headless UI, and authentication-disabled
-events, plus UI initialization failure, successful UI and GraphQL registration,
-rate-limit enablement, and Heimdall disablement. English remains exact; Spanish
-changes only prose; event IDs, levels, component attribution, routes, errors,
-limits, subsystem identifiers, fallback reason, and remediation fields remain
-stable.
+Status: complete. `pkg/localization` defines typed log events with stable event
+IDs, catalog-backed prose, and structured `slog.Attr` fields. Server, Bolt,
+Cypher, search, storage WAL recovery, replication modes and transport,
+observability bootstrap and tenant detection, Heimdall handlers/plugins/model
+lifecycle, and inference QC/edge decay now emit through that contract. English
+fallback remains exact; Spanish changes only reviewed prose; pseudo-locale
+coverage exercises rendering without changing machine fields.
+
+Native and provider diagnostics remain opaque structured causes at their Go
+boundary. CPU/GPU reranker fallback, Heimdall GPU-to-CPU fallback, inference
+fail-open behavior, and observability noop-provider fallback have stable event
+identity and preserve provider text without translating it. Event IDs, levels,
+component attribution, routes, errors, limits, providers, URLs, subsystem
+identifiers, fallback reasons, and remediation fields remain stable. Runtime
+and tests use embedded catalogs and generated Go metadata; inventory CSV files
+and CI workflow additions are not required.
 
 1. Assign stable event IDs and structured fields to all 584 operator-policy
    occurrences.

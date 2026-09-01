@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -314,8 +315,7 @@ func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("oauth redirect: stored state in memory (expires in 10 minutes)",
-		"subsystem", "oauth", "state_prefix", state[:16])
+	s.logEvent(r.Context(), slog.LevelInfo, localization.ServerOAuthRedirectStateStoredEvent(state[:16]))
 
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
@@ -356,7 +356,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Handle callback using OAuth manager
 	_, token, _, err := s.oauthManager.HandleCallback(code, state)
 	if err != nil {
-		s.log.Warn("oauth callback error", "subsystem", "oauth")
+		s.logEvent(r.Context(), slog.LevelWarn, localization.ServerOAuthCallbackFailedEvent())
 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
@@ -377,7 +377,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   86400 * 7, // 7 days
 	})
 
-	s.log.Info("oauth callback: authenticated user", "subsystem", "oauth")
+	s.logEvent(r.Context(), slog.LevelInfo, localization.ServerOAuthUserAuthenticatedEvent())
 
 	// Redirect to UI
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -745,7 +745,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 					return
 				}
 				if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-					s.log.Warn("role entitlements set failed", "subsystem", "rbac", "entitlements_count", len(norm))
+					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACRoleEntitlementsSetFailedEvent(len(norm)))
 					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 					return
 				}
@@ -941,7 +941,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 		if req.Mappings != nil {
 			for _, m := range *req.Mappings {
 				if err := s.allowlistStore.SaveRoleDatabases(r.Context(), m.Role, m.Databases); err != nil {
-					s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
+					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
 					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 					return
 				}
@@ -952,7 +952,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
-				s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
+				s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
 				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 				return
 			}
@@ -986,7 +986,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {
-			s.log.Warn("privileges PutMatrix failed", "subsystem", "rbac")
+			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACPrivilegesPutMatrixFailedEvent())
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}

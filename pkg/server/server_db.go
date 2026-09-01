@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -1269,8 +1270,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 				// Ensure CREATE DATABASE always returns a proper result (name + row).
 				// Defensive: executor should return this, but if it ever returns empty we still send a valid response.
 				if len(result.Columns) == 0 && len(result.Rows) == 0 {
-					s.log.Warn("create_database: server defensive fix applied — executor returned empty result, filled with database name",
-						"subsystem", "create_database", "db", createdName)
+					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
 					result.Columns = []string{"name"}
 					result.Rows = [][]interface{}{{createdName}}
 				}

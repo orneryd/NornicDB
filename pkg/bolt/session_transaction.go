@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // claimTransactionOperation joins timeout cleanup when expiry wins admission,
@@ -159,32 +161,22 @@ func (s *Session) observeTransactionTerminal(
 	}
 	logger := s.server.logger()
 	level := slog.LevelDebug
-	message := "explicit transaction terminated"
+	event := localization.BoltTransactionTerminatedEvent(string(reason), database, duration)
 	if reason == transactionTerminalTimeoutCleanupRequested {
 		level = slog.LevelWarn
-		message = "explicit transaction timeout cleanup requested"
+		event = localization.BoltTransactionTimeoutCleanupRequestedEvent(string(reason), database, duration)
 	} else if reason == transactionTerminalCommit && cleanupErr != nil {
 		level = slog.LevelError
-		message = "explicit transaction commit failed"
+		event = localization.BoltTransactionCommitFailedEvent(string(reason), database, duration, cleanupErr)
 	} else if cleanupErr != nil {
 		level = slog.LevelError
-		message = "explicit transaction cleanup failed"
+		event = localization.BoltTransactionCleanupFailedEvent(string(reason), database, duration, cleanupErr)
 	} else if reason == transactionTerminalTimeout {
 		level = slog.LevelWarn
-		message = "explicit transaction timeout cleanup completed"
+		event = localization.BoltTransactionTimeoutCleanupCompletedEvent(string(reason), database, duration)
 	}
 	if !logger.Enabled(context.Background(), level) {
 		return
 	}
-	attributes := []any{
-		"reason", string(reason),
-		"database", database,
-		"duration", duration,
-	}
-	if reason == transactionTerminalCommit && cleanupErr != nil {
-		attributes = append(attributes, "commit_error", cleanupErr)
-	} else if cleanupErr != nil {
-		attributes = append(attributes, "cleanup_error", cleanupErr)
-	}
-	logger.Log(context.Background(), level, message, attributes...)
+	s.server.logEvent(context.Background(), level, event)
 }

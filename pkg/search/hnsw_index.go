@@ -23,7 +23,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"os"
@@ -892,7 +891,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
 	entries, err := security.ReadRootedDir(ivfDir)
 	if err != nil {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDir, err)
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDir, err)
 		return nil, nil, nil
 	}
 	var clusterIDs []int
@@ -909,7 +908,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 		}
 	}
 	if len(clusterIDs) == 0 {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDir, len(seenNames), seenNames)
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDir, len(seenNames), seenNames)
 		return nil, nil, nil
 	}
 	sort.Ints(clusterIDs)
@@ -958,7 +957,7 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	}
 
 	if dims == 0 {
-		log.Printf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDir)
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDir)
 		return nil, nil, nil
 	}
 	// Dense slice so centroid index matches cluster IDs (0, 1, 2, ...); RestoreClusteringState expects cid < len(centroids).

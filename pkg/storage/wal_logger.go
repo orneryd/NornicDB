@@ -1,9 +1,20 @@
 package storage
 
 import (
+	"context"
 	"io"
 	"log/slog"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
+
+func logWALRecoveryEvent(logger *slog.Logger, event localization.LogEvent) {
+	if logger == nil {
+		logger = discardWALSlog()
+	}
+	attrs := append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)
+	logger.LogAttrs(context.Background(), slog.LevelWarn, event.Message.Fallback, attrs...)
+}
 
 // WALLogger receives structured diagnostics emitted by WAL recovery / corruption handlers.
 //

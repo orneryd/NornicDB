@@ -1,0 +1,6 @@
+- id: storage-log.log.wal_incomplete_write
+  description: Advertencia de recuperación por una cola atómica incompleta.
+  other: "recuperación de WAL: se detectó una escritura incompleta al final"
+- id: storage-log.log.wal_embeddings_skipped
+  description: Advertencia tras omitir incrustaciones dañadas recuperables.
+  other: "recuperación de WAL: se omitieron entradas de incrustación dañadas"

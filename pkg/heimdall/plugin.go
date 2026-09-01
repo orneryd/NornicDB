@@ -70,7 +70,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"plugin"
@@ -938,9 +938,9 @@ func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
 	manager := GetSubsystemManager()
 	manager.SetContext(ctx)
 
-	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║ Loading SLM Plugins                                          ║")
-	fmt.Println("╠══════════════════════════════════════════════════════════════╣")
+	logHeimdallPrintf(slog.LevelInfo, "╔══════════════════════════════════════════════════════════════╗")
+	logHeimdallPrintf(slog.LevelInfo, "║ Loading SLM Plugins                                          ║")
+	logHeimdallPrintf(slog.LevelInfo, "╠══════════════════════════════════════════════════════════════╣")
 
 	var totalActions int
 	var loadedCount int
@@ -948,25 +948,25 @@ func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
 	for _, path := range matches {
 		p, err := loadHeimdallPluginFromFile(path)
 		if err != nil {
-			fmt.Printf("║ ⚠ %-58s ║\n", filepath.Base(path)+": "+err.Error())
+			logHeimdallPrintf(slog.LevelWarn, "║ ⚠ %-58s ║", filepath.Base(path)+": "+err.Error())
 			continue
 		}
 
 		if err := manager.RegisterPlugin(p, path, false); err != nil {
-			fmt.Printf("║ ⚠ %-58s ║\n", p.Name()+": "+err.Error())
+			logHeimdallPrintf(slog.LevelWarn, "║ ⚠ %-58s ║", p.Name()+": "+err.Error())
 			continue
 		}
 
 		loadedCount++
 		totalActions += len(p.Actions())
 
-		fmt.Printf("║ ✓ %-15s v%-8s  %d actions %18s ║\n",
+		logHeimdallPrintf(slog.LevelInfo, "║ ✓ %-15s v%-8s  %d actions %18s ║",
 			p.Name(), p.Version(), len(p.Actions()), "")
 	}
 
-	fmt.Println("╠══════════════════════════════════════════════════════════════╣")
-	fmt.Printf("║ Loaded: %d plugins, %d actions %28s ║\n", loadedCount, totalActions, "")
-	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+	logHeimdallPrintf(slog.LevelInfo, "╠══════════════════════════════════════════════════════════════╣")
+	logHeimdallPrintf(slog.LevelInfo, "║ Loaded: %d plugins, %d actions %28s ║", loadedCount, totalActions, "")
+	logHeimdallPrintf(slog.LevelInfo, "╚══════════════════════════════════════════════════════════════╝")
 
 	manager.mu.Lock()
 	manager.initialized = true
@@ -1305,7 +1305,7 @@ func orderPlugins(plugins map[string]*LoadedHeimdallPlugin) []*LoadedHeimdallPlu
 			}
 			return fallback[i].Plugin.Name() < fallback[j].Plugin.Name()
 		})
-		log.Printf("[Heimdall] Plugin ordering cycle detected; falling back to priority order")
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] Plugin ordering cycle detected; falling back to priority order")
 		return fallback
 	}
 
@@ -1464,7 +1464,7 @@ func (i *ActionInvoker) Invoke(ctx context.Context, parsed ParsedAction, userMes
 // Returns the first cancellation encountered, or nil if no cancellations.
 func CallPrePromptHooks(ctx *PromptContext) {
 	if !HeimdallPluginsInitialized() {
-		log.Printf("[Heimdall] PrePrompt hooks skipped: plugins not initialized (request=%s)", ctx.RequestID)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PrePrompt hooks skipped: plugins not initialized (request=%s)", ctx.RequestID)
 		return
 	}
 
@@ -1475,13 +1475,13 @@ func CallPrePromptHooks(ctx *PromptContext) {
 			hookCount++
 		}
 	}
-	log.Printf("[Heimdall] PrePrompt hooks: request=%s plugins=%d hooks=%d", ctx.RequestID, len(plugins), hookCount)
+	logHeimdallPrintf(slog.LevelInfo, "[Heimdall] PrePrompt hooks: request=%s plugins=%d hooks=%d", ctx.RequestID, len(plugins), hookCount)
 	for _, p := range plugins {
 		// Check if plugin implements PrePromptHook
 		if hook, ok := p.Plugin.(PrePromptHook); ok {
 			if err := hook.PrePrompt(ctx); err != nil {
 				// Log warning but don't abort
-				fmt.Printf("[Heimdall] PrePrompt warning from %s: %v\n", p.Plugin.Name(), err)
+				logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PrePrompt warning from %s: %v", p.Plugin.Name(), err)
 			}
 			// Check for cancellation after each plugin
 			if ctx.Cancelled() {
@@ -1496,7 +1496,7 @@ func CallPrePromptHooks(ctx *PromptContext) {
 // This is synchronous - waits for each plugin with a timeout.
 func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 	if !HeimdallPluginsInitialized() {
-		log.Printf("[Heimdall] PreExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PreExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
 		return PreExecuteResult{Continue: true}
 	}
 
@@ -1508,7 +1508,7 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 			hookCount++
 		}
 	}
-	log.Printf("[Heimdall] PreExecute hooks: request=%s action=%s plugins=%d hooks=%d", ctx.RequestID, ctx.Action, len(plugins), hookCount)
+	logHeimdallPrintf(slog.LevelInfo, "[Heimdall] PreExecute hooks: request=%s action=%s plugins=%d hooks=%d", ctx.RequestID, ctx.Action, len(plugins), hookCount)
 
 	for _, p := range plugins {
 		// Check if plugin implements PreExecuteHook
@@ -1527,7 +1527,7 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 					ctx.Params = r.ModifiedParams
 				}
 			case <-time.After(5 * time.Second):
-				fmt.Printf("[Heimdall] PreExecute timeout from %s\n", p.Plugin.Name())
+				logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PreExecute timeout from %s", p.Plugin.Name())
 			}
 
 			// Check for cancellation via context method
@@ -1545,7 +1545,7 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 // This is fire-and-forget - runs asynchronously using a bounded worker pool.
 func CallPostExecuteHooks(ctx *PostExecuteContext) {
 	if !HeimdallPluginsInitialized() {
-		log.Printf("[Heimdall] PostExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
 		return
 	}
 
@@ -1556,7 +1556,7 @@ func CallPostExecuteHooks(ctx *PostExecuteContext) {
 			hookCount++
 		}
 	}
-	log.Printf("[Heimdall] PostExecute hooks: request=%s action=%s plugins=%d hooks=%d", ctx.RequestID, ctx.Action, len(plugins), hookCount)
+	logHeimdallPrintf(slog.LevelInfo, "[Heimdall] PostExecute hooks: request=%s action=%s plugins=%d hooks=%d", ctx.RequestID, ctx.Action, len(plugins), hookCount)
 	for _, p := range plugins {
 		// Check if plugin implements PostExecuteHook
 		if hook, ok := p.Plugin.(PostExecuteHook); ok {
@@ -1604,7 +1604,7 @@ func (p *postExecuteWorkerPool) start() {
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							log.Printf("[Heimdall] PostExecute panic in %s: %v", job.pluginName, r)
+							logHeimdallPrintf(slog.LevelError, "[Heimdall] PostExecute panic in %s: %v", job.pluginName, r)
 						}
 					}()
 					job.hook.PostExecute(job.ctx)
@@ -1621,7 +1621,7 @@ func (p *postExecuteWorkerPool) enqueue(job postExecuteJob) {
 	select {
 	case p.jobs <- job:
 	default:
-		log.Printf("[Heimdall] PostExecute queue full, dropping job from %s", job.pluginName)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute queue full, dropping job from %s", job.pluginName)
 	}
 }
 
@@ -1647,11 +1647,11 @@ func CallSynthesisHooks(ctx *SynthesisContext) string {
 			select {
 			case response := <-done:
 				if response != "" {
-					log.Printf("[Heimdall] Plugin %s provided synthesis response", p.Plugin.Name())
+					logHeimdallPrintf(slog.LevelInfo, "[Heimdall] Plugin %s provided synthesis response", p.Plugin.Name())
 					return response // First non-empty response wins
 				}
 			case <-time.After(5 * time.Second):
-				log.Printf("[Heimdall] Plugin %s synthesis timed out", p.Plugin.Name())
+				logHeimdallPrintf(slog.LevelWarn, "[Heimdall] Plugin %s synthesis timed out", p.Plugin.Name())
 			}
 		}
 	}
@@ -1778,7 +1778,7 @@ func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHoo
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Printf("[Heimdall] DatabaseEventHook panic in %s: %v\n", q.name, r)
+						logHeimdallPrintf(slog.LevelError, "[Heimdall] DatabaseEventHook panic in %s: %v", q.name, r)
 					}
 				}()
 				q.hook.OnDatabaseEvent(event)
@@ -1800,7 +1800,7 @@ func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, ev
 	select {
 	case queue.ch <- event:
 	default:
-		fmt.Printf("[Heimdall] DatabaseEvent queue full for %s, dropping event: %s\n", name, event.Type)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full for %s, dropping event: %s", name, event.Type)
 	}
 }
 
@@ -1828,7 +1828,7 @@ func EmitDatabaseEvent(event *DatabaseEvent) {
 		// Event queued successfully
 	default:
 		// Queue full - drop event with warning
-		fmt.Printf("[Heimdall] Event queue full, dropping event: %s\n", event.Type)
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] Event queue full, dropping event: %s", event.Type)
 	}
 }
 

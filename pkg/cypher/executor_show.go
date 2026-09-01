@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -442,9 +443,7 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 //   - Error: If database already exists (unless IF NOT EXISTS is used)
 //   - Error: If DatabaseManager is not configured
 func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	e.logger().Debug("executeCreateDatabase invoked",
-		"subsystem", "create_database",
-		"query_len", len(cypher))
+	e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
 	}
@@ -537,12 +536,10 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	// Create database
 	err = e.dbManager.CreateDatabase(dbName)
 	if err != nil {
-		e.logger().Error("CreateDatabase failed",
-			"subsystem", "create_database")
+		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
-	e.logger().Info("CreateDatabase succeeded",
-		"subsystem", "create_database")
+	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
 
 	return &ExecuteResult{
 		Columns: []string{"name"},

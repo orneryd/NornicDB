@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,12 +46,12 @@ func convertOneDbDir(dbDir string) error {
 		filepath.Join(dbDir, "bm25"),
 		"fulltext"); err != nil {
 		if errors.Is(err, errAlreadyMsgpack) {
-			log.Printf("Skip (already msgpack) %s/bm25", dbDir)
+			logSearchPrintf("Skip (already msgpack) %s/bm25", dbDir)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("bm25: %w", err)
 		}
 	} else {
-		log.Printf("Converted %s/bm25.gob -> bm25", dbDir)
+		logSearchPrintf("Converted %s/bm25.gob -> bm25", dbDir)
 	}
 
 	// vectors.gob -> vectors
@@ -61,12 +60,12 @@ func convertOneDbDir(dbDir string) error {
 		filepath.Join(dbDir, "vectors"),
 		"vector"); err != nil {
 		if errors.Is(err, errAlreadyMsgpack) {
-			log.Printf("Skip (already msgpack) %s/vectors", dbDir)
+			logSearchPrintf("Skip (already msgpack) %s/vectors", dbDir)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("vectors: %w", err)
 		}
 	} else {
-		log.Printf("Converted %s/vectors.gob -> vectors", dbDir)
+		logSearchPrintf("Converted %s/vectors.gob -> vectors", dbDir)
 	}
 
 	// hnsw.gob -> hnsw
@@ -75,12 +74,12 @@ func convertOneDbDir(dbDir string) error {
 		filepath.Join(dbDir, "hnsw"),
 		"hnsw"); err != nil {
 		if errors.Is(err, errAlreadyMsgpack) {
-			log.Printf("Skip (already msgpack) %s/hnsw", dbDir)
+			logSearchPrintf("Skip (already msgpack) %s/hnsw", dbDir)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("hnsw: %w", err)
 		}
 	} else {
-		log.Printf("Converted %s/hnsw.gob -> hnsw", dbDir)
+		logSearchPrintf("Converted %s/hnsw.gob -> hnsw", dbDir)
 	}
 
 	// hnsw_ivf/N.gob -> hnsw_ivf/N (then remove N.gob)
@@ -109,12 +108,12 @@ func convertOneDbDir(dbDir string) error {
 		newPath := filepath.Join(ivfDir, fmt.Sprintf("%d", cid))
 		if err := convertFileGobToMsgpack(oldPath, newPath, "hnsw"); err != nil {
 			if errors.Is(err, errAlreadyMsgpack) {
-				log.Printf("Skip (already msgpack) %s", newPath)
+				logSearchPrintf("Skip (already msgpack) %s", newPath)
 			} else {
 				return fmt.Errorf("hnsw_ivf/%s: %w", name, err)
 			}
 		} else {
-			log.Printf("Converted %s -> %s", oldPath, newPath)
+			logSearchPrintf("Converted %s -> %s", oldPath, newPath)
 		}
 	}
 	return nil

@@ -926,12 +926,11 @@ func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, du
 	if len(redacted) > 500 {
 		redacted = redacted[:500]
 	}
-	e.logger().Warn("slow query",
-		"event", "slow_query",
-		"plan_hash", PlanHash(plan),
-		"cypher.duration_ms", duration.Milliseconds(),
-		"query", redacted,
-	)
+	e.logEvent(slog.LevelWarn, localization.CypherSlowQueryEvent(
+		PlanHash(plan),
+		duration.Milliseconds(),
+		redacted,
+	))
 }
 
 // SetDatabaseManager sets the database manager for system commands.

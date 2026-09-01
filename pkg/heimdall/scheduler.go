@@ -3,6 +3,7 @@ package heimdall
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func NewManager(cfg Config) (*Manager, error) {
 			return nil, fmt.Errorf("Heimdall %s provider: %w", provider, err)
 		}
 		modelPath = generator.ModelPath()
-		fmt.Printf("🛡️ Heimdall using %s: %s\n", provider, modelPath)
+		logHeimdallPrintf(slog.LevelInfo, "🛡️ Heimdall using %s: %s", provider, modelPath)
 	} else {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
@@ -92,13 +93,13 @@ func NewManager(cfg Config) (*Manager, error) {
 		GPULayers() int
 	}
 	if gi, ok := generator.(gpuInfo); ok {
-		fmt.Printf("   Compute: GPU=%v (gpu_layers=%d)\n", gi.UsingGPU(), gi.GPULayers())
+		logHeimdallPrintf(slog.LevelInfo, "   Compute: GPU=%v (gpu_layers=%d)", gi.UsingGPU(), gi.GPULayers())
 	} else {
-		fmt.Printf("   Compute: GPU=unknown (generator does not report backend)\n")
+		logHeimdallPrintf(slog.LevelInfo, "   Compute: GPU=unknown (generator does not report backend)")
 	}
 
 	// Log token budget allocation
-	fmt.Printf("   Token budget: %dK context = %dK system + %dK user (multi-batch prefill)\n",
+	logHeimdallPrintf(slog.LevelInfo, "   Token budget: %dK context = %dK system + %dK user (multi-batch prefill)",
 		MaxContextTokens()/1024, MaxSystemPromptTokens()/1024, MaxUserMessageTokens()/1024)
 
 	return &Manager{
@@ -164,7 +165,7 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 			fullPath := filepath.Join(dir, modelFile)
 			if _, err := os.Stat(fullPath); err == nil {
 				modelsDir = dir
-				fmt.Printf("   Found Heimdall model at: %s\n", fullPath)
+				logHeimdallPrintf(slog.LevelInfo, "   Found Heimdall model at: %s", fullPath)
 				break
 			}
 		}
@@ -192,21 +193,21 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 		batchSize = 2048
 	}
 
-	fmt.Printf("🛡️ Loading Heimdall model: %s\n", modelPath)
-	fmt.Printf("   GPU layers: %d (-1 = auto, falls back to CPU if needed)\n", gpuLayers)
-	fmt.Printf("   Context: %d tokens, Batch: %d tokens (single-shot mode)\n", contextSize, batchSize)
+	logHeimdallPrintf(slog.LevelInfo, "🛡️ Loading Heimdall model: %s", modelPath)
+	logHeimdallPrintf(slog.LevelInfo, "   GPU layers: %d (-1 = auto, falls back to CPU if needed)", gpuLayers)
+	logHeimdallPrintf(slog.LevelInfo, "   Context: %d tokens, Batch: %d tokens (single-shot mode)", contextSize, batchSize)
 
 	generator, err := loadGenerator(modelPath, gpuLayers, contextSize, batchSize)
 	if err != nil {
 		gpuErr := err
-		fmt.Printf("⚠️  GPU loading failed, trying CPU fallback: %v\n", err)
+		logHeimdallPrintf(slog.LevelWarn, "⚠️  GPU loading failed, trying CPU fallback: %v", err)
 		generator, err = loadGenerator(modelPath, 0, contextSize, batchSize)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to load SLM model: gpu load failed: %v; cpu fallback failed: %w", gpuErr, err)
 		}
-		fmt.Printf("✅ SLM model loaded (gpu_layers=0)\n")
+		logHeimdallPrintf(slog.LevelInfo, "✅ SLM model loaded (gpu_layers=0)")
 	} else {
-		fmt.Printf("✅ SLM model loaded: %s\n", modelName)
+		logHeimdallPrintf(slog.LevelInfo, "✅ SLM model loaded: %s", modelName)
 	}
 	return generator, modelPath, nil
 }
@@ -384,9 +385,9 @@ func (m *Manager) Close() error {
 	m.closed = true
 
 	if m.generator != nil {
-		fmt.Printf("🧠 Closing SLM model\n")
-		fmt.Printf("   Total requests: %d\n", m.requestCount)
-		fmt.Printf("   Total errors: %d\n", m.errorCount)
+		logHeimdallPrintf(slog.LevelInfo, "🧠 Closing SLM model")
+		logHeimdallPrintf(slog.LevelInfo, "   Total requests: %d", m.requestCount)
+		logHeimdallPrintf(slog.LevelInfo, "   Total errors: %d", m.errorCount)
 		return m.generator.Close()
 	}
 	return nil

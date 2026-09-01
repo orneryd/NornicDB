@@ -1,0 +1,24 @@
+- id: cypher.log.slow_query
+  description: Operator warning when a Cypher query exceeds the configured slow-query threshold. Query text remains structured data.
+  other: slow query
+- id: cypher.log.create_database_invoked
+  description: Operator debug record when CREATE DATABASE execution begins.
+  other: executeCreateDatabase invoked
+- id: cypher.log.create_database_failed
+  description: Operator error record when CREATE DATABASE execution fails.
+  other: CreateDatabase failed
+- id: cypher.log.create_database_succeeded
+  description: Operator information record when CREATE DATABASE execution succeeds.
+  other: CreateDatabase succeeded
+- id: cypher.log.vector_search_disabled
+  description: Operator warning when vector search is called for a database where vectors are disabled. The procedure and index name remain structured data.
+  other: db.index.vector.queryNodes called against vector-disabled database — returning empty result
+- id: cypher.log.orphaned_embedding_detected
+  description: Operator warning when vector search finds an embedding without a stored node. The node ID remains structured data.
+  other: orphaned embedding detected, removing from indexes
+- id: cypher.log.orphaned_embedding_removal_failed
+  description: Operator error when an orphaned embedding cannot be removed. The node ID and error remain structured data.
+  other: failed to remove orphaned embedding
+- id: cypher.log.decay_subsystem_disabled
+  description: Operator warning when a decay function is called while the decay subsystem is disabled.
+  other: decay function called but decay subsystem is disabled; returning neutral scores

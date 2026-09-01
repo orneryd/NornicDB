@@ -76,6 +76,12 @@
 - id: server.log.mcp_disabled
   description: Registro de inicio cuando MCP está deshabilitado por la configuración.
   other: servidor MCP deshabilitado mediante la configuración
+- id: server.log.search_reconcile_storage_unavailable
+  description: Advertencia de inicio cuando la reconciliación de búsqueda no puede acceder al almacenamiento de una base de datos.
+  other: "reconciliación de búsqueda al inicio: almacenamiento no disponible"
+- id: server.log.search_reconcile_failed
+  description: Advertencia de inicio cuando falla la reconciliación del índice de búsqueda de una base de datos.
+  other: error en la reconciliación de búsqueda al inicio
 - id: server.log.remote_credentials_key_fallback
   description: Advertencia de inicio cuando se reutiliza otro secreto configurado para cifrar credenciales remotas.
   other: respaldo de clave de cifrado de credenciales remotas en uso
@@ -100,3 +106,114 @@
 - id: server.log.heimdall_disabled
   description: Registro de inicio cuando el asistente de IA Heimdall está deshabilitado.
   other: asistente de IA Heimdall deshabilitado
+- id: server.log.search_rerank_disabled
+  description: Registro de inicio cuando la reordenación de búsqueda de segunda etapa está deshabilitada.
+  other: reordenación de búsqueda deshabilitada
+- id: server.log.search_rerank_api_url_missing
+  description: Advertencia de inicio cuando la reordenación externa está habilitada sin una URL de API.
+  other: reordenación de búsqueda habilitada pero sin URL de API; reordenación de segunda etapa deshabilitada
+- id: server.log.search_reranker_ready
+  description: Registro de inicio cuando un reordenador de búsqueda local o externo está listo.
+  other: reordenador de búsqueda listo (reordenación de segunda etapa habilitada)
+- id: server.log.search_reranker_loading
+  description: Registro de inicio mientras un reordenador de búsqueda local se carga de forma asíncrona.
+  other: cargando modelo de reordenación de búsqueda
+- id: server.log.slow_query_logging_enabled
+  description: Registro de inicio cuando el registro interno de consultas lentas está habilitado.
+  other: registro de consultas lentas habilitado
+- id: server.log.slow_query_logging_configured
+  description: Registro de inicio cuando se configura el registro de consultas lentas en archivo.
+  other: registro de consultas lentas configurado
+- id: server.log.slow_query_log_open_failed
+  description: Advertencia de inicio cuando no se puede abrir el archivo de consultas lentas.
+  other: no se pudo abrir el archivo de registro de consultas lentas
+- id: server.log.http2_enabled
+  description: Registro de inicio cuando el transporte HTTP/2 está habilitado.
+  other: HTTP/2 habilitado
+- id: server.log.heimdall_initializing
+  description: Inicio de la inicialización asíncrona de Heimdall.
+  other: inicializando de forma asíncrona el asistente de IA Heimdall
+- id: server.log.heimdall_provider_resolved
+  description: Proveedor de Heimdall resuelto.
+  other: proveedor de Heimdall resuelto
+- id: server.log.heimdall_initialization_failed
+  description: Error de inicialización de Heimdall.
+  other: error al inicializar Heimdall
+- id: server.log.apoc_plugins_loading
+  description: Carga de complementos APOC.
+  other: cargando complementos APOC
+- id: server.log.apoc_plugins_load_failed
+  description: Error de carga de complementos APOC.
+  other: no se pudieron cargar los complementos APOC
+- id: server.log.heimdall_plugins_loading
+  description: Carga de complementos de Heimdall.
+  other: cargando complementos de Heimdall
+- id: server.log.heimdall_plugins_load_failed
+  description: Error de carga de complementos de Heimdall.
+  other: no se pudieron cargar los complementos de Heimdall
+- id: server.log.heimdall_plugins_directory_empty
+  description: Directorio de complementos de Heimdall vacío.
+  other: el directorio de complementos de Heimdall está vacío
+- id: server.log.heimdall_plugins_directory_duplicate
+  description: Directorios de complementos duplicados.
+  other: el directorio de complementos de Heimdall coincide con el directorio de complementos; se omite
+- id: server.log.heimdall_ready
+  description: Heimdall listo.
+  other: asistente de IA Heimdall listo
+- id: server.log.heimdall_plugins_missing
+  description: No se cargaron complementos de Heimdall.
+  other: no se cargaron complementos de Heimdall; no habrá registros del observador
+- id: server.log.heimdall_action_registered
+  description: Acción de Heimdall registrada.
+  other: acción de Heimdall registrada
+- id: server.log.search_reranker_model_unavailable
+  description: Modelo local de reordenación no disponible.
+  other: modelo de reordenación de búsqueda no disponible; reordenación de segunda etapa deshabilitada, solo orden RRF
+- id: server.log.search_reranker_health_check_failed
+  description: Error de comprobación de estado del reordenador.
+  other: error en la comprobación de estado del reordenador de búsqueda
+- id: server.log.embedding_model_loading
+  description: Carga del modelo de incrustaciones.
+  other: cargando modelo de incrustaciones
+- id: server.log.embedding_retry_loop_stopped
+  description: Detención de reintentos durante el cierre.
+  other: "bucle de reintentos de inicialización de incrustaciones detenido: el servidor se está cerrando"
+- id: server.log.embedding_cache_enabled
+  description: Caché de incrustaciones habilitada.
+  other: caché de incrustaciones habilitada
+- id: server.log.embeddings_ready
+  description: Proveedor de incrustaciones listo.
+  other: incrustaciones listas
+- id: server.log.embedding_initialization_attempt_failed
+  description: Error de inicialización de incrustaciones.
+  other: falló el intento de inicialización de incrustaciones
+- id: server.log.embedding_initialization_retrying
+  description: Reintento con espera exponencial.
+  other: reintentando la inicialización de incrustaciones (espera exponencial)
+- id: server.log.embedding_initialization_retry_interrupted
+  description: Reintento interrumpido por el cierre.
+  other: reintento de inicialización de incrustaciones interrumpido por el cierre del servidor
+- id: server.log.embedding_retry_interval_capped
+  description: Reintentos periódicos de inicialización.
+  other: el intervalo de reintento de inicialización de incrustaciones alcanzó el límite; continúan los reintentos periódicos
+- id: server.log.rbac_roles_load_failed
+  description: Error de carga de roles RBAC.
+  other: no se pudieron cargar los roles de RBAC
+- id: server.log.rbac_allowlist_load_failed
+  description: Error de carga de la lista de acceso RBAC.
+  other: no se pudo cargar la lista de acceso de RBAC
+- id: server.log.rbac_allowlist_seed_failed
+  description: Error de inicialización de la lista de acceso RBAC.
+  other: no se pudo inicializar la lista de acceso de RBAC
+- id: server.log.rbac_privileges_load_failed
+  description: Error de carga de privilegios RBAC.
+  other: no se pudieron cargar los privilegios de RBAC
+- id: server.log.rbac_role_entitlements_load_failed
+  description: Error de carga de derechos de rol RBAC.
+  other: no se pudieron cargar los derechos de rol de RBAC
+- id: server.log.database_config_store_load_failed
+  description: Error de carga del almacén de configuración por base de datos.
+  other: no se pudo cargar el almacén de configuración por base de datos
+- id: server.log.http_serve_failed
+  description: Error inesperado del servidor HTTP.
+  other: error del servidor HTTP

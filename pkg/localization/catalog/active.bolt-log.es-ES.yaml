@@ -1,0 +1,66 @@
+- id: bolt.log.server_listening
+  description: Registro del servidor Bolt cuando está listo para aceptar conexiones.
+  other: El servidor Bolt está escuchando
+- id: bolt.log.connection_handler_panic
+  description: Registro de recuperación de un pánico en el controlador de conexión Bolt.
+  other: pánico en el controlador de conexión
+- id: bolt.log.unencrypted_connection_rejected
+  description: Rechazo de una conexión Bolt cuando se requiere TLS.
+  other: rechazando conexión sin cifrar
+- id: bolt.log.transport_sniff_failed
+  description: Error de detección del transporte Bolt.
+  other: error al detectar el transporte
+- id: bolt.log.handshake_failed
+  description: Error de negociación del protocolo Bolt.
+  other: error en la negociación
+- id: bolt.log.message_handling_error
+  description: Error al procesar un mensaje de sesión Bolt.
+  other: error al procesar el mensaje
+- id: bolt.log.hello_scheme_none
+  description: Diagnóstico de autenticación Bolt para un saludo con el esquema none.
+  other: saludo con esquema=none
+- id: bolt.log.ws_cookie_bearer_rejected
+  description: Token bearer de cookie WebSocket rechazado durante la autenticación Bolt.
+  other: token bearer de cookie WebSocket rechazado
+- id: bolt.log.authentication_failed
+  description: Error de autenticación Bolt.
+  other: error de autenticación
+- id: bolt.log.hello
+  description: Registro del saludo de una sesión Bolt autenticada.
+  other: saludo
+- id: bolt.log.query
+  description: Diagnóstico de ejecución de una consulta Bolt.
+  other: consulta
+- id: bolt.log.query_error
+  description: Error de ejecución de una consulta Bolt.
+  other: error de consulta
+- id: bolt.log.run
+  description: Registro de tiempo de ejecución RUN de Bolt.
+  other: ejecución
+- id: bolt.log.discovery_refresh_failed
+  description: Error al actualizar la respuesta de descubrimiento Bolt.
+  other: error al actualizar el descubrimiento
+- id: bolt.log.websocket_upgrade_read_request_failed
+  description: Error al leer una solicitud de actualización WebSocket de Bolt.
+  other: error al leer la solicitud de actualización WebSocket
+- id: bolt.log.websocket_upgrade_credentials
+  description: Diagnóstico de presencia de credenciales en una actualización WebSocket de Bolt.
+  other: credenciales de actualización WebSocket
+- id: bolt.log.websocket_upgrade_failed
+  description: Error de actualización del protocolo WebSocket de Bolt.
+  other: error en la actualización WebSocket
+- id: bolt.log.transaction_terminated
+  description: Diagnóstico de terminación de una transacción explícita Bolt.
+  other: transacción explícita terminada
+- id: bolt.log.transaction_timeout_cleanup_requested
+  description: Solicitud de limpieza por tiempo de espera de una transacción explícita Bolt.
+  other: solicitada la limpieza por tiempo de espera de la transacción explícita
+- id: bolt.log.transaction_commit_failed
+  description: Error al confirmar una transacción explícita Bolt.
+  other: error al confirmar la transacción explícita
+- id: bolt.log.transaction_cleanup_failed
+  description: Error al limpiar una transacción explícita Bolt.
+  other: error al limpiar la transacción explícita
+- id: bolt.log.transaction_timeout_cleanup_completed
+  description: Limpieza por tiempo de espera completada para una transacción explícita Bolt.
+  other: completada la limpieza por tiempo de espera de la transacción explícita

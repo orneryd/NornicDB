@@ -3,7 +3,6 @@ package search
 import (
 	"context"
 	"fmt"
-	"log"
 	"sort"
 	"time"
 
@@ -534,7 +533,7 @@ func buildHNSWCPU(ctx context.Context, dimensions int, config HNSWConfig, lookup
 			}
 			added++
 			if added%hnswProgressInterval == 0 || added == total {
-				log.Printf("[HNSW] 🔨 Progress: %d / %d vectors", added, total)
+				logSearchPrintf("[HNSW] 🔨 Progress: %d / %d vectors", added, total)
 			}
 		}
 		return nil
@@ -549,17 +548,17 @@ func buildHNSWCPU(ctx context.Context, dimensions int, config HNSWConfig, lookup
 func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
 	// Try CUDA first (NVIDIA GPUs)
 	if accel, err := NewCudaHNSWBuildAccelerator(); err == nil {
-		log.Printf("[HNSW] Using CUDA GPU accelerator")
+		logSearchPrintf("[HNSW] Using CUDA GPU accelerator")
 		return accel, nil
 	}
 	// Try Vulkan next (cross-platform)
 	if accel, err := NewVulkanHNSWBuildAccelerator(); err == nil {
-		log.Printf("[HNSW] Using Vulkan GPU accelerator")
+		logSearchPrintf("[HNSW] Using Vulkan GPU accelerator")
 		return accel, nil
 	}
 	// Try Metal last (Apple Silicon)
 	if accel, err := NewMetalHNSWBuildAccelerator(); err == nil {
-		log.Printf("[HNSW] Using Metal GPU accelerator")
+		logSearchPrintf("[HNSW] Using Metal GPU accelerator")
 		return accel, nil
 	}
 	return nil, localizedError(localization.SearchGPUAcceleratorUnavailable(), nil)
@@ -573,7 +572,7 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 		var err error
 		accel, err = newBestHNSWBuildAccelerator()
 		if err != nil {
-			log.Printf("[HNSW] GPU build unavailable, falling back to CPU: %v", err)
+			logSearchPrintf("[HNSW] GPU build unavailable, falling back to CPU: %v", err)
 			built, stats, cpuErr := buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 			stats.Fallback = true
 			return built, stats, cpuErr
@@ -581,7 +580,7 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 	}
 	if err := accel.Prepare(dimensions, total); err != nil {
 		_ = accel.Close()
-		log.Printf("[HNSW] GPU build prepare failed, falling back to CPU: %v", err)
+		logSearchPrintf("[HNSW] GPU build prepare failed, falling back to CPU: %v", err)
 		built, stats, cpuErr := buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 		stats.Fallback = true
 		return built, stats, cpuErr
@@ -595,7 +594,7 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, stats, ctxErr
 	}
-	log.Printf("[HNSW] GPU build failed after %d batches, falling back to CPU: %v", stats.Batches, err)
+	logSearchPrintf("[HNSW] GPU build failed after %d batches, falling back to CPU: %v", stats.Batches, err)
 	cpuBuilt, cpuStats, cpuErr := buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 	cpuStats.Fallback = true
 	cpuStats.KernelErrors = stats.KernelErrors + 1
@@ -638,7 +637,7 @@ func buildHNSWAccelerated(ctx context.Context, dimensions int, config HNSWConfig
 				stats.KernelErrors++
 				return err
 			}
-			log.Printf("[HNSW] GPU build batch=%d vectors=%d frontier=%d duration=%s", stats.Batches, len(batch), len(frontierVecs), time.Since(batchStart))
+			logSearchPrintf("[HNSW] GPU build batch=%d vectors=%d frontier=%d duration=%s", stats.Batches, len(batch), len(frontierVecs), time.Since(batchStart))
 		}
 		for i, p := range batch {
 			if err := ctx.Err(); err != nil {
@@ -668,7 +667,7 @@ func buildHNSWAccelerated(ctx context.Context, dimensions int, config HNSWConfig
 			frontierInternalIDs = append(frontierInternalIDs, internalID)
 			added++
 			if added%hnswProgressInterval == 0 || added == total {
-				log.Printf("[HNSW] 🔨 Progress: %d / %d vectors", added, total)
+				logSearchPrintf("[HNSW] 🔨 Progress: %d / %d vectors", added, total)
 			}
 		}
 		return nil

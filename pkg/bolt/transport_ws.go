@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // wsAcceptResult bundles everything handleConnection needs after a
@@ -52,7 +54,7 @@ func (s *Server) acceptWebSocket(
 	// request from a bufio.Reader.
 	req, err := http.ReadRequest(br)
 	if err != nil {
-		s.logger().Warn("ws upgrade read request failed", "remote", remoteAddr, slog.Any("error", err))
+		s.logEvent(context.Background(), slog.LevelWarn, localization.BoltWebSocketUpgradeReadRequestFailedEvent(remoteAddr, err))
 		return nil, err
 	}
 
@@ -104,11 +106,8 @@ func (s *Server) acceptWebSocket(
 			hasAuthHeader = true
 		}
 	}
-	s.logger().Debug("ws upgrade credentials",
-		"remote", remoteAddr,
-		"has_cookie", hasCookie,
-		"has_authorization_header", hasAuthHeader,
-		"implicit_bearer_present", implicitBearer != "")
+	s.logEvent(context.Background(), slog.LevelDebug,
+		localization.BoltWebSocketUpgradeCredentialsEvent(remoteAddr, hasCookie, hasAuthHeader, implicitBearer != ""))
 
 	// Actual WS handshake.
 	upgrader := s.getUpgrader()
@@ -131,7 +130,7 @@ func (s *Server) acceptWebSocket(
 		if ms := s.metricsState; ms != nil && ms.bag != nil {
 			incBoltConnectionsRejected(ms.bag, "ws_handshake")
 		}
-		s.logger().Warn("ws upgrade failed", "remote", remoteAddr, slog.Any("error", err))
+		s.logEvent(context.Background(), slog.LevelWarn, localization.BoltWebSocketUpgradeFailedEvent(remoteAddr, err))
 		return nil, err
 	}
 

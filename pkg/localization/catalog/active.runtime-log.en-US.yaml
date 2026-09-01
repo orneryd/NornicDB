@@ -1,0 +1,30 @@
+- id: runtime.log.heimdall_tool_call
+  description: Canonical operator log for an agent tool invocation; arguments remain opaque.
+  other: "[Heimdall] Tool call: request={{.RequestID}} action={{.Action}} params={{.Params}}"
+- id: runtime.log.heimdall_operator
+  description: Canonical dynamic operator log emitted by Heimdall or Bifrost.
+  other: "{{.Message}}"
+- id: runtime.log.inference_edge_decay_started
+  description: Canonical operator log when the edge-decay worker starts.
+  other: "[EDGE-DECAY] Started | decay_rate={{.DecayRate}} min_conf={{.MinConfidence}} scan_interval={{.ScanInterval}} grace={{.GracePeriod}}"
+- id: runtime.log.inference_heimdall_batch_error
+  description: Canonical operator log for a fail-open quality-control batch error.
+  other: "[HEIMDALL] ⚠️ Batch error, fail-open: {{.Error}}"
+- id: runtime.log.inference_operator
+  description: Canonical dynamic operator log emitted by inference workers.
+  other: "{{.Message}}"
+- id: runtime.log.observability_tenant_labels_resolved
+  description: Startup log after resolving whether observability tenant labels are enabled.
+  other: resolved tenant labels enabled
+- id: runtime.log.observability_instance_id_resolved
+  description: Startup log after resolving the service instance identity.
+  other: 'INFO observability: service.instance.id={{printf "%q" .InstanceID}} (resolved from {{.Source}})'
+- id: runtime.log.observability_operator
+  description: Canonical dynamic observability bootstrap log.
+  other: "{{.Message}}"
+- id: runtime.log.replication_raft_became_leader
+  description: Canonical operator log for a Raft leader transition.
+  other: "[Raft {{.NodeID}}] Became leader for term {{.Term}}"
+- id: runtime.log.replication_operator
+  description: Canonical dynamic operator log emitted by replication modes and transports.
+  other: "{{.Message}}"

@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"runtime"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
@@ -468,14 +471,7 @@ func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, messag
 // Logging helpers
 
 func (s *Server) logRequest(r *http.Request, status int, duration time.Duration) {
-	// Phase 2 D-13: conventional "http" group for request records.
-	s.log.Info("http request",
-		"subsystem", "http",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"status", status,
-		"duration", duration,
-	)
+	s.logEvent(r.Context(), slog.LevelInfo, localization.ServerHTTPRequestEvent(r.Method, r.URL.Path, status, duration))
 }
 
 // logSlowQuery logs queries that exceed the configured threshold.
@@ -507,7 +503,7 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 	if s.slowQueryLogger != nil {
 		s.slowQueryLogger.Println(logMsg)
 	} else {
-		s.log.Warn("slow query", "event", "slow_query", "msg", logMsg)
+		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSlowQueryEvent(logMsg))
 	}
 }
 

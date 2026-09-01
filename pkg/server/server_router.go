@@ -293,12 +293,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 		if os.Getenv("NORNICDB_TRACE_GRAPHQL") != "" {
 			start := time.Now()
 			s.graphqlHandler.ServeHTTP(w, r)
-			s.log.Debug("graphql request",
-				"subsystem", "graphql",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"duration", time.Since(start),
-			)
+			s.logEvent(r.Context(), slog.LevelDebug, localization.ServerGraphQLRequestEvent(r.Method, r.URL.Path, time.Since(start)))
 			return
 		}
 		s.graphqlHandler.ServeHTTP(w, r)

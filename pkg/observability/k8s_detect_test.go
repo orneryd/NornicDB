@@ -1,13 +1,19 @@
 package observability
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
 )
 
 // fakeFI is a minimal os.FileInfo stub used by table-driven autodetect tests.
@@ -129,4 +135,34 @@ func TestK8sProbe_DefaultProbeIsLive(t *testing.T) {
 	probe := DefaultK8sProbe()
 	require.NotNil(t, probe.Getenv, "DefaultK8sProbe must wire os.Getenv")
 	require.NotNil(t, probe.StatFile, "DefaultK8sProbe must wire os.Stat")
+}
+
+func TestLogTenantLabelsResolvedUsesStableLocalizedEvent(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
+	require.NoError(t, err)
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	logTenantLabelsResolved(context.Background(), manager, logger, true, ReasonK8sDetected, true, true)
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	require.Equal(t, "se resolvió la activación de etiquetas de inquilino", record["msg"])
+	require.Equal(t, "observability.tenant_labels.resolved", record["event_id"])
+	require.Equal(t, "observability", record["component"])
+	require.Equal(t, true, record["enabled"])
+	require.Equal(t, ReasonK8sDetected, record["reason"])
+	require.Equal(t, true, record["service_host_present"])
+	require.Equal(t, true, record["token_file_present"])
+}
+
+func TestLogTenantLabelsResolvedFallsBackWithoutManager(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	logTenantLabelsResolved(context.Background(), nil, logger, false, ReasonServiceHostAbsent, false, false)
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	require.Equal(t, "resolved tenant labels enabled", record["msg"])
+	require.Equal(t, "observability.tenant_labels.resolved", record["event_id"])
 }

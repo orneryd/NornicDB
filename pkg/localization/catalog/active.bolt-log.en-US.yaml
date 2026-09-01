@@ -1,0 +1,66 @@
+- id: bolt.log.server_listening
+  description: Bolt server log emitted when the listener is ready to accept connections.
+  other: bolt server listening
+- id: bolt.log.connection_handler_panic
+  description: Bolt connection handler panic recovery log.
+  other: connection handler panic
+- id: bolt.log.unencrypted_connection_rejected
+  description: Bolt connection rejection when TLS is required.
+  other: rejecting unencrypted connection
+- id: bolt.log.transport_sniff_failed
+  description: Bolt transport detection failure log.
+  other: transport sniff failed
+- id: bolt.log.handshake_failed
+  description: Bolt protocol handshake failure log.
+  other: handshake failed
+- id: bolt.log.message_handling_error
+  description: Bolt session message handling failure log.
+  other: message handling error
+- id: bolt.log.hello_scheme_none
+  description: Bolt authentication diagnostic for a HELLO using scheme none.
+  other: hello scheme=none
+- id: bolt.log.ws_cookie_bearer_rejected
+  description: Bolt authentication warning for a rejected WebSocket cookie bearer token.
+  other: ws cookie bearer rejected
+- id: bolt.log.authentication_failed
+  description: Bolt authentication failure log.
+  other: auth failed
+- id: bolt.log.hello
+  description: Bolt authenticated session HELLO log.
+  other: hello
+- id: bolt.log.query
+  description: Bolt query execution diagnostic log.
+  other: query
+- id: bolt.log.query_error
+  description: Bolt query execution error log.
+  other: query error
+- id: bolt.log.run
+  description: Bolt RUN timing log.
+  other: run
+- id: bolt.log.discovery_refresh_failed
+  description: Bolt discovery response refresh failure log.
+  other: discovery refresh failed
+- id: bolt.log.websocket_upgrade_read_request_failed
+  description: Bolt WebSocket upgrade request read failure log.
+  other: ws upgrade read request failed
+- id: bolt.log.websocket_upgrade_credentials
+  description: Bolt WebSocket upgrade credential-presence diagnostic log.
+  other: ws upgrade credentials
+- id: bolt.log.websocket_upgrade_failed
+  description: Bolt WebSocket protocol upgrade failure log.
+  other: ws upgrade failed
+- id: bolt.log.transaction_terminated
+  description: Bolt explicit transaction terminal diagnostic log.
+  other: explicit transaction terminated
+- id: bolt.log.transaction_timeout_cleanup_requested
+  description: Bolt explicit transaction timeout cleanup request log.
+  other: explicit transaction timeout cleanup requested
+- id: bolt.log.transaction_commit_failed
+  description: Bolt explicit transaction commit failure log.
+  other: explicit transaction commit failed
+- id: bolt.log.transaction_cleanup_failed
+  description: Bolt explicit transaction cleanup failure log.
+  other: explicit transaction cleanup failed
+- id: bolt.log.transaction_timeout_cleanup_completed
+  description: Bolt explicit transaction timeout cleanup completion log.
+  other: explicit transaction timeout cleanup completed

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -179,9 +180,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	// instantiate a fresh Service whose default flags are both ON, silently
 	// bypassing the operator's disable.
 	if e.searchService != nil && !e.searchService.VectorEnabled() {
-		e.logger().Warn("db.index.vector.queryNodes called against vector-disabled database — returning empty result",
-			"subsystem", "vector_search",
-			"index_name", indexName)
+		e.logEvent(slog.LevelWarn, localization.CypherVectorSearchDisabledEvent(indexName))
 		return result, nil
 	}
 
@@ -204,9 +203,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	// Belt-and-braces: if anyone else flipped the flag on the wired service
 	// since we entered this function, still bail.
 	if !svc.VectorEnabled() {
-		e.logger().Warn("db.index.vector.queryNodes called against vector-disabled database — returning empty result",
-			"subsystem", "vector_search",
-			"index_name", indexName)
+		e.logEvent(slog.LevelWarn, localization.CypherVectorSearchDisabledEvent(indexName))
 		return result, nil
 	}
 
@@ -227,14 +224,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 		if err != nil || node == nil {
 			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
 				if !seenOrphans[hit.ID] {
-					e.logger().Warn("orphaned embedding detected, removing from indexes",
-						"subsystem", "vector_search",
-						"node_id", hit.ID)
+					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
 					if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {
-						e.logger().Error("failed to remove orphaned embedding",
-							"subsystem", "vector_search",
-							"node_id", hit.ID,
-							"error", removeErr)
+						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
 					}
 					seenOrphans[hit.ID] = true
 				}
