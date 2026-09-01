@@ -1,0 +1,12 @@
+- id: search.auto_embed_not_enabled
+  description: Neo4j HTTP response when automatic embedding is unavailable.
+  other: Auto-embed not enabled
+- id: search.service_unavailable
+  description: HTTP response when the database search service cannot be initialized.
+  other: search service unavailable
+- id: search.query_chunking_failed
+  description: HTTP response when a search query cannot be divided into chunks.
+  other: failed to chunk query
+- id: search.node_has_no_embedding
+  description: HTTP validation response when a vector-similarity target has no embedding.
+  other: Node has no embedding

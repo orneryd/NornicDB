@@ -1,0 +1,12 @@
+- id: graph.historical_neighborhood_route
+  description: Respuesta HTTP que indica las rutas compatibles para recorridos históricos.
+  other: el recorrido histórico del vecindario está disponible mediante /nornicdb/graph/{database}/temporal o /nornicdb/graph/{database}/diff
+- id: graph.path_node_ids_required
+  description: Respuesta HTTP cuando faltan source_node_id y target_node_id.
+  other: se requieren source_node_id y target_node_id
+- id: graph.historical_path_route
+  description: Respuesta HTTP que indica la ruta compatible para reconstruir rutas históricas.
+  other: el recorrido histórico de rutas aún no está disponible en /nornicdb/graph/{database}/path; use /nornicdb/graph/{database}/temporal para reconstruir instantáneas
+- id: graph.database_access_denied
+  description: Respuesta de autorización HTTP de Neo4j que no revela el nombre de la base de datos.
+  other: No se permite el acceso a la base de datos solicitada.

@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,818
-occurrences and 4,584 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,810
+occurrences and 4,578 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 110 HTTP occurrences, 137 to 44 gRPC occurrences,
+counts changed from 290 to 102 HTTP occurrences, 137 to 44 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -170,6 +170,13 @@ Implemented:
 - Per-database configuration and MVCC lifecycle responses use a split
   DB-config catalog while preserving Neo4j codes, HTTP statuses, and machine
   configuration keys.
+- Search/embedding service availability, query chunking, and missing-embedding
+  responses use a split search-domain catalog while preserving the auto-embed
+  Neo4j error contract.
+- Historical graph route guidance, compound node-ID validation, and
+  non-disclosing database authorization use a split graph-domain catalog. The
+  centralized graph resolver now receives request context for locale-aware
+  boundary rendering.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 

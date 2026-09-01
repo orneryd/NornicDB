@@ -1,0 +1,12 @@
+- id: search.auto_embed_not_enabled
+  description: Respuesta HTTP de Neo4j cuando no está disponible el embedding automático.
+  other: El embedding automático no está habilitado
+- id: search.service_unavailable
+  description: Respuesta HTTP cuando no está disponible el servicio de búsqueda.
+  other: servicio de búsqueda no disponible
+- id: search.query_chunking_failed
+  description: Respuesta HTTP cuando no se puede dividir una consulta de búsqueda.
+  other: no se pudo dividir la consulta
+- id: search.node_has_no_embedding
+  description: Respuesta HTTP cuando un nodo no tiene embedding.
+  other: El nodo no tiene embedding
