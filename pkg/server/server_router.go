@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -37,7 +39,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) *uiHandler {
 	// UI Browser (if enabled and not in headless mode)
 	// ==========================================================================
 	if s.config.Headless {
-		s.log.Info("headless mode: UI disabled")
+		s.logEvent(context.Background(), slog.LevelInfo, localization.ServerUIHeadlessEvent())
 		return nil
 	}
 

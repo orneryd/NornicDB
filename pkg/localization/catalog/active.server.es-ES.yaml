@@ -73,3 +73,15 @@
 - id: server.backup_complete
   description: Confirmación después de completar una copia de seguridad.
   other: copia de seguridad completada
+- id: server.log.mcp_disabled
+  description: Registro de inicio cuando MCP está deshabilitado por la configuración.
+  other: servidor MCP deshabilitado mediante la configuración
+- id: server.log.remote_credentials_key_fallback
+  description: Advertencia de inicio cuando se reutiliza otro secreto configurado para cifrar credenciales remotas.
+  other: respaldo de clave de cifrado de credenciales remotas en uso
+- id: server.log.ui_headless
+  description: Registro de inicio cuando la interfaz de navegador está deshabilitada en modo sin interfaz.
+  other: "modo sin interfaz: UI deshabilitada"
+- id: server.log.authentication_disabled
+  description: Advertencia de inicio cuando la autenticación está deshabilitada.
+  other: autenticación deshabilitada

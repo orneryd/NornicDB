@@ -635,6 +635,13 @@ bounded line widths.
 
 ### Phase 5: Logs And Native Messages
 
+Status: in progress. `pkg/localization` now defines typed log events with
+stable event IDs, catalog-backed prose, and structured `slog.Attr` fields. The
+server composition boundary uses this contract for MCP-disabled startup,
+remote-credential key fallback, headless UI, and authentication-disabled
+events. English remains exact; Spanish changes only prose; event IDs, levels,
+component attribution, fallback reason, and remediation fields remain stable.
+
 1. Assign stable event IDs and structured fields to all 584 operator-policy
    occurrences.
 2. Decide which prose is translated; keep security audit logs in a configured
