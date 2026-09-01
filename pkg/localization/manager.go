@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
@@ -27,12 +28,13 @@ type Match struct {
 
 // Manager owns an immutable localization bundle and process-default locale.
 type Manager struct {
-	bundle      *i18n.Bundle
-	matcher     language.Matcher
-	supported   []language.Tag
-	defaultTag  language.Tag
-	logger      *slog.Logger
-	warningKeys sync.Map
+	bundle         *i18n.Bundle
+	matcher        language.Matcher
+	supported      []language.Tag
+	defaultTag     language.Tag
+	logger         *slog.Logger
+	warningKeys    sync.Map
+	missingEntries atomic.Uint64
 }
 
 // NewManager loads and validates all embedded catalogs.
@@ -95,6 +97,15 @@ func (m *Manager) SupportedTags() []language.Tag {
 	return append([]language.Tag(nil), m.supported...)
 }
 
+// MissingCatalogEntryCount returns the number of render attempts that could
+// not find a message in the selected catalog.
+func (m *Manager) MissingCatalogEntryCount() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.missingEntries.Load()
+}
+
 // Match resolves ordered preferences against installed catalogs.
 func (m *Manager) Match(preferred ...language.Tag) Match {
 	if m == nil || m.matcher == nil {
@@ -154,6 +165,7 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 		PluralCount:  message.PluralCount,
 	})
 	if err != nil {
+		m.missingEntries.Add(1)
 		m.warnOnce(
 			"message:"+match.Tag.String()+":"+string(message.ID),
 			"localization.catalog_entry_missing",
@@ -172,6 +184,7 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 		return text, language.AmericanEnglish, nil
 	}
 	if renderedTag.String() != match.Tag.String() {
+		m.missingEntries.Add(1)
 		m.warnOnce(
 			"message:"+match.Tag.String()+":"+string(message.ID),
 			"localization.catalog_entry_missing",

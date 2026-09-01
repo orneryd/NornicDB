@@ -3,6 +3,7 @@ package multidb
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,12 +56,14 @@ func TestRemoteCredentialCipher_DecryptMalformedInput(t *testing.T) {
 
 	_, err := cipher.decrypt("not-encrypted-at-all")
 	assert.Error(t, err, "non-prefixed input must fail")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbCredentialFormatInvalid)
 
 	_, err = cipher.decrypt(remoteCredentialPrefix + "!!!invalid-base64!!!")
 	assert.Error(t, err, "invalid base64 must fail")
 
 	_, err = cipher.decrypt(remoteCredentialPrefix + "dG9v") // valid b64 but too short for nonce
 	assert.Error(t, err, "truncated payload must fail")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbCredentialPayloadTruncated)
 }
 
 func TestIsEncryptedRemoteCredential(t *testing.T) {
@@ -97,6 +100,7 @@ func TestDatabaseManager_EncryptRemotePassword_EmptyReject(t *testing.T) {
 
 	_, err = manager.encryptRemotePassword("")
 	assert.Error(t, err, "empty password must be rejected")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbRemotePasswordEmpty)
 
 	_, err = manager.encryptRemotePassword("   ")
 	assert.Error(t, err, "whitespace-only password must be rejected")
@@ -112,6 +116,7 @@ func TestDatabaseManager_EncryptRemotePassword_NoCipherConfigured(t *testing.T) 
 
 	_, err = manager.encryptRemotePassword("pass")
 	assert.Error(t, err, "must fail when no encryption key is configured")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbCredentialKeyConfigRequired)
 }
 
 func TestDatabaseManager_DecryptStoredRemotePassword(t *testing.T) {
@@ -159,6 +164,7 @@ func TestDatabaseManager_DecryptStoredRemotePassword_EmptyReject(t *testing.T) {
 
 	_, err = manager.decryptStoredRemotePassword("")
 	assert.Error(t, err)
+	requireLocalizedMessageID(t, err, localization.MessageMultidbStoredPasswordMissing)
 
 	_, err = manager.decryptStoredRemotePassword("   ")
 	assert.Error(t, err)
@@ -175,4 +181,5 @@ func TestDatabaseManager_DecryptStoredRemotePassword_NoCipherConfigured(t *testi
 	// Encrypted value but no cipher configured
 	_, err = manager.decryptStoredRemotePassword("enc:v1:someciphertext")
 	assert.Error(t, err, "must fail when cipher is not configured")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbCredentialDecryptKeyRequired)
 }

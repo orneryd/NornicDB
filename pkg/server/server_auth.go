@@ -93,7 +93,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.logAudit(r, claims.Sub, "logout", true, "")
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.LogoutComplete())})
 }
 
 // handleGenerateAPIToken generates a stateless API token for MCP servers.
@@ -310,7 +310,7 @@ func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 	baseURL := s.getBaseURL(r)
 	state, authURL, err := s.oauthManager.GenerateAuthURL(baseURL)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
@@ -357,7 +357,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	_, token, _, err := s.oauthManager.HandleCallback(code, state)
 	if err != nil {
 		s.log.Warn("oauth callback error", "subsystem", "oauth")
-		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
@@ -505,12 +505,12 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			s.writeLocalizedError(w, r, http.StatusUnauthorized, localization.OldPasswordIncorrect(), ErrUnauthorized)
 			return
 		}
-		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
 	s.logAudit(r, claims.Sub, "password_change", true, "user changed own password")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.PasswordChanged())})
 }
 
 // handleUpdateProfile allows users to update their own profile information.
@@ -556,12 +556,12 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Update user profile
 	if err := s.auth.UpdateUser(username, req.Email, req.Metadata); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
 	s.logAudit(r, claims.Sub, "profile_update", true, "user updated own profile")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated"})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.ProfileUpdated())})
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -591,7 +591,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 		user, err := s.auth.CreateUser(req.Username, req.Password, roles)
 		if err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 			return
 		}
 
@@ -636,7 +636,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 				roles[i] = auth.Role(r)
 			}
 			if err := s.auth.UpdateRoles(username, roles); err != nil {
-				s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+				s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 				return
 			}
 		}
@@ -677,7 +677,7 @@ func (s *Server) handleEntitlements(w http.ResponseWriter, r *http.Request) {
 // PUT accepts { role: string, entitlements: string[] } and sets that role's entitlements.
 func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) {
 	if s.roleEntitlementsStore == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "Role entitlements are not configured (auth disabled or system DB unavailable).")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RoleEntitlementsUnavailable())
 		return
 	}
 	switch r.Method {
@@ -741,12 +741,12 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 				}
 				norm, err := normalize(m.Entitlements)
 				if err != nil {
-					s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err.Error())
+					s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 					return
 				}
 				if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
 					s.log.Warn("role entitlements set failed", "subsystem", "rbac", "entitlements_count", len(norm))
-					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 					return
 				}
 			}
@@ -754,15 +754,15 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 			role := strings.ToLower(strings.TrimSpace(body.Role))
 			norm, err := normalize(body.Entitlements)
 			if err != nil {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 				return
 			}
 			if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-				s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 				return
 			}
 		} else {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", "body must contain role and entitlements or mappings array")
+			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", localization.RoleEntitlementsBodyInvalid())
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -775,7 +775,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 // GET returns list of role names (built-in + user-defined). POST creates a user-defined role; body { "name": string }.
 func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	if s.roleStore == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "Roles are not configured (auth disabled or system DB unavailable).")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailableDetailed())
 		return
 	}
 	switch r.Method {
@@ -795,14 +795,14 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.roleStore.CreateRole(r.Context(), req.Name); err != nil {
 			if err == auth.ErrRoleExists {
-				s.writeNeo4jError(w, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", "role already exists")
+				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.RoleAlreadyExists())
 				return
 			}
 			if err == auth.ErrInvalidRoleName {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 				return
 			}
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, map[string]string{"name": strings.ToLower(strings.TrimSpace(req.Name))})
@@ -820,7 +820,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.roleStore == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "Roles are not configured.")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailable())
 		return
 	}
 	switch r.Method {
@@ -839,14 +839,14 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.roleStore.RenameRole(r.Context(), roleName, newName); err != nil {
 			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
 				return
 			}
 			if err == auth.ErrRoleExists {
-				s.writeNeo4jError(w, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", "new role name already exists")
+				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.NewRoleNameAlreadyExists())
 				return
 			}
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
 		if s.allowlistStore != nil {
@@ -881,7 +881,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			for _, u := range s.auth.ListUsers() {
 				for _, ur := range u.Roles {
 					if strings.EqualFold(string(ur), roleName) {
-						s.writeNeo4jError(w, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", "cannot delete role: at least one user has this role")
+						s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.RoleCannotDeleteWhileInUse())
 						return
 					}
 				}
@@ -889,15 +889,15 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.roleStore.DeleteRole(r.Context(), roleName); err != nil {
 			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
 				return
 			}
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "PATCH or DELETE required", ErrMethodNotAllowed)
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PatchOrDeleteRequired(), ErrMethodNotAllowed)
 	}
 }
 
@@ -906,7 +906,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 // PUT accepts { role: string, databases: string[] } or { mappings: [{ role, databases }] } and persists to system DB.
 func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 	if s.allowlistStore == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "Database access allowlist is not configured (auth disabled or system DB unavailable).")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.DatabaseAllowlistUnavailable())
 		return
 	}
 
@@ -942,7 +942,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			for _, m := range *req.Mappings {
 				if err := s.allowlistStore.SaveRoleDatabases(r.Context(), m.Role, m.Databases); err != nil {
 					s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
-					s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 					return
 				}
 			}
@@ -953,7 +953,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
 				s.log.Warn("allowlist save role databases failed", "subsystem", "rbac")
-				s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 				return
 			}
 		}
@@ -968,7 +968,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 // GET returns [{ role, database, read, write }, ...]. PUT accepts the same array and replaces the matrix.
 func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) {
 	if s.privilegesStore == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "Database access privileges are not configured (auth disabled or system DB unavailable).")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.DatabasePrivilegesUnavailable())
 		return
 	}
 	switch r.Method {
@@ -987,7 +987,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {
 			s.log.Warn("privileges PutMatrix failed", "subsystem", "rbac")
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})

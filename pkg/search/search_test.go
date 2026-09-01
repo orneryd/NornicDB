@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2146,13 +2148,18 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 	var nilSvc *Service
 	_, err := nilSvc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unavailable")
+	require.EqualError(t, err, "search service unavailable")
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchServiceUnavailable, localizedErr.Message.ID)
 
 	engine := storage.NewMemoryEngine()
 	svc := NewServiceWithDimensions(engine, 3)
 	_, err = svc.VectorQueryNodes(context.Background(), nil, VectorQuerySpec{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "required")
+	require.EqualError(t, err, "query embedding required")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchQueryEmbeddingRequired, localizedErr.Message.ID)
 
 	// Trigger cancellation branch in exact path loop.
 	for i := 0; i < 3; i++ {
@@ -2169,6 +2176,31 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 		Limit:      10,
 	})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc.buildAttempted.Store(true)
+	svc.ready.Store(false)
+
+	_, err := svc.Search(context.Background(), "query", nil, DefaultSearchOptions())
+	require.ErrorIs(t, err, ErrSearchIndexBuilding)
+	require.EqualError(t, err, "search index being built, please try again when they are complete")
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchIndexBuilding, localizedErr.Message.ID)
+
+	svc.buildAttempted.Store(false)
+	svc.ready.Store(true)
+	_, err = svc.VectorSearchCandidates(context.Background(), nil, DefaultSearchOptions())
+	require.EqualError(t, err, "vector search requires embedding")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchVectorEmbeddingRequired, localizedErr.Message.ID)
+
+	err = svc.TriggerClustering(context.Background())
+	require.EqualError(t, err, "clustering not enabled - call EnableClustering() first")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchClusteringNotEnabled, localizedErr.Message.ID)
 }
 
 func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {

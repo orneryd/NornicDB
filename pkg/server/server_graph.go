@@ -134,7 +134,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 
 	collection, err := s.collectLatestNeighborhood(r.Context(), engine, req.NodeIDs, req.Depth, req.Limit, filterSet)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
@@ -211,12 +211,12 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.NodeIDs) > maxGraphTemporalDiffNodeIDs {
-		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("node_ids exceeds maximum of %d for temporal graph requests", maxGraphTemporalDiffNodeIDs), ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.TemporalGraphNodeLimitExceeded(maxGraphTemporalDiffNodeIDs), ErrBadRequest)
 		return
 	}
 	version, err := parseGraphVersion(req.AsOf)
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
@@ -233,7 +233,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 			s.writeTemporalGraphReconstructionUnsupported(w, r, err)
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
@@ -261,7 +261,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.NodeIDs) > maxGraphTemporalDiffNodeIDs {
-		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("node_ids exceeds maximum of %d for diff graph requests", maxGraphTemporalDiffNodeIDs), ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.DiffGraphNodeLimitExceeded(maxGraphTemporalDiffNodeIDs), ErrBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.AsOf) == "" {
@@ -271,7 +271,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 
 	targetVersion, err := parseGraphVersion(req.AsOf)
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
+		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
@@ -288,7 +288,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.CompareTo) != "" {
 		baselineVersion, versionErr := parseGraphVersionForField(req.CompareTo, "compare_to")
 		if versionErr != nil {
-			s.writeError(w, http.StatusBadRequest, versionErr.Error(), ErrBadRequest)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, versionErr, ErrBadRequest)
 			return
 		}
 		baseline, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, baselineVersion, filterSet)
@@ -297,7 +297,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
-			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 		compareLabel = baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
@@ -308,13 +308,13 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
-			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 	} else {
 		baseline, err = s.collectLatestInducedSubgraph(engine, req.NodeIDs, filterSet)
 		if err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 
@@ -324,7 +324,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
-			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 	}

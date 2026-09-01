@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"runtime"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // =============================================================================
@@ -90,12 +92,12 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.db.Backup(r.Context(), req.Path); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{
-		"status": "backup complete",
+		"status": s.localizedText(w, r, localization.BackupComplete()),
 		"path":   req.Path,
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
 
@@ -236,12 +237,12 @@ func (s *Server) registerHeimdallRoutes(mux *http.ServeMux) {
 	// All Bifrost endpoints require authentication (PermRead minimum)
 	serveHeimdall := func(w http.ResponseWriter, r *http.Request) {
 		if s.config != nil && s.config.Features != nil && !s.config.Features.HeimdallEnabled {
-			s.writeError(w, http.StatusServiceUnavailable, "Heimdall is disabled by configuration", nil)
+			s.writeLocalizedError(w, r, http.StatusServiceUnavailable, localization.HeimdallDisabled(), nil)
 			return
 		}
 		handler := s.getHeimdallHandler()
 		if handler == nil {
-			s.writeError(w, http.StatusServiceUnavailable, "Heimdall is initializing, please try again shortly", nil)
+			s.writeLocalizedError(w, r, http.StatusServiceUnavailable, localization.HeimdallInitializing(), nil)
 			return
 		}
 		r = s.withBifrostRBAC(r)
@@ -313,6 +314,7 @@ func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 	// Wrap with middleware (order matters: outermost runs first)
 	// Security middleware validates all tokens, URLs, and headers FIRST
 	securityMiddleware := security.NewSecurityMiddleware()
+	securityMiddleware.SetLocalizer(s.localizer)
 	handler := securityMiddleware.ValidateRequest(next)
 	handler = s.corsMiddleware(handler)
 	handler = s.rateLimitMiddleware(handler) // Rate limit after CORS preflight

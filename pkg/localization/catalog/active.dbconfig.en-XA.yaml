@@ -25,3 +25,12 @@
 - id: dbconfig.disallowed_key
   description: Expanded pseudo-locale disallowed configuration key response.
   other: "[!! disallowed or unknown key: {{.Key}} !!]"
+- id: dbconfig.mvcc_prune_triggered
+  description: Expanded pseudo-locale MVCC prune confirmation.
+  other: "[!! prune triggered !!]"
+- id: dbconfig.mvcc_lifecycle_paused
+  description: Expanded pseudo-locale MVCC lifecycle pause confirmation.
+  other: "[!! lifecycle paused !!]"
+- id: dbconfig.mvcc_lifecycle_resumed
+  description: Expanded pseudo-locale MVCC lifecycle resume confirmation.
+  other: "[!! lifecycle resumed !!]"

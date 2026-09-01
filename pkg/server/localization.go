@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"golang.org/x/text/language"
 )
@@ -47,6 +49,24 @@ func (s *Server) localizedText(w http.ResponseWriter, r *http.Request, message l
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
 	return text
+}
+
+func (s *Server) writeBoundaryError(w http.ResponseWriter, r *http.Request, status int, cause, identity error) {
+	message := localization.ExternalDiagnostic(cause)
+	var localized *nornicerrors.Localized
+	if errors.As(cause, &localized) {
+		message = localized.Message
+	}
+	s.writeLocalizedError(w, r, status, message, identity)
+}
+
+func (s *Server) writeBoundaryNeo4jError(w http.ResponseWriter, r *http.Request, status int, code string, cause error) {
+	message := localization.ExternalDiagnostic(cause)
+	var localized *nornicerrors.Localized
+	if errors.As(cause, &localized) {
+		message = localized.Message
+	}
+	s.writeLocalizedNeo4jError(w, r, status, code, message)
 }
 
 func (s *Server) writeLocalizedNeo4jError(w http.ResponseWriter, r *http.Request, status int, code string, message localization.Message) {

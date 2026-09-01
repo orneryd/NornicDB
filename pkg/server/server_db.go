@@ -39,7 +39,7 @@ func (s *Server) handleDatabaseEndpoint(w http.ResponseWriter, r *http.Request) 
 	parts := strings.Split(path, "/")
 
 	if len(parts) < 1 || parts[0] == "" {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "database name required")
+		s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", localization.DatabaseNameRequired())
 		return
 	}
 
@@ -61,7 +61,7 @@ func (s *Server) handleDatabaseEndpoint(w http.ResponseWriter, r *http.Request) 
 		s.handleClusterStatus(w, r, dbName)
 
 	default:
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "unknown endpoint")
+		s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Request.Invalid", localization.UnknownEndpoint())
 	}
 }
 
@@ -907,7 +907,7 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 		s.handleCommitTransaction(w, r, dbName, txID)
 
 	default:
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Request.Invalid", "unknown transaction endpoint")
+		s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Request.Invalid", localization.UnknownTransactionEndpoint())
 	}
 }
 

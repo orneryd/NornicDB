@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // =============================================================================
@@ -22,7 +23,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
 			"enabled":   false,
-			"message":   "GPU manager not initialized",
+			"message":   s.localizedText(w, r, localization.GPUManagerNotInitialized()),
 		})
 		return
 	}
@@ -79,13 +80,13 @@ func (s *Server) handleGPUEnable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := gpuManager.Enable(); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "enabled",
-		"message": "GPU acceleration enabled",
+		"message": s.localizedText(w, r, localization.GPUAccelerationEnabled()),
 	})
 }
 
@@ -111,7 +112,7 @@ func (s *Server) handleGPUDisable(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "disabled",
-		"message": "GPU acceleration disabled (CPU fallback active)",
+		"message": s.localizedText(w, r, localization.GPUAccelerationDisabled()),
 	})
 }
 
@@ -165,7 +166,7 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 		}()
 	case "gpu":
 		if err := gpuManager.Enable(); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "GPU unavailable: "+err.Error(), ErrInternalError)
+			s.writeLocalizedError(w, r, http.StatusInternalServerError, localization.GPUUnavailable(err), ErrInternalError)
 			return
 		}
 		defer func() {
@@ -181,7 +182,7 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	results, err := s.db.FindSimilar(r.Context(), req.NodeID, req.Limit)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 	elapsedMs := time.Since(startTime).Milliseconds()

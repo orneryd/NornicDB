@@ -3,11 +3,11 @@ package search
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -85,10 +85,10 @@ type RelationshipVectorQueryHit struct {
 // vector index (unified pipeline) rather than scanning storage.
 func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec) ([]VectorQueryHit, error) {
 	if s == nil || s.engine == nil {
-		return nil, fmt.Errorf("search service unavailable")
+		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
 	if len(queryEmbedding) == 0 {
-		return nil, fmt.Errorf("query embedding required")
+		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -128,10 +128,10 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 // on every fact-search call.
 func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding []float32, spec RelationshipVectorQuerySpec) ([]RelationshipVectorQueryHit, error) {
 	if s == nil || s.engine == nil {
-		return nil, fmt.Errorf("search service unavailable")
+		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
 	if len(queryEmbedding) == 0 {
-		return nil, fmt.Errorf("query embedding required")
+		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()

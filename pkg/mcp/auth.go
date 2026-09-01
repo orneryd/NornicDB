@@ -30,6 +30,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -37,6 +39,9 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"golang.org/x/text/language"
 )
 
 // ============================================================================
@@ -155,7 +160,7 @@ func RoleFromString(s string) (MCPRole, error) {
 	case "viewer":
 		return RoleOrgViewer, nil
 	default:
-		return "", fmt.Errorf("unknown MCP role: %s", s)
+		return "", localizedError(localization.MCPUnknownRole(s), nil)
 	}
 }
 
@@ -274,10 +279,10 @@ func (r *RateLimiter) Allow(userID string, role MCPRole) (bool, error) {
 
 	// Check limits
 	if counter.minuteCount >= limit.RequestsPerMinute {
-		return false, fmt.Errorf("rate limit exceeded: %d requests per minute", limit.RequestsPerMinute)
+		return false, localizedError(localization.MCPRateLimitExceeded(limit.RequestsPerMinute, "minute"), nil)
 	}
 	if counter.hourCount >= limit.RequestsPerHour {
-		return false, fmt.Errorf("rate limit exceeded: %d requests per hour", limit.RequestsPerHour)
+		return false, localizedError(localization.MCPRateLimitExceeded(limit.RequestsPerHour, "hour"), nil)
 	}
 
 	// Increment counters
@@ -421,6 +426,7 @@ type AuthMiddleware struct {
 	rateLimiter   *RateLimiter
 	auditLogger   *AuditLogger
 	config        AuthConfig
+	localizer     *localization.Manager
 }
 
 // AuthConfig holds authentication configuration.
@@ -462,6 +468,32 @@ func NewAuthMiddleware(authenticator *auth.Authenticator, config AuthConfig) *Au
 // SetAuditLogger sets the audit logger.
 func (m *AuthMiddleware) SetAuditLogger(logger *AuditLogger) {
 	m.auditLogger = logger
+}
+
+// SetLocalizer sets the immutable message catalog used by auth HTTP responses.
+func (m *AuthMiddleware) SetLocalizer(manager *localization.Manager) {
+	m.localizer = manager
+}
+
+func (m *AuthMiddleware) writeLocalizedError(w http.ResponseWriter, r *http.Request, message localization.Message, status int) {
+	text := message.Fallback
+	tag := language.AmericanEnglish
+	if m.localizer != nil {
+		ctx := r.Context()
+		preferences, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
+		if err == nil && len(preferences) > 0 {
+			match := m.localizer.Resolve("http", preferences...)
+			ctx = localization.WithPreferences(ctx, match.Tag)
+		}
+		if rendered, resolved, err := m.localizer.Render(ctx, message); err == nil {
+			text = rendered
+			tag = resolved
+		}
+	}
+	body, _ := json.Marshal(map[string]string{"error": text})
+	w.Header().Set("Content-Language", tag.String())
+	w.Header().Add("Vary", "Accept-Language")
+	http.Error(w, string(body), status)
 }
 
 // AuthContext holds authentication context for a request.
@@ -541,14 +573,14 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 
 		// Token required
 		if token == "" && m.config.RequireAuth {
-			http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+			m.writeLocalizedError(w, r, localization.MCPAuthenticationRequired(), http.StatusUnauthorized)
 			return
 		}
 
 		// Validate JWT signature and expiration - NO DATABASE LOOKUP
 		claims, err := m.validateJWT(token)
 		if err != nil {
-			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			m.writeLocalizedError(w, r, localization.MCPInvalidOrExpiredToken(), http.StatusUnauthorized)
 			return
 		}
 
@@ -559,7 +591,12 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 		if m.config.RateLimitEnabled && len(authCtx.Roles) > 0 {
 			allowed, err := m.rateLimiter.Allow(authCtx.UserID, authCtx.Roles[0])
 			if !allowed {
-				http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusTooManyRequests)
+				var localized *nornicerrors.Localized
+				if errors.As(err, &localized) {
+					m.writeLocalizedError(w, r, localized.Message, http.StatusTooManyRequests)
+				} else {
+					http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusTooManyRequests)
+				}
 				return
 			}
 		}
@@ -597,7 +634,7 @@ func (m *AuthMiddleware) extractToken(r *http.Request) string {
 // This is STATELESS - the authenticator only validates signature and expiration.
 func (m *AuthMiddleware) validateJWT(token string) (*auth.JWTClaims, error) {
 	if m.authenticator == nil {
-		return nil, fmt.Errorf("authenticator not configured")
+		return nil, localizedError(localization.MCPAuthenticatorNotConfigured(), nil)
 	}
 	return m.authenticator.ValidateToken(token)
 }
@@ -633,7 +670,7 @@ func (m *AuthMiddleware) buildAuthContext(claims *auth.JWTClaims) *AuthContext {
 func (m *AuthMiddleware) CheckToolAccess(ctx context.Context, tool string) error {
 	authCtx, ok := GetAuthContext(ctx)
 	if !ok {
-		return fmt.Errorf("no authentication context")
+		return localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	}
 
 	// Check if any role can use the tool
@@ -643,7 +680,7 @@ func (m *AuthMiddleware) CheckToolAccess(ctx context.Context, tool string) error
 		}
 	}
 
-	return fmt.Errorf("permission denied: role(s) %v cannot use tool %s", authCtx.Roles, tool)
+	return localizedError(localization.MCPToolPermissionDenied(authCtx.Roles, tool), nil)
 }
 
 // LogToolCall logs a tool call for audit (fire-and-forget).

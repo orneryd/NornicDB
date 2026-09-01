@@ -1,0 +1,75 @@
+- id: server.role_entitlements_unavailable
+  description: Respuesta cuando no se pueden configurar derechos de rol.
+  other: Los derechos de rol no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.role_entitlements_body_invalid
+  description: Respuesta de validación para derechos de rol.
+  other: el cuerpo debe contener role y entitlements o una matriz mappings
+- id: server.roles_unavailable_detailed
+  description: Respuesta cuando no está disponible la configuración de roles.
+  other: Los roles no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.role_already_exists
+  description: Conflicto cuando ya existe un rol.
+  other: el rol ya existe
+- id: server.roles_unavailable
+  description: Respuesta cuando no están configurados los roles.
+  other: Los roles no están configurados.
+- id: server.new_role_already_exists
+  description: Conflicto cuando ya existe el nuevo nombre de rol.
+  other: el nuevo nombre de rol ya existe
+- id: server.role_in_use
+  description: Conflicto cuando un usuario todavía tiene el rol.
+  other: "no se puede eliminar el rol: al menos un usuario tiene este rol"
+- id: server.method_patch_or_delete_required
+  description: Respuesta para un endpoint que acepta PATCH o DELETE.
+  other: se requiere PATCH o DELETE
+- id: server.database_allowlist_unavailable
+  description: Respuesta cuando no está disponible la lista de acceso a bases de datos.
+  other: La lista de acceso a bases de datos no está configurada (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.database_privileges_unavailable
+  description: Respuesta cuando no están disponibles los privilegios de bases de datos.
+  other: Los privilegios de acceso a bases de datos no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).
+- id: server.database_name_required
+  description: Respuesta cuando falta el nombre de la base de datos.
+  other: se requiere el nombre de la base de datos
+- id: server.unknown_endpoint
+  description: Respuesta para un endpoint de base de datos desconocido.
+  other: endpoint desconocido
+- id: server.unknown_transaction_endpoint
+  description: Respuesta para un endpoint de transacción desconocido.
+  other: endpoint de transacción desconocido
+- id: server.gpu_unavailable
+  description: Error de operación de GPU. Cause no se traduce.
+  other: "GPU no disponible: {{.Cause}}"
+- id: server.heimdall_disabled
+  description: Respuesta cuando Heimdall está deshabilitado.
+  other: Heimdall está deshabilitado por la configuración
+- id: server.heimdall_initializing
+  description: Respuesta mientras Heimdall se inicializa.
+  other: Heimdall se está inicializando; inténtelo de nuevo en breve
+- id: server.gpu_acceleration_enabled
+  description: Confirmación después de habilitar la aceleración por GPU.
+  other: aceleración por GPU habilitada
+- id: server.gpu_acceleration_disabled
+  description: Confirmación después de deshabilitar la aceleración por GPU.
+  other: aceleración por GPU deshabilitada (respaldo de CPU activo)
+- id: server.embedding_regeneration_started
+  description: Confirmación del inicio de la regeneración de incrustaciones.
+  other: Regeneración iniciada; se borrarán y regenerarán las incrustaciones en segundo plano. Consulte /nornicdb/embed/stats para ver el progreso.
+- id: server.embedding_worker_already_running
+  description: Estado cuando el procesador de incrustaciones ya está activo.
+  other: El procesador de incrustaciones ya está activo y continuará procesando
+- id: server.embedding_worker_triggered
+  description: Confirmación del inicio del procesamiento de incrustaciones.
+  other: Procesador de incrustaciones activado; los nodos se procesarán en segundo plano
+- id: server.retention_policy_deleted
+  description: Confirmación después de eliminar una directiva de retención.
+  other: eliminada
+- id: server.retention_hold_released
+  description: Confirmación después de liberar una retención.
+  other: liberada
+- id: server.retention_sweep_triggered
+  description: Confirmación después de activar un barrido de retención.
+  other: barrido activado
+- id: server.backup_complete
+  description: Confirmación después de completar una copia de seguridad.
+  other: copia de seguridad completada

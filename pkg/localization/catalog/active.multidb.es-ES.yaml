@@ -1,0 +1,69 @@
+- id: multidb.constituent_alias_required
+  description: Validación cuando falta el alias del constituyente.
+  other: el alias del constituyente no puede estar vacío
+- id: multidb.constituent_database_required
+  description: Validación cuando falta la base de datos del constituyente.
+  other: el nombre de la base de datos constituyente no puede estar vacío
+- id: multidb.constituent_type_invalid
+  description: Validación de un tipo de constituyente no válido.
+  other: el tipo de constituyente debe ser 'local' o 'remote'
+- id: multidb.access_mode_invalid
+  description: Validación de un modo de acceso no válido.
+  other: el modo de acceso debe ser 'read', 'write' o 'read_write'
+- id: multidb.remote_uri_required
+  description: Validación cuando falta el URI remoto.
+  other: el URI del constituyente remoto no puede estar vacío
+- id: multidb.remote_auth_mode_invalid
+  description: Validación de un modo de autenticación remota no válido.
+  other: el modo de autenticación remota debe ser 'oidc_forwarding' o 'user_password'
+- id: multidb.remote_user_required
+  description: Validación cuando falta el usuario de autenticación remota.
+  other: el usuario del constituyente remoto no puede estar vacío cuando el modo de autenticación es user_password
+- id: multidb.remote_password_required
+  description: Validación cuando falta la contraseña de autenticación remota.
+  other: la contraseña del constituyente remoto no puede estar vacía cuando el modo de autenticación es user_password
+- id: multidb.oidc_credentials_forbidden
+  description: Validación de credenciales explícitas con reenvío OIDC.
+  other: no se puede establecer el usuario ni la contraseña del constituyente remoto cuando el modo de autenticación es oidc_forwarding
+- id: multidb.max_nodes_reached
+  description: Límite de almacenamiento de nodos. Name y max_nodes no se traducen.
+  other: "límite de almacenamiento superado: la base de datos '{{.Name}}' alcanzó el límite max_nodes ({{.Current}}/{{.Limit}})"
+- id: multidb.max_edges_reached
+  description: Límite de almacenamiento de relaciones. Name y max_edges no se traducen.
+  other: "límite de almacenamiento superado: la base de datos '{{.Name}}' alcanzó el límite max_edges ({{.Current}}/{{.Limit}})"
+- id: multidb.max_bytes_exceeded
+  description: Límite de bytes de almacenamiento. Name y max_bytes no se traducen.
+  other: "límite de almacenamiento superado: la base de datos '{{.Name}}' superaría el límite max_bytes (actual: {{.Current}} bytes, límite: {{.Limit}} bytes, entidad nueva: {{.EntitySize}} bytes)"
+- id: multidb.max_concurrent_queries_reached
+  description: Límite de consultas simultáneas. Name y max_concurrent_queries no se traducen.
+  other: "límite de consultas superado: la base de datos '{{.Name}}' alcanzó el límite max_concurrent_queries ({{.Current}}/{{.Limit}})"
+- id: multidb.query_rate_exceeded
+  description: Límite de frecuencia de consultas. Name y max_queries_per_second no se traducen.
+  other: "límite de frecuencia superado: la base de datos '{{.Name}}' superó max_queries_per_second ({{.Limit}})"
+- id: multidb.write_rate_exceeded
+  description: Límite de frecuencia de escrituras. Name y max_writes_per_second no se traducen.
+  other: "límite de frecuencia superado: la base de datos '{{.Name}}' superó max_writes_per_second ({{.Limit}})"
+- id: multidb.max_connections_reached
+  description: Límite de conexiones. Name y max_connections no se traducen.
+  other: "límite de conexiones superado: la base de datos '{{.Name}}' alcanzó el límite max_connections ({{.Current}}/{{.Limit}})"
+- id: multidb.credential_format_invalid
+  description: Error cuando la credencial remota no tiene el formato cifrado esperado.
+  other: la credencial remota no está cifrada con el formato esperado
+- id: multidb.credential_payload_truncated
+  description: Error cuando la carga cifrada de la credencial remota está truncada.
+  other: la carga de la credencial remota está truncada
+- id: multidb.remote_password_empty
+  description: Validación de una contraseña remota vacía.
+  other: la contraseña del constituyente remoto no puede estar vacía
+- id: multidb.credential_key_config_required
+  description: Validación cuando falta la configuración de la clave de cifrado.
+  other: la autenticación remota con usuario y contraseña requiere configurar la clave de cifrado de credenciales
+- id: multidb.stored_password_missing
+  description: Error cuando falta la contraseña remota almacenada.
+  other: falta la contraseña del constituyente remoto
+- id: multidb.credential_decrypt_key_required
+  description: Error cuando falta la clave necesaria para descifrar credenciales.
+  other: se requiere la clave de cifrado de credenciales remotas para descifrar las credenciales almacenadas
+- id: multidb.invalid_constituent
+  description: Validación de un constituyente con índice y detalle.
+  other: "constituyente no válido en el índice {{.Index}}: {{.Cause}}"

@@ -251,6 +251,12 @@
 - id: bolt.no_transaction_to_commit
   description: Expanded pseudo-locale Bolt commit-without-transaction failure.
   other: "[!! No transaction to commit !!]"
+- id: bolt.run_message_parse_failed
+  description: Expanded pseudo-locale Bolt RUN parse failure.
+  other: "[!! Failed to parse RUN message: {{.Cause}} !!]"
+- id: bolt.bookmark_validation_failed
+  description: Expanded pseudo-locale Bolt bookmark validation failure.
+  other: "[!! Bookmark validation failed: {{.Cause}} !!]"
 - id: search.searcher_required
   description: Expanded pseudo-locale missing searcher error.
   other: "[!! searcher is required !!]"
@@ -266,3 +272,9 @@
 - id: search.failed
   description: Expanded pseudo-locale search error.
   other: "[!! search: {{.Cause}} !!]"
+- id: grpc.localization_initialization_failed
+  description: Expanded pseudo-locale gRPC localization bootstrap failure.
+  other: "[!! initialize localization: {{.Cause}} !!]"
+- id: localization.external_diagnostic
+  description: Untranslated external diagnostic passthrough.
+  other: "{{.Cause}}"

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,6 +36,10 @@ func validateCatalogFiles(fsys fs.FS, paths []string) error {
 		if languageTag == "" {
 			return fmt.Errorf("catalog %s has no language tag", path)
 		}
+		parsedTag, err := language.Parse(languageTag)
+		if err != nil || parsedTag.String() != languageTag {
+			return fmt.Errorf("catalog %s has invalid or non-canonical language tag %q", path, languageTag)
+		}
 		if catalogs[languageTag] == nil {
 			catalogs[languageTag] = make(map[string]catalogEntry)
 		}
@@ -54,13 +59,18 @@ func validateCatalogFiles(fsys fs.FS, paths []string) error {
 		if languageTag == SourceLanguage {
 			continue
 		}
+		for id := range source {
+			if _, exists := entries[id]; !exists {
+				return fmt.Errorf("catalog %s is missing source message %s", languageTag, id)
+			}
+		}
 		for id, translated := range entries {
 			base, exists := source[id]
 			if !exists {
 				return fmt.Errorf("catalog %s contains unknown message %s", languageTag, id)
 			}
-			if !sameFields(base, translated) {
-				return fmt.Errorf("catalog %s message %s has different template fields from %s", languageTag, id, SourceLanguage)
+			if err := validateEntrySchema(base, translated); err != nil {
+				return fmt.Errorf("catalog %s message %s differs from %s: %w", languageTag, id, SourceLanguage, err)
 			}
 		}
 	}
@@ -113,21 +123,48 @@ func catalogLanguageFromPath(path string) string {
 	return name[index+1:]
 }
 
-func sameFields(left, right catalogEntry) bool {
-	return strings.Join(entryFields(left), "\x00") == strings.Join(entryFields(right), "\x00")
-}
-
-func entryFields(entry catalogEntry) []string {
-	set := make(map[string]struct{})
-	for _, value := range []string{entry.Zero, entry.One, entry.Two, entry.Few, entry.Many, entry.Other} {
-		for _, match := range templateFieldPattern.FindAllStringSubmatch(value, -1) {
-			set[match[1]] = struct{}{}
+func validateEntrySchema(source, translated catalogEntry) error {
+	sourceForms := entryForms(source)
+	translatedForms := entryForms(translated)
+	if strings.Join(sortedKeys(sourceForms), "\x00") != strings.Join(sortedKeys(translatedForms), "\x00") {
+		return fmt.Errorf("different plural forms")
+	}
+	for form, sourceText := range sourceForms {
+		if strings.Join(templateFields(sourceText), "\x00") != strings.Join(templateFields(translatedForms[form]), "\x00") {
+			return fmt.Errorf("different template fields in %s form", form)
 		}
 	}
-	fields := make([]string, 0, len(set))
-	for field := range set {
-		fields = append(fields, field)
+	return nil
+}
+
+func entryForms(entry catalogEntry) map[string]string {
+	forms := map[string]string{
+		"zero": entry.Zero, "one": entry.One, "two": entry.Two,
+		"few": entry.Few, "many": entry.Many, "other": entry.Other,
+	}
+	for form, value := range forms {
+		if value == "" {
+			delete(forms, form)
+		}
+	}
+	return forms
+}
+
+func templateFields(value string) []string {
+	matches := templateFieldPattern.FindAllStringSubmatch(value, -1)
+	fields := make([]string, 0, len(matches))
+	for _, match := range matches {
+		fields = append(fields, match[1])
 	}
 	sort.Strings(fields)
 	return fields
+}
+
+func sortedKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

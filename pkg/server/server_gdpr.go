@@ -39,7 +39,7 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 
 	data, err := s.db.ExportUserData(r.Context(), req.UserID, req.Format)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 
 		erasureReq, err := rm.CreateErasureRequest(req.UserID, "")
 		if err != nil && !errors.Is(err, retention.ErrErasureInProgress) {
-			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 		if erasureReq != nil {
@@ -110,7 +110,7 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 

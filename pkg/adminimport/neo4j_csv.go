@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -50,7 +51,7 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 		return nil
 	})
 	if err != nil {
-		return nil, nil, &Error{ExitCode: ExitCSV, Message: "failed to scan Neo4j CSV directory", Err: err}
+		return nil, nil, newImportError(ExitCSV, localization.AdminImportScanDirectoryFailed(), err)
 	}
 	sort.Strings(entries)
 	for _, path := range entries {
@@ -66,17 +67,17 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 		}
 	}
 	if len(nodeSources) == 0 && len(relSources) == 0 {
-		return nil, nil, unsupported("no Neo4j-compatible CSV files found in source directory")
+		return nil, nil, unsupported(localization.AdminImportNoCSVFiles())
 	}
 	if len(nodeSources) == 0 {
-		return nil, nil, unsupported("source directory does not contain any node CSV files")
+		return nil, nil, unsupported(localization.AdminImportNoNodeCSVFiles())
 	}
 	return nodeSources, relSources, nil
 }
 
 func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions) error {
 	if opts.OutputDir == "" {
-		return unsupported("output directory is required")
+		return unsupported(localization.AdminExportOutputDirectoryRequired())
 	}
 	if opts.Delimiter == 0 {
 		opts.Delimiter = ','
@@ -91,7 +92,7 @@ func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions)
 		opts.Quote = '"'
 	}
 	if opts.Quote != '"' {
-		return unsupported("custom quote characters are not supported for Neo4j CSV export")
+		return unsupported(localization.AdminExportCustomQuoteUnsupported())
 	}
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return err
@@ -139,7 +140,7 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 	defer source.Close()
 	header, err := source.ReadHeader()
 	if err != nil {
-		return "", &Error{ExitCode: ExitCSV, Message: "failed to read CSV header", Err: err}
+		return "", newImportError(ExitCSV, localization.AdminImportReadHeaderFailed(), err)
 	}
 	cols, err := parseHeader(header, false)
 	if err == nil {
@@ -152,7 +153,7 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 	if _, err := parseHeader(header, true); err == nil {
 		return "node", nil
 	}
-	return "", unsupported("unsupported CSV header in Neo4j source directory: " + path)
+	return "", unsupported(localization.AdminImportUnsupportedCSVHeader(path))
 }
 
 func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptions) error {

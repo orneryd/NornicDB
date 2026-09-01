@@ -14,7 +14,7 @@ func TestValidateCatalogFiles(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "valid partial target catalog",
+			name: "valid complete target catalog",
 			files: fstest.MapFS{
 				"active.en-US.yaml": {Data: []byte("- id: greeting\n  other: 'Hello {{.Name}}'\n")},
 				"active.es-ES.yaml": {Data: []byte("- id: greeting\n  other: 'Hola {{.Name}}'\n")},
@@ -33,7 +33,38 @@ func TestValidateCatalogFiles(t *testing.T) {
 				"active.en-US.yaml": {Data: []byte("- id: greeting\n  other: 'Hello {{.Name}}'\n")},
 				"active.es-ES.yaml": {Data: []byte("- id: greeting\n  other: 'Hola {{.User}}'\n")},
 			},
-			wantErr: "different template fields",
+			wantErr: "different template fields in other form",
+		},
+		{
+			name: "placeholder count mismatch",
+			files: fstest.MapFS{
+				"active.en-US.yaml": {Data: []byte("- id: greeting\n  other: 'Hello {{.Name}} {{.Name}}'\n")},
+				"active.es-ES.yaml": {Data: []byte("- id: greeting\n  other: 'Hola {{.Name}}'\n")},
+			},
+			wantErr: "different template fields in other form",
+		},
+		{
+			name: "plural form mismatch",
+			files: fstest.MapFS{
+				"active.en-US.yaml": {Data: []byte("- id: count\n  one: '{{.Count}} item'\n  other: '{{.Count}} items'\n")},
+				"active.es-ES.yaml": {Data: []byte("- id: count\n  other: '{{.Count}} elementos'\n")},
+			},
+			wantErr: "different plural forms",
+		},
+		{
+			name: "missing source key",
+			files: fstest.MapFS{
+				"active.en-US.yaml": {Data: []byte("- id: first\n  other: First\n- id: second\n  other: Second\n")},
+				"active.es-ES.yaml": {Data: []byte("- id: first\n  other: Primero\n")},
+			},
+			wantErr: "missing source message second",
+		},
+		{
+			name: "non-canonical language tag",
+			files: fstest.MapFS{
+				"active.en-us.yaml": {Data: []byte("- id: greeting\n  other: Hello\n")},
+			},
+			wantErr: "invalid or non-canonical language tag",
 		},
 		{
 			name: "duplicate across domain files",

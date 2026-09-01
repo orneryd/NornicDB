@@ -77,6 +77,8 @@ northwind_power
 northwind_power_bench
 bench-data
 scripts/benchmark_reports
+# Local localization review artifacts (regenerate with scripts/localization_inventory).
+/docs/plans/localization-*.csv
 metrics-doc-gen
 !cmd/metrics-doc-gen
 *.pyc

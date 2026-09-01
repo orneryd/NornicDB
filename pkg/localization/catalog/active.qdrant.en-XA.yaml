@@ -1,0 +1,99 @@
+- id: qdrant.invalid_vectors_config
+  description: Pseudo-locale invalid vectors config.
+  other: "[!! invalid vectors_config !!]"
+- id: qdrant.vector_size_positive
+  description: Pseudo-locale vector size validation.
+  other: "[!! vector size must be positive !!]"
+- id: qdrant.create_collection_failed
+  description: Pseudo-locale collection creation failure.
+  other: "[!! failed to create collection: {{.Cause}} !!]"
+- id: qdrant.list_collections_failed
+  description: Pseudo-locale collection listing failure.
+  other: "[!! failed to list collections: {{.Cause}} !!]"
+- id: qdrant.delete_collection_failed
+  description: Pseudo-locale collection deletion failure.
+  other: "[!! failed to delete collection: {{.Cause}} !!]"
+- id: qdrant.collection_store_not_configured
+  description: Pseudo-locale unavailable collection store.
+  other: "[!! collection store not configured !!]"
+- id: qdrant.too_many_points
+  description: Pseudo-locale batch size validation.
+  other: "[!! too many points: {{.Count}} > {{.Maximum}} !!]"
+- id: qdrant.read_existing_points_failed
+  description: Pseudo-locale point read failure.
+  other: "[!! failed to read existing points: {{.Cause}} !!]"
+- id: qdrant.create_points_failed
+  description: Pseudo-locale point creation failure.
+  other: "[!! failed to create points: {{.Cause}} !!]"
+- id: qdrant.update_point_failed
+  description: Pseudo-locale point update failure.
+  other: "[!! failed to update point {{.PointID}}: {{.Cause}} !!]"
+- id: qdrant.missing_vector_for_point
+  description: Pseudo-locale missing vector failure.
+  other: '[!! missing vector "{{.Name}}" for point {{.PointID}} !!]'
+- id: qdrant.index_point_failed
+  description: Pseudo-locale point indexing failure.
+  other: "[!! failed to index point {{.PointID}}: {{.Cause}} !!]"
+- id: qdrant.offset_too_large
+  description: Pseudo-locale offset validation.
+  other: "[!! offset too large !!]"
+- id: qdrant.hnsw_ef_too_large
+  description: Pseudo-locale hnsw_ef validation.
+  other: "[!! hnsw_ef too large !!]"
+- id: qdrant.point_id_and_vectors_required
+  description: Pseudo-locale point/vector validation.
+  other: "[!! point id and vectors are required !!]"
+- id: qdrant.query_variant_missing
+  description: Pseudo-locale missing query variant.
+  other: "[!! query without Query.variant is not implemented !!]"
+- id: qdrant.query_variant_unsupported
+  description: Pseudo-locale unsupported query variant.
+  other: "[!! query variant {{.Variant}} is not implemented !!]"
+- id: qdrant.point_not_found_with_cause
+  description: Pseudo-locale point lookup failure.
+  other: "[!! point not found: {{.Cause}} !!]"
+- id: qdrant.vector_not_found_for_point
+  description: Pseudo-locale missing point vector.
+  other: "[!! vector not found for point !!]"
+- id: qdrant.vector_input_variant_unsupported
+  description: Pseudo-locale unsupported vector input.
+  other: "[!! vector input variant {{.Variant}} is not implemented !!]"
+- id: qdrant.positive_example_required
+  description: Pseudo-locale positive example validation.
+  other: "[!! at least one positive example is required !!]"
+- id: qdrant.positive_average_failed
+  description: Pseudo-locale positive average failure.
+  other: "[!! failed to compute positive vector average: no valid vectors !!]"
+- id: qdrant.negative_average_failed
+  description: Pseudo-locale negative average failure.
+  other: "[!! failed to compute negative vector average: no valid vectors !!]"
+- id: qdrant.recommend_dimension_mismatch
+  description: Pseudo-locale recommendation dimensions.
+  other: "[!! dimension mismatch: positive vectors have dimension {{.Positive}}, negative vectors have dimension {{.Negative}} !!]"
+- id: qdrant.vector_kind_unsupported
+  description: Pseudo-locale unsupported vector kind.
+  other: "[!! unsupported vector kind !!]"
+- id: qdrant.scan_points_failed
+  description: Pseudo-locale point scan failure.
+  other: "[!! failed to scan points: {{.Cause}} !!]"
+- id: qdrant.points_selector_invalid
+  description: Pseudo-locale invalid selector.
+  other: "[!! invalid points selector !!]"
+- id: qdrant.vectors_type_unsupported
+  description: Pseudo-locale unsupported vectors type.
+  other: "[!! unsupported vectors type !!]"
+- id: qdrant.get_collection_points_failed
+  description: Pseudo-locale collection point failure.
+  other: "[!! failed to get collection points: {{.Cause}} !!]"
+- id: qdrant.full_snapshot_storage_required
+  description: Pseudo-locale full snapshot storage requirement.
+  other: "[!! full snapshots require base storage !!]"
+- id: qdrant.create_backup_failed
+  description: Pseudo-locale backup failure.
+  other: "[!! failed to create backup: {{.Cause}} !!]"
+- id: qdrant.get_nodes_failed
+  description: Pseudo-locale node read failure.
+  other: "[!! failed to get nodes: {{.Cause}} !!]"
+- id: qdrant.get_edges_failed
+  description: Pseudo-locale edge read failure.
+  other: "[!! failed to get edges: {{.Cause}} !!]"

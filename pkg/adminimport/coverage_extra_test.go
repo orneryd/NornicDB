@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +70,16 @@ func TestImportError_ErrorAndUnwrap_ReturnsExpectedShapes(t *testing.T) {
 		bare := &Error{Message: "plain"}
 		require.Nil(t, bare.Unwrap())
 	})
+}
+
+func TestImportError_PreservesEnglishAndCarriesSemanticMessage(t *testing.T) {
+	cause := errors.New("permission denied")
+	err := newImportError(ExitCSV, localization.AdminImportOpenCSVFailed(), cause)
+
+	require.Equal(t, ExitCSV, err.ExitCode)
+	require.Equal(t, "failed to open CSV file: permission denied", err.Error())
+	require.Equal(t, localization.MessageAdminImportOpenCSVFailed, err.LocalizedMessage.ID)
+	require.True(t, errors.Is(err, cause))
 }
 
 // ============================================================================

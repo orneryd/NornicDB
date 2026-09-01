@@ -76,7 +76,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		s.writeNeo4jError(w, http.StatusNotFound, "Neo.ClientError.Database.DatabaseNotFound", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Database.DatabaseNotFound", err)
 		return
 	}
 	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
@@ -99,24 +99,24 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		if err := lce.TriggerPruneNow(r.Context()); err != nil {
-			s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "prune triggered", "database": dbName})
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
 	case "mvcc/pause":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.PauseLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "lifecycle paused", "database": dbName})
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
 	case "mvcc/resume":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.ResumeLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "lifecycle resumed", "database": dbName})
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
 	case "mvcc/schedule":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -140,7 +140,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		if err := scheduler.SetLifecycleSchedule(interval); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", err)
 			return
 		}
 		status := lce.LifecycleStatus()
@@ -223,7 +223,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		}
 	}
 	if err := s.dbConfigStore.SetOverrides(r.Context(), dbName, body.Overrides); err != nil {
-		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 		return
 	}
 	// Reload so in-memory cache is current

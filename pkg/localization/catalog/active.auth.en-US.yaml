@@ -28,6 +28,15 @@
 - id: auth.old_password_incorrect
   description: HTTP authentication response when the supplied current password is rejected.
   other: old password incorrect
+- id: auth.logout_complete
+  description: HTTP confirmation after clearing the authenticated session.
+  other: logged out
+- id: auth.password_changed
+  description: HTTP confirmation after changing the authenticated user's password.
+  other: password changed
+- id: auth.profile_updated
+  description: HTTP confirmation after updating the authenticated user's profile.
+  other: profile updated
 - id: server.method_put_required
   description: HTTP response for an endpoint that only accepts PUT requests.
   other: PUT required

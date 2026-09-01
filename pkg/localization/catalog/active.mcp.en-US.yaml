@@ -1,0 +1,126 @@
+- id: mcp.invalid_request_body
+  description: MCP HTTP response for malformed JSON.
+  other: invalid request body
+- id: mcp.unknown_tool
+  description: MCP tool dispatch error. Name is a tool identifier.
+  other: "unknown tool: {{.Name}}"
+- id: mcp.database_executor_unavailable
+  description: MCP database routing error. Database is an identifier.
+  other: 'database scoped executor unavailable for "{{.Database}}"'
+- id: mcp.cypher_executor_unavailable
+  description: MCP internal routing error when no Cypher executor is available.
+  other: cypher executor unavailable
+- id: mcp.field_required
+  description: MCP validation error. Field is a machine field identifier.
+  other: "{{.Field}} is required"
+- id: mcp.invalid_label
+  description: MCP validation error. Label is user-supplied data.
+  other: 'invalid label: "{{.Label}}" (must be a valid identifier)'
+- id: mcp.store_node_failed
+  description: MCP node persistence failure. Cause is diagnostic text.
+  other: "failed to store node: {{.Cause}}"
+- id: mcp.store_no_node_id
+  description: MCP store error when no node ID is returned.
+  other: store returned no node id
+- id: mcp.store_invalid_node_id
+  description: MCP store error when an invalid node ID is returned.
+  other: store returned invalid node id
+- id: mcp.store_no_executor
+  description: MCP store error when persistence is not wired.
+  other: "store failed: no database executor available (data would not persist); ensure MCP is wired to the server's default database"
+- id: mcp.node_not_found
+  description: MCP node lookup error. ID is a node identifier.
+  other: "node not found: {{.ID}}"
+- id: mcp.recall_failed
+  description: MCP recall failure. Cause is diagnostic text.
+  other: "failed to recall nodes: {{.Cause}}"
+- id: mcp.invalid_relation
+  description: MCP relation validation error. Relation is user-supplied data.
+  other: 'invalid relation: "{{.Relation}}" (must be a non-empty valid identifier, e.g. relates_to, depends_on)'
+- id: mcp.source_node_not_found
+  description: MCP source node lookup error. ID is an identifier.
+  other: "source node not found: {{.ID}}"
+- id: mcp.target_node_not_found
+  description: MCP target node lookup error. ID is an identifier.
+  other: "target node not found: {{.ID}}"
+- id: mcp.create_edge_failed
+  description: MCP edge creation failure. Cause is diagnostic text.
+  other: "failed to create edge: {{.Cause}}"
+- id: mcp.link_no_edge_id
+  description: MCP link error when no edge ID is returned.
+  other: link returned no edge id
+- id: mcp.link_invalid_edge_id
+  description: MCP link error when an invalid edge ID is returned.
+  other: link returned invalid edge id
+- id: mcp.delete_task_failed
+  description: MCP task deletion failure. Cause is diagnostic text.
+  other: "failed to delete task: {{.Cause}}"
+- id: mcp.task_not_found
+  description: MCP task lookup error. ID is a task identifier.
+  other: "task not found: {{.ID}}"
+- id: mcp.update_task_failed
+  description: MCP task update failure. Cause is diagnostic text.
+  other: "failed to update task: {{.Cause}}"
+- id: mcp.fetch_task_failed
+  description: MCP updated-task retrieval failure. Cause is diagnostic text.
+  other: "failed to fetch updated task: {{.Cause}}"
+- id: mcp.id_required_for_delete
+  description: MCP task validation error for delete without an ID.
+  other: id is required for delete
+- id: mcp.title_required_for_new
+  description: MCP task validation error for a new task without a title.
+  other: title is required for new tasks
+- id: mcp.create_task_failed
+  description: MCP task creation failure. Cause is diagnostic text.
+  other: "failed to create task: {{.Cause}}"
+- id: mcp.task_no_id
+  description: MCP task creation error when no ID is returned.
+  other: task create returned no id
+- id: mcp.task_invalid_id
+  description: MCP task creation error when an invalid ID is returned.
+  other: task create returned invalid id
+- id: mcp.dependency_create_failed
+  description: MCP task dependency creation failure. ID and Cause are diagnostic values.
+  other: 'failed to create task dependency "{{.ID}}": {{.Cause}}'
+- id: mcp.list_tasks_failed
+  description: MCP task listing failure. Cause is diagnostic text.
+  other: "failed to list tasks: {{.Cause}}"
+- id: mcp.embedding_element_invalid
+  description: MCP embedding validation error. Index is numeric and Type is a Go diagnostic type.
+  other: "invalid embedding: element {{.Index}} is not a number (got {{.Type}})"
+- id: mcp.embedding_type_invalid
+  description: MCP embedding validation error. Type is a Go diagnostic type.
+  other: "invalid embedding: must be an array of numbers (got {{.Type}})"
+- id: mcp.embedding_empty
+  description: MCP embedding validation error for an empty array.
+  other: "invalid embedding: cannot be empty array"
+- id: mcp.embedding_dimensions_invalid
+  description: MCP embedding validation error. Expected and Got are dimensions; Model is a machine model identifier.
+  other: "invalid embedding dimensions: expected {{.Expected}}, got {{.Got}}. The configured embedding model ({{.Model}}) requires {{.Expected}}-dimensional vectors"
+- id: mcp.authentication_required
+  description: MCP HTTP authentication response when credentials are absent.
+  other: authentication required
+- id: mcp.invalid_or_expired_token
+  description: MCP HTTP authentication response when a token is rejected.
+  other: invalid or expired token
+- id: mcp.rate_limit_exceeded
+  description: MCP rate-limit error. Limit is numeric and Period is a machine period value.
+  other: "rate limit exceeded: {{.Limit}} requests per {{.Period}}"
+- id: mcp.authentication_context_missing
+  description: MCP authorization error when authentication context is absent.
+  other: no authentication context
+- id: mcp.tool_permission_denied
+  description: MCP tool authorization error. Roles and Tool are machine identifiers.
+  other: "permission denied: role(s) {{.Roles}} cannot use tool {{.Tool}}"
+- id: mcp.cypher_executor_nil
+  description: MCP internal guard when a Cypher mutation receives no executor.
+  other: cypher executor is nil
+- id: mcp.server_already_closed
+  description: MCP lifecycle error when starting a closed server.
+  other: server already closed
+- id: mcp.unknown_role
+  description: MCP role parsing error. Role is a machine role identifier.
+  other: "unknown MCP role: {{.Role}}"
+- id: mcp.authenticator_not_configured
+  description: MCP authentication error when no authenticator is configured.
+  other: authenticator not configured

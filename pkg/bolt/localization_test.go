@@ -24,6 +24,18 @@ func TestSessionLocalizesRunFailuresWithoutChangingFallback(t *testing.T) {
 	require.Equal(t, "Write operations require write permission", fallback)
 }
 
+func TestSessionRendersPseudoLocale(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	session := &Session{
+		server:   &Server{config: &Config{Localizer: manager}},
+		language: language.MustParse("en-XA"),
+	}
+
+	require.Equal(t, "[!! Not authenticated !!]", session.localize(localization.NotAuthenticated()))
+	require.Equal(t, "[!! Database 'analytics' does not exist !!]", session.localize(localization.DatabaseNotFound("analytics")))
+}
+
 func TestSessionLocalizesHelloAuthenticationMessagesFromProcessDefault(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)
@@ -46,4 +58,15 @@ func TestSessionLocalizesHelloAuthenticationMessagesFromProcessDefault(t *testin
 	require.Equal(t, "Unsupported auth scheme: custom", localization.BoltUnsupportedAuthScheme("custom").Fallback)
 	require.Equal(t, "Database 'analytics' not found: unavailable", localization.BoltDatabaseNotFoundWithCause("analytics", errors.New("unavailable")).Fallback)
 	require.Equal(t, "No transaction to commit", localization.BoltNoTransactionToCommit().Fallback)
+}
+
+func TestSessionLocalizesRunProtocolDiagnostics(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
+	require.NoError(t, err)
+	session := &Session{server: &Server{config: &Config{Localizer: manager}}, language: language.Und}
+
+	require.Equal(t, "No se pudo analizar el mensaje RUN: malformed", session.localize(localization.BoltRunMessageParseFailed(errors.New("malformed"))))
+	require.Equal(t, "Error de validación del marcador: stale", session.localize(localization.BoltBookmarkValidationFailed(errors.New("stale"))))
+	require.Equal(t, "Failed to parse RUN message: malformed", localization.BoltRunMessageParseFailed(errors.New("malformed")).Fallback)
+	require.Equal(t, "Bookmark validation failed: stale", localization.BoltBookmarkValidationFailed(errors.New("stale")).Fallback)
 }

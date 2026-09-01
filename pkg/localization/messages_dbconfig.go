@@ -10,6 +10,9 @@ const (
 	MessageMVCCDebtUnsupported          MessageID = "dbconfig.mvcc_debt_unsupported"
 	MessageInvalidLimit                 MessageID = "dbconfig.invalid_limit"
 	MessageDisallowedConfigKey          MessageID = "dbconfig.disallowed_key"
+	MessageMVCCPruneTriggered           MessageID = "dbconfig.mvcc_prune_triggered"
+	MessageMVCCLifecyclePaused          MessageID = "dbconfig.mvcc_lifecycle_paused"
+	MessageMVCCLifecycleResumed         MessageID = "dbconfig.mvcc_lifecycle_resumed"
 )
 
 // SystemDatabaseOverridesUnsupported identifies an override attempt on the system database.
@@ -59,4 +62,19 @@ func DisallowedOrUnknownConfigKey(key string) Message {
 		Fallback: "disallowed or unknown key: " + key,
 		Data:     map[string]any{"Key": key},
 	}
+}
+
+// MVCCPruneTriggered identifies an accepted manual MVCC prune request.
+func MVCCPruneTriggered() Message {
+	return Message{ID: MessageMVCCPruneTriggered, Fallback: "prune triggered"}
+}
+
+// MVCCLifecyclePaused identifies a paused MVCC lifecycle.
+func MVCCLifecyclePaused() Message {
+	return Message{ID: MessageMVCCLifecyclePaused, Fallback: "lifecycle paused"}
+}
+
+// MVCCLifecycleResumed identifies a resumed MVCC lifecycle.
+func MVCCLifecycleResumed() Message {
+	return Message{ID: MessageMVCCLifecycleResumed, Fallback: "lifecycle resumed"}
 }

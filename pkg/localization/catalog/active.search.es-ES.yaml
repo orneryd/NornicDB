@@ -10,3 +10,45 @@
 - id: search.node_has_no_embedding
   description: Respuesta HTTP cuando un nodo no tiene embedding.
   other: El nodo no tiene embedding
+- id: search.node_not_found
+  description: Error al buscar un nodo para similitud vectorial. ID no se traduce.
+  other: "No se encontró el nodo '{{.ID}}'"
+- id: search.query_embedding_required
+  description: Error de validación de consulta vectorial cuando falta el embedding.
+  other: se requiere el embedding de la consulta
+- id: search.index_building
+  description: Respuesta temporal mientras se construyen los índices de búsqueda.
+  other: se está construyendo el índice de búsqueda; inténtelo de nuevo cuando finalice
+- id: search.vector_embedding_required
+  description: Error de validación de búsqueda vectorial cuando falta el embedding.
+  other: la búsqueda vectorial requiere un embedding
+- id: search.clustering_not_enabled
+  description: Error cuando se activa la agrupación antes de habilitarla.
+  other: agrupación no habilitada; llame primero a EnableClustering()
+- id: search.clustering_failed
+  description: Error de agrupación. Cause no se traduce.
+  other: "error de agrupación: {{.Cause}}"
+- id: search.cluster_index_not_clustered
+  description: Error cuando el índice de agrupación aún no está agrupado.
+  other: el índice de agrupación no está agrupado
+- id: search.vector_index_unavailable
+  description: Error cuando no está disponible el índice vectorial.
+  other: índice vectorial no disponible
+- id: search.no_clusters
+  description: Error cuando no hay grupos disponibles.
+  other: no hay grupos
+- id: search.vector_pipeline_failed
+  description: Error al inicializar la canalización vectorial. Cause no se traduce.
+  other: "no se pudo obtener la canalización vectorial: {{.Cause}}"
+- id: search.candidate_generation_failed
+  description: Error al generar candidatos vectoriales. Cause no se traduce.
+  other: "error al generar candidatos: {{.Cause}}"
+- id: search.exact_scoring_failed
+  description: Error de puntuación vectorial exacta. Cause no se traduce.
+  other: "error de puntuación exacta: {{.Cause}}"
+- id: search.gpu_embedding_index_unavailable
+  description: Error cuando no está disponible el índice de embeddings de GPU.
+  other: índice de embeddings de GPU no disponible
+- id: search.dimensions_must_be_positive
+  description: Validación de dimensiones del almacén vectorial.
+  other: "las dimensiones deben ser > 0; se recibió {{.Dimensions}}"

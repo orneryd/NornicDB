@@ -1,0 +1,69 @@
+- id: multidb.constituent_alias_required
+  description: Composite database validation when the constituent alias is empty.
+  other: constituent alias cannot be empty
+- id: multidb.constituent_database_required
+  description: Composite database validation when the constituent database name is empty.
+  other: constituent database name cannot be empty
+- id: multidb.constituent_type_invalid
+  description: Composite database validation for an invalid constituent type. Enum values are machine identifiers.
+  other: constituent type must be 'local' or 'remote'
+- id: multidb.access_mode_invalid
+  description: Composite database validation for an invalid access mode. Enum values are machine identifiers.
+  other: access mode must be 'read', 'write', or 'read_write'
+- id: multidb.remote_uri_required
+  description: Composite database validation when a remote constituent URI is empty.
+  other: remote constituent URI cannot be empty
+- id: multidb.remote_auth_mode_invalid
+  description: Composite database validation for an invalid remote authentication mode. Enum values are machine identifiers.
+  other: remote auth mode must be 'oidc_forwarding' or 'user_password'
+- id: multidb.remote_user_required
+  description: Composite database validation when user_password authentication has no user.
+  other: remote constituent user cannot be empty when auth mode is user_password
+- id: multidb.remote_password_required
+  description: Composite database validation when user_password authentication has no password.
+  other: remote constituent password cannot be empty when auth mode is user_password
+- id: multidb.oidc_credentials_forbidden
+  description: Composite database validation when explicit credentials are supplied for OIDC forwarding.
+  other: remote constituent user/password cannot be set when auth mode is oidc_forwarding
+- id: multidb.max_nodes_reached
+  description: Storage quota failure. Name is a database identifier; max_nodes is a machine limit key.
+  other: "storage limit exceeded: database '{{.Name}}' has reached max_nodes limit ({{.Current}}/{{.Limit}})"
+- id: multidb.max_edges_reached
+  description: Storage quota failure. Name is a database identifier; max_edges is a machine limit key.
+  other: "storage limit exceeded: database '{{.Name}}' has reached max_edges limit ({{.Current}}/{{.Limit}})"
+- id: multidb.max_bytes_exceeded
+  description: Storage byte-quota failure. Name is a database identifier; values are byte counts; max_bytes is a machine limit key.
+  other: "storage limit exceeded: database '{{.Name}}' would exceed max_bytes limit (current: {{.Current}} bytes, limit: {{.Limit}} bytes, new entity: {{.EntitySize}} bytes)"
+- id: multidb.max_concurrent_queries_reached
+  description: Concurrent query quota failure. Name is a database identifier; max_concurrent_queries is a machine limit key.
+  other: "query limit exceeded: database '{{.Name}}' has reached max_concurrent_queries limit ({{.Current}}/{{.Limit}})"
+- id: multidb.query_rate_exceeded
+  description: Query rate quota failure. Name is a database identifier; max_queries_per_second is a machine limit key.
+  other: "rate limit exceeded: database '{{.Name}}' exceeded max_queries_per_second ({{.Limit}})"
+- id: multidb.write_rate_exceeded
+  description: Write rate quota failure. Name is a database identifier; max_writes_per_second is a machine limit key.
+  other: "rate limit exceeded: database '{{.Name}}' exceeded max_writes_per_second ({{.Limit}})"
+- id: multidb.max_connections_reached
+  description: Connection quota failure. Name is a database identifier; max_connections is a machine limit key.
+  other: "connection limit exceeded: database '{{.Name}}' has reached max_connections limit ({{.Current}}/{{.Limit}})"
+- id: multidb.credential_format_invalid
+  description: Remote credential decryption failure when stored data lacks the expected encrypted format. Credential data is never included.
+  other: remote credential is not encrypted with expected format
+- id: multidb.credential_payload_truncated
+  description: Remote credential decryption failure when the encrypted payload is too short. Credential data is never included.
+  other: remote credential payload is truncated
+- id: multidb.remote_password_empty
+  description: Remote constituent validation when an encryption operation receives an empty password.
+  other: remote constituent password cannot be empty
+- id: multidb.credential_key_config_required
+  description: Remote constituent validation when user/password authentication lacks encryption-key configuration.
+  other: remote user/password auth requires remote credential encryption key configuration
+- id: multidb.stored_password_missing
+  description: Remote constituent failure when no stored password exists.
+  other: remote constituent password is missing
+- id: multidb.credential_decrypt_key_required
+  description: Remote credential decryption failure when the process lacks the configured key.
+  other: remote credential encryption key is required to decrypt stored remote credentials
+- id: multidb.invalid_constituent
+  description: Composite database validation wrapper. Index is zero-based and Cause is the constituent validation detail.
+  other: "invalid constituent at index {{.Index}}: {{.Cause}}"

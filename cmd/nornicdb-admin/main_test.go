@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
 )
 
 func TestExitCodeForError_UsesImportExitCode(t *testing.T) {
@@ -26,6 +29,16 @@ func TestExitCodeForError_UsesImportExitCode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderCommandError_LocalizesImportMessageAndPreservesExitCode(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
+	require.NoError(t, err)
+	cause := errors.New("permission denied")
+	importErr := adminimport.NewLocalizedError(adminimport.ExitCSV, localization.AdminImportOpenCSVFailed(), cause)
+
+	require.Equal(t, "no se pudo abrir el archivo CSV: permission denied", renderCommandError(manager, importErr))
+	require.Equal(t, adminimport.ExitCSV, exitCodeForError(importErr))
 }
 
 func wrapErr(err error) error {

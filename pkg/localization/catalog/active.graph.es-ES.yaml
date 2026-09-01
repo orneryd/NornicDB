@@ -10,3 +10,9 @@
 - id: graph.database_access_denied
   description: Respuesta de autorización HTTP de Neo4j que no revela el nombre de la base de datos.
   other: No se permite el acceso a la base de datos solicitada.
+- id: graph.temporal_node_limit_exceeded
+  description: Respuesta cuando node_ids supera Maximum para solicitudes temporales.
+  other: "node_ids supera el máximo de {{.Maximum}} para solicitudes de grafo temporal"
+- id: graph.diff_node_limit_exceeded
+  description: Respuesta cuando node_ids supera Maximum para solicitudes de diferencias.
+  other: "node_ids supera el máximo de {{.Maximum}} para solicitudes de diferencias del grafo"

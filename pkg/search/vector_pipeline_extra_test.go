@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +97,11 @@ func TestVectorPipelineExtraSearchBranches(t *testing.T) {
 		coverageExactScorer{},
 	)
 	_, err := pipeline.Search(context.Background(), []float32{1, 0}, 3, 0)
-	require.ErrorContains(t, err, "candidate generation failed")
+	require.EqualError(t, err, "candidate generation failed: candidate failed")
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchCandidateGenerationFailed, localizedErr.Message.ID)
+	require.EqualError(t, errors.Unwrap(err), "candidate failed")
 
 	pipeline = NewVectorSearchPipeline(
 		coverageCandidateGen{candidates: []Candidate{}},
@@ -110,7 +116,9 @@ func TestVectorPipelineExtraSearchBranches(t *testing.T) {
 		coverageExactScorer{err: errors.New("score failed")},
 	)
 	_, err = pipeline.Search(context.Background(), []float32{1, 0}, 3, 0)
-	require.ErrorContains(t, err, "exact scoring failed")
+	require.EqualError(t, err, "exact scoring failed: score failed")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchExactScoringFailed, localizedErr.Message.ID)
 
 	pipeline = NewVectorSearchPipeline(
 		coverageCandidateGen{candidates: []Candidate{{ID: "a"}, {ID: "b"}, {ID: "c"}}},
@@ -122,7 +130,9 @@ func TestVectorPipelineExtraSearchBranches(t *testing.T) {
 
 	gpuGen := NewGPUBruteForceCandidateGen(nil)
 	_, err = gpuGen.SearchCandidates(context.Background(), []float32{1, 0}, 3, 0)
-	require.ErrorContains(t, err, "gpu embedding index unavailable")
+	require.EqualError(t, err, "gpu embedding index unavailable")
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, localization.MessageSearchGPUEmbeddingUnavailable, localizedErr.Message.ID)
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()

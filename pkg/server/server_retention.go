@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/retention"
 )
 
@@ -47,7 +48,7 @@ func (s *Server) handleRetentionPolicies(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if err := rm.AddPolicy(&policy); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, policy)
@@ -71,7 +72,7 @@ func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		policy, err := rm.GetPolicy(id)
 		if err != nil {
-			s.writeError(w, http.StatusNotFound, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, policy)
@@ -83,16 +84,16 @@ func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Reques
 		}
 		policy.ID = id
 		if err := rm.UpdatePolicy(&policy); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, policy)
 	case http.MethodDelete:
 		if err := rm.DeletePolicy(id); err != nil {
-			s.writeError(w, http.StatusNotFound, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionPolicyDeleted()), "id": id})
 	default:
 		s.writeGetPutOrDeleteRequired(w, r)
 	}
@@ -147,7 +148,7 @@ func (s *Server) handleRetentionHolds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := rm.PlaceLegalHold(&hold); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, hold)
@@ -171,10 +172,10 @@ func (s *Server) handleRetentionHoldByID(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := rm.ReleaseLegalHold(id); err != nil {
-		s.writeError(w, http.StatusNotFound, err.Error(), err)
+		s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "released", "id": id})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionHoldReleased()), "id": id})
 }
 
 func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +197,7 @@ func (s *Server) handleRetentionErasures(w http.ResponseWriter, r *http.Request)
 		}
 		erasureReq, err := rm.CreateErasureRequest(req.SubjectID, req.SubjectEmail)
 		if err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error(), err)
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, err)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, erasureReq)
@@ -221,21 +222,21 @@ func (s *Server) handleRetentionProcessErasure(w http.ResponseWriter, r *http.Re
 	}
 	request, err := rm.GetErasureRequest(id)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, err.Error(), err)
+		s.writeBoundaryError(w, r, http.StatusNotFound, err, err)
 		return
 	}
 	records, err := s.db.CollectSubjectRetentionRecords(r.Context(), request.SubjectID)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), err)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, err)
 		return
 	}
 	if err := rm.ProcessErasure(r.Context(), id, records); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), err)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, err)
 		return
 	}
 	updated, err := rm.GetErasureRequest(id)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), err)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, updated)
@@ -250,7 +251,7 @@ func (s *Server) handleRetentionSweep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.db.RunRetentionSweep(r.Context())
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "sweep triggered"})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.RetentionSweepTriggered())})
 }
 
 func (s *Server) handleRetentionStatus(w http.ResponseWriter, r *http.Request) {

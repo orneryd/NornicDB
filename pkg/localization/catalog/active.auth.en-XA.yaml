@@ -28,6 +28,15 @@
 - id: auth.old_password_incorrect
   description: Expanded pseudo-locale incorrect old password response.
   other: "[!! old password incorrect !!]"
+- id: auth.logout_complete
+  description: Expanded pseudo-locale logout confirmation.
+  other: "[!! logged out !!]"
+- id: auth.password_changed
+  description: Expanded pseudo-locale password change confirmation.
+  other: "[!! password changed !!]"
+- id: auth.profile_updated
+  description: Expanded pseudo-locale profile update confirmation.
+  other: "[!! profile updated !!]"
 - id: server.method_put_required
   description: Expanded pseudo-locale PUT method response.
   other: "[!! PUT required !!]"

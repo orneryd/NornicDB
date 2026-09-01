@@ -12,13 +12,47 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	localizer, err := newCommandLocalizer()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+	rootCmd := newRootCmd()
+	rootCmd.SilenceErrors = true
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(rootCmd.ErrOrStderr(), "Error:", renderCommandError(localizer, err))
 		os.Exit(exitCodeForError(err))
 	}
+}
+
+func newCommandLocalizer() (*localization.Manager, error) {
+	preferences, err := localization.ResolveProcessPreferences(localization.AutoLanguage)
+	if err != nil {
+		return nil, err
+	}
+	return localization.NewManager(preferences.Preferences, nil)
+}
+
+func renderCommandError(manager *localization.Manager, err error) string {
+	var importErr *adminimport.Error
+	if !errors.As(err, &importErr) || importErr.LocalizedMessage.ID == "" {
+		return err.Error()
+	}
+	text := importErr.LocalizedMessage.Fallback
+	if manager != nil {
+		if rendered, _, renderErr := manager.Render(context.Background(), importErr.LocalizedMessage); renderErr == nil {
+			text = rendered
+		}
+	}
+	if importErr.Err != nil {
+		text += ": " + importErr.Err.Error()
+	}
+	return text
 }
 
 func newRootCmd() *cobra.Command {

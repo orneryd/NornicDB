@@ -59,6 +59,7 @@ func main() {
 	check := flag.Bool("check", false, "fail when generated inventory differs from -out")
 	duplicatesOut := flag.String("duplicates-out", "", "optional exact duplicate candidate CSV")
 	normalizedOut := flag.String("normalized-out", "", "optional normalized duplicate candidate CSV")
+	nearOut := flag.String("near-out", "", "optional token-similarity candidate CSV")
 	flag.Parse()
 	if *check && *out == "" {
 		fatalf("-check requires -out")
@@ -100,30 +101,39 @@ func main() {
 		fatalf("write inventory: %v", err)
 	}
 	if *duplicatesOut != "" {
-		writeReport(*duplicatesOut, s.writeDuplicatesCSV)
+		checkOrWriteReport(*duplicatesOut, *check, s.writeDuplicatesCSV)
 	}
 	if *normalizedOut != "" {
-		writeReport(*normalizedOut, s.writeNormalizedCandidatesCSV)
+		checkOrWriteReport(*normalizedOut, *check, s.writeNormalizedCandidatesCSV)
+	}
+	if *nearOut != "" {
+		checkOrWriteReport(*nearOut, *check, s.writeNearCandidatesCSV)
 	}
 	if *out != "" {
 		s.writeSummary(os.Stderr)
 	}
 }
 
-func writeReport(path string, write func(io.Writer) error) {
+func checkOrWriteReport(path string, check bool, write func(io.Writer) error) {
+	var output bytes.Buffer
+	if err := write(&output); err != nil {
+		fatalf("render report: %v", err)
+	}
+	if check {
+		current, err := os.ReadFile(path)
+		if err != nil {
+			fatalf("read report for check: %v", err)
+		}
+		if !bytes.Equal(current, output.Bytes()) {
+			fatalf("report drift: regenerate %s", path)
+		}
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		fatalf("create report output directory: %v", err)
 	}
-	file, err := os.Create(path)
-	if err != nil {
-		fatalf("create report: %v", err)
-	}
-	if err := write(file); err != nil {
-		file.Close()
+	if err := os.WriteFile(path, output.Bytes(), 0o644); err != nil {
 		fatalf("write report: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		fatalf("close report: %v", err)
 	}
 }
 
@@ -557,6 +567,137 @@ func (s *scanner) writeNormalizedCandidatesCSV(out io.Writer) error {
 	return writer.Error()
 }
 
+type nearGroup struct {
+	audience   string
+	channel    string
+	schema     string
+	normalized string
+	texts      map[string]struct{}
+	packages   map[string]struct{}
+	locations  []string
+	tokens     map[string]struct{}
+}
+
+type nearCandidate struct {
+	left  *nearGroup
+	right *nearGroup
+	score float64
+}
+
+func (s *scanner) writeNearCandidatesCSV(out io.Writer) error {
+	buckets := make(map[string]map[string]*nearGroup)
+	for _, item := range s.occurrences {
+		if item.Review != "localize" || strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		normalized := normalizeCandidate(item.Text)
+		schema := placeholderSchema(item.Text)
+		bucketKey := item.Audience + "\x00" + item.Channel + "\x00" + schema
+		if buckets[bucketKey] == nil {
+			buckets[bucketKey] = make(map[string]*nearGroup)
+		}
+		group := buckets[bucketKey][normalized]
+		if group == nil {
+			group = &nearGroup{
+				audience: item.Audience, channel: item.Channel, schema: schema, normalized: normalized,
+				texts: make(map[string]struct{}), packages: make(map[string]struct{}), tokens: tokenSet(normalized),
+			}
+			buckets[bucketKey][normalized] = group
+		}
+		group.texts[item.Text] = struct{}{}
+		group.packages[item.Package] = struct{}{}
+		group.locations = append(group.locations, fmt.Sprintf("%s:%d", item.File, item.Line))
+	}
+
+	const minimumSimilarity = 0.75
+	candidates := make([]nearCandidate, 0)
+	for _, groupsByText := range buckets {
+		groups := make([]*nearGroup, 0, len(groupsByText))
+		for _, group := range groupsByText {
+			if len(group.tokens) >= 3 {
+				sort.Strings(group.locations)
+				groups = append(groups, group)
+			}
+		}
+		sort.Slice(groups, func(i, j int) bool { return groups[i].normalized < groups[j].normalized })
+		for leftIndex := 0; leftIndex < len(groups); leftIndex++ {
+			for rightIndex := leftIndex + 1; rightIndex < len(groups); rightIndex++ {
+				score := jaccardSimilarity(groups[leftIndex].tokens, groups[rightIndex].tokens)
+				if score >= minimumSimilarity && score < 1 {
+					candidates = append(candidates, nearCandidate{left: groups[leftIndex], right: groups[rightIndex], score: score})
+				}
+			}
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		if candidates[i].left.audience != candidates[j].left.audience {
+			return candidates[i].left.audience < candidates[j].left.audience
+		}
+		if candidates[i].left.channel != candidates[j].left.channel {
+			return candidates[i].left.channel < candidates[j].left.channel
+		}
+		if candidates[i].left.schema != candidates[j].left.schema {
+			return candidates[i].left.schema < candidates[j].left.schema
+		}
+		if candidates[i].left.normalized != candidates[j].left.normalized {
+			return candidates[i].left.normalized < candidates[j].left.normalized
+		}
+		return candidates[i].right.normalized < candidates[j].right.normalized
+	})
+
+	writer := csv.NewWriter(out)
+	defer writer.Flush()
+	if err := writer.Write([]string{"audience", "channel", "placeholder_schema", "similarity", "left_text", "right_text", "packages", "locations"}); err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		packages := make(map[string]struct{})
+		for value := range candidate.left.packages {
+			packages[value] = struct{}{}
+		}
+		for value := range candidate.right.packages {
+			packages[value] = struct{}{}
+		}
+		locations := append(append([]string(nil), candidate.left.locations...), candidate.right.locations...)
+		sort.Strings(locations)
+		if err := writer.Write([]string{
+			candidate.left.audience, candidate.left.channel, candidate.left.schema,
+			strconv.FormatFloat(candidate.score, 'f', 3, 64),
+			strings.Join(sortedKeys(candidate.left.texts), " | "),
+			strings.Join(sortedKeys(candidate.right.texts), " | "),
+			strings.Join(sortedKeys(packages), ";"), strings.Join(locations, ";"),
+		}); err != nil {
+			return err
+		}
+	}
+	return writer.Error()
+}
+
+func tokenSet(text string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, token := range strings.Fields(text) {
+		tokens[token] = struct{}{}
+	}
+	return tokens
+}
+
+func jaccardSimilarity(left, right map[string]struct{}) float64 {
+	intersection := 0
+	for token := range left {
+		if _, exists := right[token]; exists {
+			intersection++
+		}
+	}
+	union := len(left) + len(right) - intersection
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
+}
+
 type reviewGroup struct {
 	audience   string
 	channel    string
@@ -602,10 +743,19 @@ func (s *scanner) reviewGroups(normalized bool) []*reviewGroup {
 		if len(duplicates[i].locations) != len(duplicates[j].locations) {
 			return len(duplicates[i].locations) > len(duplicates[j].locations)
 		}
+		if duplicates[i].audience != duplicates[j].audience {
+			return duplicates[i].audience < duplicates[j].audience
+		}
+		if duplicates[i].channel != duplicates[j].channel {
+			return duplicates[i].channel < duplicates[j].channel
+		}
+		if duplicates[i].schema != duplicates[j].schema {
+			return duplicates[i].schema < duplicates[j].schema
+		}
 		if duplicates[i].normalized != duplicates[j].normalized {
 			return duplicates[i].normalized < duplicates[j].normalized
 		}
-		return duplicates[i].channel < duplicates[j].channel
+		return strings.Join(sortedKeys(duplicates[i].texts), "\x00") < strings.Join(sortedKeys(duplicates[j].texts), "\x00")
 	})
 	return duplicates
 }

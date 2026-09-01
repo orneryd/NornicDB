@@ -1,9 +1,12 @@
 package multidb
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,6 +129,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 		name        string
 		ref         ConstituentRef
 		errContains string
+		messageID   localization.MessageID
 	}{
 		{
 			name: "empty alias rejected",
@@ -135,6 +139,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AccessMode:   "read",
 			},
 			errContains: "alias cannot be empty",
+			messageID:   localization.MessageMultidbConstituentAliasRequired,
 		},
 		{
 			name: "empty database name rejected",
@@ -144,6 +149,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AccessMode: "read",
 			},
 			errContains: "database name cannot be empty",
+			messageID:   localization.MessageMultidbConstituentDatabaseRequired,
 		},
 		{
 			name: "invalid constituent type rejected",
@@ -154,6 +160,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AccessMode:   "read",
 			},
 			errContains: "type must be 'local' or 'remote'",
+			messageID:   localization.MessageMultidbConstituentTypeInvalid,
 		},
 		{
 			name: "invalid access mode rejected",
@@ -164,6 +171,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AccessMode:   "admin",
 			},
 			errContains: "access mode must be",
+			messageID:   localization.MessageMultidbAccessModeInvalid,
 		},
 		{
 			name: "remote requires uri",
@@ -174,6 +182,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AccessMode:   "read",
 			},
 			errContains: "URI cannot be empty",
+			messageID:   localization.MessageMultidbRemoteURIRequired,
 		},
 		{
 			name: "remote defaults to oidc forwarding when mode omitted",
@@ -196,6 +205,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				AuthMode:     "bad_mode",
 			},
 			errContains: "auth mode",
+			messageID:   localization.MessageMultidbRemoteAuthModeInvalid,
 		},
 		{
 			name: "user_password requires user",
@@ -209,6 +219,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				Password:     "pass",
 			},
 			errContains: "user cannot be empty",
+			messageID:   localization.MessageMultidbRemoteUserRequired,
 		},
 		{
 			name: "user_password requires password",
@@ -222,6 +233,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				User:         "svc",
 			},
 			errContains: "password cannot be empty",
+			messageID:   localization.MessageMultidbRemotePasswordRequired,
 		},
 		{
 			name: "oidc forwarding rejects user/password",
@@ -236,6 +248,7 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 				Password:     "pass",
 			},
 			errContains: "cannot be set when auth mode is oidc_forwarding",
+			messageID:   localization.MessageMultidbOIDCCredentialsForbidden,
 		},
 		{
 			name: "user_password valid",
@@ -261,6 +274,9 @@ func TestConstituentRefValidate_RemoteAuthModes(t *testing.T) {
 			}
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.errContains)
+			var localizedErr *nornicerrors.Localized
+			require.ErrorAs(t, err, &localizedErr)
+			require.Equal(t, tc.messageID, localizedErr.Message.ID)
 		})
 	}
 }
@@ -338,6 +354,15 @@ func TestGetStorageWithAuth_RemoteFactoryErrorPaths(t *testing.T) {
 
 func TestCreateCompositeDatabase_InvalidConstituent(t *testing.T) {
 	manager, _ := setupTestManager(t)
+
+	t.Run("validation preserves constituent index", func(t *testing.T) {
+		err := manager.CreateCompositeDatabase("invalid_config", []ConstituentRef{{DatabaseName: "db", Type: "local", AccessMode: "read"}})
+		require.EqualError(t, err, "invalid constituent at index 0: constituent alias cannot be empty")
+		var localizedErr *nornicerrors.Localized
+		require.ErrorAs(t, err, &localizedErr)
+		require.Equal(t, localization.MessageMultidbInvalidConstituent, localizedErr.Message.ID)
+		require.Equal(t, localization.MessageMultidbConstituentAliasRequired, errors.Unwrap(err).(*nornicerrors.Localized).Message.ID)
+	})
 
 	// Try to create composite with non-existent constituent
 	constituents := []ConstituentRef{

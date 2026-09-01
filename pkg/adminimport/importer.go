@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -69,9 +70,19 @@ type Report struct {
 }
 
 type Error struct {
-	ExitCode int
-	Message  string
-	Err      error
+	ExitCode         int
+	Message          string
+	LocalizedMessage localization.Message
+	Err              error
+}
+
+// NewLocalizedError creates an import error with a stable exit code and message descriptor.
+func NewLocalizedError(exitCode int, message localization.Message, err error) *Error {
+	return &Error{ExitCode: exitCode, Message: message.Fallback, LocalizedMessage: message, Err: err}
+}
+
+func newImportError(exitCode int, message localization.Message, err error) *Error {
+	return NewLocalizedError(exitCode, message, err)
 }
 
 func (e *Error) Error() string {
@@ -90,16 +101,16 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 	opts = opts.withDefaults()
 	report := Report{DatabaseName: opts.DatabaseName, StartedAt: time.Now(), Status: "failed"}
 	if opts.DatabaseName == "" {
-		return report, unsupported("database name is required")
+		return report, unsupported(localization.AdminImportDatabaseNameRequired())
 	}
 	if len(opts.NodeSources) == 0 {
-		return report, unsupported("at least one --nodes source is required")
+		return report, unsupported(localization.AdminImportNodeSourceRequired())
 	}
 	if engine == nil {
-		return report, unsupported("storage engine is required")
+		return report, unsupported(localization.AdminImportStorageEngineRequired())
 	}
 	if opts.IDType == "actual" {
-		return report, unsupported("--id-type=actual is not supported")
+		return report, unsupported(localization.AdminImportActualIDUnsupported())
 	}
 	if err := preflightSources(opts); err != nil {
 		return report, err
@@ -132,7 +143,7 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 		if err := applySchema(ctx, target, opts.SchemaFile); err != nil {
 			report.Errors = append(report.Errors, err.Error())
 			_ = writeReport(opts.ReportFile, report)
-			return report, &Error{ExitCode: ExitConstraintViolation, Message: "schema application failed", Err: err}
+			return report, newImportError(ExitConstraintViolation, localization.AdminImportSchemaApplicationFailed(), err)
 		}
 	}
 	if opts.BuildIndexes {
@@ -267,7 +278,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 					report.DuplicateNodesSkipped++
 					continue
 				}
-				return &Error{ExitCode: ExitDuplicateID, Message: fmt.Sprintf("duplicate node ID at row %d", rowNum)}
+				return newImportError(ExitDuplicateID, localization.AdminImportDuplicateNodeID(rowNum), nil)
 			}
 			state.idMap[lookupKey] = node.ID
 		}
@@ -313,7 +324,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	typeCols := filterColumns(cols, kindType)
 	relIDCols := filterColumns(cols, kindID)
 	if len(startCols) == 0 || len(endCols) == 0 {
-		return unsupported("relationship source requires :START_ID and :END_ID columns")
+		return unsupported(localization.AdminImportRelationshipIDsRequired())
 	}
 	edges := make([]*storage.Edge, 0, opts.ChunkSize)
 	for {
@@ -342,7 +353,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		if len(edges) >= opts.ChunkSize {
 			if err := engine.BulkCreateEdges(edges); err != nil {
 				if errors.Is(err, storage.ErrAlreadyExists) {
-					return &Error{ExitCode: ExitDuplicateID, Message: "duplicate relationship ID", Err: err}
+					return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 				}
 				return err
 			}
@@ -353,7 +364,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	if len(edges) > 0 {
 		if err := engine.BulkCreateEdges(edges); err != nil {
 			if errors.Is(err, storage.ErrAlreadyExists) {
-				return &Error{ExitCode: ExitDuplicateID, Message: "duplicate relationship ID", Err: err}
+				return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 			}
 			return err
 		}
@@ -455,7 +466,7 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	}
 	startID, ok := state.idMap[importIDKey(startSpaces, startValues)]
 	if !ok {
-		skip, relErr := badRelationship(opts, report, line, "missing start node")
+		skip, relErr := badRelationship(opts, report, line, true)
 		if relErr != nil {
 			return nil, false, relErr
 		}
@@ -463,7 +474,7 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	}
 	endID, ok := state.idMap[importIDKey(endSpaces, endValues)]
 	if !ok {
-		skip, relErr := badRelationship(opts, report, line, "missing end node")
+		skip, relErr := badRelationship(opts, report, line, false)
 		if relErr != nil {
 			return nil, false, relErr
 		}
@@ -479,7 +490,7 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 		}
 	}
 	if edgeType == "" {
-		return nil, false, unsupported("relationship source requires :TYPE column or --relationships=TYPE= prefix")
+		return nil, false, unsupported(localization.AdminImportRelationshipTypeRequired())
 	}
 	if len(relIDCols) > 0 {
 		edgeValues, _, edgeIDCol, idErr := idValuesFromRecord(record, cols, relIDCols, opts)
@@ -490,7 +501,7 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	}
 	edgeIDValue := storage.EdgeID(edgeID)
 	if _, exists := state.relationshipIDs[edgeIDValue]; exists {
-		return nil, false, &Error{ExitCode: ExitDuplicateID, Message: fmt.Sprintf("duplicate relationship ID at row %d", line)}
+		return nil, false, newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipIDAtRow(line), nil)
 	}
 	state.relationshipIDs[edgeIDValue] = struct{}{}
 	for i, col := range cols {
@@ -517,7 +528,7 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 	return &storage.Edge{ID: edgeIDValue, StartNode: startID, EndNode: endID, Type: edgeType, Properties: props, CreatedAt: opts.Now, UpdatedAt: opts.Now, Confidence: 1.0}, false, nil
 }
 
-func badRelationship(opts Options, report *Report, line int, msg string) (bool, error) {
+func badRelationship(opts Options, report *Report, line int, missingStart bool) (bool, error) {
 	report.BadRelationships++
 	if opts.BadTolerance > 0 && report.BadRelationships <= int64(opts.BadTolerance) {
 		return true, nil
@@ -526,9 +537,15 @@ func badRelationship(opts Options, report *Report, line int, msg string) (bool, 
 		return true, nil
 	}
 	if opts.BadTolerance > 0 && report.BadRelationships > int64(opts.BadTolerance) {
-		return false, &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship tolerance exceeded at row %d (%d > %d): %s", line, report.BadRelationships, opts.BadTolerance, msg)}
+		if missingStart {
+			return false, newImportError(ExitBadRelationship, localization.AdminImportBadStartToleranceExceeded(line, report.BadRelationships, opts.BadTolerance), nil)
+		}
+		return false, newImportError(ExitBadRelationship, localization.AdminImportBadEndToleranceExceeded(line, report.BadRelationships, opts.BadTolerance), nil)
 	}
-	return false, &Error{ExitCode: ExitBadRelationship, Message: fmt.Sprintf("bad relationship at row %d: %s", line, msg)}
+	if missingStart {
+		return false, newImportError(ExitBadRelationship, localization.AdminImportBadStartRelationship(line), nil)
+	}
+	return false, newImportError(ExitBadRelationship, localization.AdminImportBadEndRelationship(line), nil)
 }
 
 func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts Options) ([]string, []string, int, error) {
@@ -587,13 +604,13 @@ func parseColumnSpec(raw string, node bool) (columnSpec, error) {
 			if d, ok := opts["dimensions"]; ok {
 				parsed, err := strconv.Atoi(d)
 				if err != nil {
-					return columnSpec{}, unsupported("invalid vector dimensions in header: " + raw)
+					return columnSpec{}, unsupported(localization.AdminImportInvalidVectorDimensions(raw))
 				}
 				dims = parsed
 			}
 			return columnSpec{Kind: kindNamedEmbedding, EmbedKey: defaultString(arg, "default"), Options: opts, VectorDims: dims}, nil
 		default:
-			return columnSpec{}, unsupported("unsupported header token: " + raw)
+			return columnSpec{}, unsupported(localization.AdminImportUnsupportedHeaderToken(raw))
 		}
 	}
 	name, typ := splitNameType(raw)
@@ -606,7 +623,7 @@ func parseColumnSpec(raw string, node bool) (columnSpec, error) {
 		if d, ok := opts["dimensions"]; ok {
 			parsed, err := strconv.Atoi(d)
 			if err != nil {
-				return columnSpec{}, unsupported("invalid vector dimensions in header: " + raw)
+				return columnSpec{}, unsupported(localization.AdminImportInvalidVectorDimensions(raw))
 			}
 			dims = parsed
 		}
@@ -693,7 +710,7 @@ func parseScalar(value, typ string, opts Options) (any, error) {
 		}
 		return v, nil
 	default:
-		return nil, unsupported("unsupported property type: " + typ)
+		return nil, unsupported(localization.AdminImportUnsupportedPropertyType(typ))
 	}
 }
 
@@ -722,13 +739,13 @@ func parseSourceSpec(raw string, node bool) (sourceSpec, error) {
 	}
 	files := splitList(filesPart, ',')
 	if len(files) == 0 || files[0] == "" {
-		return sourceSpec{}, unsupported("empty import source")
+		return sourceSpec{}, unsupported(localization.AdminImportEmptySource())
 	}
 	for i := range files {
 		files[i] = strings.TrimSpace(files[i])
 	}
 	if !node && len(prefix) > 1 {
-		return sourceSpec{}, unsupported("relationship source accepts at most one type prefix")
+		return sourceSpec{}, unsupported(localization.AdminImportRelationshipPrefixLimit())
 	}
 	return sourceSpec{prefix: uniqueNonEmpty(prefix), files: files}, nil
 }
@@ -746,11 +763,11 @@ type csvSourceReader struct {
 
 func openCSVSource(files []string, opts Options) (*csvSourceReader, error) {
 	if opts.Quote != '"' {
-		return nil, unsupported("custom --quote is not supported by the Go CSV reader yet")
+		return nil, unsupported(localization.AdminImportCustomQuoteUnsupported())
 	}
 	for _, path := range files {
 		if _, err := os.Stat(path); err != nil {
-			return nil, &Error{ExitCode: ExitCSV, Message: "failed to open CSV file", Err: err}
+			return nil, newImportError(ExitCSV, localization.AdminImportOpenCSVFailed(), err)
 		}
 	}
 	return &csvSourceReader{files: files, opts: opts}, nil
@@ -795,7 +812,7 @@ func preflightCSVSource(files []string, opts Options, node bool) error {
 	}
 	if !node {
 		if len(filterColumns(cols, kindStartID)) == 0 || len(filterColumns(cols, kindEndID)) == 0 {
-			return unsupported("relationship source requires :START_ID and :END_ID columns")
+			return unsupported(localization.AdminImportRelationshipIDsRequired())
 		}
 	}
 	return nil
@@ -887,13 +904,13 @@ func (s *csvSourceReader) advanceFile() error {
 func openOne(path string) (io.Reader, io.Closer, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, &Error{ExitCode: ExitCSV, Message: "failed to open CSV file", Err: err}
+		return nil, nil, newImportError(ExitCSV, localization.AdminImportOpenCSVFailed(), err)
 	}
 	if strings.HasSuffix(path, ".gz") {
 		gz, err := gzip.NewReader(f)
 		if err != nil {
 			_ = f.Close()
-			return nil, nil, &Error{ExitCode: ExitCSV, Message: "failed to open gzip CSV file", Err: err}
+			return nil, nil, newImportError(ExitCSV, localization.AdminImportOpenGzipCSVFailed(), err)
 		}
 		return gz, closers{gz, f}, nil
 	}
@@ -901,17 +918,17 @@ func openOne(path string) (io.Reader, io.Closer, error) {
 		zr, err := zip.OpenReader(path)
 		if err != nil {
 			_ = f.Close()
-			return nil, nil, &Error{ExitCode: ExitCSV, Message: "failed to open zip CSV file", Err: err}
+			return nil, nil, newImportError(ExitCSV, localization.AdminImportOpenZipCSVFailed(), err)
 		}
 		_ = f.Close()
 		if len(zr.File) != 1 {
 			_ = zr.Close()
-			return nil, nil, unsupported("zip CSV sources must contain exactly one file")
+			return nil, nil, unsupported(localization.AdminImportZipSingleFileRequired())
 		}
 		rc, err := zr.File[0].Open()
 		if err != nil {
 			_ = zr.Close()
-			return nil, nil, &Error{ExitCode: ExitCSV, Message: "failed to open zipped CSV member", Err: err}
+			return nil, nil, newImportError(ExitCSV, localization.AdminImportOpenZipMemberFailed(), err)
 		}
 		return rc, closers{rc, zr}, nil
 	}
@@ -1042,7 +1059,7 @@ func ensureEmpty(engine storage.Engine) error {
 		return err
 	}
 	if nodes != 0 || edges != 0 {
-		return unsupported("database import full requires an empty target database")
+		return unsupported(localization.AdminImportTargetNotEmpty())
 	}
 	return nil
 }
@@ -1139,9 +1156,9 @@ func csvErr(file string, row, col int, err error) error {
 	if file != "" {
 		where = file + ": " + where
 	}
-	return &Error{ExitCode: ExitCSV, Message: "CSV parse error at " + where, Err: err}
+	return newImportError(ExitCSV, localization.AdminImportCSVParseError(where), err)
 }
 
-func unsupported(message string) error {
-	return &Error{ExitCode: ExitUnsupported, Message: message}
+func unsupported(message localization.Message) error {
+	return newImportError(ExitUnsupported, message, nil)
 }

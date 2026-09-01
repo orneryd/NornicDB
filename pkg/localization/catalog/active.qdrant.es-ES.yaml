@@ -1,0 +1,99 @@
+- id: qdrant.invalid_vectors_config
+  description: Error de Qdrant para vectors_config no válido.
+  other: vectors_config no válido
+- id: qdrant.vector_size_positive
+  description: Error de Qdrant cuando el tamaño del vector no es positivo.
+  other: el tamaño del vector debe ser positivo
+- id: qdrant.create_collection_failed
+  description: Error al crear una colección. Cause no se traduce.
+  other: "no se pudo crear la colección: {{.Cause}}"
+- id: qdrant.list_collections_failed
+  description: Error al enumerar colecciones. Cause no se traduce.
+  other: "no se pudieron enumerar las colecciones: {{.Cause}}"
+- id: qdrant.delete_collection_failed
+  description: Error al eliminar una colección. Cause no se traduce.
+  other: "no se pudo eliminar la colección: {{.Cause}}"
+- id: qdrant.collection_store_not_configured
+  description: Respuesta interna cuando no está configurado el almacén de colecciones.
+  other: almacén de colecciones no configurado
+- id: qdrant.too_many_points
+  description: Error de lote. Count y Maximum son enteros.
+  other: "demasiados puntos: {{.Count}} > {{.Maximum}}"
+- id: qdrant.read_existing_points_failed
+  description: Error al leer puntos existentes. Cause no se traduce.
+  other: "no se pudieron leer los puntos existentes: {{.Cause}}"
+- id: qdrant.create_points_failed
+  description: Error al crear puntos. Cause no se traduce.
+  other: "no se pudieron crear los puntos: {{.Cause}}"
+- id: qdrant.update_point_failed
+  description: Error al actualizar un punto. PointID y Cause no se traducen.
+  other: "no se pudo actualizar el punto {{.PointID}}: {{.Cause}}"
+- id: qdrant.missing_vector_for_point
+  description: Error interno al buscar un vector. Name y PointID no se traducen.
+  other: 'falta el vector "{{.Name}}" para el punto {{.PointID}}'
+- id: qdrant.index_point_failed
+  description: Error al indexar un punto. PointID y Cause no se traducen.
+  other: "no se pudo indexar el punto {{.PointID}}: {{.Cause}}"
+- id: qdrant.offset_too_large
+  description: Error cuando offset supera el rango entero.
+  other: offset demasiado grande
+- id: qdrant.hnsw_ef_too_large
+  description: Error cuando hnsw_ef supera el rango entero.
+  other: hnsw_ef demasiado grande
+- id: qdrant.point_id_and_vectors_required
+  description: Error cuando se requieren un ID de punto y vectores.
+  other: se requieren el id del punto y los vectores
+- id: qdrant.query_variant_missing
+  description: Respuesta cuando falta Query.variant.
+  other: la consulta sin Query.variant no está implementada
+- id: qdrant.query_variant_unsupported
+  description: Respuesta para una variante de consulta no compatible. Variant no se traduce.
+  other: "la variante de consulta {{.Variant}} no está implementada"
+- id: qdrant.point_not_found_with_cause
+  description: Error al buscar un punto. Cause no se traduce.
+  other: "no se encontró el punto: {{.Cause}}"
+- id: qdrant.vector_not_found_for_point
+  description: Respuesta cuando un punto no tiene el vector solicitado.
+  other: no se encontró el vector del punto
+- id: qdrant.vector_input_variant_unsupported
+  description: Respuesta para una variante de entrada no compatible. Variant no se traduce.
+  other: "la variante de entrada de vector {{.Variant}} no está implementada"
+- id: qdrant.positive_example_required
+  description: Error cuando falta un ejemplo positivo.
+  other: se requiere al menos un ejemplo positivo
+- id: qdrant.positive_average_failed
+  description: Error al promediar vectores positivos.
+  other: "no se pudo calcular el promedio de vectores positivos: no hay vectores válidos"
+- id: qdrant.negative_average_failed
+  description: Error al promediar vectores negativos.
+  other: "no se pudo calcular el promedio de vectores negativos: no hay vectores válidos"
+- id: qdrant.recommend_dimension_mismatch
+  description: Error de dimensiones. Positive y Negative son dimensiones.
+  other: "las dimensiones no coinciden: los vectores positivos tienen dimensión {{.Positive}} y los negativos dimensión {{.Negative}}"
+- id: qdrant.vector_kind_unsupported
+  description: Respuesta para un tipo de vector no compatible.
+  other: tipo de vector no compatible
+- id: qdrant.scan_points_failed
+  description: Error al examinar puntos. Cause no se traduce.
+  other: "no se pudieron examinar los puntos: {{.Cause}}"
+- id: qdrant.points_selector_invalid
+  description: Error para un selector de puntos no válido.
+  other: selector de puntos no válido
+- id: qdrant.vectors_type_unsupported
+  description: Error para un tipo de vectores no compatible.
+  other: tipo de vectores no compatible
+- id: qdrant.get_collection_points_failed
+  description: Error de instantánea al leer puntos. Cause no se traduce.
+  other: "no se pudieron obtener los puntos de la colección: {{.Cause}}"
+- id: qdrant.full_snapshot_storage_required
+  description: Respuesta cuando no está disponible el almacenamiento base.
+  other: las instantáneas completas requieren almacenamiento base
+- id: qdrant.create_backup_failed
+  description: Error al crear una copia de seguridad. Cause no se traduce.
+  other: "no se pudo crear la copia de seguridad: {{.Cause}}"
+- id: qdrant.get_nodes_failed
+  description: Error al leer nodos. Cause no se traduce.
+  other: "no se pudieron obtener los nodos: {{.Cause}}"
+- id: qdrant.get_edges_failed
+  description: Error al leer relaciones. Cause no se traduce.
+  other: "no se pudieron obtener las relaciones: {{.Cause}}"

@@ -1,0 +1,75 @@
+- id: server.role_entitlements_unavailable
+  description: Pseudo-locale role entitlements unavailable.
+  other: "[!! Role entitlements are not configured (auth disabled or system DB unavailable). !!]"
+- id: server.role_entitlements_body_invalid
+  description: Pseudo-locale role entitlement body validation.
+  other: "[!! body must contain role and entitlements or mappings array !!]"
+- id: server.roles_unavailable_detailed
+  description: Pseudo-locale detailed roles unavailable.
+  other: "[!! Roles are not configured (auth disabled or system DB unavailable). !!]"
+- id: server.role_already_exists
+  description: Pseudo-locale role conflict.
+  other: "[!! role already exists !!]"
+- id: server.roles_unavailable
+  description: Pseudo-locale roles unavailable.
+  other: "[!! Roles are not configured. !!]"
+- id: server.new_role_already_exists
+  description: Pseudo-locale new role conflict.
+  other: "[!! new role name already exists !!]"
+- id: server.role_in_use
+  description: Pseudo-locale role in use.
+  other: "[!! cannot delete role: at least one user has this role !!]"
+- id: server.method_patch_or_delete_required
+  description: Pseudo-locale PATCH or DELETE response.
+  other: "[!! PATCH or DELETE required !!]"
+- id: server.database_allowlist_unavailable
+  description: Pseudo-locale database allowlist unavailable.
+  other: "[!! Database access allowlist is not configured (auth disabled or system DB unavailable). !!]"
+- id: server.database_privileges_unavailable
+  description: Pseudo-locale database privileges unavailable.
+  other: "[!! Database access privileges are not configured (auth disabled or system DB unavailable). !!]"
+- id: server.database_name_required
+  description: Pseudo-locale database name validation.
+  other: "[!! database name required !!]"
+- id: server.unknown_endpoint
+  description: Pseudo-locale unknown endpoint.
+  other: "[!! unknown endpoint !!]"
+- id: server.unknown_transaction_endpoint
+  description: Pseudo-locale unknown transaction endpoint.
+  other: "[!! unknown transaction endpoint !!]"
+- id: server.gpu_unavailable
+  description: Pseudo-locale GPU failure.
+  other: "[!! GPU unavailable: {{.Cause}} !!]"
+- id: server.heimdall_disabled
+  description: Pseudo-locale Heimdall disabled.
+  other: "[!! Heimdall is disabled by configuration !!]"
+- id: server.heimdall_initializing
+  description: Pseudo-locale Heimdall initializing.
+  other: "[!! Heimdall is initializing, please try again shortly !!]"
+- id: server.gpu_acceleration_enabled
+  description: Pseudo-locale GPU enable confirmation.
+  other: "[!! GPU acceleration enabled !!]"
+- id: server.gpu_acceleration_disabled
+  description: Pseudo-locale GPU disable confirmation.
+  other: "[!! GPU acceleration disabled (CPU fallback active) !!]"
+- id: server.embedding_regeneration_started
+  description: Pseudo-locale embedding regeneration confirmation.
+  other: "[!! Regeneration started - clearing embeddings and regenerating in background. Check /nornicdb/embed/stats for progress. !!]"
+- id: server.embedding_worker_already_running
+  description: Pseudo-locale active embedding worker status.
+  other: "[!! Embedding worker already running - will continue processing !!]"
+- id: server.embedding_worker_triggered
+  description: Pseudo-locale embedding worker trigger confirmation.
+  other: "[!! Embedding worker triggered - processing nodes in background !!]"
+- id: server.retention_policy_deleted
+  description: Pseudo-locale retention policy deletion confirmation.
+  other: "[!! deleted !!]"
+- id: server.retention_hold_released
+  description: Pseudo-locale retention hold release confirmation.
+  other: "[!! released !!]"
+- id: server.retention_sweep_triggered
+  description: Pseudo-locale retention sweep confirmation.
+  other: "[!! sweep triggered !!]"
+- id: server.backup_complete
+  description: Pseudo-locale backup confirmation.
+  other: "[!! backup complete !!]"

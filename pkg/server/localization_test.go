@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
@@ -27,6 +29,7 @@ func TestLocalizedInvalidRequestBody(t *testing.T) {
 	}{
 		{name: "source fallback", message: "invalid request body", tag: "en-US"},
 		{name: "Spanish", language: "es-ES, en;q=0.5", message: "cuerpo de solicitud no válido", tag: "es-ES"},
+		{name: "pseudo locale", language: "en-XA", message: "[!! invalid request body !!]", tag: "en-XA"},
 		{name: "malformed header", language: "not_a_locale_@", message: "invalid request body", tag: "en-US"},
 	}
 	for _, test := range tests {
@@ -61,6 +64,66 @@ func TestLocalizedHelperWithoutManagerUsesEnglishFallback(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 	require.Equal(t, "invalid request body", body["message"])
 	require.Equal(t, "en-US", response.Header().Get("Content-Language"))
+}
+
+func TestRemainingHTTPSuccessMessagesRenderPseudoLocale(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request = request.WithContext(localization.WithPreferences(request.Context(), language.MustParse("en-XA")))
+
+	messages := []localization.Message{
+		localization.GPUManagerNotInitialized(),
+		localization.GPUAccelerationEnabled(),
+		localization.GPUAccelerationDisabled(),
+		localization.EmbeddingRegenerationStarted(),
+		localization.EmbeddingWorkerAlreadyRunning(),
+		localization.EmbeddingWorkerTriggered(),
+		localization.LogoutComplete(),
+		localization.PasswordChanged(),
+		localization.ProfileUpdated(),
+		localization.MVCCPruneTriggered(),
+		localization.MVCCLifecyclePaused(),
+		localization.MVCCLifecycleResumed(),
+		localization.RetentionPolicyDeleted(),
+		localization.RetentionHoldReleased(),
+		localization.RetentionSweepTriggered(),
+		localization.BackupComplete(),
+	}
+	for _, message := range messages {
+		response := httptest.NewRecorder()
+		text := server.localizedText(response, request, message)
+		require.Equal(t, "[!! "+message.Fallback+" !!]", text, message.ID)
+		require.Equal(t, "en-XA", response.Header().Get("Content-Language"))
+	}
+}
+
+func TestBoundaryErrorPreservesDiagnosticsAndRendersTypedErrors(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	ctxRequest := func() *http.Request {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		return request
+	}
+
+	diagnostic := httptest.NewRecorder()
+	server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.writeBoundaryError(w, r, http.StatusInternalServerError, errors.New("storage offline"), ErrInternalError)
+	})).ServeHTTP(diagnostic, ctxRequest())
+	require.Contains(t, diagnostic.Body.String(), "storage offline")
+	require.NotContains(t, diagnostic.Body.String(), "fuera de línea")
+
+	typed := httptest.NewRecorder()
+	cause := errors.New("disk offline")
+	localizedErr := nornicerrors.NewLocalized("search.failed", localization.SearchFailed(cause), cause)
+	server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.writeBoundaryError(w, r, http.StatusServiceUnavailable, localizedErr, ErrServiceUnavailable)
+	})).ServeHTTP(typed, ctxRequest())
+	require.Contains(t, typed.Body.String(), "búsqueda fallida: disk offline")
+	require.True(t, errors.Is(localizedErr, cause))
 }
 
 func TestLocalizedNeo4jInvalidRequestBodyPreservesCode(t *testing.T) {
