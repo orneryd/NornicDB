@@ -29,6 +29,11 @@ func TestIsCacheableReadQuery_NewPrimitives(t *testing.T) {
 			expect: true,
 		},
 		{
+			name:   "localized procedure metadata not cacheable",
+			query:  "SHOW PROCEDURES",
+			expect: false,
+		},
+		{
 			name:   "infer not cacheable by default",
 			query:  "CALL db.infer({prompt: 'hello'})",
 			expect: false,

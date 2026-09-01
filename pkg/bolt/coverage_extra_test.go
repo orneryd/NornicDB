@@ -1125,6 +1125,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		session = &Session{server: &Server{dbManager: &mockDBManager{stores: map[string]storage.Engine{"graph": store}, defaultDB: "graph"}}}
 		exec, err := session.getExecutorForDatabase("graph")
 		require.NoError(t, err)
+		require.NotNil(t, exec)
 		res, err := exec.Execute(context.Background(), "RETURN 1", map[string]any{"x": 1})
 		require.NoError(t, err)
 		require.NotNil(t, res)

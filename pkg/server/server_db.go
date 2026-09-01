@@ -275,6 +275,7 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 	}
 
 	executor := cypher.NewStorageExecutor(storageEngine)
+	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	if !s.dbManager.IsCompositeDatabase(dbName) {
@@ -324,6 +325,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	}
 
 	executor := cypher.NewStorageExecutor(storageEngine)
+	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	// Reuse DB's cached search service instead of creating a new one.

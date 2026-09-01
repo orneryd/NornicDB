@@ -114,6 +114,11 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 
 	// Create executor scoped to this database.
 	exec = cypher.NewStorageExecutor(engine)
+	if r.db != nil {
+		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
+			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
+		}
+	}
 
 	// Enable multi-db commands (SHOW/CREATE/DROP DATABASE...) when supported.
 	// The adapter lives in server_db.go (same package), so we can reuse it here.

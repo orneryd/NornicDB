@@ -1,0 +1,142 @@
+- id: cypherproceduremetadata.db_awaitindex
+  other: "Espera a que un índice esté en línea"
+- id: cypherproceduremetadata.db_awaitindexes
+  other: "Espera a que todos los índices estén en línea"
+- id: cypherproceduremetadata.db_clearquerycaches
+  other: "Borra las cachés de consultas"
+- id: cypherproceduremetadata.db_constraints
+  other: "Enumera todas las restricciones de la base de datos"
+- id: cypherproceduremetadata.db_create_setnodevectorproperty
+  other: "Establece una propiedad vectorial en un nodo"
+- id: cypherproceduremetadata.db_create_setrelationshipvectorproperty
+  other: "Establece una propiedad vectorial en una relación"
+- id: cypherproceduremetadata.db_index_fulltext_createnodeindex
+  other: "Crea un índice de texto completo en nodos"
+- id: cypherproceduremetadata.db_index_fulltext_createrelationshipindex
+  other: "Crea un índice de texto completo en relaciones"
+- id: cypherproceduremetadata.db_index_fulltext_drop
+  other: "Elimina un índice de texto completo"
+- id: cypherproceduremetadata.db_index_fulltext_listavailableanalyzers
+  other: "Enumera los analizadores disponibles"
+- id: cypherproceduremetadata.db_index_fulltext_querynodes
+  other: "Busca texto completo en nodos"
+- id: cypherproceduremetadata.db_index_fulltext_queryrelationships
+  other: "Busca texto completo en relaciones"
+- id: cypherproceduremetadata.db_index_stats
+  other: "Devuelve estadísticas del índice"
+- id: cypherproceduremetadata.db_index_vector_createnodeindex
+  other: "Crea un índice vectorial en nodos"
+- id: cypherproceduremetadata.db_index_vector_createrelationshipindex
+  other: "Crea un índice vectorial en relaciones"
+- id: cypherproceduremetadata.db_index_vector_drop
+  other: "Elimina un índice vectorial"
+- id: cypherproceduremetadata.db_index_vector_embed
+  other: "Genera el embedding del texto con el generador configurado"
+- id: cypherproceduremetadata.db_index_vector_querynodes
+  other: "Realiza una búsqueda vectorial en nodos"
+- id: cypherproceduremetadata.db_index_vector_queryrelationships
+  other: "Realiza una búsqueda vectorial en relaciones"
+- id: cypherproceduremetadata.db_indexes
+  other: "Enumera todos los índices de la base de datos"
+- id: cypherproceduremetadata.db_infer
+  other: "Procedimiento de inferencia LLM"
+- id: cypherproceduremetadata.db_info
+  other: "Devuelve información de la base de datos"
+- id: cypherproceduremetadata.db_labels
+  other: "Enumera todas las etiquetas de la base de datos"
+- id: cypherproceduremetadata.db_ping
+  other: "Comprueba la conectividad de la base de datos"
+- id: cypherproceduremetadata.db_propertykeys
+  other: "Enumera todas las claves de propiedad de la base de datos"
+- id: cypherproceduremetadata.db_relationshiptypes
+  other: "Enumera todos los tipos de relación de la base de datos"
+- id: cypherproceduremetadata.db_rerank
+  other: "Procedimiento independiente de reordenación"
+- id: cypherproceduremetadata.db_resampleindex
+  other: "Vuelve a muestrear las estadísticas del índice"
+- id: cypherproceduremetadata.db_retrieve
+  other: "Procedimiento de recuperación híbrida"
+- id: cypherproceduremetadata.db_rretrieve
+  other: "Procedimiento de recuperación híbrida y reordenación"
+- id: cypherproceduremetadata.db_schema_nodeproperties
+  other: "Devuelve las propiedades de nodo por etiqueta"
+- id: cypherproceduremetadata.db_schema_relproperties
+  other: "Devuelve las propiedades de relación por tipo"
+- id: cypherproceduremetadata.db_schema_visualization
+  other: "Visualiza el esquema"
+- id: cypherproceduremetadata.db_stats_clear
+  other: "Borra las estadísticas recopiladas"
+- id: cypherproceduremetadata.db_stats_collect
+  other: "Inicia la recopilación de estadísticas"
+- id: cypherproceduremetadata.db_stats_retrieve
+  other: "Recupera las estadísticas recopiladas"
+- id: cypherproceduremetadata.db_stats_retrieveallanthestats
+  other: "Recupera todas las estadísticas"
+- id: cypherproceduremetadata.db_stats_status
+  other: "Devuelve el estado de la recopilación de estadísticas"
+- id: cypherproceduremetadata.db_stats_stop
+  other: "Detiene la recopilación de estadísticas"
+- id: cypherproceduremetadata.db_temporal_asof
+  other: "Lee el grafo temporal en un instante"
+- id: cypherproceduremetadata.db_temporal_assertnooverlap
+  other: "Comprueba las restricciones de solapamiento temporal"
+- id: cypherproceduremetadata.db_txlog_bytxid
+  other: "Devuelve las entradas WAL de un identificador de transacción"
+- id: cypherproceduremetadata.db_txlog_entries
+  other: "Devuelve las entradas del registro de transacciones"
+- id: cypherproceduremetadata.dbms_clientconfig
+  other: "Devuelve la configuración del cliente"
+- id: cypherproceduremetadata.dbms_components
+  other: "Enumera los componentes del DBMS"
+- id: cypherproceduremetadata.dbms_functions
+  other: "Enumera las funciones"
+- id: cypherproceduremetadata.dbms_info
+  other: "Devuelve información del DBMS"
+- id: cypherproceduremetadata.dbms_listconfig
+  other: "Enumera la configuración del DBMS"
+- id: cypherproceduremetadata.dbms_listconnections
+  other: "Enumera las conexiones activas del DBMS"
+- id: cypherproceduremetadata.dbms_procedures
+  other: "Enumera los procedimientos"
+- id: cypherproceduremetadata.gds_fastrp_stats
+  other: "Ejecuta FastRP y devuelve estadísticas"
+- id: cypherproceduremetadata.gds_fastrp_stream
+  other: "Transmite embeddings de FastRP"
+- id: cypherproceduremetadata.gds_graph_drop
+  other: "Elimina un grafo GDS proyectado"
+- id: cypherproceduremetadata.gds_graph_list
+  other: "Enumera los grafos GDS proyectados"
+- id: cypherproceduremetadata.gds_graph_project
+  other: "Proyecta el grafo en el catálogo GDS"
+- id: cypherproceduremetadata.gds_linkprediction_adamicadar_stream
+  other: "Ejecuta la predicción de enlaces Adamic-Adar"
+- id: cypherproceduremetadata.gds_linkprediction_commonneighbors_stream
+  other: "Ejecuta la predicción de enlaces por vecinos comunes"
+- id: cypherproceduremetadata.gds_linkprediction_jaccard_stream
+  other: "Ejecuta la predicción de enlaces Jaccard"
+- id: cypherproceduremetadata.gds_linkprediction_predict_stream
+  other: "Ejecuta la predicción de enlaces basada en modelos"
+- id: cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream
+  other: "Ejecuta la predicción de enlaces por asociación preferente"
+- id: cypherproceduremetadata.gds_linkprediction_resourceallocation_stream
+  other: "Ejecuta la predicción de enlaces por asignación de recursos"
+- id: cypherproceduremetadata.gds_version
+  other: "Devuelve la versión de GDS"
+- id: cypherproceduremetadata.nornicdb_decay_info
+  other: "Devuelve la configuración de puntuación de la capa de conocimiento"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
+  other: "Devuelve el estado de la cola de desindexación de la capa de conocimiento"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_info
+  other: "Devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_policies
+  other: "Devuelve los perfiles y las políticas de promoción de la capa de conocimiento"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_profiles
+  other: "Devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_resolve
+  other: "Resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista"
+- id: cypherproceduremetadata.nornicdb_stats
+  other: "Devuelve estadísticas de NornicDB"
+- id: cypherproceduremetadata.nornicdb_version
+  other: "Devuelve la versión de NornicDB"
+- id: cypherproceduremetadata.tx_setmetadata
+  other: "Establece los metadatos de la transacción"

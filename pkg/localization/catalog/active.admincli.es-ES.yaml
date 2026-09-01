@@ -1,0 +1,110 @@
+- id: admincli.error_prefix
+  other: "Error:"
+- id: admincli.root_short
+  other: Herramientas administrativas para NornicDB
+- id: admincli.database_short
+  other: Comandos de administración de bases de datos
+- id: admincli.import_short
+  other: Importar datos CSV en una base de datos sin conexión
+- id: admincli.full_import_short
+  other: Ejecutar una importación completa sin conexión
+- id: admincli.incremental_import_short
+  other: Comando reservado para la importación incremental
+- id: admincli.export_short
+  other: Exportar datos de la base de datos para una migración sin conexión
+- id: admincli.neo4j_csv_export_short
+  other: Exportar una base de datos como archivos CSV compatibles con Neo4j
+- id: admincli.server_short
+  other: Comandos del servidor
+- id: admincli.server_status_short
+  other: Mostrar el estado del servidor
+- id: admincli.version_short
+  other: Mostrar la versión
+- id: admincli.flag.data_directory
+  other: Directorio de datos de destino
+- id: admincli.flag.nodes
+  other: Fuente CSV de nodos (se puede repetir)
+- id: admincli.flag.relationships
+  other: Fuente CSV de relaciones (se puede repetir)
+- id: admincli.flag.from_path
+  other: Directorio que contiene archivos CSV compatibles con Neo4j
+- id: admincli.flag.schema
+  other: Archivo de esquema Cypher que se aplicará después de la carga
+- id: admincli.flag.build_indexes
+  other: Crear índices de búsqueda después de la importación
+- id: admincli.flag.skip_bad_relationships
+  other: Omitir relaciones que hagan referencia a nodos ausentes
+- id: admincli.flag.skip_duplicate_nodes
+  other: Omitir ID de nodos duplicados
+- id: admincli.flag.normalize_types
+  other: Normalizar los valores de propiedades importados
+- id: admincli.flag.ignore_extra_columns
+  other: Ignorar columnas CSV adicionales
+- id: admincli.flag.ignore_empty_strings
+  other: Tratar las cadenas vacías como nulas
+- id: admincli.flag.report_file
+  other: Escribir un informe JSON
+- id: admincli.flag.id_type
+  other: "Tipo de ID: cadena o entero"
+- id: admincli.flag.bad_tolerance
+  other: Número de filas no válidas toleradas antes de cancelar
+- id: admincli.flag.chunk_size
+  other: Filas por bloque de escritura masiva
+- id: admincli.flag.delimiter
+  other: Delimitador de campos
+- id: admincli.flag.array_delimiter
+  other: Delimitador de matrices
+- id: admincli.flag.vector_delimiter
+  other: Delimitador de vectores
+- id: admincli.flag.quote
+  other: Carácter de comillas
+- id: admincli.flag.constraints_file
+  other: Alias obsoleto de --schema
+- id: admincli.flag.verbose
+  other: Registro detallado
+- id: admincli.flag.to_path
+  other: Directorio de salida para archivos CSV compatibles con Neo4j
+- id: admincli.incremental_not_implemented
+  other: la importación incremental de bases de datos aún no está implementada
+- id: admincli.database_info_not_implemented
+  other: la información de la base de datos aún no está implementada
+- id: admincli.server_status_not_implemented
+  other: el estado del servidor aún no está implementado
+- id: admincli.to_path_required
+  other: se requiere --to-path
+- id: admincli.exact_args
+  other: acepta {{.Expected}} argumento(s), se recibieron {{.Received}}
+- id: admincli.unknown_command
+  other: comando desconocido {{.Argument}} para {{.Command}}
+- id: admincli.help.usage_heading
+  other: "Uso:"
+- id: admincli.help.aliases_heading
+  other: "Alias:"
+- id: admincli.help.examples_heading
+  other: "Ejemplos:"
+- id: admincli.help.available_commands_heading
+  other: "Comandos disponibles:"
+- id: admincli.help.additional_commands_heading
+  other: "Comandos adicionales:"
+- id: admincli.help.flags_heading
+  other: "Opciones:"
+- id: admincli.help.global_flags_heading
+  other: "Opciones globales:"
+- id: admincli.help.additional_topics_heading
+  other: "Temas de ayuda adicionales:"
+- id: admincli.help.more_information
+  other: Use "{{.CommandPath}} [command] --help" para obtener más información sobre un comando.
+- id: admincli.help.command_short
+  other: Ayuda sobre cualquier comando
+- id: admincli.help.command_long
+  other: |-
+    La ayuda proporciona información sobre cualquier comando de la aplicación.
+    Escriba {{.Command}} help [ruta al comando] para obtener todos los detalles.
+- id: admincli.help.flag
+  other: ayuda para {{.Command}}
+- id: admincli.completion.command_short
+  other: Generar el script de autocompletado para el shell especificado
+- id: admincli.completion.command_long
+  other: |
+    Generar el script de autocompletado para {{.Command}} para el shell especificado.
+    Consulte la ayuda de cada subcomando para obtener detalles sobre cómo usar el script generado.

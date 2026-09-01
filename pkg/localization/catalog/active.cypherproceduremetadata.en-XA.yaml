@@ -1,0 +1,142 @@
+- id: cypherproceduremetadata.db_awaitindex
+  other: "[!! Waits for one index to be online !!]"
+- id: cypherproceduremetadata.db_awaitindexes
+  other: "[!! Waits for all indexes to be online !!]"
+- id: cypherproceduremetadata.db_clearquerycaches
+  other: "[!! Clears query caches !!]"
+- id: cypherproceduremetadata.db_constraints
+  other: "[!! Lists all constraints in the database !!]"
+- id: cypherproceduremetadata.db_create_setnodevectorproperty
+  other: "[!! Sets vector property on a node !!]"
+- id: cypherproceduremetadata.db_create_setrelationshipvectorproperty
+  other: "[!! Sets vector property on a relationship !!]"
+- id: cypherproceduremetadata.db_index_fulltext_createnodeindex
+  other: "[!! Creates fulltext index on nodes !!]"
+- id: cypherproceduremetadata.db_index_fulltext_createrelationshipindex
+  other: "[!! Creates fulltext index on relationships !!]"
+- id: cypherproceduremetadata.db_index_fulltext_drop
+  other: "[!! Drops fulltext index !!]"
+- id: cypherproceduremetadata.db_index_fulltext_listavailableanalyzers
+  other: "[!! Lists available analyzers !!]"
+- id: cypherproceduremetadata.db_index_fulltext_querynodes
+  other: "[!! Fulltext search on nodes !!]"
+- id: cypherproceduremetadata.db_index_fulltext_queryrelationships
+  other: "[!! Fulltext search on relationships !!]"
+- id: cypherproceduremetadata.db_index_stats
+  other: "[!! Returns index statistics !!]"
+- id: cypherproceduremetadata.db_index_vector_createnodeindex
+  other: "[!! Creates vector index on nodes !!]"
+- id: cypherproceduremetadata.db_index_vector_createrelationshipindex
+  other: "[!! Creates vector index on relationships !!]"
+- id: cypherproceduremetadata.db_index_vector_drop
+  other: "[!! Drops vector index !!]"
+- id: cypherproceduremetadata.db_index_vector_embed
+  other: "[!! Embeds text using configured embedder !!]"
+- id: cypherproceduremetadata.db_index_vector_querynodes
+  other: "[!! Vector search on nodes !!]"
+- id: cypherproceduremetadata.db_index_vector_queryrelationships
+  other: "[!! Vector search on relationships !!]"
+- id: cypherproceduremetadata.db_indexes
+  other: "[!! Lists all indexes in the database !!]"
+- id: cypherproceduremetadata.db_infer
+  other: "[!! LLM inference procedure !!]"
+- id: cypherproceduremetadata.db_info
+  other: "[!! Returns database information !!]"
+- id: cypherproceduremetadata.db_labels
+  other: "[!! Lists all labels in the database !!]"
+- id: cypherproceduremetadata.db_ping
+  other: "[!! Checks database connectivity !!]"
+- id: cypherproceduremetadata.db_propertykeys
+  other: "[!! Lists all property keys in the database !!]"
+- id: cypherproceduremetadata.db_relationshiptypes
+  other: "[!! Lists all relationship types in the database !!]"
+- id: cypherproceduremetadata.db_rerank
+  other: "[!! Standalone rerank procedure !!]"
+- id: cypherproceduremetadata.db_resampleindex
+  other: "[!! Resamples index statistics !!]"
+- id: cypherproceduremetadata.db_retrieve
+  other: "[!! Hybrid retrieval procedure !!]"
+- id: cypherproceduremetadata.db_rretrieve
+  other: "[!! Hybrid retrieval + rerank procedure !!]"
+- id: cypherproceduremetadata.db_schema_nodeproperties
+  other: "[!! Returns node properties by label !!]"
+- id: cypherproceduremetadata.db_schema_relproperties
+  other: "[!! Returns relationship properties by type !!]"
+- id: cypherproceduremetadata.db_schema_visualization
+  other: "[!! Visualizes schema !!]"
+- id: cypherproceduremetadata.db_stats_clear
+  other: "[!! Clears collected statistics !!]"
+- id: cypherproceduremetadata.db_stats_collect
+  other: "[!! Starts statistics collection !!]"
+- id: cypherproceduremetadata.db_stats_retrieve
+  other: "[!! Retrieves collected statistics !!]"
+- id: cypherproceduremetadata.db_stats_retrieveallanthestats
+  other: "[!! Retrieves all statistics !!]"
+- id: cypherproceduremetadata.db_stats_status
+  other: "[!! Returns statistics collection status !!]"
+- id: cypherproceduremetadata.db_stats_stop
+  other: "[!! Stops statistics collection !!]"
+- id: cypherproceduremetadata.db_temporal_asof
+  other: "[!! Reads temporal graph at point in time !!]"
+- id: cypherproceduremetadata.db_temporal_assertnooverlap
+  other: "[!! Checks temporal overlap constraints !!]"
+- id: cypherproceduremetadata.db_txlog_bytxid
+  other: "[!! Returns WAL entries for a transaction id !!]"
+- id: cypherproceduremetadata.db_txlog_entries
+  other: "[!! Returns transaction log entries !!]"
+- id: cypherproceduremetadata.dbms_clientconfig
+  other: "[!! Returns client config !!]"
+- id: cypherproceduremetadata.dbms_components
+  other: "[!! Lists DBMS components !!]"
+- id: cypherproceduremetadata.dbms_functions
+  other: "[!! Lists functions !!]"
+- id: cypherproceduremetadata.dbms_info
+  other: "[!! Returns DBMS information !!]"
+- id: cypherproceduremetadata.dbms_listconfig
+  other: "[!! Lists DBMS configuration !!]"
+- id: cypherproceduremetadata.dbms_listconnections
+  other: "[!! Lists active DBMS connections !!]"
+- id: cypherproceduremetadata.dbms_procedures
+  other: "[!! Lists procedures !!]"
+- id: cypherproceduremetadata.gds_fastrp_stats
+  other: "[!! Runs FastRP and returns statistics !!]"
+- id: cypherproceduremetadata.gds_fastrp_stream
+  other: "[!! Streams FastRP embeddings !!]"
+- id: cypherproceduremetadata.gds_graph_drop
+  other: "[!! Drops projected GDS graph !!]"
+- id: cypherproceduremetadata.gds_graph_list
+  other: "[!! Lists projected GDS graphs !!]"
+- id: cypherproceduremetadata.gds_graph_project
+  other: "[!! Projects graph into GDS catalog !!]"
+- id: cypherproceduremetadata.gds_linkprediction_adamicadar_stream
+  other: "[!! Runs Adamic-Adar link prediction !!]"
+- id: cypherproceduremetadata.gds_linkprediction_commonneighbors_stream
+  other: "[!! Runs common neighbors link prediction !!]"
+- id: cypherproceduremetadata.gds_linkprediction_jaccard_stream
+  other: "[!! Runs Jaccard link prediction !!]"
+- id: cypherproceduremetadata.gds_linkprediction_predict_stream
+  other: "[!! Runs model-based link prediction !!]"
+- id: cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream
+  other: "[!! Runs preferential attachment link prediction !!]"
+- id: cypherproceduremetadata.gds_linkprediction_resourceallocation_stream
+  other: "[!! Runs resource-allocation link prediction !!]"
+- id: cypherproceduremetadata.gds_version
+  other: "[!! Returns GDS version !!]"
+- id: cypherproceduremetadata.nornicdb_decay_info
+  other: "[!! Returns knowledge-layer scoring configuration !!]"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
+  other: "[!! Returns knowledge-layer deindex queue status !!]"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_info
+  other: "[!! Returns knowledge-layer profile and policy catalog counts !!]"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_policies
+  other: "[!! Returns knowledge-layer promotion profiles and policies !!]"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_profiles
+  other: "[!! Returns knowledge-layer decay bundles and bindings !!]"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_resolve
+  other: "[!! Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type !!]"
+- id: cypherproceduremetadata.nornicdb_stats
+  other: "[!! Returns NornicDB stats !!]"
+- id: cypherproceduremetadata.nornicdb_version
+  other: "[!! Returns NornicDB version !!]"
+- id: cypherproceduremetadata.tx_setmetadata
+  other: "[!! Sets transaction metadata !!]"

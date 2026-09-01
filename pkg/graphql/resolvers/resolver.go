@@ -176,6 +176,7 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 	if r.DB != nil {
 		baseExecutor := r.DB.GetCypherExecutor()
 		if baseExecutor != nil {
+			executor.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// Copy embedder for vector search queries (CALL db.index.vector.queryNodes)
 			// This ensures GraphQL queries can use string-based vector search
 			if embedder := baseExecutor.GetEmbedder(); embedder != nil {

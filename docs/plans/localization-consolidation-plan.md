@@ -610,6 +610,12 @@ or belong to the later procedure-metadata and native-message phases.
 
 ### Phase 4: Procedure Metadata And CLI
 
+Status: complete. All 71 core built-in procedure descriptions use generated
+typed descriptors and render per request without changing names, signatures,
+modes, or user-defined literal metadata. The two CLIs localize command help,
+flags, validation failures, progress output, and startup summaries while
+preserving exact English defaults and machine-facing contracts.
+
 1. Move core Cypher procedure descriptions/examples to catalog keys while
    keeping names and signatures unchanged.
 2. Migrate command help, validation failures, progress output, and startup
@@ -619,6 +625,13 @@ or belong to the later procedure-metadata and native-message phases.
 Generate repetitive core procedure registrations from catalog metadata instead
 of hand-editing repeated calls. APOC and external plugin metadata are outside
 this plan.
+
+The live procedure contract has no separate example field, so there were no
+core procedure examples to migrate. Reviewed deferrals are `SHOW FUNCTIONS`
+metadata, APOC and external plugin metadata, pre-localizer bootstrap failures,
+operator-only readiness diagnostics, and fixed machine/version/prompt tokens.
+Pseudo-locale help tests cover multiline output, stable flag alignment, and
+bounded line widths.
 
 ### Phase 5: Logs And Native Messages
 

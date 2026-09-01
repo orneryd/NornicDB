@@ -1,0 +1,110 @@
+- id: admincli.error_prefix
+  other: "Error:"
+- id: admincli.root_short
+  other: Administrative tools for NornicDB
+- id: admincli.database_short
+  other: Database administration commands
+- id: admincli.import_short
+  other: Import CSV data into an offline database
+- id: admincli.full_import_short
+  other: Run a full offline import
+- id: admincli.incremental_import_short
+  other: Reserved incremental import command
+- id: admincli.export_short
+  other: Export database data for offline migration
+- id: admincli.neo4j_csv_export_short
+  other: Export a database as Neo4j-compatible CSV files
+- id: admincli.server_short
+  other: Server commands
+- id: admincli.server_status_short
+  other: Show server status
+- id: admincli.version_short
+  other: Print version
+- id: admincli.flag.data_directory
+  other: Target data directory
+- id: admincli.flag.nodes
+  other: Node CSV source (repeatable)
+- id: admincli.flag.relationships
+  other: Relationship CSV source (repeatable)
+- id: admincli.flag.from_path
+  other: Directory containing Neo4j-compatible CSV files
+- id: admincli.flag.schema
+  other: Cypher schema file to apply after load
+- id: admincli.flag.build_indexes
+  other: Build search indexes after import
+- id: admincli.flag.skip_bad_relationships
+  other: Skip relationships that reference missing nodes
+- id: admincli.flag.skip_duplicate_nodes
+  other: Skip duplicate node IDs
+- id: admincli.flag.normalize_types
+  other: Normalize imported property values
+- id: admincli.flag.ignore_extra_columns
+  other: Ignore extra CSV columns
+- id: admincli.flag.ignore_empty_strings
+  other: Treat empty strings as null
+- id: admincli.flag.report_file
+  other: Write a JSON report
+- id: admincli.flag.id_type
+  other: "ID type: string or integer"
+- id: admincli.flag.bad_tolerance
+  other: Number of bad rows tolerated before abort
+- id: admincli.flag.chunk_size
+  other: Rows per bulk write chunk
+- id: admincli.flag.delimiter
+  other: Field delimiter
+- id: admincli.flag.array_delimiter
+  other: Array delimiter
+- id: admincli.flag.vector_delimiter
+  other: Vector delimiter
+- id: admincli.flag.quote
+  other: Quote character
+- id: admincli.flag.constraints_file
+  other: Deprecated alias for --schema
+- id: admincli.flag.verbose
+  other: Verbose logging
+- id: admincli.flag.to_path
+  other: Output directory for Neo4j-compatible CSV files
+- id: admincli.incremental_not_implemented
+  other: database import incremental is not implemented yet
+- id: admincli.database_info_not_implemented
+  other: database info is not implemented yet
+- id: admincli.server_status_not_implemented
+  other: server status is not implemented yet
+- id: admincli.to_path_required
+  other: --to-path is required
+- id: admincli.exact_args
+  other: accepts {{.Expected}} arg(s), received {{.Received}}
+- id: admincli.unknown_command
+  other: unknown command {{.Argument}} for {{.Command}}
+- id: admincli.help.usage_heading
+  other: "Usage:"
+- id: admincli.help.aliases_heading
+  other: "Aliases:"
+- id: admincli.help.examples_heading
+  other: "Examples:"
+- id: admincli.help.available_commands_heading
+  other: "Available Commands:"
+- id: admincli.help.additional_commands_heading
+  other: "Additional Commands:"
+- id: admincli.help.flags_heading
+  other: "Flags:"
+- id: admincli.help.global_flags_heading
+  other: "Global Flags:"
+- id: admincli.help.additional_topics_heading
+  other: "Additional help topics:"
+- id: admincli.help.more_information
+  other: Use "{{.CommandPath}} [command] --help" for more information about a command.
+- id: admincli.help.command_short
+  other: Help about any command
+- id: admincli.help.command_long
+  other: |-
+    Help provides help for any command in the application.
+    Simply type {{.Command}} help [path to command] for full details.
+- id: admincli.help.flag
+  other: help for {{.Command}}
+- id: admincli.completion.command_short
+  other: Generate the autocompletion script for the specified shell
+- id: admincli.completion.command_long
+  other: |
+    Generate the autocompletion script for {{.Command}} for the specified shell.
+    See each sub-command's help for details on how to use the generated script.

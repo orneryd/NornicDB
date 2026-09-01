@@ -1,0 +1,375 @@
+- id: nornicdbcli.root.short
+  description: Main CLI summary.
+  other: NornicDB - High-Performance Graph Database for LLM Agents
+- id: nornicdbcli.root.long
+  description: Main CLI detailed help.
+  other: |-
+    NornicDB is a purpose-built graph database written in Go,
+    designed for AI agent memory with Neo4j Bolt/Cypher compatibility.
+
+    Features:
+      • Neo4j Bolt protocol compatibility
+      • Cypher query language support
+      • Knowledge-layer scoring with declarative decay profiles
+      • Automatic relationship inference
+      • Built-in vector search with RRF hybrid ranking
+      • Server-side embedding generation
+- id: nornicdbcli.version.short
+  description: Version command summary.
+  other: Print version information
+- id: nornicdbcli.serve.short
+  description: Serve command summary.
+  other: Start NornicDB server
+- id: nornicdbcli.serve.long
+  description: Serve command detailed help.
+  other: Start NornicDB server with Bolt protocol and HTTP API endpoints
+- id: nornicdbcli.init.short
+  description: Init command summary.
+  other: Initialize a new NornicDB database
+- id: nornicdbcli.shell.short
+  description: Shell command summary.
+  other: Interactive Cypher shell
+- id: nornicdbcli.decay.short
+  description: Decay command summary.
+  other: Memory decay operations
+- id: nornicdbcli.decay.suppress.short
+  description: Decay suppress command summary.
+  other: Suppress nodes below visibility threshold
+- id: nornicdbcli.decay.stats.short
+  description: Decay stats command summary.
+  other: Show decay statistics
+- id: nornicdbcli.flag.config
+  description: Config path flag help.
+  other: Path to YAML config file (overrides auto-discovery)
+- id: nornicdbcli.flag.bolt_port
+  description: Bolt port flag help.
+  other: Bolt protocol port (Neo4j compatible)
+- id: nornicdbcli.flag.http_port
+  description: HTTP port flag help.
+  other: HTTP API port
+- id: nornicdbcli.flag.address
+  description: Bind address flag help.
+  other: Bind address (127.0.0.1 for localhost only, 0.0.0.0 for all interfaces)
+- id: nornicdbcli.flag.data_dir
+  description: Data directory flag help.
+  other: Data directory
+- id: nornicdbcli.flag.upgrade_storage
+  description: Storage upgrade authorization flag help.
+  other: Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.
+- id: nornicdbcli.flag.embedding_provider
+  description: Embedding provider flag help. Provider names are machine values.
+  other: "Embedding provider: local, ollama, openai"
+- id: nornicdbcli.flag.embedding_url
+  description: Embedding API URL flag help.
+  other: Embedding API URL (ollama/openai)
+- id: nornicdbcli.flag.embedding_key
+  description: Embedding API key flag help.
+  other: Embeddings API Key (openai)
+- id: nornicdbcli.flag.embedding_model
+  description: Embedding model flag help.
+  other: Embedding model name
+- id: nornicdbcli.flag.embedding_dimensions
+  description: Embedding dimensions flag help.
+  other: Embedding dimensions
+- id: nornicdbcli.flag.embedding_cache
+  description: Embedding cache flag help.
+  other: Embedding cache size (0=disabled, default 10000)
+- id: nornicdbcli.flag.embedding_gpu_layers
+  description: Embedding GPU layers flag help.
+  other: "GPU layers for local provider: -1=auto, 0=CPU only"
+- id: nornicdbcli.flag.embedding_enabled
+  description: Embedding enablement flag help.
+  other: Enable embedding generation (semantic search). Default is off unless enabled via config/env.
+- id: nornicdbcli.flag.search_bm25_enabled
+  description: BM25 search enablement flag help.
+  other: "Enable BM25 fulltext search (default: true). Per-DB override via /admin/databases/{name}/config wins."
+- id: nornicdbcli.flag.search_bm25_warming
+  description: BM25 warming mode flag help. Mode names are machine values.
+  other: "BM25 build trigger: startup (build at boot) or lazy (defer to first inbound search query). Default: startup."
+- id: nornicdbcli.flag.search_vector_enabled
+  description: Vector search enablement flag help.
+  other: Enable vector (ANN) search across all strategies (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, no node embeddings load into RAM. Per-DB override wins.
+- id: nornicdbcli.flag.search_vector_warming
+  description: Vector warming mode flag help. Mode names are machine values.
+  other: "Vector build trigger: startup or lazy. Default: startup."
+- id: nornicdbcli.flag.gpu_backend
+  description: GPU backend flag help. Backend names are machine values.
+  other: "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)"
+- id: nornicdbcli.flag.no_auth
+  description: Authentication disablement flag help.
+  other: Disable authentication
+- id: nornicdbcli.flag.admin_password
+  description: Initial administrator password flag help.
+  other: "Admin password (default: password)"
+- id: nornicdbcli.flag.mcp_enabled
+  description: MCP enablement flag help.
+  other: Enable MCP (Model Context Protocol) server for LLM tools
+- id: nornicdbcli.flag.parallel
+  description: Parallel execution flag help.
+  other: Enable parallel query execution
+- id: nornicdbcli.flag.parallel_workers
+  description: Parallel worker count flag help.
+  other: Max parallel workers (0 = auto, uses all CPUs)
+- id: nornicdbcli.flag.parallel_batch_size
+  description: Parallel batch threshold flag help.
+  other: Min batch size before parallelizing
+- id: nornicdbcli.flag.memory_limit
+  description: Runtime memory limit flag help.
+  other: "Memory limit in MB as an integer (e.g., 500, 0 for unlimited)"
+- id: nornicdbcli.flag.gc_percent
+  description: Garbage collector aggressiveness flag help.
+  other: GC aggressiveness (100=default, lower=more aggressive)
+- id: nornicdbcli.flag.pool_enabled
+  description: Object pooling flag help.
+  other: Enable object pooling for reduced allocations
+- id: nornicdbcli.flag.low_memory
+  description: Low-memory mode flag help.
+  other: Use minimal RAM (for resource constrained environments)
+- id: nornicdbcli.flag.query_cache_size
+  description: Query plan cache size flag help.
+  other: Query plan cache size (0 to disable)
+- id: nornicdbcli.flag.query_cache_ttl
+  description: Query plan cache lifetime flag help.
+  other: Query plan cache TTL
+- id: nornicdbcli.flag.log_queries
+  description: Query logging flag help.
+  other: Log all Bolt queries to stdout (for debugging)
+- id: nornicdbcli.flag.stdio_log_max_kb
+  description: Standard stream log size flag help.
+  other: Max size of stdout/stderr log files in KB before automatic truncation (0 disables)
+- id: nornicdbcli.flag.stdio_log_compact_seconds
+  description: Standard stream log compaction interval flag help.
+  other: Interval in seconds for automatic stdout/stderr log size checks
+- id: nornicdbcli.flag.headless
+  description: Headless mode flag help.
+  other: Disable web UI and browser-related endpoints
+- id: nornicdbcli.flag.base_path
+  description: Reverse proxy base path flag help.
+  other: "Base URL path for reverse proxy deployment (e.g., /nornicdb)"
+- id: nornicdbcli.flag.cluster_mode
+  description: Cluster mode flag help. Mode names are machine values.
+  other: "Cluster mode: standalone|ha_standby|raft|multi_region (empty disables clustering)"
+- id: nornicdbcli.flag.cluster_node_id
+  description: Cluster node ID flag help.
+  other: Cluster node ID (empty auto-generates)
+- id: nornicdbcli.flag.cluster_bind_address
+  description: Cluster bind address flag help.
+  other: "Cluster bind address for replication protocol (e.g., 127.0.0.1:7000)"
+- id: nornicdbcli.flag.cluster_advertise_address
+  description: Cluster advertise address flag help.
+  other: Cluster advertise address (defaults to bind addr)
+- id: nornicdbcli.flag.cluster_data_dir
+  description: Cluster data directory flag help.
+  other: Cluster state directory (defaults to <data-dir>/replication)
+- id: nornicdbcli.flag.cluster_ha_role
+  description: HA role flag help. Role names are machine values.
+  other: "HA standby role: primary|standby"
+- id: nornicdbcli.flag.cluster_ha_peer_address
+  description: HA peer address flag help.
+  other: HA standby peer cluster address (host:port)
+- id: nornicdbcli.flag.cluster_raft_bootstrap
+  description: Raft bootstrap flag help.
+  other: Raft bootstrap (true for first node in a new cluster)
+- id: nornicdbcli.flag.cluster_raft_peers
+  description: Raft peer list flag help. Example is a machine value.
+  other: "Raft peers (format: node2:host2:7000,node3:host3:7000)"
+- id: nornicdbcli.flag.uri
+  description: Shell URI flag help.
+  other: NornicDB URI (for future Bolt client support)
+- id: nornicdbcli.flag.decay_threshold
+  description: Decay suppression threshold flag help.
+  other: "Visibility suppression threshold (default: 0.05)"
+- id: nornicdbcli.validation.invalid_memory_limit
+  description: Invalid memory-limit flag. Value and Cause are untranslated diagnostics.
+  other: 'invalid --memory-limit value {{printf "%q" .Value}}: {{.Cause}}'
+- id: nornicdbcli.validation.invalid_stdio_interval
+  other: "invalid stdio-log-compact-seconds {{.Value}}: must be >= 0"
+- id: nornicdbcli.config.not_found
+  other: 📄 No config file found (using defaults + environment variables)
+- id: nornicdbcli.config.load_warning
+  other: "⚠️  Warning: failed to load config from {{.Path}}: {{.Cause}}"
+- id: nornicdbcli.config.loaded
+  other: "📄 Loaded config from: {{.Path}}"
+- id: nornicdbcli.serve.starting
+  other: 🚀 Starting NornicDB {{.Version}}
+- id: nornicdbcli.serve.data_directory
+  other: "   Data directory:  {{.Path}}"
+- id: nornicdbcli.serve.bolt_endpoint
+  other: "   Bolt protocol:   bolt://localhost:{{.Port}}"
+- id: nornicdbcli.serve.http_endpoint
+  other: "   HTTP API:        http://localhost:{{.Port}}"
+- id: nornicdbcli.serve.embeddings_enabled
+  other: "   Embeddings:      ✅ enabled ({{.Provider}}, {{.Model}}, {{.Dimensions}} dims)"
+- id: nornicdbcli.serve.embeddings_disabled
+  other: "   Embeddings:      ❌ disabled (set NORNICDB_EMBEDDING_ENABLED=true or use --embedding-enabled)"
+- id: nornicdbcli.serve.embedding_local
+  other: "   Embedding:       local GGUF ({{.Path}}/{{.Model}}.gguf, {{.Dimensions}} dims, GPU: {{.GPU}})"
+- id: nornicdbcli.serve.embedding_url
+  other: "   Embedding URL:   {{.URL}}"
+- id: nornicdbcli.serve.embedding_model
+  other: "   Embedding model: {{.Model}} ({{.Dimensions}} dims)"
+- id: nornicdbcli.serve.parallel_enabled
+  other: "   Parallel exec:   ✅ enabled ({{.Workers}} workers, batch size {{.Batch}})"
+- id: nornicdbcli.serve.parallel_disabled
+  other: "   Parallel exec:   ❌ disabled"
+- id: nornicdbcli.serve.memory_limit
+  other: "   Memory limit:    {{.Value}}"
+- id: nornicdbcli.serve.memory_unlimited
+  other: "   Memory limit:    unlimited"
+- id: nornicdbcli.serve.gc_percent
+  other: "   GC percent:      {{.Value}}% (more aggressive)"
+- id: nornicdbcli.serve.object_pooling
+  other: "   Object pooling:  ✅ enabled"
+- id: nornicdbcli.serve.query_cache
+  other: "   Query cache:     ✅ {{.Size}} entries, TTL {{.TTL}}"
+- id: nornicdbcli.progress.opening_database
+  other: 📂 Opening database...
+- id: nornicdbcli.progress.initializing_gpu
+  other: 🎮 Initializing GPU acceleration...
+- id: nornicdbcli.serve.gpu_unavailable
+  other: "   ⚠️  GPU not available: {{.Cause}} (using CPU)"
+- id: nornicdbcli.serve.gpu_enabled
+  other: "   ✅ GPU enabled: {{.Name}} ({{.Backend}}, {{.Memory}}MB)"
+- id: nornicdbcli.serve.gpu_detected_no_cuda
+  other: "   ⚠️  GPU detected: {{.Name}} ({{.Memory}}MB) - CUDA not compiled in, using CPU"
+- id: nornicdbcli.serve.build_cuda
+  other: "      💡 Build with Dockerfile.cuda for GPU acceleration"
+- id: nornicdbcli.serve.gpu_disabled
+  other: "   ⚠️  GPU disabled (CPU fallback active)"
+- id: nornicdbcli.progress.setting_up_auth
+  other: 🔐 Setting up authentication...
+- id: nornicdbcli.serve.configured_jwt
+  other: "   Using configured JWT secret ({{.Bytes}} bytes)"
+- id: nornicdbcli.serve.no_jwt
+  other: "   ⚠️  No JWT secret configured - tokens will invalidate on restart!"
+- id: nornicdbcli.serve.admin_setup_failed
+  other: "   ⚠️  Admin user setup failed or user already exists"
+- id: nornicdbcli.serve.admin_created
+  other: "   ✅ Admin user created ({{.Username}})"
+- id: nornicdbcli.serve.ready
+  other: ✅ NornicDB is ready!
+- id: nornicdbcli.serve.endpoints
+  other: |-
+    Endpoints:
+      • HTTP API:     http://{{.Address}}:{{.HTTPPort}}
+      • Bolt:         bolt://{{.Address}}:{{.BoltPort}}
+      • Health:       http://{{.Address}}:{{.HTTPPort}}/health
+      • Search:       POST http://{{.Address}}:{{.HTTPPort}}/nornicdb/search
+      • Cypher:       POST http://{{.Address}}:{{.HTTPPort}}/db/nornicdb/tx/commit{{if .MCPEnabled}}
+      • MCP:          {{.MCP}}{{end}}
+      • Telemetry:    {{.Metrics}}{{if .PprofEnabled}}
+      • pprof:        {{.Pprof}}{{end}}
+- id: nornicdbcli.serve.authentication
+  other: |-
+    Authentication:
+      • Username: {{.Username}}
+      • Password: <redacted>
+- id: nornicdbcli.serve.press_to_stop
+  other: Press Ctrl+C to stop
+- id: nornicdbcli.serve.stopped
+  other: ✅ Server stopped gracefully
+- id: nornicdbcli.init.progress
+  other: 📂 Initializing NornicDB database in {{.Path}}
+- id: nornicdbcli.init.summary
+  other: |-
+    ✅ Database initialized successfully
+       Config: {{.Config}}
+
+    Next steps:
+      1. Start the server:  nornicdb serve --data-dir {{.Data}}
+      2. Load data:         use Cypher/Bolt ingestion
+- id: nornicdbcli.shell.opening
+  other: 📂 Opening database at {{.Path}}...
+- id: nornicdbcli.shell.intro
+  other: |-
+    ✅ Connected to NornicDB
+    Type 'exit' or Ctrl+D to quit
+    Enter Cypher queries (end with semicolon or newline):
+- id: nornicdbcli.shell.query_failed
+  other: ❌ Query execution failed
+- id: nornicdbcli.shell.rows
+  one: ({{.Count}} row(s))
+  other: ({{.Count}} row(s))
+- id: nornicdbcli.shell.query_succeeded
+  other: ✅ Query executed successfully
+- id: nornicdbcli.shell.goodbye
+  other: 👋 Goodbye!
+- id: nornicdbcli.decay.opening
+  other: Opening database at {{.Path}}...
+- id: nornicdbcli.decay.suppressing
+  other: Suppressing nodes with score below {{.Threshold}} ({{.Count}} nodes to evaluate)...
+- id: nornicdbcli.decay.suppress_warning
+  other: "  warning: failed to suppress {{.Node}}: {{.Cause}}"
+- id: nornicdbcli.decay.suppress_summary
+  other: |-
+    Suppression complete:
+      Newly suppressed:     {{.Newly}}
+      Already suppressed:   {{.Already}}
+      Above threshold:      {{.Above}}
+      Total evaluated:      {{.Total}}
+- id: nornicdbcli.decay.stats_summary
+  other: |-
+    Decay Statistics (knowledge-layer):
+      Total nodes:           {{.Total}}
+      Visibility suppressed: {{.Suppressed}}
+      Scored by decay:       {{.Scored}}
+      No decay profile:      {{.NoDecay}}{{if .HasAverage}}
+      Average score:         {{.Average}}{{end}}
+- id: nornicdbcli.decay.score_distribution
+  other: "Score distribution:"
+- id: nornicdbcli.decay.per_label_breakdown
+  other: "Per-label breakdown:"
+- id: nornicdbcli.decay.per_label_row
+  other: '  {{printf "%-20s" .Label}}: {{.Count}} nodes, {{.Eligible}} suppression-eligible'
+- id: nornicdbcli.validation.shell_unavailable
+  other: cypher executor not available
+- id: nornicdbcli.validation.decay_suppress_storage
+  other: decay suppress requires BadgerEngine storage
+- id: nornicdbcli.validation.decay_stats_storage
+  other: decay stats requires BadgerEngine storage
+- id: nornicdbcli.config.load_failed
+  description: Explicit config path load failure. Path and Cause are untranslated diagnostics.
+  other: "failed to load config from {{.Path}}: {{.Cause}}"
+- id: nornicdbcli.serve.create_data_directory_failed
+  description: Data directory creation failure. Cause is an untranslated diagnostic.
+  other: "creating data directory: {{.Cause}}"
+- id: nornicdbcli.operation.open_database_failed
+  description: Database open failure. Cause is an untranslated diagnostic.
+  other: "opening database: {{.Cause}}"
+- id: nornicdbcli.serve.create_authenticator_failed
+  other: "creating authenticator: {{.Cause}}"
+- id: nornicdbcli.serve.create_server_failed
+  other: "creating server: {{.Cause}}"
+- id: nornicdbcli.serve.bolt_tls_client_auth_failed
+  other: "bolt tls client auth mode: {{.Cause}}"
+- id: nornicdbcli.serve.bolt_tls_load_failed
+  other: "bolt tls load: {{.Cause}}"
+- id: nornicdbcli.serve.observability_init_failed
+  other: "observability init: {{.Cause}}"
+- id: nornicdbcli.serve.start_server_failed
+  other: "starting server: {{.Cause}}"
+- id: nornicdbcli.serve.telemetry_listener_failed
+  other: "telemetry listener: {{.Cause}}"
+- id: nornicdbcli.serve.pprof_listener_failed
+  other: "pprof listener: {{.Cause}}"
+- id: nornicdbcli.serve.supervised_run_failed
+  other: "supervised run: {{.Cause}}"
+- id: nornicdbcli.serve.localization_init_failed
+  other: "initialize localization: {{.Cause}}"
+- id: nornicdbcli.adapter.bolt_failed
+  other: "bolt: {{.Cause}}"
+- id: nornicdbcli.transaction.database_not_initialized
+  other: database is not initialized
+- id: nornicdbcli.transaction.not_found
+  other: transaction not found
+- id: nornicdbcli.transaction.already_active
+  other: transaction already active
+- id: nornicdbcli.init.create_directory_failed
+  description: Initialization directory creation failure. Path and Cause are untranslated diagnostics.
+  other: "creating {{.Path}}: {{.Cause}}"
+- id: nornicdbcli.init.write_config_failed
+  other: "writing config: {{.Cause}}"
+- id: nornicdbcli.shell.read_input_failed
+  other: "reading input: {{.Cause}}"
+- id: nornicdbcli.decay.load_nodes_failed
+  other: "loading nodes: {{.Cause}}"

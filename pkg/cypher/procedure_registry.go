@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
+	"golang.org/x/text/language"
 )
 
 // ProcedureMode represents Neo4j-compatible procedure execution mode.
@@ -37,15 +38,21 @@ type ProcedureColumn struct {
 
 // ProcedureSpec is the canonical contract for built-in and user-defined procedures.
 type ProcedureSpec struct {
-	Name          string
-	Signature     string
-	Description   string
-	Mode          ProcedureMode
-	WorksOnSystem bool
-	Params        []ProcedureParam
-	Returns       []ProcedureColumn
-	MinArgs       int
-	MaxArgs       int
+	Name               string
+	Signature          string
+	Description        string
+	DescriptionMessage localization.Message
+	Mode               ProcedureMode
+	WorksOnSystem      bool
+	Params             []ProcedureParam
+	Returns            []ProcedureColumn
+	MinArgs            int
+	MaxArgs            int
+}
+
+// ProcedureMetadataRenderer renders localized procedure metadata for a request context.
+type ProcedureMetadataRenderer interface {
+	Render(context.Context, localization.Message) (string, language.Tag, error)
 }
 
 // ProcedureHandler executes a registered procedure.

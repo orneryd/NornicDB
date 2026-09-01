@@ -41,31 +41,114 @@ import (
 func main() {
 	// Route logs to stdout so container/system log collectors see them.
 	log.SetOutput(os.Stdout)
+	preferences, err := localization.ResolveProcessPreferences(localization.AutoLanguage)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+	localizer, err := localization.NewManager(preferences.Preferences, nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+
+	if err := newRootCommand(localizer).Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+type commandLocalizerContextKey struct{}
+
+type commandLocalization struct {
+	mu      sync.RWMutex
+	manager *localization.Manager
+}
+
+type commandError struct {
+	cmd     *cobra.Command
+	manager *localization.Manager
+	message localization.Message
+	cause   error
+}
+
+func (e *commandError) Error() string {
+	manager := e.manager
+	if e.cmd != nil {
+		manager = commandLocalizer(e.cmd)
+	}
+	return commandText(manager, e.message)
+}
+func (e *commandError) Unwrap() error { return e.cause }
+
+func commandText(manager *localization.Manager, message localization.Message) string {
+	if manager == nil {
+		return message.Fallback
+	}
+	text, _, err := manager.Render(context.Background(), message)
+	if err != nil {
+		return message.Fallback
+	}
+	return text
+}
+
+func newCommandError(cmd *cobra.Command, message localization.Message, cause error) error {
+	return &commandError{cmd: cmd, message: message, cause: cause}
+}
+
+func newCLIError(manager *localization.Manager, message localization.Message, cause error) error {
+	return &commandError{manager: manager, message: message, cause: cause}
+}
+
+func commandLocalizer(cmd *cobra.Command) *localization.Manager {
+	if cmd == nil {
+		return nil
+	}
+	state, _ := cmd.Context().Value(commandLocalizerContextKey{}).(*commandLocalization)
+	if state == nil {
+		return nil
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.manager
+}
+
+func setCommandLocalizer(cmd *cobra.Command, manager *localization.Manager) {
+	if cmd == nil {
+		return
+	}
+	state, _ := cmd.Context().Value(commandLocalizerContextKey{}).(*commandLocalization)
+	if state == nil {
+		state = &commandLocalization{}
+		cmd.SetContext(context.WithValue(cmd.Context(), commandLocalizerContextKey{}, state))
+	}
+	state.mu.Lock()
+	state.manager = manager
+	state.mu.Unlock()
+}
+
+func commandPrintln(cmd *cobra.Command, message localization.Message) {
+	cmd.Println(commandText(commandLocalizer(cmd), message))
+}
+
+func newRootCommand(localizer *localization.Manager) *cobra.Command {
+	text := func(message localization.Message) string { return commandText(localizer, message) }
 
 	rootCmd := &cobra.Command{
 		Use:   "nornicdb",
-		Short: "NornicDB - High-Performance Graph Database for LLM Agents",
-		Long: `NornicDB is a purpose-built graph database written in Go,
-designed for AI agent memory with Neo4j Bolt/Cypher compatibility.
-
-Features:
-  • Neo4j Bolt protocol compatibility
-  • Cypher query language support
-  • Knowledge-layer scoring with declarative decay profiles
-  • Automatic relationship inference
-  • Built-in vector search with RRF hybrid ranking
-  • Server-side embedding generation`,
+		Short: text(localization.NornicDBCLIRootShort()),
+		Long:  text(localization.NornicDBCLIRootLong()),
 	}
+	rootCmd.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: localizer}))
 
 	// Global config flag (applies to all subcommands that load config).
 	// This is the primary configuration mechanism for Docker/K8s where the config
 	// is commonly mounted at a fixed path (e.g. /config/nornicdb.yaml).
-	rootCmd.PersistentFlags().String("config", getEnvStr("NORNICDB_CONFIG", ""), "Path to YAML config file (overrides auto-discovery)")
+	rootCmd.PersistentFlags().String("config", getEnvStr("NORNICDB_CONFIG", ""), text(localization.NornicDBCLIFlagConfig()))
 
 	// Version command
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
-		Short: "Print version information",
+		Short: text(localization.NornicDBCLIVersionShort()),
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("NornicDB %s\n", buildinfo.DisplayVersion())
 		},
@@ -74,115 +157,112 @@ Features:
 	// Serve command
 	serveCmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start NornicDB server",
-		Long:  "Start NornicDB server with Bolt protocol and HTTP API endpoints",
+		Short: text(localization.NornicDBCLIServeShort()),
+		Long:  text(localization.NornicDBCLIServeLong()),
 		RunE:  runServe,
 	}
-	serveCmd.Flags().Int("bolt-port", getEnvInt("NORNICDB_BOLT_PORT", 7687), "Bolt protocol port (Neo4j compatible)")
-	serveCmd.Flags().Int("http-port", getEnvInt("NORNICDB_HTTP_PORT", 7474), "HTTP API port")
-	serveCmd.Flags().String("address", getEnvStr("NORNICDB_ADDRESS", "127.0.0.1"), "Bind address (127.0.0.1 for localhost only, 0.0.0.0 for all interfaces)")
-	serveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
-	serveCmd.Flags().Bool("upgrade-storage", getEnvBool("NORNICDB_UPGRADE_STORAGE", false), "Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.")
-	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "local"), "Embedding provider: local, ollama, openai")
-	serveCmd.Flags().String("embedding-url", getEnvStr("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434"), "Embedding API URL (ollama/openai)")
-	serveCmd.Flags().String("embedding-key", getEnvStr("NORNICDB_EMBEDDING_API_KEY", ""), "Embeddings API Key (openai)")
-	serveCmd.Flags().String("embedding-model", getEnvStr("NORNICDB_EMBEDDING_MODEL", "bge-m3"), "Embedding model name")
-	serveCmd.Flags().Int("embedding-dim", getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024), "Embedding dimensions")
-	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), "Embedding cache size (0=disabled, default 10000)")
-	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), "GPU layers for local provider: -1=auto, 0=CPU only")
-	serveCmd.Flags().Bool("embedding-enabled", getEnvBool("NORNICDB_EMBEDDING_ENABLED", false), "Enable embedding generation (semantic search). Default is off unless enabled via config/env.")
+	serveCmd.Flags().Int("bolt-port", getEnvInt("NORNICDB_BOLT_PORT", 7687), text(localization.NornicDBCLIFlagBoltPort()))
+	serveCmd.Flags().Int("http-port", getEnvInt("NORNICDB_HTTP_PORT", 7474), text(localization.NornicDBCLIFlagHTTPPort()))
+	serveCmd.Flags().String("address", getEnvStr("NORNICDB_ADDRESS", "127.0.0.1"), text(localization.NornicDBCLIFlagAddress()))
+	serveCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
+	serveCmd.Flags().Bool("upgrade-storage", getEnvBool("NORNICDB_UPGRADE_STORAGE", false), text(localization.NornicDBCLIFlagUpgradeStorage()))
+	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "local"), text(localization.NornicDBCLIFlagEmbeddingProvider()))
+	serveCmd.Flags().String("embedding-url", getEnvStr("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434"), text(localization.NornicDBCLIFlagEmbeddingURL()))
+	serveCmd.Flags().String("embedding-key", getEnvStr("NORNICDB_EMBEDDING_API_KEY", ""), text(localization.NornicDBCLIFlagEmbeddingKey()))
+	serveCmd.Flags().String("embedding-model", getEnvStr("NORNICDB_EMBEDDING_MODEL", "bge-m3"), text(localization.NornicDBCLIFlagEmbeddingModel()))
+	serveCmd.Flags().Int("embedding-dim", getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024), text(localization.NornicDBCLIFlagEmbeddingDimensions()))
+	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), text(localization.NornicDBCLIFlagEmbeddingCache()))
+	serveCmd.Flags().Int("embedding-gpu-layers", getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -1), text(localization.NornicDBCLIFlagEmbeddingGPULayers()))
+	serveCmd.Flags().Bool("embedding-enabled", getEnvBool("NORNICDB_EMBEDDING_ENABLED", false), text(localization.NornicDBCLIFlagEmbeddingEnabled()))
 	// Per-database search index master switches and warming triggers (global
 	// defaults; per-DB overrides via /admin/databases/{name}/config always win).
 	// Defaults reproduce today's behaviour: both indexes enabled, both built at startup.
-	serveCmd.Flags().Bool("search-bm25-enabled", getEnvBool("NORNICDB_SEARCH_BM25_ENABLED", true), "Enable BM25 fulltext search (default: true). Per-DB override via /admin/databases/{name}/config wins.")
-	serveCmd.Flags().String("search-bm25-warming", getEnvStr("NORNICDB_SEARCH_BM25_WARMING", "startup"), "BM25 build trigger: startup (build at boot) or lazy (defer to first inbound search query). Default: startup.")
-	serveCmd.Flags().Bool("search-vector-enabled", getEnvBool("NORNICDB_SEARCH_VECTOR_ENABLED", true), "Enable vector (ANN) search across all strategies (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, no node embeddings load into RAM. Per-DB override wins.")
-	serveCmd.Flags().String("search-vector-warming", getEnvStr("NORNICDB_SEARCH_VECTOR_WARMING", "startup"), "Vector build trigger: startup or lazy. Default: startup.")
-	serveCmd.Flags().String("gpu-backend", getEnvStr("NORNICDB_GPU_BACKEND", ""), "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)")
-	serveCmd.Flags().Bool("no-auth", false, "Disable authentication")
-	serveCmd.Flags().String("admin-password", "password", "Admin password (default: password)")
-	serveCmd.Flags().Bool("mcp-enabled", getEnvBool("NORNICDB_MCP_ENABLED", true), "Enable MCP (Model Context Protocol) server for LLM tools")
+	serveCmd.Flags().Bool("search-bm25-enabled", getEnvBool("NORNICDB_SEARCH_BM25_ENABLED", true), text(localization.NornicDBCLIFlagSearchBM25Enabled()))
+	serveCmd.Flags().String("search-bm25-warming", getEnvStr("NORNICDB_SEARCH_BM25_WARMING", "startup"), text(localization.NornicDBCLIFlagSearchBM25Warming()))
+	serveCmd.Flags().Bool("search-vector-enabled", getEnvBool("NORNICDB_SEARCH_VECTOR_ENABLED", true), text(localization.NornicDBCLIFlagSearchVectorEnabled()))
+	serveCmd.Flags().String("search-vector-warming", getEnvStr("NORNICDB_SEARCH_VECTOR_WARMING", "startup"), text(localization.NornicDBCLIFlagSearchVectorWarming()))
+	serveCmd.Flags().String("gpu-backend", getEnvStr("NORNICDB_GPU_BACKEND", ""), text(localization.NornicDBCLIFlagGPUBackend()))
+	serveCmd.Flags().Bool("no-auth", false, text(localization.NornicDBCLIFlagNoAuth()))
+	serveCmd.Flags().String("admin-password", "password", text(localization.NornicDBCLIFlagAdminPassword()))
+	serveCmd.Flags().Bool("mcp-enabled", getEnvBool("NORNICDB_MCP_ENABLED", true), text(localization.NornicDBCLIFlagMCPEnabled()))
 	// Parallel execution flags
-	serveCmd.Flags().Bool("parallel", true, "Enable parallel query execution")
-	serveCmd.Flags().Int("parallel-workers", 0, "Max parallel workers (0 = auto, uses all CPUs)")
-	serveCmd.Flags().Int("parallel-batch-size", 1000, "Min batch size before parallelizing")
+	serveCmd.Flags().Bool("parallel", true, text(localization.NornicDBCLIFlagParallel()))
+	serveCmd.Flags().Int("parallel-workers", 0, text(localization.NornicDBCLIFlagParallelWorkers()))
+	serveCmd.Flags().Int("parallel-batch-size", 1000, text(localization.NornicDBCLIFlagParallelBatchSize()))
 	// Memory management flags
-	serveCmd.Flags().String("memory-limit", "", "Memory limit in MB as an integer (e.g., 500, 0 for unlimited)")
-	serveCmd.Flags().Int("gc-percent", 100, "GC aggressiveness (100=default, lower=more aggressive)")
-	serveCmd.Flags().Bool("pool-enabled", true, "Enable object pooling for reduced allocations")
-	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), "Use minimal RAM (for resource constrained environments)")
-	serveCmd.Flags().Int("query-cache-size", 1000, "Query plan cache size (0 to disable)")
-	serveCmd.Flags().String("query-cache-ttl", "5m", "Query plan cache TTL")
+	serveCmd.Flags().String("memory-limit", "", text(localization.NornicDBCLIFlagMemoryLimit()))
+	serveCmd.Flags().Int("gc-percent", 100, text(localization.NornicDBCLIFlagGCPercent()))
+	serveCmd.Flags().Bool("pool-enabled", true, text(localization.NornicDBCLIFlagPoolEnabled()))
+	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), text(localization.NornicDBCLIFlagLowMemory()))
+	serveCmd.Flags().Int("query-cache-size", 1000, text(localization.NornicDBCLIFlagQueryCacheSize()))
+	serveCmd.Flags().String("query-cache-ttl", "5m", text(localization.NornicDBCLIFlagQueryCacheTTL()))
 	// Logging flags
-	serveCmd.Flags().Bool("log-queries", getEnvBool("NORNICDB_LOG_QUERIES", false), "Log all Bolt queries to stdout (for debugging)")
-	serveCmd.Flags().Int("stdio-log-max-kb", getEnvInt("NORNICDB_STDIO_LOG_MAX_KB", 20480), "Max size of stdout/stderr log files in KB before automatic truncation (0 disables)")
-	serveCmd.Flags().Int("stdio-log-compact-seconds", getEnvInt("NORNICDB_STDIO_LOG_COMPACT_SECONDS", 3600), "Interval in seconds for automatic stdout/stderr log size checks")
+	serveCmd.Flags().Bool("log-queries", getEnvBool("NORNICDB_LOG_QUERIES", false), text(localization.NornicDBCLIFlagLogQueries()))
+	serveCmd.Flags().Int("stdio-log-max-kb", getEnvInt("NORNICDB_STDIO_LOG_MAX_KB", 20480), text(localization.NornicDBCLIFlagStdioLogMaxKB()))
+	serveCmd.Flags().Int("stdio-log-compact-seconds", getEnvInt("NORNICDB_STDIO_LOG_COMPACT_SECONDS", 3600), text(localization.NornicDBCLIFlagStdioLogCompactSeconds()))
 	// Headless mode
-	serveCmd.Flags().Bool("headless", getEnvBool("NORNICDB_HEADLESS", false), "Disable web UI and browser-related endpoints")
+	serveCmd.Flags().Bool("headless", getEnvBool("NORNICDB_HEADLESS", false), text(localization.NornicDBCLIFlagHeadless()))
 	// Base path for reverse proxy deployment
-	serveCmd.Flags().String("base-path", getEnvStr("NORNICDB_BASE_PATH", ""), "Base URL path for reverse proxy deployment (e.g., /nornicdb)")
+	serveCmd.Flags().String("base-path", getEnvStr("NORNICDB_BASE_PATH", ""), text(localization.NornicDBCLIFlagBasePath()))
 
 	// Replication / HA (pkg/replication). These map to NORNICDB_CLUSTER_* env vars.
-	serveCmd.Flags().String("cluster-mode", getEnvStr("NORNICDB_CLUSTER_MODE", ""), "Cluster mode: standalone|ha_standby|raft|multi_region (empty disables clustering)")
-	serveCmd.Flags().String("cluster-node-id", getEnvStr("NORNICDB_CLUSTER_NODE_ID", ""), "Cluster node ID (empty auto-generates)")
-	serveCmd.Flags().String("cluster-bind-addr", getEnvStr("NORNICDB_CLUSTER_BIND_ADDR", ""), "Cluster bind address for replication protocol (e.g., 127.0.0.1:7000)")
-	serveCmd.Flags().String("cluster-advertise-addr", getEnvStr("NORNICDB_CLUSTER_ADVERTISE_ADDR", ""), "Cluster advertise address (defaults to bind addr)")
-	serveCmd.Flags().String("cluster-data-dir", getEnvStr("NORNICDB_CLUSTER_DATA_DIR", ""), "Cluster state directory (defaults to <data-dir>/replication)")
+	serveCmd.Flags().String("cluster-mode", getEnvStr("NORNICDB_CLUSTER_MODE", ""), text(localization.NornicDBCLIFlagClusterMode()))
+	serveCmd.Flags().String("cluster-node-id", getEnvStr("NORNICDB_CLUSTER_NODE_ID", ""), text(localization.NornicDBCLIFlagClusterNodeID()))
+	serveCmd.Flags().String("cluster-bind-addr", getEnvStr("NORNICDB_CLUSTER_BIND_ADDR", ""), text(localization.NornicDBCLIFlagClusterBindAddress()))
+	serveCmd.Flags().String("cluster-advertise-addr", getEnvStr("NORNICDB_CLUSTER_ADVERTISE_ADDR", ""), text(localization.NornicDBCLIFlagClusterAdvertiseAddress()))
+	serveCmd.Flags().String("cluster-data-dir", getEnvStr("NORNICDB_CLUSTER_DATA_DIR", ""), text(localization.NornicDBCLIFlagClusterDataDir()))
 
 	// HA standby
-	serveCmd.Flags().String("cluster-ha-role", getEnvStr("NORNICDB_CLUSTER_HA_ROLE", ""), "HA standby role: primary|standby")
-	serveCmd.Flags().String("cluster-ha-peer-addr", getEnvStr("NORNICDB_CLUSTER_HA_PEER_ADDR", ""), "HA standby peer cluster address (host:port)")
+	serveCmd.Flags().String("cluster-ha-role", getEnvStr("NORNICDB_CLUSTER_HA_ROLE", ""), text(localization.NornicDBCLIFlagClusterHARole()))
+	serveCmd.Flags().String("cluster-ha-peer-addr", getEnvStr("NORNICDB_CLUSTER_HA_PEER_ADDR", ""), text(localization.NornicDBCLIFlagClusterHAPeerAddress()))
 
 	// Raft
-	serveCmd.Flags().Bool("cluster-raft-bootstrap", getEnvBool("NORNICDB_CLUSTER_RAFT_BOOTSTRAP", false), "Raft bootstrap (true for first node in a new cluster)")
-	serveCmd.Flags().String("cluster-raft-peers", getEnvStr("NORNICDB_CLUSTER_RAFT_PEERS", ""), "Raft peers (format: node2:host2:7000,node3:host3:7000)")
+	serveCmd.Flags().Bool("cluster-raft-bootstrap", getEnvBool("NORNICDB_CLUSTER_RAFT_BOOTSTRAP", false), text(localization.NornicDBCLIFlagClusterRaftBootstrap()))
+	serveCmd.Flags().String("cluster-raft-peers", getEnvStr("NORNICDB_CLUSTER_RAFT_PEERS", ""), text(localization.NornicDBCLIFlagClusterRaftPeers()))
 	rootCmd.AddCommand(serveCmd)
 
 	// Init command
 	initCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a new NornicDB database",
+		Short: text(localization.NornicDBCLIInitShort()),
 		RunE:  runInit,
 	}
-	initCmd.Flags().String("data-dir", "./data", "Data directory")
+	initCmd.Flags().String("data-dir", "./data", text(localization.NornicDBCLIFlagDataDir()))
 	rootCmd.AddCommand(initCmd)
 
 	// Shell command (interactive Cypher REPL)
 	shellCmd := &cobra.Command{
 		Use:   "shell",
-		Short: "Interactive Cypher shell",
+		Short: text(localization.NornicDBCLIShellShort()),
 		RunE:  runShell,
 	}
-	shellCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
-	shellCmd.Flags().String("uri", "bolt://localhost:7687", "NornicDB URI (for future Bolt client support)")
+	shellCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
+	shellCmd.Flags().String("uri", "bolt://localhost:7687", text(localization.NornicDBCLIFlagURI()))
 	rootCmd.AddCommand(shellCmd)
 
 	// Decay command (manual decay operations)
 	decayCmd := &cobra.Command{
 		Use:   "decay",
-		Short: "Memory decay operations",
+		Short: text(localization.NornicDBCLIDecayShort()),
 	}
 	decaySuppressCmd := &cobra.Command{
 		Use:   "suppress",
-		Short: "Suppress nodes below visibility threshold",
+		Short: text(localization.NornicDBCLIDecaySuppressShort()),
 		RunE:  runDecaySuppress,
 	}
-	decaySuppressCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
-	decaySuppressCmd.Flags().Float64("threshold", 0.05, "Visibility suppression threshold (default: 0.05)")
+	decaySuppressCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
+	decaySuppressCmd.Flags().Float64("threshold", 0.05, text(localization.NornicDBCLIFlagDecayThreshold()))
 	decayCmd.AddCommand(decaySuppressCmd)
 
 	decayStatsCmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Show decay statistics",
+		Short: text(localization.NornicDBCLIDecayStatsShort()),
 		RunE:  runDecayStats,
 	}
-	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), "Data directory")
+	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 // setCLIOverride stamps a single canonical NORNICDB_* key into
@@ -298,7 +378,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	setEnvIfChanged("cluster-raft-peers", "NORNICDB_CLUSTER_RAFT_PEERS", clusterRaftPeers)
 
 	if stdioLogCompactSeconds < 0 {
-		return fmt.Errorf("invalid stdio-log-compact-seconds %d: must be >= 0", stdioLogCompactSeconds)
+		cause := fmt.Errorf("stdio-log-compact-seconds must be >= 0")
+		return newCommandError(cmd, localization.NornicDBCLIInvalidStdioInterval(stdioLogCompactSeconds), cause)
 	}
 	stopStdioCompactor := startStdioLogCompactor(stdioLogMaxKB, time.Duration(stdioLogCompactSeconds)*time.Second)
 	defer stopStdioCompactor()
@@ -313,24 +394,35 @@ func runServe(cmd *cobra.Command, args []string) error {
 		configPath = config.FindConfigFile()
 	}
 
+	var configStatus localization.Message
 	if configPath == "" {
 		cfg = config.LoadFromEnv()
-		fmt.Println("📄 No config file found (using defaults + environment variables)")
+		configStatus = localization.NornicDBCLINoConfig()
 	} else {
 		var err error
 		cfg, err = config.LoadFromFile(configPath)
 		if err != nil {
 			// If the user explicitly set --config, fail fast.
 			if strings.TrimSpace(explicitConfigPath) != "" {
-				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+				return newCommandError(cmd, localization.NornicDBCLIConfigLoadFailed(configPath, err), err)
 			}
-			fmt.Printf("⚠️  Warning: failed to load config from %s: %v\n", configPath, err)
+			configStatus = localization.NornicDBCLIConfigWarning(configPath, err)
 			cfg = config.LoadFromEnv()
 		} else {
 			loadedConfigFile = true
-			fmt.Printf("📄 Loaded config from: %s\n", configPath)
+			configStatus = localization.NornicDBCLIConfigLoaded(configPath)
 		}
 	}
+	processPreferences, err := localization.ResolveProcessPreferences(cfg.Localization.Language)
+	if err != nil {
+		return fmt.Errorf("resolve localization preferences: %w", err)
+	}
+	localizer, err := localization.NewManager(processPreferences.Preferences, nil)
+	if err != nil {
+		return fmt.Errorf("initialize localization: %w", err)
+	}
+	setCommandLocalizer(cmd, localizer)
+	commandPrintln(cmd, configStatus)
 
 	resolvedAddress := resolveBindAddress(cmd, cfg, address, loadedConfigFile)
 	cfg.Server.HTTPAddress = resolvedAddress
@@ -404,7 +496,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if memoryLimit != "" {
 		runtimeLimit, err := config.ParseMemoryLimitMB(memoryLimit)
 		if err != nil {
-			return fmt.Errorf("invalid --memory-limit value %q: %w", memoryLimit, err)
+			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, err), err)
 		}
 		cfg.Memory.RuntimeLimitStr = memoryLimit
 		cfg.Memory.RuntimeLimit = runtimeLimit
@@ -431,14 +523,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		cache.ConfigureGlobalCache(cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL)
 	}
 
-	fmt.Printf("🚀 Starting NornicDB %s\n", buildinfo.DisplayVersion())
-	fmt.Printf("   Data directory:  %s\n", dataDir)
-	fmt.Printf("   Bolt protocol:   bolt://localhost:%d\n", boltPort)
-	fmt.Printf("   HTTP API:        http://localhost:%d\n", httpPort)
+	commandPrintln(cmd, localization.NornicDBCLIStarting(buildinfo.DisplayVersion()))
+	commandPrintln(cmd, localization.NornicDBCLIDataDirectory(dataDir))
+	commandPrintln(cmd, localization.NornicDBCLIBoltEndpoint(boltPort))
+	commandPrintln(cmd, localization.NornicDBCLIHTTPEndpoint(httpPort))
 	if cfg.Memory.EmbeddingEnabled {
-		fmt.Printf("   Embeddings:      ✅ enabled (%s, %s, %d dims)\n", embeddingProvider, embeddingModel, embeddingDim)
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingsEnabled(embeddingProvider, embeddingModel, embeddingDim))
 	} else {
-		fmt.Printf("   Embeddings:      ❌ disabled (set NORNICDB_EMBEDDING_ENABLED=true or use --embedding-enabled)\n")
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingsDisabled())
 	}
 	if embeddingProvider == "local" {
 		modelsDir := cfg.Memory.ModelsDir
@@ -451,40 +543,40 @@ func runServe(cmd *cobra.Command, args []string) error {
 		} else if embeddingGPULayers > 0 {
 			gpuMode = fmt.Sprintf("%d layers", embeddingGPULayers)
 		}
-		fmt.Printf("   Embedding:       local GGUF (%s/%s.gguf, %d dims, GPU: %s)\n", modelsDir, embeddingModel, embeddingDim, gpuMode)
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingLocal(modelsDir, embeddingModel, embeddingDim, gpuMode))
 	} else {
-		fmt.Printf("   Embedding URL:   %s\n", embeddingURL)
-		fmt.Printf("   Embedding model: %s (%d dims)\n", embeddingModel, embeddingDim)
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(embeddingURL))
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingModel(embeddingModel, embeddingDim))
 	}
 	if parallelEnabled {
 		workers := parallelWorkers
 		if workers == 0 {
 			workers = runtime.NumCPU()
 		}
-		fmt.Printf("   Parallel exec:   ✅ enabled (%d workers, batch size %d)\n", workers, parallelBatchSize)
+		commandPrintln(cmd, localization.NornicDBCLIParallelEnabled(workers, parallelBatchSize))
 	} else {
-		fmt.Printf("   Parallel exec:   ❌ disabled\n")
+		commandPrintln(cmd, localization.NornicDBCLIParallelDisabled())
 	}
 	// Memory management info
 	if cfg.Memory.RuntimeLimit > 0 {
-		fmt.Printf("   Memory limit:    %s\n", config.FormatMemorySize(cfg.Memory.RuntimeLimit))
+		commandPrintln(cmd, localization.NornicDBCLIMemoryLimit(config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
 	} else {
-		fmt.Printf("   Memory limit:    unlimited\n")
+		commandPrintln(cmd, localization.NornicDBCLIMemoryUnlimited())
 	}
 	if cfg.Memory.GCPercent != 100 {
-		fmt.Printf("   GC percent:      %d%% (more aggressive)\n", cfg.Memory.GCPercent)
+		commandPrintln(cmd, localization.NornicDBCLIGCPercent(cfg.Memory.GCPercent))
 	}
 	if cfg.Memory.PoolEnabled {
-		fmt.Printf("   Object pooling:  ✅ enabled\n")
+		commandPrintln(cmd, localization.NornicDBCLIObjectPooling())
 	}
 	if cfg.Memory.QueryCacheEnabled {
-		fmt.Printf("   Query cache:     ✅ %d entries, TTL %v\n", cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL)
+		commandPrintln(cmd, localization.NornicDBCLIQueryCache(cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL))
 	}
-	fmt.Println()
+	cmd.Println()
 
 	// Create data directory
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return fmt.Errorf("creating data directory: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLICreateDataDirectoryFailed(err), err)
 	}
 
 	// Configure database. cfg is the canonical config snapshot built by
@@ -542,14 +634,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if earlyLogErr != nil {
 		fmt.Fprintln(os.Stderr, "WARN logger init: ", earlyLogErr)
 	}
-	processPreferences, err := localization.ResolveProcessPreferences(cfg.Localization.Language)
+	localizer, err = localization.NewManager(processPreferences.Preferences, earlyLogger)
 	if err != nil {
-		return fmt.Errorf("resolve localization preferences: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLILocalizationInitFailed(err), err)
 	}
-	localizer, err := localization.NewManager(processPreferences.Preferences, earlyLogger)
-	if err != nil {
-		return fmt.Errorf("initialize localization: %w", err)
-	}
+	setCommandLocalizer(cmd, localizer)
 	localization.LogProcessFallback(earlyLogger, processPreferences, localizer.Match(processPreferences.Preferences...))
 	// Phase 2 D-01 storage threading: assign the slog logger into nornicdb.Config
 	// so storage ctors (BadgerEngine, AsyncEngine, WAL) inherit it through
@@ -561,15 +650,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// underlying io.Writer flushes during Provider.Shutdown (D-09a).
 
 	// Open database
-	fmt.Println("📂 Opening database...")
+	commandPrintln(cmd, localization.NornicDBCLIOpeningDatabase())
 	db, err := nornicdb.Open(dataDir, dbConfig)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
 	defer db.Close()
 
 	// Initialize GPU acceleration (Metal on macOS, auto-detect otherwise)
-	fmt.Println("🎮 Initializing GPU acceleration...")
+	commandPrintln(cmd, localization.NornicDBCLIInitializingGPU())
 	gpuConfig := gpu.DefaultConfig()
 	gpuConfig.Enabled = true
 	gpuConfig.FallbackOnError = true
@@ -593,20 +682,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	gpuManager, gpuErr := gpu.NewManager(gpuConfig)
 	if gpuErr != nil {
-		fmt.Printf("   ⚠️  GPU not available: %v (using CPU)\n", gpuErr)
+		commandPrintln(cmd, localization.NornicDBCLIGPUUnavailable(gpuErr))
 	} else if gpuManager.IsEnabled() {
 		device := gpuManager.Device()
 		db.SetGPUManager(gpuManager)
-		fmt.Printf("   ✅ GPU enabled: %s (%s, %dMB)\n", device.Name, device.Backend, device.MemoryMB)
+		commandPrintln(cmd, localization.NornicDBCLIGPUEnabled(device.Name, string(device.Backend), device.MemoryMB))
 	} else {
 		// Check if GPU hardware is present but CUDA not compiled in
 		device := gpuManager.Device()
 		if device != nil && device.MemoryMB > 0 {
-			fmt.Printf("   ⚠️  GPU detected: %s (%dMB) - CUDA not compiled in, using CPU\n",
-				device.Name, device.MemoryMB)
-			fmt.Println("      💡 Build with Dockerfile.cuda for GPU acceleration")
+			commandPrintln(cmd, localization.NornicDBCLIGPUDetectedNoCUDA(device.Name, device.MemoryMB))
+			commandPrintln(cmd, localization.NornicDBCLIBuildCUDA())
 		} else {
-			fmt.Println("   ⚠️  GPU disabled (CPU fallback active)")
+			commandPrintln(cmd, localization.NornicDBCLIGPUDisabled())
 		}
 	}
 
@@ -619,16 +707,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	var authenticator *auth.Authenticator
 	authEnabled := serveAuthEnabled(cfg, noAuth)
 	if authEnabled {
-		fmt.Println("🔐 Setting up authentication...")
+		commandPrintln(cmd, localization.NornicDBCLISettingUpAuth())
 		authConfig := auth.DefaultAuthConfig()
 		// Use JWT secret from config (auto-generated if not set)
 		if cfg.Auth.JWTSecret != "" {
 			authConfig.JWTSecret = []byte(cfg.Auth.JWTSecret)
-			fmt.Printf("   Using configured JWT secret (%d bytes)\n", len(cfg.Auth.JWTSecret))
+			commandPrintln(cmd, localization.NornicDBCLIConfiguredJWT(len(cfg.Auth.JWTSecret)))
 		} else {
 			// Fallback to a generated secret (will change on restart!)
 			authConfig.JWTSecret = []byte("nornicdb-dev-key" + fmt.Sprintf("%d", time.Now().UnixNano()))
-			fmt.Println("   ⚠️  No JWT secret configured - tokens will invalidate on restart!")
+			commandPrintln(cmd, localization.NornicDBCLINoJWT())
 		}
 
 		// Use configured default admin username (from env/config, default: "admin")
@@ -639,7 +727,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		var authErr error
 		authenticator, authErr = auth.NewAuthenticator(authConfig, systemStorage)
 		if authErr != nil {
-			return fmt.Errorf("creating authenticator: %w", authErr)
+			return newCommandError(cmd, localization.NornicDBCLICreateAuthenticatorFailed(authErr), authErr)
 		}
 
 		// Create admin user with configured credentials (fallback from auth defaults).
@@ -658,9 +746,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		_, err := authenticator.CreateUser(adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
 		if err != nil {
 			// User might already exist
-			fmt.Println("   ⚠️  Admin user setup failed or user already exists")
+			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
 		} else {
-			fmt.Printf("   ✅ Admin user created (%s)\n", adminUsername)
+			commandPrintln(cmd, localization.NornicDBCLIAdminCreated(adminUsername))
 		}
 	}
 	// Note: Auth status logged at server startup
@@ -741,7 +829,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	httpServer, err := server.New(db, authenticator, serverConfig)
 	if err != nil {
-		return fmt.Errorf("creating server: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLICreateServerFailed(err), err)
 	}
 
 	// HTTP server START is deferred until AFTER observability.New runs
@@ -781,7 +869,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cfg.Server.BoltTLSEnabled && cfg.Server.BoltTLSCert != "" && cfg.Server.BoltTLSKey != "" {
 		mode, err := bolt.ParseClientAuthMode(cfg.Server.BoltTLSClientAuthMode)
 		if err != nil {
-			return fmt.Errorf("bolt tls client auth mode: %w", err)
+			return newCommandError(cmd, localization.NornicDBCLIBoltTLSClientAuthFailed(err), err)
 		}
 		var tlsCfg *tls.Config
 		if cfg.Server.BoltTLSClientCAFile != "" {
@@ -795,7 +883,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			tlsCfg, err = bolt.LoadTLSConfig(cfg.Server.BoltTLSCert, cfg.Server.BoltTLSKey)
 		}
 		if err != nil {
-			return fmt.Errorf("bolt tls load: %w", err)
+			return newCommandError(cmd, localization.NornicDBCLIBoltTLSLoadFailed(err), err)
 		}
 		boltConfig.TLSConfig = tlsCfg
 	}
@@ -834,6 +922,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// to the same database manager used by HTTP so multi-db/composite/fabric
 	// semantics are identical across protocols.
 	queryExecutor := NewDBQueryExecutor(db)
+	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
 	// Wire per-database access from HTTP server so Bolt enforces same policy (allowlist + principal roles)
 	boltServer.SetDatabaseAccessModeResolver(httpServer.GetDatabaseAccessModeForRoles)
@@ -860,7 +949,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    downstream business-package constructors per D-01.
 	obs, obsErr := observability.New(cmd.Context(), cfg.Observability, loggerInfo, logger, writerRef)
 	if obsErr != nil {
-		return fmt.Errorf("observability init: %w", obsErr)
+		return newCommandError(cmd, localization.NornicDBCLIObservabilityInitFailed(obsErr), obsErr)
 	}
 	log.Printf("INFO observability: instance_id=%s (source=%s)", obs.InstanceID(), obs.InstanceIDSource())
 
@@ -1079,7 +1168,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//     server. The instrumentedMux wrapper picks up s.httpMetrics at
 	//     Handler-mount time inside Start() (Plan 04-02 D-03 chokepoint).
 	if err := httpServer.Start(); err != nil {
-		return fmt.Errorf("starting server: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIStartServerFailed(err), err)
 	}
 
 	// 2. Build the health registry.
@@ -1089,14 +1178,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	//    constructor so EADDRINUSE surfaces synchronously.
 	telemetry, telemetryErr := observability.NewTelemetryListener(obs, health)
 	if telemetryErr != nil {
-		return fmt.Errorf("telemetry listener: %w", telemetryErr)
+		return newCommandError(cmd, localization.NornicDBCLITelemetryListenerFailed(telemetryErr), telemetryErr)
 	}
 
 	// 4. Build the optional pprof listener (Component, may be nil when
 	//    cfg.Observability.Pprof.Enabled is false — OBS-06 / Phase-success-2).
 	pprof, pprofErr := observability.NewPprofListener(cfg.Observability.Pprof)
 	if pprofErr != nil {
-		return fmt.Errorf("pprof listener: %w", pprofErr)
+		return newCommandError(cmd, localization.NornicDBCLIPprofListenerFailed(pprofErr), pprofErr)
 	}
 
 	// 5. Register health checks AFTER storage/search are open (D-03c).
@@ -1125,7 +1214,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// 6. Build adapter components for HTTP, Bolt, and embed-workers.
 	httpC := &httpAdapter{srv: httpServer}
-	boltC := &boltAdapter{srv: boltServer}
+	boltC := &boltAdapter{srv: boltServer, localizer: localizer}
 	workersC := &workersAdapter{db: db}
 
 	// 7. D-04a registration order:
@@ -1157,28 +1246,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	components = append(components, workersC, boltC, httpC)
 
-	fmt.Println()
-	fmt.Println("✅ NornicDB is ready!")
-	fmt.Println()
+	cmd.Println()
+	commandPrintln(cmd, localization.NornicDBCLIReady())
+	cmd.Println()
 	// Determine the display address for user-friendly output
 	displayAddr := resolvedAddress
 	if resolvedAddress == "0.0.0.0" || resolvedAddress == "::" {
 		displayAddr = "localhost" // 0.0.0.0 is all interfaces, show localhost for convenience
 	}
-	fmt.Println("Endpoints:")
-	fmt.Printf("  • HTTP API:     http://%s:%d\n", displayAddr, httpPort)
-	fmt.Printf("  • Bolt:         bolt://%s:%d\n", displayAddr, boltPort)
-	fmt.Printf("  • Health:       http://%s:%d/health\n", displayAddr, httpPort)
-	fmt.Printf("  • Search:       POST http://%s:%d/nornicdb/search\n", displayAddr, httpPort)
-	fmt.Printf("  • Cypher:       POST http://%s:%d/db/nornicdb/tx/commit\n", displayAddr, httpPort)
+	mcpEndpoint := ""
 	if mcpEnabled {
-		fmt.Printf("  • MCP:          http://%s:%d/mcp\n", displayAddr, httpPort)
+		mcpEndpoint = fmt.Sprintf("http://%s:%d/mcp", displayAddr, httpPort)
 	}
-	fmt.Printf("  • Telemetry:    http://%s%s/metrics\n", displayAddr, cfg.Observability.Metrics.Listen)
+	pprofEndpoint := ""
 	if pprof != nil {
-		fmt.Printf("  • pprof:        http://%s/debug/pprof/\n", cfg.Observability.Pprof.Listen)
+		pprofEndpoint = fmt.Sprintf("http://%s/debug/pprof/", cfg.Observability.Pprof.Listen)
 	}
-	fmt.Println()
+	metricsEndpoint := fmt.Sprintf("http://%s%s/metrics", displayAddr, cfg.Observability.Metrics.Listen)
+	commandPrintln(cmd, localization.NornicDBCLIEndpoints(displayAddr, httpPort, boltPort, metricsEndpoint, pprofEndpoint, mcpEndpoint, pprof != nil))
+	cmd.Println()
 	if authEnabled {
 		adminUsername := cfg.Auth.InitialUsername
 		if adminUsername == "" {
@@ -1191,23 +1277,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if adminPasswordFlagChanged && adminPasswordFlag != "" {
 			adminPassword = adminPasswordFlag
 		}
-		fmt.Println("Authentication:")
-		fmt.Printf("  • Username: %s\n", adminUsername)
-		fmt.Println("  • Password: <redacted>")
+		commandPrintln(cmd, localization.NornicDBCLIAuthentication(adminUsername))
 	}
-	fmt.Println()
-	fmt.Println("Press Ctrl+C to stop")
-	fmt.Println()
+	cmd.Println()
+	commandPrintln(cmd, localization.NornicDBCLIPressToStop())
+	cmd.Println()
 
 	// 8. Run the supervisor. lifecycle.Run installs a SIGINT/SIGTERM
 	//    NotifyContext, runs every Component.Start in an errgroup, and
 	//    on cancellation drains in REVERSE order on a fresh
 	//    context.WithTimeout(context.Background(), 30s) (OBS-09).
 	if runErr := lifecycle.Run(cmd.Context(), components...); runErr != nil {
-		return fmt.Errorf("supervised run: %w", runErr)
+		return newCommandError(cmd, localization.NornicDBCLISupervisedRunFailed(runErr), runErr)
 	}
 
-	fmt.Println("✅ Server stopped gracefully")
+	commandPrintln(cmd, localization.NornicDBCLIServerStopped())
 	return nil
 }
 
@@ -1308,7 +1392,8 @@ func compactStreamIfOversized(name string, stream *os.File, maxBytes int64) {
 
 // DBQueryExecutor adapts nornicdb.DB to bolt.QueryExecutor interface.
 type DBQueryExecutor struct {
-	db *nornicdb.DB
+	db        *nornicdb.DB
+	localizer *localization.Manager
 
 	txMu     sync.Mutex
 	txID     string
@@ -1342,7 +1427,8 @@ func defaultBoltDatabaseName(db *nornicdb.DB) string {
 
 func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecutor, error) {
 	if db == nil {
-		return nil, fmt.Errorf("database is not initialized")
+		cause := errors.New("database is not initialized")
+		return nil, newCLIError(nil, localization.NornicDBCLIDatabaseNotInitialized(), cause)
 	}
 
 	storageEngine := db.GetStorage()
@@ -1376,7 +1462,9 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 }
 
 func (e *DBQueryExecutor) NewSessionExecutor() bolt.QueryExecutor {
-	return NewDBQueryExecutor(e.db)
+	executor := NewDBQueryExecutor(e.db)
+	executor.localizer = e.localizer
+	return executor
 }
 
 // BaseCypherExecutor exposes the base executor used by DBQueryExecutor so
@@ -1423,7 +1511,8 @@ func (e *DBQueryExecutor) Execute(ctx context.Context, query string, params map[
 	if txID != "" {
 		txSession, ok := e.txMgr.Get(txID)
 		if !ok || txSession == nil {
-			return nil, fmt.Errorf("transaction not found")
+			cause := errors.New("transaction not found")
+			return nil, newCLIError(e.localizer, localization.NornicDBCLITransactionNotFound(), cause)
 		}
 		result, err := e.txMgr.ExecuteInSession(ctx, txSession, query, params)
 		if err != nil {
@@ -1452,7 +1541,8 @@ func (e *DBQueryExecutor) BeginTransaction(ctx context.Context, metadata map[str
 	e.txMu.Lock()
 	defer e.txMu.Unlock()
 	if e.txID != "" {
-		return fmt.Errorf("transaction already active")
+		cause := errors.New("transaction already active")
+		return newCLIError(e.localizer, localization.NornicDBCLITransactionAlreadyActive(), cause)
 	}
 
 	session, err := e.txMgr.Open(ctx, e.txDBName)
@@ -1474,7 +1564,8 @@ func (e *DBQueryExecutor) CommitTransaction(ctx context.Context) error {
 
 	session, ok := e.txMgr.Get(txID)
 	if !ok || session == nil {
-		return fmt.Errorf("transaction not found")
+		cause := errors.New("transaction not found")
+		return newCLIError(e.localizer, localization.NornicDBCLITransactionNotFound(), cause)
 	}
 
 	_, err := e.txMgr.CommitAndDelete(ctx, session)
@@ -1500,7 +1591,7 @@ func (e *DBQueryExecutor) RollbackTransaction(ctx context.Context) error {
 func runInit(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
-	fmt.Printf("📂 Initializing NornicDB database in %s\n", dataDir)
+	commandPrintln(cmd, localization.NornicDBCLIInitProgress(dataDir))
 
 	// Create directories
 	dirs := []string{
@@ -1512,7 +1603,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating %s: %w", dir, err)
+			return newCommandError(cmd, localization.NornicDBCLICreateDirectoryFailed(dir, err), err)
 		}
 	}
 
@@ -1546,15 +1637,10 @@ bolt_port: 7687
 http_port: 7474
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("writing config: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIWriteConfigFailed(err), err)
 	}
 
-	fmt.Println("✅ Database initialized successfully")
-	fmt.Printf("   Config: %s\n", configPath)
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Start the server:  nornicdb serve --data-dir", dataDir)
-	fmt.Println("  2. Load data:         use Cypher/Bolt ingestion")
+	commandPrintln(cmd, localization.NornicDBCLIInitSummary(configPath, dataDir))
 
 	return nil
 }
@@ -1563,25 +1649,23 @@ func runShell(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
 	// Open database
-	fmt.Printf("📂 Opening database at %s...\n", dataDir)
+	commandPrintln(cmd, localization.NornicDBCLIShellOpening(dataDir))
 	config := nornicdb.DefaultConfig()
 	config.Database.DataDir = dataDir
 
 	db, err := nornicdb.Open(dataDir, config)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
 	defer db.Close()
 
 	executor := db.GetCypherExecutor()
 	if executor == nil {
-		return fmt.Errorf("cypher executor not available")
+		return newCommandError(cmd, localization.NornicDBCLIShellUnavailable(), nil)
 	}
 
-	fmt.Println("✅ Connected to NornicDB")
-	fmt.Println("Type 'exit' or Ctrl+D to quit")
-	fmt.Println("Enter Cypher queries (end with semicolon or newline):")
-	fmt.Println()
+	commandPrintln(cmd, localization.NornicDBCLIShellIntro())
+	cmd.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	ctx := context.Background()
@@ -1604,7 +1688,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 		// Execute query
 		result, err := executor.Execute(ctx, query, nil)
 		if err != nil {
-			fmt.Println("❌ Query execution failed")
+			commandPrintln(cmd, localization.NornicDBCLIShellQueryFailed())
 			continue
 		}
 
@@ -1632,18 +1716,19 @@ func runShell(cmd *cobra.Command, args []string) error {
 				// shellDisplayValue redacts values for sensitive column names.
 				cmd.Println(strings.Join(values, " | "))
 			}
-			cmd.Printf("\n(%d row(s))\n", len(result.Rows))
+			cmd.Println()
+			commandPrintln(cmd, localization.NornicDBCLIShellRows(len(result.Rows)))
 		} else {
-			cmd.Println("✅ Query executed successfully")
+			commandPrintln(cmd, localization.NornicDBCLIShellQuerySucceeded())
 		}
 		cmd.Println()
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading input: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIReadInputFailed(err), err)
 	}
 
-	fmt.Println("👋 Goodbye!")
+	commandPrintln(cmd, localization.NornicDBCLIShellGoodbye())
 	return nil
 }
 
@@ -1665,29 +1750,29 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 	threshold, _ := cmd.Flags().GetFloat64("threshold")
 
-	fmt.Printf("Opening database at %s...\n", dataDir)
+	commandPrintln(cmd, localization.NornicDBCLIDecayOpening(dataDir))
 	cfg := nornicdb.DefaultConfig()
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
 	db, err := nornicdb.Open(dataDir, cfg)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
 	defer db.Close()
 
 	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
 	if !ok {
-		return fmt.Errorf("decay suppress requires BadgerEngine storage")
+		return newCommandError(cmd, localization.NornicDBCLIDecaySuppressStorage(), nil)
 	}
 
 	nodes, err := db.GetStorage().AllNodes()
 	if err != nil {
-		return fmt.Errorf("loading nodes: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}
 
 	nowNanos := storage.DecayScoringTime()
-	fmt.Printf("Suppressing nodes with score below %.4f (%d nodes to evaluate)...\n", threshold, len(nodes))
+	commandPrintln(cmd, localization.NornicDBCLIDecaySuppressing(threshold, len(nodes)))
 
 	var newlySuppressed, alreadySuppressed, aboveThreshold int
 	for _, node := range nodes {
@@ -1716,7 +1801,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		if res.FinalScore < threshold {
 			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(string(node.ID), false)
 			if err != nil {
-				fmt.Printf("  warning: failed to suppress %s: %v\n", node.ID, err)
+				commandPrintln(cmd, localization.NornicDBCLIDecaySuppressWarning(string(node.ID), err))
 				continue
 			}
 			applySuppressionCounters(becameSuppressed, &newlySuppressed, &alreadySuppressed)
@@ -1725,11 +1810,8 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Println("\nSuppression complete:")
-	fmt.Printf("  Newly suppressed:     %d\n", newlySuppressed)
-	fmt.Printf("  Already suppressed:   %d\n", alreadySuppressed)
-	fmt.Printf("  Above threshold:      %d\n", aboveThreshold)
-	fmt.Printf("  Total evaluated:      %d\n", len(nodes))
+	cmd.Println()
+	commandPrintln(cmd, localization.NornicDBCLIDecaySuppressSummary(newlySuppressed, alreadySuppressed, aboveThreshold, len(nodes)))
 	return nil
 }
 
@@ -1744,25 +1826,25 @@ func applySuppressionCounters(becameSuppressed bool, newlySuppressed, alreadySup
 func runDecayStats(cmd *cobra.Command, args []string) error {
 	dataDir, _ := cmd.Flags().GetString("data-dir")
 
-	fmt.Printf("Opening database at %s...\n", dataDir)
+	commandPrintln(cmd, localization.NornicDBCLIDecayOpening(dataDir))
 	cfg := nornicdb.DefaultConfig()
 	cfg.Database.DataDir = dataDir
 	cfg.Memory.DecayEnabled = true
 
 	db, err := nornicdb.Open(dataDir, cfg)
 	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLIOpenDatabaseFailed(err), err)
 	}
 	defer db.Close()
 
 	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
 	if !ok {
-		return fmt.Errorf("decay stats requires BadgerEngine storage")
+		return newCommandError(cmd, localization.NornicDBCLIDecayStatsStorage(), nil)
 	}
 
 	nodes, err := db.GetStorage().AllNodes()
 	if err != nil {
-		return fmt.Errorf("loading nodes: %w", err)
+		return newCommandError(cmd, localization.NornicDBCLILoadNodesFailed(err), err)
 	}
 
 	nowNanos := storage.DecayScoringTime()
@@ -1835,24 +1917,24 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Println("\nDecay Statistics (knowledge-layer):")
-	fmt.Printf("  Total nodes:           %d\n", len(nodes))
-	fmt.Printf("  Visibility suppressed: %d\n", suppressed)
-	fmt.Printf("  Scored by decay:       %d\n", totalScored)
-	fmt.Printf("  No decay profile:      %d\n", noDecay)
+	average := ""
 	if totalScored > 0 {
-		fmt.Printf("  Average score:         %.4f\n", scoreSum/float64(totalScored))
+		average = fmt.Sprintf("%.4f", scoreSum/float64(totalScored))
 	}
+	cmd.Println()
+	commandPrintln(cmd, localization.NornicDBCLIDecayStatsSummary(len(nodes), suppressed, totalScored, noDecay, average))
 
-	fmt.Println("\nScore distribution:")
+	cmd.Println()
+	commandPrintln(cmd, localization.NornicDBCLIScoreDistribution())
 	for _, bucket := range []string{"1.00", "0.75-1.00", "0.50-0.75", "0.25-0.50", "0.10-0.25", "0.00-0.10"} {
 		fmt.Printf("  [%-9s]: %d\n", bucket, scoreBuckets[bucket])
 	}
 
 	if len(labelStats) > 0 {
-		fmt.Println("\nPer-label breakdown:")
+		cmd.Println()
+		commandPrintln(cmd, localization.NornicDBCLIPerLabelBreakdown())
 		for label, s := range labelStats {
-			fmt.Printf("  %-20s: %d nodes, %d suppression-eligible\n", label, s.count, s.suppressed)
+			commandPrintln(cmd, localization.NornicDBCLIPerLabelRow(label, s.count, s.suppressed))
 		}
 	}
 
