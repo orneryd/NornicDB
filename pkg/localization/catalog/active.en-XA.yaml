@@ -10,6 +10,9 @@
 - id: server.invalid_request_body
   description: Expanded pseudo-locale invalid request response.
   other: "[!! invalid request body !!]"
+- id: server.invalid_json_body
+  description: Expanded pseudo-locale invalid JSON body response.
+  other: "[!! invalid JSON body !!]"
 - id: server.method_post_required
   description: Expanded pseudo-locale POST method response.
   other: "[!! POST required !!]"
@@ -22,6 +25,12 @@
 - id: server.method_get_or_put_required
   description: Expanded pseudo-locale GET or PUT method response.
   other: "[!! GET or PUT required !!]"
+- id: server.method_get_put_or_delete_required
+  description: Expanded pseudo-locale GET, PUT, or DELETE method response.
+  other: "[!! GET, PUT, or DELETE required !!]"
+- id: server.method_post_or_delete_required
+  description: Expanded pseudo-locale POST or DELETE method response.
+  other: "[!! POST or DELETE required !!]"
 - id: server.method_not_allowed
   description: Expanded pseudo-locale unsupported HTTP method response.
   other: "[!! method not allowed !!]"
@@ -101,6 +110,9 @@
 - id: server.authentication_not_configured
   description: Expanded pseudo-locale unavailable authentication response.
   other: "[!! authentication not configured !!]"
+- id: server.oauth_not_configured
+  description: Expanded pseudo-locale unavailable OAuth response.
+  other: "[!! OAuth not configured !!]"
 - id: server.not_authenticated
   description: Expanded pseudo-locale unauthenticated HTTP response.
   other: "[!! not authenticated !!]"
@@ -116,6 +128,18 @@
 - id: server.not_found
   description: Expanded pseudo-locale generic lookup response.
   other: "[!! not found !!]"
+- id: server.invalid_gpu_manager_type
+  description: Expanded pseudo-locale invalid GPU manager response.
+  other: "[!! invalid GPU manager type !!]"
+- id: server.gpu_manager_not_initialized
+  description: Expanded pseudo-locale unavailable GPU manager response.
+  other: "[!! GPU manager not initialized !!]"
+- id: server.temporal_graph_reconstruction_unsupported
+  description: Expanded pseudo-locale temporal graph reconstruction capability response.
+  other: "[!! temporal graph reconstruction is not supported by the configured storage engine !!]"
+- id: server.temporal_graph_diff_unsupported
+  description: Expanded pseudo-locale temporal graph diff capability response.
+  other: "[!! temporal graph diff is not supported by the configured storage engine !!]"
 - id: search.searcher_required
   description: Expanded pseudo-locale missing searcher error.
   other: "[!! searcher is required !!]"

@@ -229,7 +229,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 	collection, err := s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, version, filterSet)
 	if err != nil {
 		if err == storage.ErrNotImplemented {
-			s.writeError(w, http.StatusBadRequest, "temporal graph reconstruction is not supported by the configured storage engine", err)
+			s.writeTemporalGraphReconstructionUnsupported(w, r, err)
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
@@ -293,7 +293,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		baseline, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, baselineVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
-				s.writeError(w, http.StatusBadRequest, "temporal graph diff is not supported by the configured storage engine", err)
+				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
 			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
@@ -304,7 +304,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
-				s.writeError(w, http.StatusBadRequest, "temporal graph diff is not supported by the configured storage engine", err)
+				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
 			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
@@ -320,7 +320,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 		target, err = s.collectSnapshotInducedSubgraph(engine, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
 			if err == storage.ErrNotImplemented {
-				s.writeError(w, http.StatusBadRequest, "temporal graph diff is not supported by the configured storage engine", err)
+				s.writeTemporalGraphDiffUnsupported(w, r, err)
 				return
 			}
 			s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)

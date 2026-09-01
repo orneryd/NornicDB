@@ -70,6 +70,23 @@ func TestLocalizedNeo4jInvalidRequestBodyPreservesCode(t *testing.T) {
 	require.Equal(t, "cuerpo de solicitud no válido", body.Errors[0].Message)
 }
 
+func TestLocalizedNeo4jInvalidJSONBodyPreservesContract(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	server := &Server{localizer: manager}
+	request := httptest.NewRequest(http.MethodPut, "/", nil)
+	request.Header.Set("Accept-Language", "es-ES")
+	response := httptest.NewRecorder()
+	server.localizationMiddleware(http.HandlerFunc(server.writeNeo4jInvalidJSONBody)).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	var body TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, "Neo.ClientError.General.BadRequest", body.Errors[0].Code)
+	require.Equal(t, "cuerpo JSON no válido", body.Errors[0].Message)
+	require.Equal(t, "invalid JSON body", localization.InvalidJSONBody().Fallback)
+}
+
 func TestLocalizedPostRequiredPreservesNeo4jCode(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
@@ -134,6 +151,31 @@ func TestLocalizedGetOrPutRequiredPreservesHTTPContract(t *testing.T) {
 	require.Equal(t, "GET or PUT required", localization.GetOrPutRequired().Fallback)
 }
 
+func TestLocalizedMultiMethodRequirementsPreserveContracts(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	t.Run("HTTP", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodPatch, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(server.writeGetPutOrDeleteRequired)).ServeHTTP(response, request)
+		require.Equal(t, http.StatusMethodNotAllowed, response.Code)
+		require.Contains(t, response.Body.String(), "se requiere GET, PUT o DELETE")
+	})
+	t.Run("Neo4j", func(t *testing.T) {
+		server := &Server{localizer: manager}
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Accept-Language", "es-ES")
+		response := httptest.NewRecorder()
+		server.localizationMiddleware(http.HandlerFunc(server.writeNeo4jPostOrDeleteRequired)).ServeHTTP(response, request)
+		var body TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		require.Equal(t, "Neo.ClientError.Request.Invalid", body.Errors[0].Code)
+		require.Equal(t, "se requiere POST o DELETE", body.Errors[0].Message)
+	})
+}
+
 func TestLocalizedDatabaseAccessDeniedPreservesNeo4jContract(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
@@ -189,6 +231,7 @@ func TestLocalizedHTTPAuthenticationResponsesPreserveStatus(t *testing.T) {
 		write   func(*Server, http.ResponseWriter, *http.Request)
 	}{
 		{name: "not configured", status: http.StatusServiceUnavailable, message: "autenticación no configurada", write: (*Server).writeAuthenticationNotConfigured},
+		{name: "OAuth not configured", status: http.StatusBadRequest, message: "OAuth no configurado", write: (*Server).writeOAuthNotConfigured},
 		{name: "not authenticated", status: http.StatusUnauthorized, message: "sin autenticar", write: (*Server).writeNotAuthenticated},
 		{name: "user not found", status: http.StatusNotFound, message: "usuario no encontrado", write: (*Server).writeUserNotFound},
 	}
@@ -308,6 +351,65 @@ func TestLocalizedNotFoundPreservesCallerCode(t *testing.T) {
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 			require.Equal(t, code, body.Errors[0].Code)
 			require.Equal(t, "no encontrado", body.Errors[0].Message)
+		})
+	}
+}
+
+func TestLocalizedGPUManagerResponsesPreserveStatus(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		status  int
+		message string
+		write   func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{name: "invalid type", status: http.StatusInternalServerError, message: "tipo de gestor de GPU no válido", write: (*Server).writeInvalidGPUManagerType},
+		{name: "not initialized", status: http.StatusServiceUnavailable, message: "gestor de GPU no inicializado", write: (*Server).writeGPUManagerNotInitialized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{localizer: manager}
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request.Header.Set("Accept-Language", "es-ES")
+			response := httptest.NewRecorder()
+			server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				test.write(server, w, r)
+			})).ServeHTTP(response, request)
+
+			require.Equal(t, test.status, response.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, test.message, body["message"])
+		})
+	}
+}
+
+func TestLocalizedTemporalGraphCapabilityResponses(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		message string
+		write   func(*Server, http.ResponseWriter, *http.Request, error)
+	}{
+		{name: "reconstruction", message: "el motor de almacenamiento configurado no admite la reconstrucción temporal del grafo", write: (*Server).writeTemporalGraphReconstructionUnsupported},
+		{name: "diff", message: "el motor de almacenamiento configurado no admite diferencias temporales del grafo", write: (*Server).writeTemporalGraphDiffUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{localizer: manager}
+			request := httptest.NewRequest(http.MethodPost, "/", nil)
+			request.Header.Set("Accept-Language", "es-ES")
+			response := httptest.NewRecorder()
+			server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				test.write(server, w, r, ErrBadRequest)
+			})).ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, test.message, body["message"])
 		})
 	}
 }

@@ -894,7 +894,7 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 		case http.MethodDelete:
 			s.handleRollbackTransaction(w, r, dbName, txID)
 		default:
-			s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST or DELETE required")
+			s.writeNeo4jPostOrDeleteRequired(w, r)
 		}
 
 	case len(remaining) == 2 && remaining[1] == "commit":

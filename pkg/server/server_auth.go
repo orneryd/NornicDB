@@ -302,7 +302,7 @@ func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.oauthManager == nil {
-		s.writeError(w, http.StatusBadRequest, "OAuth not configured", ErrBadRequest)
+		s.writeOAuthNotConfigured(w, r)
 		return
 	}
 
@@ -328,7 +328,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.oauthManager == nil {
-		s.writeError(w, http.StatusBadRequest, "OAuth not configured", ErrBadRequest)
+		s.writeOAuthNotConfigured(w, r)
 		return
 	}
 
@@ -658,7 +658,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET, PUT, or DELETE required", ErrMethodNotAllowed)
+		s.writeGetPutOrDeleteRequired(w, r)
 	}
 }
 
