@@ -11,6 +11,7 @@ import (
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -36,7 +37,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(path, "/", 2)
 	dbName := parts[0]
 	if dbName == "system" {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "system database cannot have config overrides")
+		s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.SystemDatabaseOverridesUnsupported())
 		return
 	}
 	if len(parts) != 2 {
@@ -46,7 +47,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case parts[1] == "config":
 		if s.dbConfigStore == nil {
-			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "per-database config not available (system DB unavailable)")
+			s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.DatabaseConfigUnavailable())
 			return
 		}
 		switch r.Method {
@@ -66,11 +67,11 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request, dbName string, suffix string) {
 	if s.dbManager == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", "database manager unavailable")
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.DatabaseManagerUnavailable())
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", "mvcc lifecycle controls are not supported for composite databases")
+		s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", localization.MVCCCompositeUnsupported())
 		return
 	}
 	storageEngine, err := s.dbManager.GetStorage(dbName)
@@ -123,7 +124,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		scheduler, ok := storageEngine.(storage.MVCCLifecycleScheduleEngine)
 		if !ok {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", "mvcc lifecycle schedule control is not supported for this database")
+			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", localization.MVCCScheduleUnsupported())
 			return
 		}
 		var body struct {
@@ -135,7 +136,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		interval, err := time.ParseDuration(strings.TrimSpace(body.Interval))
 		if err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "invalid interval")
+			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.InvalidInterval())
 			return
 		}
 		if err := scheduler.SetLifecycleSchedule(interval); err != nil {
@@ -152,7 +153,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		provider, ok := storageEngine.(storage.MVCCLifecycleDebtEngine)
 		if !ok {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", "mvcc lifecycle debt inspection is not supported for this database")
+			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", localization.MVCCDebtUnsupported())
 			return
 		}
 		limit := 10
@@ -160,7 +161,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
 			parsed, err := strconv.Atoi(rawLimit)
 			if err != nil || parsed < 0 {
-				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "invalid limit")
+				s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.InvalidLimit())
 				return
 			}
 			limit = parsed
@@ -212,7 +213,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	}
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "disallowed or unknown key: "+key)
+			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
 			return
 		}
 		if ok, allowed := dbconfig.IsValidEnumValue(key, value); !ok {

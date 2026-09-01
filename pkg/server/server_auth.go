@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // =============================================================================
@@ -40,7 +41,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 	// Support OAuth 2.0 password grant
 	if req.GrantType != "" && req.GrantType != "password" {
-		s.writeError(w, http.StatusBadRequest, "unsupported grant_type", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.UnsupportedGrantType(), ErrBadRequest)
 		return
 	}
 
@@ -125,7 +126,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if !isAdmin {
-		s.writeError(w, http.StatusForbidden, "admin role required to generate API tokens", ErrForbidden)
+		s.writeLocalizedError(w, r, http.StatusForbidden, localization.APITokenAdminRequired(), ErrForbidden)
 		return
 	}
 
@@ -152,7 +153,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 		if strings.HasSuffix(expiresIn, "d") {
 			days, err := strconv.Atoi(strings.TrimSuffix(expiresIn, "d"))
 			if err != nil {
-				s.writeError(w, http.StatusBadRequest, "invalid expires_in format", ErrBadRequest)
+				s.writeLocalizedError(w, r, http.StatusBadRequest, localization.InvalidExpiresIn(), ErrBadRequest)
 				return
 			}
 			expiry = time.Duration(days) * 24 * time.Hour
@@ -160,7 +161,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 			var err error
 			expiry, err = time.ParseDuration(expiresIn)
 			if err != nil {
-				s.writeError(w, http.StatusBadRequest, "invalid expires_in format (use: 1h, 24h, 7d, 365d, 0 for never)", ErrBadRequest)
+				s.writeLocalizedError(w, r, http.StatusBadRequest, localization.InvalidExpiresInWithHelp(), ErrBadRequest)
 				return
 			}
 		}
@@ -181,7 +182,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 	// Generate the API token
 	token, err := s.auth.GenerateAPIToken(user, req.Subject, expiry)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "failed to generate token", err)
+		s.writeLocalizedError(w, r, http.StatusInternalServerError, localization.APITokenGenerationFailed(), err)
 		return
 	}
 
@@ -338,17 +339,17 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	if errorParam != "" {
 		errorDesc := r.URL.Query().Get("error_description")
-		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("OAuth error: %s - %s", errorParam, errorDesc), ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.OAuthCallbackFailed(errorParam, errorDesc), ErrBadRequest)
 		return
 	}
 
 	if code == "" {
-		s.writeError(w, http.StatusBadRequest, "missing authorization code", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MissingAuthorizationCode(), ErrBadRequest)
 		return
 	}
 
 	if state == "" {
-		s.writeError(w, http.StatusBadRequest, "missing state parameter", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MissingStateParameter(), ErrBadRequest)
 		return
 	}
 
@@ -401,7 +402,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	claims := getClaims(r)
 	if claims == nil {
-		s.writeError(w, http.StatusUnauthorized, "no user context", ErrUnauthorized)
+		s.writeLocalizedError(w, r, http.StatusUnauthorized, localization.NoUserContext(), ErrUnauthorized)
 		return
 	}
 
@@ -501,7 +502,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Change password
 	if err := s.auth.ChangePassword(username, req.OldPassword, req.NewPassword); err != nil {
 		if err == auth.ErrInvalidCredentials {
-			s.writeError(w, http.StatusUnauthorized, "old password incorrect", ErrUnauthorized)
+			s.writeLocalizedError(w, r, http.StatusUnauthorized, localization.OldPasswordIncorrect(), ErrUnauthorized)
 			return
 		}
 		s.writeError(w, http.StatusBadRequest, err.Error(), ErrBadRequest)
@@ -515,7 +516,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 // handleUpdateProfile allows users to update their own profile information.
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		s.writeError(w, http.StatusMethodNotAllowed, "PUT required", ErrMethodNotAllowed)
+		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PutRequired(), ErrMethodNotAllowed)
 		return
 	}
 

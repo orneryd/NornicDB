@@ -1,0 +1,27 @@
+- id: dbconfig.system_database_overrides_unsupported
+  description: Expanded pseudo-locale system database override response.
+  other: "[!! system database cannot have config overrides !!]"
+- id: dbconfig.store_unavailable
+  description: Expanded pseudo-locale unavailable database config response.
+  other: "[!! per-database config not available (system DB unavailable) !!]"
+- id: dbconfig.manager_unavailable
+  description: Expanded pseudo-locale unavailable database manager response.
+  other: "[!! database manager unavailable !!]"
+- id: dbconfig.mvcc_composite_unsupported
+  description: Expanded pseudo-locale composite MVCC response.
+  other: "[!! mvcc lifecycle controls are not supported for composite databases !!]"
+- id: dbconfig.mvcc_schedule_unsupported
+  description: Expanded pseudo-locale unsupported MVCC schedule response.
+  other: "[!! mvcc lifecycle schedule control is not supported for this database !!]"
+- id: dbconfig.invalid_interval
+  description: Expanded pseudo-locale invalid interval response.
+  other: "[!! invalid interval !!]"
+- id: dbconfig.mvcc_debt_unsupported
+  description: Expanded pseudo-locale unsupported MVCC debt response.
+  other: "[!! mvcc lifecycle debt inspection is not supported for this database !!]"
+- id: dbconfig.invalid_limit
+  description: Expanded pseudo-locale invalid limit response.
+  other: "[!! invalid limit !!]"
+- id: dbconfig.disallowed_key
+  description: Expanded pseudo-locale disallowed configuration key response.
+  other: "[!! disallowed or unknown key: {{.Key}} !!]"

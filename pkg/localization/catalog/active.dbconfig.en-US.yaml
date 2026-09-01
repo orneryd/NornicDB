@@ -1,0 +1,27 @@
+- id: dbconfig.system_database_overrides_unsupported
+  description: Neo4j HTTP response when configuration overrides target the system database.
+  other: system database cannot have config overrides
+- id: dbconfig.store_unavailable
+  description: Neo4j HTTP response when per-database configuration is unavailable because the system database is unavailable.
+  other: per-database config not available (system DB unavailable)
+- id: dbconfig.manager_unavailable
+  description: Neo4j HTTP response when the database manager is unavailable.
+  other: database manager unavailable
+- id: dbconfig.mvcc_composite_unsupported
+  description: Neo4j HTTP response when MVCC lifecycle controls target a composite database.
+  other: mvcc lifecycle controls are not supported for composite databases
+- id: dbconfig.mvcc_schedule_unsupported
+  description: Neo4j HTTP response when lifecycle scheduling is unsupported for a database.
+  other: mvcc lifecycle schedule control is not supported for this database
+- id: dbconfig.invalid_interval
+  description: Neo4j HTTP validation response for an invalid lifecycle interval.
+  other: invalid interval
+- id: dbconfig.mvcc_debt_unsupported
+  description: Neo4j HTTP response when lifecycle debt inspection is unsupported for a database.
+  other: mvcc lifecycle debt inspection is not supported for this database
+- id: dbconfig.invalid_limit
+  description: Neo4j HTTP validation response for an invalid result limit.
+  other: invalid limit
+- id: dbconfig.disallowed_key
+  description: Neo4j HTTP validation response for a disallowed configuration key. Key is a machine identifier and must not be translated.
+  other: "disallowed or unknown key: {{.Key}}"

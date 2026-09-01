@@ -1,0 +1,33 @@
+- id: auth.unsupported_grant_type
+  description: Respuesta HTTP para un campo grant_type no compatible.
+  other: grant_type no compatible
+- id: auth.api_token_admin_required
+  description: Respuesta HTTP cuando un usuario sin rol de administrador intenta generar un token de API.
+  other: se requiere el rol de administrador para generar tokens de API
+- id: auth.invalid_expires_in
+  description: Respuesta HTTP para un campo expires_in no válido.
+  other: formato de expires_in no válido
+- id: auth.invalid_expires_in_help
+  description: Respuesta HTTP para expires_in no válido con ejemplos aceptados.
+  other: "formato de expires_in no válido (use: 1h, 24h, 7d, 365d, 0 para nunca)"
+- id: auth.api_token_generation_failed
+  description: Respuesta HTTP genérica cuando falla la generación de un token de API.
+  other: no se pudo generar el token
+- id: auth.oauth_callback_error
+  description: Respuesta de OAuth. Error y Description son valores del proveedor y no se traducen.
+  other: "Error de OAuth: {{.Error}} - {{.Description}}"
+- id: auth.authorization_code_missing
+  description: Respuesta de OAuth cuando falta el código de autorización.
+  other: falta el código de autorización
+- id: auth.state_parameter_missing
+  description: Respuesta de OAuth cuando falta el parámetro state.
+  other: falta el parámetro state
+- id: auth.user_context_missing
+  description: Respuesta HTTP cuando falta el contexto del usuario.
+  other: falta el contexto del usuario
+- id: auth.old_password_incorrect
+  description: Respuesta HTTP cuando la contraseña actual es incorrecta.
+  other: la contraseña anterior es incorrecta
+- id: server.method_put_required
+  description: Respuesta HTTP para un endpoint que solo acepta solicitudes PUT.
+  other: se requiere PUT
