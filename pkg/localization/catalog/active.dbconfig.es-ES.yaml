@@ -1,0 +1,27 @@
+- id: dbconfig.system_database_overrides_unsupported
+  description: Respuesta HTTP de Neo4j cuando se intenta configurar la base de datos del sistema.
+  other: la base de datos del sistema no puede tener anulaciones de configuración
+- id: dbconfig.store_unavailable
+  description: Respuesta HTTP de Neo4j cuando no está disponible la configuración por base de datos.
+  other: la configuración por base de datos no está disponible (la base de datos del sistema no está disponible)
+- id: dbconfig.manager_unavailable
+  description: Respuesta HTTP de Neo4j cuando el administrador de bases de datos no está disponible.
+  other: administrador de bases de datos no disponible
+- id: dbconfig.mvcc_composite_unsupported
+  description: Respuesta HTTP de Neo4j cuando los controles MVCC apuntan a una base de datos compuesta.
+  other: los controles del ciclo de vida de mvcc no son compatibles con bases de datos compuestas
+- id: dbconfig.mvcc_schedule_unsupported
+  description: Respuesta HTTP de Neo4j cuando la programación MVCC no está disponible.
+  other: el control de programación del ciclo de vida de mvcc no es compatible con esta base de datos
+- id: dbconfig.invalid_interval
+  description: Respuesta HTTP de Neo4j para un intervalo no válido.
+  other: intervalo no válido
+- id: dbconfig.mvcc_debt_unsupported
+  description: Respuesta HTTP de Neo4j cuando la inspección de deuda MVCC no está disponible.
+  other: la inspección de deuda del ciclo de vida de mvcc no es compatible con esta base de datos
+- id: dbconfig.invalid_limit
+  description: Respuesta HTTP de Neo4j para un límite no válido.
+  other: límite no válido
+- id: dbconfig.disallowed_key
+  description: Respuesta HTTP de Neo4j para una clave no permitida. Key no se traduce.
+  other: "clave no permitida o desconocida: {{.Key}}"

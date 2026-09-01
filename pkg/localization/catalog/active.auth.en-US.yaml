@@ -1,0 +1,33 @@
+- id: auth.unsupported_grant_type
+  description: HTTP validation response for an unsupported OAuth grant_type field. grant_type is a machine field identifier.
+  other: unsupported grant_type
+- id: auth.api_token_admin_required
+  description: HTTP authorization response when a non-admin attempts to generate an API token.
+  other: admin role required to generate API tokens
+- id: auth.invalid_expires_in
+  description: HTTP validation response for an invalid API token expires_in field. expires_in is a machine field identifier.
+  other: invalid expires_in format
+- id: auth.invalid_expires_in_help
+  description: HTTP validation response for an invalid expires_in field with accepted duration examples.
+  other: "invalid expires_in format (use: 1h, 24h, 7d, 365d, 0 for never)"
+- id: auth.api_token_generation_failed
+  description: Generic HTTP response when API token generation fails. Internal details are not disclosed.
+  other: failed to generate token
+- id: auth.oauth_callback_error
+  description: HTTP OAuth callback response. Error and Description are provider-controlled diagnostic values and must not be translated.
+  other: "OAuth error: {{.Error}} - {{.Description}}"
+- id: auth.authorization_code_missing
+  description: HTTP OAuth callback validation response when the authorization code is absent.
+  other: missing authorization code
+- id: auth.state_parameter_missing
+  description: HTTP OAuth callback validation response when the state parameter is absent.
+  other: missing state parameter
+- id: auth.user_context_missing
+  description: HTTP authentication response when an endpoint has no principal context.
+  other: no user context
+- id: auth.old_password_incorrect
+  description: HTTP authentication response when the supplied current password is rejected.
+  other: old password incorrect
+- id: server.method_put_required
+  description: HTTP response for an endpoint that only accepts PUT requests.
+  other: PUT required

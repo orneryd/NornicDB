@@ -1,0 +1,33 @@
+- id: auth.unsupported_grant_type
+  description: Expanded pseudo-locale unsupported grant response.
+  other: "[!! unsupported grant_type !!]"
+- id: auth.api_token_admin_required
+  description: Expanded pseudo-locale API token authorization response.
+  other: "[!! admin role required to generate API tokens !!]"
+- id: auth.invalid_expires_in
+  description: Expanded pseudo-locale invalid expires_in response.
+  other: "[!! invalid expires_in format !!]"
+- id: auth.invalid_expires_in_help
+  description: Expanded pseudo-locale invalid expires_in response with examples.
+  other: "[!! invalid expires_in format (use: 1h, 24h, 7d, 365d, 0 for never) !!]"
+- id: auth.api_token_generation_failed
+  description: Expanded pseudo-locale API token generation failure.
+  other: "[!! failed to generate token !!]"
+- id: auth.oauth_callback_error
+  description: Expanded pseudo-locale OAuth callback failure.
+  other: "[!! OAuth error: {{.Error}} - {{.Description}} !!]"
+- id: auth.authorization_code_missing
+  description: Expanded pseudo-locale missing authorization code response.
+  other: "[!! missing authorization code !!]"
+- id: auth.state_parameter_missing
+  description: Expanded pseudo-locale missing state response.
+  other: "[!! missing state parameter !!]"
+- id: auth.user_context_missing
+  description: Expanded pseudo-locale missing user context response.
+  other: "[!! no user context !!]"
+- id: auth.old_password_incorrect
+  description: Expanded pseudo-locale incorrect old password response.
+  other: "[!! old password incorrect !!]"
+- id: server.method_put_required
+  description: Expanded pseudo-locale PUT method response.
+  other: "[!! PUT required !!]"

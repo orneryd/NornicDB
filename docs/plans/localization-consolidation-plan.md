@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,836
-occurrences and 4,602 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,818
+occurrences and 4,584 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 130 HTTP occurrences, 137 to 44 gRPC occurrences,
+counts changed from 290 to 110 HTTP occurrences, 137 to 44 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -164,6 +164,12 @@ Implemented:
 - Retention availability, policy/hold/erasure validation, DELETE method, GDPR
   ownership, confirmation, and legal-hold responses now localize at the HTTP
   boundary while retaining their existing status and error classifications.
+- Token generation, OAuth callback, account/profile validation, and API-token
+  authorization responses use a split auth-domain catalog. Provider error
+  values and protocol field names remain untranslated.
+- Per-database configuration and MVCC lifecycle responses use a split
+  DB-config catalog while preserving Neo4j codes, HTTP statuses, and machine
+  configuration keys.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 
