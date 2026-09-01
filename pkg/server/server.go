@@ -1328,9 +1328,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 		}()
 	} else {
-		s.log.Info("heimdall AI assistant disabled",
-			"subsystem", "heimdall",
-			"override_env", "NORNICDB_HEIMDALL_ENABLED")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerHeimdallDisabledEvent("heimdall", "NORNICDB_HEIMDALL_ENABLED"))
 	}
 
 	// Independent search rerank (Stage-2 reranking, not tied to Heimdall).
@@ -1594,10 +1593,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	var rateLimiter *IPRateLimiter
 	if config.RateLimitEnabled {
 		rateLimiter = NewIPRateLimiter(config.RateLimitPerMinute, config.RateLimitPerHour, config.RateLimitBurst)
-		s.log.Info("rate limiting enabled",
-			"per_minute", config.RateLimitPerMinute,
-			"per_hour", config.RateLimitPerHour,
-			"scope", "per_ip")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerRateLimitEnabledEvent(config.RateLimitPerMinute, config.RateLimitPerHour, "per_ip"))
 	}
 	s.rateLimiter = rateLimiter
 

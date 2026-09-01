@@ -46,14 +46,14 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) *uiHandler {
 	SetUIBasePath(s.config.BasePath)
 	uiHandler, uiErr := newUIHandler()
 	if uiErr != nil {
-		s.log.Warn("UI initialization failed", "error", uiErr)
+		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerUIInitializationFailedEvent(uiErr))
 		return nil
 	}
 	if uiHandler == nil {
 		return nil
 	}
 
-	s.log.Info("UI browser enabled", "route", "/")
+	s.logEvent(context.Background(), slog.LevelInfo, localization.ServerUIEnabledEvent("/"))
 
 	// Serve UI assets
 	mux.Handle("/assets/", uiHandler)
@@ -309,7 +309,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 		r = s.withBifrostRBAC(r)
 		s.graphqlHandler.Playground().ServeHTTP(w, r)
 	}, auth.PermRead))
-	s.log.Info("graphql API enabled", "route", "/graphql")
+	s.logEvent(context.Background(), slog.LevelInfo, localization.ServerGraphQLEnabledEvent("/graphql"))
 }
 
 func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {

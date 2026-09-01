@@ -85,3 +85,18 @@
 - id: server.log.authentication_disabled
   description: Pseudo-locale authentication-disabled startup warning.
   other: "[!! authentication disabled !!]"
+- id: server.log.ui_initialization_failed
+  description: Pseudo-locale browser UI initialization warning.
+  other: "[!! UI initialization failed !!]"
+- id: server.log.ui_enabled
+  description: Pseudo-locale browser UI enabled log.
+  other: "[!! UI browser enabled !!]"
+- id: server.log.rate_limit_enabled
+  description: Pseudo-locale request rate limiting enabled log.
+  other: "[!! rate limiting enabled !!]"
+- id: server.log.graphql_enabled
+  description: Pseudo-locale GraphQL route registration log.
+  other: "[!! graphql API enabled !!]"
+- id: server.log.heimdall_disabled
+  description: Pseudo-locale Heimdall-disabled startup log.
+  other: "[!! heimdall AI assistant disabled !!]"
