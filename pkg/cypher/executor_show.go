@@ -202,7 +202,13 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
 	for _, p := range registered {
-		procedures = append(procedures, []interface{}{p.Name, p.Signature, p.Description, string(p.Mode), p.WorksOnSystem})
+		description := p.Description
+		if p.DescriptionMessage.ID != "" && e.localizationRenderer != nil {
+			if rendered, _, err := e.localizationRenderer.Render(ctx, p.DescriptionMessage); err == nil {
+				description = rendered
+			}
+		}
+		procedures = append(procedures, []interface{}{p.Name, p.Signature, description, string(p.Mode), p.WorksOnSystem})
 	}
 
 	return &ExecuteResult{

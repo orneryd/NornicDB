@@ -1,0 +1,351 @@
+- {
+    name: db.awaitIndex,
+    en: "Waits for one index to be online",
+    es: "Espera a que un índice esté en línea",
+  }
+- {
+    name: db.awaitIndexes,
+    en: "Waits for all indexes to be online",
+    es: "Espera a que todos los índices estén en línea",
+  }
+- {
+    name: db.clearQueryCaches,
+    en: "Clears query caches",
+    es: "Borra las cachés de consultas",
+  }
+- {
+    name: db.constraints,
+    en: "Lists all constraints in the database",
+    es: "Enumera todas las restricciones de la base de datos",
+  }
+- {
+    name: db.create.setNodeVectorProperty,
+    en: "Sets vector property on a node",
+    es: "Establece una propiedad vectorial en un nodo",
+  }
+- {
+    name: db.create.setRelationshipVectorProperty,
+    en: "Sets vector property on a relationship",
+    es: "Establece una propiedad vectorial en una relación",
+  }
+- {
+    name: db.index.fulltext.createNodeIndex,
+    en: "Creates fulltext index on nodes",
+    es: "Crea un índice de texto completo en nodos",
+  }
+- {
+    name: db.index.fulltext.createRelationshipIndex,
+    en: "Creates fulltext index on relationships",
+    es: "Crea un índice de texto completo en relaciones",
+  }
+- {
+    name: db.index.fulltext.drop,
+    en: "Drops fulltext index",
+    es: "Elimina un índice de texto completo",
+  }
+- {
+    name: db.index.fulltext.listAvailableAnalyzers,
+    en: "Lists available analyzers",
+    es: "Enumera los analizadores disponibles",
+  }
+- {
+    name: db.index.fulltext.queryNodes,
+    en: "Fulltext search on nodes",
+    es: "Busca texto completo en nodos",
+  }
+- {
+    name: db.index.fulltext.queryRelationships,
+    en: "Fulltext search on relationships",
+    es: "Busca texto completo en relaciones",
+  }
+- {
+    name: db.index.stats,
+    en: "Returns index statistics",
+    es: "Devuelve estadísticas del índice",
+  }
+- {
+    name: db.index.vector.createNodeIndex,
+    en: "Creates vector index on nodes",
+    es: "Crea un índice vectorial en nodos",
+  }
+- {
+    name: db.index.vector.createRelationshipIndex,
+    en: "Creates vector index on relationships",
+    es: "Crea un índice vectorial en relaciones",
+  }
+- {
+    name: db.index.vector.drop,
+    en: "Drops vector index",
+    es: "Elimina un índice vectorial",
+  }
+- {
+    name: db.index.vector.embed,
+    en: "Embeds text using configured embedder",
+    es: "Genera el embedding del texto con el generador configurado",
+  }
+- {
+    name: db.index.vector.queryNodes,
+    en: "Vector search on nodes",
+    es: "Realiza una búsqueda vectorial en nodos",
+  }
+- {
+    name: db.index.vector.queryRelationships,
+    en: "Vector search on relationships",
+    es: "Realiza una búsqueda vectorial en relaciones",
+  }
+- {
+    name: db.indexes,
+    en: "Lists all indexes in the database",
+    es: "Enumera todos los índices de la base de datos",
+  }
+- {
+    name: db.infer,
+    en: "LLM inference procedure",
+    es: "Procedimiento de inferencia LLM",
+  }
+- {
+    name: db.info,
+    en: "Returns database information",
+    es: "Devuelve información de la base de datos",
+  }
+- {
+    name: db.labels,
+    en: "Lists all labels in the database",
+    es: "Enumera todas las etiquetas de la base de datos",
+  }
+- {
+    name: db.ping,
+    en: "Checks database connectivity",
+    es: "Comprueba la conectividad de la base de datos",
+  }
+- {
+    name: db.propertyKeys,
+    en: "Lists all property keys in the database",
+    es: "Enumera todas las claves de propiedad de la base de datos",
+  }
+- {
+    name: db.relationshipTypes,
+    en: "Lists all relationship types in the database",
+    es: "Enumera todos los tipos de relación de la base de datos",
+  }
+- {
+    name: db.rerank,
+    en: "Standalone rerank procedure",
+    es: "Procedimiento independiente de reordenación",
+  }
+- {
+    name: db.resampleIndex,
+    en: "Resamples index statistics",
+    es: "Vuelve a muestrear las estadísticas del índice",
+  }
+- {
+    name: db.retrieve,
+    en: "Hybrid retrieval procedure",
+    es: "Procedimiento de recuperación híbrida",
+  }
+- {
+    name: db.rretrieve,
+    en: "Hybrid retrieval + rerank procedure",
+    es: "Procedimiento de recuperación híbrida y reordenación",
+  }
+- {
+    name: db.schema.nodeProperties,
+    en: "Returns node properties by label",
+    es: "Devuelve las propiedades de nodo por etiqueta",
+  }
+- {
+    name: db.schema.relProperties,
+    en: "Returns relationship properties by type",
+    es: "Devuelve las propiedades de relación por tipo",
+  }
+- {
+    name: db.schema.visualization,
+    en: "Visualizes schema",
+    es: "Visualiza el esquema",
+  }
+- {
+    name: db.stats.clear,
+    en: "Clears collected statistics",
+    es: "Borra las estadísticas recopiladas",
+  }
+- {
+    name: db.stats.collect,
+    en: "Starts statistics collection",
+    es: "Inicia la recopilación de estadísticas",
+  }
+- {
+    name: db.stats.retrieve,
+    en: "Retrieves collected statistics",
+    es: "Recupera las estadísticas recopiladas",
+  }
+- {
+    name: db.stats.retrieveAllAnTheStats,
+    en: "Retrieves all statistics",
+    es: "Recupera todas las estadísticas",
+  }
+- {
+    name: db.stats.status,
+    en: "Returns statistics collection status",
+    es: "Devuelve el estado de la recopilación de estadísticas",
+  }
+- {
+    name: db.stats.stop,
+    en: "Stops statistics collection",
+    es: "Detiene la recopilación de estadísticas",
+  }
+- {
+    name: db.temporal.asOf,
+    en: "Reads temporal graph at point in time",
+    es: "Lee el grafo temporal en un instante",
+  }
+- {
+    name: db.temporal.assertNoOverlap,
+    en: "Checks temporal overlap constraints",
+    es: "Comprueba las restricciones de solapamiento temporal",
+  }
+- {
+    name: db.txlog.byTxId,
+    en: "Returns WAL entries for a transaction id",
+    es: "Devuelve las entradas WAL de un identificador de transacción",
+  }
+- {
+    name: db.txlog.entries,
+    en: "Returns transaction log entries",
+    es: "Devuelve las entradas del registro de transacciones",
+  }
+- {
+    name: dbms.clientConfig,
+    en: "Returns client config",
+    es: "Devuelve la configuración del cliente",
+  }
+- {
+    name: dbms.components,
+    en: "Lists DBMS components",
+    es: "Enumera los componentes del DBMS",
+  }
+- { name: dbms.functions, en: "Lists functions", es: "Enumera las funciones" }
+- {
+    name: dbms.info,
+    en: "Returns DBMS information",
+    es: "Devuelve información del DBMS",
+  }
+- {
+    name: dbms.listConfig,
+    en: "Lists DBMS configuration",
+    es: "Enumera la configuración del DBMS",
+  }
+- {
+    name: dbms.listConnections,
+    en: "Lists active DBMS connections",
+    es: "Enumera las conexiones activas del DBMS",
+  }
+- {
+    name: dbms.procedures,
+    en: "Lists procedures",
+    es: "Enumera los procedimientos",
+  }
+- {
+    name: gds.fastRP.stats,
+    en: "Runs FastRP and returns statistics",
+    es: "Ejecuta FastRP y devuelve estadísticas",
+  }
+- {
+    name: gds.fastRP.stream,
+    en: "Streams FastRP embeddings",
+    es: "Transmite embeddings de FastRP",
+  }
+- {
+    name: gds.graph.drop,
+    en: "Drops projected GDS graph",
+    es: "Elimina un grafo GDS proyectado",
+  }
+- {
+    name: gds.graph.list,
+    en: "Lists projected GDS graphs",
+    es: "Enumera los grafos GDS proyectados",
+  }
+- {
+    name: gds.graph.project,
+    en: "Projects graph into GDS catalog",
+    es: "Proyecta el grafo en el catálogo GDS",
+  }
+- {
+    name: gds.linkPrediction.adamicAdar.stream,
+    en: "Runs Adamic-Adar link prediction",
+    es: "Ejecuta la predicción de enlaces Adamic-Adar",
+  }
+- {
+    name: gds.linkPrediction.commonNeighbors.stream,
+    en: "Runs common neighbors link prediction",
+    es: "Ejecuta la predicción de enlaces por vecinos comunes",
+  }
+- {
+    name: gds.linkPrediction.jaccard.stream,
+    en: "Runs Jaccard link prediction",
+    es: "Ejecuta la predicción de enlaces Jaccard",
+  }
+- {
+    name: gds.linkPrediction.predict.stream,
+    en: "Runs model-based link prediction",
+    es: "Ejecuta la predicción de enlaces basada en modelos",
+  }
+- {
+    name: gds.linkPrediction.preferentialAttachment.stream,
+    en: "Runs preferential attachment link prediction",
+    es: "Ejecuta la predicción de enlaces por asociación preferente",
+  }
+- {
+    name: gds.linkPrediction.resourceAllocation.stream,
+    en: "Runs resource-allocation link prediction",
+    es: "Ejecuta la predicción de enlaces por asignación de recursos",
+  }
+- {
+    name: gds.version,
+    en: "Returns GDS version",
+    es: "Devuelve la versión de GDS",
+  }
+- {
+    name: nornicdb.decay.info,
+    en: "Returns knowledge-layer scoring configuration",
+    es: "Devuelve la configuración de puntuación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.deindexStatus,
+    en: "Returns knowledge-layer deindex queue status",
+    es: "Devuelve el estado de la cola de desindexación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.info,
+    en: "Returns knowledge-layer profile and policy catalog counts",
+    es: "Devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.policies,
+    en: "Returns knowledge-layer promotion profiles and policies",
+    es: "Devuelve los perfiles y las políticas de promoción de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.profiles,
+    en: "Returns knowledge-layer decay bundles and bindings",
+    es: "Devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.resolve,
+    en: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type",
+    es: "Resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
+  }
+- {
+    name: nornicdb.stats,
+    en: "Returns NornicDB stats",
+    es: "Devuelve estadísticas de NornicDB",
+  }
+- {
+    name: nornicdb.version,
+    en: "Returns NornicDB version",
+    es: "Devuelve la versión de NornicDB",
+  }
+- {
+    name: tx.setMetaData,
+    en: "Sets transaction metadata",
+    es: "Establece los metadatos de la transacción",
+  }

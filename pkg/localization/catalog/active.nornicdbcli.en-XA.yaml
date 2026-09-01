@@ -1,0 +1,313 @@
+- id: nornicdbcli.root.short
+  other: "[!! NórnícDB - Hígh-Pérfórmáncé Gráph Dátábásé fór LLM Ágénts !!]"
+- id: nornicdbcli.root.long
+  other: |-
+    [!! NórnícDB ís á púrpósé-búílt gráph dátábásé wríttén ín Gó,
+    désígnéd fór ÁÍ ágént mémóry wíth Néó4j Bólt/Cýphér cómpátíbílítý.
+
+    Féátúrés:
+      • Néó4j Bólt prótócól cómpátíbílítý
+      • Cýphér qúérý lángúágé súppórt
+      • Knówlédgé-láýér scóríng wíth déclárátívé décáý prófílés
+      • Áútómátíc rélátíónshíp ínféréncé
+      • Búílt-ín véctór séárch wíth RRF hýbríd ránkíng
+      • Sérvér-sídé émbéddíng générátíón !!]
+- id: nornicdbcli.version.short
+  other: "[!! Prínt vérsíón ínfórmátíón !!]"
+- id: nornicdbcli.serve.short
+  other: "[!! Stárt NórnícDB sérvér !!]"
+- id: nornicdbcli.serve.long
+  other: "[!! Stárt NórnícDB sérvér wíth Bólt prótócól ánd HTTP ÁPÍ éndpóínts !!]"
+- id: nornicdbcli.init.short
+  other: "[!! Ínítíálízé á néw NórnícDB dátábásé !!]"
+- id: nornicdbcli.shell.short
+  other: "[!! Íntéráctívé Cýphér shéll !!]"
+- id: nornicdbcli.decay.short
+  other: "[!! Mémórý décáý ópérátíóns !!]"
+- id: nornicdbcli.decay.suppress.short
+  other: "[!! Súppréss nódés bélów vísíbílítý thréshóld !!]"
+- id: nornicdbcli.decay.stats.short
+  other: "[!! Shów décáý státístícs !!]"
+- id: nornicdbcli.flag.config
+  other: "[!! Páth tó YAML cónfíg f ílé (óvérrídés áútó-díscóvérý) !!]"
+- id: nornicdbcli.flag.bolt_port
+  other: "[!! Bólt prótócól pórt (Néó4j cómpátíblé) !!]"
+- id: nornicdbcli.flag.http_port
+  other: "[!! HTTP ÁPÍ pórt !!]"
+- id: nornicdbcli.flag.address
+  other: "[!! Bínd áddréss (127.0.0.1 fór lócálhóst, 0.0.0.0 fór áll íntérfácés) !!]"
+- id: nornicdbcli.flag.data_dir
+  other: "[!! Dátá díréctórý !!]"
+- id: nornicdbcli.flag.upgrade_storage
+  other: "[!! Áúthórízé óné-wáý stórágé úpgrádés thróúgh áll súppórtéd mígrátíóns; báck úp fírst. !!]"
+- id: nornicdbcli.flag.embedding_provider
+  other: "[!! Émbéddíng próvídér: local, ollama, openai !!]"
+- id: nornicdbcli.flag.embedding_url
+  other: "[!! Émbéddíng ÁPÍ URL (ollama/openai) !!]"
+- id: nornicdbcli.flag.embedding_key
+  other: "[!! Émbéddíngs ÁPÍ Kéý (openai) !!]"
+- id: nornicdbcli.flag.embedding_model
+  other: "[!! Émbéddíng módél námé !!]"
+- id: nornicdbcli.flag.embedding_dimensions
+  other: "[!! Émbéddíng díménsíóns !!]"
+- id: nornicdbcli.flag.embedding_cache
+  other: "[!! Émbéddíng cáché sízé (0=dísábléd, défáúlt 10000) !!]"
+- id: nornicdbcli.flag.embedding_gpu_layers
+  other: "[!! GPU láýérs fór local: -1=áútó, 0=CPU ónlý !!]"
+- id: nornicdbcli.flag.embedding_enabled
+  other: "[!! Énáblé émbéddíng générátíón; défáúlt óff únléss cónfíg/énv énáblés ít. !!]"
+- id: nornicdbcli.flag.search_bm25_enabled
+  other: "[!! Énáblé BM25 fúllt éxt séárch; pér-DB /admin/databases/{name}/config óvérrídé wíns. !!]"
+- id: nornicdbcli.flag.search_bm25_warming
+  other: "[!! BM25 búíld tríggér: startup ór lazy. Défáúlt: startup. !!]"
+- id: nornicdbcli.flag.search_vector_enabled
+  other: "[!! Énáblé véctór (ANN) séárch; false kééps nódé émbéddíngs óút óf RAM. Pér-DB óvérrídé wíns. !!]"
+- id: nornicdbcli.flag.search_vector_warming
+  other: "[!! Véctór búíld tríggér: startup ór lazy. Défáúlt: startup. !!]"
+- id: nornicdbcli.flag.gpu_backend
+  other: "[!! GPU báckénd: vulkan, cuda, metal, opencl (émptý=áútó-détéct) !!]"
+- id: nornicdbcli.flag.no_auth
+  other: "[!! Dísáblé áúthéntícátíón !!]"
+- id: nornicdbcli.flag.admin_password
+  other: "[!! Ádmín pásswórd (défáúlt: password) !!]"
+- id: nornicdbcli.flag.mcp_enabled
+  other: "[!! Énáblé MCP sérvér fór LLM tóóls !!]"
+- id: nornicdbcli.flag.parallel
+  other: "[!! Énáblé párállél qúérý éxécútíón !!]"
+- id: nornicdbcli.flag.parallel_workers
+  other: "[!! Máx párállél wórkérs (0 = áútó, úsés áll CPUs) !!]"
+- id: nornicdbcli.flag.parallel_batch_size
+  other: "[!! Mín bátch sízé béfóré párállélízíng !!]"
+- id: nornicdbcli.flag.memory_limit
+  other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500, 0 únlímítéd) !!]"
+- id: nornicdbcli.flag.gc_percent
+  other: "[!! GC ággréssívénéss (100= défáúlt, lówér=móré ággréssívé) !!]"
+- id: nornicdbcli.flag.pool_enabled
+  other: "[!! Énáblé óbjéct póólíng tó rédúcé állócátíóns !!]"
+- id: nornicdbcli.flag.low_memory
+  other: "[!! Úsé mínímál RAM fór résóúrcé-cónstráínéd énvírónménts !!]"
+- id: nornicdbcli.flag.query_cache_size
+  other: "[!! Qúérý plán cáché sízé (0 tó dísáblé) !!]"
+- id: nornicdbcli.flag.query_cache_ttl
+  other: "[!! Qúérý plán cáché TTL !!]"
+- id: nornicdbcli.flag.log_queries
+  other: "[!! Lóg áll Bólt qúéríés tó stdout fór débúggíng !!]"
+- id: nornicdbcli.flag.stdio_log_max_kb
+  other: "[!! Máx stdout/stderr lóg sízé ín KB béfóré áútómátíc trúncátíón (0 dísáblés) !!]"
+- id: nornicdbcli.flag.stdio_log_compact_seconds
+  other: "[!! Sécónds bétwéén áútómátíc stdout/stderr lóg sízé chécks !!]"
+- id: nornicdbcli.flag.headless
+  other: "[!! Dísáblé wéb ÚÍ ánd brówsér éndpóínts !!]"
+- id: nornicdbcli.flag.base_path
+  other: "[!! Básé URL páth fór révérsé próxý déplóýmént (é.g., /nornicdb) !!]"
+- id: nornicdbcli.flag.cluster_mode
+  other: "[!! Clústér módé: standalone|ha_standby|raft|multi_region (émptý dísáblés) !!]"
+- id: nornicdbcli.flag.cluster_node_id
+  other: "[!! Clústér nódé ÍD (émptý áútó-générátés) !!]"
+- id: nornicdbcli.flag.cluster_bind_address
+  other: "[!! Clústér bínd áddréss fór réplícátíón (é.g., 127.0.0.1:7000) !!]"
+- id: nornicdbcli.flag.cluster_advertise_address
+  other: "[!! Clústér ádvértísé áddréss (défáúlts tó bínd áddréss) !!]"
+- id: nornicdbcli.flag.cluster_data_dir
+  other: "[!! Clústér státé díréctórý (défáúlts tó <data-dir>/replication) !!]"
+- id: nornicdbcli.flag.cluster_ha_role
+  other: "[!! HÁ stándbý rólé: primary|standby !!]"
+- id: nornicdbcli.flag.cluster_ha_peer_address
+  other: "[!! HÁ stándbý péér clústér áddréss (host:port) !!]"
+- id: nornicdbcli.flag.cluster_raft_bootstrap
+  other: "[!! Ráft bóótstráp (true fór fírst nódé ín á néw clústér) !!]"
+- id: nornicdbcli.flag.cluster_raft_peers
+  other: "[!! Ráft péérs (fórmát: node2:host2:7000,node3:host3:7000) !!]"
+- id: nornicdbcli.flag.uri
+  other: "[!! NórnícDB ÚRÍ fór fútúré Bólt clíént súppórt !!]"
+- id: nornicdbcli.flag.decay_threshold
+  other: "[!! Vísíbílítý súppréssíón thréshóld (défáúlt: 0.05) !!]"
+- id: nornicdbcli.validation.invalid_memory_limit
+  other: '[!! Ínválíd --memory-limit válúé {{printf "%q" .Value}}: {{.Cause}} !!]'
+- id: nornicdbcli.validation.invalid_stdio_interval
+  other: "[!! Ínválíd stdio-log-compact-seconds {{.Value}}: múst bé >= 0 !!]"
+- id: nornicdbcli.config.not_found
+  other: "[!! 📄 Nó cónfíg f ílé fóúnd (úsíng défáúlts + énvírónmént váríáblés) !!]"
+- id: nornicdbcli.config.load_warning
+  other: "[!! ⚠️  Wárníng: fáíléd tó lóád cónfíg fróm {{.Path}}: {{.Cause}} !!]"
+- id: nornicdbcli.config.loaded
+  other: "[!! 📄 Lóádéd cónfíg fróm: {{.Path}} !!]"
+- id: nornicdbcli.serve.starting
+  other: "[!! 🚀 Stártíng NórnícDB {{.Version}} !!]"
+- id: nornicdbcli.serve.data_directory
+  other: "[!! Dátá díréctórý: {{.Path}} !!]"
+- id: nornicdbcli.serve.bolt_endpoint
+  other: "[!! Bólt prótócól: bolt://localhost:{{.Port}} !!]"
+- id: nornicdbcli.serve.http_endpoint
+  other: "[!! HTTP ÁPÍ: http://localhost:{{.Port}} !!]"
+- id: nornicdbcli.serve.embeddings_enabled
+  other: "[!! Émbéddíngs: ✅ énábléd ({{.Provider}}, {{.Model}}, {{.Dimensions}} díms) !!]"
+- id: nornicdbcli.serve.embeddings_disabled
+  other: "[!! Émbéddíngs: ❌ dísábléd; sét NORNICDB_EMBEDDING_ENABLED=true ór úsé --embedding-enabled !!]"
+- id: nornicdbcli.serve.embedding_local
+  other: "[!! Émbéddíng: local GGUF ({{.Path}}/{{.Model}}.gguf, {{.Dimensions}} díms, GPU: {{.GPU}}) !!]"
+- id: nornicdbcli.serve.embedding_url
+  other: "[!! Émbéddíng URL: {{.URL}} !!]"
+- id: nornicdbcli.serve.embedding_model
+  other: "[!! Émbéddíng módél: {{.Model}} ({{.Dimensions}} díms) !!]"
+- id: nornicdbcli.serve.parallel_enabled
+  other: "[!! Párállél éxéc: ✅ énábléd ({{.Workers}} wórkérs, bátch {{.Batch}}) !!]"
+- id: nornicdbcli.serve.parallel_disabled
+  other: "[!! Párállél éxéc: ❌ dísábléd !!]"
+- id: nornicdbcli.serve.memory_limit
+  other: "[!! Mémórý límít: {{.Value}} !!]"
+- id: nornicdbcli.serve.memory_unlimited
+  other: "[!! Mémórý límít: únlímítéd !!]"
+- id: nornicdbcli.serve.gc_percent
+  other: "[!! GC pércént: {{.Value}}% (móré ággréssívé) !!]"
+- id: nornicdbcli.serve.object_pooling
+  other: "[!! Óbjéct póólíng: ✅ énábléd !!]"
+- id: nornicdbcli.serve.query_cache
+  other: "[!! Qúérý cáché: ✅ {{.Size}} éntríés, TTL {{.TTL}} !!]"
+- id: nornicdbcli.progress.opening_database
+  other: "[!! 📂 Ópéníng dátábásé... !!]"
+- id: nornicdbcli.progress.initializing_gpu
+  other: "[!! 🎮 Ínítíálízíng GPU áccélérátíón... !!]"
+- id: nornicdbcli.serve.gpu_unavailable
+  other: "[!! ⚠️ GPU nót áváíláblé: {{.Cause}} (úsíng CPU) !!]"
+- id: nornicdbcli.serve.gpu_enabled
+  other: "[!! ✅ GPU énábléd: {{.Name}} ({{.Backend}}, {{.Memory}}MB) !!]"
+- id: nornicdbcli.serve.gpu_detected_no_cuda
+  other: "[!! ⚠️ GPU détéctéd: {{.Name}} ({{.Memory}}MB); CUDA nót cómpíléd, úsíng CPU !!]"
+- id: nornicdbcli.serve.build_cuda
+  other: "[!! 💡 Búíld wíth Dockerfile.cuda fór GPU áccélérátíón !!]"
+- id: nornicdbcli.serve.gpu_disabled
+  other: "[!! ⚠️ GPU dísábléd (CPU fállbáck áctívé) !!]"
+- id: nornicdbcli.progress.setting_up_auth
+  other: "[!! 🔐 Séttíng úp áúthéntícátíón... !!]"
+- id: nornicdbcli.serve.configured_jwt
+  other: "[!! Úsíng cónfígúréd JWT sécrét ({{.Bytes}} býtés) !!]"
+- id: nornicdbcli.serve.no_jwt
+  other: "[!! ⚠️ Nó JWT sécrét cónfígúréd; tókéns ínválídáté ón réstárt! !!]"
+- id: nornicdbcli.serve.admin_setup_failed
+  other: "[!! ⚠️ Ádmín úsér sétúp fáíléd ór úsér álréádý éxísts !!]"
+- id: nornicdbcli.serve.admin_created
+  other: "[!! ✅ Ádmín úsér créátéd ({{.Username}}) !!]"
+- id: nornicdbcli.serve.ready
+  other: "[!! ✅ NórnícDB ís réádý! !!]"
+- id: nornicdbcli.serve.endpoints
+  other: |-
+    [!! Éndpóínts:
+      • HTTP ÁPÍ: http://{{.Address}}:{{.HTTPPort}}
+      • Bólt: bolt://{{.Address}}:{{.BoltPort}}
+      • Héálth: http://{{.Address}}:{{.HTTPPort}}/health
+      • Séárch: POST http://{{.Address}}:{{.HTTPPort}}/nornicdb/search
+      • Cýphér: POST http://{{.Address}}:{{.HTTPPort}}/db/nornicdb/tx/commit{{if .MCPEnabled}}
+      • MCP: {{.MCP}}{{end}}
+      • Télémétrý: {{.Metrics}}{{if .PprofEnabled}}
+      • pprof: {{.Pprof}}{{end}} !!]
+- id: nornicdbcli.serve.authentication
+  other: |-
+    [!! Áúthéntícátíón:
+      • Úsérnámé: {{.Username}}
+      • Pásswórd: <redacted> !!]
+- id: nornicdbcli.serve.press_to_stop
+  other: "[!! Préss Ctrl+C tó stóp !!]"
+- id: nornicdbcli.serve.stopped
+  other: "[!! ✅ Sérvér stóppéd grácéfúllý !!]"
+- id: nornicdbcli.init.progress
+  other: "[!! 📂 Ínítíálízíng NórnícDB dátábásé ín {{.Path}} !!]"
+- id: nornicdbcli.init.summary
+  other: |-
+    [!! ✅ Dátábásé ínítíálízéd súccéssfúllý
+       Cónfíg: {{.Config}}
+
+    Néxt stéps:
+      1. Stárt thé sérvér: nornicdb serve --data-dir {{.Data}}
+      2. Lóád dátá: úsé Cýphér/Bólt íngéstíón !!]
+- id: nornicdbcli.shell.opening
+  other: "[!! 📂 Ópéníng dátábásé át {{.Path}}... !!]"
+- id: nornicdbcli.shell.intro
+  other: |-
+    [!! ✅ Cónnéctéd tó NórnícDB
+    Týpé 'exit' ór Ctrl+D tó qúít
+    Éntér Cýphér qúéríés (énd wíth sémícólón ór néwlíné): !!]
+- id: nornicdbcli.shell.query_failed
+  other: "[!! ❌ Qúérý éxécútíón fáíléd !!]"
+- id: nornicdbcli.shell.rows
+  one: "[!! ({{.Count}} rów) !!]"
+  other: "[!! ({{.Count}} róws) !!]"
+- id: nornicdbcli.shell.query_succeeded
+  other: "[!! ✅ Qúérý éxécútéd súccéssfúllý !!]"
+- id: nornicdbcli.shell.goodbye
+  other: "[!! 👋 Góódbýé! !!]"
+- id: nornicdbcli.decay.opening
+  other: "[!! Ópéníng dátábásé át {{.Path}}... !!]"
+- id: nornicdbcli.decay.suppressing
+  other: "[!! Súppréssíng nódés bélów {{.Threshold}} ({{.Count}} tó éválúáté)... !!]"
+- id: nornicdbcli.decay.suppress_warning
+  other: "[!! wárníng: fáíléd tó súppréss {{.Node}}: {{.Cause}} !!]"
+- id: nornicdbcli.decay.suppress_summary
+  other: |-
+    [!! Súppréssíón cómplété:
+      Néwlý súpprésséd: {{.Newly}}
+      Álréádý súpprésséd: {{.Already}}
+      Ábóvé thréshóld: {{.Above}}
+      Tótál éválúátéd: {{.Total}} !!]
+- id: nornicdbcli.decay.stats_summary
+  other: |-
+    [!! Décáý Státístícs (knówlédgé-láýér):
+      Tótál nódés: {{.Total}}
+      Vísíbílítý súpprésséd: {{.Suppressed}}
+      Scóréd bý décáý: {{.Scored}}
+      Nó décáý prófílé: {{.NoDecay}}{{if .HasAverage}}
+      Ávérágé scóré: {{.Average}}{{end}} !!]
+- id: nornicdbcli.decay.score_distribution
+  other: "[!! Scóré dístríbútíón: !!]"
+- id: nornicdbcli.decay.per_label_breakdown
+  other: "[!! Pér-lábél bréákdówn: !!]"
+- id: nornicdbcli.decay.per_label_row
+  other: '[!! {{printf "%-20s" .Label}}: {{.Count}} nódés, {{.Eligible}} súppréssíón-élígíblé !!]'
+- id: nornicdbcli.validation.shell_unavailable
+  other: "[!! Cýphér éxécútór nót áváíláblé !!]"
+- id: nornicdbcli.validation.decay_suppress_storage
+  other: "[!! decay suppress réqúírés BadgerEngine stórágé !!]"
+- id: nornicdbcli.validation.decay_stats_storage
+  other: "[!! decay stats réqúírés BadgerEngine stórágé !!]"
+- id: nornicdbcli.config.load_failed
+  other: "[!! Fáíléd tó lóád cónfíg fróm {{.Path}}: {{.Cause}} !!]"
+- id: nornicdbcli.serve.create_data_directory_failed
+  other: "[!! Créátíng dátá díréctórý: {{.Cause}} !!]"
+- id: nornicdbcli.operation.open_database_failed
+  other: "[!! Ópéníng dátábásé: {{.Cause}} !!]"
+- id: nornicdbcli.serve.create_authenticator_failed
+  other: "[!! Créátíng áúthéntícátór: {{.Cause}} !!]"
+- id: nornicdbcli.serve.create_server_failed
+  other: "[!! Créátíng sérvér: {{.Cause}} !!]"
+- id: nornicdbcli.serve.bolt_tls_client_auth_failed
+  other: "[!! Bólt TLS clíént áúth módé: {{.Cause}} !!]"
+- id: nornicdbcli.serve.bolt_tls_load_failed
+  other: "[!! Bólt TLS lóád: {{.Cause}} !!]"
+- id: nornicdbcli.serve.observability_init_failed
+  other: "[!! Óbsérvábílítý ínít: {{.Cause}} !!]"
+- id: nornicdbcli.serve.start_server_failed
+  other: "[!! Stártíng sérvér: {{.Cause}} !!]"
+- id: nornicdbcli.serve.telemetry_listener_failed
+  other: "[!! Télémétrý lísténér: {{.Cause}} !!]"
+- id: nornicdbcli.serve.pprof_listener_failed
+  other: "[!! pprof lísténér: {{.Cause}} !!]"
+- id: nornicdbcli.serve.supervised_run_failed
+  other: "[!! Súpérvíséd rún: {{.Cause}} !!]"
+- id: nornicdbcli.serve.localization_init_failed
+  other: "[!! Ínítíálízé lócálízátíón: {{.Cause}} !!]"
+- id: nornicdbcli.adapter.bolt_failed
+  other: "[!! Bólt: {{.Cause}} !!]"
+- id: nornicdbcli.transaction.database_not_initialized
+  other: "[!! Dátábásé ís nót ínítíálízéd !!]"
+- id: nornicdbcli.transaction.not_found
+  other: "[!! Tránsáctíón nót fóúnd !!]"
+- id: nornicdbcli.transaction.already_active
+  other: "[!! Tránsáctíón álréádý áctívé !!]"
+- id: nornicdbcli.init.create_directory_failed
+  other: "[!! Créátíng {{.Path}}: {{.Cause}} !!]"
+- id: nornicdbcli.init.write_config_failed
+  other: "[!! Wrítíng cónfíg: {{.Cause}} !!]"
+- id: nornicdbcli.shell.read_input_failed
+  other: "[!! Réádíng ínpút: {{.Cause}} !!]"
+- id: nornicdbcli.decay.load_nodes_failed
+  other: "[!! Lóádíng nódés: {{.Cause}} !!]"

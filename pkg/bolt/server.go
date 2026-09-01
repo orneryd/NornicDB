@@ -2211,6 +2211,9 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 	}
 
 	executor := cypher.NewStorageExecutor(storageEngine)
+	if s.server.config != nil {
+		executor.SetLocalizationRenderer(s.server.config.Localizer)
+	}
 	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
 		if emb := baseAdapter.executor.GetEmbedder(); emb != nil {
 			executor.SetEmbedder(emb)

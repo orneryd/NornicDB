@@ -1009,6 +1009,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			return nil, fmt.Errorf("initialize localization: %w", err)
 		}
 	}
+	if executor := db.GetCypherExecutor(); executor != nil {
+		executor.SetLocalizationRenderer(config.Localizer)
+	}
 
 	// Note: GPU status is logged in main.go during GPU manager initialization
 	// This avoids duplicate logs and provides more detailed information

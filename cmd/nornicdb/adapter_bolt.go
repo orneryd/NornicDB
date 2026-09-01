@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // boltAdapter wraps *bolt.Server so it satisfies lifecycle.Component.
@@ -26,7 +26,8 @@ import (
 // net.ErrClosed if the listener has already been closed — same filter
 // applies.
 type boltAdapter struct {
-	srv *bolt.Server
+	srv       *bolt.Server
+	localizer *localization.Manager
 }
 
 // Compile-time interface assertion.
@@ -51,12 +52,12 @@ func (a *boltAdapter) Start(ctx context.Context) error {
 		_ = a.srv.Close()
 		err := <-errCh
 		if err != nil && !errors.Is(err, net.ErrClosed) {
-			return fmt.Errorf("bolt: %w", err)
+			return newCLIError(a.localizer, localization.NornicDBCLIBoltAdapterFailed(err), err)
 		}
 		return nil
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, net.ErrClosed) {
-			return fmt.Errorf("bolt: %w", err)
+			return newCLIError(a.localizer, localization.NornicDBCLIBoltAdapterFailed(err), err)
 		}
 		return nil
 	}

@@ -18,6 +18,9 @@ var (
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
 	upper := strings.ToUpper(cypher)
+	if strings.HasPrefix(strings.TrimSpace(upper), "SHOW PROCEDURES") {
+		return false
+	}
 
 	// Non-deterministic / time-sensitive builtins.
 	// Keep this intentionally small and conservative; add more as we support them.

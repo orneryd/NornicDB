@@ -328,6 +328,9 @@ type StorageExecutor struct {
 	// inferenceManager optionally provides LLM inference for db.infer.
 	inferenceManager InferenceManager
 
+	// localizationRenderer renders descriptor-backed metadata using request context.
+	localizationRenderer ProcedureMetadataRenderer
+
 	// onNodeMutated is called when a node is created or mutated (CREATE, MERGE, SET, REMOVE).
 	// This allows the embed queue to be notified so embeddings are (re)generated.
 	onNodeMutated               NodeMutatedCallback
@@ -485,6 +488,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		embedder:                       e.embedder,
 		searchService:                  e.searchService,
 		inferenceManager:               e.inferenceManager,
+		localizationRenderer:           e.localizationRenderer,
 		onNodeMutated:                  e.onNodeMutated,
 		inlineEmbeddingTextOptions:     e.inlineEmbeddingTextOptions,
 		inlineEmbeddingChunkSize:       e.inlineEmbeddingChunkSize,
@@ -642,6 +646,16 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	ensureBuiltInProceduresRegistered()
 	_ = exec.loadPersistedProcedures()
 	return exec
+}
+
+// SetLocalizationRenderer sets the immutable renderer used for procedure metadata.
+func (e *StorageExecutor) SetLocalizationRenderer(renderer ProcedureMetadataRenderer) {
+	e.localizationRenderer = renderer
+}
+
+// GetLocalizationRenderer returns the renderer inherited by scoped executors.
+func (e *StorageExecutor) GetLocalizationRenderer() ProcedureMetadataRenderer {
+	return e.localizationRenderer
 }
 
 // SetAllowLocalAPOCFileAccess enables or disables local APOC file reads/writes.
