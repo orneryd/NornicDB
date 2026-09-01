@@ -47,7 +47,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 	stats := s.db.EmbedQueueStats()
 	if stats == nil {
-		s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.DatabaseError.General.UnknownError", "Auto-embed not enabled")
+		s.writeNeo4jAutoEmbedNotEnabled(w, r)
 		return
 	}
 
@@ -405,7 +405,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine)
 	serviceLookupDur = time.Since(serviceLookupStart)
 	if err != nil {
-		s.writeError(w, http.StatusServiceUnavailable, "search service unavailable", ErrInternalError)
+		s.writeSearchServiceUnavailable(w, r)
 		return
 	}
 	// Lazy-warm: synchronously trigger and wait for the build BEFORE any
@@ -443,7 +443,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	queryChunks, err := s.db.ChunkQueryForDB(ctx, dbName, req.Query)
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "failed to chunk query", ErrBadRequest)
+		s.writeQueryChunkingFailed(w, r)
 		return
 	}
 	if len(queryChunks) > maxQueryChunks {
@@ -751,7 +751,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(targetNode.ChunkEmbeddings) == 0 || len(targetNode.ChunkEmbeddings[0]) == 0 {
-		s.writeError(w, http.StatusBadRequest, "Node has no embedding", ErrBadRequest)
+		s.writeNodeHasNoEmbedding(w, r)
 		return
 	}
 

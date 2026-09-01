@@ -217,3 +217,19 @@ func (s *Server) writeGDPROwnDataDeleteOnly(w http.ResponseWriter, r *http.Reque
 func (s *Server) writeGDPRLegalHoldPreventsDeletion(w http.ResponseWriter, r *http.Request) {
 	s.writeLocalizedError(w, r, http.StatusConflict, localization.GDPRLegalHoldPreventsDeletion(), ErrForbidden)
 }
+
+func (s *Server) writeNeo4jAutoEmbedNotEnabled(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.DatabaseError.General.UnknownError", localization.AutoEmbedNotEnabled())
+}
+
+func (s *Server) writeSearchServiceUnavailable(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusServiceUnavailable, localization.SearchServiceUnavailable(), ErrInternalError)
+}
+
+func (s *Server) writeQueryChunkingFailed(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.QueryChunkingFailed(), ErrBadRequest)
+}
+
+func (s *Server) writeNodeHasNoEmbedding(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.NodeHasNoEmbedding(), ErrBadRequest)
+}

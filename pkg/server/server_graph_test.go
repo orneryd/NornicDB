@@ -777,15 +777,15 @@ func TestWriteGraphResolveError_MapsSentinels(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	recNotFound := httptest.NewRecorder()
-	server.writeGraphResolveError(recNotFound, multidb.ErrDatabaseNotFound)
+	server.writeGraphResolveError(recNotFound, httptest.NewRequest(http.MethodGet, "/", nil), multidb.ErrDatabaseNotFound)
 	require.Equal(t, 404, recNotFound.Code)
 
 	recOffline := httptest.NewRecorder()
-	server.writeGraphResolveError(recOffline, multidb.ErrDatabaseOffline)
+	server.writeGraphResolveError(recOffline, httptest.NewRequest(http.MethodGet, "/", nil), multidb.ErrDatabaseOffline)
 	require.Equal(t, 503, recOffline.Code)
 
 	recBadRequest := httptest.NewRecorder()
-	server.writeGraphResolveError(recBadRequest, ErrBadRequest)
+	server.writeGraphResolveError(recBadRequest, httptest.NewRequest(http.MethodGet, "/", nil), ErrBadRequest)
 	require.Equal(t, 400, recBadRequest.Code)
 }
 
@@ -1222,7 +1222,7 @@ func TestWriteGraphResolveError_NilNoWrite(t *testing.T) {
 	server, _ := setupTestServer(t)
 	rec := httptest.NewRecorder()
 
-	server.writeGraphResolveError(rec, nil)
+	server.writeGraphResolveError(rec, httptest.NewRequest(http.MethodGet, "/", nil), nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "", rec.Body.String())
 }

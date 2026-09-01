@@ -1,0 +1,12 @@
+- id: search.auto_embed_not_enabled
+  description: Expanded pseudo-locale unavailable auto-embedding response.
+  other: "[!! Auto-embed not enabled !!]"
+- id: search.service_unavailable
+  description: Expanded pseudo-locale unavailable search service response.
+  other: "[!! search service unavailable !!]"
+- id: search.query_chunking_failed
+  description: Expanded pseudo-locale query chunking response.
+  other: "[!! failed to chunk query !!]"
+- id: search.node_has_no_embedding
+  description: Expanded pseudo-locale missing node embedding response.
+  other: "[!! Node has no embedding !!]"

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -117,7 +118,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if strings.TrimSpace(req.AsOf) != "" {
-		s.writeError(w, http.StatusBadRequest, "historical neighborhood traversal is exposed via /nornicdb/graph/{database}/temporal or /nornicdb/graph/{database}/diff", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.HistoricalNeighborhoodRoute(), ErrBadRequest)
 		return
 	}
 
@@ -127,7 +128,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
-		s.writeGraphResolveError(w, err)
+		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
@@ -160,18 +161,18 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.SourceNodeID) == "" || strings.TrimSpace(req.TargetNodeID) == "" {
-		s.writeError(w, http.StatusBadRequest, "source_node_id and target_node_id are required", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.PathNodeIDsRequired(), ErrBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.AsOf) != "" {
-		s.writeError(w, http.StatusBadRequest, "historical path traversal is not yet exposed on /nornicdb/graph/{database}/path; use /nornicdb/graph/{database}/temporal for snapshot reconstruction", ErrBadRequest)
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.HistoricalPathRoute(), ErrBadRequest)
 		return
 	}
 
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
-		s.writeGraphResolveError(w, err)
+		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
@@ -222,7 +223,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
-		s.writeGraphResolveError(w, err)
+		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
@@ -277,7 +278,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
 	dbName, engine, err := s.resolveGraphStorage(r)
 	if err != nil {
-		s.writeGraphResolveError(w, err)
+		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
@@ -361,12 +362,12 @@ func (s *Server) resolveGraphStorage(r *http.Request) (string, storage.Engine, e
 	return dbName, engine, nil
 }
 
-func (s *Server) writeGraphResolveError(w http.ResponseWriter, err error) {
+func (s *Server) writeGraphResolveError(w http.ResponseWriter, r *http.Request, err error) {
 	if err == nil {
 		return
 	}
 	if err == errGraphForbidden {
-		s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", "Access to the requested database is not allowed.")
+		s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.GraphDatabaseAccessDenied())
 		return
 	}
 	message := err.Error()

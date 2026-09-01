@@ -1,0 +1,12 @@
+- id: graph.historical_neighborhood_route
+  description: HTTP validation response directing historical neighborhood traversal to supported routes. Route templates are machine text.
+  other: historical neighborhood traversal is exposed via /nornicdb/graph/{database}/temporal or /nornicdb/graph/{database}/diff
+- id: graph.path_node_ids_required
+  description: HTTP validation response when source_node_id and target_node_id are missing. Field names are machine identifiers.
+  other: source_node_id and target_node_id are required
+- id: graph.historical_path_route
+  description: HTTP validation response directing historical path reconstruction to its supported route. Route templates are machine text.
+  other: historical path traversal is not yet exposed on /nornicdb/graph/{database}/path; use /nornicdb/graph/{database}/temporal for snapshot reconstruction
+- id: graph.database_access_denied
+  description: Neo4j HTTP authorization response that intentionally does not disclose the database name.
+  other: Access to the requested database is not allowed.
