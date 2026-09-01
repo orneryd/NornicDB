@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"strings"
 	"sync"
@@ -82,7 +81,7 @@ type Provider struct {
 // writerRef MAY be nil (no Sync attempt during Shutdown).
 func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger *slog.Logger, writerRef io.Writer) (*Provider, error) {
 	// Step 1: Resource — also resolves and logs service.instance.id (OBS-10).
-	res := buildResource(info)
+	res := buildResourceWithLogger(info, logger)
 	instanceID, instanceIDSrc := resolveInstanceID(info.NodeID)
 
 	// Step 2: Registry + OTel→Prom bridge (OBS-04 — skipped when disabled).
@@ -100,7 +99,7 @@ func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger 
 	}
 
 	// Step 3: TracerProvider — SDK or noop (OBS-11).
-	tp := buildTracerProvider(ctx, cfg.Tracing, res)
+	tp := buildTracerProviderWithLogger(ctx, cfg.Tracing, res, logger)
 
 	return &Provider{
 		tracerProvider: tp,
@@ -134,6 +133,10 @@ func New(ctx context.Context, cfg ObservabilityConfig, info ServiceInfo, logger 
 //   - TRC-02: BSP is wrapped by bspSelfMetrics so nornicdb_otel_bsp_queue_depth
 //   - _dropped_spans_total reflect real pipeline state.
 func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.Resource) trace.TracerProvider {
+	return buildTracerProviderWithLogger(ctx, cfg, res, nil)
+}
+
+func buildTracerProviderWithLogger(ctx context.Context, cfg TracingConfig, res *resource.Resource, logger *slog.Logger) trace.TracerProvider {
 	if !cfg.Enabled {
 		return noop.NewTracerProvider()
 	}
@@ -143,7 +146,7 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 	// refuse to build a real provider and fall back to noop + WARN. This is
 	// a cheap check before we spend 5s dialing.
 	if ep, _ := cfg.OTLPEndpoint(); strings.HasPrefix(strings.ToLower(ep), "http://") && !cfg.Insecure {
-		log.Printf("WARN observability: OTLP endpoint %q is plaintext but NORNICDB_OTLP_INSECURE is not set; installing noop tracer provider (TRC-09)", ep)
+		logSlogBootstrapEvent(logger, bootstrapOTLPPlaintextRejected, ep)
 		return noop.NewTracerProvider()
 	}
 
@@ -156,7 +159,7 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 
 	exporter, err := buildSpanExporter(exporterCtx, cfg)
 	if err != nil {
-		log.Printf("WARN observability: span exporter init failed: %v; installing noop tracer provider — process continues", err)
+		logSlogBootstrapEvent(logger, bootstrapSpanExporterInitFailed, err)
 		return noop.NewTracerProvider()
 	}
 
@@ -184,10 +187,10 @@ func buildTracerProvider(ctx context.Context, cfg TracingConfig, res *resource.R
 	// TRC-05/06/07: root sampler.
 	mode, modeErr := parseParentMode(cfg.ParentMode)
 	if modeErr != nil {
-		log.Printf("WARN observability: %v; falling back to default sampler mode (TRC-05)", modeErr)
+		logSlogBootstrapEvent(logger, bootstrapSamplerModeInvalid, modeErr)
 	}
 	if mode == ParentModeStrict {
-		log.Printf("WARN observability: parent_strict sampler honors upstream decisions unconditionally; trace volume is unbounded (TRC-07)")
+		logSlogBootstrapEvent(logger, bootstrapParentStrictUnbounded)
 	}
 	sampler := buildSampler(mode, cfg.SampleRatio, cfg.ParentMaxQPS)
 

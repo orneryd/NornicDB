@@ -2,7 +2,7 @@ package replication
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,7 +107,7 @@ func (r *MultiRegionReplicator) Start(ctx context.Context) error {
 	}
 
 	r.started.Store(true)
-	log.Printf("[MultiRegion %s] Started in region %s", r.config.NodeID, r.config.MultiRegion.RegionID)
+	r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Started in region %s", r.config.NodeID, r.config.MultiRegion.RegionID)
 	return nil
 }
 
@@ -143,7 +143,7 @@ func (r *MultiRegionReplicator) connectToRemoteRegions(ctx context.Context) {
 	defer r.mu.Unlock()
 
 	if r.transport == nil {
-		log.Printf("[MultiRegion %s] No transport configured for cross-region replication", r.config.NodeID)
+		r.config.logPrintf(ctx, slog.LevelWarn, "[MultiRegion %s] No transport configured for cross-region replication", r.config.NodeID)
 		return
 	}
 
@@ -156,14 +156,14 @@ func (r *MultiRegionReplicator) connectToRemoteRegions(ctx context.Context) {
 		for _, addr := range remote.Addrs {
 			conn, err := r.transport.Connect(ctx, addr)
 			if err != nil {
-				log.Printf("[MultiRegion %s] Failed to connect to region %s at %s: %v",
+				r.config.logPrintf(ctx, slog.LevelWarn, "[MultiRegion %s] Failed to connect to region %s at %s: %v",
 					r.config.NodeID, remote.RegionID, addr, err)
 				continue
 			}
 
 			r.remoteConns[remote.RegionID] = conn
 			r.remoteStreaming[remote.RegionID] = true
-			log.Printf("[MultiRegion %s] Connected to remote region %s at %s",
+			r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Connected to remote region %s at %s",
 				r.config.NodeID, remote.RegionID, addr)
 			break
 		}
@@ -220,12 +220,12 @@ func (r *MultiRegionReplicator) streamWALToRemoteRegions(ctx context.Context) {
 
 			resp, err := c.SendWALBatch(sendCtx, entries)
 			if err != nil {
-				log.Printf("[MultiRegion %s] Failed to stream WAL to region %s: %v",
+				r.config.logPrintf(ctx, slog.LevelError, "[MultiRegion %s] Failed to stream WAL to region %s: %v",
 					r.config.NodeID, rid, err)
 				return
 			}
 
-			log.Printf("[MultiRegion %s] Streamed %d WAL entries to region %s (acked: %d)",
+			r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Streamed %d WAL entries to region %s (acked: %d)",
 				r.config.NodeID, len(entries), rid, resp.AckedPosition)
 		}(regionID, conn)
 	}
@@ -337,14 +337,14 @@ func (r *MultiRegionReplicator) Shutdown() error {
 	r.mu.Lock()
 	for regionID, conn := range r.remoteConns {
 		if err := conn.Close(); err != nil {
-			log.Printf("[MultiRegion %s] Error closing connection to region %s: %v",
+			r.config.logPrintf(context.Background(), slog.LevelWarn, "[MultiRegion %s] Error closing connection to region %s: %v",
 				r.config.NodeID, regionID, err)
 		}
 	}
 	r.remoteConns = make(map[string]PeerConnection)
 	r.mu.Unlock()
 
-	log.Printf("[MultiRegion %s] Shutting down", r.config.NodeID)
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[MultiRegion %s] Shutting down", r.config.NodeID)
 	return r.localRaft.Shutdown()
 }
 
@@ -384,7 +384,7 @@ func (r *MultiRegionReplicator) RegionFailover(ctx context.Context) error {
 	// Notify other regions of failover
 	r.notifyRegionsOfFailover(ctx)
 
-	log.Printf("[MultiRegion %s] Region failover complete - now primary region", r.config.NodeID)
+	r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Region failover complete - now primary region", r.config.NodeID)
 	return nil
 }
 
@@ -414,10 +414,10 @@ func (r *MultiRegionReplicator) notifyRegionsOfFailover(ctx context.Context) {
 				Timestamp: time.Now().UnixNano(),
 			})
 			if err != nil {
-				log.Printf("[MultiRegion %s] Failed to notify region %s of failover: %v",
+				r.config.logPrintf(ctx, slog.LevelWarn, "[MultiRegion %s] Failed to notify region %s of failover: %v",
 					r.config.NodeID, rid, err)
 			} else {
-				log.Printf("[MultiRegion %s] Notified region %s of failover", r.config.NodeID, rid)
+				r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Notified region %s of failover", r.config.NodeID, rid)
 			}
 		}(regionID, conn)
 	}

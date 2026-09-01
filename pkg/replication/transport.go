@@ -41,7 +41,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -122,6 +122,8 @@ type ClusterTransport struct {
 	tlsClient    *tls.Config
 	authSecret   []byte
 	authMaxSkew  time.Duration
+	logger       *slog.Logger
+	localizer    *localization.Manager
 
 	// Message handlers
 	handlers map[ClusterMessageType]MessageHandler
@@ -142,6 +144,8 @@ type ClusterTransportConfig struct {
 	TLSClient    *tls.Config
 	AuthSecret   []byte
 	AuthMaxSkew  time.Duration
+	Logger       *slog.Logger
+	Localizer    *localization.Manager
 }
 
 // DefaultClusterTransportConfig returns production defaults.
@@ -189,8 +193,14 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		tlsClient:    config.TLSClient,
 		authSecret:   config.AuthSecret,
 		authMaxSkew:  config.AuthMaxSkew,
+		logger:       config.Logger,
+		localizer:    config.Localizer,
 		handlers:     make(map[ClusterMessageType]MessageHandler),
 	}
+}
+
+func (t *ClusterTransport) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
+	logReplicationEvent(ctx, t.logger, t.localizer, level, localization.ReplicationOperatorEvent(format, args...))
 }
 
 // RegisterHandler registers a handler for a message type.
@@ -245,7 +255,7 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 	t.connections[addr] = conn
 	t.mu.Unlock()
 
-	log.Printf("[Cluster] Connected to peer %s", addr)
+	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Connected to peer %s", addr)
 	return conn, nil
 }
 
@@ -293,7 +303,7 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 	t.bindAddr = listener.Addr().String()
 	t.mu.Unlock()
 
-	log.Printf("[Cluster] Listening on %s", listener.Addr().String())
+	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Listening on %s", listener.Addr().String())
 
 	for {
 		select {
@@ -317,7 +327,7 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 			if t.closed.Load() {
 				return nil
 			}
-			log.Printf("[Cluster] Accept error: %v", err)
+			t.logPrintf(ctx, slog.LevelError, "[Cluster] Accept error: %v", err)
 			continue
 		}
 
@@ -330,7 +340,7 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 	defer t.wg.Done()
 
 	remoteAddr := netConn.RemoteAddr().String()
-	log.Printf("[Cluster] Accepted connection from %s", remoteAddr)
+	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Accepted connection from %s", remoteAddr)
 
 	// Treat inbound connections the same as outbound ones so they can both:
 	// 1) serve incoming requests via registered handlers
@@ -368,7 +378,7 @@ func (t *ClusterTransport) Close() error {
 	t.mu.Unlock()
 
 	t.wg.Wait()
-	log.Printf("[Cluster] Transport closed")
+	t.logPrintf(context.Background(), slog.LevelInfo, "[Cluster] Transport closed")
 	return nil
 }
 
@@ -476,14 +486,14 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 			if !errors.Is(err, io.EOF) {
 				var netErr net.Error
 				if !errors.As(err, &netErr) || !netErr.Timeout() {
-					log.Printf("[Cluster] Read error: %v", err)
+					c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Read error: %v", err)
 				}
 			}
 			return
 		}
 
 		if err := c.verifyMessage(msg); err != nil {
-			log.Printf("[Cluster] Auth failed from %s: %v", c.addr, err)
+			c.transport.logPrintf(ctx, slog.LevelWarn, "[Cluster] Auth failed from %s: %v", c.addr, err)
 			return
 		}
 
@@ -518,13 +528,13 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		handler, ok := c.transport.handlers[msg.Type]
 		c.transport.mu.RUnlock()
 		if !ok {
-			log.Printf("[Cluster] No handler for message type %d", msg.Type)
+			c.transport.logPrintf(ctx, slog.LevelWarn, "[Cluster] No handler for message type %d", msg.Type)
 			continue
 		}
 
 		resp, err := handler(ctx, msg.NodeID, msg)
 		if err != nil {
-			log.Printf("[Cluster] Handler error: %v", err)
+			c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Handler error: %v", err)
 			continue
 		}
 		if resp == nil {
@@ -545,7 +555,7 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		c.mu.Unlock()
 
 		if werr != nil {
-			log.Printf("[Cluster] Write error to %s: %v", c.addr, werr)
+			c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Write error to %s: %v", c.addr, werr)
 			return
 		}
 	}

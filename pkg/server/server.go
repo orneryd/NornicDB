@@ -740,11 +740,13 @@ func (s *Server) ensureSearchBuildStartedForKnownDatabases() {
 		}
 		storageEngine, err := s.dbManager.GetStorage(info.Name)
 		if err != nil {
-			s.log.Warn("startup search reconcile: storage unavailable", "subsystem", "search", "db", info.Name, "error", err)
+			s.logEvent(context.Background(), slog.LevelWarn,
+				localization.ServerSearchReconcileStorageUnavailableEvent(info.Name, err))
 			continue
 		}
 		if _, err := s.db.EnsureSearchIndexesBuildStarted(info.Name, storageEngine); err != nil {
-			s.log.Warn("startup search reconcile failed", "subsystem", "search", "db", info.Name, "error", err)
+			s.logEvent(context.Background(), slog.LevelWarn,
+				localization.ServerSearchReconcileFailedEvent(info.Name, err))
 		}
 	}
 }
@@ -1227,10 +1229,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return nil
 	})
 	if featuresConfig.HeimdallEnabled {
-		// Derive a child logger once at goroutine entry so every record
-		// carries subsystem=heimdall (Phase 2 D-10a).
-		heimdallLog := s.log.With("subsystem", "heimdall")
-		heimdallLog.Info("heimdall AI assistant initializing asynchronously")
+		s.logEvent(context.Background(), slog.LevelInfo, localization.ServerHeimdallInitializingEvent())
 		go func() {
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
@@ -1240,14 +1239,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if provider == "" {
 				provider = "local"
 			}
-			heimdallLog.Info("heimdall provider resolved",
-				"provider", provider,
-				"override_env", "NORNICDB_HEIMDALL_PROVIDER")
+			s.logEvent(context.Background(), slog.LevelInfo,
+				localization.ServerHeimdallProviderResolvedEvent(provider, "NORNICDB_HEIMDALL_PROVIDER"))
 			manager, err := heimdall.NewManager(heimdallCfg)
 			if err != nil {
-				heimdallLog.Warn("heimdall initialization failed",
-					"error", err,
-					"remediation", "check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR")
+				s.logEvent(context.Background(), slog.LevelWarn,
+					localization.ServerHeimdallInitializationFailedEvent(err,
+						"check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR"))
 				return
 			}
 			if baseExec := db.GetCypherExecutor(); baseExec != nil {
@@ -1290,41 +1288,36 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			// Load plugins from configured directories.
 			if config.PluginsDir != "" {
-				heimdallLog.Debug("loading APOC plugins", "dir", config.PluginsDir)
+				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(config.PluginsDir))
 				if err := nornicdb.LoadPluginsFromDir(config.PluginsDir, &subsystemCtx); err != nil {
-					heimdallLog.Warn("failed to load APOC plugins", "dir", config.PluginsDir, "error", err)
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(config.PluginsDir, err))
 				}
 			}
 			if config.HeimdallPluginsDir != "" && config.HeimdallPluginsDir != config.PluginsDir {
-				heimdallLog.Debug("loading Heimdall plugins", "dir", config.HeimdallPluginsDir)
+				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(config.HeimdallPluginsDir))
 				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
-					heimdallLog.Warn("failed to load Heimdall plugins", "dir", config.HeimdallPluginsDir, "error", err)
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(config.HeimdallPluginsDir, err))
 				}
 			} else if config.HeimdallPluginsDir == "" {
-				heimdallLog.Debug("heimdall plugins dir is empty")
+				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryEmptyEvent())
 			} else {
-				heimdallLog.Debug("heimdall plugins dir same as plugins dir; skipping",
-					"heimdall_dir", config.HeimdallPluginsDir,
-					"plugins_dir", config.PluginsDir)
+				s.logEvent(context.Background(), slog.LevelDebug,
+					localization.ServerHeimdallPluginsDirectoryDuplicateEvent(config.HeimdallPluginsDir, config.PluginsDir))
 			}
 
 			s.setHeimdallHandler(handler)
 
 			plugins := heimdall.ListHeimdallPlugins()
 			actions := heimdall.ListHeimdallActions()
-			heimdallLog.Info("heimdall AI assistant ready",
-				"model", heimdallCfg.Model,
-				"plugins_loaded", len(plugins),
-				"actions_available", len(actions),
-				"bifrost_chat_route", "/api/bifrost/chat/completions",
-				"status_route", "/api/bifrost/status",
-			)
+			s.logEvent(context.Background(), slog.LevelInfo,
+				localization.ServerHeimdallReadyEvent(heimdallCfg.Model, len(plugins), len(actions),
+					"/api/bifrost/chat/completions", "/api/bifrost/status"))
 			if len(plugins) == 0 {
-				heimdallLog.Warn("no heimdall plugins loaded — watcher logs will be absent",
-					"remediation", "ensure a .so exists in HeimdallPluginsDir")
+				s.logEvent(context.Background(), slog.LevelWarn,
+					localization.ServerHeimdallPluginsMissingEvent("ensure a .so exists in HeimdallPluginsDir"))
 			}
 			for _, actionName := range actions {
-				heimdallLog.Debug("heimdall action registered", "action", actionName)
+				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallActionRegisteredEvent(actionName))
 			}
 		}()
 	} else {
@@ -1356,11 +1349,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 			modelPath := filepath.Join(modelsDir, modelName)
 
-			rerankLog := s.log.With("subsystem", "search_rerank")
-			rerankLog.Info("loading search reranker model",
-				"provider", "local",
-				"model_path", modelPath,
-				"note", "server starts immediately; reranking available after model loads")
+			s.logEvent(context.Background(), slog.LevelInfo,
+				localization.ServerSearchRerankerLoadingEvent(
+					"search_rerank", "local", modelPath,
+					"server starts immediately; reranking available after model loads"))
 
 			go func() {
 				opts := localllm.DefaultRerankerOptions(modelPath)
@@ -1382,8 +1374,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 				rerankerModel, err := localllm.LoadRerankerModel(opts)
 				if err != nil {
-					rerankLog.Warn("search reranker model unavailable; stage-2 reranking disabled, RRF order only",
-						"error", err)
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerModelUnavailableEvent(err))
 					return
 				}
 
@@ -1392,7 +1383,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				cancel()
 				if healthErr != nil {
 					rerankerModel.Close()
-					rerankLog.Warn("search reranker failed health check", "error", healthErr)
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerHealthCheckFailedEvent(healthErr))
 					return
 				}
 
@@ -1401,8 +1392,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				r := search.NewLocalReranker(rerankerModel, cfg)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
-				rerankLog.Info("search reranker ready (stage-2 reranking enabled)",
-					"model", modelName)
+				s.logEvent(context.Background(), slog.LevelInfo,
+					localization.ServerSearchRerankerReadyLocalEvent("search_rerank", modelName))
 			}()
 		} else {
 			// External provider: use HTTP rerank API (Cohere, HuggingFace TEI, Ollama adapter, etc.).
@@ -1413,10 +1404,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 			}
 			if apiURL == "" {
-				s.log.Warn("search rerank enabled but API URL not set; stage-2 reranking disabled",
-					"subsystem", "search_rerank",
-					"provider", provider,
-					"required_env", "NORNICDB_SEARCH_RERANK_API_URL")
+				s.logEvent(context.Background(), slog.LevelWarn,
+					localization.ServerSearchRerankAPIURLMissingEvent(
+						"search_rerank", provider, "NORNICDB_SEARCH_RERANK_API_URL"))
 			} else {
 				ceConfig := &search.CrossEncoderConfig{
 					Enabled:  true,
@@ -1433,16 +1423,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				ce := search.NewCrossEncoder(ceConfig)
 				db.SetSearchReranker(ce)
 				setGlobalRerankerResolver(func(string) search.Reranker { return ce })
-				s.log.Info("search reranker ready (stage-2 reranking enabled)",
-					"subsystem", "search_rerank",
-					"provider", provider,
-					"url", apiURL)
+				s.logEvent(context.Background(), slog.LevelInfo,
+					localization.ServerSearchRerankerReadyExternalEvent("search_rerank", provider, apiURL))
 			}
 		}
 	} else {
-		s.log.Info("search rerank disabled",
-			"subsystem", "search_rerank",
-			"override_env", "NORNICDB_SEARCH_RERANK_ENABLED")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerSearchRerankDisabledEvent("search_rerank", "NORNICDB_SEARCH_RERANK_ENABLED"))
 	}
 
 	// Configure embeddings if enabled
@@ -1478,11 +1465,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 		// Initialize embeddings asynchronously to prevent startup blocking
 		// Local GGUF models can take 5-30 seconds to load (graph compilation)
-		embedInitLog := s.log.With("subsystem", "embed_init")
-		embedInitLog.Info("loading embedding model",
-			"model", embedConfig.Model,
-			"provider", embedConfig.Provider,
-			"note", "server starts immediately; embeddings available after model loads")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerEmbeddingModelLoadingEvent(embedConfig.Model, embedConfig.Provider,
+				"server starts immediately; embeddings available after model loads"))
 
 		go func() {
 			// Retry forever: exponential backoff to 5m, then fixed 5m interval.
@@ -1496,7 +1481,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			for {
 				if s.closed.Load() {
-					embedInitLog.Info("embedding init retry loop stopped: server shutting down")
+					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
 					return
 				}
 
@@ -1518,22 +1503,18 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					// Wrap with caching if enabled (default: 10K cache).
 					if config.EmbeddingCacheSize > 0 {
 						embedder = embed.NewCachedEmbedder(embedder, config.EmbeddingCacheSize)
-						embedInitLog.Info("embedding cache enabled",
-							"entries", config.EmbeddingCacheSize,
-							"memory_mb", embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions))
+						s.logEvent(context.Background(), slog.LevelInfo,
+							localization.ServerEmbeddingCacheEnabledEvent(config.EmbeddingCacheSize,
+								embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions)))
 					}
 
 					if config.EmbeddingProvider == "local" {
-						embedInitLog.Info("embeddings ready",
-							"provider", "local_gguf",
-							"model", config.EmbeddingModel,
-							"dims", config.EmbeddingDimensions)
+						s.logEvent(context.Background(), slog.LevelInfo,
+							localization.ServerEmbeddingsReadyLocalEvent(config.EmbeddingModel, config.EmbeddingDimensions))
 					} else {
-						embedInitLog.Info("embeddings ready",
-							"provider", config.EmbeddingProvider,
-							"url", config.EmbeddingAPIURL,
-							"model", config.EmbeddingModel,
-							"dims", config.EmbeddingDimensions)
+						s.logEvent(context.Background(), slog.LevelInfo,
+							localization.ServerEmbeddingsReadyRemoteEvent(config.EmbeddingProvider,
+								config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions))
 					}
 
 					if mcpServer != nil {
@@ -1548,24 +1529,18 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 
 				if config.EmbeddingProvider == "local" {
-					embedInitLog.Warn("embedding init attempt failed",
-						"attempt", attempt,
-						"provider", "local",
-						"model", config.EmbeddingModel,
-						"error", err)
+					s.logEvent(context.Background(), slog.LevelWarn,
+						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, config.EmbeddingModel, err))
 				} else {
-					embedInitLog.Warn("embedding init attempt failed",
-						"attempt", attempt,
-						"provider", config.EmbeddingProvider,
-						"model", config.EmbeddingModel,
-						"url", config.EmbeddingAPIURL,
-						"error", err)
+					s.logEvent(context.Background(), slog.LevelWarn,
+						localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
+							config.EmbeddingProvider, config.EmbeddingModel, config.EmbeddingAPIURL, err))
 				}
 
 				if backoff < maxBackoff {
-					embedInitLog.Info("retrying embedding init (exponential backoff)", "wait", backoff)
+					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryingEvent(backoff))
 					if !waitForDurationOrServerClose(s, backoff) {
-						embedInitLog.Info("embedding init retry interrupted by server shutdown")
+						s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
 						return
 					}
 					backoff *= 2
@@ -1573,10 +1548,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 						backoff = maxBackoff
 					}
 				} else {
-					embedInitLog.Info("embedding init retry interval capped; continuing periodic retries",
-						"interval", maxBackoff)
+					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryIntervalCappedEvent(maxBackoff))
 					if !waitForDurationOrServerClose(s, maxBackoff) {
-						embedInitLog.Info("embedding init retry interrupted by server shutdown")
+						s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
 						return
 					}
 				}
@@ -1664,32 +1638,32 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		ctx := context.Background()
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
-			s.log.Warn("failed to load RBAC roles", "subsystem", "rbac", "error", loadErr)
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRolesLoadFailedEvent(loadErr))
 		} else {
 			s.roleStore = roleStore
 		}
 		allowlistStore := auth.NewAllowlistStore(systemStorage)
 		if loadErr := allowlistStore.Load(ctx); loadErr != nil {
-			s.log.Warn("failed to load RBAC allowlist", "subsystem", "rbac", "error", loadErr)
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACAllowlistLoadFailedEvent(loadErr))
 		} else {
 			dbList := make([]string, 0, len(dbManager.ListDatabases()))
 			for _, info := range dbManager.ListDatabases() {
 				dbList = append(dbList, info.Name)
 			}
 			if seedErr := allowlistStore.SeedIfEmpty(ctx, dbList); seedErr != nil {
-				s.log.Warn("failed to seed RBAC allowlist", "subsystem", "rbac")
+				s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACAllowlistSeedFailedEvent())
 			}
 			s.allowlistStore = allowlistStore
 		}
 		privilegesStore := auth.NewPrivilegesStore(systemStorage)
 		if loadErr := privilegesStore.Load(ctx); loadErr != nil {
-			s.log.Warn("failed to load RBAC privileges", "subsystem", "rbac", "error", loadErr)
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(loadErr))
 		} else {
 			s.privilegesStore = privilegesStore
 		}
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
-			s.log.Warn("failed to load RBAC role entitlements", "subsystem", "rbac", "error", loadErr)
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
 		} else {
 			s.roleEntitlementsStore = roleEntitlementsStore
 		}
@@ -1700,7 +1674,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		// Falls back to plain Load when no yaml overrides are present.
 		yamlOverrides := s.perDBYAMLOverrides
 		if loadErr := dbConfigStore.LoadWithYAMLDefaults(ctx, yamlOverrides); loadErr != nil {
-			s.log.Warn("failed to load per-DB config store", "subsystem", "dbconfig")
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerDatabaseConfigStoreLoadFailedEvent())
 		} else {
 			s.dbConfigStore = dbConfigStore
 			globalConfig := nornicConfig.LoadFromEnv()
@@ -1749,21 +1723,20 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if config.SlowQueryEnabled && config.Logging.SlowQueryLogFile != "" {
 		file, err := os.OpenFile(config.Logging.SlowQueryLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			s.log.Warn("failed to open slow query log file",
-				"subsystem", "slow_query",
-				"file", config.Logging.SlowQueryLogFile,
-				"error", err)
+			s.logEvent(context.Background(), slog.LevelWarn,
+				localization.ServerSlowQueryLogOpenFailedEvent(
+					"slow_query", config.Logging.SlowQueryLogFile, err))
 		} else {
 			s.slowQueryLogger = log.New(file, "", log.LstdFlags)
-			s.log.Info("slow query logging configured",
-				"subsystem", "slow_query",
-				"file", config.Logging.SlowQueryLogFile,
-				"threshold", config.Logging.SlowQueryThreshold)
+			s.logEvent(context.Background(), slog.LevelInfo,
+				localization.ServerSlowQueryLoggingConfiguredEvent(
+					"slow_query", config.Logging.SlowQueryLogFile,
+					config.Logging.SlowQueryThreshold))
 		}
 	} else if config.SlowQueryEnabled {
-		s.log.Info("slow query logging enabled",
-			"subsystem", "slow_query",
-			"threshold", config.Logging.SlowQueryThreshold)
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerSlowQueryLoggingEnabledEvent(
+				"slow_query", config.Logging.SlowQueryThreshold))
 	}
 
 	return s, nil
@@ -1906,14 +1879,16 @@ func (s *Server) Start() error {
 		if err := http2.ConfigureServer(s.httpServer, http2Config); err != nil {
 			return fmt.Errorf("failed to configure HTTP/2 for TLS: %w", err)
 		}
-		s.log.Info("HTTP/2 enabled", "mode", "https")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerHTTP2EnabledEvent("https", ""))
 	} else {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
 		// Wrap the INSTRUMENTED mux (not bare mux) so observation runs
 		// inside the h2c transport adapter (Plan 04-02 D-03).
 		s.httpServer.Handler = h2c.NewHandler(instrumented, http2Config)
-		s.log.Info("HTTP/2 enabled", "mode", "h2c_cleartext", "compat", "http/1.1")
+		s.logEvent(context.Background(), slog.LevelInfo,
+			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}
 
 	// Start serving
@@ -1926,7 +1901,7 @@ func (s *Server) Start() error {
 		}
 		if err != nil && err != http.ErrServerClosed {
 			// Log error but don't crash
-			s.log.Error("http server error", "error", err)
+			s.logEvent(context.Background(), slog.LevelError, localization.ServerHTTPServeFailedEvent(err))
 		}
 	}()
 

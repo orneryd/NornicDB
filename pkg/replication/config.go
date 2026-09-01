@@ -93,7 +93,9 @@
 package replication
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -167,6 +169,11 @@ const (
 // Config holds all replication configuration.
 // Designed to integrate with NornicDB's existing config patterns.
 type Config struct {
+	// Logger receives structured replication lifecycle events.
+	Logger *slog.Logger
+	// Localizer renders replication lifecycle prose. Nil preserves source English.
+	Localizer *localization.Manager
+
 	// Mode selects the replication mode (default: standalone)
 	// Environment: NORNICDB_CLUSTER_MODE
 	Mode ReplicationMode
@@ -209,6 +216,34 @@ type Config struct {
 
 	// TLS holds security configuration for encrypted connections.
 	TLS TLSConfig
+}
+
+func (c *Config) logEvent(ctx context.Context, level slog.Level, event localization.LogEvent) {
+	if c == nil {
+		logReplicationEvent(ctx, nil, nil, level, event)
+		return
+	}
+	logReplicationEvent(ctx, c.Logger, c.Localizer, level, event)
+}
+
+func (c *Config) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
+	c.logEvent(ctx, level, localization.ReplicationOperatorEvent(format, args...))
+}
+
+func logReplicationEvent(ctx context.Context, logger *slog.Logger, localizer *localization.Manager, level slog.Level, event localization.LogEvent) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if localizer != nil {
+		localizer.Log(ctx, logger, level, event)
+		return
+	}
+	attrs := append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)
+	logger.LogAttrs(ctx, level, event.Message.Fallback, attrs...)
+}
+
+func logReplicationPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
+	logReplicationEvent(ctx, nil, nil, level, localization.ReplicationOperatorEvent(format, args...))
 }
 
 // TLSConfig configures TLS/mTLS for secure replication connections.

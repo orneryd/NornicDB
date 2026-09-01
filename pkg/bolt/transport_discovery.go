@@ -1,10 +1,13 @@
 package bolt
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // startDiscoveryRefresher pre-encodes the discovery response and starts a
@@ -34,7 +37,7 @@ func (s *Server) startDiscoveryRefresher() error {
 					// Validation errors are surfaced at startup; a
 					// runtime failure here means OAuthConfig was mutated.
 					// Log but keep the previous bytes.
-					s.logger().Warn("discovery refresh failed", slog.Any("error", err))
+					s.logEvent(context.Background(), slog.LevelWarn, localization.BoltDiscoveryRefreshFailedEvent(err))
 					continue
 				}
 				s.discoveryResponse.Store(&bytes)

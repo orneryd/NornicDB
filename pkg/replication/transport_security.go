@@ -18,6 +18,8 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 	transportCfg := DefaultClusterTransportConfig()
 	transportCfg.NodeID = cfg.NodeID
 	transportCfg.BindAddr = cfg.BindAddr
+	transportCfg.Logger = cfg.Logger
+	transportCfg.Localizer = cfg.Localizer
 
 	if cfg.ReplicationSecret != "" {
 		transportCfg.AuthSecret = []byte(cfg.ReplicationSecret)

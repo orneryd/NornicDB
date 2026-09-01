@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // =============================================================================
@@ -61,7 +63,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			start := time.Now()
 			claims, err = s.auth.ValidateToken(token)
 			if traceAuth && r.URL.Path == "/graphql" {
-				s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "validate_token", "duration", time.Since(start), "error", err)
+				s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "validate_token", time.Since(start), err))
 			}
 		} else if strings.HasPrefix(authHeader, "Basic ") {
 			start := time.Now()
@@ -73,7 +75,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 					claims = cached
 					err = nil
 					if traceAuth && r.URL.Path == "/graphql" {
-						s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "basic_auth_cache", "duration", time.Since(start), "error", err)
+						s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth_cache", time.Since(start), err))
 					}
 					goto doneAuth
 				}
@@ -97,7 +99,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 				s.basicAuthCache.SetFromHeader(authHeader, claims)
 			}
 			if traceAuth && r.URL.Path == "/graphql" {
-				s.log.Debug("auth", "subsystem", "auth", "method", r.Method, "path", r.URL.Path, "step", "basic_auth", "duration", time.Since(start), "error", err)
+				s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth", time.Since(start), err))
 			}
 		} else {
 			s.writeNeo4jNoAuthenticationProvided(w, r)
@@ -322,13 +324,13 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 			if err := recover(); err != nil {
 				// Log panic summary (without stack trace to prevent info exposure)
 				// #nosec CWE-209 -- Panic type only logged via slog stack, not exposed to clients
-				s.log.Error("panic recovered in HTTP handler", "panic", fmt.Sprintf("%v", err))
+				s.logEvent(r.Context(), slog.LevelError, localization.ServerHTTPPanicRecoveredEvent(fmt.Sprintf("%v", err)))
 				// Stack trace only in debug mode
 				if os.Getenv("NORNICDB_DEBUG") == "true" {
 					buf := make([]byte, 4096)
 					n := runtime.Stack(buf, false)
 					// #nosec CWE-209 -- Debug-only, slog output, not exposed to clients
-					s.log.Error("panic stack trace", "stack", string(buf[:n]))
+					s.logEvent(r.Context(), slog.LevelError, localization.ServerHTTPPanicStackTraceEvent(string(buf[:n])))
 				}
 
 				s.errorCount.Add(1)

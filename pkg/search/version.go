@@ -6,7 +6,6 @@
 package search
 
 import (
-	"log"
 	"strconv"
 	"strings"
 )
@@ -79,7 +78,7 @@ func searchIndexVersionCompatible(stored, current string, indexName string) bool
 	case 0:
 		return true
 	case 1:
-		log.Printf("📇 %s index was written by a newer version (%s > %s); please upgrade the application, skipping load", indexName, stored, current)
+		logSearchPrintf("📇 %s index was written by a newer version (%s > %s); please upgrade the application, skipping load", indexName, stored, current)
 		return false
 	default:
 		return false // old or invalid

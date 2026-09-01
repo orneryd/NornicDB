@@ -1,0 +1,4 @@
+- id: search-log.log.bm25_engine_selected
+  other: "📇 Search: BM25 engine selected: {{.Engine}}"
+- id: search-log.log.operator
+  other: "{{.Message}}"

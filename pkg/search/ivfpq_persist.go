@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -128,10 +127,10 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 		return
 	}
 	if err := SaveIVFPQBundle(basePath, idx); err != nil {
-		log.Printf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
+		logSearchPrintf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
 		return
 	}
-	log.Printf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
+	logSearchPrintf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
 }
 
 func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore) (*IVFPQIndex, error) {
@@ -172,7 +171,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[IVFPQ] ✅ built | vectors=%d sample=%d lists=%d avg_list=%.1f max_list=%d bytes_per_vector=%.2f duration=%v",
+	logSearchPrintf("[IVFPQ] ✅ built | vectors=%d sample=%d lists=%d avg_list=%.1f max_list=%d bytes_per_vector=%.2f duration=%v",
 		stats.VectorCount, stats.TrainingSampleCount, stats.ListCount, stats.AvgListSize, stats.MaxListSize, stats.BytesPerVector, stats.BuildDuration)
 	s.ivfpqIndex = built
 	return s.ivfpqIndex, nil

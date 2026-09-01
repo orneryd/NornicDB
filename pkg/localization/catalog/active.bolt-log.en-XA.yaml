@@ -1,0 +1,66 @@
+- id: bolt.log.server_listening
+  description: Pseudo-locale Bolt server listener log.
+  other: "[!! bolt server listening !!]"
+- id: bolt.log.connection_handler_panic
+  description: Pseudo-locale Bolt connection handler panic log.
+  other: "[!! connection handler panic !!]"
+- id: bolt.log.unencrypted_connection_rejected
+  description: Pseudo-locale Bolt unencrypted connection rejection log.
+  other: "[!! rejecting unencrypted connection !!]"
+- id: bolt.log.transport_sniff_failed
+  description: Pseudo-locale Bolt transport detection failure log.
+  other: "[!! transport sniff failed !!]"
+- id: bolt.log.handshake_failed
+  description: Pseudo-locale Bolt handshake failure log.
+  other: "[!! handshake failed !!]"
+- id: bolt.log.message_handling_error
+  description: Pseudo-locale Bolt message handling failure log.
+  other: "[!! message handling error !!]"
+- id: bolt.log.hello_scheme_none
+  description: Pseudo-locale Bolt scheme-none HELLO diagnostic log.
+  other: "[!! hello scheme=none !!]"
+- id: bolt.log.ws_cookie_bearer_rejected
+  description: Pseudo-locale Bolt WebSocket cookie bearer rejection log.
+  other: "[!! ws cookie bearer rejected !!]"
+- id: bolt.log.authentication_failed
+  description: Pseudo-locale Bolt authentication failure log.
+  other: "[!! auth failed !!]"
+- id: bolt.log.hello
+  description: Pseudo-locale Bolt authenticated session HELLO log.
+  other: "[!! hello !!]"
+- id: bolt.log.query
+  description: Pseudo-locale Bolt query execution diagnostic log.
+  other: "[!! query !!]"
+- id: bolt.log.query_error
+  description: Pseudo-locale Bolt query execution error log.
+  other: "[!! query error !!]"
+- id: bolt.log.run
+  description: Pseudo-locale Bolt RUN timing log.
+  other: "[!! run !!]"
+- id: bolt.log.discovery_refresh_failed
+  description: Pseudo-locale Bolt discovery refresh failure log.
+  other: "[!! discovery refresh failed !!]"
+- id: bolt.log.websocket_upgrade_read_request_failed
+  description: Pseudo-locale Bolt WebSocket upgrade request read failure log.
+  other: "[!! ws upgrade read request failed !!]"
+- id: bolt.log.websocket_upgrade_credentials
+  description: Pseudo-locale Bolt WebSocket upgrade credential diagnostic log.
+  other: "[!! ws upgrade credentials !!]"
+- id: bolt.log.websocket_upgrade_failed
+  description: Pseudo-locale Bolt WebSocket protocol upgrade failure log.
+  other: "[!! ws upgrade failed !!]"
+- id: bolt.log.transaction_terminated
+  description: Pseudo-locale Bolt explicit transaction terminal log.
+  other: "[!! explicit transaction terminated !!]"
+- id: bolt.log.transaction_timeout_cleanup_requested
+  description: Pseudo-locale Bolt transaction timeout cleanup request log.
+  other: "[!! explicit transaction timeout cleanup requested !!]"
+- id: bolt.log.transaction_commit_failed
+  description: Pseudo-locale Bolt transaction commit failure log.
+  other: "[!! explicit transaction commit failed !!]"
+- id: bolt.log.transaction_cleanup_failed
+  description: Pseudo-locale Bolt transaction cleanup failure log.
+  other: "[!! explicit transaction cleanup failed !!]"
+- id: bolt.log.transaction_timeout_cleanup_completed
+  description: Pseudo-locale Bolt transaction timeout cleanup completion log.
+  other: "[!! explicit transaction timeout cleanup completed !!]"

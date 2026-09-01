@@ -76,6 +76,12 @@
 - id: server.log.mcp_disabled
   description: Server startup log when MCP is disabled by configuration.
   other: mcp server disabled via configuration
+- id: server.log.search_reconcile_storage_unavailable
+  description: Server startup warning when search reconciliation cannot access a database storage engine.
+  other: "startup search reconcile: storage unavailable"
+- id: server.log.search_reconcile_failed
+  description: Server startup warning when search index reconciliation fails for a database.
+  other: startup search reconcile failed
 - id: server.log.remote_credentials_key_fallback
   description: Server startup warning when another configured secret is reused for remote credential encryption.
   other: remote credential encryption key fallback in use
@@ -100,3 +106,114 @@
 - id: server.log.heimdall_disabled
   description: Server startup log when the Heimdall AI assistant is disabled.
   other: heimdall AI assistant disabled
+- id: server.log.search_rerank_disabled
+  description: Server startup log when stage-2 search reranking is disabled.
+  other: search rerank disabled
+- id: server.log.search_rerank_api_url_missing
+  description: Server startup warning when external search reranking is enabled without an API URL.
+  other: search rerank enabled but API URL not set; stage-2 reranking disabled
+- id: server.log.search_reranker_ready
+  description: Server startup log when a local or external stage-2 search reranker is ready.
+  other: search reranker ready (stage-2 reranking enabled)
+- id: server.log.search_reranker_loading
+  description: Server startup log while a local stage-2 search reranker loads asynchronously.
+  other: loading search reranker model
+- id: server.log.slow_query_logging_enabled
+  description: Server startup log when in-process slow-query logging is enabled.
+  other: slow query logging enabled
+- id: server.log.slow_query_logging_configured
+  description: Server startup log when file-backed slow-query logging is configured.
+  other: slow query logging configured
+- id: server.log.slow_query_log_open_failed
+  description: Server startup warning when the slow-query log file cannot be opened.
+  other: failed to open slow query log file
+- id: server.log.http2_enabled
+  description: Server startup log when HTTP/2 transport is enabled.
+  other: HTTP/2 enabled
+- id: server.log.heimdall_initializing
+  description: Heimdall asynchronous initialization startup log.
+  other: heimdall AI assistant initializing asynchronously
+- id: server.log.heimdall_provider_resolved
+  description: Resolved Heimdall provider log.
+  other: heimdall provider resolved
+- id: server.log.heimdall_initialization_failed
+  description: Heimdall initialization failure warning.
+  other: heimdall initialization failed
+- id: server.log.apoc_plugins_loading
+  description: APOC plugin loading debug log.
+  other: loading APOC plugins
+- id: server.log.apoc_plugins_load_failed
+  description: APOC plugin loading failure warning.
+  other: failed to load APOC plugins
+- id: server.log.heimdall_plugins_loading
+  description: Heimdall plugin loading debug log.
+  other: loading Heimdall plugins
+- id: server.log.heimdall_plugins_load_failed
+  description: Heimdall plugin loading failure warning.
+  other: failed to load Heimdall plugins
+- id: server.log.heimdall_plugins_directory_empty
+  description: Empty Heimdall plugin directory debug log.
+  other: heimdall plugins dir is empty
+- id: server.log.heimdall_plugins_directory_duplicate
+  description: Duplicate plugin directory debug log.
+  other: heimdall plugins dir same as plugins dir; skipping
+- id: server.log.heimdall_ready
+  description: Heimdall ready startup log.
+  other: heimdall AI assistant ready
+- id: server.log.heimdall_plugins_missing
+  description: Missing Heimdall plugins warning.
+  other: no heimdall plugins loaded — watcher logs will be absent
+- id: server.log.heimdall_action_registered
+  description: Heimdall action registration debug log.
+  other: heimdall action registered
+- id: server.log.search_reranker_model_unavailable
+  description: Local search reranker model unavailable warning.
+  other: search reranker model unavailable; stage-2 reranking disabled, RRF order only
+- id: server.log.search_reranker_health_check_failed
+  description: Search reranker health-check failure warning.
+  other: search reranker failed health check
+- id: server.log.embedding_model_loading
+  description: Embedding model loading startup log.
+  other: loading embedding model
+- id: server.log.embedding_retry_loop_stopped
+  description: Embedding retry-loop shutdown log.
+  other: "embedding init retry loop stopped: server shutting down"
+- id: server.log.embedding_cache_enabled
+  description: Embedding cache enabled log.
+  other: embedding cache enabled
+- id: server.log.embeddings_ready
+  description: Embedding provider ready log.
+  other: embeddings ready
+- id: server.log.embedding_initialization_attempt_failed
+  description: Embedding initialization attempt failure warning.
+  other: embedding init attempt failed
+- id: server.log.embedding_initialization_retrying
+  description: Embedding initialization exponential-backoff retry log.
+  other: retrying embedding init (exponential backoff)
+- id: server.log.embedding_initialization_retry_interrupted
+  description: Embedding initialization retry interrupted by shutdown log.
+  other: embedding init retry interrupted by server shutdown
+- id: server.log.embedding_retry_interval_capped
+  description: Embedding initialization periodic retry log.
+  other: embedding init retry interval capped; continuing periodic retries
+- id: server.log.rbac_roles_load_failed
+  description: RBAC roles load failure warning.
+  other: failed to load RBAC roles
+- id: server.log.rbac_allowlist_load_failed
+  description: RBAC allowlist load failure warning.
+  other: failed to load RBAC allowlist
+- id: server.log.rbac_allowlist_seed_failed
+  description: RBAC allowlist seed failure warning.
+  other: failed to seed RBAC allowlist
+- id: server.log.rbac_privileges_load_failed
+  description: RBAC privileges load failure warning.
+  other: failed to load RBAC privileges
+- id: server.log.rbac_role_entitlements_load_failed
+  description: RBAC role entitlements load failure warning.
+  other: failed to load RBAC role entitlements
+- id: server.log.database_config_store_load_failed
+  description: Per-database configuration store load failure warning.
+  other: failed to load per-DB config store
+- id: server.log.http_serve_failed
+  description: Unexpected HTTP serving failure log.
+  other: http server error

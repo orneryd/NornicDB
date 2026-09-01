@@ -31,12 +31,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ============================================================================
@@ -88,6 +89,11 @@ type HeimdallFunc func(ctx context.Context, prompt string) (string, error)
 
 // HeimdallQCConfig configures the Heimdall hybrid review system.
 type HeimdallQCConfig struct {
+	// Logger receives structured QC events.
+	Logger *slog.Logger
+	// Localizer renders QC operator prose. Nil preserves source English.
+	Localizer *localization.Manager
+
 	// Enabled controls whether QC is active (also requires feature flag)
 	Enabled bool
 
@@ -277,7 +283,7 @@ func (h *HeimdallQC) ReviewBatch(
 		batchApproved, batchAugmented, err := h.processBatch(ctx, sourceNode, batch, candidatePool)
 		if err != nil {
 			// On error, approve all in batch (fail-open)
-			log.Printf("[HEIMDALL] ⚠️ Batch error, fail-open: %v", err)
+			h.logEvent(ctx, slog.LevelWarn, localization.InferenceHeimdallBatchErrorEvent(err))
 			approved = append(approved, batch...)
 			continue
 		}
@@ -326,7 +332,7 @@ func (h *HeimdallQC) processBatch(
 	// Build prompt and check size
 	prompt := h.buildBatchPrompt(&req)
 	if len(prompt) > h.config.MaxContextBytes {
-		log.Printf("[HEIMDALL] ⚠️ Prompt too large (%d > %d bytes), approving batch without review",
+		h.logPrintf(ctx, slog.LevelWarn, "[HEIMDALL] ⚠️ Prompt too large (%d > %d bytes), approving batch without review",
 			len(prompt), h.config.MaxContextBytes)
 		h.stats.mu.Lock()
 		h.stats.Skipped += int64(len(suggestions))
@@ -374,7 +380,7 @@ func (h *HeimdallQC) processBatch(
 	// Parse response
 	response, err := h.parseBatchResponse(rawResponse, len(suggestions))
 	if err != nil {
-		log.Printf("[HEIMDALL] ⚠️ Parse error: %v", err)
+		h.logPrintf(ctx, slog.LevelWarn, "[HEIMDALL] ⚠️ Parse error: %v", err)
 		// Fail-open: approve all
 		return suggestions, nil, nil
 	}
@@ -389,10 +395,18 @@ func (h *HeimdallQC) processBatch(
 		h.cacheMu.Unlock()
 	}
 
-	log.Printf("[HEIMDALL] ✅ Batch reviewed | in=%d approved=%d augmented=%d latency=%dms",
+	h.logPrintf(ctx, slog.LevelInfo, "[HEIMDALL] ✅ Batch reviewed | in=%d approved=%d augmented=%d latency=%dms",
 		len(suggestions), len(response.Approved), len(response.Additional), latencyMs)
 
 	return h.applyBatchResponse(suggestions, candidatePool, response)
+}
+
+func (h *HeimdallQC) logEvent(ctx context.Context, level slog.Level, event localization.LogEvent) {
+	logInferenceEvent(ctx, h.config.Logger, h.config.Localizer, level, event)
+}
+
+func (h *HeimdallQC) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
+	h.logEvent(ctx, level, localization.InferenceOperatorEvent(format, args...))
 }
 
 // GetSystemPrompt returns the appropriate static system prompt.

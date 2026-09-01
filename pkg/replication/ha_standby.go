@@ -3,7 +3,7 @@ package replication
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -236,7 +236,7 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 	}
 	r.mu.Unlock()
 
-	log.Printf("[HA] Starting in role=%s peer=%s sync_mode=%s wal_batch_size=%d wal_batch_timeout=%s",
+	r.config.logPrintf(ctx, slog.LevelInfo, "[HA] Starting in role=%s peer=%s sync_mode=%s wal_batch_size=%d wal_batch_timeout=%s",
 		r.config.HAStandby.Role,
 		r.config.HAStandby.PeerAddr,
 		r.config.HAStandby.SyncMode,
@@ -256,7 +256,7 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("[HA] Started as %s, peer: %s", r.role, r.config.HAStandby.PeerAddr)
+	r.config.logPrintf(ctx, slog.LevelInfo, "[HA] Started as %s, peer: %s", r.role, r.config.HAStandby.PeerAddr)
 
 	// Plan 04-06-03 D-15a: emit initial role gauge at the same lifecycle
 	// log site that announces start-up. HA primary maps to "leader",
@@ -320,14 +320,14 @@ func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("[HA Primary] Connecting to standby: %s", r.config.HAStandby.PeerAddr)
+		r.config.logPrintf(ctx, slog.LevelInfo, "[HA Primary] Connecting to standby: %s", r.config.HAStandby.PeerAddr)
 
 		r.mu.RLock()
 		transport := r.transport
 		r.mu.RUnlock()
 		conn, err := transport.Connect(ctx, r.config.HAStandby.PeerAddr)
 		if err != nil {
-			log.Printf("[HA Primary] Failed to connect to standby: %v", err)
+			r.config.logPrintf(ctx, slog.LevelWarn, "[HA Primary] Failed to connect to standby: %v", err)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, r.config.HAStandby.MaxReconnectBackoff)
 			continue
@@ -338,7 +338,7 @@ func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
 		r.mu.Unlock()
 
 		backoff = r.config.HAStandby.ReconnectInterval
-		log.Printf("[HA Primary] Connected to standby")
+		r.config.logPrintf(ctx, slog.LevelInfo, "[HA Primary] Connected to standby")
 	}
 }
 
@@ -378,7 +378,7 @@ func (r *HAStandbyReplicator) streamPendingWAL(ctx context.Context) {
 
 	resp, err := conn.SendWALBatch(ctx, entries)
 	if err != nil {
-		log.Printf("[HA Primary] Failed to send WAL batch: %v", err)
+		r.config.logPrintf(ctx, slog.LevelError, "[HA Primary] Failed to send WAL batch: %v", err)
 		return
 	}
 
@@ -425,7 +425,7 @@ func (r *HAStandbyReplicator) sendHeartbeat(ctx context.Context) {
 
 	_, err := conn.SendHeartbeat(ctx, req)
 	if err != nil {
-		log.Printf("[HA Primary] Heartbeat failed: %v", err)
+		r.config.logPrintf(ctx, slog.LevelWarn, "[HA Primary] Heartbeat failed: %v", err)
 	}
 }
 
@@ -451,7 +451,7 @@ func (r *HAStandbyReplicator) listenForPrimary(ctx context.Context) {
 		r.lastPrimaryHB = time.Now()
 		r.mu.Unlock()
 
-		log.Printf("[HA Standby] Primary connected")
+		r.config.logPrintf(ctx, slog.LevelInfo, "[HA Standby] Primary connected")
 	}
 
 	r.mu.RLock()
@@ -459,7 +459,7 @@ func (r *HAStandbyReplicator) listenForPrimary(ctx context.Context) {
 	r.mu.RUnlock()
 	if err := transport.Listen(listenCtx, r.config.BindAddr, handler); err != nil {
 		if listenCtx.Err() == nil {
-			log.Printf("[HA Standby] Listen error: %v", err)
+			r.config.logPrintf(ctx, slog.LevelError, "[HA Standby] Listen error: %v", err)
 		}
 	}
 }
@@ -494,7 +494,7 @@ func (r *HAStandbyReplicator) checkPrimaryHealth(ctx context.Context) {
 
 	if timeSinceHB > r.config.HAStandby.FailoverTimeout {
 		if wasHealthy {
-			log.Printf("[HA Standby] Primary appears down, last heartbeat: %v ago", timeSinceHB)
+			r.config.logPrintf(ctx, slog.LevelWarn, "[HA Standby] Primary appears down, last heartbeat: %v ago", timeSinceHB)
 			r.primaryHealthy.Store(false)
 
 			if r.config.HAStandby.AutoFailover && !r.isPromoted.Load() {
@@ -506,18 +506,18 @@ func (r *HAStandbyReplicator) checkPrimaryHealth(ctx context.Context) {
 
 // triggerAutoFailover initiates automatic promotion to primary.
 func (r *HAStandbyReplicator) triggerAutoFailover(ctx context.Context) {
-	log.Printf("[HA Standby] Initiating auto-failover")
+	r.config.logPrintf(ctx, slog.LevelWarn, "[HA Standby] Initiating auto-failover")
 
 	// Try to fence old primary
 	r.fenceOldPrimary(ctx)
 
 	// Promote self
 	if err := r.Promote(ctx); err != nil {
-		log.Printf("[HA Standby] Auto-failover failed")
+		r.config.logPrintf(ctx, slog.LevelError, "[HA Standby] Auto-failover failed")
 		return
 	}
 
-	log.Printf("[HA Standby] Auto-failover completed, now primary")
+	r.config.logPrintf(ctx, slog.LevelInfo, "[HA Standby] Auto-failover completed, now primary")
 }
 
 // fenceOldPrimary attempts to stop the old primary from accepting writes.
@@ -536,7 +536,7 @@ func (r *HAStandbyReplicator) fenceOldPrimary(ctx context.Context) {
 	}
 
 	if _, err := conn.SendFence(ctx, req); err != nil {
-		log.Printf("[HA Standby] Failed to fence old primary: %v", err)
+		r.config.logPrintf(ctx, slog.LevelWarn, "[HA Standby] Failed to fence old primary: %v", err)
 	}
 }
 
@@ -562,7 +562,7 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 	r.isPrimary.Store(true)
 	r.isPromoted.Store(true)
 
-	log.Printf("[HA] Promoted to primary")
+	r.config.logPrintf(ctx, slog.LevelInfo, "[HA] Promoted to primary")
 
 	// Plan 04-06-03 D-15a: emit role transition at the same site that
 	// emits the "Promoted to primary" log line.
@@ -598,7 +598,7 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	ackErr := r.waitForReplicationAck(walPos, timeout)
 	ackDur := time.Since(ackStart)
 	if traceWrites {
-		log.Printf("[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
+		r.config.logPrintf(context.Background(), slog.LevelInfo, "[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
 			cmd.Type, applyDur, ackDur, time.Since(start), r.config.HAStandby.SyncMode, walPos, ackErr)
 	}
 	return ackErr
@@ -823,7 +823,7 @@ func (r *HAStandbyReplicator) HandleHeartbeat(req *HeartbeatRequest) (*Heartbeat
 
 // HandleFence handles incoming fence request (for primary).
 func (r *HAStandbyReplicator) HandleFence(req *FenceRequest) (*FenceResponse, error) {
-	log.Printf("[HA Primary] Received fence request: %s", req.Reason)
+	r.config.logPrintf(context.Background(), slog.LevelWarn, "[HA Primary] Received fence request: %s", req.Reason)
 
 	// Stop accepting writes
 	r.isPrimary.Store(false)

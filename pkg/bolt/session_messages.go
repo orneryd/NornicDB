@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -147,18 +148,8 @@ func (s *Session) handleRun(data []byte) error {
 		// it). D-03a: any "credentials"/"password"/"token" key in the
 		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
 		// chain via DefaultRedactKeys.
-		if len(params) > 0 {
-			s.server.logger().Debug("query",
-				"user", user, "remote", remoteAddr,
-				"query", truncateQuery(query, 200),
-				"params", params,
-			)
-		} else {
-			s.server.logger().Debug("query",
-				"user", user, "remote", remoteAddr,
-				"query", truncateQuery(query, 200),
-			)
-		}
+		s.server.logEvent(context.Background(), slog.LevelDebug,
+			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(query, 200), params))
 	}
 
 	// Resolve effective database name (Neo4j-compatible precedence):
@@ -290,7 +281,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		s.logRunTiming("ERROR", dbName, query, time.Since(runStart), 0, err)
 		if s.server != nil && s.server.config.LogQueries {
-			s.server.logger().Warn("query error")
+			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
 		return s.sendRunFailure(code, msg)
@@ -365,20 +356,13 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 	// LogQueries=true) emits at DEBUG so it doesn't pollute production
 	// stdout at INFO level.
 	if runErr != nil {
-		attrs := []any{
-			"database", dbName, "status", status,
-			"rows", rows, "duration", duration,
-			"error", runErr.Error(),
-		}
-		s.server.logger().Warn("run", attrs...)
+		s.server.logEvent(context.Background(), slog.LevelWarn,
+			localization.BoltRunErrorEvent(dbName, status, rows, duration, runErr.Error()))
 		return
 	}
 
-	attrs := []any{
-		"database", dbName, "status", status,
-		"rows", rows, "duration", duration,
-	}
-	s.server.logger().Debug("run", attrs...)
+	s.server.logEvent(context.Background(), slog.LevelDebug,
+		localization.BoltRunEvent(dbName, status, rows, duration))
 }
 
 func mapBoltQueryError(err error) (code, message string) {

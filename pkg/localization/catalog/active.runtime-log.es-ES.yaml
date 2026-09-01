@@ -1,0 +1,30 @@
+- id: runtime.log.heimdall_tool_call
+  description: Registro canónico para una invocación de herramienta; los argumentos permanecen opacos.
+  other: "[Heimdall] Tool call: request={{.RequestID}} action={{.Action}} params={{.Params}}"
+- id: runtime.log.heimdall_operator
+  description: Registro dinámico canónico emitido por Heimdall o Bifrost.
+  other: "{{.Message}}"
+- id: runtime.log.inference_edge_decay_started
+  description: Registro canónico al iniciar el proceso de decaimiento de aristas.
+  other: "[EDGE-DECAY] Started | decay_rate={{.DecayRate}} min_conf={{.MinConfidence}} scan_interval={{.ScanInterval}} grace={{.GracePeriod}}"
+- id: runtime.log.inference_heimdall_batch_error
+  description: Registro canónico para un error de lote con continuidad permisiva.
+  other: "[HEIMDALL] ⚠️ Batch error, fail-open: {{.Error}}"
+- id: runtime.log.inference_operator
+  description: Registro dinámico canónico emitido por los procesos de inferencia.
+  other: "{{.Message}}"
+- id: runtime.log.observability_tenant_labels_resolved
+  description: Registro tras resolver si se habilitan las etiquetas de inquilino.
+  other: se resolvió la activación de etiquetas de inquilino
+- id: runtime.log.observability_instance_id_resolved
+  description: Registro tras resolver la identidad de la instancia de servicio.
+  other: 'INFO observability: service.instance.id={{printf "%q" .InstanceID}} (resuelto desde {{.Source}})'
+- id: runtime.log.observability_operator
+  description: Registro dinámico canónico del arranque de observabilidad.
+  other: "{{.Message}}"
+- id: runtime.log.replication_raft_became_leader
+  description: Registro canónico para una transición de líder de Raft.
+  other: "[Raft {{.NodeID}}] Became leader for term {{.Term}}"
+- id: runtime.log.replication_operator
+  description: Registro dinámico canónico emitido por los modos y transportes de replicación.
+  other: "{{.Message}}"

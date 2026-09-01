@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,6 +33,7 @@ type Handler struct {
 	metrics        MetricsReader
 	inMemoryRunner InMemoryToolRunner // optional: e.g. MCP store/recall/discover for agentic loop
 	localizer      *localization.Manager
+	logger         *slog.Logger
 }
 
 var leakedChatTemplateMarker = regexp.MustCompile(`(?s)<\|im_(?:start|end)\|>`)
@@ -222,6 +223,28 @@ func (h *Handler) SetInMemoryToolRunner(runner InMemoryToolRunner) {
 // SetLocalizer sets the immutable message catalog used for HTTP responses.
 func (h *Handler) SetLocalizer(manager *localization.Manager) {
 	h.localizer = manager
+}
+
+// SetLogger sets the structured logger used for operator events.
+func (h *Handler) SetLogger(logger *slog.Logger) {
+	h.logger = logger
+}
+
+func (h *Handler) logEvent(event localization.LogEvent) {
+	logger := h.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if h.localizer != nil {
+		h.localizer.Log(context.Background(), logger, slog.LevelInfo, event)
+		return
+	}
+	attrs := append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, event.Message.Fallback, attrs...)
+}
+
+func (h *Handler) logPrintf(format string, args ...any) {
+	h.logEvent(localization.HeimdallOperatorEvent(format, args...))
 }
 
 func (h *Handler) writeLocalizedError(w http.ResponseWriter, r *http.Request, message localization.Message, status int) {
@@ -613,7 +636,7 @@ Complete Cypher query (one line only):`,
 // This is called when a lifecycle hook cancels the request.
 func (h *Handler) sendCancellationResponse(w http.ResponseWriter, requestID, phase, cancelledBy, reason string) {
 	// Log the cancellation
-	log.Printf("[Bifrost] Request %s cancelled in %s by %s: %s", requestID, phase, cancelledBy, reason)
+	h.logPrintf("[Bifrost] Request %s cancelled in %s by %s: %s", requestID, phase, cancelledBy, reason)
 
 	// Send notification via Bifrost if available
 	if h.bifrost != nil {
@@ -705,7 +728,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	// Plugins can call promptCtx.Cancel() to abort the request
 	CallPrePromptHooks(promptCtx)
 	if promptCtx.Cancelled() {
-		log.Printf("[Bifrost] Request cancelled by %s: %s", promptCtx.CancelledBy(), promptCtx.CancelReason())
+		h.logPrintf("[Bifrost] Request cancelled by %s: %s", promptCtx.CancelledBy(), promptCtx.CancelReason())
 		h.sendCancellationResponse(w, promptCtx.RequestID, "PrePrompt", promptCtx.CancelledBy(), promptCtx.CancelReason())
 		return
 	}
@@ -718,7 +741,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	// Validate token budget before proceeding
 	if err := promptCtx.ValidateTokenBudget(); err != nil {
 		budgetInfo := promptCtx.GetBudgetInfo()
-		log.Printf("[Bifrost] Token budget exceeded: %v (system: %d, user: %d, total: %d)",
+		h.logPrintf("[Bifrost] Token budget exceeded: %v (system: %d, user: %d, total: %d)",
 			err, budgetInfo.SystemTokens, budgetInfo.UserTokens, budgetInfo.TotalTokens)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -887,7 +910,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 			if paramsMap == nil {
 				paramsMap = make(map[string]interface{})
 			}
-			logToolCall(lifecycle.requestID, tc.Name, paramsMap)
+			h.logToolCall(lifecycle.requestID, tc.Name, paramsMap)
 			preExecCtx := &PreExecuteContext{
 				Context:   ctx,
 				RequestID: lifecycle.requestID, RequestTime: lifecycle.promptCtx.RequestTime,
@@ -918,7 +941,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 				raw, execErr := h.inMemoryRunner.CallTool(ctx, tc.Name, paramsMap, dbName)
 				toolContent = FormatInMemoryToolResult(raw, execErr)
 				execDuration := time.Since(startTime)
-				logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
+				h.logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
 				hookResult := &ActionResult{Success: execErr == nil}
 				if execErr != nil {
 					hookResult.Message = execErr.Error()
@@ -939,7 +962,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 				}
 				result, execErr := ExecuteAction(tc.Name, actCtx)
 				execDuration := time.Since(startTime)
-				logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
+				h.logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
 				if execErr != nil {
 					toolContent = FormatActionResultForModel(&ActionResult{Success: false, Message: execErr.Error()})
 				} else {
@@ -968,15 +991,40 @@ func sliceContains(ss []string, s string) bool {
 }
 
 func logToolCall(requestID, action string, params map[string]interface{}) {
-	log.Printf("[Heimdall] Tool call: request=%s action=%s params=%v", requestID, action, params)
+	logHeimdallEvent(localization.HeimdallToolCallEvent(requestID, action, params))
 }
 
 func logToolResult(requestID, action string, duration time.Duration, err error) {
 	if err != nil {
-		log.Printf("[Heimdall] Tool result: request=%s action=%s duration=%v error=%v", requestID, action, duration, err)
+		logHeimdallEvent(localization.HeimdallOperatorEvent("[Heimdall] Tool result: request=%s action=%s duration=%v error=%v", requestID, action, duration, err))
 		return
 	}
-	log.Printf("[Heimdall] Tool result: request=%s action=%s duration=%v success=true", requestID, action, duration)
+	logHeimdallEvent(localization.HeimdallOperatorEvent("[Heimdall] Tool result: request=%s action=%s duration=%v success=true", requestID, action, duration))
+}
+
+func logHeimdallEvent(event localization.LogEvent) {
+	logHeimdallEventAt(slog.LevelInfo, event)
+}
+
+func logHeimdallEventAt(level slog.Level, event localization.LogEvent) {
+	attrs := append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)
+	slog.Default().LogAttrs(context.Background(), level, event.Message.Fallback, attrs...)
+}
+
+func logHeimdallPrintf(level slog.Level, format string, args ...any) {
+	logHeimdallEventAt(level, localization.HeimdallOperatorEvent(format, args...))
+}
+
+func (h *Handler) logToolCall(requestID, action string, params map[string]interface{}) {
+	h.logEvent(localization.HeimdallToolCallEvent(requestID, action, params))
+}
+
+func (h *Handler) logToolResult(requestID, action string, duration time.Duration, err error) {
+	if err != nil {
+		h.logPrintf("[Heimdall] Tool result: request=%s action=%s duration=%v error=%v", requestID, action, duration, err)
+		return
+	}
+	h.logPrintf("[Heimdall] Tool result: request=%s action=%s duration=%v success=true", requestID, action, duration)
 }
 
 // runAgenticLoopPromptBased uses prompt-based multi-round for local GGUF (or any provider without native tools).
@@ -1046,7 +1094,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 		if preExecResult.ModifiedParams != nil {
 			paramsToUse = preExecResult.ModifiedParams
 		}
-		logToolCall(lifecycle.requestID, parsedAction.Action, paramsToUse)
+		h.logToolCall(lifecycle.requestID, parsedAction.Action, paramsToUse)
 		startTime := time.Now()
 		var resultStr string
 		if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
@@ -1054,7 +1102,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 			raw, execErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, paramsToUse, dbName)
 			resultStr = FormatInMemoryToolResult(raw, execErr)
 			execDuration := time.Since(startTime)
-			logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
+			h.logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
 			hookResult := &ActionResult{Success: execErr == nil}
 			if execErr != nil {
 				hookResult.Message = execErr.Error()
@@ -1073,7 +1121,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 			}
 			result, execErr := ExecuteAction(parsedAction.Action, actCtx)
 			execDuration := time.Since(startTime)
-			logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
+			h.logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
 			if execErr != nil {
 				prompt = prompt + response + "\n\nTool result: " + FormatActionResultForModel(&ActionResult{Success: false, Message: execErr.Error()}) + "\n\nOutput exactly one line: either {\"action\": \"<name>\", \"params\": {...}} or a brief direct answer. no repetition.\n\nAssistant: "
 				continue
@@ -1124,7 +1172,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 	}
 	finalResponse = sanitizeAssistantResponse(finalResponse)
 
-	log.Printf("[Bifrost] Agentic loop finished: %s", finalResponse)
+	h.logPrintf("[Bifrost] Agentic loop finished: %s", finalResponse)
 
 	resp := ChatResponse{
 		ID:      lifecycle.requestID,
@@ -1217,20 +1265,20 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 func (h *Handler) tryParseAction(response string) (*ParsedAction, string) {
 	parsed := parseActionEnvelope(response)
 	if parsed == nil {
-		log.Printf("[Bifrost] tryParseAction: no parseable action envelope found")
+		h.logPrintf("[Bifrost] tryParseAction: no parseable action envelope found")
 		return nil, ""
 	}
 
-	log.Printf("[Bifrost] tryParseAction: looking up action: %s", parsed.Action)
+	h.logPrintf("[Bifrost] tryParseAction: looking up action: %s", parsed.Action)
 	actions := ListHeimdallActions()
-	log.Printf("[Bifrost] tryParseAction: registered actions: %v", actions)
+	h.logPrintf("[Bifrost] tryParseAction: registered actions: %v", actions)
 
 	if _, ok := GetHeimdallAction(parsed.Action); !ok {
-		log.Printf("[Bifrost] tryParseAction: action NOT FOUND: %s", parsed.Action)
+		h.logPrintf("[Bifrost] tryParseAction: action NOT FOUND: %s", parsed.Action)
 		return nil, fmt.Sprintf("Sorry, I don't know how to perform the action '%s'. Try asking 'what can you do?' to see available actions.", parsed.Action)
 	}
 
-	log.Printf("[Bifrost] tryParseAction: action FOUND: %s", parsed.Action)
+	h.logPrintf("[Bifrost] tryParseAction: action FOUND: %s", parsed.Action)
 	return parsed, ""
 }
 
@@ -1312,7 +1360,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 	// Check if response contains an action command
 	response := fullResponse.String()
 	response = sanitizeAssistantResponse(response)
-	log.Printf("[Bifrost] Streaming complete, checking for action: %s", response)
+	h.logPrintf("[Bifrost] Streaming complete, checking for action: %s", response)
 
 	parsedAction, actionError := h.tryParseAction(response)
 	if parsedAction == nil && actionError == "" {
@@ -1364,7 +1412,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 	}
 
 	if parsedAction != nil {
-		log.Printf("[Bifrost] Action detected in stream: %s", parsedAction.Action)
+		h.logPrintf("[Bifrost] Action detected in stream: %s", parsedAction.Action)
 
 		// === Phase 4: PreExecute hooks ===
 		preExecCtx := &PreExecuteContext{
@@ -1388,7 +1436,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 		preExecResult := CallPreExecuteHooks(preExecCtx)
 		cancelled := preExecCtx.Cancelled()
 		if cancelled {
-			log.Printf("[Bifrost] Request cancelled by %s: %s", preExecCtx.CancelledBy(), preExecCtx.CancelReason())
+			h.logPrintf("[Bifrost] Request cancelled by %s: %s", preExecCtx.CancelledBy(), preExecCtx.CancelReason())
 			// Send cancellation as SSE chunk
 			cancelChunk := ChatResponse{
 				ID:      id,
@@ -1487,10 +1535,10 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				}
 
 				if err != nil {
-					log.Printf("[Bifrost] Action execution failed: %v", err)
+					h.logPrintf("[Bifrost] Action execution failed: %v", err)
 					actionResponse = fmt.Sprintf("Action failed: %v", err)
 				} else if result != nil {
-					log.Printf("[Bifrost] Action result: success=%v", result.Success)
+					h.logPrintf("[Bifrost] Action result: success=%v", result.Success)
 				}
 
 				// === Phase 6: PostExecute hooks (optional) ===
@@ -1554,11 +1602,11 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 
 					// First, try plugin synthesis hooks
 					if pluginResponse := CallSynthesisHooks(synthCtx); pluginResponse != "" {
-						log.Printf("[Bifrost] Using plugin-provided synthesis")
+						h.logPrintf("[Bifrost] Using plugin-provided synthesis")
 						actionResponse = "\n\n" + pluginResponse
 					} else {
 						// Fall back to simple formatting (no LLM synthesis)
-						log.Printf("[Bifrost] Using default format (no plugin synthesis)")
+						h.logPrintf("[Bifrost] Using default format (no plugin synthesis)")
 						actionResponse = "\n\n" + h.defaultFormatResponse(result)
 					}
 				}

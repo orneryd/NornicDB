@@ -1,0 +1,6 @@
+- id: storage-log.log.wal_incomplete_write
+  description: WAL recovery warning for an incomplete atomic tail.
+  other: "wal recovery: detected incomplete write at end"
+- id: storage-log.log.wal_embeddings_skipped
+  description: WAL recovery warning after skipping recoverable corrupted embeddings.
+  other: "wal recovery: skipped corrupted embedding entries"

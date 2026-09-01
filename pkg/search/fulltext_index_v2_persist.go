@@ -2,7 +2,6 @@ package search
 
 import (
 	"errors"
-	"log"
 	"math"
 	"os"
 	"sort"
@@ -121,7 +120,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 		f.applyV2Snapshot(v2)
 		return nil
 	} else if err != nil {
-		log.Printf("⚠️ BM25 V2 load: failed decoding %s as v2 snapshot: %v", path, err)
+		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as v2 snapshot: %v", path, err)
 	}
 
 	// Fallback: try legacy BM25 V1 file format and migrate to V2 in-memory.
@@ -136,7 +135,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 
 	var v1 bm25V1Snapshot
 	if err := util.DecodeMsgpackFile(fileLegacy.File, &v1); err != nil {
-		log.Printf("⚠️ BM25 V2 load: failed decoding %s as legacy snapshot: %v", path, err)
+		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as legacy snapshot: %v", path, err)
 		f.Clear()
 		return nil
 	}

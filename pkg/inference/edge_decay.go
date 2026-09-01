@@ -26,15 +26,21 @@ package inference
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // EdgeDecayConfig configures the edge decay system.
 type EdgeDecayConfig struct {
+	// Logger receives structured edge-decay lifecycle events.
+	Logger *slog.Logger
+	// Localizer renders edge-decay lifecycle prose. Nil preserves source English.
+	Localizer *localization.Manager
+
 	// Enabled controls whether decay runs
 	Enabled bool
 
@@ -129,7 +135,7 @@ func (ed *EdgeDecay) Start(ctx context.Context) {
 	defer ed.mu.Unlock()
 
 	if !ed.config.Enabled {
-		log.Println("[EDGE-DECAY] Disabled, not starting")
+		ed.logPrintf(ctx, slog.LevelInfo, "[EDGE-DECAY] Disabled, not starting")
 		return
 	}
 
@@ -137,8 +143,8 @@ func (ed *EdgeDecay) Start(ctx context.Context) {
 	ed.wg.Add(1)
 	go ed.worker()
 
-	log.Printf("[EDGE-DECAY] Started | decay_rate=%.2f min_conf=%.2f scan_interval=%v grace=%v",
-		ed.config.DecayRate, ed.config.MinConfidence, ed.config.ScanInterval, ed.config.GracePeriod)
+	ed.logEvent(ctx, slog.LevelInfo, localization.InferenceEdgeDecayStartedEvent(
+		ed.config.DecayRate, ed.config.MinConfidence, ed.config.ScanInterval, ed.config.GracePeriod))
 }
 
 // Stop halts the background worker.
@@ -149,7 +155,7 @@ func (ed *EdgeDecay) Stop() {
 	}
 	ed.mu.Unlock()
 	ed.wg.Wait()
-	log.Println("[EDGE-DECAY] Stopped")
+	ed.logPrintf(context.Background(), slog.LevelInfo, "[EDGE-DECAY] Stopped")
 }
 
 // ReinforceEdge marks an edge as recently accessed, resetting its decay.
@@ -198,9 +204,9 @@ func (ed *EdgeDecay) worker() {
 		case <-ticker.C:
 			scanned, decayed, deleted, err := ed.scanAndDecay(ed.ctx)
 			if err != nil {
-				log.Printf("[EDGE-DECAY] ❌ Scan error: %v", err)
+				ed.logPrintf(ed.ctx, slog.LevelError, "[EDGE-DECAY] ❌ Scan error: %v", err)
 			} else if deleted > 0 || decayed > 0 {
-				log.Printf("[EDGE-DECAY] ✅ Scan complete | scanned=%d decayed=%d deleted=%d",
+				ed.logPrintf(ed.ctx, slog.LevelInfo, "[EDGE-DECAY] ✅ Scan complete | scanned=%d decayed=%d deleted=%d",
 					scanned, decayed, deleted)
 			}
 		case <-ed.ctx.Done():
@@ -270,7 +276,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 			if !ed.config.DryRun {
 				edge.Confidence = decayedConfidence
 				if err := ed.storage.UpdateEdge(edge); err != nil {
-					log.Printf("[EDGE-DECAY] Failed to update decayed edge")
+					ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] Failed to update decayed edge")
 				}
 			}
 			decayed++
@@ -281,7 +287,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 	if !ed.config.DryRun {
 		for _, edgeID := range toDelete {
 			if err := ed.storage.DeleteEdge(edgeID); err != nil {
-				log.Printf("[EDGE-DECAY] Failed to delete decayed edge")
+				ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] Failed to delete decayed edge")
 			} else {
 				// Clean up reinforcement tracking
 				ed.mu.Lock()
@@ -290,7 +296,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 			}
 		}
 	} else if len(toDelete) > 0 {
-		log.Printf("[EDGE-DECAY] DRY-RUN: Would delete %d edges", len(toDelete))
+		ed.logPrintf(ctx, slog.LevelInfo, "[EDGE-DECAY] DRY-RUN: Would delete %d edges", len(toDelete))
 	}
 
 	// Update stats
@@ -305,6 +311,14 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 	ed.stats.mu.Unlock()
 
 	return scanned, decayed, deleted, nil
+}
+
+func (ed *EdgeDecay) logEvent(ctx context.Context, level slog.Level, event localization.LogEvent) {
+	logInferenceEvent(ctx, ed.config.Logger, ed.config.Localizer, level, event)
+}
+
+func (ed *EdgeDecay) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
+	ed.logEvent(ctx, level, localization.InferenceOperatorEvent(format, args...))
 }
 
 // pow calculates base^exp for float64.

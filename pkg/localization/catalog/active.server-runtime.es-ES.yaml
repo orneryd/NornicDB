@@ -1,0 +1,62 @@
+- id: server-runtime.log.http_request
+  other: solicitud HTTP
+- id: server-runtime.log.slow_query
+  other: consulta lenta
+- id: server-runtime.log.auth_trace
+  other: autenticación
+- id: server-runtime.log.http_panic_recovered
+  other: pánico recuperado en el controlador HTTP
+- id: server-runtime.log.http_panic_stack_trace
+  other: traza de pila del pánico
+- id: server-runtime.log.oauth_redirect_state_stored
+  other: "redirección OAuth: estado guardado en memoria (caduca en 10 minutos)"
+- id: server-runtime.log.oauth_callback_failed
+  other: error de devolución de llamada OAuth
+- id: server-runtime.log.oauth_user_authenticated
+  other: "devolución de llamada OAuth: usuario autenticado"
+- id: server-runtime.log.rbac_role_entitlements_set_failed
+  other: error al establecer los derechos del rol
+- id: server-runtime.log.rbac_allowlist_save_failed
+  other: error al guardar las bases de datos del rol en la lista de acceso
+- id: server-runtime.log.rbac_privileges_put_matrix_failed
+  other: error de PutMatrix de privilegios
+- id: server-runtime.log.embed_regeneration_aborted
+  other: regeneración cancelada durante el apagado
+- id: server-runtime.log.embed_regeneration_starting
+  other: "iniciando regeneración en segundo plano: deteniendo el procesador y borrando las incrustaciones"
+- id: server-runtime.log.embed_worker_reset_failed
+  other: error al restablecer el procesador de incrustaciones
+- id: server-runtime.log.embed_regeneration_skipped_db_closing
+  other: "regeneración omitida: la base de datos se está cerrando"
+- id: server-runtime.log.embed_clear_failed
+  other: error al borrar las incrustaciones
+- id: server-runtime.log.embed_cleared
+  other: incrustaciones borradas; activando la regeneración
+- id: server-runtime.log.embed_worker_trigger_failed
+  other: error al activar el procesador de incrustaciones
+- id: server-runtime.log.embed_worker_triggered
+  other: procesador de incrustaciones activado para la regeneración
+- id: server-runtime.log.search_request
+  other: solicitud de búsqueda
+- id: server-runtime.log.search_storage_lookup_failed
+  other: "búsqueda: error al localizar el almacenamiento"
+- id: server-runtime.log.search_query_embedding_failed
+  other: error al generar la incrustación de la consulta
+- id: server-runtime.log.search_chunked_query_embedding_failed
+  other: error al generar la incrustación de la consulta (por fragmentos)
+- id: server-runtime.log.search_timing
+  other: tiempos de búsqueda
+- id: server-runtime.log.dbconfig_reload_failed
+  other: error al recargar la configuración de la base de datos después de PUT
+- id: server-runtime.log.dbconfig_rebuild_storage_resolve_failed
+  other: error al resolver el almacenamiento para reconstruir la configuración de la base de datos
+- id: server-runtime.log.dbconfig_rebuild_start_failed
+  other: error al iniciar la reconstrucción del servicio de búsqueda después de actualizar la configuración
+- id: server-runtime.log.create_database_defensive_fix
+  other: "create_database: se aplicó la corrección defensiva del servidor; el ejecutor devolvió un resultado vacío y se completó con el nombre de la base de datos"
+- id: server-runtime.log.retention_default_policy_add_failed
+  other: "valores predeterminados de retención: error al añadir la directiva"
+- id: server-runtime.log.graphql_request
+  other: solicitud GraphQL
+- id: server-runtime.log.qdrant_grpc_enabled
+  other: gRPC de Qdrant habilitado

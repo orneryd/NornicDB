@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Additional WAL operation types (extends OperationType from transaction.go)
@@ -1730,17 +1731,10 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 	}
 
 	if partialWriteDetected {
-		logger.Warn("wal recovery: detected incomplete write at end",
-			"reason", "crash_recovery",
-			"format", "atomic",
-		)
+		logWALRecoveryEvent(logger, localization.StorageWALIncompleteWriteEvent())
 	}
 	if skippedEmbeddings > 0 {
-		logger.Warn("wal recovery: skipped corrupted embedding entries",
-			"skipped_embeddings", skippedEmbeddings,
-			"format", "atomic",
-			"action", "will_regenerate",
-		)
+		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
 	}
 
 	return entries, nil
@@ -1786,11 +1780,7 @@ func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 	}
 
 	if skippedEmbeddings > 0 {
-		logger.Warn("wal recovery: skipped corrupted embedding entries",
-			"skipped_embeddings", skippedEmbeddings,
-			"format", "legacy",
-			"action", "will_regenerate",
-		)
+		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "legacy"))
 	}
 
 	return entries, nil

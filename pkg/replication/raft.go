@@ -3,7 +3,7 @@ package replication
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -286,7 +286,7 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("[Raft %s] Starting node", r.config.NodeID)
+	r.config.logPrintf(ctx, slog.LevelInfo, "[Raft %s] Starting node", r.config.NodeID)
 
 	if r.transport == nil {
 		transport, err := NewDefaultTransportFromConfig(r.config)
@@ -320,7 +320,7 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 		r.leaderAddr = r.config.AdvertiseAddr
 		r.currentTerm = 1
 		r.mu.Unlock()
-		log.Printf("[Raft %s] Bootstrap: became leader (term 1)", r.config.NodeID)
+		r.config.logPrintf(ctx, slog.LevelInfo, "[Raft %s] Bootstrap: became leader (term 1)", r.config.NodeID)
 		// Plan 04-06-03 D-15a: observe role transition at the same log site.
 		r.metrics.get().observeRoleTransition("leader", 1, 0, 0)
 	}
@@ -332,7 +332,7 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 	}
 
 	r.started.Store(true)
-	log.Printf("[Raft %s] Started in %s state", r.config.NodeID, r.getState())
+	r.config.logPrintf(ctx, slog.LevelInfo, "[Raft %s] Started in %s state", r.config.NodeID, r.getState())
 
 	return nil
 }
@@ -396,7 +396,7 @@ func (r *RaftReplicator) startElection(ctx context.Context) {
 	r.votedFor = r.config.NodeID // Vote for self
 	r.mu.Unlock()
 
-	log.Printf("[Raft %s] Starting election for term %d", r.config.NodeID, term)
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Starting election for term %d", r.config.NodeID, term)
 
 	// Get last log info for vote request
 	r.logMu.RLock()
@@ -443,7 +443,7 @@ func (r *RaftReplicator) startElection(ctx context.Context) {
 	select {
 	case <-done:
 	case <-time.After(r.config.Raft.ElectionTimeout):
-		log.Printf("[Raft %s] Election timed out for term %d", r.config.NodeID, term)
+		r.config.logPrintf(context.Background(), slog.LevelWarn, "[Raft %s] Election timed out for term %d", r.config.NodeID, term)
 	case <-ctx.Done():
 	case <-r.stopCh:
 	}
@@ -454,14 +454,14 @@ func (r *RaftReplicator) requestVoteFromPeer(ctx context.Context, peer PeerConfi
 	// Get or establish connection
 	conn, err := r.getOrConnectPeer(ctx, peer)
 	if err != nil {
-		log.Printf("[Raft %s] Cannot connect to %s for vote: %v", r.config.NodeID, peer.ID, err)
+		r.config.logPrintf(context.Background(), slog.LevelWarn, "[Raft %s] Cannot connect to %s for vote: %v", r.config.NodeID, peer.ID, err)
 		return
 	}
 
 	// Send vote request
 	resp, err := r.sendVoteRequestRPC(ctx, conn, req)
 	if err != nil {
-		log.Printf("[Raft %s] Vote request to %s failed: %v", r.config.NodeID, peer.ID, err)
+		r.config.logPrintf(context.Background(), slog.LevelWarn, "[Raft %s] Vote request to %s failed: %v", r.config.NodeID, peer.ID, err)
 		return
 	}
 
@@ -481,7 +481,7 @@ func (r *RaftReplicator) requestVoteFromPeer(ctx context.Context, peer PeerConfi
 		r.votedFor = ""
 		r.leaderID = ""
 		r.leaderAddr = ""
-		log.Printf("[Raft %s] Stepping down: discovered higher term %d from %s", r.config.NodeID, resp.Term, peer.ID)
+		r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Stepping down: discovered higher term %d from %s", r.config.NodeID, resp.Term, peer.ID)
 		// Plan 04-06-03 D-15a: observe role transition. commitIndex /
 		// lastApplied are protected by logMu (separate from r.mu) — read
 		// under RLock to satisfy -race.
@@ -498,7 +498,7 @@ func (r *RaftReplicator) requestVoteFromPeer(ctx context.Context, peer PeerConfi
 		votes := *votesReceived
 		votesMu.Unlock()
 
-		log.Printf("[Raft %s] Received vote from %s (%d/%d needed)", r.config.NodeID, resp.VoterID, votes, votesNeeded)
+		r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Received vote from %s (%d/%d needed)", r.config.NodeID, resp.VoterID, votes, votesNeeded)
 
 		if votes >= votesNeeded && r.state == StateCandidate && r.currentTerm == term {
 			r.mu.Unlock()
@@ -558,7 +558,8 @@ func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
 
 	r.mu.Unlock()
 
-	log.Printf("[Raft %s] Became leader for term %d", r.config.NodeID, term)
+	r.config.logEvent(context.Background(), slog.LevelInfo,
+		localization.ReplicationRaftBecameLeaderEvent(r.config.NodeID, term))
 
 	// Plan 04-06-03 D-15a: observe role transition at the same log site.
 	// commit/apply indexes read-locked outside r.mu to avoid double-locking;
@@ -729,7 +730,7 @@ func (r *RaftReplicator) handleAppendEntriesResponse(peerID string, term uint64,
 		r.leaderID = ""
 		r.leaderAddr = ""
 		r.votedFor = ""
-		log.Printf("[Raft %s] Stepping down: discovered higher term %d", r.config.NodeID, resp.Term)
+		r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Stepping down: discovered higher term %d", r.config.NodeID, resp.Term)
 		// Plan 04-06-03 D-15a: observe role transition. commitIndex and
 		// lastApplied are guarded by logMu, not r.mu — read-lock them
 		// here. Slight staleness is acceptable for the gauge.
@@ -955,7 +956,7 @@ func (r *RaftReplicator) advanceCommitIndex() {
 			entry := r.log[applyIdx]
 			if entry.Command != nil {
 				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					log.Printf("[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
+					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
 			}
 		}
@@ -1138,7 +1139,7 @@ func (r *RaftReplicator) handleVoteRequest(req *VoteRequest) *VoteResponse {
 			default:
 			}
 
-			log.Printf("[Raft %s] Granted vote to %s for term %d", r.config.NodeID, req.CandidateID, req.Term)
+			r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Granted vote to %s for term %d", r.config.NodeID, req.CandidateID, req.Term)
 		}
 	}
 
@@ -1254,7 +1255,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 			entry := r.log[r.lastApplied]
 			if entry.Command != nil {
 				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					log.Printf("[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
+					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
 			}
 		}
@@ -1276,7 +1277,7 @@ func (r *RaftReplicator) listenForPeers(ctx context.Context) {
 		r.handleIncomingConnection(ctx, conn)
 	})
 	if err != nil && ctx.Err() == nil {
-		log.Printf("[Raft %s] Listen error: %v", r.config.NodeID, err)
+		r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Listen error: %v", r.config.NodeID, err)
 	}
 }
 
@@ -1498,7 +1499,7 @@ func (r *RaftReplicator) Shutdown() error {
 		return nil
 	}
 
-	log.Printf("[Raft %s] Shutting down", r.config.NodeID)
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
 	r.closed.Store(true)
 	close(r.stopCh)
 
@@ -1577,7 +1578,7 @@ func (r *RaftReplicator) AddVoter(id, addr string) error {
 	r.nextIndex[id] = lastIdx + 1
 	r.matchIndex[id] = 0
 
-	log.Printf("[Raft %s] Added voter %s at %s", r.config.NodeID, id, addr)
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Added voter %s at %s", r.config.NodeID, id, addr)
 	return nil
 }
 
@@ -1611,7 +1612,7 @@ func (r *RaftReplicator) RemoveServer(id string) error {
 	delete(r.nextIndex, id)
 	delete(r.matchIndex, id)
 
-	log.Printf("[Raft %s] Removed server %s", r.config.NodeID, id)
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Removed server %s", r.config.NodeID, id)
 	return nil
 }
 

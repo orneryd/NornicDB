@@ -1,0 +1,62 @@
+- id: server-runtime.log.http_request
+  other: http request
+- id: server-runtime.log.slow_query
+  other: slow query
+- id: server-runtime.log.auth_trace
+  other: auth
+- id: server-runtime.log.http_panic_recovered
+  other: panic recovered in HTTP handler
+- id: server-runtime.log.http_panic_stack_trace
+  other: panic stack trace
+- id: server-runtime.log.oauth_redirect_state_stored
+  other: "oauth redirect: stored state in memory (expires in 10 minutes)"
+- id: server-runtime.log.oauth_callback_failed
+  other: oauth callback error
+- id: server-runtime.log.oauth_user_authenticated
+  other: "oauth callback: authenticated user"
+- id: server-runtime.log.rbac_role_entitlements_set_failed
+  other: role entitlements set failed
+- id: server-runtime.log.rbac_allowlist_save_failed
+  other: allowlist save role databases failed
+- id: server-runtime.log.rbac_privileges_put_matrix_failed
+  other: privileges PutMatrix failed
+- id: server-runtime.log.embed_regeneration_aborted
+  other: regeneration aborted during shutdown
+- id: server-runtime.log.embed_regeneration_starting
+  other: "starting background regeneration: stopping worker and clearing embeddings"
+- id: server-runtime.log.embed_worker_reset_failed
+  other: failed to reset embed worker
+- id: server-runtime.log.embed_regeneration_skipped_db_closing
+  other: "regeneration skipped: database is closing"
+- id: server-runtime.log.embed_clear_failed
+  other: failed to clear embeddings
+- id: server-runtime.log.embed_cleared
+  other: cleared embeddings; triggering regeneration
+- id: server-runtime.log.embed_worker_trigger_failed
+  other: failed to trigger embedding worker
+- id: server-runtime.log.embed_worker_triggered
+  other: embedding worker triggered for regeneration
+- id: server-runtime.log.search_request
+  other: search request
+- id: server-runtime.log.search_storage_lookup_failed
+  other: "search: storage lookup failed"
+- id: server-runtime.log.search_query_embedding_failed
+  other: query embedding failed
+- id: server-runtime.log.search_chunked_query_embedding_failed
+  other: query embedding failed (chunked)
+- id: server-runtime.log.search_timing
+  other: search timing
+- id: server-runtime.log.dbconfig_reload_failed
+  other: failed to reload db config store after PUT
+- id: server-runtime.log.dbconfig_rebuild_storage_resolve_failed
+  other: failed to resolve storage for db config rebuild
+- id: server-runtime.log.dbconfig_rebuild_start_failed
+  other: failed to start search service rebuild after db config update
+- id: server-runtime.log.create_database_defensive_fix
+  other: "create_database: server defensive fix applied — executor returned empty result, filled with database name"
+- id: server-runtime.log.retention_default_policy_add_failed
+  other: "retention defaults: failed to add policy"
+- id: server-runtime.log.graphql_request
+  other: graphql request
+- id: server-runtime.log.qdrant_grpc_enabled
+  other: qdrant grpc enabled

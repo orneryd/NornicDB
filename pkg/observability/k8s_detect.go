@@ -9,9 +9,12 @@
 package observability
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Reason* are the closed-set source strings logged at startup (D-02b).
@@ -102,19 +105,28 @@ func (p k8sProbe) Detect() (enabled bool, reason string) {
 // cfg.Observability.Metrics.TenantLabelsEnabled before any Phase 4 bag
 // constructor reads it.
 func ResolveAndLogTenantLabels(explicit *bool, logger *slog.Logger) bool {
+	return ResolveAndLogTenantLabelsLocalized(explicit, nil, logger)
+}
+
+// ResolveAndLogTenantLabelsLocalized resolves tenant labels and localizes its operator event.
+func ResolveAndLogTenantLabelsLocalized(explicit *bool, localizer *localization.Manager, logger *slog.Logger) bool {
 	probe := DefaultK8sProbe()
 	resolved, source := ResolveTenantLabels(explicit, probe)
 	serviceHostPresent := strings.TrimSpace(probe.Getenv(k8sServiceHostEnv)) != ""
 	tokenInfo, tokenStatErr := probe.StatFile(k8sTokenPath)
 	// Mirror the same size check Detect() uses: "present" means exists AND non-empty.
 	tokenFilePresent := tokenStatErr == nil && tokenInfo != nil && tokenInfo.Size() > 0
-	logger.Info("resolved tenant labels enabled",
-		"enabled", resolved,
-		"reason", source,
-		"service_host_present", serviceHostPresent,
-		"token_file_present", tokenFilePresent,
-	)
+	logTenantLabelsResolved(context.Background(), localizer, logger, resolved, source, serviceHostPresent, tokenFilePresent)
 	return resolved
+}
+
+func logTenantLabelsResolved(ctx context.Context, localizer *localization.Manager, logger *slog.Logger, enabled bool, reason string, serviceHostPresent, tokenFilePresent bool) {
+	event := localization.ObservabilityTenantLabelsResolvedEvent(enabled, reason, serviceHostPresent, tokenFilePresent)
+	if localizer == nil {
+		logger.LogAttrs(ctx, slog.LevelInfo, event.Message.Fallback, append([]slog.Attr{slog.String("event_id", string(event.ID))}, event.Attrs...)...)
+		return
+	}
+	localizer.Log(ctx, logger, slog.LevelInfo, event)
 }
 
 // ResolveTenantLabels enforces D-02a precedence:

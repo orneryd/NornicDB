@@ -1,0 +1,30 @@
+- id: runtime.log.heimdall_tool_call
+  description: Pseudo-locale canonical agent tool invocation log.
+  other: "[Heimdall] Tool call: request={{.RequestID}} action={{.Action}} params={{.Params}}"
+- id: runtime.log.heimdall_operator
+  description: Pseudo-locale canonical dynamic Heimdall or Bifrost operator log.
+  other: "{{.Message}}"
+- id: runtime.log.inference_edge_decay_started
+  description: Pseudo-locale canonical edge-decay startup log.
+  other: "[EDGE-DECAY] Started | decay_rate={{.DecayRate}} min_conf={{.MinConfidence}} scan_interval={{.ScanInterval}} grace={{.GracePeriod}}"
+- id: runtime.log.inference_heimdall_batch_error
+  description: Pseudo-locale canonical fail-open batch error log.
+  other: "[HEIMDALL] ⚠️ Batch error, fail-open: {{.Error}}"
+- id: runtime.log.inference_operator
+  description: Pseudo-locale canonical dynamic inference worker log.
+  other: "{{.Message}}"
+- id: runtime.log.observability_tenant_labels_resolved
+  description: Pseudo-locale tenant-label resolution log.
+  other: "[!! resolved tenant labels enabled !!]"
+- id: runtime.log.observability_instance_id_resolved
+  description: Pseudo-locale service instance identity resolution log.
+  other: 'INFO observability: service.instance.id={{printf "%q" .InstanceID}} ([!! resolved from {{.Source}} !!])'
+- id: runtime.log.observability_operator
+  description: Pseudo-locale canonical dynamic observability bootstrap log.
+  other: "{{.Message}}"
+- id: runtime.log.replication_raft_became_leader
+  description: Pseudo-locale canonical Raft leader transition log.
+  other: "[Raft {{.NodeID}}] Became leader for term {{.Term}}"
+- id: runtime.log.replication_operator
+  description: Pseudo-locale canonical dynamic replication mode and transport log.
+  other: "{{.Message}}"

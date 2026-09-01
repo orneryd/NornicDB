@@ -1,0 +1,6 @@
+- id: storage-log.log.wal_incomplete_write
+  description: Pseudo-locale WAL incomplete-tail recovery warning.
+  other: "[!! wal recovery: detected incomplete write at end !!]"
+- id: storage-log.log.wal_embeddings_skipped
+  description: Pseudo-locale recoverable corrupted-embedding warning.
+  other: "[!! wal recovery: skipped corrupted embedding entries !!]"

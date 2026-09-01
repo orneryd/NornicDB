@@ -948,7 +948,7 @@ func (s *Server) ListenAndServe() error {
 	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok && tcpAddr.Port > 0 {
 		actualPort = tcpAddr.Port
 	}
-	s.logger().Info("bolt server listening", "host", announceHost, "port", actualPort)
+	s.logEvent(context.Background(), slog.LevelInfo, localization.BoltServerListeningEvent(announceHost, actualPort))
 
 	// Validate the discovery body once at startup and start the 1s Date
 	// refresh ticker. Startup fails if OAuthConfig has malformed URLs.
@@ -1059,7 +1059,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// session loop is caught.
 	defer func() {
 		if r := recover(); r != nil {
-			s.logger().Error("connection handler panic", slog.Any("recover", r))
+			s.logEvent(context.Background(), slog.LevelError, localization.BoltConnectionHandlerPanicEvent(r))
 			sessionResult = "error"
 		}
 	}()
@@ -1089,9 +1089,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			emitMetrics = true
 		}
 		if errors.Is(err, ErrUnencryptedRequired) {
-			s.logger().Warn("rejecting unencrypted connection", "remote", remoteAddr)
+			s.logEvent(context.Background(), slog.LevelWarn, localization.BoltUnencryptedConnectionRejectedEvent(remoteAddr))
 		} else {
-			s.logger().Warn("transport sniff failed", "remote", remoteAddr, slog.Any("error", err))
+			s.logEvent(context.Background(), slog.LevelWarn, localization.BoltTransportSniffFailedEvent(remoteAddr, err))
 		}
 		if reason == "sniff_timeout" {
 			sessionResult = "timeout"
@@ -1239,7 +1239,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	if err := session.handshake(); err != nil {
-		s.logger().Warn("handshake failed", "remote", remoteAddr, slog.Any("error", err))
+		s.logEvent(context.Background(), slog.LevelWarn, localization.BoltHandshakeFailedEvent(remoteAddr, err))
 		if ms := s.metricsState; ms != nil && ms.bag != nil {
 			reason := "unrecognized_prefix"
 			if isDeadlineErr(err) {
@@ -1279,7 +1279,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				strings.Contains(errStr, "use of closed network connection") {
 				return
 			}
-			s.logger().Warn("message handling error", "remote", remoteAddr, slog.Any("error", err))
+			s.logEvent(context.Background(), slog.LevelWarn, localization.BoltMessageHandlingErrorEvent(remoteAddr, err))
 			sessionResult = "error"
 			return
 		}
@@ -1904,9 +1904,8 @@ func (s *Session) handleHello(data []byte) error {
 			// have the same-origin cookie carry the credential. HELLO
 			// bearer always wins over the cookie because we only enter
 			// this branch when the driver explicitly chose scheme=none.
-			s.server.logger().Debug("hello scheme=none",
-				"implicit_bearer_present", s.implicitBearer != "",
-				"allow_anonymous", s.server.config.AllowAnonymous)
+			s.server.logEvent(context.Background(), slog.LevelDebug,
+				localization.BoltHelloSchemeNoneEvent(s.implicitBearer != "", s.server.config.AllowAnonymous))
 			cookieAuthed := false
 			if s.implicitBearer != "" {
 				result, err := s.server.config.Authenticator.Authenticate("bearer", "", s.implicitBearer)
@@ -1924,8 +1923,8 @@ func (s *Session) handleHello(data []byte) error {
 					if s.conn != nil {
 						remoteAddr = s.conn.RemoteAddr().String()
 					}
-					s.server.logger().Warn("ws cookie bearer rejected",
-						"remote", remoteAddr, slog.Any("error", err))
+					s.server.logEvent(context.Background(), slog.LevelWarn,
+						localization.BoltWebSocketCookieBearerRejectedEvent(remoteAddr, err))
 				}
 			}
 			if !cookieAuthed {
@@ -1948,7 +1947,8 @@ func (s *Session) handleHello(data []byte) error {
 				if s.conn != nil {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
-				s.server.logger().Warn("auth failed", "scheme", "basic", "principal", principal, "remote", remoteAddr, slog.Any("error", err))
+				s.server.logEvent(context.Background(), slog.LevelWarn,
+					localization.BoltBasicAuthenticationFailedEvent(principal, remoteAddr, err))
 				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidCredentials())
 			}
 			s.authenticated = true
@@ -1962,7 +1962,8 @@ func (s *Session) handleHello(data []byte) error {
 				if s.conn != nil {
 					remoteAddr = s.conn.RemoteAddr().String()
 				}
-				s.server.logger().Warn("auth failed", "scheme", "bearer", "remote", remoteAddr, slog.Any("error", err))
+				s.server.logEvent(context.Background(), slog.LevelWarn,
+					localization.BoltBearerAuthenticationFailedEvent(remoteAddr, err))
 				return s.sendLocalizedFailure("Neo.ClientError.Security.Unauthorized", localization.BoltInvalidOrExpiredToken())
 			}
 			s.authenticated = true
@@ -2026,12 +2027,8 @@ func (s *Session) handleHello(data []byte) error {
 		// DefaultRedactKeys); we deliberately do NOT log credentials
 		// here, but the redaction guard remains in force as a defense
 		// in depth.
-		s.server.logger().Info("hello",
-			"remote", remoteAddr,
-			"user", s.authResult.Username,
-			"roles", s.authResult.Roles,
-			"database", dbName,
-		)
+		s.server.logEvent(context.Background(), slog.LevelInfo,
+			localization.BoltHelloEvent(remoteAddr, s.authResult.Username, s.authResult.Roles, dbName))
 	}
 
 	return s.sendSuccess(map[string]any{

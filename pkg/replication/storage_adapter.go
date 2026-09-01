@@ -4,7 +4,7 @@ package replication
 import (
 	"context"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -212,7 +212,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		if err != nil {
 			// Log error but don't fail the operation (WAL is for durability, not correctness)
 			// The command was already applied to storage
-			log.Printf("[WAL] Async write error (non-fatal): %v", err)
+			logReplicationPrintf(context.Background(), slog.LevelError, "[WAL] Async write error (non-fatal): %v", err)
 		}
 	default:
 		// Position not ready yet, will be set by walWriterLoop

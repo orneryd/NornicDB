@@ -2,7 +2,6 @@ package search
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,6 +187,6 @@ func (s *Service) persistSearchBuildSettings(fulltextPath, vectorPath, hnswPath 
 		return
 	}
 	if err := saveSearchBuildSettings(path, s.currentSearchBuildSettings()); err != nil {
-		log.Printf("⚠️ Background persist: failed to save build settings metadata to %s: %v", path, err)
+		logSearchPrintf("⚠️ Background persist: failed to save build settings metadata to %s: %v", path, err)
 	}
 }

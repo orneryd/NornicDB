@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"log"
 	"sort"
 	"strings"
 
@@ -83,7 +82,7 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 	s.clusterLexicalMu.Lock()
 	s.clusterLexicalProfiles = profiles
 	s.clusterLexicalMu.Unlock()
-	log.Printf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
+	logSearchPrintf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
 }
 
 func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
@@ -254,5 +253,5 @@ func (s *Service) applyBM25SeedHints() {
 		return
 	}
 	clusterIndex.SetPreferredSeedIndices(indices)
-	log.Printf("[K-MEANS] 🔍 Applied BM25 seed hints: %d preferred seeds", len(indices))
+	logSearchPrintf("[K-MEANS] 🔍 Applied BM25 seed hints: %d preferred seeds", len(indices))
 }

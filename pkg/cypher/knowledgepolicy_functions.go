@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -83,9 +84,7 @@ func (e *StorageExecutor) logDecayMismatchOnce() {
 		return
 	}
 	e.decayMismatchLogged = true
-	e.logger().Warn("decay function called but decay subsystem is disabled; returning neutral scores",
-		"component", "knowledgepolicy",
-	)
+	e.logEvent(slog.LevelWarn, localization.CypherDecaySubsystemDisabledEvent())
 }
 
 // evalDecayScore implements decayScore(entity) and decayScore(entity, {property: "key"}).

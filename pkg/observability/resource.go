@@ -1,7 +1,7 @@
 package observability
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -66,8 +66,12 @@ func resolveInstanceID(nodeID string) (id, source string) {
 // The OBS-10 startup log line is emitted here, exactly once per Provider
 // construction.
 func buildResource(info ServiceInfo) *resource.Resource {
+	return buildResourceWithLogger(info, nil)
+}
+
+func buildResourceWithLogger(info ServiceInfo, logger *slog.Logger) *resource.Resource {
 	instanceID, source := resolveInstanceID(info.NodeID)
-	log.Printf("INFO observability: service.instance.id=%q (resolved from %s)", instanceID, source)
+	logSlogBootstrapEvent(logger, bootstrapInstanceIDResolved, instanceID, source)
 
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(info.Name),
