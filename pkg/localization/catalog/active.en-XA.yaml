@@ -76,6 +76,39 @@
 - id: qdrant.snapshot_not_found
   description: Expanded pseudo-locale Qdrant snapshot lookup failure.
   other: '[!! snapshot "{{.Name}}" not found !!]'
+- id: qdrant.vector_dimension_mismatch
+  description: Expanded pseudo-locale Qdrant vector dimension failure.
+  other: "[!! vector dimension mismatch: got {{.Got}}, expected {{.Expected}} !!]"
+- id: qdrant.vector_mutations_disabled
+  description: Expanded pseudo-locale managed-vector mutation failure.
+  other: "[!! vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC !!]"
+- id: qdrant.limit_too_large
+  description: Expanded pseudo-locale Qdrant result-limit failure.
+  other: "[!! limit too large: {{.Limit}} > {{.Maximum}} !!]"
+- id: qdrant.text_query_embeddings_required
+  description: Expanded pseudo-locale missing query embedding capability response.
+  other: "[!! text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery !!]"
+- id: qdrant.get_points_failed
+  description: Expanded pseudo-locale point retrieval failure.
+  other: "[!! failed to get points: {{.Cause}} !!]"
+- id: qdrant.embed_query_failed
+  description: Expanded pseudo-locale query embedding failure.
+  other: "[!! failed to embed query: {{.Cause}} !!]"
+- id: qdrant.collection_not_found_with_cause
+  description: Expanded pseudo-locale collection lookup failure.
+  other: "[!! collection not found: {{.Cause}} !!]"
+- id: qdrant.snapshot_directory_create_failed
+  description: Expanded pseudo-locale snapshot-directory creation failure.
+  other: "[!! failed to create snapshot directory: {{.Cause}} !!]"
+- id: qdrant.snapshot_save_failed
+  description: Expanded pseudo-locale snapshot persistence failure.
+  other: "[!! failed to save snapshot: {{.Cause}} !!]"
+- id: qdrant.snapshot_list_failed
+  description: Expanded pseudo-locale snapshot listing failure.
+  other: "[!! failed to list snapshots: {{.Cause}} !!]"
+- id: qdrant.snapshot_delete_failed
+  description: Expanded pseudo-locale snapshot deletion failure.
+  other: "[!! failed to delete snapshot: {{.Cause}} !!]"
 - id: localization.items_processed
   description: Expanded pseudo-locale plural test.
   one: "[!! {{.Count}} item processed !!]"

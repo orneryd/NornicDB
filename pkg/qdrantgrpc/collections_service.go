@@ -95,7 +95,7 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 
 	meta, err := s.collections.GetMeta(ctx, req.CollectionName)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "collection not found: %v", err)
+		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err))
 	}
 
 	// Get point count
