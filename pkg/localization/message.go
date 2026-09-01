@@ -61,6 +61,16 @@ const (
 	MessageGPUManagerUnavailable MessageID = "server.gpu_manager_not_initialized"
 	MessageTemporalReconstruct   MessageID = "server.temporal_graph_reconstruction_unsupported"
 	MessageTemporalDiff          MessageID = "server.temporal_graph_diff_unsupported"
+	MessageNoAuthentication      MessageID = "security.no_authentication_provided"
+	MessageInsufficientPerms     MessageID = "security.insufficient_permissions"
+	MessageInternalServerError   MessageID = "server.internal_error"
+	MessageBoltAuthRequired      MessageID = "bolt.authentication_required"
+	MessageBoltInvalidCreds      MessageID = "bolt.invalid_credentials"
+	MessageBoltInvalidToken      MessageID = "bolt.invalid_or_expired_token"
+	MessageBoltAuthUnavailable   MessageID = "bolt.authentication_not_configured"
+	MessageBoltUnsupportedScheme MessageID = "bolt.unsupported_auth_scheme"
+	MessageBoltDatabaseLookup    MessageID = "bolt.database_not_found_with_cause"
+	MessageBoltNoTransaction     MessageID = "bolt.no_transaction_to_commit"
 	MessageSearcherRequired      MessageID = "search.searcher_required"
 	MessageRequestRequired       MessageID = "request.required"
 	MessageQueryRequired         MessageID = "search.query_required"
@@ -361,6 +371,65 @@ func TemporalGraphReconstructionUnsupported() Message {
 // TemporalGraphDiffUnsupported identifies unavailable temporal diff support.
 func TemporalGraphDiffUnsupported() Message {
 	return Message{ID: MessageTemporalDiff, Fallback: "temporal graph diff is not supported by the configured storage engine"}
+}
+
+// NoAuthenticationProvided identifies a request without credentials.
+func NoAuthenticationProvided() Message {
+	return Message{ID: MessageNoAuthentication, Fallback: "No authentication provided"}
+}
+
+// InsufficientPermissions identifies a request lacking required permissions.
+func InsufficientPermissions() Message {
+	return Message{ID: MessageInsufficientPerms, Fallback: "insufficient permissions"}
+}
+
+// InternalServerError identifies an unexpected HTTP server failure.
+func InternalServerError() Message {
+	return Message{ID: MessageInternalServerError, Fallback: "internal server error"}
+}
+
+// BoltAuthenticationRequired identifies a Bolt HELLO without required credentials.
+func BoltAuthenticationRequired() Message {
+	return Message{ID: MessageBoltAuthRequired, Fallback: "Authentication required"}
+}
+
+// BoltInvalidCredentials identifies rejected Bolt basic credentials.
+func BoltInvalidCredentials() Message {
+	return Message{ID: MessageBoltInvalidCreds, Fallback: "Invalid credentials"}
+}
+
+// BoltInvalidOrExpiredToken identifies a rejected Bolt bearer token.
+func BoltInvalidOrExpiredToken() Message {
+	return Message{ID: MessageBoltInvalidToken, Fallback: "Invalid or expired token"}
+}
+
+// BoltAuthenticationNotConfigured identifies a server requiring auth without an authenticator.
+func BoltAuthenticationNotConfigured() Message {
+	return Message{ID: MessageBoltAuthUnavailable, Fallback: "Authentication required but not configured"}
+}
+
+// BoltUnsupportedAuthScheme identifies an unsupported Bolt HELLO authentication scheme.
+func BoltUnsupportedAuthScheme(scheme string) Message {
+	return Message{
+		ID:       MessageBoltUnsupportedScheme,
+		Fallback: "Unsupported auth scheme: " + scheme,
+		Data:     map[string]any{"Scheme": scheme},
+	}
+}
+
+// BoltDatabaseNotFoundWithCause identifies a Bolt database lookup failure with diagnostic detail.
+func BoltDatabaseNotFoundWithCause(name string, cause error) Message {
+	causeText := cause.Error()
+	return Message{
+		ID:       MessageBoltDatabaseLookup,
+		Fallback: "Database '" + name + "' not found: " + causeText,
+		Data:     map[string]any{"Name": name, "Cause": causeText},
+	}
+}
+
+// BoltNoTransactionToCommit identifies COMMIT without an active transaction.
+func BoltNoTransactionToCommit() Message {
+	return Message{ID: MessageBoltNoTransaction, Fallback: "No transaction to commit"}
 }
 
 // SearcherRequired identifies missing search-service configuration.

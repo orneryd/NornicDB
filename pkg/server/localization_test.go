@@ -413,3 +413,37 @@ func TestLocalizedTemporalGraphCapabilityResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalizedMiddlewareResponsesPreserveContracts(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		status  int
+		code    string
+		message string
+		write   func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{name: "missing authentication", status: http.StatusUnauthorized, code: "Neo.ClientError.Security.Unauthorized", message: "No se proporcionó autenticación", write: (*Server).writeNeo4jNoAuthenticationProvided},
+		{name: "insufficient permissions", status: http.StatusForbidden, code: "Neo.ClientError.Security.Forbidden", message: "permisos insuficientes", write: (*Server).writeNeo4jInsufficientPermissions},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{localizer: manager}
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request.Header.Set("Accept-Language", "es-ES")
+			response := httptest.NewRecorder()
+			server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				test.write(server, w, r)
+			})).ServeHTTP(response, request)
+
+			require.Equal(t, test.status, response.Code)
+			var body TransactionResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, test.code, body.Errors[0].Code)
+			require.Equal(t, test.message, body.Errors[0].Message)
+		})
+	}
+	require.Equal(t, "No authentication provided", localization.NoAuthenticationProvided().Fallback)
+	require.Equal(t, "insufficient permissions", localization.InsufficientPermissions().Fallback)
+}

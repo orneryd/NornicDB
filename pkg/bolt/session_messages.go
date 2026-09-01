@@ -22,6 +22,10 @@ func (s *Session) sendLocalizedRunFailure(code string, message localization.Mess
 	return s.sendRunFailure(code, s.localize(message))
 }
 
+func (s *Session) sendLocalizedFailure(code string, message localization.Message) error {
+	return s.sendFailure(code, s.localize(message))
+}
+
 func (s *Session) localize(message localization.Message) string {
 	if s.server == nil || s.server.config == nil || s.server.config.Localizer == nil {
 		if message.Fallback != "" {
@@ -200,8 +204,7 @@ func (s *Session) handleRun(data []byte) error {
 		mode = auth.DenyAllDatabaseAccessMode
 	}
 	if mode != nil && !mode.CanAccessDatabase(dbName) {
-		return s.sendRunFailure("Neo.ClientError.Security.Forbidden",
-			fmt.Sprintf("Access to database '%s' is not allowed.", dbName))
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
 	}
 
 	// Per-DB write: for mutations, require ResolvedAccess.Write for this (principal, db).
@@ -212,8 +215,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		ra := s.server.resolvedAccessResolver(roles, dbName)
 		if !ra.Write {
-			return s.sendRunFailure("Neo.ClientError.Security.Forbidden",
-				fmt.Sprintf("Write on database '%s' is not allowed.", dbName))
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
 		}
 	}
 
@@ -227,8 +229,7 @@ func (s *Session) handleRun(data []byte) error {
 	} else if s.server != nil && s.server.dbManager != nil {
 		dbExecutor, err := s.getExecutorForDatabase(dbName)
 		if err != nil {
-			return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
-				fmt.Sprintf("Database '%s' not found: %v", dbName, err))
+			return s.sendLocalizedRunFailure("Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, err))
 		}
 		executor = dbExecutor
 	}
@@ -841,7 +842,7 @@ func (s *Session) handleBegin(data []byte) error {
 		txExec, err := s.getTransactionalExecutorForDatabase(dbName)
 		if err != nil {
 			return s.sendTransactionControlFailure("Neo.ClientError.Database.DatabaseNotFound",
-				fmt.Sprintf("Database '%s' not found: %v", dbName, err))
+				s.localize(localization.BoltDatabaseNotFoundWithCause(dbName, err)))
 		}
 		s.executor = txExec
 		txDatabase = dbName
@@ -900,7 +901,7 @@ func (s *Session) handleBegin(data []byte) error {
 func (s *Session) handleCommit(data []byte) error {
 	if !s.inTransaction {
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
-			"No transaction to commit")
+			s.localize(localization.BoltNoTransactionToCommit()))
 	}
 	txExec, claimErr := s.txLifecycle.claimCommit()
 	if errors.Is(claimErr, errTransactionTimedOut) {
@@ -909,7 +910,7 @@ func (s *Session) handleCommit(data []byte) error {
 	if claimErr != nil {
 		s.clearExplicitTransactionState()
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
-			"No transaction to commit")
+			s.localize(localization.BoltNoTransactionToCommit()))
 	}
 	commitCallStarted := false
 	commitCallReturned := false

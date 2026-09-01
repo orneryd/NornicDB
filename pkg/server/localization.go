@@ -166,3 +166,15 @@ func (s *Server) writeTemporalGraphReconstructionUnsupported(w http.ResponseWrit
 func (s *Server) writeTemporalGraphDiffUnsupported(w http.ResponseWriter, r *http.Request, err error) {
 	s.writeLocalizedError(w, r, http.StatusBadRequest, localization.TemporalGraphDiffUnsupported(), err)
 }
+
+func (s *Server) writeNeo4jNoAuthenticationProvided(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusUnauthorized, "Neo.ClientError.Security.Unauthorized", localization.NoAuthenticationProvided())
+}
+
+func (s *Server) writeNeo4jInsufficientPermissions(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.InsufficientPermissions())
+}
+
+func (s *Server) writeInternalServerError(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedError(w, r, http.StatusInternalServerError, localization.InternalServerError(), ErrInternalError)
+}
