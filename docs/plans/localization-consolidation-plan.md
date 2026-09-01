@@ -113,10 +113,10 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,858
-occurrences and 4,618 unique text/templates. The source additions for the
+The working-tree snapshot after the current boundary migration contains 8,845
+occurrences and 4,611 unique text/templates. The source additions for the
 localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 152 HTTP occurrences, 137 to 44 gRPC occurrences,
+counts changed from 290 to 139 HTTP occurrences, 137 to 44 gRPC occurrences,
 and three to one JSON-RPC occurrences.
 
 Review reports are generated alongside the inventory:
@@ -151,9 +151,14 @@ Implemented:
   embedding failures preserve gRPC codes and diagnostic arguments while
   rendering through catalog IDs.
 - Repeated Qdrant collection lookup and snapshot directory/save/list/delete
-  diagnostics preserve their gRPC codes and untranslated cause details. The
-  remaining exact-duplicate public-boundary report is limited to Heimdall HTTP
-  responses, which require localizer wiring at the Heimdall handler boundary.
+  diagnostics preserve their gRPC codes and untranslated cause details.
+- Heimdall now resolves request language at its HTTP handler boundary and
+  carries locale context into streaming and generation helpers. Its method,
+  request-body, streaming, availability, validation, autocomplete, and
+  generation failures preserve plain-text `http.Error` semantics.
+- The exact-duplicate review report currently contains no repeated HTTP, Bolt,
+  gRPC, or JSON-RPC families; remaining public messages require semantic rather
+  than exact-duplicate migration.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
 - Deterministic inventory drift checking and exact/normalized review reports.
 

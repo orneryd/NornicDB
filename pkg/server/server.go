@@ -1251,6 +1251,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			dbRouter := newHeimdallDBRouter(db, dbManager, featuresConfig)
 			metricsReader := &heimdallMetricsReader{}
 			handler := heimdall.NewHandler(manager, heimdallCfg, dbRouter, metricsReader)
+			handler.SetLocalizer(s.localizer)
 			// Expose MCP tools to the agentic loop only when enabled (default off to avoid context bloat)
 			if mcpServer != nil && featuresConfig.HeimdallMCPEnable {
 				handler.SetInMemoryToolRunner(&mcpToolRunnerAdapter{

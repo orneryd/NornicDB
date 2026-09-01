@@ -109,6 +109,27 @@
 - id: qdrant.snapshot_delete_failed
   description: Expanded pseudo-locale snapshot deletion failure.
   other: "[!! failed to delete snapshot: {{.Cause}} !!]"
+- id: heimdall.method_not_allowed
+  description: Expanded pseudo-locale Heimdall method response.
+  other: "[!! Method not allowed !!]"
+- id: heimdall.invalid_request_body
+  description: Expanded pseudo-locale Heimdall invalid request response.
+  other: "[!! Invalid request body !!]"
+- id: heimdall.streaming_not_supported
+  description: Expanded pseudo-locale Heimdall streaming capability response.
+  other: "[!! Streaming not supported !!]"
+- id: heimdall.bifrost_not_enabled
+  description: Expanded pseudo-locale unavailable Bifrost response.
+  other: "[!! Bifrost not enabled !!]"
+- id: heimdall.query_parameter_required
+  description: Expanded pseudo-locale missing autocomplete query response.
+  other: "[!! query parameter required !!]"
+- id: heimdall.autocomplete_failed
+  description: Expanded pseudo-locale autocomplete failure.
+  other: "[!! Autocomplete error: {{.Cause}} !!]"
+- id: heimdall.generation_failed
+  description: Expanded pseudo-locale generation failure.
+  other: "[!! Generation error: {{.Cause}} !!]"
 - id: localization.items_processed
   description: Expanded pseudo-locale plural test.
   one: "[!! {{.Count}} item processed !!]"

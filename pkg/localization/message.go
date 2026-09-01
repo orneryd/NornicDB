@@ -14,79 +14,86 @@ type Message struct {
 }
 
 const (
-	MessageOSLanguageUndetected       MessageID = "localization.os_language_undetected"
-	MessageLanguagePackMissing        MessageID = "localization.language_pack_missing"
-	MessageCatalogEntryMissing        MessageID = "localization.catalog_entry_missing"
-	MessageInvalidRequestBody         MessageID = "server.invalid_request_body"
-	MessageInvalidJSONBody            MessageID = "server.invalid_json_body"
-	MessagePostRequired               MessageID = "server.method_post_required"
-	MessageGetRequired                MessageID = "server.method_get_required"
-	MessageGetOrPostRequired          MessageID = "server.method_get_or_post_required"
-	MessageGetOrPutRequired           MessageID = "server.method_get_or_put_required"
-	MessageGetPutDeleteRequired       MessageID = "server.method_get_put_or_delete_required"
-	MessagePostOrDeleteRequired       MessageID = "server.method_post_or_delete_required"
-	MessageMethodNotAllowed           MessageID = "server.method_not_allowed"
-	MessageRequestBodyReadFailed      MessageID = "request.body_read_failed"
-	MessageMCPParseError              MessageID = "mcp.parse_error"
-	MessageMCPMethodNotFound          MessageID = "mcp.method_not_found"
-	MessageMCPToolFailed              MessageID = "mcp.tool_execution_failed"
-	MessageQdrantCollectionName       MessageID = "qdrant.collection_name_required"
-	MessageQdrantFieldRequired        MessageID = "qdrant.field_required"
-	MessageQdrantFieldsRequired       MessageID = "qdrant.fields_required"
-	MessageQdrantDatabaseDenied       MessageID = "qdrant.database_access_denied"
-	MessageQdrantDatabaseWrite        MessageID = "qdrant.database_write_denied"
-	MessageQdrantPermission           MessageID = "qdrant.permission_denied"
-	MessageQdrantAuthRequired         MessageID = "qdrant.authentication_required"
-	MessageQdrantInvalidToken         MessageID = "qdrant.invalid_or_expired_token"
-	MessageQdrantCollectionMiss       MessageID = "qdrant.collection_not_found"
-	MessageQdrantSnapshotMiss         MessageID = "qdrant.snapshot_not_found"
-	MessageQdrantDimensionMismatch    MessageID = "qdrant.vector_dimension_mismatch"
-	MessageQdrantMutationsDisabled    MessageID = "qdrant.vector_mutations_disabled"
-	MessageQdrantLimitTooLarge        MessageID = "qdrant.limit_too_large"
-	MessageQdrantEmbeddingsRequired   MessageID = "qdrant.text_query_embeddings_required"
-	MessageQdrantGetPointsFailed      MessageID = "qdrant.get_points_failed"
-	MessageQdrantEmbedQueryFailed     MessageID = "qdrant.embed_query_failed"
-	MessageQdrantCollectionFailed     MessageID = "qdrant.collection_not_found_with_cause"
-	MessageQdrantSnapshotDirFailed    MessageID = "qdrant.snapshot_directory_create_failed"
-	MessageQdrantSnapshotSaveFailed   MessageID = "qdrant.snapshot_save_failed"
-	MessageQdrantSnapshotListFailed   MessageID = "qdrant.snapshot_list_failed"
-	MessageQdrantSnapshotDeleteFailed MessageID = "qdrant.snapshot_delete_failed"
-	MessageItemsProcessed             MessageID = "localization.items_processed"
-	MessageNotAuthenticated           MessageID = "security.not_authenticated"
-	MessageSchemaPermission           MessageID = "security.schema_permission_required"
-	MessageAdminPermission            MessageID = "security.admin_permission_required"
-	MessageWritePermission            MessageID = "security.write_permission_required"
-	MessageReadPermission             MessageID = "security.read_permission_required"
-	MessageDatabaseNotFound           MessageID = "database.not_found"
-	MessageHTTPDatabaseNotFound       MessageID = "server.database_not_found"
-	MessageDatabaseAccessDenied       MessageID = "security.database_access_denied"
-	MessageDatabaseWriteDenied        MessageID = "security.database_write_denied"
-	MessageAuthNotConfigured          MessageID = "server.authentication_not_configured"
-	MessageOAuthNotConfigured         MessageID = "server.oauth_not_configured"
-	MessageHTTPNotAuthenticated       MessageID = "server.not_authenticated"
-	MessageUserNotFound               MessageID = "server.user_not_found"
-	MessageTransactionNotFound        MessageID = "server.transaction_not_found"
-	MessageRequestFieldRequired       MessageID = "server.request_field_required"
-	MessageNotFound                   MessageID = "server.not_found"
-	MessageInvalidGPUManager          MessageID = "server.invalid_gpu_manager_type"
-	MessageGPUManagerUnavailable      MessageID = "server.gpu_manager_not_initialized"
-	MessageTemporalReconstruct        MessageID = "server.temporal_graph_reconstruction_unsupported"
-	MessageTemporalDiff               MessageID = "server.temporal_graph_diff_unsupported"
-	MessageNoAuthentication           MessageID = "security.no_authentication_provided"
-	MessageInsufficientPerms          MessageID = "security.insufficient_permissions"
-	MessageInternalServerError        MessageID = "server.internal_error"
-	MessageBoltAuthRequired           MessageID = "bolt.authentication_required"
-	MessageBoltInvalidCreds           MessageID = "bolt.invalid_credentials"
-	MessageBoltInvalidToken           MessageID = "bolt.invalid_or_expired_token"
-	MessageBoltAuthUnavailable        MessageID = "bolt.authentication_not_configured"
-	MessageBoltUnsupportedScheme      MessageID = "bolt.unsupported_auth_scheme"
-	MessageBoltDatabaseLookup         MessageID = "bolt.database_not_found_with_cause"
-	MessageBoltNoTransaction          MessageID = "bolt.no_transaction_to_commit"
-	MessageSearcherRequired           MessageID = "search.searcher_required"
-	MessageRequestRequired            MessageID = "request.required"
-	MessageQueryRequired              MessageID = "search.query_required"
-	MessageQueryChunkFailed           MessageID = "search.query_chunk_failed"
-	MessageSearchFailed               MessageID = "search.failed"
+	MessageOSLanguageUndetected         MessageID = "localization.os_language_undetected"
+	MessageLanguagePackMissing          MessageID = "localization.language_pack_missing"
+	MessageCatalogEntryMissing          MessageID = "localization.catalog_entry_missing"
+	MessageInvalidRequestBody           MessageID = "server.invalid_request_body"
+	MessageInvalidJSONBody              MessageID = "server.invalid_json_body"
+	MessagePostRequired                 MessageID = "server.method_post_required"
+	MessageGetRequired                  MessageID = "server.method_get_required"
+	MessageGetOrPostRequired            MessageID = "server.method_get_or_post_required"
+	MessageGetOrPutRequired             MessageID = "server.method_get_or_put_required"
+	MessageGetPutDeleteRequired         MessageID = "server.method_get_put_or_delete_required"
+	MessagePostOrDeleteRequired         MessageID = "server.method_post_or_delete_required"
+	MessageMethodNotAllowed             MessageID = "server.method_not_allowed"
+	MessageRequestBodyReadFailed        MessageID = "request.body_read_failed"
+	MessageMCPParseError                MessageID = "mcp.parse_error"
+	MessageMCPMethodNotFound            MessageID = "mcp.method_not_found"
+	MessageMCPToolFailed                MessageID = "mcp.tool_execution_failed"
+	MessageQdrantCollectionName         MessageID = "qdrant.collection_name_required"
+	MessageQdrantFieldRequired          MessageID = "qdrant.field_required"
+	MessageQdrantFieldsRequired         MessageID = "qdrant.fields_required"
+	MessageQdrantDatabaseDenied         MessageID = "qdrant.database_access_denied"
+	MessageQdrantDatabaseWrite          MessageID = "qdrant.database_write_denied"
+	MessageQdrantPermission             MessageID = "qdrant.permission_denied"
+	MessageQdrantAuthRequired           MessageID = "qdrant.authentication_required"
+	MessageQdrantInvalidToken           MessageID = "qdrant.invalid_or_expired_token"
+	MessageQdrantCollectionMiss         MessageID = "qdrant.collection_not_found"
+	MessageQdrantSnapshotMiss           MessageID = "qdrant.snapshot_not_found"
+	MessageQdrantDimensionMismatch      MessageID = "qdrant.vector_dimension_mismatch"
+	MessageQdrantMutationsDisabled      MessageID = "qdrant.vector_mutations_disabled"
+	MessageQdrantLimitTooLarge          MessageID = "qdrant.limit_too_large"
+	MessageQdrantEmbeddingsRequired     MessageID = "qdrant.text_query_embeddings_required"
+	MessageQdrantGetPointsFailed        MessageID = "qdrant.get_points_failed"
+	MessageQdrantEmbedQueryFailed       MessageID = "qdrant.embed_query_failed"
+	MessageQdrantCollectionFailed       MessageID = "qdrant.collection_not_found_with_cause"
+	MessageQdrantSnapshotDirFailed      MessageID = "qdrant.snapshot_directory_create_failed"
+	MessageQdrantSnapshotSaveFailed     MessageID = "qdrant.snapshot_save_failed"
+	MessageQdrantSnapshotListFailed     MessageID = "qdrant.snapshot_list_failed"
+	MessageQdrantSnapshotDeleteFailed   MessageID = "qdrant.snapshot_delete_failed"
+	MessageHeimdallMethodNotAllowed     MessageID = "heimdall.method_not_allowed"
+	MessageHeimdallInvalidRequestBody   MessageID = "heimdall.invalid_request_body"
+	MessageHeimdallStreamingUnsupported MessageID = "heimdall.streaming_not_supported"
+	MessageHeimdallBifrostDisabled      MessageID = "heimdall.bifrost_not_enabled"
+	MessageHeimdallQueryRequired        MessageID = "heimdall.query_parameter_required"
+	MessageHeimdallAutocompleteFailed   MessageID = "heimdall.autocomplete_failed"
+	MessageHeimdallGenerationFailed     MessageID = "heimdall.generation_failed"
+	MessageItemsProcessed               MessageID = "localization.items_processed"
+	MessageNotAuthenticated             MessageID = "security.not_authenticated"
+	MessageSchemaPermission             MessageID = "security.schema_permission_required"
+	MessageAdminPermission              MessageID = "security.admin_permission_required"
+	MessageWritePermission              MessageID = "security.write_permission_required"
+	MessageReadPermission               MessageID = "security.read_permission_required"
+	MessageDatabaseNotFound             MessageID = "database.not_found"
+	MessageHTTPDatabaseNotFound         MessageID = "server.database_not_found"
+	MessageDatabaseAccessDenied         MessageID = "security.database_access_denied"
+	MessageDatabaseWriteDenied          MessageID = "security.database_write_denied"
+	MessageAuthNotConfigured            MessageID = "server.authentication_not_configured"
+	MessageOAuthNotConfigured           MessageID = "server.oauth_not_configured"
+	MessageHTTPNotAuthenticated         MessageID = "server.not_authenticated"
+	MessageUserNotFound                 MessageID = "server.user_not_found"
+	MessageTransactionNotFound          MessageID = "server.transaction_not_found"
+	MessageRequestFieldRequired         MessageID = "server.request_field_required"
+	MessageNotFound                     MessageID = "server.not_found"
+	MessageInvalidGPUManager            MessageID = "server.invalid_gpu_manager_type"
+	MessageGPUManagerUnavailable        MessageID = "server.gpu_manager_not_initialized"
+	MessageTemporalReconstruct          MessageID = "server.temporal_graph_reconstruction_unsupported"
+	MessageTemporalDiff                 MessageID = "server.temporal_graph_diff_unsupported"
+	MessageNoAuthentication             MessageID = "security.no_authentication_provided"
+	MessageInsufficientPerms            MessageID = "security.insufficient_permissions"
+	MessageInternalServerError          MessageID = "server.internal_error"
+	MessageBoltAuthRequired             MessageID = "bolt.authentication_required"
+	MessageBoltInvalidCreds             MessageID = "bolt.invalid_credentials"
+	MessageBoltInvalidToken             MessageID = "bolt.invalid_or_expired_token"
+	MessageBoltAuthUnavailable          MessageID = "bolt.authentication_not_configured"
+	MessageBoltUnsupportedScheme        MessageID = "bolt.unsupported_auth_scheme"
+	MessageBoltDatabaseLookup           MessageID = "bolt.database_not_found_with_cause"
+	MessageBoltNoTransaction            MessageID = "bolt.no_transaction_to_commit"
+	MessageSearcherRequired             MessageID = "search.searcher_required"
+	MessageRequestRequired              MessageID = "request.required"
+	MessageQueryRequired                MessageID = "search.query_required"
+	MessageQueryChunkFailed             MessageID = "search.query_chunk_failed"
+	MessageSearchFailed                 MessageID = "search.failed"
 )
 
 // OSLanguageUndetected reports that OS language detection failed.
@@ -354,6 +361,51 @@ func QdrantSnapshotDeleteFailed(cause error) Message {
 	return Message{
 		ID:       MessageQdrantSnapshotDeleteFailed,
 		Fallback: "failed to delete snapshot: " + causeText,
+		Data:     map[string]any{"Cause": causeText},
+	}
+}
+
+// HeimdallMethodNotAllowed identifies an unsupported Heimdall HTTP method.
+func HeimdallMethodNotAllowed() Message {
+	return Message{ID: MessageHeimdallMethodNotAllowed, Fallback: "Method not allowed"}
+}
+
+// HeimdallInvalidRequestBody identifies a malformed Heimdall request body.
+func HeimdallInvalidRequestBody() Message {
+	return Message{ID: MessageHeimdallInvalidRequestBody, Fallback: "Invalid request body"}
+}
+
+// HeimdallStreamingNotSupported identifies a response writer without streaming support.
+func HeimdallStreamingNotSupported() Message {
+	return Message{ID: MessageHeimdallStreamingUnsupported, Fallback: "Streaming not supported"}
+}
+
+// HeimdallBifrostNotEnabled identifies an unavailable Bifrost event service.
+func HeimdallBifrostNotEnabled() Message {
+	return Message{ID: MessageHeimdallBifrostDisabled, Fallback: "Bifrost not enabled"}
+}
+
+// HeimdallQueryParameterRequired identifies a missing autocomplete query.
+func HeimdallQueryParameterRequired() Message {
+	return Message{ID: MessageHeimdallQueryRequired, Fallback: "query parameter required"}
+}
+
+// HeimdallAutocompleteFailed identifies an autocomplete operation failure.
+func HeimdallAutocompleteFailed(cause error) Message {
+	causeText := cause.Error()
+	return Message{
+		ID:       MessageHeimdallAutocompleteFailed,
+		Fallback: "Autocomplete error: " + causeText,
+		Data:     map[string]any{"Cause": causeText},
+	}
+}
+
+// HeimdallGenerationFailed identifies a response generation failure.
+func HeimdallGenerationFailed(cause error) Message {
+	causeText := cause.Error()
+	return Message{
+		ID:       MessageHeimdallGenerationFailed,
+		Fallback: "Generation error: " + causeText,
 		Data:     map[string]any{"Cause": causeText},
 	}
 }
