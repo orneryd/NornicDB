@@ -73,3 +73,15 @@
 - id: server.backup_complete
   description: HTTP confirmation after completing a database backup.
   other: backup complete
+- id: server.log.mcp_disabled
+  description: Server startup log when MCP is disabled by configuration.
+  other: mcp server disabled via configuration
+- id: server.log.remote_credentials_key_fallback
+  description: Server startup warning when another configured secret is reused for remote credential encryption.
+  other: remote credential encryption key fallback in use
+- id: server.log.ui_headless
+  description: Server startup log when the browser UI is disabled in headless mode.
+  other: "headless mode: UI disabled"
+- id: server.log.authentication_disabled
+  description: Server startup warning when authentication is disabled.
+  other: authentication disabled

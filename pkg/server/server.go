@@ -1030,7 +1030,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		mcpConfig.Localizer = config.Localizer
 		mcpServer = mcp.NewServer(db, mcpConfig)
 	} else {
-		config.Logger.With("component", "server").Info("mcp server disabled via configuration")
+		config.Localizer.Log(context.Background(), config.Logger.With("component", "server"), slog.LevelInfo, localization.ServerMCPDisabledEvent())
 	}
 
 	// Initialize DatabaseManager for multi-database support.
@@ -1045,14 +1045,18 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		remoteCredentialEncryptionKey = strings.TrimSpace(os.Getenv("NORNICDB_REMOTE_CREDENTIALS_KEY"))
 	case strings.TrimSpace(globalConfig.Database.EncryptionPassword) != "":
 		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Database.EncryptionPassword)
-		config.Logger.With("component", "server").Warn("remote credential encryption key fallback in use",
-			"fallback", "database_encryption_password",
-			"remediation", "set NORNICDB_REMOTE_CREDENTIALS_KEY for key separation")
+		config.Localizer.Log(context.Background(), config.Logger.With("component", "server"), slog.LevelWarn,
+			localization.ServerRemoteCredentialKeyFallbackEvent(
+				"database_encryption_password",
+				"set NORNICDB_REMOTE_CREDENTIALS_KEY for key separation",
+			))
 	case strings.TrimSpace(globalConfig.Auth.JWTSecret) != "":
 		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Auth.JWTSecret)
-		config.Logger.With("component", "server").Warn("remote credential encryption key fallback in use",
-			"fallback", "jwt_signing_secret",
-			"remediation", "set NORNICDB_REMOTE_CREDENTIALS_KEY for stronger key separation")
+		config.Localizer.Log(context.Background(), config.Logger.With("component", "server"), slog.LevelWarn,
+			localization.ServerRemoteCredentialKeyFallbackEvent(
+				"jwt_signing_secret",
+				"set NORNICDB_REMOTE_CREDENTIALS_KEY for stronger key separation",
+			))
 	}
 	multiDBConfig := &multidb.Config{
 		DefaultDatabase:               globalConfig.Database.DefaultDatabase,
@@ -1583,7 +1587,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 	// Log authentication status
 	if authenticator == nil || !authenticator.IsSecurityEnabled() {
-		s.log.Warn("authentication disabled")
+		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAuthenticationDisabledEvent())
 	}
 
 	// Initialize rate limiter if enabled

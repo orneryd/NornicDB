@@ -3,6 +3,7 @@ package localization
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -90,4 +91,36 @@ func TestManagerWarnsOnceForMissingCatalogEntry(t *testing.T) {
 
 	require.Equal(t, uint64(2), manager.MissingCatalogEntryCount())
 	require.Equal(t, 1, strings.Count(strings.TrimSpace(output.String()), "\n")+1)
+}
+
+func TestManagerLogPreservesEventIdentityAndFieldsAcrossLocales(t *testing.T) {
+	event := LogEvent{
+		ID:      "server.request.invalid_body",
+		Message: InvalidRequestBody(),
+		Attrs: []slog.Attr{
+			slog.String("component", "server"),
+			slog.Int("status", 400),
+		},
+	}
+
+	logs := make([]map[string]any, 0, 2)
+	for _, tag := range []language.Tag{language.AmericanEnglish, language.EuropeanSpanish} {
+		var output bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&output, nil))
+		manager, err := NewManager([]language.Tag{tag}, nil)
+		require.NoError(t, err)
+
+		manager.Log(WithPreferences(context.Background(), tag), logger, slog.LevelWarn, event)
+
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+		logs = append(logs, record)
+	}
+
+	require.Equal(t, "invalid request body", logs[0]["msg"])
+	require.Equal(t, "cuerpo de solicitud no válido", logs[1]["msg"])
+	for _, field := range []string{"level", "event_id", "component", "status"} {
+		require.Equal(t, logs[0][field], logs[1][field], "field %s changed with locale", field)
+	}
+	require.Equal(t, "server.request.invalid_body", logs[0]["event_id"])
 }

@@ -73,3 +73,15 @@
 - id: server.backup_complete
   description: Pseudo-locale backup confirmation.
   other: "[!! backup complete !!]"
+- id: server.log.mcp_disabled
+  description: Pseudo-locale server startup log when MCP is disabled.
+  other: "[!! mcp server disabled via configuration !!]"
+- id: server.log.remote_credentials_key_fallback
+  description: Pseudo-locale remote credential encryption key fallback warning.
+  other: "[!! remote credential encryption key fallback in use !!]"
+- id: server.log.ui_headless
+  description: Pseudo-locale headless UI startup log.
+  other: "[!! headless mode: UI disabled !!]"
+- id: server.log.authentication_disabled
+  description: Pseudo-locale authentication-disabled startup warning.
+  other: "[!! authentication disabled !!]"
