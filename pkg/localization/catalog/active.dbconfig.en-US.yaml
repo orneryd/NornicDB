@@ -25,3 +25,12 @@
 - id: dbconfig.disallowed_key
   description: Neo4j HTTP validation response for a disallowed configuration key. Key is a machine identifier and must not be translated.
   other: "disallowed or unknown key: {{.Key}}"
+- id: dbconfig.mvcc_prune_triggered
+  description: HTTP confirmation after triggering an MVCC prune.
+  other: prune triggered
+- id: dbconfig.mvcc_lifecycle_paused
+  description: HTTP confirmation after pausing the MVCC lifecycle.
+  other: lifecycle paused
+- id: dbconfig.mvcc_lifecycle_resumed
+  description: HTTP confirmation after resuming the MVCC lifecycle.
+  other: lifecycle resumed

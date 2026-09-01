@@ -28,6 +28,15 @@
 - id: auth.old_password_incorrect
   description: Respuesta HTTP cuando la contraseña actual es incorrecta.
   other: la contraseña anterior es incorrecta
+- id: auth.logout_complete
+  description: Confirmación después de cerrar la sesión autenticada.
+  other: sesión cerrada
+- id: auth.password_changed
+  description: Confirmación después de cambiar la contraseña.
+  other: contraseña cambiada
+- id: auth.profile_updated
+  description: Confirmación después de actualizar el perfil.
+  other: perfil actualizado
 - id: server.method_put_required
   description: Respuesta HTTP para un endpoint que solo acepta solicitudes PUT.
   other: se requiere PUT

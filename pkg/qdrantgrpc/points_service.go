@@ -14,7 +14,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // PointsService implements the upstream Qdrant Points gRPC service (package `qdrant`).
@@ -47,7 +46,7 @@ func (s *PointsService) allowAccess(ctx context.Context, collectionName string, 
 
 func (s *PointsService) openCollection(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
 	if s.collections == nil {
-		return nil, nil, status.Error(codes.Internal, "collection store not configured")
+		return nil, nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCollectionStoreNotConfigured())
 	}
 	engine, meta, err := s.collections.Open(ctx, name)
 	if err != nil {
@@ -84,7 +83,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
 	}
 	if len(req.GetPoints()) > s.config.MaxBatchPoints {
-		return nil, status.Errorf(codes.InvalidArgument, "too many points: %d > %d", len(req.GetPoints()), s.config.MaxBatchPoints)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantTooManyPoints(len(req.GetPoints()), s.config.MaxBatchPoints))
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
@@ -102,7 +101,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 	existing, err := store.BatchGetNodes(nodeIDs)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to read existing points: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantReadExistingPointsFailed(err))
 	}
 
 	nodesToCreate := make([]*storage.Node, 0, len(req.Points))
@@ -115,7 +114,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		if point.Vectors == nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"))
 		}
-		vecNames, vecs, err := extractVectors(point.Vectors)
+		vecNames, vecs, err := extractVectors(ctx, s.config.Localizer, point.Vectors)
 		if err != nil {
 			return nil, err
 		}
@@ -164,12 +163,12 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 	if len(nodesToCreate) > 0 {
 		if err := store.BulkCreateNodes(nodesToCreate); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to create points: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err))
 		}
 	}
 	for _, node := range nodesToUpdate {
 		if err := store.UpdateNode(node); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to update point %s: %v", node.ID, err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err))
 		}
 	}
 
@@ -202,12 +201,12 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 			for _, name := range newNames {
 				vec, ok := nodeVectorByName(node, name)
 				if !ok {
-					return nil, status.Errorf(codes.Internal, "missing vector %q for point %s", name, node.ID)
+					return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantMissingVectorForPoint(name, string(node.ID)))
 				}
 				vectors = append(vectors, vec)
 			}
 			if err := s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to index point %s: %v", node.ID, err)
+				return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
 			}
 		}
 	}
@@ -379,7 +378,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	offset := 0
 	if req.Offset != nil {
 		if *req.Offset > uint64(^uint(0)>>1) {
-			return nil, status.Error(codes.InvalidArgument, "offset too large")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantOffsetTooLarge())
 		}
 		offset = int(*req.Offset)
 	}
@@ -388,7 +387,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	if req.Params != nil && req.Params.HnswEf != nil {
 		raw := req.Params.GetHnswEf()
 		if raw > uint64(^uint(0)>>1) {
-			return nil, status.Error(codes.InvalidArgument, "hnsw_ef too large")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantHNSWEfTooLarge())
 		}
 		ef = int(raw)
 		// Keep `ef` sane: HNSW ef must be at least the number of candidates we need.
@@ -699,7 +698,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 
 	for _, pv := range req.Points {
 		if pv == nil || pv.Id == nil || pv.Vectors == nil {
-			return nil, status.Error(codes.InvalidArgument, "point id and vectors are required")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPointIDAndVectorsRequired())
 		}
 
 		nodeID := pointIDToNodeID(pv.Id)
@@ -709,7 +708,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		}
 		oldNames := nodeVectorNames(node)
 
-		names, vecs, err := extractVectors(pv.Vectors)
+		names, vecs, err := extractVectors(ctx, s.config.Localizer, pv.Vectors)
 		if err != nil {
 			return nil, err
 		}
@@ -1087,7 +1086,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 
 	if req.Query == nil {
 		// No query: treat as scroll-by-id (not implemented here).
-		return nil, status.Error(codes.Unimplemented, "query without Query.variant is not implemented")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantMissing())
 	}
 
 	switch q := req.Query.Variant.(type) {
@@ -1122,7 +1121,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 			Time:   time.Since(start).Seconds(),
 		}, nil
 	default:
-		return nil, status.Errorf(codes.Unimplemented, "query variant %T is not implemented", q)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantUnsupported(q))
 	}
 }
 
@@ -1165,11 +1164,11 @@ func (s *PointsService) vectorFromInput(ctx context.Context, collection string, 
 		nodeID := pointIDToNodeID(v.Id)
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			return nil, status.Errorf(codes.NotFound, "point not found: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantPointNotFoundWithCause(err))
 		}
 		emb, ok := nodeVectorByName(node, using)
 		if !ok {
-			return nil, status.Error(codes.NotFound, "vector not found for point")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantVectorNotFoundForPoint())
 		}
 		return emb, nil
 	case *qpb.VectorInput_Document:
@@ -1185,7 +1184,7 @@ func (s *PointsService) vectorFromInput(ctx context.Context, collection string, 
 		}
 		return emb, nil
 	default:
-		return nil, status.Errorf(codes.Unimplemented, "vector input variant %T is not implemented", v)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantVectorInputVariantUnsupported(v))
 	}
 }
 
@@ -1225,7 +1224,7 @@ func (s *PointsService) recommendQueryVector(
 	}
 
 	if len(vectorsPos) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "at least one positive example is required")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveExampleRequired())
 	}
 
 	var vectorsNeg [][]float32
@@ -1251,17 +1250,17 @@ func (s *PointsService) recommendQueryVector(
 
 	pos := averageVectors(vectorsPos)
 	if pos == nil {
-		return nil, status.Error(codes.InvalidArgument, "failed to compute positive vector average: no valid vectors")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantPositiveAverageFailed())
 	}
 	if len(vectorsNeg) == 0 {
 		return pos, nil
 	}
 	neg := averageVectors(vectorsNeg)
 	if neg == nil {
-		return nil, status.Error(codes.InvalidArgument, "failed to compute negative vector average: no valid vectors")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantNegativeAverageFailed())
 	}
 	if len(pos) != len(neg) {
-		return nil, status.Errorf(codes.InvalidArgument, "dimension mismatch: positive vectors have dimension %d, negative vectors have dimension %d", len(pos), len(neg))
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantRecommendationDimensionMismatch(len(pos), len(neg)))
 	}
 	for i := range pos {
 		pos[i] = pos[i] - neg[i]
@@ -1289,7 +1288,7 @@ func (s *PointsService) vectorFromVector(ctx context.Context, v *qpb.Vector) ([]
 		}
 		return emb, nil
 	}
-	return nil, status.Error(codes.Unimplemented, "unsupported vector kind")
+	return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantUnsupportedVectorKind())
 }
 
 func averageVectors(vectors [][]float32) []float32 {
@@ -1531,14 +1530,14 @@ func isQdrantPointNode(node *storage.Node) bool {
 	return false
 }
 
-func resolvePointIDs(sel *qpb.PointsSelector) ([]*qpb.PointId, error) {
+func resolvePointIDs(ctx context.Context, manager *localization.Manager, sel *qpb.PointsSelector) ([]*qpb.PointId, error) {
 	if sel == nil {
-		return nil, status.Error(codes.InvalidArgument, "points selector is required")
+		return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 	switch opt := sel.PointsSelectorOneOf.(type) {
 	case *qpb.PointsSelector_Points:
 		if opt.Points == nil || len(opt.Points.Ids) == 0 {
-			return nil, status.Error(codes.InvalidArgument, "ids are required")
+			return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("ids"))
 		}
 		return opt.Points.Ids, nil
 	default:
@@ -1553,7 +1552,7 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 
 	switch opt := sel.PointsSelectorOneOf.(type) {
 	case *qpb.PointsSelector_Points:
-		ids, err := resolvePointIDs(sel)
+		ids, err := resolvePointIDs(ctx, s.config.Localizer, sel)
 		if err != nil {
 			return nil, err
 		}
@@ -1565,7 +1564,7 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 	case *qpb.PointsSelector_Filter:
 		nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 		if err != nil && err != storage.ErrNotFound {
-			return nil, status.Errorf(codes.Internal, "failed to scan points: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantScanPointsFailed(err))
 		}
 		out := make([]storage.NodeID, 0, len(nodes))
 		for _, node := range nodes {
@@ -1578,7 +1577,7 @@ func (s *PointsService) resolvePointsSelector(ctx context.Context, store storage
 		}
 		return out, nil
 	default:
-		return nil, status.Error(codes.InvalidArgument, "invalid points selector")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidPointsSelector())
 	}
 }
 
@@ -1643,21 +1642,21 @@ func splitNodeID(nodeID string) []string {
 // extractVectors extracts one or more dense vectors from a Vectors message.
 // We support Qdrant's single unnamed vector and named vectors. Other vector
 // kinds (sparse/multi/document) are rejected for storage.
-func extractVectors(v *qpb.Vectors) ([]string, [][]float32, error) {
+func extractVectors(ctx context.Context, manager *localization.Manager, v *qpb.Vectors) ([]string, [][]float32, error) {
 	if v == nil {
-		return nil, nil, status.Error(codes.InvalidArgument, "vectors is required")
+		return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vectors"))
 	}
 
 	switch opt := v.VectorsOptions.(type) {
 	case *qpb.Vectors_Vector:
-		vec, err := extractDenseFromVector(opt.Vector)
+		vec, err := extractDenseFromVector(ctx, manager, opt.Vector)
 		if err != nil {
 			return nil, nil, err
 		}
 		return []string{""}, [][]float32{vec}, nil
 	case *qpb.Vectors_Vectors:
 		if opt.Vectors == nil || len(opt.Vectors.Vectors) == 0 {
-			return nil, nil, status.Error(codes.InvalidArgument, "vectors are required")
+			return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("vectors"))
 		}
 		keys := make([]string, 0, len(opt.Vectors.Vectors))
 		for k := range opt.Vectors.Vectors {
@@ -1669,7 +1668,7 @@ func extractVectors(v *qpb.Vectors) ([]string, [][]float32, error) {
 		vecs := make([][]float32, 0, len(keys))
 		for _, name := range keys {
 			vec := opt.Vectors.Vectors[name]
-			dense, err := extractDenseFromVector(vec)
+			dense, err := extractDenseFromVector(ctx, manager, vec)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1678,13 +1677,13 @@ func extractVectors(v *qpb.Vectors) ([]string, [][]float32, error) {
 		}
 		return names, vecs, nil
 	default:
-		return nil, nil, status.Error(codes.InvalidArgument, "unsupported vectors type")
+		return nil, nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantUnsupportedVectorsType())
 	}
 }
 
-func extractDenseFromVector(v *qpb.Vector) ([]float32, error) {
+func extractDenseFromVector(ctx context.Context, manager *localization.Manager, v *qpb.Vector) ([]float32, error) {
 	if v == nil {
-		return nil, status.Error(codes.InvalidArgument, "vector is required")
+		return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("vector"))
 	}
 	if dense := v.GetDense(); dense != nil && len(dense.Data) > 0 {
 		return dense.Data, nil
@@ -1692,7 +1691,7 @@ func extractDenseFromVector(v *qpb.Vector) ([]float32, error) {
 	if len(v.Data) > 0 {
 		return v.Data, nil
 	}
-	return nil, status.Error(codes.InvalidArgument, "dense vector data is required")
+	return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector data"))
 }
 
 func nodeVectorNames(node *storage.Node) []string {

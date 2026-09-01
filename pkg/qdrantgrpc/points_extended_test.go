@@ -455,17 +455,17 @@ func TestPointVectorHelperBranches(t *testing.T) {
 	require.Equal(t, uint64(77), nodeIDToPointID(storage.NodeID("qdrant:point:77")).GetNum())
 
 	// extractVectors branches.
-	_, _, err := extractVectors(nil)
+	_, _, err := extractVectors(context.Background(), nil, nil)
 	require.Error(t, err)
-	_, _, err = extractVectors(&qpb.Vectors{})
+	_, _, err = extractVectors(context.Background(), nil, &qpb.Vectors{})
 	require.Error(t, err)
-	_, _, err = extractVectors(&qpb.Vectors{
+	_, _, err = extractVectors(context.Background(), nil, &qpb.Vectors{
 		VectorsOptions: &qpb.Vectors_Vectors{
 			Vectors: &qpb.NamedVectors{Vectors: map[string]*qpb.Vector{}},
 		},
 	})
 	require.Error(t, err)
-	_, _, err = extractVectors(&qpb.Vectors{
+	_, _, err = extractVectors(context.Background(), nil, &qpb.Vectors{
 		VectorsOptions: &qpb.Vectors_Vectors{
 			Vectors: &qpb.NamedVectors{
 				Vectors: map[string]*qpb.Vector{

@@ -4,6 +4,9 @@
 - id: localization.language_pack_missing
   description: Aviso cuando el paquete de idioma solicitado no está disponible.
   other: "El paquete de idioma {{.RequestedLanguage}} no está disponible; se usará {{.ResolvedLanguage}} (origen: {{.Source}})"
+- id: localization.catalog_entry_missing
+  description: Aviso cuando una entrada no está disponible en un catálogo instalado.
+  other: "El mensaje {{.MessageID}} no está disponible en {{.Language}}; se usará inglés (Estados Unidos)"
 - id: server.invalid_request_body
   description: Respuesta HTTP para un cuerpo de solicitud no válido.
   other: cuerpo de solicitud no válido
@@ -248,6 +251,12 @@
 - id: bolt.no_transaction_to_commit
   description: Error de Bolt COMMIT cuando la sesión no tiene una transacción activa.
   other: No hay ninguna transacción que confirmar
+- id: bolt.run_message_parse_failed
+  description: Error de Bolt RUN para una entrada PackStream no válida. Cause no se traduce.
+  other: "No se pudo analizar el mensaje RUN: {{.Cause}}"
+- id: bolt.bookmark_validation_failed
+  description: Error de Bolt RUN para un marcador no válido. Cause no se traduce.
+  other: "Error de validación del marcador: {{.Cause}}"
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda
@@ -263,3 +272,9 @@
 - id: search.failed
   description: Error de ejecución de búsqueda.
   other: "búsqueda fallida: {{.Cause}}"
+- id: grpc.localization_initialization_failed
+  description: Error de inicio de gRPC al inicializar la localización. Cause no se traduce.
+  other: "no se pudo inicializar la localización: {{.Cause}}"
+- id: localization.external_diagnostic
+  description: Texto de diagnóstico fuera de la localización. Cause no se traduce.
+  other: "{{.Cause}}"

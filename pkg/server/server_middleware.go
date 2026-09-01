@@ -107,7 +107,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 	doneAuth:
 
 		if err != nil {
-			s.writeNeo4jError(w, http.StatusUnauthorized, "Neo.ClientError.Security.Unauthorized", err.Error())
+			s.writeBoundaryNeo4jError(w, r, http.StatusUnauthorized, "Neo.ClientError.Security.Unauthorized", err)
 			return
 		}
 

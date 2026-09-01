@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -94,7 +95,7 @@ type Server struct {
 
 func runCypherMutationWithRetry(ctx context.Context, exec *cypher.StorageExecutor, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
 	if exec == nil {
-		return nil, fmt.Errorf("cypher executor is nil")
+		return nil, localizedError(localization.MCPCypherExecutorNil(), nil)
 	}
 
 	var lastErr error
@@ -278,7 +279,7 @@ func (s *Server) Start(addr string) error {
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return fmt.Errorf("server already closed")
+		return localizedError(localization.MCPServerAlreadyClosed(), nil)
 	}
 
 	if addr == "" {
@@ -387,7 +388,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Wrap error in MCP content format
 			result = CallToolResponse{
-				Content: []Content{{Type: "text", Text: err.Error()}},
+				Content: []Content{{Type: "text", Text: s.renderError(r.Context(), err)}},
 				IsError: true,
 			}
 		} else {
@@ -424,7 +425,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MCPInvalidRequestBody())
 		return
 	}
 
@@ -462,7 +463,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MCPInvalidRequestBody())
 		return
 	}
 
@@ -473,7 +474,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, CallToolResponse{
-			Content: []Content{{Type: "text", Text: err.Error()}},
+			Content: []Content{{Type: "text", Text: s.renderError(r.Context(), err)}},
 			IsError: true,
 		})
 		return
@@ -538,7 +539,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 
 	handler, ok := s.handlers[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown tool: %s", name)
+		return nil, localizedError(localization.MCPUnknownTool(name), nil)
 	}
 
 	return handler(ctx, args)
@@ -585,7 +586,7 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 			return nil, nil, resolveErr
 		}
 		if e == nil || gn == nil {
-			return nil, nil, fmt.Errorf("database scoped executor unavailable for %q", dbName)
+			return nil, nil, localizedError(localization.MCPDatabaseExecutorUnavailable(dbName), nil)
 		}
 		return e, func(ctx context.Context, id string) (*nornicdb.Node, error) {
 			return gn(ctx, normalizeNodeElementID(id))
@@ -594,7 +595,7 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 	if s.db != nil {
 		exec := s.db.GetCypherExecutor()
 		if exec == nil {
-			return nil, nil, fmt.Errorf("cypher executor unavailable")
+			return nil, nil, localizedError(localization.MCPCypherExecutorUnavailable(), nil)
 		}
 		return exec, func(ctx context.Context, id string) (*nornicdb.Node, error) {
 			return s.db.GetNode(ctx, localNodeIDFromAny(id))
@@ -637,7 +638,7 @@ func (s *Server) storageForContext(ctx context.Context) (storage.Engine, error) 
 func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	content := getString(args, "content")
 	if content == "" {
-		return nil, fmt.Errorf("content is required")
+		return nil, localizedError(localization.MCPFieldRequired("content"), nil)
 	}
 
 	// Resolve labels: prefer explicit "labels" array, fall back to single "type" string.
@@ -694,7 +695,7 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		for _, l := range labels {
 			safe := strings.ReplaceAll(l, "`", "")
 			if !IsValidNodeType(safe) {
-				return nil, fmt.Errorf("invalid label: %q (must be a valid identifier)", l)
+				return nil, localizedError(localization.MCPInvalidLabel(l), nil)
 			}
 			safeLabels = append(safeLabels, safe)
 		}
@@ -702,14 +703,14 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		query := fmt.Sprintf("CREATE (n:%s) SET n += $props RETURN elementId(n) AS id", labelExpr)
 		result, err := exec.Execute(ctx, query, map[string]interface{}{"props": props})
 		if err != nil {
-			return nil, fmt.Errorf("failed to store node: %w", err)
+			return nil, localizedError(localization.MCPStoreNodeFailed(err), err)
 		}
 		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-			return nil, fmt.Errorf("store returned no node id")
+			return nil, localizedError(localization.MCPStoreNoNodeID(), nil)
 		}
 		id, ok := result.Rows[0][0].(string)
 		if !ok || id == "" {
-			return nil, fmt.Errorf("store returned invalid node id")
+			return nil, localizedError(localization.MCPStoreInvalidNodeID(), nil)
 		}
 		nodeID = id
 		embedded = true
@@ -719,7 +720,7 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 			}
 		}
 	} else {
-		return nil, fmt.Errorf("store failed: no database executor available (data would not persist); ensure MCP is wired to the server's default database")
+		return nil, localizedError(localization.MCPStoreNoExecutor(), nil)
 	}
 
 	return StoreResult{
@@ -748,7 +749,7 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 		if getNode != nil {
 			node, err := getNode(ctx, id)
 			if err != nil {
-				return nil, fmt.Errorf("node not found: %s", id)
+				return nil, localizedError(localization.MCPNodeNotFound(id), nil)
 			}
 			return RecallResult{
 				Nodes: []Node{{
@@ -788,7 +789,7 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 
 		result, err := exec.Execute(ctx, b.String(), params)
 		if err != nil {
-			return nil, fmt.Errorf("failed to recall nodes: %w", err)
+			return nil, localizedError(localization.MCPRecallFailed(err), err)
 		}
 
 		nodes := make([]Node, 0, len(result.Rows))
@@ -854,7 +855,7 @@ func hasAllTags(nodeTags, requested []string) bool {
 func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	query := getString(args, "query")
 	if query == "" {
-		return nil, fmt.Errorf("query is required")
+		return nil, localizedError(localization.MCPFieldRequired("query"), nil)
 	}
 
 	nodeTypes := getStringSlice(args, "type")
@@ -1090,17 +1091,17 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 	relation := getString(args, "relation")
 
 	if from == "" {
-		return nil, fmt.Errorf("from is required")
+		return nil, localizedError(localization.MCPFieldRequired("from"), nil)
 	}
 	if to == "" {
-		return nil, fmt.Errorf("to is required")
+		return nil, localizedError(localization.MCPFieldRequired("to"), nil)
 	}
 	if relation == "" {
-		return nil, fmt.Errorf("relation is required")
+		return nil, localizedError(localization.MCPFieldRequired("relation"), nil)
 	}
 
 	if !IsValidRelation(relation) {
-		return nil, fmt.Errorf("invalid relation: %q (must be a non-empty valid identifier, e.g. relates_to, depends_on)", relation)
+		return nil, localizedError(localization.MCPInvalidRelation(relation), nil)
 	}
 
 	strength := getFloat64(args, "strength", 1.0)
@@ -1129,7 +1130,7 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 		// Verify source node exists and get its info (support elementId or id property)
 		srcNode, srcEID, err := s.resolveNodeForLink(ctx, exec, getNode, from)
 		if err != nil {
-			return nil, fmt.Errorf("source node not found: %s", from)
+			return nil, localizedError(localization.MCPSourceNodeNotFound(from), nil)
 		}
 		fromNode = Node{
 			ID:    srcEID,
@@ -1140,7 +1141,7 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 		// Verify target node exists and get its info
 		tgtNode, tgtEID, err := s.resolveNodeForLink(ctx, exec, getNode, to)
 		if err != nil {
-			return nil, fmt.Errorf("target node not found: %s", to)
+			return nil, localizedError(localization.MCPTargetNodeNotFound(to), nil)
 		}
 		toNode = Node{
 			ID:    tgtEID,
@@ -1157,14 +1158,14 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 			"props": edgeProps,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create edge: %w", err)
+			return nil, localizedError(localization.MCPCreateEdgeFailed(err), err)
 		}
 		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-			return nil, fmt.Errorf("link returned no edge id")
+			return nil, localizedError(localization.MCPLinkNoEdgeID(), nil)
 		}
 		id, ok := result.Rows[0][0].(string)
 		if !ok || id == "" {
-			return nil, fmt.Errorf("link returned invalid edge id")
+			return nil, localizedError(localization.MCPLinkInvalidEdgeID(), nil)
 		}
 		edgeID = id
 		if result.Metadata != nil {
@@ -1283,7 +1284,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 				map[string]interface{}{"id": taskEID},
 			)
 			if err != nil {
-				return nil, fmt.Errorf("failed to delete task: %w", err)
+				return nil, localizedError(localization.MCPDeleteTaskFailed(err), err)
 			}
 			var deleted int64
 			if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
@@ -1316,7 +1317,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 
 		node, err := getNode(ctx, taskEID)
 		if err != nil {
-			return nil, fmt.Errorf("task not found: %s", id)
+			return nil, localizedError(localization.MCPTaskNotFound(id), nil)
 		}
 
 		// Update properties
@@ -1356,7 +1357,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 			},
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to update task: %w", err)
+			return nil, localizedError(localization.MCPUpdateTaskFailed(err), err)
 		}
 		var receipt interface{}
 		if result.Metadata != nil {
@@ -1366,7 +1367,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 		}
 		updatedNode, err := getNode(ctx, taskEID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch updated task: %w", err)
+			return nil, localizedError(localization.MCPFetchUpdatedTaskFailed(err), err)
 		}
 
 		return TaskResult{
@@ -1383,10 +1384,10 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 
 	// Create new task
 	if del {
-		return nil, fmt.Errorf("id is required for delete")
+		return nil, localizedError(localization.MCPIDRequiredForDelete(), nil)
 	}
 	if title == "" {
-		return nil, fmt.Errorf("title is required for new tasks")
+		return nil, localizedError(localization.MCPTitleRequiredForNewTasks(), nil)
 	}
 
 	if complete {
@@ -1415,14 +1416,14 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 		query := "CREATE (t:Task) SET t += $props RETURN elementId(t) AS id"
 		result, err := runCypherMutationWithRetry(ctx, exec, query, map[string]interface{}{"props": props})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create task: %w", err)
+			return nil, localizedError(localization.MCPCreateTaskFailed(err), err)
 		}
 		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-			return nil, fmt.Errorf("task create returned no id")
+			return nil, localizedError(localization.MCPTaskCreateNoID(), nil)
 		}
 		id, ok := result.Rows[0][0].(string)
 		if !ok || id == "" {
-			return nil, fmt.Errorf("task create returned invalid id")
+			return nil, localizedError(localization.MCPTaskCreateInvalidID(), nil)
 		}
 		taskID = id
 		if result.Metadata != nil {
@@ -1444,7 +1445,7 @@ func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (i
 					 CREATE (t)-[:DEPENDS_ON]->(d)`,
 					map[string]interface{}{"id": taskID, "dep": depElementID},
 				); err != nil {
-					return nil, fmt.Errorf("failed to create task dependency %q: %w", depID, err)
+					return nil, localizedError(localization.MCPDependencyCreateFailed(depID, err), err)
 				}
 			}
 		}
@@ -1535,7 +1536,7 @@ func (s *Server) handleTasks(ctx context.Context, args map[string]interface{}) (
 
 		result, err := exec.Execute(ctx, listQuery, params)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list tasks: %w", err)
+			return nil, localizedError(localization.MCPListTasksFailed(err), err)
 		}
 		for _, row := range result.Rows {
 			if len(row) < 6 {
@@ -1808,24 +1809,23 @@ func (s *Server) validateAndConvertEmbedding(input interface{}) ([]float32, erro
 			case int64:
 				embedding[i] = float32(f)
 			default:
-				return nil, fmt.Errorf("invalid embedding: element %d is not a number (got %T)", i, val)
+				return nil, localizedError(localization.MCPEmbeddingElementInvalid(i, val), nil)
 			}
 		}
 	default:
-		return nil, fmt.Errorf("invalid embedding: must be an array of numbers (got %T)", input)
+		return nil, localizedError(localization.MCPEmbeddingTypeInvalid(input), nil)
 	}
 
 	// Validate not empty
 	if len(embedding) == 0 {
-		return nil, fmt.Errorf("invalid embedding: cannot be empty array")
+		return nil, localizedError(localization.MCPEmbeddingEmpty(), nil)
 	}
 
 	// Validate dimensions if configured
 	if s.config.EmbeddingDimensions > 0 && len(embedding) != s.config.EmbeddingDimensions {
-		return nil, fmt.Errorf("invalid embedding dimensions: expected %d, got %d. "+
-			"The configured embedding model (%s) requires %d-dimensional vectors",
-			s.config.EmbeddingDimensions, len(embedding),
-			s.config.EmbeddingModel, s.config.EmbeddingDimensions)
+		return nil, localizedError(localization.MCPEmbeddingDimensionsInvalid(
+			s.config.EmbeddingDimensions, len(embedding), s.config.EmbeddingModel,
+		), nil)
 	}
 
 	return embedding, nil
@@ -1872,6 +1872,22 @@ func (s *Server) renderMessage(ctx context.Context, message localization.Message
 		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
 	}
 	return text, tag
+}
+
+func (s *Server) renderError(ctx context.Context, err error) string {
+	var localized *nornicerrors.Localized
+	if !errors.As(err, &localized) {
+		return err.Error()
+	}
+	text, _, renderErr := localized.Render(ctx, s.localizer)
+	if renderErr != nil {
+		return localized.Error()
+	}
+	return text
+}
+
+func localizedError(message localization.Message, cause error) error {
+	return nornicerrors.NewLocalized(string(message.ID), message, cause)
 }
 
 func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message) {

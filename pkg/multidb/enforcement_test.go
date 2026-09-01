@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,6 +129,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStorageLimitExceeded)
 	assert.Contains(t, err.Error(), "max_nodes limit")
 	assert.Contains(t, err.Error(), "5/5")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbMaxNodesReached)
 }
 
 func TestDatabaseLimitChecker_CheckStorageLimits_MaxNodes_UnderLimit(t *testing.T) {
@@ -566,6 +569,7 @@ func TestDatabaseLimitChecker_CheckQueryLimits_MaxConcurrentQueries(t *testing.T
 	assert.ErrorIs(t, err, ErrQueryLimitExceeded)
 	assert.Contains(t, err.Error(), "max_concurrent_queries limit")
 	assert.Contains(t, err.Error(), "2/2")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbMaxConcurrentQueries)
 
 	// Cleanup
 	cancel1()
@@ -776,6 +780,7 @@ func TestDatabaseLimitChecker_CheckQueryRate_ExceedsLimit(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRateLimitExceeded)
 	assert.Contains(t, err.Error(), "max_queries_per_second")
 	assert.Contains(t, err.Error(), "5")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbQueryRateExceeded)
 }
 
 func TestDatabaseLimitChecker_CheckWriteRate_NoLimit(t *testing.T) {
@@ -828,6 +833,7 @@ func TestDatabaseLimitChecker_CheckWriteRate_ExceedsLimit(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRateLimitExceeded)
 	assert.Contains(t, err.Error(), "max_writes_per_second")
 	assert.Contains(t, err.Error(), "3")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbWriteRateExceeded)
 }
 
 func TestDatabaseLimitChecker_NewDatabaseLimitChecker_DatabaseNotFound(t *testing.T) {
@@ -993,6 +999,14 @@ func TestConnectionTracker_CheckConnectionLimit_ExceedsLimit(t *testing.T) {
 	assert.ErrorIs(t, err, ErrConnectionLimitExceeded)
 	assert.Contains(t, err.Error(), "max_connections limit")
 	assert.Contains(t, err.Error(), "3/3")
+	requireLocalizedMessageID(t, err, localization.MessageMultidbMaxConnections)
+}
+
+func requireLocalizedMessageID(t *testing.T, err error, messageID localization.MessageID) {
+	t.Helper()
+	var localizedErr *nornicerrors.Localized
+	require.ErrorAs(t, err, &localizedErr)
+	require.Equal(t, messageID, localizedErr.Message.ID)
 }
 
 func TestConnectionTracker_CheckConnectionLimit_DatabaseNotFound(t *testing.T) {

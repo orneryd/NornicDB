@@ -1,0 +1,102 @@
+- id: adminimport.open_csv_failed
+  description: Error de importación administrativa al abrir un archivo CSV. La causa adjunta no se traduce.
+  other: no se pudo abrir el archivo CSV
+- id: adminimport.database_name_required
+  description: Validación cuando falta el nombre de la base de datos.
+  other: se requiere el nombre de la base de datos
+- id: adminimport.node_source_required
+  description: Validación cuando no se proporciona una fuente de nodos.
+  other: se requiere al menos una fuente --nodes
+- id: adminimport.storage_engine_required
+  description: Validación cuando falta el motor de almacenamiento.
+  other: se requiere un motor de almacenamiento
+- id: adminimport.actual_id_unsupported
+  description: Validación del modo de ID actual no compatible.
+  other: --id-type=actual no es compatible
+- id: adminimport.relationship_ids_required
+  description: Validación cuando faltan las columnas de extremos de relación.
+  other: la fuente de relaciones requiere las columnas :START_ID y :END_ID
+- id: adminimport.relationship_type_required
+  description: Validación cuando falta el tipo de relación.
+  other: la fuente de relaciones requiere una columna :TYPE o el prefijo --relationships=TYPE=
+- id: adminimport.invalid_vector_dimensions
+  description: Validación de dimensiones vectoriales. Header no se traduce.
+  other: "dimensiones vectoriales no válidas en el encabezado: {{.Header}}"
+- id: adminimport.unsupported_header_token
+  description: Validación de un token de encabezado no compatible. Token no se traduce.
+  other: "token de encabezado no compatible: {{.Token}}"
+- id: adminimport.unsupported_property_type
+  description: Validación de un tipo de propiedad no compatible. Type no se traduce.
+  other: "tipo de propiedad no compatible: {{.Type}}"
+- id: adminimport.empty_source
+  description: Validación de una fuente de importación vacía.
+  other: fuente de importación vacía
+- id: adminimport.relationship_prefix_limit
+  description: Validación de múltiples prefijos de tipo de relación.
+  other: la fuente de relaciones acepta como máximo un prefijo de tipo
+- id: adminimport.custom_quote_unsupported
+  description: Validación de comillas CSV personalizadas no compatibles.
+  other: el lector CSV de Go todavía no admite --quote personalizado
+- id: adminimport.zip_single_file_required
+  description: Validación de una fuente ZIP con un número incorrecto de archivos.
+  other: las fuentes CSV en ZIP deben contener exactamente un archivo
+- id: adminimport.target_not_empty
+  description: Validación de una importación completa a una base de datos no vacía.
+  other: la importación completa de la base de datos requiere una base de datos de destino vacía
+- id: adminimport.no_csv_files
+  description: Validación cuando no se encuentran archivos CSV compatibles.
+  other: no se encontraron archivos CSV compatibles con Neo4j en el directorio de origen
+- id: adminimport.no_node_csv_files
+  description: Validación cuando no se encuentran archivos CSV de nodos.
+  other: el directorio de origen no contiene archivos CSV de nodos
+- id: adminimport.export_output_directory_required
+  description: Validación cuando falta el directorio de salida.
+  other: se requiere el directorio de salida
+- id: adminimport.export_custom_quote_unsupported
+  description: Validación de caracteres de comillas no compatibles en la exportación.
+  other: los caracteres de comillas personalizados no son compatibles con la exportación CSV de Neo4j
+- id: adminimport.unsupported_csv_header
+  description: Error de detección de fuente. Path no se traduce.
+  other: "encabezado CSV no compatible en el directorio de origen de Neo4j: {{.Path}}"
+- id: adminimport.schema_application_failed
+  description: Error al aplicar el esquema posterior a la carga.
+  other: no se pudo aplicar el esquema
+- id: adminimport.duplicate_node_id
+  description: Error por identificador de nodo duplicado.
+  other: "ID de nodo duplicado en la fila {{.Row}}"
+- id: adminimport.duplicate_relationship_id
+  description: Error por identificador de relación duplicado.
+  other: ID de relación duplicado
+- id: adminimport.duplicate_relationship_id_at_row
+  description: Error por identificador de relación duplicado en una fila.
+  other: "ID de relación duplicado en la fila {{.Row}}"
+- id: adminimport.bad_start_relationship
+  description: Relación no válida porque falta el nodo inicial.
+  other: "relación no válida en la fila {{.Row}}: falta el nodo inicial"
+- id: adminimport.bad_end_relationship
+  description: Relación no válida porque falta el nodo final.
+  other: "relación no válida en la fila {{.Row}}: falta el nodo final"
+- id: adminimport.bad_start_tolerance_exceeded
+  description: Tolerancia superada porque falta un nodo inicial.
+  other: "se superó la tolerancia de relaciones no válidas en la fila {{.Row}} ({{.BadCount}} > {{.Tolerance}}): falta el nodo inicial"
+- id: adminimport.bad_end_tolerance_exceeded
+  description: Tolerancia superada porque falta un nodo final.
+  other: "se superó la tolerancia de relaciones no válidas en la fila {{.Row}} ({{.BadCount}} > {{.Tolerance}}): falta el nodo final"
+- id: adminimport.open_gzip_csv_failed
+  description: Error al abrir una fuente CSV gzip.
+  other: no se pudo abrir el archivo CSV gzip
+- id: adminimport.open_zip_csv_failed
+  description: Error al abrir una fuente CSV ZIP.
+  other: no se pudo abrir el archivo CSV ZIP
+- id: adminimport.open_zip_member_failed
+  description: Error al abrir el miembro CSV de una fuente ZIP.
+  other: no se pudo abrir el miembro CSV comprimido
+- id: adminimport.csv_parse_error
+  description: Error al analizar CSV. Where no se traduce.
+  other: "error de análisis CSV en {{.Where}}"
+- id: adminimport.scan_directory_failed
+  description: Error al examinar el directorio CSV de Neo4j.
+  other: no se pudo examinar el directorio CSV de Neo4j
+- id: adminimport.read_header_failed
+  description: Error al leer un encabezado CSV.
+  other: no se pudo leer el encabezado CSV

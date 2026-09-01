@@ -11,6 +11,9 @@ const (
 	MessageStateParameter        MessageID = "auth.state_parameter_missing"
 	MessageNoUserContext         MessageID = "auth.user_context_missing"
 	MessageOldPasswordIncorrect  MessageID = "auth.old_password_incorrect"
+	MessageLogoutComplete        MessageID = "auth.logout_complete"
+	MessagePasswordChanged       MessageID = "auth.password_changed"
+	MessageProfileUpdated        MessageID = "auth.profile_updated"
 	MessagePutRequired           MessageID = "server.method_put_required"
 )
 
@@ -66,6 +69,21 @@ func NoUserContext() Message {
 // OldPasswordIncorrect identifies a rejected current password.
 func OldPasswordIncorrect() Message {
 	return Message{ID: MessageOldPasswordIncorrect, Fallback: "old password incorrect"}
+}
+
+// LogoutComplete identifies a completed HTTP logout operation.
+func LogoutComplete() Message {
+	return Message{ID: MessageLogoutComplete, Fallback: "logged out"}
+}
+
+// PasswordChanged identifies a completed password change.
+func PasswordChanged() Message {
+	return Message{ID: MessagePasswordChanged, Fallback: "password changed"}
+}
+
+// ProfileUpdated identifies a completed profile update.
+func ProfileUpdated() Message {
+	return Message{ID: MessageProfileUpdated, Fallback: "profile updated"}
 }
 
 // PutRequired identifies an endpoint that only accepts PUT requests.

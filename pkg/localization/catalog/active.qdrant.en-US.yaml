@@ -1,0 +1,99 @@
+- id: qdrant.invalid_vectors_config
+  description: Qdrant validation error for an invalid vectors_config field.
+  other: invalid vectors_config
+- id: qdrant.vector_size_positive
+  description: Qdrant validation error when vector size is not positive.
+  other: vector size must be positive
+- id: qdrant.create_collection_failed
+  description: Qdrant collection creation failure. Cause is diagnostic text.
+  other: "failed to create collection: {{.Cause}}"
+- id: qdrant.list_collections_failed
+  description: Qdrant collection listing failure. Cause is diagnostic text.
+  other: "failed to list collections: {{.Cause}}"
+- id: qdrant.delete_collection_failed
+  description: Qdrant collection deletion failure. Cause is diagnostic text.
+  other: "failed to delete collection: {{.Cause}}"
+- id: qdrant.collection_store_not_configured
+  description: Qdrant internal response when the collection store is unavailable.
+  other: collection store not configured
+- id: qdrant.too_many_points
+  description: Qdrant batch validation error. Count and Maximum are integers.
+  other: "too many points: {{.Count}} > {{.Maximum}}"
+- id: qdrant.read_existing_points_failed
+  description: Qdrant point read failure. Cause is diagnostic text.
+  other: "failed to read existing points: {{.Cause}}"
+- id: qdrant.create_points_failed
+  description: Qdrant point creation failure. Cause is diagnostic text.
+  other: "failed to create points: {{.Cause}}"
+- id: qdrant.update_point_failed
+  description: Qdrant point update failure. PointID and Cause are diagnostic values.
+  other: "failed to update point {{.PointID}}: {{.Cause}}"
+- id: qdrant.missing_vector_for_point
+  description: Qdrant internal vector lookup failure. Name and PointID are identifiers.
+  other: 'missing vector "{{.Name}}" for point {{.PointID}}'
+- id: qdrant.index_point_failed
+  description: Qdrant point indexing failure. PointID and Cause are diagnostic values.
+  other: "failed to index point {{.PointID}}: {{.Cause}}"
+- id: qdrant.offset_too_large
+  description: Qdrant validation error for an offset outside the platform integer range.
+  other: offset too large
+- id: qdrant.hnsw_ef_too_large
+  description: Qdrant validation error for hnsw_ef outside the platform integer range.
+  other: hnsw_ef too large
+- id: qdrant.point_id_and_vectors_required
+  description: Qdrant validation error when both a point ID and vectors are required.
+  other: point id and vectors are required
+- id: qdrant.query_variant_missing
+  description: Qdrant response when Query.variant is absent.
+  other: query without Query.variant is not implemented
+- id: qdrant.query_variant_unsupported
+  description: Qdrant response for an unsupported query variant. Variant is a Go diagnostic type.
+  other: "query variant {{.Variant}} is not implemented"
+- id: qdrant.point_not_found_with_cause
+  description: Qdrant point lookup failure. Cause is diagnostic text.
+  other: "point not found: {{.Cause}}"
+- id: qdrant.vector_not_found_for_point
+  description: Qdrant response when a requested point has no matching vector.
+  other: vector not found for point
+- id: qdrant.vector_input_variant_unsupported
+  description: Qdrant response for an unsupported vector input variant. Variant is a Go diagnostic type.
+  other: "vector input variant {{.Variant}} is not implemented"
+- id: qdrant.positive_example_required
+  description: Qdrant recommendation validation error when no positive example is supplied.
+  other: at least one positive example is required
+- id: qdrant.positive_average_failed
+  description: Qdrant recommendation error when positive vectors cannot be averaged.
+  other: "failed to compute positive vector average: no valid vectors"
+- id: qdrant.negative_average_failed
+  description: Qdrant recommendation error when negative vectors cannot be averaged.
+  other: "failed to compute negative vector average: no valid vectors"
+- id: qdrant.recommend_dimension_mismatch
+  description: Qdrant recommendation validation error. Positive and Negative are dimensions.
+  other: "dimension mismatch: positive vectors have dimension {{.Positive}}, negative vectors have dimension {{.Negative}}"
+- id: qdrant.vector_kind_unsupported
+  description: Qdrant response for an unsupported vector kind.
+  other: unsupported vector kind
+- id: qdrant.scan_points_failed
+  description: Qdrant point scan failure. Cause is diagnostic text.
+  other: "failed to scan points: {{.Cause}}"
+- id: qdrant.points_selector_invalid
+  description: Qdrant validation error for an invalid points selector.
+  other: invalid points selector
+- id: qdrant.vectors_type_unsupported
+  description: Qdrant validation error for an unsupported vectors type.
+  other: unsupported vectors type
+- id: qdrant.get_collection_points_failed
+  description: Qdrant snapshot failure while reading collection points. Cause is diagnostic text.
+  other: "failed to get collection points: {{.Cause}}"
+- id: qdrant.full_snapshot_storage_required
+  description: Qdrant full-snapshot response when base storage is unavailable.
+  other: full snapshots require base storage
+- id: qdrant.create_backup_failed
+  description: Qdrant full-snapshot backup failure. Cause is diagnostic text.
+  other: "failed to create backup: {{.Cause}}"
+- id: qdrant.get_nodes_failed
+  description: Qdrant full-snapshot node read failure. Cause is diagnostic text.
+  other: "failed to get nodes: {{.Cause}}"
+- id: qdrant.get_edges_failed
+  description: Qdrant full-snapshot edge read failure. Cause is diagnostic text.
+  other: "failed to get edges: {{.Cause}}"

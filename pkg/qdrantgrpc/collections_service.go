@@ -7,7 +7,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // CollectionsService implements the Qdrant Collections gRPC service.
@@ -65,16 +64,16 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 			break
 		}
 	default:
-		return nil, status.Error(codes.InvalidArgument, "invalid vectors_config")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidVectorsConfig())
 	}
 
 	if dims <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "vector size must be positive")
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantVectorSizeMustBePositive())
 	}
 
 	// Create collection
 	if err := s.collections.Create(ctx, req.CollectionName, dims, distance); err != nil {
-		return nil, status.Errorf(codes.AlreadyExists, "failed to create collection: %v", err)
+		return nil, localizedStatus(ctx, s.localizer, codes.AlreadyExists, localization.QdrantCreateCollectionFailed(err))
 	}
 
 	return &qpb.CollectionOperationResponse{
@@ -160,7 +159,7 @@ func (s *CollectionsService) List(ctx context.Context, req *qpb.ListCollectionsR
 
 	names, err := s.collections.List(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list collections: %v", err)
+		return nil, localizedStatus(ctx, s.localizer, codes.Internal, localization.QdrantListCollectionsFailed(err))
 	}
 	if s.checker != nil {
 		names, err = s.checker.VisibleDatabases(ctx, names)
@@ -191,7 +190,7 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 	}
 
 	if err := s.collections.Drop(ctx, req.CollectionName); err != nil {
-		return nil, status.Errorf(codes.NotFound, "failed to delete collection: %v", err)
+		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err))
 	}
 
 	// Drop per-collection in-memory index cache (persistent storage already

@@ -353,6 +353,30 @@ func TestMCPLocalizedJSONRPCErrorPreservesCodeAndData(t *testing.T) {
 	require.Equal(t, "unknown", body.Error.Data)
 }
 
+func TestMCPPseudoLocalePreservesJSONRPCCode(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	config := DefaultServerConfig()
+	config.Localizer = manager
+	server := NewServer(nil, config)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":7,"method":"unknown","params":{}}`))
+	request.Header.Set("Accept-Language", "en-XA")
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	var body struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, -32601, body.Error.Code)
+	require.Equal(t, "[!! Method not found !!]", body.Error.Message)
+	require.Equal(t, "en-XA", response.Header().Get("Content-Language"))
+}
+
 func TestServerRouteAndWrapperHelpers(t *testing.T) {
 	t.Run("register routes and serve http", func(t *testing.T) {
 		server := NewServer(nil, nil)

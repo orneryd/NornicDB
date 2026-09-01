@@ -962,31 +962,31 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	})
 
 	t.Run("extractDenseFromVector and resolvePointIDs", func(t *testing.T) {
-		_, err := extractDenseFromVector(nil)
+		_, err := extractDenseFromVector(context.Background(), nil, nil)
 		require.Error(t, err)
 
-		out, err := extractDenseFromVector(&qpb.Vector{
+		out, err := extractDenseFromVector(context.Background(), nil, &qpb.Vector{
 			Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 2, 3, 4}}},
 		})
 		require.NoError(t, err)
 		require.Equal(t, []float32{1, 2, 3, 4}, out)
 
-		out, err = extractDenseFromVector(&qpb.Vector{Data: []float32{4, 3, 2, 1}})
+		out, err = extractDenseFromVector(context.Background(), nil, &qpb.Vector{Data: []float32{4, 3, 2, 1}})
 		require.NoError(t, err)
 		require.Equal(t, []float32{4, 3, 2, 1}, out)
 
-		_, err = extractDenseFromVector(&qpb.Vector{})
+		_, err = extractDenseFromVector(context.Background(), nil, &qpb.Vector{})
 		require.Error(t, err)
 
-		_, err = resolvePointIDs(nil)
+		_, err = resolvePointIDs(context.Background(), nil, nil)
 		require.Error(t, err)
 
-		_, err = resolvePointIDs(&qpb.PointsSelector{
+		_, err = resolvePointIDs(context.Background(), nil, &qpb.PointsSelector{
 			PointsSelectorOneOf: &qpb.PointsSelector_Points{Points: &qpb.PointsIdsList{}},
 		})
 		require.Error(t, err)
 
-		ids, err := resolvePointIDs(&qpb.PointsSelector{
+		ids, err := resolvePointIDs(context.Background(), nil, &qpb.PointsSelector{
 			PointsSelectorOneOf: &qpb.PointsSelector_Points{
 				Points: &qpb.PointsIdsList{
 					Ids: []*qpb.PointId{{PointIdOptions: &qpb.PointId_Num{Num: 11}}},
@@ -996,7 +996,7 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, ids, 1)
 
-		ids, err = resolvePointIDs(&qpb.PointsSelector{
+		ids, err = resolvePointIDs(context.Background(), nil, &qpb.PointsSelector{
 			PointsSelectorOneOf: &qpb.PointsSelector_Filter{Filter: &qpb.Filter{}},
 		})
 		require.NoError(t, err)

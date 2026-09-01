@@ -55,7 +55,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
 	if err != nil {
-		return s.sendRunFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse RUN message: %v", err))
+		return s.sendLocalizedRunFailure("Neo.ClientError.Request.Invalid", localization.BoltRunMessageParseFailed(err))
 	}
 	s.language = language.Und
 	if requestedLocale, ok := metadata["locale"].(string); ok {
@@ -70,8 +70,8 @@ func (s *Session) handleRun(data []byte) error {
 	// Validate bookmarks if present (for causal consistency)
 	if bookmarks, ok := metadata["bookmarks"].([]any); ok && len(bookmarks) > 0 {
 		if err := s.validateBookmarks(bookmarks); err != nil {
-			return s.sendRunFailure("Neo.ClientError.Transaction.BookmarkValidationFailed",
-				fmt.Sprintf("Bookmark validation failed: %v", err))
+			return s.sendLocalizedRunFailure("Neo.ClientError.Transaction.BookmarkValidationFailed",
+				localization.BoltBookmarkValidationFailed(err))
 		}
 	}
 

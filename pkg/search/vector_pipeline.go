@@ -10,11 +10,11 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -336,7 +336,7 @@ func NewGPUBruteForceCandidateGen(embeddingIndex *gpu.EmbeddingIndex) *GPUBruteF
 
 func (g *GPUBruteForceCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
 	if g.embeddingIndex == nil {
-		return nil, fmt.Errorf("gpu embedding index unavailable")
+		return nil, localizedError(localization.SearchGPUEmbeddingUnavailable(), nil)
 	}
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -420,7 +420,7 @@ func (p *VectorSearchPipeline) Search(ctx context.Context, query []float32, k in
 	// Stage 1: Candidate generation
 	candidates, err := p.candidateGen.SearchCandidates(ctx, query, k, minSimilarity)
 	if err != nil {
-		return nil, fmt.Errorf("candidate generation failed: %w", err)
+		return nil, localizedError(localization.SearchCandidateGenerationFailed(err), err)
 	}
 
 	if len(candidates) == 0 {
@@ -430,7 +430,7 @@ func (p *VectorSearchPipeline) Search(ctx context.Context, query []float32, k in
 	// Stage 2: Exact scoring
 	scored, err := p.exactScorer.ScoreCandidates(ctx, query, candidates)
 	if err != nil {
-		return nil, fmt.Errorf("exact scoring failed: %w", err)
+		return nil, localizedError(localization.SearchExactScoringFailed(err), err)
 	}
 
 	// Stage 3+4: Since scored is descending, apply threshold and top-k in one pass.

@@ -79,14 +79,15 @@ func TestManagerWarnsOnceForMissingCatalogEntry(t *testing.T) {
 	manager, err := NewManager([]language.Tag{language.EuropeanSpanish}, logger)
 	require.NoError(t, err)
 	spanishContext := WithPreferences(context.Background(), language.EuropeanSpanish)
-	message := CatalogEntryMissing("es-ES", MessageInvalidRequestBody)
+	message := Message{ID: "test.missing_message"}
 
 	text, tag, err := manager.Render(spanishContext, message)
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.Equal(t, language.AmericanEnglish, tag)
-	require.Equal(t, "Message server.invalid_request_body is unavailable in es-ES; using English (United States)", text)
+	require.Equal(t, "test.missing_message", text)
 	_, _, err = manager.Render(spanishContext, message)
-	require.NoError(t, err)
+	require.Error(t, err)
 
+	require.Equal(t, uint64(2), manager.MissingCatalogEntryCount())
 	require.Equal(t, 1, strings.Count(strings.TrimSpace(output.String()), "\n")+1)
 }

@@ -17,19 +17,20 @@ contract.
 The baseline was generated on 2026-08-31 from the working tree rooted at
 revision `16596bc6a6eb671cca3bb56a773090d332baf12b`.
 
-Reproduce it with:
+Reproduce the local working reports with:
 
 ```bash
 go run ./scripts/localization_inventory \
   -out docs/plans/localization-message-inventory.csv \
   -duplicates-out docs/plans/localization-duplicate-candidates.csv \
-  -normalized-out docs/plans/localization-normalized-candidates.csv
+  -normalized-out docs/plans/localization-normalized-candidates.csv \
+  -near-out docs/plans/localization-near-candidates.csv
 ```
 
-The occurrence-level inventory is
-[`localization-message-inventory.csv`](localization-message-inventory.csv).
-It records audience, delivery channel, package, file, line, callee or field,
-text/template, whether interpolation is dynamic, and the required review action.
+These CSV files are ignored local review artifacts, not checked-in source or
+production inputs. The occurrence report records audience, delivery channel,
+package, file, line, callee or field, text/template, whether interpolation is
+dynamic, and the required review action.
 
 ### Scope
 
@@ -113,20 +114,21 @@ them through an optimistic heuristic.
 
 ### Implementation Snapshot
 
-The working-tree snapshot after the current boundary migration contains 8,810
-occurrences and 4,578 unique text/templates. The source additions for the
-localization infrastructure are included in those numbers. Public boundary
-counts changed from 290 to 102 HTTP occurrences, 137 to 44 gRPC occurrences,
-and three to one JSON-RPC occurrences.
+The working-tree snapshot after the current boundary and initial core migration
+contains 8,519 occurrences and 4,433 unique text/templates. The source additions
+for the localization infrastructure are included in those numbers. The ignored
+working report currently contains 22 HTTP, four gRPC, 43 Bolt, and one JSON-RPC
+candidate occurrences; these conservative counts still include machine tokens,
+localized fallbacks, route names, and other rows requiring classification.
 
-Review reports are generated alongside the inventory:
+Local review reports are generated alongside the inventory:
 
-- [`localization-duplicate-candidates.csv`](localization-duplicate-candidates.csv)
-  contains exact duplicate templates grouped by audience, channel, and
-  placeholder schema.
-- [`localization-normalized-candidates.csv`](localization-normalized-candidates.csv)
-  contains case, punctuation, whitespace, and compatible format-verb variants
-  for human review. It never merges messages automatically.
+- `localization-duplicate-candidates.csv` contains exact duplicate templates
+  grouped by audience, channel, and placeholder schema.
+- `localization-normalized-candidates.csv` contains case, punctuation,
+  whitespace, and compatible format-verb variants for human review.
+- `localization-near-candidates.csv` contains token-similarity suggestions.
+  Reports never merge messages automatically.
 
 Implemented:
 
@@ -178,15 +180,20 @@ Implemented:
   centralized graph resolver now receives request context for locale-aware
   boundary rendering.
 - Typed localizable errors that preserve wrapping and `errors.Is`/`errors.As`.
-- Deterministic inventory drift checking and exact/normalized review reports.
+- Admin import/export errors carry semantic descriptors and render at the CLI
+  boundary while preserving exit codes, wrapped causes, and source English.
+- Initial Phase 3 search vector/lifecycle and multi-database constituent,
+  quota, and remote-credential errors are catalog-backed. Search index and
+  multi-database quota sentinels remain discoverable through `errors.Is`.
+- Deterministic exact, normalized, and near-duplicate local review reports.
+- Generated constructor manifest, strict catalog validation, and catalog-only
+  CI checks. CI and production code do not read or require inventory CSV files.
 
 Still pending:
 
 - Owner classification and semantic keys for the remaining inventory rows.
 - Remaining public error families, core returned errors, procedure metadata,
   CLI output, stable log event IDs, and native error descriptors.
-- Catalog constructor generation, near-duplicate suggestions, and CI workflow
-  integration.
 
 ## Current State
 
@@ -203,7 +210,7 @@ Still pending:
   Translating prose in place would break dashboards unless stable event IDs and
   structured attributes are introduced first.
 - Some response messages are assembled dynamically from lower-level errors.
-  The 289 `trace-source` rows need data-flow review before catalog extraction.
+  The 279 `trace-source` rows need data-flow review before catalog extraction.
 
 ## Translation Boundary
 
@@ -565,6 +572,8 @@ with bounded observability.
 
 ### Phase 2: Public Error Boundaries
 
+Status: complete for the scoped core protocol and admin-import boundaries.
+
 Migrate the smallest, highest-risk boundary helpers first:
 
 1. `pkg/server` HTTP and Neo4j error writers.
@@ -578,6 +587,9 @@ Exit criteria: public errors render through message IDs; status/code/retry
 behavior and default English remain unchanged in protocol compatibility tests.
 
 ### Phase 3: Core Errors And Returned Messages
+
+Status: in progress. Initial client-reaching `pkg/search` and `pkg/multidb`
+families are migrated with sentinel and wrapped-cause compatibility tests.
 
 Migrate package by package, starting with `pkg/storage`, `pkg/cypher`,
 `pkg/search`, `pkg/nornicdb`, `pkg/replication`, and `pkg/multidb`.
@@ -639,16 +651,10 @@ Extend `localization_inventory` with a check mode and add CI gates for:
 The inventory must remain occurrence-based. A unique-string-only report would
 hide cases where identical English has different semantics or argument types.
 
-The implemented deterministic drift check is:
-
-```bash
-go run ./scripts/localization_inventory \
-  -check \
-  -out docs/plans/localization-message-inventory.csv
-```
-
-Catalog validation runs with `go test ./pkg/localization`. Workflow-level CI
-gates for reviewed dispositions and generated constructor drift remain pending.
+Inventory reports are intentionally generated and reviewed locally; CI does not
+depend on review CSVs. Catalog validation runs with `go test ./pkg/localization`,
+and CI regenerates the typed catalog manifest and fails on manifest drift.
+Workflow-level gates for reviewed dispositions remain pending.
 
 ## Completion Criteria
 

@@ -10,3 +10,45 @@
 - id: search.node_has_no_embedding
   description: Expanded pseudo-locale missing node embedding response.
   other: "[!! Node has no embedding !!]"
+- id: search.node_not_found
+  description: Pseudo-locale vector-similarity node lookup.
+  other: "[!! Node '{{.ID}}' not found !!]"
+- id: search.query_embedding_required
+  description: Expanded pseudo-locale vector-query embedding validation.
+  other: "[!! query embedding required !!]"
+- id: search.index_building
+  description: Expanded pseudo-locale index building response.
+  other: "[!! search index being built, please try again when they are complete !!]"
+- id: search.vector_embedding_required
+  description: Expanded pseudo-locale vector embedding validation.
+  other: "[!! vector search requires embedding !!]"
+- id: search.clustering_not_enabled
+  description: Expanded pseudo-locale clustering configuration error.
+  other: "[!! clustering not enabled - call EnableClustering() first !!]"
+- id: search.clustering_failed
+  description: Expanded pseudo-locale clustering failure.
+  other: "[!! clustering failed: {{.Cause}} !!]"
+- id: search.cluster_index_not_clustered
+  description: Expanded pseudo-locale cluster index state error.
+  other: "[!! cluster index not clustered !!]"
+- id: search.vector_index_unavailable
+  description: Expanded pseudo-locale vector index availability error.
+  other: "[!! vector index unavailable !!]"
+- id: search.no_clusters
+  description: Expanded pseudo-locale empty clusters error.
+  other: "[!! no clusters !!]"
+- id: search.vector_pipeline_failed
+  description: Expanded pseudo-locale vector pipeline failure.
+  other: "[!! failed to get vector pipeline: {{.Cause}} !!]"
+- id: search.candidate_generation_failed
+  description: Expanded pseudo-locale candidate generation failure.
+  other: "[!! candidate generation failed: {{.Cause}} !!]"
+- id: search.exact_scoring_failed
+  description: Expanded pseudo-locale exact scoring failure.
+  other: "[!! exact scoring failed: {{.Cause}} !!]"
+- id: search.gpu_embedding_index_unavailable
+  description: Expanded pseudo-locale GPU embedding index error.
+  other: "[!! gpu embedding index unavailable !!]"
+- id: search.dimensions_must_be_positive
+  description: Expanded pseudo-locale vector dimensions validation.
+  other: "[!! dimensions must be > 0, got {{.Dimensions}} !!]"

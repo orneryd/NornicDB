@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -385,8 +387,10 @@ func TestVectorFileStore_CompactIfNeeded_DecisionBranches(t *testing.T) {
 func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 	t.Run("new_store_rejects_non_positive_dimensions", func(t *testing.T) {
 		_, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 0)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "dimensions must be > 0")
+		require.EqualError(t, err, "dimensions must be > 0, got 0")
+		var localizedErr *nornicerrors.Localized
+		require.ErrorAs(t, err, &localizedErr)
+		require.Equal(t, localization.MessageSearchDimensionsPositive, localizedErr.Message.ID)
 	})
 
 	t.Run("add_dimension_mismatch_and_closed_store", func(t *testing.T) {

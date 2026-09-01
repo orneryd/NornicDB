@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -56,19 +57,19 @@ type ConstituentRef struct {
 // Validate validates a constituent reference.
 func (c *ConstituentRef) Validate() error {
 	if c.Alias == "" {
-		return fmt.Errorf("constituent alias cannot be empty")
+		return localizedError(localization.MultidbConstituentAliasRequired(), nil)
 	}
 	if c.DatabaseName == "" {
-		return fmt.Errorf("constituent database name cannot be empty")
+		return localizedError(localization.MultidbConstituentDatabaseRequired(), nil)
 	}
 	if c.Type != "local" && c.Type != "remote" {
-		return fmt.Errorf("constituent type must be 'local' or 'remote'")
+		return localizedError(localization.MultidbConstituentTypeInvalid(), nil)
 	}
 	if c.AccessMode != "read" && c.AccessMode != "write" && c.AccessMode != "read_write" {
-		return fmt.Errorf("access mode must be 'read', 'write', or 'read_write'")
+		return localizedError(localization.MultidbAccessModeInvalid(), nil)
 	}
 	if c.Type == "remote" && c.URI == "" {
-		return fmt.Errorf("remote constituent URI cannot be empty")
+		return localizedError(localization.MultidbRemoteURIRequired(), nil)
 	}
 	if c.Type == "remote" {
 		mode := strings.ToLower(strings.TrimSpace(c.AuthMode))
@@ -76,19 +77,19 @@ func (c *ConstituentRef) Validate() error {
 			mode = "oidc_forwarding"
 		}
 		if mode != "oidc_forwarding" && mode != "user_password" {
-			return fmt.Errorf("remote auth mode must be 'oidc_forwarding' or 'user_password'")
+			return localizedError(localization.MultidbRemoteAuthModeInvalid(), nil)
 		}
 		if mode == "user_password" {
 			if strings.TrimSpace(c.User) == "" {
-				return fmt.Errorf("remote constituent user cannot be empty when auth mode is user_password")
+				return localizedError(localization.MultidbRemoteUserRequired(), nil)
 			}
 			if strings.TrimSpace(c.Password) == "" {
-				return fmt.Errorf("remote constituent password cannot be empty when auth mode is user_password")
+				return localizedError(localization.MultidbRemotePasswordRequired(), nil)
 			}
 		}
 		if mode == "oidc_forwarding" {
 			if strings.TrimSpace(c.User) != "" || strings.TrimSpace(c.Password) != "" {
-				return fmt.Errorf("remote constituent user/password cannot be set when auth mode is oidc_forwarding")
+				return localizedError(localization.MultidbOIDCCredentialsForbidden(), nil)
 			}
 		}
 	}
@@ -124,7 +125,7 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 	// Validate all constituents
 	for i, ref := range constituents {
 		if err := ref.Validate(); err != nil {
-			return fmt.Errorf("invalid constituent at index %d: %w", i, err)
+			return localizedError(localization.MultidbInvalidConstituent(i, err), err)
 		}
 
 		if ref.Type == "local" {

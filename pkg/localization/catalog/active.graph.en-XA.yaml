@@ -10,3 +10,9 @@
 - id: graph.database_access_denied
   description: Expanded pseudo-locale graph database authorization response.
   other: "[!! Access to the requested database is not allowed. !!]"
+- id: graph.temporal_node_limit_exceeded
+  description: Pseudo-locale temporal graph node limit.
+  other: "[!! node_ids exceeds maximum of {{.Maximum}} for temporal graph requests !!]"
+- id: graph.diff_node_limit_exceeded
+  description: Pseudo-locale diff graph node limit.
+  other: "[!! node_ids exceeds maximum of {{.Maximum}} for diff graph requests !!]"

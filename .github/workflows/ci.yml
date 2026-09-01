@@ -11,6 +11,8 @@ on:
       - "pkg/**"
       - "plugins/**"
       - "scripts/**"
+      - "cmd/nornicdb/**"
+      - "cmd/nornicdb-admin/**"
       - "ui/**"
       - "go.mod"
       - "go.sum"
@@ -24,6 +26,8 @@ on:
       - "pkg/**"
       - "plugins/**"
       - "scripts/**"
+      - "cmd/nornicdb/**"
+      - "cmd/nornicdb-admin/**"
       - "ui/**"
       - "go.mod"
       - "go.sum"
@@ -57,6 +61,13 @@ jobs:
 
       - name: Install dependencies
         run: go mod download
+
+      - name: Validate localization catalogs
+        run: |
+          go test ./pkg/localization ./scripts/localization_catalog ./scripts/localization_inventory
+          go generate ./pkg/localization
+          git diff --exit-code -- pkg/localization/catalog_manifest_gen.go
+          go run ./scripts/localization_catalog -check
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

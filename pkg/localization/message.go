@@ -98,11 +98,15 @@ const (
 	MessageBoltUnsupportedScheme        MessageID = "bolt.unsupported_auth_scheme"
 	MessageBoltDatabaseLookup           MessageID = "bolt.database_not_found_with_cause"
 	MessageBoltNoTransaction            MessageID = "bolt.no_transaction_to_commit"
+	MessageBoltRunParseFailed           MessageID = "bolt.run_message_parse_failed"
+	MessageBoltBookmarkValidation       MessageID = "bolt.bookmark_validation_failed"
 	MessageSearcherRequired             MessageID = "search.searcher_required"
 	MessageRequestRequired              MessageID = "request.required"
 	MessageQueryRequired                MessageID = "search.query_required"
 	MessageQueryChunkFailed             MessageID = "search.query_chunk_failed"
 	MessageSearchFailed                 MessageID = "search.failed"
+	MessageGRPCLocalizationInitFailed   MessageID = "grpc.localization_initialization_failed"
+	MessageExternalDiagnostic           MessageID = "localization.external_diagnostic"
 )
 
 // OSLanguageUndetected reports that OS language detection failed.
@@ -653,6 +657,16 @@ func BoltNoTransactionToCommit() Message {
 	return Message{ID: MessageBoltNoTransaction, Fallback: "No transaction to commit"}
 }
 
+// BoltRunMessageParseFailed identifies a malformed Bolt RUN message.
+func BoltRunMessageParseFailed(cause error) Message {
+	return Message{ID: MessageBoltRunParseFailed, Fallback: "Failed to parse RUN message: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
+}
+
+// BoltBookmarkValidationFailed identifies an invalid Bolt bookmark.
+func BoltBookmarkValidationFailed(cause error) Message {
+	return Message{ID: MessageBoltBookmarkValidation, Fallback: "Bookmark validation failed: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
+}
+
 // SearcherRequired identifies missing search-service configuration.
 func SearcherRequired() Message {
 	return Message{ID: MessageSearcherRequired, Fallback: "searcher is required"}
@@ -676,4 +690,15 @@ func QueryChunkFailed(cause error) Message {
 // SearchFailed identifies search execution failure.
 func SearchFailed(cause error) Message {
 	return Message{ID: MessageSearchFailed, Fallback: "search: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
+}
+
+// GRPCLocalizationInitializationFailed identifies localization bootstrap failure for a gRPC service.
+func GRPCLocalizationInitializationFailed(cause error) Message {
+	causeText := cause.Error()
+	return Message{ID: MessageGRPCLocalizationInitFailed, Fallback: "initialize localization: " + causeText, Data: map[string]any{"Cause": causeText}}
+}
+
+// ExternalDiagnostic preserves diagnostic text that is outside localization ownership.
+func ExternalDiagnostic(cause error) Message {
+	return Message{ID: MessageExternalDiagnostic, Fallback: cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
 }

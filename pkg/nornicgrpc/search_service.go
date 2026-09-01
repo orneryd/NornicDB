@@ -53,15 +53,16 @@ type Config struct {
 
 // NewService creates a NornicDB-native search service.
 func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc, searcher Searcher) (*Service, error) {
-	if searcher == nil {
-		return nil, status.Error(codes.InvalidArgument, localization.SearcherRequired().Fallback)
-	}
 	if cfg.Localizer == nil {
 		var err error
 		cfg.Localizer, err = localization.NewManager(nil, nil)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "initialize localization: %v", err)
+			return nil, status.Error(codes.Internal, localization.GRPCLocalizationInitializationFailed(err).Fallback)
 		}
+	}
+	if searcher == nil {
+		service := &Service{localizer: cfg.Localizer}
+		return nil, service.localizedStatus(context.Background(), codes.InvalidArgument, localization.SearcherRequired())
 	}
 	if cfg.MaxLimit <= 0 {
 		cfg.MaxLimit = 1000

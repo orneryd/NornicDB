@@ -150,6 +150,33 @@ func TestNormalizedCandidatesRequireDistinctVariants(t *testing.T) {
 	}
 }
 
+func TestNearCandidatesAreReviewOnlyAndSchemaScoped(t *testing.T) {
+	s := &scanner{occurrences: []occurrence{
+		{Audience: "client", Channel: "http", Package: "pkg/server", File: "a.go", Line: 1, Text: "database not found", Review: "localize"},
+		{Audience: "client", Channel: "http", Package: "pkg/server", File: "b.go", Line: 2, Text: "database was not found", Review: "localize"},
+		{Audience: "client", Channel: "http", Package: "pkg/server", File: "c.go", Line: 3, Text: "database not found", Review: "localize"},
+		{Audience: "client", Channel: "grpc", Package: "pkg/server", File: "d.go", Line: 4, Text: "database is not found", Review: "localize"},
+		{Audience: "operator", Channel: "http", Package: "pkg/server", File: "e.go", Line: 5, Text: "database is not found", Review: "localize"},
+	}}
+	var output bytes.Buffer
+	if err := s.writeNearCandidatesCSV(&output); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(&output).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("record count = %d, want header plus one candidate", len(records))
+	}
+	if records[1][3] != "0.750" {
+		t.Fatalf("similarity = %q", records[1][3])
+	}
+	if records[1][4] != "database not found" || records[1][5] != "database was not found" {
+		t.Fatalf("unexpected near pair: %q / %q", records[1][4], records[1][5])
+	}
+}
+
 func tokenFileSet() *token.FileSet {
 	return token.NewFileSet()
 }

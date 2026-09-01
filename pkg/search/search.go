@@ -111,6 +111,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -1330,7 +1331,7 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 
 	if clusterIndex == nil {
 		log.Printf("[K-MEANS] ❌ SKIPPED | reason=not_enabled")
-		return fmt.Errorf("clustering not enabled - call EnableClustering() first")
+		return localizedError(localization.SearchClusteringNotEnabled(), nil)
 	}
 
 	if threshold <= 0 {
@@ -1366,7 +1367,7 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 			return err
 		}
 		log.Printf("[K-MEANS] ❌ FAILED | embeddings=%d error=%v", totalCount, err)
-		return fmt.Errorf("clustering failed: %w", err)
+		return localizedError(localization.SearchClusteringFailed(err), err)
 	}
 
 	elapsed := time.Since(startTime)
@@ -1399,7 +1400,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		ctx = context.Background()
 	}
 	if clusterIndex == nil || !clusterIndex.IsClustered() {
-		return fmt.Errorf("cluster index not clustered")
+		return localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
 	s.mu.RLock()
 	clusterUsesGPU := s.clusterUsesGPU
@@ -1414,7 +1415,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 	s.mu.RUnlock()
 	dims := s.VectorIndexDimensions()
 	if dims <= 0 {
-		return fmt.Errorf("vector index unavailable")
+		return localizedError(localization.SearchVectorIndexUnavailable(), nil)
 	}
 	vectorLookup := s.getVectorLookup()
 
@@ -1422,7 +1423,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 	maxClusters := envutil.GetInt("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", 1024)
 	numClusters := clusterIndex.NumClusters()
 	if numClusters <= 0 {
-		return fmt.Errorf("no clusters")
+		return localizedError(localization.SearchNoClusters(), nil)
 	}
 	if numClusters > maxClusters {
 		numClusters = maxClusters
@@ -3818,7 +3819,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		return nil, err
 	}
 	if s.buildAttempted.Load() && !s.IsReady() {
-		return nil, ErrSearchIndexBuilding
+		return nil, localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
 	}
 	if opts == nil {
 		opts = DefaultSearchOptions()
@@ -4063,13 +4064,13 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 
 	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 	if len(embedding) == 0 {
-		return nil, fmt.Errorf("vector search requires embedding")
+		return nil, localizedError(localization.SearchVectorEmbeddingRequired(), nil)
 	}
 
 	// Use unified vector search pipeline
 	pipeline, err := s.getOrCreateVectorPipeline(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get vector pipeline: %w", err)
+		return nil, localizedError(localization.SearchVectorPipelineFailed(err), err)
 	}
 
 	seenOrphans := make(map[string]bool)
@@ -4632,7 +4633,7 @@ func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi
 		return built, err
 	}
 	if vi == nil {
-		return nil, fmt.Errorf("vector index unavailable")
+		return nil, localizedError(localization.SearchVectorIndexUnavailable(), nil)
 	}
 	vi.mu.RLock()
 	pairs := make([]hnswBuildPair, 0, len(vi.vectors))
@@ -5881,7 +5882,7 @@ func (s *Service) RerankerAvailable(ctx context.Context) bool {
 // This is a seam-friendly API for adapters that need rerank semantics without running retrieval.
 func (s *Service) RerankCandidates(ctx context.Context, query string, candidates []RerankCandidate, opts *SearchOptions) ([]RerankResult, error) {
 	if s == nil {
-		return nil, fmt.Errorf("search service unavailable")
+		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
 	if opts == nil {
 		opts = DefaultSearchOptions()

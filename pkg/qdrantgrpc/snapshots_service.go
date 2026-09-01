@@ -12,7 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -88,7 +87,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	}
 	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, status.Errorf(codes.Internal, "failed to get collection points: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err))
 	}
 
 	var qdrantPoints []*storage.Node
@@ -236,7 +235,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	start := time.Now()
 
 	if s.baseStorage == nil {
-		return nil, status.Error(codes.FailedPrecondition, "full snapshots require base storage")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantFullSnapshotsRequireBaseStorage())
 	}
 
 	// Create full snapshots directory
@@ -253,18 +252,18 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	// Try to use BadgerEngine.Backup if available
 	if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
 		if err := badger.Backup(snapshotPath); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to create backup: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err))
 		}
 	} else {
 		// Fallback: export all nodes and edges as a snapshot
 		nodes, err := s.baseStorage.AllNodes()
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get nodes: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err))
 		}
 
 		edges, err := s.baseStorage.AllEdges()
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get edges: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err))
 		}
 
 		snapshot := &storage.Snapshot{

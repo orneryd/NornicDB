@@ -25,3 +25,12 @@
 - id: dbconfig.disallowed_key
   description: Respuesta HTTP de Neo4j para una clave no permitida. Key no se traduce.
   other: "clave no permitida o desconocida: {{.Key}}"
+- id: dbconfig.mvcc_prune_triggered
+  description: Confirmación después de activar una poda MVCC.
+  other: poda activada
+- id: dbconfig.mvcc_lifecycle_paused
+  description: Confirmación después de pausar el ciclo de vida MVCC.
+  other: ciclo de vida pausado
+- id: dbconfig.mvcc_lifecycle_resumed
+  description: Confirmación después de reanudar el ciclo de vida MVCC.
+  other: ciclo de vida reanudado

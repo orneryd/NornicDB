@@ -53,6 +53,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -192,15 +193,13 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 
 	if operation == "create_node" {
 		if storageLimits.MaxNodes > 0 && nodeCount >= storageLimits.MaxNodes {
-			return fmt.Errorf("%w: database '%s' has reached max_nodes limit (%d/%d)",
-				ErrStorageLimitExceeded, c.databaseName, nodeCount, storageLimits.MaxNodes)
+			return localizedError(localization.MultidbMaxNodesReached(c.databaseName, nodeCount, storageLimits.MaxNodes), ErrStorageLimitExceeded)
 		}
 	}
 
 	if operation == "create_edge" {
 		if storageLimits.MaxEdges > 0 && edgeCount >= storageLimits.MaxEdges {
-			return fmt.Errorf("%w: database '%s' has reached max_edges limit (%d/%d)",
-				ErrStorageLimitExceeded, c.databaseName, edgeCount, storageLimits.MaxEdges)
+			return localizedError(localization.MultidbMaxEdgesReached(c.databaseName, edgeCount, storageLimits.MaxEdges), ErrStorageLimitExceeded)
 		}
 	}
 
@@ -231,8 +230,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 
 		// Check if adding the new entity would exceed the limit
 		if currentSize+newEntitySize > storageLimits.MaxBytes {
-			return fmt.Errorf("%w: database '%s' would exceed max_bytes limit (current: %d bytes, limit: %d bytes, new entity: %d bytes)",
-				ErrStorageLimitExceeded, c.databaseName, currentSize, storageLimits.MaxBytes, newEntitySize)
+			return localizedError(localization.MultidbMaxBytesExceeded(c.databaseName, currentSize, storageLimits.MaxBytes, newEntitySize), ErrStorageLimitExceeded)
 		}
 	}
 
@@ -391,8 +389,7 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 		c.activeQueriesMu.Lock()
 		if c.activeQueries >= queryLimits.MaxConcurrentQueries {
 			c.activeQueriesMu.Unlock()
-			return nil, nil, fmt.Errorf("%w: database '%s' has reached max_concurrent_queries limit (%d/%d)",
-				ErrQueryLimitExceeded, c.databaseName, c.activeQueries, queryLimits.MaxConcurrentQueries)
+			return nil, nil, localizedError(localization.MultidbMaxConcurrentQueriesReached(c.databaseName, c.activeQueries, queryLimits.MaxConcurrentQueries), ErrQueryLimitExceeded)
 		}
 		c.activeQueries++
 		c.activeQueriesMu.Unlock()
@@ -440,8 +437,7 @@ func (c *databaseLimitChecker) CheckQueryRate() error {
 		return nil // No limit
 	}
 	if !c.queryRateLimiter.Allow() {
-		return fmt.Errorf("%w: database '%s' exceeded max_queries_per_second (%d)",
-			ErrRateLimitExceeded, c.databaseName, c.limits.Rate.MaxQueriesPerSecond)
+		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, c.limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
 }
@@ -452,8 +448,7 @@ func (c *databaseLimitChecker) CheckWriteRate() error {
 		return nil // No limit
 	}
 	if !c.writeRateLimiter.Allow() {
-		return fmt.Errorf("%w: database '%s' exceeded max_writes_per_second (%d)",
-			ErrRateLimitExceeded, c.databaseName, c.limits.Rate.MaxWritesPerSecond)
+		return localizedError(localization.MultidbWriteRateExceeded(c.databaseName, c.limits.Rate.MaxWritesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
 }
@@ -550,8 +545,7 @@ func (t *ConnectionTracker) CheckConnectionLimit(manager *DatabaseManager, datab
 
 	current := t.connections[databaseName]
 	if current >= info.Limits.Connection.MaxConnections {
-		return fmt.Errorf("%w: database '%s' has reached max_connections limit (%d/%d)",
-			ErrConnectionLimitExceeded, databaseName, current, info.Limits.Connection.MaxConnections)
+		return localizedError(localization.MultidbMaxConnectionsReached(databaseName, current, info.Limits.Connection.MaxConnections), ErrConnectionLimitExceeded)
 	}
 
 	return nil
@@ -586,8 +580,7 @@ func (t *ConnectionTracker) TryIncrementConnection(manager *DatabaseManager, dat
 
 	current := t.connections[databaseName]
 	if current >= limit {
-		return fmt.Errorf("%w: database '%s' has reached max_connections limit (%d/%d)",
-			ErrConnectionLimitExceeded, databaseName, current, limit)
+		return localizedError(localization.MultidbMaxConnectionsReached(databaseName, current, limit), ErrConnectionLimitExceeded)
 	}
 
 	t.connections[databaseName]++

@@ -28,4 +28,10 @@ func TestSearchTextLocalizesValidationErrorFromMetadata(t *testing.T) {
 	_, err = service.SearchText(context.Background(), &gen.SearchTextRequest{})
 	require.Error(t, err)
 	require.Equal(t, "query is required", status.Convert(err).Message())
+
+	pseudoContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "en-XA"))
+	_, err = service.SearchText(pseudoContext, &gen.SearchTextRequest{})
+	require.Error(t, err)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "[!! query is required !!]", status.Convert(err).Message())
 }

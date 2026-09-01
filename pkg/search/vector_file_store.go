@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -85,7 +86,7 @@ type VectorFileStoreMeta struct {
 // If the .vec file exists it is opened for append; otherwise it is created with a header.
 func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, error) {
 	if dimensions <= 0 {
-		return nil, fmt.Errorf("dimensions must be > 0, got %d", dimensions)
+		return nil, localizedError(localization.SearchDimensionsMustBePositive(dimensions), nil)
 	}
 	vecPath := vecBasePath + ".vec"
 	metaPath := vecBasePath + ".meta"

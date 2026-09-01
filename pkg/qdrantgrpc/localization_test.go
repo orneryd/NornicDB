@@ -26,6 +26,11 @@ func TestCollectionsCreateLocalizesRequiredNameAndPreservesCode(t *testing.T) {
 
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "se requiere collection_name", status.Convert(err).Message())
+
+	pseudoContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "en-XA"))
+	_, err = service.Create(pseudoContext, &qpb.CreateCollection{})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, "[!! collection_name is required !!]", status.Convert(err).Message())
 }
 
 func TestRequiredFieldLocalizesAndPreservesIdentifier(t *testing.T) {

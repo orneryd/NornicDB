@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -59,7 +60,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
 			"accepted":   true,
 			"regenerate": true,
-			"message":    "Regeneration started - clearing embeddings and regenerating in background. Check /nornicdb/embed/stats for progress.",
+			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
 		s.writeJSON(w, http.StatusAccepted, response)
 
@@ -112,25 +113,25 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	// Trigger (safe to call even if already running - just wakes up worker)
 	_, err := s.db.EmbedExisting(r.Context())
 	if err != nil {
-		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 		return
 	}
 
 	// Get updated stats
 	stats = s.db.EmbedQueueStats()
 
-	var message string
+	var message localization.Message
 	if wasRunning {
-		message = "Embedding worker already running - will continue processing"
+		message = localization.EmbeddingWorkerAlreadyRunning()
 	} else {
-		message = "Embedding worker triggered - processing nodes in background"
+		message = localization.EmbeddingWorkerTriggered()
 	}
 
 	response := map[string]interface{}{
 		"triggered":      true,
 		"regenerate":     false,
 		"already_active": wasRunning,
-		"message":        message,
+		"message":        s.localizedText(w, r, message),
 		"stats":          stats,
 	}
 	s.writeJSON(w, http.StatusOK, response)
@@ -201,7 +202,7 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 
 	cleared, err := s.db.ClearAllEmbeddings()
 	if err != nil {
-		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 		return
 	}
 
@@ -264,12 +265,12 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 
 	searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine)
 	if err != nil {
-		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 		return
 	}
 
 	if err := searchSvc.BuildIndexes(r.Context()); err != nil {
-		s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 		return
 	}
 
@@ -492,7 +493,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		emb, embedErr := embedQuery(ctx, req.Query)
 		if embedErr != nil {
 			if errors.Is(embedErr, nornicdb.ErrQueryEmbeddingDimensionMismatch) {
-				s.writeError(w, http.StatusBadRequest, embedErr.Error(), ErrBadRequest)
+				s.writeBoundaryError(w, r, http.StatusBadRequest, embedErr, ErrBadRequest)
 				return
 			}
 			s.log.Warn("query embedding failed", "subsystem", "search", "error", embedErr)
@@ -535,7 +536,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			emb, embedErr := embedQuery(ctx, chunkQuery)
 			if embedErr != nil {
 				if errors.Is(embedErr, nornicdb.ErrQueryEmbeddingDimensionMismatch) {
-					s.writeError(w, http.StatusBadRequest, embedErr.Error(), ErrBadRequest)
+					s.writeBoundaryError(w, r, http.StatusBadRequest, embedErr, ErrBadRequest)
 					return
 				}
 				s.log.Warn("query embedding failed (chunked)", "subsystem", "search", "error", embedErr)
@@ -651,10 +652,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 		if errors.Is(err, search.ErrSearchIndexBuilding) {
-			s.writeError(w, http.StatusServiceUnavailable, err.Error(), ErrServiceUnavailable)
+			s.writeBoundaryError(w, r, http.StatusServiceUnavailable, err, ErrServiceUnavailable)
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
@@ -746,7 +747,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	// Get the target node from namespaced storage
 	targetNode, err := storageEngine.GetNode(storage.NodeID(req.NodeID))
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Node '%s' not found", req.NodeID), ErrNotFound)
+		s.writeLocalizedError(w, r, http.StatusNotFound, localization.SearchNodeNotFound(req.NodeID), ErrNotFound)
 		return
 	}
 
@@ -797,7 +798,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error(), ErrInternalError)
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 

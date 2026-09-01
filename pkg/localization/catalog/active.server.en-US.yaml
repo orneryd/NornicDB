@@ -1,0 +1,75 @@
+- id: server.role_entitlements_unavailable
+  description: Neo4j HTTP response when role entitlements cannot be configured.
+  other: Role entitlements are not configured (auth disabled or system DB unavailable).
+- id: server.role_entitlements_body_invalid
+  description: Neo4j HTTP validation response for role entitlement updates.
+  other: body must contain role and entitlements or mappings array
+- id: server.roles_unavailable_detailed
+  description: Neo4j HTTP response when role configuration is unavailable because auth or system DB is unavailable.
+  other: Roles are not configured (auth disabled or system DB unavailable).
+- id: server.role_already_exists
+  description: Neo4j HTTP conflict response when a role already exists.
+  other: role already exists
+- id: server.roles_unavailable
+  description: Neo4j HTTP response when roles are not configured.
+  other: Roles are not configured.
+- id: server.new_role_already_exists
+  description: Neo4j HTTP conflict response when a renamed role already exists.
+  other: new role name already exists
+- id: server.role_in_use
+  description: Neo4j HTTP conflict response when a role is assigned to a user.
+  other: "cannot delete role: at least one user has this role"
+- id: server.method_patch_or_delete_required
+  description: HTTP response for an endpoint that accepts PATCH or DELETE.
+  other: PATCH or DELETE required
+- id: server.database_allowlist_unavailable
+  description: Neo4j HTTP response when database access allowlist configuration is unavailable.
+  other: Database access allowlist is not configured (auth disabled or system DB unavailable).
+- id: server.database_privileges_unavailable
+  description: Neo4j HTTP response when database access privilege configuration is unavailable.
+  other: Database access privileges are not configured (auth disabled or system DB unavailable).
+- id: server.database_name_required
+  description: Neo4j HTTP validation response when a database name is absent.
+  other: database name required
+- id: server.unknown_endpoint
+  description: Neo4j HTTP response for an unknown database endpoint.
+  other: unknown endpoint
+- id: server.unknown_transaction_endpoint
+  description: Neo4j HTTP response for an unknown transaction endpoint.
+  other: unknown transaction endpoint
+- id: server.gpu_unavailable
+  description: HTTP GPU operation failure. Cause is diagnostic text.
+  other: "GPU unavailable: {{.Cause}}"
+- id: server.heimdall_disabled
+  description: HTTP response when Heimdall is disabled by configuration.
+  other: Heimdall is disabled by configuration
+- id: server.heimdall_initializing
+  description: HTTP response while Heimdall is still initializing.
+  other: Heimdall is initializing, please try again shortly
+- id: server.gpu_acceleration_enabled
+  description: HTTP confirmation after enabling GPU acceleration.
+  other: GPU acceleration enabled
+- id: server.gpu_acceleration_disabled
+  description: HTTP confirmation after disabling GPU acceleration while retaining CPU fallback.
+  other: GPU acceleration disabled (CPU fallback active)
+- id: server.embedding_regeneration_started
+  description: HTTP confirmation after starting asynchronous embedding regeneration. The route is a machine identifier and must not be translated.
+  other: Regeneration started - clearing embeddings and regenerating in background. Check /nornicdb/embed/stats for progress.
+- id: server.embedding_worker_already_running
+  description: HTTP status when an embedding trigger finds the worker active.
+  other: Embedding worker already running - will continue processing
+- id: server.embedding_worker_triggered
+  description: HTTP confirmation after triggering background embedding work.
+  other: Embedding worker triggered - processing nodes in background
+- id: server.retention_policy_deleted
+  description: HTTP confirmation after deleting a retention policy.
+  other: deleted
+- id: server.retention_hold_released
+  description: HTTP confirmation after releasing a retention hold.
+  other: released
+- id: server.retention_sweep_triggered
+  description: HTTP confirmation after triggering a retention sweep.
+  other: sweep triggered
+- id: server.backup_complete
+  description: HTTP confirmation after completing a database backup.
+  other: backup complete

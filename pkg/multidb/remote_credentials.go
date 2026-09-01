@@ -6,9 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 const remoteCredentialPrefix = "enc:v1:"
@@ -42,7 +43,7 @@ func (c *remoteCredentialCipher) encrypt(plaintext string) (string, error) {
 
 func (c *remoteCredentialCipher) decrypt(encoded string) (string, error) {
 	if !strings.HasPrefix(encoded, remoteCredentialPrefix) {
-		return "", fmt.Errorf("remote credential is not encrypted with expected format")
+		return "", localizedError(localization.MultidbCredentialFormatInvalid(), nil)
 	}
 	raw := strings.TrimPrefix(encoded, remoteCredentialPrefix)
 	payload, err := base64.StdEncoding.DecodeString(raw)
@@ -51,7 +52,7 @@ func (c *remoteCredentialCipher) decrypt(encoded string) (string, error) {
 	}
 	nonceSize := c.aead.NonceSize()
 	if len(payload) < nonceSize {
-		return "", fmt.Errorf("remote credential payload is truncated")
+		return "", localizedError(localization.MultidbCredentialPayloadTruncated(), nil)
 	}
 	nonce := payload[:nonceSize]
 	ciphertext := payload[nonceSize:]
@@ -68,10 +69,10 @@ func isEncryptedRemoteCredential(v string) bool {
 
 func (m *DatabaseManager) encryptRemotePassword(password string) (string, error) {
 	if strings.TrimSpace(password) == "" {
-		return "", fmt.Errorf("remote constituent password cannot be empty")
+		return "", localizedError(localization.MultidbRemotePasswordEmpty(), nil)
 	}
 	if m.remoteCredentialCipher == nil {
-		return "", fmt.Errorf("remote user/password auth requires remote credential encryption key configuration")
+		return "", localizedError(localization.MultidbCredentialKeyConfigurationRequired(), nil)
 	}
 	return m.remoteCredentialCipher.encrypt(password)
 }
@@ -79,14 +80,14 @@ func (m *DatabaseManager) encryptRemotePassword(password string) (string, error)
 func (m *DatabaseManager) decryptStoredRemotePassword(stored string) (string, error) {
 	stored = strings.TrimSpace(stored)
 	if stored == "" {
-		return "", fmt.Errorf("remote constituent password is missing")
+		return "", localizedError(localization.MultidbStoredPasswordMissing(), nil)
 	}
 	if !isEncryptedRemoteCredential(stored) {
 		// Backward-compatibility path: existing plaintext metadata.
 		return stored, nil
 	}
 	if m.remoteCredentialCipher == nil {
-		return "", fmt.Errorf("remote credential encryption key is required to decrypt stored remote credentials")
+		return "", localizedError(localization.MultidbCredentialDecryptKeyRequired(), nil)
 	}
 	return m.remoteCredentialCipher.decrypt(stored)
 }

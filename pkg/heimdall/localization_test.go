@@ -27,6 +27,7 @@ func TestLocalizedHTTPErrorsPreservePlainTextContract(t *testing.T) {
 		{name: "method", language: "es-ES", message: localization.HeimdallMethodNotAllowed(), status: http.StatusMethodNotAllowed, body: "Método no permitido\n", tag: "es-ES"},
 		{name: "body", language: "es-ES", message: localization.HeimdallInvalidRequestBody(), status: http.StatusBadRequest, body: "Cuerpo de solicitud no válido\n", tag: "es-ES"},
 		{name: "streaming", language: "es-ES", message: localization.HeimdallStreamingNotSupported(), status: http.StatusInternalServerError, body: "Transmisión no compatible\n", tag: "es-ES"},
+		{name: "pseudo locale", language: "en-XA", message: localization.HeimdallMethodNotAllowed(), status: http.StatusMethodNotAllowed, body: "[!! Method not allowed !!]\n", tag: "en-XA"},
 		{name: "malformed language", language: "not_a_locale_@", message: localization.HeimdallMethodNotAllowed(), status: http.StatusMethodNotAllowed, body: "Method not allowed\n", tag: "en-US"},
 	}
 	for _, test := range tests {

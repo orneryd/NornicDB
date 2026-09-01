@@ -1,0 +1,126 @@
+- id: mcp.invalid_request_body
+  description: Respuesta HTTP de MCP para JSON no válido.
+  other: cuerpo de solicitud no válido
+- id: mcp.unknown_tool
+  description: Error de herramienta desconocida. Name no se traduce.
+  other: "herramienta desconocida: {{.Name}}"
+- id: mcp.database_executor_unavailable
+  description: Error de enrutamiento de base de datos. Database no se traduce.
+  other: 'ejecutor con ámbito de base de datos no disponible para "{{.Database}}"'
+- id: mcp.cypher_executor_unavailable
+  description: Error cuando no hay un ejecutor de Cypher.
+  other: ejecutor de Cypher no disponible
+- id: mcp.field_required
+  description: Error de validación. Field no se traduce.
+  other: "se requiere {{.Field}}"
+- id: mcp.invalid_label
+  description: Error de etiqueta. Label no se traduce.
+  other: 'etiqueta no válida: "{{.Label}}" (debe ser un identificador válido)'
+- id: mcp.store_node_failed
+  description: Error al guardar un nodo. Cause no se traduce.
+  other: "no se pudo guardar el nodo: {{.Cause}}"
+- id: mcp.store_no_node_id
+  description: Error cuando no se devuelve el ID del nodo.
+  other: la operación de guardado no devolvió un id de nodo
+- id: mcp.store_invalid_node_id
+  description: Error cuando se devuelve un ID de nodo no válido.
+  other: la operación de guardado devolvió un id de nodo no válido
+- id: mcp.store_no_executor
+  description: Error cuando la persistencia MCP no está conectada.
+  other: "la operación de guardado falló: no hay un ejecutor de base de datos disponible (los datos no persistirían); asegúrese de que MCP esté conectado a la base de datos predeterminada del servidor"
+- id: mcp.node_not_found
+  description: Error al buscar un nodo. ID no se traduce.
+  other: "nodo no encontrado: {{.ID}}"
+- id: mcp.recall_failed
+  description: Error al recuperar nodos. Cause no se traduce.
+  other: "no se pudieron recuperar los nodos: {{.Cause}}"
+- id: mcp.invalid_relation
+  description: Error de relación. Relation no se traduce.
+  other: 'relación no válida: "{{.Relation}}" (debe ser un identificador válido y no vacío, p. ej. relates_to, depends_on)'
+- id: mcp.source_node_not_found
+  description: Error al buscar el nodo origen. ID no se traduce.
+  other: "nodo origen no encontrado: {{.ID}}"
+- id: mcp.target_node_not_found
+  description: Error al buscar el nodo destino. ID no se traduce.
+  other: "nodo destino no encontrado: {{.ID}}"
+- id: mcp.create_edge_failed
+  description: Error al crear una relación. Cause no se traduce.
+  other: "no se pudo crear la relación: {{.Cause}}"
+- id: mcp.link_no_edge_id
+  description: Error cuando no se devuelve el ID de relación.
+  other: la operación de enlace no devolvió un id de relación
+- id: mcp.link_invalid_edge_id
+  description: Error cuando el ID de relación no es válido.
+  other: la operación de enlace devolvió un id de relación no válido
+- id: mcp.delete_task_failed
+  description: Error al eliminar una tarea. Cause no se traduce.
+  other: "no se pudo eliminar la tarea: {{.Cause}}"
+- id: mcp.task_not_found
+  description: Error al buscar una tarea. ID no se traduce.
+  other: "tarea no encontrada: {{.ID}}"
+- id: mcp.update_task_failed
+  description: Error al actualizar una tarea. Cause no se traduce.
+  other: "no se pudo actualizar la tarea: {{.Cause}}"
+- id: mcp.fetch_task_failed
+  description: Error al obtener la tarea actualizada. Cause no se traduce.
+  other: "no se pudo obtener la tarea actualizada: {{.Cause}}"
+- id: mcp.id_required_for_delete
+  description: Error al eliminar una tarea sin ID.
+  other: se requiere id para eliminar
+- id: mcp.title_required_for_new
+  description: Error al crear una tarea sin título.
+  other: se requiere title para las tareas nuevas
+- id: mcp.create_task_failed
+  description: Error al crear una tarea. Cause no se traduce.
+  other: "no se pudo crear la tarea: {{.Cause}}"
+- id: mcp.task_no_id
+  description: Error cuando la tarea creada no tiene ID.
+  other: la creación de la tarea no devolvió un id
+- id: mcp.task_invalid_id
+  description: Error cuando la tarea creada tiene un ID no válido.
+  other: la creación de la tarea devolvió un id no válido
+- id: mcp.dependency_create_failed
+  description: Error al crear una dependencia. ID y Cause no se traducen.
+  other: 'no se pudo crear la dependencia de tarea "{{.ID}}": {{.Cause}}'
+- id: mcp.list_tasks_failed
+  description: Error al enumerar tareas. Cause no se traduce.
+  other: "no se pudieron enumerar las tareas: {{.Cause}}"
+- id: mcp.embedding_element_invalid
+  description: Error en un elemento de embedding. Index y Type no se traducen.
+  other: "embedding no válido: el elemento {{.Index}} no es un número (se obtuvo {{.Type}})"
+- id: mcp.embedding_type_invalid
+  description: Error en el tipo de embedding. Type no se traduce.
+  other: "embedding no válido: debe ser una matriz de números (se obtuvo {{.Type}})"
+- id: mcp.embedding_empty
+  description: Error para un embedding vacío.
+  other: "embedding no válido: la matriz no puede estar vacía"
+- id: mcp.embedding_dimensions_invalid
+  description: Error en las dimensiones del embedding. Model no se traduce.
+  other: "dimensiones de embedding no válidas: se esperaban {{.Expected}}, se obtuvieron {{.Got}}. El modelo de embedding configurado ({{.Model}}) requiere vectores de {{.Expected}} dimensiones"
+- id: mcp.authentication_required
+  description: Respuesta de autenticación cuando faltan credenciales.
+  other: se requiere autenticación
+- id: mcp.invalid_or_expired_token
+  description: Respuesta cuando un token es rechazado.
+  other: token no válido o caducado
+- id: mcp.rate_limit_exceeded
+  description: Error de límite. Limit y Period no se traducen.
+  other: "límite de solicitudes superado: {{.Limit}} solicitudes por {{.Period}}"
+- id: mcp.authentication_context_missing
+  description: Error cuando falta el contexto de autenticación.
+  other: falta el contexto de autenticación
+- id: mcp.tool_permission_denied
+  description: Error de autorización de herramienta. Roles y Tool no se traducen.
+  other: "permiso denegado: los roles {{.Roles}} no pueden usar la herramienta {{.Tool}}"
+- id: mcp.cypher_executor_nil
+  description: Error interno cuando falta el ejecutor de Cypher.
+  other: el ejecutor de Cypher es nulo
+- id: mcp.server_already_closed
+  description: Error al iniciar un servidor MCP cerrado.
+  other: el servidor ya está cerrado
+- id: mcp.unknown_role
+  description: Error al interpretar un rol MCP. Role no se traduce.
+  other: "rol MCP desconocido: {{.Role}}"
+- id: mcp.authenticator_not_configured
+  description: Error cuando no está configurado el autenticador MCP.
+  other: autenticador no configurado

@@ -1,0 +1,126 @@
+- id: mcp.invalid_request_body
+  description: Pseudo-locale invalid MCP body.
+  other: "[!! invalid request body !!]"
+- id: mcp.unknown_tool
+  description: Pseudo-locale unknown tool.
+  other: "[!! unknown tool: {{.Name}} !!]"
+- id: mcp.database_executor_unavailable
+  description: Pseudo-locale database executor failure.
+  other: '[!! database scoped executor unavailable for "{{.Database}}" !!]'
+- id: mcp.cypher_executor_unavailable
+  description: Pseudo-locale Cypher executor failure.
+  other: "[!! cypher executor unavailable !!]"
+- id: mcp.field_required
+  description: Pseudo-locale required field.
+  other: "[!! {{.Field}} is required !!]"
+- id: mcp.invalid_label
+  description: Pseudo-locale invalid label.
+  other: '[!! invalid label: "{{.Label}}" (must be a valid identifier) !!]'
+- id: mcp.store_node_failed
+  description: Pseudo-locale store failure.
+  other: "[!! failed to store node: {{.Cause}} !!]"
+- id: mcp.store_no_node_id
+  description: Pseudo-locale missing node ID.
+  other: "[!! store returned no node id !!]"
+- id: mcp.store_invalid_node_id
+  description: Pseudo-locale invalid node ID.
+  other: "[!! store returned invalid node id !!]"
+- id: mcp.store_no_executor
+  description: Pseudo-locale unwired store.
+  other: "[!! store failed: no database executor available (data would not persist); ensure MCP is wired to the server's default database !!]"
+- id: mcp.node_not_found
+  description: Pseudo-locale node lookup.
+  other: "[!! node not found: {{.ID}} !!]"
+- id: mcp.recall_failed
+  description: Pseudo-locale recall failure.
+  other: "[!! failed to recall nodes: {{.Cause}} !!]"
+- id: mcp.invalid_relation
+  description: Pseudo-locale invalid relation.
+  other: '[!! invalid relation: "{{.Relation}}" (must be a non-empty valid identifier, e.g. relates_to, depends_on) !!]'
+- id: mcp.source_node_not_found
+  description: Pseudo-locale source lookup.
+  other: "[!! source node not found: {{.ID}} !!]"
+- id: mcp.target_node_not_found
+  description: Pseudo-locale target lookup.
+  other: "[!! target node not found: {{.ID}} !!]"
+- id: mcp.create_edge_failed
+  description: Pseudo-locale edge failure.
+  other: "[!! failed to create edge: {{.Cause}} !!]"
+- id: mcp.link_no_edge_id
+  description: Pseudo-locale missing edge ID.
+  other: "[!! link returned no edge id !!]"
+- id: mcp.link_invalid_edge_id
+  description: Pseudo-locale invalid edge ID.
+  other: "[!! link returned invalid edge id !!]"
+- id: mcp.delete_task_failed
+  description: Pseudo-locale delete task failure.
+  other: "[!! failed to delete task: {{.Cause}} !!]"
+- id: mcp.task_not_found
+  description: Pseudo-locale task lookup.
+  other: "[!! task not found: {{.ID}} !!]"
+- id: mcp.update_task_failed
+  description: Pseudo-locale update task failure.
+  other: "[!! failed to update task: {{.Cause}} !!]"
+- id: mcp.fetch_task_failed
+  description: Pseudo-locale fetch task failure.
+  other: "[!! failed to fetch updated task: {{.Cause}} !!]"
+- id: mcp.id_required_for_delete
+  description: Pseudo-locale delete ID validation.
+  other: "[!! id is required for delete !!]"
+- id: mcp.title_required_for_new
+  description: Pseudo-locale title validation.
+  other: "[!! title is required for new tasks !!]"
+- id: mcp.create_task_failed
+  description: Pseudo-locale create task failure.
+  other: "[!! failed to create task: {{.Cause}} !!]"
+- id: mcp.task_no_id
+  description: Pseudo-locale missing task ID.
+  other: "[!! task create returned no id !!]"
+- id: mcp.task_invalid_id
+  description: Pseudo-locale invalid task ID.
+  other: "[!! task create returned invalid id !!]"
+- id: mcp.dependency_create_failed
+  description: Pseudo-locale dependency failure.
+  other: '[!! failed to create task dependency "{{.ID}}": {{.Cause}} !!]'
+- id: mcp.list_tasks_failed
+  description: Pseudo-locale list task failure.
+  other: "[!! failed to list tasks: {{.Cause}} !!]"
+- id: mcp.embedding_element_invalid
+  description: Pseudo-locale embedding element failure.
+  other: "[!! invalid embedding: element {{.Index}} is not a number (got {{.Type}}) !!]"
+- id: mcp.embedding_type_invalid
+  description: Pseudo-locale embedding type failure.
+  other: "[!! invalid embedding: must be an array of numbers (got {{.Type}}) !!]"
+- id: mcp.embedding_empty
+  description: Pseudo-locale empty embedding.
+  other: "[!! invalid embedding: cannot be empty array !!]"
+- id: mcp.embedding_dimensions_invalid
+  description: Pseudo-locale embedding dimensions.
+  other: "[!! invalid embedding dimensions: expected {{.Expected}}, got {{.Got}}. The configured embedding model ({{.Model}}) requires {{.Expected}}-dimensional vectors !!]"
+- id: mcp.authentication_required
+  description: Pseudo-locale authentication required.
+  other: "[!! authentication required !!]"
+- id: mcp.invalid_or_expired_token
+  description: Pseudo-locale invalid token.
+  other: "[!! invalid or expired token !!]"
+- id: mcp.rate_limit_exceeded
+  description: Pseudo-locale rate limit.
+  other: "[!! rate limit exceeded: {{.Limit}} requests per {{.Period}} !!]"
+- id: mcp.authentication_context_missing
+  description: Pseudo-locale missing auth context.
+  other: "[!! no authentication context !!]"
+- id: mcp.tool_permission_denied
+  description: Pseudo-locale tool denial.
+  other: "[!! permission denied: role(s) {{.Roles}} cannot use tool {{.Tool}} !!]"
+- id: mcp.cypher_executor_nil
+  description: Pseudo-locale nil Cypher executor.
+  other: "[!! cypher executor is nil !!]"
+- id: mcp.server_already_closed
+  description: Pseudo-locale closed MCP server.
+  other: "[!! server already closed !!]"
+- id: mcp.unknown_role
+  description: Pseudo-locale unknown MCP role.
+  other: "[!! unknown MCP role: {{.Role}} !!]"
+- id: mcp.authenticator_not_configured
+  description: Pseudo-locale missing MCP authenticator.
+  other: "[!! authenticator not configured !!]"
