@@ -76,6 +76,39 @@
 - id: qdrant.snapshot_not_found
   description: Qdrant gRPC lookup error when a snapshot does not exist. Name is the snapshot identifier.
   other: 'snapshot "{{.Name}}" not found'
+- id: qdrant.vector_dimension_mismatch
+  description: Qdrant gRPC validation error for a vector with the wrong dimension. Got and Expected are integer dimensions.
+  other: "vector dimension mismatch: got {{.Got}}, expected {{.Expected}}"
+- id: qdrant.vector_mutations_disabled
+  description: Qdrant gRPC response when managed embeddings prevent direct vector mutation. The environment variable is a machine identifier.
+  other: vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC
+- id: qdrant.limit_too_large
+  description: Qdrant gRPC validation error when Limit exceeds Maximum. Both values are integers.
+  other: "limit too large: {{.Limit}} > {{.Maximum}}"
+- id: qdrant.text_query_embeddings_required
+  description: Qdrant gRPC response when a text query is used without embedding support. EmbedQuery is a machine identifier.
+  other: text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery
+- id: qdrant.get_points_failed
+  description: Qdrant gRPC storage failure while retrieving points. Cause is diagnostic text and must not be translated.
+  other: "failed to get points: {{.Cause}}"
+- id: qdrant.embed_query_failed
+  description: Qdrant gRPC failure while embedding query text. Cause is diagnostic text and must not be translated.
+  other: "failed to embed query: {{.Cause}}"
+- id: qdrant.collection_not_found_with_cause
+  description: Qdrant gRPC collection lookup failure. Cause is diagnostic text and must not be translated.
+  other: "collection not found: {{.Cause}}"
+- id: qdrant.snapshot_directory_create_failed
+  description: Qdrant gRPC snapshot-directory creation failure. Cause is diagnostic text and must not be translated.
+  other: "failed to create snapshot directory: {{.Cause}}"
+- id: qdrant.snapshot_save_failed
+  description: Qdrant gRPC snapshot persistence failure. Cause is diagnostic text and must not be translated.
+  other: "failed to save snapshot: {{.Cause}}"
+- id: qdrant.snapshot_list_failed
+  description: Qdrant gRPC snapshot listing failure. Cause is diagnostic text and must not be translated.
+  other: "failed to list snapshots: {{.Cause}}"
+- id: qdrant.snapshot_delete_failed
+  description: Qdrant gRPC snapshot deletion failure. Cause is diagnostic text and must not be translated.
+  other: "failed to delete snapshot: {{.Cause}}"
 - id: localization.items_processed
   description: Test and shared progress message reporting a processed item count.
   one: "{{.Count}} item processed"

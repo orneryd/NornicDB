@@ -51,7 +51,7 @@ func (s *PointsService) openCollection(ctx context.Context, name string) (storag
 	}
 	engine, meta, err := s.collections.Open(ctx, name)
 	if err != nil {
-		return nil, nil, status.Errorf(codes.NotFound, "collection not found: %v", err)
+		return nil, nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err))
 	}
 	return engine, meta, nil
 }
@@ -78,7 +78,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
 	}
 	if len(req.GetPoints()) == 0 {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
@@ -121,7 +121,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 		for _, v := range vecs {
 			if len(v) != meta.Dimensions {
-				return nil, status.Errorf(codes.InvalidArgument, "vector dimension mismatch: got %d, expected %d", len(v), meta.Dimensions)
+				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
 			}
 		}
 
@@ -327,7 +327,7 @@ func (s *PointsService) Count(ctx context.Context, req *qpb.CountPoints) (*qpb.C
 
 	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, status.Errorf(codes.Internal, "failed to get points: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
 	}
 
 	count := uint64(0)
@@ -365,7 +365,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		return nil, err
 	}
 	if len(req.Vector) != meta.Dimensions {
-		return nil, status.Errorf(codes.InvalidArgument, "vector dimension mismatch: got %d, expected %d", len(req.Vector), meta.Dimensions)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(req.Vector), meta.Dimensions))
 	}
 
 	limit := int(req.Limit)
@@ -373,7 +373,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		limit = 10
 	}
 	if limit > s.config.MaxTopK {
-		return nil, status.Errorf(codes.InvalidArgument, "limit too large: %d > %d", limit, s.config.MaxTopK)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(uint64(limit), s.config.MaxTopK))
 	}
 
 	offset := 0
@@ -482,7 +482,7 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 
 	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, status.Errorf(codes.Internal, "failed to get points: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
 	}
 
 	var points []*storage.Node
@@ -685,7 +685,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
 	}
 	if len(req.GetPoints()) == 0 {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("points"))
@@ -715,7 +715,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		}
 		for _, v := range vecs {
 			if len(v) != meta.Dimensions {
-				return nil, status.Errorf(codes.InvalidArgument, "vector dimension mismatch: got %d, expected %d", len(v), meta.Dimensions)
+				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
 			}
 		}
 
@@ -757,7 +757,7 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		return nil, err
 	}
 	if !s.config.AllowVectorMutations {
-		return nil, status.Error(codes.FailedPrecondition, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC")
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
 	}
 	if req.PointsSelector == nil {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points_selector"))
@@ -860,7 +860,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 		limit = req.Limit
 	}
 	if limit > uint64(s.config.MaxTopK) {
-		return nil, status.Errorf(codes.InvalidArgument, "limit too large: %d > %d", limit, s.config.MaxTopK)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantLimitTooLarge(limit, s.config.MaxTopK))
 	}
 
 	using := ""
@@ -1177,11 +1177,11 @@ func (s *PointsService) vectorFromInput(ctx context.Context, collection string, 
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("document.text"))
 		}
 		if s.config.EmbedQuery == nil {
-			return nil, status.Error(codes.FailedPrecondition, "text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
 		}
 		emb, err := s.config.EmbedQuery(ctx, v.Document.Text)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to embed query: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
 		}
 		return emb, nil
 	default:
@@ -1281,11 +1281,11 @@ func (s *PointsService) vectorFromVector(ctx context.Context, v *qpb.Vector) ([]
 	}
 	if doc := v.GetDocument(); doc != nil && doc.Text != "" {
 		if s.config.EmbedQuery == nil {
-			return nil, status.Error(codes.FailedPrecondition, "text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery")
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
 		}
 		emb, err := s.config.EmbedQuery(ctx, doc.Text)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to embed query: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
 		}
 		return emb, nil
 	}

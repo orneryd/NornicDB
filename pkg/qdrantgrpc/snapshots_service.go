@@ -74,7 +74,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	// Create snapshot directory for this collection
 	collectionSnapshotDir := filepath.Join(s.snapshotDir, "collections", req.CollectionName)
 	if err := os.MkdirAll(collectionSnapshotDir, 0755); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create snapshot directory: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
 	}
 
 	// Generate snapshot name with timestamp
@@ -109,7 +109,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	// Save snapshot
 	if err := storage.SaveSnapshot(snapshot, snapshotPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to save snapshot: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
 	}
 
 	// Get file size
@@ -157,7 +157,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
-		return nil, status.Errorf(codes.Internal, "failed to list snapshots: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
 	}
 
 	// Build snapshot list
@@ -222,7 +222,7 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 		if os.IsNotExist(err) {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
 		}
-		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
 	}
 
 	return &qpb.DeleteSnapshotResponse{
@@ -242,7 +242,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	// Create full snapshots directory
 	fullSnapshotDir := filepath.Join(s.snapshotDir, "full")
 	if err := os.MkdirAll(fullSnapshotDir, 0755); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create snapshot directory: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
 	}
 
 	// Generate snapshot name with timestamp
@@ -276,7 +276,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 		}
 
 		if err := storage.SaveSnapshot(snapshot, snapshotPath); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to save snapshot: %v", err)
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
 		}
 	}
 
@@ -313,7 +313,7 @@ func (s *SnapshotsService) ListFull(ctx context.Context, req *qpb.ListFullSnapsh
 				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
-		return nil, status.Errorf(codes.Internal, "failed to list snapshots: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
 	}
 
 	// Build snapshot list
@@ -366,7 +366,7 @@ func (s *SnapshotsService) DeleteFull(ctx context.Context, req *qpb.DeleteFullSn
 		if os.IsNotExist(err) {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
 		}
-		return nil, status.Errorf(codes.Internal, "failed to delete snapshot: %v", err)
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
 	}
 
 	return &qpb.DeleteSnapshotResponse{

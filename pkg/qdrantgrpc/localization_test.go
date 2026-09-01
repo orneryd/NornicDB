@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -99,4 +100,73 @@ func TestNotFoundMessagesPreserveCodesAndIdentifiers(t *testing.T) {
 	snapshotErr := localizedStatus(ctx, manager, codes.NotFound, localization.QdrantSnapshotNotFound("daily"))
 	require.Equal(t, codes.NotFound, status.Code(snapshotErr))
 	require.Equal(t, `no se encontró la instantánea "daily"`, status.Convert(snapshotErr).Message())
+}
+
+func TestVectorValidationMessagesPreserveCodesAndArguments(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
+
+	dimensionErr := localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(3, 4))
+	require.Equal(t, codes.InvalidArgument, status.Code(dimensionErr))
+	require.Equal(t, "la dimensión del vector no coincide: se obtuvo 3, se esperaba 4", status.Convert(dimensionErr).Message())
+	require.Equal(t, "vector dimension mismatch: got 3, expected 4", localization.QdrantVectorDimensionMismatch(3, 4).Fallback)
+
+	mutationErr := localizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
+	require.Equal(t, codes.FailedPrecondition, status.Code(mutationErr))
+	require.Contains(t, status.Convert(mutationErr).Message(), "NORNICDB_EMBEDDING_ENABLED=false")
+	require.Equal(t, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC", localization.QdrantVectorMutationsDisabled().Fallback)
+}
+
+func TestRepeatedQueryMessagesPreserveCodesAndDiagnostics(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
+
+	limitErr := localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantLimitTooLarge(101, 100))
+	require.Equal(t, codes.InvalidArgument, status.Code(limitErr))
+	require.Equal(t, "el límite es demasiado grande: 101 > 100", status.Convert(limitErr).Message())
+	require.Equal(t, "limit too large: 101 > 100", localization.QdrantLimitTooLarge(101, 100).Fallback)
+
+	getErr := localizedStatus(ctx, manager, codes.Internal, localization.QdrantGetPointsFailed(errors.New("disk offline")))
+	require.Equal(t, codes.Internal, status.Code(getErr))
+	require.Equal(t, "no se pudieron obtener los puntos: disk offline", status.Convert(getErr).Message())
+	require.Equal(t, "failed to get points: disk offline", localization.QdrantGetPointsFailed(errors.New("disk offline")).Fallback)
+
+	embedErr := localizedStatus(ctx, manager, codes.Internal, localization.QdrantEmbedQueryFailed(errors.New("model unavailable")))
+	require.Equal(t, "no se pudo generar el embedding de la consulta: model unavailable", status.Convert(embedErr).Message())
+	require.Equal(t, "failed to embed query: model unavailable", localization.QdrantEmbedQueryFailed(errors.New("model unavailable")).Fallback)
+
+	requiredErr := localizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
+	require.Equal(t, codes.FailedPrecondition, status.Code(requiredErr))
+	require.Contains(t, status.Convert(requiredErr).Message(), "EmbedQuery")
+	require.Equal(t, "text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery", localization.QdrantTextQueryEmbeddingsRequired().Fallback)
+}
+
+func TestRepeatedSnapshotMessagesPreserveCodesAndDiagnostics(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
+	cause := errors.New("disk offline")
+	tests := []struct {
+		name     string
+		code     codes.Code
+		message  localization.Message
+		want     string
+		fallback string
+	}{
+		{name: "collection", code: codes.NotFound, message: localization.QdrantCollectionNotFoundWithCause(cause), want: "no se encontró la colección: disk offline", fallback: "collection not found: disk offline"},
+		{name: "directory", code: codes.Internal, message: localization.QdrantSnapshotDirectoryCreateFailed(cause), want: "no se pudo crear el directorio de instantáneas: disk offline", fallback: "failed to create snapshot directory: disk offline"},
+		{name: "save", code: codes.Internal, message: localization.QdrantSnapshotSaveFailed(cause), want: "no se pudo guardar la instantánea: disk offline", fallback: "failed to save snapshot: disk offline"},
+		{name: "list", code: codes.Internal, message: localization.QdrantSnapshotListFailed(cause), want: "no se pudieron enumerar las instantáneas: disk offline", fallback: "failed to list snapshots: disk offline"},
+		{name: "delete", code: codes.Internal, message: localization.QdrantSnapshotDeleteFailed(cause), want: "no se pudo eliminar la instantánea: disk offline", fallback: "failed to delete snapshot: disk offline"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := localizedStatus(ctx, manager, test.code, test.message)
+			require.Equal(t, test.code, status.Code(err))
+			require.Equal(t, test.want, status.Convert(err).Message())
+			require.Equal(t, test.fallback, test.message.Fallback)
+		})
+	}
 }

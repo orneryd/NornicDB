@@ -73,6 +73,39 @@
 - id: qdrant.snapshot_not_found
   description: Error de Qdrant gRPC cuando no existe una instantánea.
   other: 'no se encontró la instantánea "{{.Name}}"'
+- id: qdrant.vector_dimension_mismatch
+  description: Error de validación de Qdrant gRPC cuando la dimensión del vector es incorrecta.
+  other: "la dimensión del vector no coincide: se obtuvo {{.Got}}, se esperaba {{.Expected}}"
+- id: qdrant.vector_mutations_disabled
+  description: Respuesta de Qdrant gRPC cuando los embeddings administrados impiden modificar vectores directamente.
+  other: las mutaciones de vectores están deshabilitadas porque los embeddings administrados por NornicDB están habilitados; establezca NORNICDB_EMBEDDING_ENABLED=false para administrar vectores mediante Qdrant gRPC
+- id: qdrant.limit_too_large
+  description: Error de validación de Qdrant gRPC cuando Limit supera Maximum.
+  other: "el límite es demasiado grande: {{.Limit}} > {{.Maximum}}"
+- id: qdrant.text_query_embeddings_required
+  description: Respuesta de Qdrant gRPC cuando se usa una consulta de texto sin embeddings.
+  other: la consulta de texto requiere embeddings; habilite los embeddings de NornicDB y configure EmbedQuery
+- id: qdrant.get_points_failed
+  description: Error de almacenamiento de Qdrant gRPC al obtener puntos. Cause no se traduce.
+  other: "no se pudieron obtener los puntos: {{.Cause}}"
+- id: qdrant.embed_query_failed
+  description: Error de Qdrant gRPC al generar el embedding de una consulta. Cause no se traduce.
+  other: "no se pudo generar el embedding de la consulta: {{.Cause}}"
+- id: qdrant.collection_not_found_with_cause
+  description: Error de Qdrant gRPC al buscar una colección. Cause no se traduce.
+  other: "no se encontró la colección: {{.Cause}}"
+- id: qdrant.snapshot_directory_create_failed
+  description: Error de Qdrant gRPC al crear el directorio de instantáneas. Cause no se traduce.
+  other: "no se pudo crear el directorio de instantáneas: {{.Cause}}"
+- id: qdrant.snapshot_save_failed
+  description: Error de Qdrant gRPC al guardar una instantánea. Cause no se traduce.
+  other: "no se pudo guardar la instantánea: {{.Cause}}"
+- id: qdrant.snapshot_list_failed
+  description: Error de Qdrant gRPC al enumerar instantáneas. Cause no se traduce.
+  other: "no se pudieron enumerar las instantáneas: {{.Cause}}"
+- id: qdrant.snapshot_delete_failed
+  description: Error de Qdrant gRPC al eliminar una instantánea. Cause no se traduce.
+  other: "no se pudo eliminar la instantánea: {{.Cause}}"
 - id: localization.items_processed
   description: Mensaje de progreso con el numero de elementos procesados.
   one: "{{.Count}} elemento procesado"
