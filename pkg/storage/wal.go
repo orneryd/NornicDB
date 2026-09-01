@@ -2416,7 +2416,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		}
 	}
 
-	// Phase 3: Rollback incomplete transactions
+	// Roll back incomplete transactions.
 	for txID, tx := range result.Transactions {
 		if !tx.Done {
 			// Transaction incomplete - needs rollback

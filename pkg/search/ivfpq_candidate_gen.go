@@ -2,7 +2,8 @@ package search
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // IVFPQCandidateGen implements CandidateGenerator using IVF/PQ compressed ANN.
@@ -29,7 +30,7 @@ func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float3
 		ctx = context.Background()
 	}
 	if g == nil || g.index == nil {
-		return nil, fmt.Errorf("ivfpq index not configured")
+		return nil, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
 	}
 	return g.index.SearchApprox(ctx, query, k, minSimilarity, g.nprobe)
 }

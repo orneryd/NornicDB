@@ -2,32 +2,11 @@ package replication
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
-)
-
-// Errors returned by replication operations.
-var (
-	// ErrNotLeader is returned when a write is attempted on a non-leader node.
-	ErrNotLeader = errors.New("not leader")
-
-	// ErrNoLeader is returned when no leader is available in the cluster.
-	ErrNoLeader = errors.New("no leader available")
-
-	// ErrTimeout is returned when an operation times out.
-	ErrTimeout = errors.New("operation timed out")
-
-	// ErrClosed is returned when operating on a closed replicator.
-	ErrClosed = errors.New("replicator is closed")
-
-	// ErrStandbyMode is returned when writes are attempted on a standby node.
-	ErrStandbyMode = errors.New("node is in standby mode")
-
-	// ErrNotReady is returned when the replicator hasn't finished initialization.
-	ErrNotReady = errors.New("replicator not ready")
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -315,7 +294,7 @@ func NewReplicator(config *Config, storage Storage) (Replicator, error) {
 		return NewMultiRegionReplicator(config, storage)
 
 	default:
-		return nil, errors.New("unknown replication mode: " + string(config.Mode))
+		return nil, localizedError(localization.ReplicationConfigUnknownMode(config.Mode), nil)
 	}
 }
 

@@ -548,7 +548,7 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 	if sc.metrics == nil {
 		return
 	}
-	// Phase 3 D-03a forbidden-label discipline: reason MUST be one of
+	// Forbidden-label discipline: reason MUST be one of
 	// observability.AllowedEvictionReasons {lru, ttl, capacity, manual}.
 	// Closed-enum string literal at the call site enforces; the bag's
 	// CounterVec is constructed against the closed enum so a free-form
@@ -724,7 +724,7 @@ func (sc *SmartQueryCache) removeEntry(key string) {
 // evictOldestLRU removes the least recently used entry. Plan 04-03 D-12b:
 // emits cache_evictions_total{cache="query_result", reason="lru"} into the
 // cross-cutting Cache bag. Reason is the closed-enum literal "lru" — never
-// free-form (Phase 3 D-03a forbidden-label discipline).
+// free-form (forbidden-label discipline).
 func (sc *SmartQueryCache) evictOldestLRU() {
 	if elem := sc.lru.Back(); elem != nil {
 		entry := elem.Value.(*smartCachedResult)

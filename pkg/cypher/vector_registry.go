@@ -73,6 +73,8 @@ func toDistanceMetric(similarity string) (vectorspace.DistanceMetric, error) {
 	case "euclidean":
 		return vectorspace.DistanceEuclidean, nil
 	default:
+		// Registration-only validation: registerVectorSpace intentionally drops
+		// this error and leaves the index unregistered.
 		return "", fmt.Errorf("unsupported similarity %q", similarity)
 	}
 }

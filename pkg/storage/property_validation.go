@@ -3,6 +3,8 @@ package storage
 import (
 	"fmt"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // validatePropertiesForStorage ensures property values are gob-encodable.
@@ -13,14 +15,14 @@ func validatePropertiesForStorage(properties map[string]interface{}) error {
 	}
 	for key, value := range properties {
 		if err := validatePropertyValueForStorage(value); err != nil {
-			return fmt.Errorf("invalid property value for key %q: %w", key, err)
+			return localizedError(localization.StoragePropertyInvalidValue(key, err), err)
 		}
 	}
 	return nil
 }
 
 func validatePropertyValueForStorage(value interface{}) error {
-	switch value.(type) {
+	switch typedValue := value.(type) {
 	case nil,
 		string,
 		bool,
@@ -31,23 +33,23 @@ func validatePropertyValueForStorage(value interface{}) error {
 		time.Time:
 		return nil
 	case []interface{}:
-		for i, item := range value.([]interface{}) {
+		for i, item := range typedValue {
 			if err := validatePropertyValueForStorage(item); err != nil {
-				return fmt.Errorf("index %d: %w", i, err)
+				return localizedError(localization.StoragePropertyInvalidIndex(i, err), err)
 			}
 		}
 		return nil
 	case []string, []int, []int32, []int64, []float32, []float64, []bool:
 		return nil
 	case map[string]interface{}:
-		for key, item := range value.(map[string]interface{}) {
+		for key, item := range typedValue {
 			if err := validatePropertyValueForStorage(item); err != nil {
-				return fmt.Errorf("key %q: %w", key, err)
+				return localizedError(localization.StoragePropertyInvalidMapKey(key, err), err)
 			}
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported property value type %T", value)
+		return localizedError(localization.StoragePropertyTypeUnsupported(fmt.Sprintf("%T", value)), nil)
 	}
 }
 

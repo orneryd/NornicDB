@@ -1,0 +1,126 @@
+- id: cyphercore.empty_query
+  description: Expanded pseudo-locale empty query.
+  other: "[!! empty query !!]"
+- id: cyphercore.composite_target_required
+  description: Expanded pseudo-locale composite target error.
+  other: "[!! {{.Code}}: Queries on composite databases require explicit graph targeting. Use USE <composite>.<alias> to target a specific constituent !!]"
+- id: cyphercore.invalid_label_name
+  description: Expanded pseudo-locale invalid label.
+  other: "[!! invalid label name: {{.Label}} (must be alphanumeric starting with letter or underscore) !!]"
+- id: cyphercore.invalid_label_reserved
+  description: Expanded pseudo-locale reserved label.
+  other: "[!! invalid label name: {{.Label}} (contains reserved keyword) !!]"
+- id: cyphercore.invalid_property_key
+  description: Expanded pseudo-locale invalid property key.
+  other: "[!! invalid property key: {{.Key}} (must be alphanumeric starting with letter or underscore) !!]"
+- id: cyphercore.invalid_property_value
+  description: Expanded pseudo-locale invalid property value.
+  other: "[!! invalid property value for key {{.Key}}: malformed syntax !!]"
+- id: cyphercore.embedding_transaction_storage_required
+  description: Expanded pseudo-locale transaction storage requirement.
+  other: "[!! WITH EMBEDDING requires transaction-capable storage !!]"
+- id: cyphercore.implicit_transaction_prime_failed
+  description: Expanded pseudo-locale implicit transaction prime failure.
+  other: "[!! failed to prime implicit transaction namespace: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_start_failed
+  description: Expanded pseudo-locale implicit transaction start failure.
+  other: "[!! failed to start implicit transaction: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_pin_failed
+  description: Expanded pseudo-locale implicit transaction pin failure.
+  other: "[!! failed to pin implicit transaction namespace: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_configure_failed
+  description: Expanded pseudo-locale implicit transaction configuration failure.
+  other: "[!! failed to configure implicit transaction: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_wal_begin_failed
+  description: Expanded pseudo-locale implicit WAL begin failure.
+  other: "[!! failed to write WAL tx begin: {{.Cause}} !!]"
+- id: cyphercore.implicit_transaction_commit_failed
+  description: Expanded pseudo-locale implicit commit failure.
+  other: "[!! commit failed: {{.Cause}} !!]"
+- id: cyphercore.embedding_configured_required
+  description: Expanded pseudo-locale configured embedder requirement.
+  other: "[!! WITH EMBEDDING requires configured embedder !!]"
+- id: cyphercore.embedding_chunk_failed
+  description: Expanded pseudo-locale embedding chunk failure.
+  other: "[!! WITH EMBEDDING chunking failed for node {{.NodeID}}: {{.Cause}} !!]"
+- id: cyphercore.embedding_node_failed
+  description: Expanded pseudo-locale node embedding failure.
+  other: "[!! WITH EMBEDDING embed failed for node {{.NodeID}}: {{.Cause}} !!]"
+- id: cyphercore.embedding_empty_vector
+  description: Expanded pseudo-locale empty embedding vector.
+  other: "[!! WITH EMBEDDING embed returned empty vector for node {{.NodeID}} !!]"
+- id: cyphercore.optional_match_required
+  description: Expanded pseudo-locale OPTIONAL MATCH error.
+  other: "[!! OPTIONAL must be followed by MATCH !!]"
+- id: cyphercore.unterminated_string_literal
+  description: Expanded pseudo-locale unterminated string.
+  other: "[!! unterminated string literal !!]"
+- id: cyphercore.parse_failed
+  description: Expanded pseudo-locale parse wrapper.
+  other: "[!! parse error: {{.Cause}} !!]"
+- id: cyphercore.case_envelope_invalid
+  description: Expanded pseudo-locale CASE envelope error.
+  other: "[!! invalid CASE expression: must start with CASE and end with END !!]"
+- id: cyphercore.case_when_required
+  description: Expanded pseudo-locale CASE WHEN requirement.
+  other: "[!! CASE expression must have at least one WHEN clause !!]"
+- id: cyphercore.case_then_required
+  description: Expanded pseudo-locale CASE THEN requirement.
+  other: "[!! WHEN clause must have THEN: {{.Section}} !!]"
+- id: cyphercore.fulltext_unexpected_token
+  description: Expanded pseudo-locale unexpected fulltext token.
+  other: "[!! query cannot be parsed: unexpected token {{.Token}} !!]"
+- id: cyphercore.fulltext_number_after_boost_expected
+  description: Expanded pseudo-locale missing boost number.
+  other: "[!! query cannot be parsed: expected number after ^ !!]"
+- id: cyphercore.fulltext_bad_boost
+  description: Expanded pseudo-locale bad boost.
+  other: "[!! query cannot be parsed: bad boost {{.Boost}} !!]"
+- id: cyphercore.fulltext_closing_parenthesis_required
+  description: Expanded pseudo-locale missing parenthesis.
+  other: "[!! query cannot be parsed: missing ')' !!]"
+- id: cyphercore.fulltext_range_to_required
+  description: Expanded pseudo-locale missing range TO.
+  other: "[!! query cannot be parsed: expected TO in range !!]"
+- id: cyphercore.fulltext_range_close_required
+  description: Expanded pseudo-locale missing range close.
+  other: "[!! query cannot be parsed: expected ] or } to close range !!]"
+- id: cyphercore.fulltext_range_endpoint_required
+  description: Expanded pseudo-locale missing range endpoint.
+  other: "[!! query cannot be parsed: expected range endpoint !!]"
+- id: cyphercore.fulltext_bad_regex
+  description: Expanded pseudo-locale bad regex.
+  other: "[!! query cannot be parsed: bad regex /{{.Pattern}}/: {{.Cause}} !!]"
+- id: cyphercore.fulltext_bad_wildcard
+  description: Expanded pseudo-locale bad wildcard.
+  other: "[!! query cannot be parsed: bad wildcard: {{.Cause}} !!]"
+- id: cyphercore.index_hint_not_found
+  description: Expanded pseudo-locale missing hinted index.
+  other: "[!! no index found for hint: {{.Hint}} (index on :{{.Label}}({{.Property}}) does not exist) !!]"
+- id: cyphercore.execution_plan_build_failed
+  description: Expanded pseudo-locale plan build failure.
+  other: "[!! failed to build execution plan: {{.Cause}} !!]"
+- id: cyphercore.typed_decode_row_failed
+  description: Expanded pseudo-locale typed row decode failure.
+  other: "[!! failed to decode row: {{.Cause}} !!]"
+- id: cyphercore.typed_destination_pointer_required
+  description: Expanded pseudo-locale destination pointer requirement.
+  other: "[!! dest must be a non-nil pointer !!]"
+- id: cyphercore.typed_destination_unsupported
+  description: Expanded pseudo-locale unsupported destination.
+  other: "[!! unsupported destination type: {{.Kind}} !!]"
+- id: cyphercore.typed_field_failed
+  description: Expanded pseudo-locale typed field failure.
+  other: "[!! field {{.Field}}: {{.Cause}} !!]"
+- id: cyphercore.typed_time_parse_failed
+  description: Expanded pseudo-locale time parse failure.
+  other: "[!! cannot parse time: {{.Value}} !!]"
+- id: cyphercore.typed_assignment_failed
+  description: Expanded pseudo-locale typed assignment failure.
+  other: "[!! cannot assign {{.ValueType}} to {{.DestinationType}} !!]"
+- id: cyphercore.embedder_not_configured
+  description: Expanded pseudo-locale missing embedder.
+  other: "[!! no embedder configured !!]"
+- id: cyphercore.embedding_no_output
+  description: Expanded pseudo-locale empty embedding output.
+  other: "[!! failed to embed query (no embeddings produced) !!]"

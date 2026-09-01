@@ -1,0 +1,84 @@
+- id: cyphercommandrouting.unknown_command
+  other: "unknown command: {{.Command}}"
+- id: cyphercommandrouting.empty_command
+  other: "empty command"
+- id: cyphercommandrouting.shell_use_database_required
+  other: ":use requires a database name"
+- id: cyphercommandrouting.parameter_map_required
+  other: "parameter expression must evaluate to a map"
+- id: cyphercommandrouting.parameter_argument_required
+  other: ":param requires an argument"
+- id: cyphercommandrouting.parameter_value_required
+  other: ":param value cannot be empty"
+- id: cyphercommandrouting.parameter_usage
+  other: "incorrect usage: expected :param clear, :param list, :param {a: 1}, or :param key => value"
+- id: cyphercommandrouting.parameter_map_keys_strings
+  other: "parameter map keys must be strings"
+- id: cyphercommandrouting.parameter_map_entry_empty
+  other: "empty map entry"
+- id: cyphercommandrouting.parameter_map_entry_invalid
+  other: 'invalid map entry {{printf "%q" .Entry}}'
+- id: cyphercommandrouting.parameter_evaluation_failed
+  other: "cypher: expression evaluation failed: parameter {{.Parameter}}: {{.Cause}}"
+- id: cyphercommandrouting.parameter_produced_no_value
+  other: "cypher: expression evaluation failed: parameter {{.Parameter}} produced no value"
+- id: cyphercommandrouting.parameter_expression_unresolved
+  other: 'cypher: expression evaluation failed: parameter {{.Parameter}} unresolved expression {{printf "%q" .Expression}}'
+- id: cyphercommandrouting.call_tail_seed_required
+  other: "CALL tail execution requires seed result"
+- id: cyphercommandrouting.call_tail_limit_invalid
+  other: "invalid CALL tail LIMIT: {{.Token}}"
+- id: cyphercommandrouting.call_tail_skip_invalid
+  other: "invalid CALL tail SKIP: {{.Token}}"
+- id: cyphercommandrouting.where_boolean_required
+  other: "WHERE expression did not evaluate to boolean: {{.Value}}"
+- id: cyphercommandrouting.unknown_procedure
+  other: "unknown procedure: {{.Procedure}} (try SHOW PROCEDURES for available procedures)"
+- id: cyphercommandrouting.fabric_not_prepared
+  other: "fabric execution was not prepared"
+- id: cyphercommandrouting.fabric_storage_type_invalid
+  other: "storage engine has unexpected type for '{{.Database}}'"
+- id: cyphercommandrouting.fabric_prepared_context_invalid
+  other: "invalid prepared fabric execution in context"
+- id: cyphercommandrouting.fabric_constituents_failed
+  other: "failed to get constituents for '{{.Database}}': {{.Cause}}"
+- id: cyphercommandrouting.fabric_shard_transaction_failed
+  other: "failed to open local shard transaction for '{{.Database}}': {{.Cause}}"
+- id: cyphercommandrouting.use_database_required
+  other: "USE clause requires a database name"
+- id: cyphercommandrouting.use_invalid
+  other: "invalid USE clause: {{.Cause}}"
+- id: cyphercommandrouting.use_backtick_unterminated
+  other: "invalid USE clause: unterminated backtick identifier"
+- id: cyphercommandrouting.graph_reference_invalid
+  other: "invalid graph reference"
+- id: cyphercommandrouting.graph_reference_argument_required
+  other: "graph reference requires an argument"
+- id: cyphercommandrouting.graph_reference_open_paren_expected
+  other: "expected '(' at position {{.Position}}"
+- id: cyphercommandrouting.graph_reference_unterminated
+  other: "unterminated graph reference"
+- id: cyphercommandrouting.graph_reference_argument_empty
+  other: "empty graph reference argument"
+- id: cyphercommandrouting.graph_reference_string_unterminated
+  other: "unterminated graph reference string"
+- id: cyphercommandrouting.backtick_identifier_unterminated
+  other: "unterminated backtick identifier"
+- id: cyphercommandrouting.use_constituent_outside_composite
+  other: "USE {{.Target}} failed: constituent '{{.Constituent}}' is not part of current composite '{{.Composite}}'"
+- id: cyphercommandrouting.use_failed
+  other: "USE {{.Target}} failed: {{.Cause}}"
+- id: cyphercommandrouting.use_backend_unsupported
+  other: "USE {{.Target}} is not supported by this storage backend"
+- id: cyphercommandrouting.use_database_manager_unavailable
+  other: "USE {{.Target}} failed: database manager not available"
+- id: cyphercommandrouting.use_storage_type_invalid
+  other: "USE {{.Target}} failed: storage engine has unexpected type"
+- id: cyphercommandrouting.use_database_not_composite
+  other: "USE {{.Target}} failed: '{{.Database}}' is not a composite database"
+- id: cyphercommandrouting.unknown_yield_column
+  other: "unknown YIELD column: {{.Column}}"
+- id: cyphercommandrouting.procedure_min_arguments
+  other: "procedure {{.Procedure}} requires at least {{.Minimum}} arguments, got {{.Actual}}"
+- id: cyphercommandrouting.procedure_max_arguments
+  other: "procedure {{.Procedure}} accepts at most {{.Maximum}} arguments, got {{.Actual}}"

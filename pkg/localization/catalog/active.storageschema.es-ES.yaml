@@ -1,0 +1,162 @@
+- id: storageschema.constraint_already_exists
+  description: Conflicto al crear una restricción. Name no se traduce.
+  other: 'la restricción "{{.Name}}" ya existe'
+- id: storageschema.constraint_different_allowed_values
+  description: Conflicto de valores permitidos. Name no se traduce.
+  other: 'la restricción "{{.Name}}" ya existe con valores permitidos diferentes'
+- id: storageschema.constraint_different_max_count
+  description: Conflicto de cardinalidad. Name no se traduce.
+  other: 'la restricción "{{.Name}}" ya existe con un recuento máximo diferente ({{.ExistingMaxCount}} frente a {{.RequestedMaxCount}})'
+- id: storageschema.constraint_different_schema_or_type
+  description: Conflicto de esquema o tipo. Name no se traduce.
+  other: 'la restricción "{{.Name}}" ya existe con un esquema o tipo diferente'
+- id: storageschema.conflicting_policy
+  description: Conflicto de política de relación. Los identificadores no se traducen.
+  other: 'política en conflicto: no se puede tener ALLOWED y DISALLOWED para {{.SourceLabel}}-[:{{.RelationshipType}}]->{{.TargetLabel}} (restricción "{{.ExistingName}}")'
+- id: storageschema.conflicting_domain_constraint
+  description: Conflicto de restricción de dominio. Name no se traduce.
+  other: 'la restricción de dominio en conflicto "{{.Name}}" ya existe en el mismo esquema con valores permitidos diferentes'
+- id: storageschema.conflicting_cardinality_constraint
+  description: Conflicto de restricción de cardinalidad. Los identificadores no se traducen.
+  other: 'la restricción de cardinalidad en conflicto "{{.Name}}" ya existe en {{.Direction}} {{.Label}} con un recuento máximo de {{.ExistingMaxCount}} (nuevo: {{.RequestedMaxCount}})'
+- id: storageschema.equivalent_constraint_already_exists
+  description: Conflicto de restricción equivalente. Name no se traduce.
+  other: 'la restricción equivalente "{{.Name}}" ya existe en el mismo esquema'
+- id: storageschema.conflicting_constraint_already_exists
+  description: Conflicto de restricción incompatible. Name no se traduce.
+  other: 'la restricción en conflicto "{{.Name}}" ya existe en el mismo esquema'
+- id: storageschema.unique_constraint_violation
+  description: Infracción de unicidad. Label, Property y Value no se traducen.
+  other: "Node({{.Label}}) ya existe con {{.Property}} = {{.Value}}"
+- id: storageschema.composite_index_min_properties
+  description: Validación del número de propiedades de un índice compuesto.
+  other: el índice compuesto requiere al menos 2 propiedades; se recibieron {{.Count}}
+- id: storageschema.range_index_properties_required
+  description: Validación de un índice de rango sin propiedades.
+  other: el índice de rango requiere al menos una propiedad
+- id: storageschema.range_index_not_found
+  description: Falta un índice de rango. Name no se traduce.
+  other: no se encontró el índice de rango {{.Name}}
+- id: storageschema.range_index_numeric_value_required
+  description: Valor no numérico para un índice de rango. Type no se traduce.
+  other: el índice de rango solo admite valores numéricos; se recibió {{.Type}}
+- id: storageschema.index_not_found
+  description: Falta un índice de esquema. Name no se traduce.
+  other: 'el índice "{{.Name}}" no existe'
+- id: storageschema.constraint_not_found
+  description: Falta una restricción de esquema. Name no se traduce.
+  other: 'la restricción "{{.Name}}" no existe'
+- id: storageschema.property_index_not_found
+  description: Falta un índice de propiedad. Label y Property no se traducen.
+  other: no se encontró el índice de propiedad {{.Label}}:{{.Property}}
+- id: storageschema.decay_profile_bundle_already_exists
+  description: Paquete de perfil de decaimiento duplicado. Name no se traduce.
+  other: 'el paquete de perfil de decaimiento "{{.Name}}" ya existe'
+- id: storageschema.decay_profile_binding_already_exists
+  description: Vinculación de perfil de decaimiento duplicada. Name no se traduce.
+  other: 'la vinculación del perfil de decaimiento "{{.Name}}" ya existe'
+- id: storageschema.decay_profile_bundle_not_found
+  description: Falta un paquete de perfil de decaimiento. Name no se traduce.
+  other: 'no se encontró el paquete de perfil de decaimiento "{{.Name}}"'
+- id: storageschema.decay_profile_bundle_referenced
+  description: Un paquete de perfil de decaimiento está en uso. Name no se traduce.
+  other: 'no se puede eliminar el paquete de perfil de decaimiento "{{.Name}}": una vinculación activa hace referencia a él'
+- id: storageschema.decay_profile_not_found
+  description: Falta un perfil de decaimiento. Name no se traduce.
+  other: 'no se encontró el perfil de decaimiento "{{.Name}}"'
+- id: storageschema.promotion_profile_already_exists
+  description: Perfil de promoción duplicado. Name no se traduce.
+  other: 'el perfil de promoción "{{.Name}}" ya existe'
+- id: storageschema.promotion_profile_not_found
+  description: Falta un perfil de promoción. Name no se traduce.
+  other: 'no se encontró el perfil de promoción "{{.Name}}"'
+- id: storageschema.promotion_profile_referenced
+  description: Un perfil de promoción está en uso. Name no se traduce.
+  other: 'no se puede eliminar el perfil de promoción "{{.Name}}": una política de promoción activa hace referencia a él'
+- id: storageschema.promotion_policy_already_exists
+  description: Política de promoción duplicada. Name no se traduce.
+  other: 'la política de promoción "{{.Name}}" ya existe'
+- id: storageschema.promotion_profile_when_clause_not_found
+  description: Falta un perfil de promoción usado por una cláusula WHEN. Name no se traduce.
+  other: 'no se encontró el perfil de promoción "{{.Name}}" (referenciado en la cláusula WHEN)'
+- id: storageschema.promotion_policy_not_found
+  description: Falta una política de promoción. Name no se traduce.
+  other: 'no se encontró la política de promoción "{{.Name}}"'
+- id: storageschema.decay_edge_binding_conflict
+  description: Vinculación duplicada para un tipo de arista. Los identificadores no se traducen.
+  other: 'el tipo de arista "{{.EdgeType}}" ya tiene una vinculación de perfil de decaimiento "{{.BindingName}}"'
+- id: storageschema.decay_label_binding_conflict
+  description: Vinculación duplicada para un conjunto de etiquetas. Los identificadores no se traducen.
+  other: 'el conjunto de etiquetas {{.Labels}} ya tiene una vinculación de perfil de decaimiento "{{.BindingName}}"'
+- id: storageschema.decay_structural_index_conflict
+  description: Una regla de decaimiento entra en conflicto con un índice estructural. Property no se traduce.
+  other: 'la propiedad "{{.Property}}" está en un índice estructural y no puede tener una regla de decaimiento'
+- id: storageschema.decay_profile_bundle_name_required
+  description: Falta el nombre del paquete de perfil de decaimiento.
+  other: el nombre del paquete de perfil de decaimiento es obligatorio
+- id: storageschema.invalid_decay_function
+  description: Función de decaimiento no válida. Function no se traduce.
+  other: 'función de decaimiento no válida: "{{.Function}}"'
+- id: storageschema.invalid_score_from_mode
+  description: Modo de origen de puntuación no válido. Mode no se traduce.
+  other: 'modo score-from no válido: "{{.Mode}}"'
+- id: storageschema.invalid_scope_type
+  description: Tipo de ámbito no válido. Scope no se traduce.
+  other: 'tipo de ámbito no válido: "{{.Scope}}"'
+- id: storageschema.score_from_property_required
+  description: Validación del origen de puntuación personalizado. Los campos no se traducen.
+  other: scoreFromProperty es obligatorio cuando scoreFrom es CUSTOM
+- id: storageschema.visibility_threshold_out_of_range
+  description: Umbral de visibilidad fuera del intervalo.
+  other: 'visibilityThreshold debe estar entre 0 y 1; se recibió {{printf "%.6f" .Value}}'
+- id: storageschema.score_floor_out_of_range
+  description: Límite inferior de puntuación fuera del intervalo.
+  other: 'scoreFloor debe estar entre 0 y 1; se recibió {{printf "%.6f" .Value}}'
+- id: storageschema.promotion_profile_name_required
+  description: Falta el nombre del perfil de promoción.
+  other: el nombre del perfil de promoción es obligatorio
+- id: storageschema.multiplier_non_negative
+  description: Multiplicador de promoción negativo.
+  other: 'el multiplicador no puede ser negativo; se recibió {{printf "%.6f" .Value}}'
+- id: storageschema.score_cap_out_of_range
+  description: Límite superior de puntuación fuera del intervalo.
+  other: 'scoreCap debe estar entre 0 y 1; se recibió {{printf "%.6f" .Value}}'
+- id: storageschema.unknown_option
+  description: Opción de política desconocida. Option no se traduce.
+  other: 'opción desconocida: "{{.Option}}"'
+- id: storageschema.constraint_contract_already_exists
+  description: Contrato de restricciones duplicado. Name no se traduce.
+  other: 'el contrato de restricciones "{{.Name}}" ya existe'
+- id: storageschema.constraint_contract_name_conflict
+  description: Conflicto de nombre de contrato. Name no se traduce.
+  other: 'el contrato de restricciones "{{.Name}}" entra en conflicto con el nombre de una restricción existente'
+- id: storageschema.scan_nodes_failed
+  description: Error al examinar nodos. Cause no se traduce.
+  other: "error al examinar nodos: {{.Cause}}"
+- id: storageschema.scan_relationships_failed
+  description: Error al examinar relaciones. Cause no se traduce.
+  other: "error al examinar relaciones: {{.Cause}}"
+- id: storageschema.unsupported_contract_target_entity_type
+  description: Tipo de entidad de destino no compatible. EntityType no se traduce.
+  other: "tipo de entidad de destino del contrato de restricciones no compatible: {{.EntityType}}"
+- id: storageschema.constraint_contract_invalid
+  description: Predicado de contrato no válido. Name, Predicate y Cause no se traducen.
+  other: 'contrato de restricciones {{.Name}} no válido: predicado "{{.Predicate}}": {{.Cause}}'
+- id: storageschema.constraint_contract_violated
+  description: Infracción de un predicado de contrato. Name y Predicate no se traducen.
+  other: 'se infringió el contrato de restricciones {{.Name}}: el predicado "{{.Predicate}}" se evaluó como falso'
+- id: storageschema.unsupported_node_predicate
+  description: Predicado de nodo no compatible.
+  other: predicado de nodo no compatible
+- id: storageschema.missing_relationship_endpoint
+  description: Falta un extremo de la relación.
+  other: falta un extremo de la relación
+- id: storageschema.unsupported_relationship_predicate
+  description: Predicado de relación no compatible.
+  other: predicado de relación no compatible
+- id: storageschema.unsupported_constraint_pattern
+  description: Patrón de contrato no compatible. Pattern no se traduce.
+  other: 'patrón no compatible "{{.Pattern}}"'
+- id: storageschema.unsupported_constraint_literal
+  description: Literal de contrato no compatible. Literal no se traduce.
+  other: 'literal no compatible "{{.Literal}}"'

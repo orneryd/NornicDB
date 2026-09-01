@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ParseResult contains the parsed ANTLR tree and any errors
@@ -55,7 +56,8 @@ var validatorPool = sync.Pool{
 func Parse(query string) (*ParseResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return nil, fmt.Errorf("empty query")
+		message := localization.CypherANTLRParseEmptyQuery()
+		return nil, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
 	// Create ANTLR input stream
@@ -87,7 +89,8 @@ func Parse(query string) (*ParseResult, error) {
 
 	// Check for errors
 	if len(errorListener.errors) > 0 {
-		return result, fmt.Errorf("syntax error: %s", strings.Join(errorListener.errors, "; "))
+		message := localization.CypherANTLRParseSyntaxError(strings.Join(errorListener.errors, "; "))
+		return result, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
 	return result, nil
@@ -100,7 +103,8 @@ func Parse(query string) (*ParseResult, error) {
 func Validate(query string) error {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return fmt.Errorf("empty query")
+		message := localization.CypherANTLRValidateEmptyQuery()
+		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
 	v := validatorPool.Get().(*pooledValidator)
@@ -133,7 +137,8 @@ func Validate(query string) error {
 		_ = v.parser.Script()
 
 		if len(v.errorListener.errors) > 0 {
-			return fmt.Errorf("syntax error: %s", strings.Join(v.errorListener.errors, "; "))
+			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.errors, "; "))
+			return localization.NewLocalizedError(string(message.ID), message, nil)
 		}
 	}
 	return nil

@@ -1,0 +1,96 @@
+- id: cyphertransactions.already_active
+  description: Ya hay una transacción explícita activa.
+  other: ya hay una transacción activa
+- id: cyphertransactions.engine_unsupported
+  description: El motor de almacenamiento no admite transacciones.
+  other: el motor no admite transacciones
+- id: cyphertransactions.prime_namespace_failed
+  description: Error al inicializar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo inicializar el espacio de nombres de la transacción: {{.Cause}}"
+- id: cyphertransactions.start_failed
+  description: Error al iniciar la transacción. Cause no se traduce.
+  other: "no se pudo iniciar la transacción: {{.Cause}}"
+- id: cyphertransactions.pin_namespace_failed
+  description: Error al fijar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo fijar el espacio de nombres de la transacción: {{.Cause}}"
+- id: cyphertransactions.configure_failed
+  description: Error al configurar la transacción. Cause no se traduce.
+  other: "no se pudo configurar la transacción: {{.Cause}}"
+- id: cyphertransactions.wal_begin_failed
+  description: Error al escribir el inicio en WAL. Cause no se traduce.
+  other: "no se pudo escribir el inicio de la transacción en WAL: {{.Cause}}"
+- id: cyphertransactions.no_active
+  description: No hay ninguna transacción explícita activa.
+  other: no hay ninguna transacción activa
+- id: cyphertransactions.unknown_type
+  description: La implementación de transacción es desconocida.
+  other: tipo de transacción desconocido
+- id: cyphertransactions.commit_failed
+  description: Error al confirmar la transacción. Cause no se traduce.
+  other: "error al confirmar la transacción: {{.Cause}}"
+- id: cyphertransactions.rollback_failed
+  description: Error al revertir la transacción. Cause no se traduce.
+  other: "error al revertir la transacción: {{.Cause}}"
+- id: cyphertransactions.show_in_transaction_unsupported
+  description: Comando SHOW no admitido en una transacción. Query no se traduce.
+  other: "comando SHOW no admitido en la transacción: {{.Query}}"
+- id: cyphertransactions.query_in_transaction_unsupported
+  description: Consulta no admitida en una transacción. Query no se traduce.
+  other: "tipo de consulta no admitido en la transacción: {{.Query}}"
+- id: cyphertransactions.invalid_script_action
+  description: Acción de script no válida. Action no se traduce.
+  other: "acción de script de transacción no válida: {{.Action}}"
+- id: cyphertransactions.case_block_missing
+  description: Falta un bloque CASE. CASE no se traduce.
+  other: "script CASE de transacción no válido: falta el bloque CASE"
+- id: cyphertransactions.case_syntax_invalid
+  description: Sintaxis CASE no válida. Las palabras clave no se traducen.
+  other: "sintaxis CASE de transacción no válida: se esperaba CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT"
+- id: cyphertransactions.condition_not_boolean
+  description: La condición produjo un valor no booleano. Value no se traduce.
+  other: "la expresión de condición no se evaluó como booleana: {{.Value}}"
+- id: cyphertransactions.query_type_unsupported
+  description: Tipo de consulta no admitido. QueryType y Supported no se traducen.
+  other: "tipo de consulta no admitido: {{.QueryType}} (admitidos: {{.Supported}})"
+- id: cyphertransactions.return_clause_not_found
+  description: Falta la cláusula RETURN. Query no se traduce.
+  other: "no se encontró la cláusula RETURN en la consulta: {{.Query}}"
+- id: cyphertransactions.syntax_start_invalid
+  description: La consulta empieza con una cláusula no válida. ValidClauses no se traduce.
+  other: "error de sintaxis: la consulta debe comenzar con una cláusula válida ({{.ValidClauses}})"
+- id: cyphertransactions.syntax_unbalanced_at
+  description: Un delimitador de cierre no tiene apertura. Position no se traduce.
+  other: "error de sintaxis: delimitadores desequilibrados en la posición {{.Position}}"
+- id: cyphertransactions.syntax_unbalanced_parentheses
+  description: La consulta tiene paréntesis desequilibrados.
+  other: "error de sintaxis: paréntesis desequilibrados"
+- id: cyphertransactions.syntax_unbalanced_square_brackets
+  description: La consulta tiene corchetes desequilibrados.
+  other: "error de sintaxis: corchetes desequilibrados"
+- id: cyphertransactions.syntax_unbalanced_curly_braces
+  description: La consulta tiene llaves desequilibradas.
+  other: "error de sintaxis: llaves desequilibradas"
+- id: cyphertransactions.syntax_unclosed_quote
+  description: La consulta tiene una comilla sin cerrar.
+  other: "error de sintaxis: comilla sin cerrar"
+- id: cyphertransactions.delete_residual_relationships
+  description: DELETE intenta eliminar un nodo conectado. NodeID y DETACH DELETE no se traducen.
+  other: "No se puede eliminar el nodo {{.NodeID}} porque todavía tiene relaciones. Para eliminar este nodo, primero debe eliminar sus relaciones (o usar DETACH DELETE)"
+- id: cyphertransactions.match_with_unwind_clauses_required
+  description: Faltan cláusulas en MATCH WITH UNWIND. La sintaxis no se traduce.
+  other: "se requieren las cláusulas MATCH, WITH, UNWIND y RETURN (p. ej., MATCH (n) WITH n UNWIND n.items AS item RETURN item)"
+- id: cyphertransactions.storage_failed
+  description: Error de almacenamiento. Cause no se traduce.
+  other: "error de almacenamiento: {{.Cause}}"
+- id: cyphertransactions.unwind_as_required
+  description: Falta AS en UNWIND. La sintaxis no se traduce.
+  other: "UNWIND requiere la cláusula AS (p. ej., UNWIND [1,2,3] AS x)"
+- id: cyphertransactions.order_by_parse_failed
+  description: Error al analizar ORDER BY.
+  other: no se pudo analizar la cláusula ORDER BY
+- id: cyphertransactions.multi_match_return_required
+  description: Falta RETURN en una consulta multi-MATCH.
+  other: la consulta multi-MATCH requiere una cláusula RETURN
+- id: cyphertransactions.multiple_match_expected
+  description: La ruta multi-MATCH recibió menos de dos cláusulas MATCH.
+  other: se esperaban varias cláusulas MATCH

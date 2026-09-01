@@ -412,6 +412,8 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 			case "collectNodeProp":
 				row = append(row, groupCollect[groupID])
 			default:
+				// Invariant guard: specs are constructed above from the closed set of
+				// supported kinds, so this cannot escape a query operation.
 				return nil, false, fmt.Errorf("unsupported aggregation spec: %s", s.kind)
 			}
 		}

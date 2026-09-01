@@ -1,0 +1,18 @@
+- id: search.rerank_request_marshal_failed
+  description: Error del cliente de reclasificación al serializar una solicitud de API. Cause no se traduce.
+  other: "no se pudo serializar la solicitud: {{.Cause}}"
+- id: search.rerank_request_creation_failed
+  description: Error del cliente de reclasificación al crear una solicitud HTTP. Cause no se traduce.
+  other: "no se pudo crear la solicitud: {{.Cause}}"
+- id: search.rerank_request_failed
+  description: Error en la solicitud HTTP del cliente de reclasificación. Cause no se traduce.
+  other: "error en la solicitud de reclasificación: {{.Cause}}"
+- id: search.rerank_api_status
+  description: Respuesta de la API de reclasificación con un estado HTTP incorrecto. Status es un código de estado HTTP numérico.
+  other: "la API de reclasificación devolvió el estado {{.Status}}"
+- id: search.rerank_response_parse_failed
+  description: Error del cliente de reclasificación al analizar una respuesta de API. Cause no se traduce.
+  other: "no se pudo analizar la respuesta: {{.Cause}}"
+- id: search.rerank_response_unrecognized
+  description: Respuesta de la API de reclasificación con un formato no compatible.
+  other: no se pudo analizar la respuesta de reclasificación

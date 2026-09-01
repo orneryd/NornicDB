@@ -16,6 +16,7 @@ import (
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -269,7 +270,7 @@ func ExecuteCypherTyped[T any](db *DB, ctx context.Context, query string, params
 	for _, row := range raw.Rows {
 		var decoded T
 		if err := decodeRow(raw.Columns, row, &decoded); err != nil {
-			return nil, fmt.Errorf("failed to decode row: %w", err)
+			return nil, localizedError(localization.NornicDBCoreCypherRowDecodeFailed(err), err)
 		}
 		rows = append(rows, decoded)
 	}
@@ -293,7 +294,7 @@ func (r *TypedCypherResult[T]) First() (T, bool) {
 func decodeRow(columns []string, values []interface{}, dest interface{}) error {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
-		return fmt.Errorf("dest must be a non-nil pointer")
+		return localizedError(localization.NornicDBCoreDecodeDestinationRequired(), nil)
 	}
 
 	destElem := destVal.Elem()
@@ -351,7 +352,7 @@ func decodeRow(columns []string, values []interface{}, dest interface{}) error {
 		}
 
 		if err := assignValue(field, values[i]); err != nil {
-			return fmt.Errorf("field %s: %w", col, err)
+			return localizedError(localization.NornicDBCoreDecodeFieldFailed(col, err), err)
 		}
 	}
 
@@ -391,7 +392,7 @@ func decodeMapToStruct(m map[string]interface{}, destElem reflect.Value, destTyp
 		}
 
 		if err := assignValue(fieldVal, val); err != nil {
-			return fmt.Errorf("field %s: %w", name, err)
+			return localizedError(localization.NornicDBCoreDecodeFieldFailed(name, err), err)
 		}
 	}
 	return nil
@@ -428,7 +429,7 @@ func assignValue(field reflect.Value, val interface{}) error {
 		}
 	}
 
-	return fmt.Errorf("cannot assign %T to %v", val, field.Type())
+	return localizedError(localization.NornicDBCoreDecodeAssignmentFailed(val, field.Type()), nil)
 }
 
 // Node represents a graph node for HTTP API.
@@ -533,7 +534,7 @@ func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[st
 // must not create a duplicate physical node.
 func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, properties map[string]interface{}) (*Node, error) {
 	if strings.TrimSpace(id) == "" {
-		return nil, fmt.Errorf("node ID must not be empty")
+		return nil, localizedError(localization.NornicDBCoreNodeIDRequired(), nil)
 	}
 	return db.createNode(ctx, id, labels, properties, true)
 }
@@ -549,7 +550,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	db.mu.RUnlock()
 	if rejectExisting {
 		if _, err := storageEngine.GetNode(storage.NodeID(id)); err == nil {
-			return nil, fmt.Errorf("node %q already exists", id)
+			return nil, localizedError(localization.NornicDBCoreNodeAlreadyExists(id), nil)
 		} else if !errors.Is(err, storage.ErrNotFound) {
 			return nil, err
 		}
@@ -829,10 +830,10 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 
 	// Verify nodes exist
 	if _, err := storageEngine.GetNode(storage.NodeID(source)); err != nil {
-		return nil, fmt.Errorf("source node not found")
+		return nil, localizedError(localization.NornicDBCoreSourceNodeNotFound(), nil)
 	}
 	if _, err := storageEngine.GetNode(storage.NodeID(target)); err != nil {
-		return nil, fmt.Errorf("target node not found")
+		return nil, localizedError(localization.NornicDBCoreTargetNodeNotFound(), nil)
 	}
 
 	id := generateID()
@@ -925,7 +926,7 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	if err != nil || svc == nil {
-		return nil, fmt.Errorf("search service not initialized")
+		return nil, localizedError(localization.NornicDBCoreSearchServiceNotInitialized(), err)
 	}
 
 	// Get adaptive search options based on query
@@ -979,7 +980,7 @@ func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEm
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	if err != nil || svc == nil {
-		return nil, fmt.Errorf("search service not initialized")
+		return nil, localizedError(localization.NornicDBCoreSearchServiceNotInitialized(), err)
 	}
 
 	if opts == nil {
@@ -1012,7 +1013,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 		return nil, ErrClosed
 	}
 	if limit <= 0 {
-		return nil, fmt.Errorf("limit must be greater than 0")
+		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
 
 	// Get target node
@@ -1022,7 +1023,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 	}
 
 	if len(target.ChunkEmbeddings) == 0 || len(target.ChunkEmbeddings[0]) == 0 {
-		return nil, fmt.Errorf("node has no embedding")
+		return nil, localizedError(localization.NornicDBCoreNodeEmbeddingMissing(), nil)
 	}
 
 	// Find similar by embedding using streaming iteration
@@ -1195,7 +1196,7 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 
 	schema := storageEngine.GetSchema()
 	if schema == nil {
-		return fmt.Errorf("schema manager not initialized")
+		return localizedError(localization.NornicDBCoreSchemaManagerNotInitialized(), nil)
 	}
 
 	indexName := fmt.Sprintf("idx_%s_%s", strings.ToLower(label), strings.ToLower(property))
@@ -1215,7 +1216,7 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 	case "range":
 		return schema.AddRangeIndex(indexName, label, property)
 	default:
-		return fmt.Errorf("unsupported index type: %s (use: property, fulltext, vector, range)", indexType)
+		return localizedError(localization.NornicDBCoreIndexTypeUnsupported(indexType), nil)
 	}
 }
 
@@ -1359,12 +1360,12 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	// Fallback: Export as JSON for non-backupable engines (memory)
 	nodes, err := db.storage.AllNodes()
 	if err != nil {
-		return fmt.Errorf("failed to get nodes: %w", err)
+		return localizedError(localization.NornicDBCoreBackupNodesReadFailed(err), err)
 	}
 
 	edges, err := db.storage.AllEdges()
 	if err != nil {
-		return fmt.Errorf("failed to get edges: %w", err)
+		return localizedError(localization.NornicDBCoreBackupEdgesReadFailed(err), err)
 	}
 
 	backup := map[string]interface{}{
@@ -1376,11 +1377,11 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 
 	data, err := json.MarshalIndent(backup, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal backup: %w", err)
+		return localizedError(localization.NornicDBCoreBackupMarshalFailed(err), err)
 	}
 
 	if err := security.WriteRootedFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write backup: %w", err)
+		return localizedError(localization.NornicDBCoreBackupWriteFailed(err), err)
 	}
 
 	return nil
@@ -1404,7 +1405,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 	// Read backup file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read backup: %w", err)
+		return localizedError(localization.NornicDBCoreBackupReadFailed(err), err)
 	}
 
 	// Parse backup
@@ -1416,7 +1417,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 	}
 
 	if err := json.Unmarshal(data, &backup); err != nil {
-		return fmt.Errorf("failed to parse backup: %w", err)
+		return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 	}
 
 	db.mu.Lock()
@@ -1432,7 +1433,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 			// Try update if node exists
 			if updateErr := db.storage.UpdateNode(node); updateErr != nil {
 				db.mu.Unlock()
-				return fmt.Errorf("failed to restore node %s: %w", node.ID, err)
+				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
 		}
 	}
@@ -1443,19 +1444,19 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 			// Try update if edge exists
 			if updateErr := db.storage.UpdateEdge(edge); updateErr != nil {
 				db.mu.Unlock()
-				return fmt.Errorf("failed to restore edge %s: %w", edge.ID, err)
+				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}
 		}
 	}
 
 	if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
 		db.mu.Unlock()
-		return fmt.Errorf("failed to rebuild temporal indexes after restore: %w", err)
+		return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
 		if err := maint.RebuildMVCCHeads(ctx); err != nil {
 			db.mu.Unlock()
-			return fmt.Errorf("failed to rebuild mvcc heads after restore: %w", err)
+			return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
 		}
 	}
 	db.mu.Unlock()

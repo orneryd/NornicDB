@@ -1,0 +1,84 @@
+- id: cyphermatching.match_pattern_required
+  description: MATCH clause has no pattern. MATCH is untranslated Cypher syntax.
+  other: MATCH clause requires a pattern
+- id: cyphermatching.match_node_pattern_required
+  description: MATCH starts with a relationship rather than a node. Keywords are untranslated.
+  other: MATCH clause requires a node pattern, not just a relationship pattern
+- id: cyphermatching.return_expression_required
+  description: RETURN clause has no projection expression. RETURN is untranslated Cypher syntax.
+  other: RETURN clause requires at least one expression
+- id: cyphermatching.return_expression_empty
+  description: RETURN clause contains an empty projection expression. RETURN is untranslated Cypher syntax.
+  other: RETURN clause contains empty expression
+- id: cyphermatching.storage_failed
+  description: Storage failure during matching. Cause is untranslated diagnostic text.
+  other: "storage error: {{.Cause}}"
+- id: cyphermatching.collect_subquery_failed
+  description: COLLECT subquery execution failure. Cause is untranslated diagnostic text.
+  other: "COLLECT subquery failed: {{.Cause}}"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Required MATCH and UNWIND query clauses are missing. Cypher syntax is untranslated.
+  other: "MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item)"
+- id: cyphermatching.unwind_as_required
+  description: UNWIND lacks an AS binding. Cypher syntax is untranslated.
+  other: "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)"
+- id: cyphermatching.with_return_clauses_required
+  description: Required WITH or RETURN clause is missing. Keywords are untranslated Cypher syntax.
+  other: WITH and RETURN clauses required
+- id: cyphermatching.with_optional_match_return_clauses_required
+  description: Required WITH, OPTIONAL MATCH, or RETURN clause is missing. Keywords are untranslated.
+  other: WITH, OPTIONAL MATCH, and RETURN clauses required
+- id: cyphermatching.order_by_parse_failed
+  description: ORDER BY clause parsing failed. Keywords are untranslated Cypher syntax.
+  other: failed to parse ORDER BY clause
+- id: cyphermatching.match_pattern_variable_missing
+  description: MATCH pattern lacks a variable. Clause includes untranslated Go quoting.
+  other: "invalid MATCH pattern: missing variable in {{.Clause}}"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Invalid traversal pattern. Pattern is untranslated Cypher syntax.
+  other: "invalid traversal pattern: {{.Pattern}}"
+- id: cyphermatching.return_after_with_required
+  description: WITH clause lacks a following RETURN. Keywords are untranslated Cypher syntax.
+  other: RETURN clause required after WITH
+- id: cyphermatching.skip_parse_failed
+  description: SKIP clause parsing failed. SKIP is untranslated Cypher syntax.
+  other: failed to parse SKIP clause
+- id: cyphermatching.limit_parse_failed
+  description: LIMIT clause parsing failed. LIMIT is untranslated Cypher syntax.
+  other: failed to parse LIMIT clause
+- id: cyphermatching.shortest_path_query_expected
+  description: Query does not contain a shortest-path function.
+  other: not a shortest path query
+- id: cyphermatching.shortest_path_syntax_invalid
+  description: Invalid shortestPath syntax. Function name is untranslated.
+  other: invalid shortestPath syntax
+- id: cyphermatching.path_pattern_invalid
+  description: Invalid shortest-path pattern. Pattern is untranslated Cypher syntax.
+  other: "invalid path pattern: {{.Pattern}}"
+- id: cyphermatching.shortest_path_start_variable_unresolved
+  description: shortestPath start variable cannot be resolved. Variable includes untranslated Go quoting.
+  other: "shortestPath: could not resolve start variable {{.Variable}} from preceding MATCH clause"
+- id: cyphermatching.shortest_path_end_variable_unresolved
+  description: shortestPath end variable cannot be resolved. Variable includes untranslated Go quoting.
+  other: "shortestPath: could not resolve end variable {{.Variable}} from preceding MATCH clause"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: OPTIONAL MATCH pattern lacks its first node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has no node endpoint"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: OPTIONAL MATCH pattern has an unterminated first node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has an unterminated node endpoint"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: OPTIONAL MATCH pattern lacks its target node endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has no target endpoint"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: OPTIONAL MATCH pattern has an unterminated target endpoint. Pattern includes untranslated Go quoting.
+  other: "optional match pattern {{.Pattern}} has an unterminated target endpoint"
+- id: cyphermatching.initial_traversal_match_failed
+  description: Initial traversal MATCH execution failed. Cause is untranslated diagnostic text.
+  other: "failed to execute initial traversal MATCH: {{.Cause}}"
+- id: cyphermatching.aggregate_call_expected
+  description: Expression is not one complete aggregate call. Expression includes untranslated Go quoting.
+  other: "not a whole aggregate call: {{.Expression}}"
+- id: cyphermatching.function_parameters_insufficient
+  description: Aggregate function has too few parameters. Function is an untranslated machine name.
+  other: "insufficient parameters for function '{{.Function}}'"

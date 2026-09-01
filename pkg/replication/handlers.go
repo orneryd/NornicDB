@@ -2,8 +2,9 @@ package replication
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // RegisterClusterHandlers wires a Replicator's handler methods into a ClusterTransport.
@@ -22,7 +23,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var entries []*WALEntry
 			if err := decodeGob(msg.Payload, &entries); err != nil {
-				return nil, fmt.Errorf("decode wal batch: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("wal batch", err), err)
 			}
 			resp, err := h.HandleWALBatch(entries)
 			if err != nil {
@@ -30,7 +31,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode wal batch resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("wal batch resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgWALBatchResponse, Payload: payload}, nil
 		})
@@ -44,7 +45,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var req HeartbeatRequest
 			if err := decodeGob(msg.Payload, &req); err != nil {
-				return nil, fmt.Errorf("decode heartbeat: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("heartbeat", err), err)
 			}
 			resp, err := h.HandleHeartbeat(&req)
 			if err != nil {
@@ -52,7 +53,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode heartbeat resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("heartbeat resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgHeartbeatResponse, Payload: payload}, nil
 		})
@@ -66,7 +67,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var req FenceRequest
 			if err := decodeGob(msg.Payload, &req); err != nil {
-				return nil, fmt.Errorf("decode fence: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("fence", err), err)
 			}
 			resp, err := h.HandleFence(&req)
 			if err != nil {
@@ -74,7 +75,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode fence resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("fence resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgFenceResponse, Payload: payload}, nil
 		})
@@ -88,7 +89,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var req PromoteRequest
 			if err := decodeGob(msg.Payload, &req); err != nil {
-				return nil, fmt.Errorf("decode promote: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("promote", err), err)
 			}
 			resp, err := h.HandlePromote(&req)
 			if err != nil {
@@ -96,7 +97,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode promote resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("promote resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgPromoteResponse, Payload: payload}, nil
 		})
@@ -111,7 +112,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var req RaftVoteRequest
 			if err := decodeGob(msg.Payload, &req); err != nil {
-				return nil, fmt.Errorf("decode raft vote: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("raft vote", err), err)
 			}
 			resp, err := h.HandleRaftVote(&req)
 			if err != nil {
@@ -119,7 +120,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode raft vote resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("raft vote resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgVoteResponse, Payload: payload}, nil
 		})
@@ -134,7 +135,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var req RaftAppendEntriesRequest
 			if err := decodeGob(msg.Payload, &req); err != nil {
-				return nil, fmt.Errorf("decode raft append: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("raft append", err), err)
 			}
 			resp, err := h.HandleRaftAppendEntries(&req)
 			if err != nil {
@@ -142,7 +143,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, err := encodeGob(resp)
 			if err != nil {
-				return nil, fmt.Errorf("encode raft append resp: %w", err)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("raft append resp", err), err)
 			}
 			return &ClusterMessage{Type: ClusterMsgAppendEntriesResponse, Payload: payload}, nil
 		})
@@ -157,7 +158,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			_ = nodeID
 			var cmd Command
 			if err := decodeGob(msg.Payload, &cmd); err != nil {
-				return nil, fmt.Errorf("decode forward apply: %w", err)
+				return nil, localizedError(localization.ReplicationRPCDecodeFailed("forward apply", err), err)
 			}
 			timeout := 30 * time.Second
 			if deadline, ok := ctx.Deadline(); ok {
@@ -172,7 +173,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			}
 			payload, encErr := encodeGob(respPayload)
 			if encErr != nil {
-				return nil, fmt.Errorf("encode forward apply resp: %w", encErr)
+				return nil, localizedError(localization.ReplicationRPCEncodeFailed("forward apply resp", encErr), encErr)
 			}
 			return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: payload}, nil
 		})

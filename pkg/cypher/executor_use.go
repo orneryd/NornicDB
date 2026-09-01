@@ -1,9 +1,9 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -17,12 +17,12 @@ func parseLeadingUseClause(cypher string) (database, remaining string, hasUse bo
 
 	rest := strings.TrimSpace(trimmed[len("USE"):])
 	if rest == "" {
-		return "", "", true, fmt.Errorf("USE clause requires a database name")
+		return "", "", true, localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
 	}
 
 	if graphRef, rem, ok, err := parseDynamicGraphReference(rest); ok {
 		if err != nil {
-			return "", "", true, fmt.Errorf("invalid USE clause: %w", err)
+			return "", "", true, localizedError(localization.CypherCommandRoutingUseInvalid(err), err)
 		}
 		return graphRef, strings.TrimSpace(rem), true, nil
 	}
@@ -48,12 +48,12 @@ func parseLeadingUseClause(cypher string) (database, remaining string, hasUse bo
 			}
 			b.WriteByte(ch)
 		}
-		return "", "", true, fmt.Errorf("invalid USE clause: unterminated backtick identifier")
+		return "", "", true, localizedError(localization.CypherCommandRoutingUseBacktickUnterminated(), nil)
 	}
 
 	parts := strings.Fields(rest)
 	if len(parts) == 0 {
-		return "", "", true, fmt.Errorf("USE clause requires a database name")
+		return "", "", true, localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
 	}
 
 	database = parts[0]
@@ -75,7 +75,7 @@ func parseDynamicGraphReference(rest string) (database, remaining string, ok boo
 
 		openIdx := strings.Index(trimmed, "(")
 		if openIdx < 0 {
-			return "", "", true, fmt.Errorf("invalid graph reference")
+			return "", "", true, localizedError(localization.CypherCommandRoutingGraphReferenceInvalid(), nil)
 		}
 		closeIdx, err := findMatchingParenInUse(trimmed, openIdx)
 		if err != nil {
@@ -84,7 +84,7 @@ func parseDynamicGraphReference(rest string) (database, remaining string, ok boo
 
 		arg := strings.TrimSpace(trimmed[openIdx+1 : closeIdx])
 		if arg == "" {
-			return "", "", true, fmt.Errorf("graph reference requires an argument")
+			return "", "", true, localizedError(localization.CypherCommandRoutingGraphReferenceArgumentRequired(), nil)
 		}
 
 		db, err := parseFirstGraphRefArg(arg)
@@ -100,7 +100,7 @@ func parseDynamicGraphReference(rest string) (database, remaining string, ok boo
 
 func findMatchingParenInUse(s string, pos int) (int, error) {
 	if pos >= len(s) || s[pos] != '(' {
-		return -1, fmt.Errorf("expected '(' at position %d", pos)
+		return -1, localizedError(localization.CypherCommandRoutingGraphReferenceOpenParenExpected(pos), nil)
 	}
 
 	depth := 1
@@ -146,13 +146,13 @@ func findMatchingParenInUse(s string, pos int) (int, error) {
 		}
 	}
 
-	return -1, fmt.Errorf("unterminated graph reference")
+	return -1, localizedError(localization.CypherCommandRoutingGraphReferenceUnterminated(), nil)
 }
 
 func parseFirstGraphRefArg(arg string) (string, error) {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
-		return "", fmt.Errorf("empty graph reference argument")
+		return "", localizedError(localization.CypherCommandRoutingGraphReferenceArgumentEmpty(), nil)
 	}
 
 	if arg[0] == '\'' || arg[0] == '"' {
@@ -166,7 +166,7 @@ func parseFirstGraphRefArg(arg string) (string, error) {
 				return arg[1:i], nil
 			}
 		}
-		return "", fmt.Errorf("unterminated graph reference string")
+		return "", localizedError(localization.CypherCommandRoutingGraphReferenceStringUnterminated(), nil)
 	}
 
 	if arg[0] == '`' {
@@ -179,12 +179,12 @@ func parseFirstGraphRefArg(arg string) (string, error) {
 				return strings.ReplaceAll(arg[1:i], "``", "`"), nil
 			}
 		}
-		return "", fmt.Errorf("unterminated backtick identifier")
+		return "", localizedError(localization.CypherCommandRoutingBacktickIdentifierUnterminated(), nil)
 	}
 
 	fields := strings.Fields(arg)
 	if len(fields) == 0 {
-		return "", fmt.Errorf("graph reference requires an argument")
+		return "", localizedError(localization.CypherCommandRoutingGraphReferenceArgumentRequired(), nil)
 	}
 	return fields[0], nil
 }
@@ -232,7 +232,7 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*StorageExecutor, string, error) {
 	targetDB := strings.TrimSpace(db)
 	if targetDB == "" {
-		return nil, "", fmt.Errorf("USE clause requires a database name")
+		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
 	}
 
 	if e.dbManager != nil {
@@ -243,7 +243,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 			if e.dbManager.IsCompositeDatabase(compositeName) {
 				currentDB := strings.TrimSpace(e.currentDatabaseName())
 				if currentDB != "" && e.dbManager.IsCompositeDatabase(currentDB) && !strings.EqualFold(currentDB, compositeName) {
-					return nil, "", fmt.Errorf("USE %s failed: constituent '%s' is not part of current composite '%s'", targetDB, compositeName, currentDB)
+					return nil, "", localizedError(localization.CypherCommandRoutingUseConstituentOutsideComposite(targetDB, compositeName, currentDB), nil)
 				}
 				// Resolve the full composite.constituent via GetStorageForUse.
 				// The composite engine's getConstituent will resolve the alias.
@@ -259,14 +259,14 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 		// Standard database: resolve alias and switch namespace.
 		resolved, err := e.dbManager.ResolveDatabase(targetDB)
 		if err != nil {
-			return nil, "", fmt.Errorf("USE %s failed: %w", targetDB, err)
+			return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(targetDB, err), err)
 		}
 		targetDB = resolved
 	}
 
 	ns, ok := e.storage.(*storage.NamespacedEngine)
 	if !ok {
-		return nil, "", fmt.Errorf("USE %s is not supported by this storage backend", targetDB)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
 
 	if strings.EqualFold(ns.Namespace(), targetDB) {
@@ -280,17 +280,17 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.
 func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToken string) (*StorageExecutor, string, error) {
 	if e.dbManager == nil {
-		return nil, "", fmt.Errorf("USE %s failed: database manager not available", compositeName)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseManagerUnavailable(compositeName), nil)
 	}
 
 	engineIface, err := e.dbManager.GetStorageForUse(compositeName, authToken)
 	if err != nil {
-		return nil, "", fmt.Errorf("USE %s failed: %w", compositeName, err)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(compositeName, err), err)
 	}
 
 	engine, ok := engineIface.(storage.Engine)
 	if !ok {
-		return nil, "", fmt.Errorf("USE %s failed: storage engine has unexpected type", compositeName)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(compositeName), nil)
 	}
 
 	return e.cloneForStorage(engine), compositeName, nil
@@ -300,24 +300,24 @@ func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToke
 // constituent engine within a composite database.
 func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, alias string, authToken string) (*StorageExecutor, string, error) {
 	if e.dbManager == nil {
-		return nil, "", fmt.Errorf("USE %s failed: database manager not available", fullName)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseManagerUnavailable(fullName), nil)
 	}
 
 	// Get the composite engine first.
 	engineIface, err := e.dbManager.GetStorageForUse(compositeName, authToken)
 	if err != nil {
-		return nil, "", fmt.Errorf("USE %s failed: %w", fullName, err)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
 	compositeEngine, ok := engineIface.(*storage.CompositeEngine)
 	if !ok {
-		return nil, "", fmt.Errorf("USE %s failed: '%s' is not a composite database", fullName, compositeName)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseNotComposite(fullName, compositeName), nil)
 	}
 
 	// Resolve the specific constituent by alias.
 	constituentEngine, err := compositeEngine.GetConstituentByAlias(alias)
 	if err != nil {
-		return nil, "", fmt.Errorf("USE %s failed: %w", fullName, err)
+		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
 	return e.cloneForStorage(constituentEngine), fullName, nil

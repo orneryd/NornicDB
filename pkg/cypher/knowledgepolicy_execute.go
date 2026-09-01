@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -16,44 +17,52 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("unsupported knowledge policy command: %s", cypher)
+		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommand(cypher), nil)
 	}
 
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema manager unavailable")
+		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 
 	switch c := cmd.(type) {
 	case *CreateDecayProfileBundleCmd:
-		return emptySchemaResult(), schema.CreateDecayProfileBundle(c.Bundle)
+		return knowledgePolicySchemaResult("CREATE DECAY PROFILE", schema.CreateDecayProfileBundle(c.Bundle))
 	case *CreateDecayProfileBindingCmd:
-		return emptySchemaResult(), schema.CreateDecayProfileBinding(c.Binding)
+		return knowledgePolicySchemaResult("CREATE DECAY PROFILE FOR", schema.CreateDecayProfileBinding(c.Binding))
 	case *AlterDecayProfileCmd:
-		return emptySchemaResult(), schema.AlterDecayProfile(c.Name, c.Updates)
+		return knowledgePolicySchemaResult("ALTER DECAY PROFILE", schema.AlterDecayProfile(c.Name, c.Updates))
 	case *DropDecayProfileCmd:
-		return emptySchemaResult(), schema.DropDecayProfile(c.Name, c.IfExists)
+		return knowledgePolicySchemaResult("DROP DECAY PROFILE", schema.DropDecayProfile(c.Name, c.IfExists))
 	case *ShowDecayProfilesCmd:
 		return e.executeShowKnowledgeDecayProfiles(schema)
 	case *CreatePromotionProfileCmd:
-		return emptySchemaResult(), schema.CreatePromotionProfile(c.Profile)
+		return knowledgePolicySchemaResult("CREATE PROMOTION PROFILE", schema.CreatePromotionProfile(c.Profile))
 	case *AlterPromotionProfileCmd:
-		return emptySchemaResult(), schema.AlterPromotionProfile(c.Name, c.Updates)
+		return knowledgePolicySchemaResult("ALTER PROMOTION PROFILE", schema.AlterPromotionProfile(c.Name, c.Updates))
 	case *DropPromotionProfileCmd:
-		return emptySchemaResult(), schema.DropPromotionProfile(c.Name, c.IfExists)
+		return knowledgePolicySchemaResult("DROP PROMOTION PROFILE", schema.DropPromotionProfile(c.Name, c.IfExists))
 	case *ShowPromotionProfilesCmd:
 		return e.executeShowKnowledgePromotionProfiles(schema)
 	case *CreatePromotionPolicyCmd:
-		return emptySchemaResult(), schema.CreatePromotionPolicy(c.Policy)
+		return knowledgePolicySchemaResult("CREATE PROMOTION POLICY", schema.CreatePromotionPolicy(c.Policy))
 	case *AlterPromotionPolicyCmd:
-		return emptySchemaResult(), schema.AlterPromotionPolicy(c.Name, c.Updates)
+		return knowledgePolicySchemaResult("ALTER PROMOTION POLICY", schema.AlterPromotionPolicy(c.Name, c.Updates))
 	case *DropPromotionPolicyCmd:
-		return emptySchemaResult(), schema.DropPromotionPolicy(c.Name, c.IfExists)
+		return knowledgePolicySchemaResult("DROP PROMOTION POLICY", schema.DropPromotionPolicy(c.Name, c.IfExists))
 	case *ShowPromotionPoliciesCmd:
 		return e.executeShowKnowledgePromotionPolicies(schema)
 	default:
-		return nil, fmt.Errorf("unsupported knowledge policy command type %T", cmd)
+		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommandType(fmt.Sprintf("%T", cmd)), nil)
 	}
+}
+
+func knowledgePolicySchemaResult(operation string, err error) (*ExecuteResult, error) {
+	result := emptySchemaResult()
+	if err != nil {
+		return result, localizedError(localization.CypherKnowledgePolicyOperationFailed(operation, err), err)
+	}
+	return result, nil
 }
 
 func emptySchemaResult() *ExecuteResult {

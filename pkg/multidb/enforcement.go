@@ -49,7 +49,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"fmt"
 	"sync"
 	"time"
 
@@ -180,12 +179,12 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 
 	nodeCount, err := storage.NodeCount()
 	if err != nil {
-		return fmt.Errorf("failed to get node count: %w", err)
+		return localizedError(localization.MultidbStorageGetNodeCountFailed(err), err)
 	}
 
 	edgeCount, err := storage.EdgeCount()
 	if err != nil {
-		return fmt.Errorf("failed to get edge count: %w", err)
+		return localizedError(localization.MultidbStorageGetEdgeCountFailed(err), err)
 	}
 
 	// Check limits
@@ -207,7 +206,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 	if storageLimits.MaxBytes > 0 {
 		currentSize, err := c.getCurrentStorageSize(storage)
 		if err != nil {
-			return fmt.Errorf("failed to get storage size: %w", err)
+			return localizedError(localization.MultidbStorageGetSizeFailed(err), err)
 		}
 
 		// Calculate EXACT size of new entity being created (serialized size)
@@ -215,12 +214,12 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 		if operation == "create_node" && node != nil {
 			newEntitySize, err = calculateNodeSize(node)
 			if err != nil {
-				return fmt.Errorf("failed to calculate node size: %w", err)
+				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(err), err)
 			}
 		} else if operation == "create_edge" && edge != nil {
 			newEntitySize, err = calculateEdgeSize(edge)
 			if err != nil {
-				return fmt.Errorf("failed to calculate edge size: %w", err)
+				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(err), err)
 			}
 		} else {
 			// Fallback: if node/edge not provided, we can't check MaxBytes
@@ -293,7 +292,7 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 	// Calculate size of all nodes
 	nodes, err := engine.AllNodes()
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get all nodes: %w", err)
+		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesFailed(err), err)
 	}
 	for _, node := range nodes {
 		size, err := calculateNodeSize(node)
@@ -307,7 +306,7 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 	// Calculate size of all edges
 	edges, err := engine.AllEdges()
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get all edges: %w", err)
+		return 0, 0, localizedError(localization.MultidbStorageGetAllEdgesFailed(err), err)
 	}
 	for _, edge := range edges {
 		size, err := calculateEdgeSize(edge)
@@ -343,7 +342,7 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(node); err != nil {
-		return 0, fmt.Errorf("failed to encode node: %w", err)
+		return 0, localizedError(localization.MultidbStorageEncodeNodeFailed(err), err)
 	}
 	return int64(buf.Len()), nil
 }
@@ -371,7 +370,7 @@ func calculateEdgeSize(edge *storage.Edge) (int64, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(edge); err != nil {
-		return 0, fmt.Errorf("failed to encode edge: %w", err)
+		return 0, localizedError(localization.MultidbStorageEncodeEdgeFailed(err), err)
 	}
 	return int64(buf.Len()), nil
 }

@@ -1,0 +1,225 @@
+- id: nornicdbcore.not_found
+  description: Generic embedded database entity lookup failure.
+  other: not found
+- id: nornicdbcore.invalid_id
+  description: Generic embedded database entity ID validation failure.
+  other: invalid ID
+- id: nornicdbcore.database_closed
+  description: Embedded database operation attempted after close.
+  other: database is closed
+- id: nornicdbcore.invalid_input
+  description: Generic embedded database input validation failure.
+  other: invalid input
+- id: nornicdbcore.query_embedding_dimension_mismatch
+  description: Query and index embedding dimensions are incompatible.
+  other: query embedding dimension mismatch
+- id: nornicdbcore.cypher_row_decode_failed
+  description: Typed Cypher row decode wrapper. Cause is an untranslated diagnostic.
+  other: "failed to decode row: {{.Cause}}"
+- id: nornicdbcore.decode_destination_required
+  description: Typed decode destination must be a non-nil pointer. dest is a Go API parameter name.
+  other: dest must be a non-nil pointer
+- id: nornicdbcore.decode_field_failed
+  description: Typed field decode wrapper. Field and Cause are untranslated diagnostics.
+  other: "field {{.Field}}: {{.Cause}}"
+- id: nornicdbcore.decode_assignment_failed
+  description: Typed assignment failure. ValueType and TargetType are untranslated Go type identifiers.
+  other: "cannot assign {{.ValueType}} to {{.TargetType}}"
+- id: nornicdbcore.node_id_required
+  description: Caller-provided node ID validation failure.
+  other: node ID must not be empty
+- id: nornicdbcore.node_already_exists
+  description: Duplicate caller-provided node ID. NodeID is untranslated user data.
+  other: 'node {{printf "%q" .NodeID}} already exists'
+- id: nornicdbcore.source_node_not_found
+  description: Relationship source-node lookup failure.
+  other: source node not found
+- id: nornicdbcore.target_node_not_found
+  description: Relationship target-node lookup failure.
+  other: target node not found
+- id: nornicdbcore.search_service_not_initialized
+  description: Default database search service is unavailable.
+  other: search service not initialized
+- id: nornicdbcore.find_similar_limit_invalid
+  description: Similarity search requires a positive result limit.
+  other: limit must be greater than 0
+- id: nornicdbcore.node_embedding_missing
+  description: Similarity source node has no embedding.
+  other: node has no embedding
+- id: nornicdbcore.schema_manager_not_initialized
+  description: Schema management is unavailable for the database.
+  other: schema manager not initialized
+- id: nornicdbcore.index_type_unsupported
+  description: Unsupported embedded API index type. IndexType is untranslated user input and option names are machine values.
+  other: "unsupported index type: {{.IndexType}} (use: property, fulltext, vector, range)"
+- id: nornicdbcore.backup_nodes_read_failed
+  description: Backup node-read wrapper. Cause is an untranslated diagnostic.
+  other: "failed to get nodes: {{.Cause}}"
+- id: nornicdbcore.backup_edges_read_failed
+  description: Backup edge-read wrapper. Cause is an untranslated diagnostic.
+  other: "failed to get edges: {{.Cause}}"
+- id: nornicdbcore.backup_marshal_failed
+  description: Backup serialization wrapper. Cause is an untranslated diagnostic.
+  other: "failed to marshal backup: {{.Cause}}"
+- id: nornicdbcore.backup_write_failed
+  description: Backup persistence wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to write backup: {{.Cause}}"
+- id: nornicdbcore.backup_read_failed
+  description: Backup file-read wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to read backup: {{.Cause}}"
+- id: nornicdbcore.backup_parse_failed
+  description: Backup deserialization wrapper. Cause is an untranslated diagnostic.
+  other: "failed to parse backup: {{.Cause}}"
+- id: nornicdbcore.restore_node_failed
+  description: Node restore wrapper. NodeID and Cause are untranslated diagnostics.
+  other: "failed to restore node {{.NodeID}}: {{.Cause}}"
+- id: nornicdbcore.restore_edge_failed
+  description: Edge restore wrapper. EdgeID and Cause are untranslated diagnostics.
+  other: "failed to restore edge {{.EdgeID}}: {{.Cause}}"
+- id: nornicdbcore.restore_temporal_indexes_failed
+  description: Post-restore temporal index rebuild wrapper. Cause is an untranslated diagnostic.
+  other: "failed to rebuild temporal indexes after restore: {{.Cause}}"
+- id: nornicdbcore.restore_mvcc_heads_failed
+  description: Post-restore MVCC head rebuild wrapper. Cause is an untranslated diagnostic.
+  other: "failed to rebuild mvcc heads after restore: {{.Cause}}"
+- id: nornicdbcore.encryption_password_required
+  description: Password-based encryption is enabled without a password.
+  other: encryption is enabled but no password was provided
+- id: nornicdbcore.encryption_salt_generate_failed
+  description: Password-encryption salt generation wrapper. Cause is an untranslated diagnostic.
+  other: "failed to generate encryption salt: {{.Cause}}"
+- id: nornicdbcore.data_directory_create_failed
+  description: Database data-directory creation wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to create data directory: {{.Cause}}"
+- id: nornicdbcore.encryption_salt_save_failed
+  description: Password-encryption salt persistence wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to save encryption salt: {{.Cause}}"
+- id: nornicdbcore.persistent_storage_open_failed
+  description: Persistent storage open wrapper. Cause is an untranslated diagnostic.
+  other: "failed to open persistent storage: {{.Cause}}"
+- id: nornicdbcore.wal_initialize_failed
+  description: Write-ahead log initialization wrapper. WAL is a technical acronym and Cause is untranslated.
+  other: "failed to initialize WAL: {{.Cause}}"
+- id: nornicdbcore.inference_initialize_failed
+  description: Inference initialization wrapper. Cause is an untranslated diagnostic.
+  other: "init inference: {{.Cause}}"
+- id: nornicdbcore.replication_storage_adapter_create_failed
+  description: Replication storage-adapter creation wrapper. Cause is an untranslated diagnostic.
+  other: "replication: create storage adapter: {{.Cause}}"
+- id: nornicdbcore.replication_replicator_create_failed
+  description: Replicator creation wrapper. Cause is an untranslated diagnostic.
+  other: "replication: create replicator: {{.Cause}}"
+- id: nornicdbcore.replication_start_failed
+  description: Replication startup wrapper. Cause is an untranslated diagnostic.
+  other: "replication: start: {{.Cause}}"
+- id: nornicdbcore.nil_database
+  description: Health check invoked with a nil DB receiver. nornicdb and DB are technical identifiers.
+  other: "nornicdb: nil DB"
+- id: nornicdbcore.storage_engine_not_initialized
+  description: Health check has no storage engine. nornicdb is a technical identifier.
+  other: "nornicdb: storage engine not initialized"
+- id: nornicdbcore.storage_probe_failed
+  description: Health-check storage probe wrapper. nornicdb is a technical identifier and Cause is untranslated.
+  other: "nornicdb: storage probe: {{.Cause}}"
+- id: nornicdbcore.close_failed
+  description: Database shutdown aggregate. Errors is an untranslated aggregate diagnostic.
+  other: "close errors: {{.Errors}}"
+- id: nornicdbcore.auto_embed_not_enabled
+  description: Automatic embedding worker is unavailable. auto-embed is a feature name.
+  other: auto-embed not enabled
+- id: nornicdbcore.clear_embeddings_unsupported
+  description: Storage engine lacks the ClearAllEmbeddings machine API operation.
+  other: storage engine does not support ClearAllEmbeddings
+- id: nornicdbcore.query_embedding_dimension_mismatch_for_database
+  description: Per-database query/index dimension mismatch. Database and dimensions are untranslated identifiers and numeric values.
+  other: 'database {{printf "%q" .Database}}: query embedding dimension mismatch (index dims {{.IndexDimensions}}, query dims {{.QueryDimensions}})'
+- id: nornicdbcore.consent_user_id_required
+  description: Consent record requires the user_id machine field.
+  other: user_id is required
+- id: nornicdbcore.consent_purpose_required
+  description: Consent record requires a purpose.
+  other: purpose is required
+- id: nornicdbcore.consent_existing_check_failed
+  description: Existing-consent lookup wrapper. Cause is an untranslated diagnostic.
+  other: "checking existing consent: {{.Cause}}"
+- id: nornicdbcore.consent_check_failed
+  description: Consent lookup wrapper. Cause is an untranslated diagnostic.
+  other: "checking consent: {{.Cause}}"
+- id: nornicdbcore.consent_get_failed
+  description: Consent retrieval wrapper. Cause is an untranslated diagnostic.
+  other: "getting consent: {{.Cause}}"
+- id: nornicdbcore.consent_stream_failed
+  description: Consent stream wrapper. Cause is an untranslated diagnostic.
+  other: "streaming consent nodes: {{.Cause}}"
+- id: nornicdbcore.search_persistence_database_invalid
+  description: Unsafe database name for persisted search paths. Database is untranslated user data.
+  other: 'invalid database name for search persistence: {{printf "%q" .Database}}'
+- id: nornicdbcore.search_system_database_unsupported
+  description: Search is unavailable for the system database.
+  other: search service not available for system database
+- id: nornicdbcore.search_base_storage_unavailable
+  description: Search initialization lacks base storage. nil is a Go technical value.
+  other: "search service unavailable: base storage is nil"
+- id: nornicdbcore.search_database_not_initialized
+  description: Per-database search state is unavailable. Database is an untranslated identifier.
+  other: 'search service not initialized for database {{printf "%q" .Database}}'
+- id: nornicdbcore.inference_base_storage_unavailable
+  description: Inference initialization lacks base storage. nil is a Go technical value.
+  other: "inference unavailable: base storage is nil"
+- id: nornicdbcore.embed_batch_failed
+  description: Embedding micro-batch wrapper. Batch bounds, NodeID, and Cause are untranslated diagnostics.
+  other: "batch {{.Start}}-{{.End}}/{{.Total}} failed for {{.NodeID}}: {{.Cause}}"
+- id: nornicdbcore.embedding_count_mismatch
+  description: Embedding provider returned an unexpected batch size. NodeID and counts are untranslated diagnostics.
+  other: "embedding count mismatch for {{.NodeID}}: got {{.Actual}}, expected {{.Expected}}"
+- id: nornicdbcore.bootstrap_knowledge_policy_failed
+  description: Default knowledge-policy bootstrap wrapper. Namespace and Cause are untranslated diagnostics.
+  other: 'bootstrap default knowledge policy for namespace {{printf "%q" .Namespace}}: {{.Cause}}'
+- id: nornicdbcore.bootstrap_ddl_expected
+  description: Default bootstrap input was not knowledge-policy DDL. DDL is a technical acronym.
+  other: not a knowledge-policy DDL statement
+- id: nornicdbcore.bootstrap_ddl_command_unsupported
+  description: Parsed bootstrap command type is unsupported. CommandType is an untranslated Go type.
+  other: "unsupported bootstrap DDL command {{.CommandType}}"
+- id: nornicdbcore.encryption_master_key_invalid
+  description: Provider-backed master-key validation wrapper. Cause is an untranslated diagnostic.
+  other: "invalid encryption master key: {{.Cause}}"
+- id: nornicdbcore.encryption_provider_initialize_failed
+  description: Encryption provider initialization wrapper. Provider and Cause are untranslated diagnostics.
+  other: 'failed to initialize encryption provider {{printf "%q" .Provider}}: {{.Cause}}'
+- id: nornicdbcore.encryption_dek_metadata_decode_failed
+  description: Persisted DEK metadata decoding wrapper. DEK is a technical acronym and Cause is untranslated.
+  other: "failed to decode persisted DEK metadata: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_provider_mismatch
+  description: Persisted DEK provider differs from configured provider. Provider values are untranslated identifiers.
+  other: 'persisted DEK was created with provider {{printf "%q" .PersistedProvider}}, not {{printf "%q" .ConfiguredProvider}}'
+- id: nornicdbcore.encryption_dek_ciphertext_decode_failed
+  description: Persisted DEK ciphertext decoding wrapper. DEK is a technical acronym and Cause is untranslated.
+  other: "failed to decode persisted DEK ciphertext: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_unwrap_failed
+  description: Persisted DEK unwrap wrapper. DEK is a technical acronym and Cause is untranslated.
+  other: "failed to unwrap persisted DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_rotate_failed
+  description: Persisted wrapped DEK rotation wrapper. DEK is a technical acronym and Cause is untranslated.
+  other: "failed to rotate persisted wrapped DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_generate_failed
+  description: Provider-backed DEK generation wrapper. DEK is a technical acronym and Cause is untranslated.
+  other: "failed to generate provider-backed DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_empty
+  description: Encryption provider returned an empty plaintext DEK. DEK is a technical acronym.
+  other: provider returned empty plaintext DEK
+- id: nornicdbcore.encryption_dek_directory_create_failed
+  description: DEK metadata directory creation wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to create data directory for DEK metadata: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_metadata_encode_failed
+  description: DEK metadata encoding wrapper. Cause is an untranslated diagnostic.
+  other: "failed to encode DEK metadata: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_metadata_persist_failed
+  description: DEK metadata persistence wrapper. Cause may contain an untranslated path and diagnostic.
+  other: "failed to persist DEK metadata: {{.Cause}}"
+- id: nornicdbcore.encryption_master_key_required
+  description: Provider-backed encryption requires a master key.
+  other: master key is required for provider-backed encryption
+- id: nornicdbcore.encryption_master_key_length_invalid
+  description: Provider-backed encryption key format validation failure. Encoding names and byte count are technical values.
+  other: expected 32-byte key as base64, hex, or raw string

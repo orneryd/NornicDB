@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -16,9 +17,7 @@ import (
 // executeShowIndexes handles SHOW INDEXES command
 func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
-		return nil, fmt.Errorf("Neo.ClientError.Statement.NotAllowed: " +
-			"SHOW INDEXES on composite databases requires a constituent target. " +
-			"Use USE <composite>.<alias> SHOW INDEXES")
+		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW INDEXES"), nil)
 	}
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
@@ -98,9 +97,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 // executeShowConstraints handles SHOW CONSTRAINTS command
 func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
-		return nil, fmt.Errorf("Neo.ClientError.Statement.NotAllowed: " +
-			"SHOW CONSTRAINTS on composite databases requires a constituent target. " +
-			"Use USE <composite>.<alias> SHOW CONSTRAINTS")
+		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
 	}
 	if isShowConstraintContractsCommand(cypher) {
 		return e.executeShowConstraintContracts(ctx)
@@ -381,7 +378,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 //   - constituents: Constituent databases (empty for single databases)
 func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - SHOW DATABASES requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW DATABASES"), nil)
 	}
 
 	databases := e.dbManager.ListDatabases()
@@ -443,13 +440,13 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 		"subsystem", "create_database",
 		"query_len", len(cypher))
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - CREATE DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
 	}
 
 	// Find "CREATE DATABASE" keyword position (with flexible whitespace)
 	createDbIdx := findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE")
 	if createDbIdx == -1 {
-		return nil, fmt.Errorf("invalid CREATE DATABASE syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
 
 	// Skip "CREATE" and whitespace to find "DATABASE"
@@ -466,7 +463,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid CREATE DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE DATABASE"), nil)
 	}
 
 	// Find end of database name (whitespace, end of string, or "IF NOT EXISTS")
@@ -505,17 +502,18 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Extract database name (trim whitespace)
-	dbName, err := unquoteBacktickIdentifier(strings.TrimSpace(cypher[startPos:dbNameEnd]))
+	rawDBName := strings.TrimSpace(cypher[startPos:dbNameEnd])
+	dbName, err := unquoteBacktickIdentifier(rawDBName)
 	if err != nil {
-		return nil, err
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
 	}
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid CREATE DATABASE syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
 	}
 
 	// Validate database name (basic validation)
 	if strings.ContainsAny(dbName, " \t\n\r") {
-		return nil, fmt.Errorf("invalid database name: '%s' (cannot contain whitespace)", dbName)
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
 	// Check if already exists
@@ -527,7 +525,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 				Rows:    [][]interface{}{{dbName}},
 			}, nil
 		}
-		return nil, fmt.Errorf("database '%s' already exists", dbName)
+		return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)
 	}
 
 	// Create database
@@ -535,7 +533,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	if err != nil {
 		e.logger().Error("CreateDatabase failed",
 			"subsystem", "create_database")
-		return nil, fmt.Errorf("failed to create database '%s': %w", dbName, err)
+		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logger().Info("CreateDatabase succeeded",
 		"subsystem", "create_database")
@@ -579,13 +577,13 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 //   - Error: If DatabaseManager is not configured
 func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - DROP DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP DATABASE"), nil)
 	}
 
 	// Find "DROP DATABASE" keyword position (with flexible whitespace)
 	dropDbIdx := findMultiWordKeywordIndex(cypher, "DROP", "DATABASE")
 	if dropDbIdx == -1 {
-		return nil, fmt.Errorf("invalid DROP DATABASE syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("DROP DATABASE"), nil)
 	}
 
 	// Skip "DROP" and whitespace to find "DATABASE"
@@ -605,7 +603,7 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid DROP DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("DROP DATABASE"), nil)
 	}
 
 	// Find end of database name (whitespace, end of string, or "IF EXISTS")
@@ -621,17 +619,18 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	}
 
 	// Extract database name (trim whitespace)
-	dbName, err := unquoteBacktickIdentifier(strings.TrimSpace(cypher[startPos:dbNameEnd]))
+	rawDBName := strings.TrimSpace(cypher[startPos:dbNameEnd])
+	dbName, err := unquoteBacktickIdentifier(rawDBName)
 	if err != nil {
-		return nil, err
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
 	}
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid DROP DATABASE syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("DROP DATABASE"), nil)
 	}
 
 	// Validate database name (basic validation)
 	if strings.ContainsAny(dbName, " \t\n\r") {
-		return nil, fmt.Errorf("invalid database name: '%s' (cannot contain whitespace)", dbName)
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
 	// Check if exists
@@ -643,13 +642,13 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 				Rows:    [][]interface{}{},
 			}, nil
 		}
-		return nil, fmt.Errorf("database '%s' does not exist", dbName)
+		return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(dbName), nil)
 	}
 
 	// Drop database
 	err = e.dbManager.DropDatabase(dbName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to drop database '%s': %w", dbName, err)
+		return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -679,13 +678,13 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 //   - Error: If alias already exists or database doesn't exist
 func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - CREATE ALIAS requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE ALIAS"), nil)
 	}
 
 	// Find "CREATE ALIAS" keyword position
 	createAliasIdx := findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS")
 	if createAliasIdx == -1 {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE ALIAS"), nil)
 	}
 
 	// Skip "CREATE" and whitespace to find "ALIAS"
@@ -702,13 +701,13 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax: alias name expected")
+		return nil, localizedError(localization.CypherAdminAliasNameExpected("CREATE ALIAS"), nil)
 	}
 
 	// Find "FOR DATABASE" to separate alias name from database name
 	forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
 	if forIdx == -1 {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax: FOR DATABASE expected")
+		return nil, localizedError(localization.CypherAdminTermExpected("CREATE ALIAS", "FOR DATABASE"), nil)
 	}
 
 	// Extract alias name (trim all whitespace)
@@ -721,12 +720,12 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	aliasName = strings.ReplaceAll(aliasName, "\r", "")
 
 	if aliasName == "" {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax: alias name cannot be empty")
+		return nil, localizedError(localization.CypherAdminAliasNameEmpty("CREATE ALIAS"), nil)
 	}
 
 	// Validate alias name (should not contain whitespace after cleaning)
 	if strings.ContainsAny(aliasName, " \t\n\r") {
-		return nil, fmt.Errorf("invalid alias name: '%s' (cannot contain whitespace)", aliasName)
+		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
 	}
 
 	// Skip "FOR" and whitespace
@@ -743,7 +742,7 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	}
 
 	if dbStartPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax: database name expected")
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE ALIAS"), nil)
 	}
 
 	// Extract database name (rest of query, trim all whitespace)
@@ -755,18 +754,18 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	dbName = strings.ReplaceAll(dbName, "\r", "")
 
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid CREATE ALIAS syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE ALIAS"), nil)
 	}
 
 	// Validate database name (should not contain whitespace after cleaning)
 	if strings.ContainsAny(dbName, " \t\n\r") {
-		return nil, fmt.Errorf("invalid database name: '%s' (cannot contain whitespace)", dbName)
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
 	// Create alias
 	err := e.dbManager.CreateAlias(aliasName, dbName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create alias '%s' for database '%s': %w", aliasName, dbName, err)
+		return nil, localizedError(localization.CypherAdminCreateAliasFailed(aliasName, dbName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -796,13 +795,13 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 //   - Error: If alias doesn't exist (unless IF EXISTS is used)
 func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - DROP ALIAS requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP ALIAS"), nil)
 	}
 
 	// Find "DROP ALIAS" keyword position
 	dropAliasIdx := findMultiWordKeywordIndex(cypher, "DROP", "ALIAS")
 	if dropAliasIdx == -1 {
-		return nil, fmt.Errorf("invalid DROP ALIAS syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("DROP ALIAS"), nil)
 	}
 
 	// Skip "DROP" and whitespace to find "ALIAS"
@@ -819,7 +818,7 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid DROP ALIAS syntax: alias name expected")
+		return nil, localizedError(localization.CypherAdminAliasNameExpected("DROP ALIAS"), nil)
 	}
 
 	// Find end of alias name (whitespace, end of string, or "IF EXISTS")
@@ -840,12 +839,12 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 	aliasName = strings.ReplaceAll(aliasName, "\r", "")
 
 	if aliasName == "" {
-		return nil, fmt.Errorf("invalid DROP ALIAS syntax: alias name cannot be empty")
+		return nil, localizedError(localization.CypherAdminAliasNameEmpty("DROP ALIAS"), nil)
 	}
 
 	// Validate alias name (should not contain whitespace after cleaning)
 	if strings.ContainsAny(aliasName, " \t\n\r") {
-		return nil, fmt.Errorf("invalid alias name: '%s' (cannot contain whitespace)", aliasName)
+		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
 	}
 
 	// Check if alias exists (by checking if it resolves)
@@ -858,13 +857,13 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 				Rows:    [][]interface{}{},
 			}, nil
 		}
-		return nil, fmt.Errorf("alias '%s' does not exist", aliasName)
+		return nil, localizedError(localization.CypherAdminAliasDoesNotExist(aliasName), nil)
 	}
 
 	// Drop alias
 	err = e.dbManager.DropAlias(aliasName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to drop alias '%s': %w", aliasName, err)
+		return nil, localizedError(localization.CypherAdminDropAliasFailed(aliasName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -896,13 +895,13 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 //   - Success: Result with alias and database columns
 func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - SHOW ALIASES requires multi-database support")
+		return nil, localizedError(localization.CypherResidualShowAliasesManagerUnavailable(), nil)
 	}
 
 	// Find "SHOW ALIASES" keyword position
 	showAliasesIdx := findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES")
 	if showAliasesIdx == -1 {
-		return nil, fmt.Errorf("invalid SHOW ALIASES syntax")
+		return nil, localizedError(localization.CypherResidualShowAliasesSyntaxInvalid(), nil)
 	}
 
 	// Skip "SHOW" and whitespace to find "ALIASES"
@@ -992,13 +991,13 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 //   - Error: If database doesn't exist or syntax is invalid
 func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - ALTER DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
 	}
 
 	// Find "ALTER DATABASE" keyword position
 	alterDbIdx := findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE")
 	if alterDbIdx == -1 {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("ALTER DATABASE"), nil)
 	}
 
 	// Skip "ALTER" and whitespace to find "DATABASE"
@@ -1013,20 +1012,20 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 			startPos++
 		}
 	} else {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax: DATABASE keyword expected")
+		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "DATABASE"), nil)
 	}
 
 	// Find "SET LIMIT" keyword
 	setLimitIdx := findMultiWordKeywordIndex(cypher[startPos:], "SET", "LIMIT")
 	if setLimitIdx == -1 {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax: SET LIMIT clause expected")
+		return nil, localizedError(localization.CypherAdminClauseExpected("ALTER DATABASE", "SET LIMIT"), nil)
 	}
 
 	// Extract database name (between "DATABASE" and "SET LIMIT")
 	dbNameEnd := startPos + setLimitIdx
 	databaseName := strings.TrimSpace(cypher[startPos:dbNameEnd])
 	if databaseName == "" {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("ALTER DATABASE"), nil)
 	}
 
 	// Skip "SET LIMIT" and whitespace
@@ -1040,13 +1039,13 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 			limitStartPos++
 		}
 	} else {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax: LIMIT keyword expected")
+		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "LIMIT"), nil)
 	}
 
 	// Get existing limits or create new ones
 	existingLimitsInterface, err := e.dbManager.GetDatabaseLimits(databaseName)
 	if err != nil {
-		return nil, fmt.Errorf("database '%s' not found: %w", databaseName, err)
+		return nil, localizedError(localization.CypherAdminDatabaseNotFound(databaseName, err), err)
 	}
 
 	// Type assert to *multidb.Limits
@@ -1055,7 +1054,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 		var ok bool
 		existingLimits, ok = existingLimitsInterface.(*multidb.Limits)
 		if !ok {
-			return nil, fmt.Errorf("invalid limits type returned from database manager")
+			return nil, localizedError(localization.CypherAdminInvalidLimitsType(), nil)
 		}
 	}
 
@@ -1089,7 +1088,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	// Parse limit assignments: "limit_name = value, limit_name2 = value2"
 	limitClause := strings.TrimSpace(cypher[limitStartPos:])
 	if limitClause == "" {
-		return nil, fmt.Errorf("invalid ALTER DATABASE syntax: limit assignment expected")
+		return nil, localizedError(localization.CypherAdminLimitAssignmentExpected(), nil)
 	}
 
 	// Split by comma to handle multiple limits
@@ -1103,7 +1102,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 		// Parse "limit_name = value"
 		parts := strings.SplitN(assignment, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid limit assignment syntax: expected 'limit_name = value', got '%s'", assignment)
+			return nil, localizedError(localization.CypherAdminInvalidLimitAssignment(assignment), nil)
 		}
 
 		limitName := strings.TrimSpace(strings.ToLower(parts[0]))
@@ -1114,75 +1113,75 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 		case "max_nodes":
 			val, err := strconv.ParseInt(limitValue, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_nodes value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Storage.MaxNodes = val
 
 		case "max_edges":
 			val, err := strconv.ParseInt(limitValue, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_edges value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Storage.MaxEdges = val
 
 		case "max_bytes":
 			val, err := strconv.ParseInt(limitValue, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_bytes value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Storage.MaxBytes = val
 
 		case "max_query_time":
 			duration, err := time.ParseDuration(limitValue)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_query_time value (expected duration like '60s' or '5m'): %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidDurationLimitValue(limitName, err), err)
 			}
 			limits.Query.MaxQueryTime = duration
 
 		case "max_results":
 			val, err := strconv.ParseInt(limitValue, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_results value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Query.MaxResults = val
 
 		case "max_concurrent_queries":
 			val, err := strconv.Atoi(limitValue)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_concurrent_queries value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Query.MaxConcurrentQueries = val
 
 		case "max_connections":
 			val, err := strconv.Atoi(limitValue)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_connections value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Connection.MaxConnections = val
 
 		case "max_queries_per_second":
 			val, err := strconv.Atoi(limitValue)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_queries_per_second value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Rate.MaxQueriesPerSecond = val
 
 		case "max_writes_per_second":
 			val, err := strconv.Atoi(limitValue)
 			if err != nil {
-				return nil, fmt.Errorf("invalid max_writes_per_second value: %w", err)
+				return nil, localizedError(localization.CypherAdminInvalidLimitValue(limitName, err), err)
 			}
 			limits.Rate.MaxWritesPerSecond = val
 
 		default:
-			return nil, fmt.Errorf("unknown limit name: '%s' (supported: max_nodes, max_edges, max_bytes, max_query_time, max_results, max_concurrent_queries, max_connections, max_queries_per_second, max_writes_per_second)", limitName)
+			return nil, localizedError(localization.CypherAdminUnknownLimitName(limitName), nil)
 		}
 	}
 
 	// Update limits in database manager (pass as interface{} to match interface)
 	err = e.dbManager.SetDatabaseLimits(databaseName, limits)
 	if err != nil {
-		return nil, fmt.Errorf("failed to set limits for database '%s': %w", databaseName, err)
+		return nil, localizedError(localization.CypherAdminSetDatabaseLimitsFailed(databaseName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -1211,13 +1210,13 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 //   - Error: If database doesn't exist
 func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - SHOW LIMITS requires multi-database support")
+		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
 	}
 
 	// Find "SHOW LIMITS" keyword position
 	showLimitsIdx := findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS")
 	if showLimitsIdx == -1 {
-		return nil, fmt.Errorf("invalid SHOW LIMITS syntax")
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW LIMITS"), nil)
 	}
 
 	// Skip "SHOW" and whitespace to find "LIMITS"
@@ -1232,13 +1231,13 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 			startPos++
 		}
 	} else {
-		return nil, fmt.Errorf("invalid SHOW LIMITS syntax: LIMITS keyword expected")
+		return nil, localizedError(localization.CypherAdminKeywordExpected("SHOW LIMITS", "LIMITS"), nil)
 	}
 
 	// Check for "FOR DATABASE" clause
 	forDbIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
 	if forDbIdx == -1 {
-		return nil, fmt.Errorf("invalid SHOW LIMITS syntax: FOR DATABASE clause expected")
+		return nil, localizedError(localization.CypherAdminClauseExpected("SHOW LIMITS", "FOR DATABASE"), nil)
 	}
 
 	// Skip "FOR" and whitespace
@@ -1253,19 +1252,19 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 			dbNameStart++
 		}
 	} else {
-		return nil, fmt.Errorf("invalid SHOW LIMITS syntax: DATABASE keyword expected")
+		return nil, localizedError(localization.CypherAdminKeywordExpected("SHOW LIMITS", "DATABASE"), nil)
 	}
 
 	// Extract database name (rest of query)
 	databaseName := strings.TrimSpace(cypher[dbNameStart:])
 	if databaseName == "" {
-		return nil, fmt.Errorf("invalid SHOW LIMITS syntax: database name expected")
+		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("SHOW LIMITS"), nil)
 	}
 
 	// Get limits from database manager
 	limitsInterface, err := e.dbManager.GetDatabaseLimits(databaseName)
 	if err != nil {
-		return nil, fmt.Errorf("database '%s' not found: %w", databaseName, err)
+		return nil, localizedError(localization.CypherAdminDatabaseNotFound(databaseName, err), err)
 	}
 
 	// Type assert to *multidb.Limits
@@ -1274,7 +1273,7 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 		var ok bool
 		limits, ok = limitsInterface.(*multidb.Limits)
 		if !ok {
-			return nil, fmt.Errorf("invalid limits type returned from database manager")
+			return nil, localizedError(localization.CypherAdminInvalidLimitsType(), nil)
 		}
 	}
 

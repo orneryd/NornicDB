@@ -69,6 +69,8 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 // callPluginHandler invokes a plugin function handler with the given arguments.
 func callPluginHandler(handler interface{}, args []interface{}) (interface{}, error) {
 	if handler == nil {
+		// Plugin dispatch consumes this registration invariant and falls back to
+		// built-in function handling; it is never returned by query execution.
 		return nil, fmt.Errorf("nil handler")
 	}
 
@@ -184,6 +186,8 @@ func callPluginHandler(handler interface{}, args []interface{}) (interface{}, er
 		}
 	}
 
+	// Plugin dispatch consumes this registration invariant and falls back to
+	// built-in function handling; it is never returned by query execution.
 	return nil, fmt.Errorf("unsupported function signature")
 }
 

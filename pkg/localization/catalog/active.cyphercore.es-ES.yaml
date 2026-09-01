@@ -1,0 +1,126 @@
+- id: cyphercore.empty_query
+  description: Consulta Cypher vacía.
+  other: consulta vacía
+- id: cyphercore.composite_target_required
+  description: La consulta compuesta requiere un componente explícito. Code y USE no se traducen.
+  other: "{{.Code}}: Las consultas en bases de datos compuestas requieren un grafo de destino explícito. Use USE <composite>.<alias> para seleccionar un componente específico"
+- id: cyphercore.invalid_label_name
+  description: Identificador de etiqueta no válido. Label no se traduce.
+  other: "nombre de etiqueta no válido: {{.Label}} (debe ser alfanumérico y comenzar con una letra o un guion bajo)"
+- id: cyphercore.invalid_label_reserved
+  description: Identificador de etiqueta reservado. Label no se traduce.
+  other: "nombre de etiqueta no válido: {{.Label}} (contiene una palabra clave reservada)"
+- id: cyphercore.invalid_property_key
+  description: Identificador de propiedad no válido. Key no se traduce.
+  other: "clave de propiedad no válida: {{.Key}} (debe ser alfanumérica y comenzar con una letra o un guion bajo)"
+- id: cyphercore.invalid_property_value
+  description: Valor de propiedad mal formado. Key no se traduce.
+  other: "valor de propiedad no válido para la clave {{.Key}}: sintaxis mal formada"
+- id: cyphercore.embedding_transaction_storage_required
+  description: WITH EMBEDDING requiere almacenamiento transaccional.
+  other: WITH EMBEDDING requiere almacenamiento compatible con transacciones
+- id: cyphercore.implicit_transaction_prime_failed
+  description: Error al inicializar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo inicializar el espacio de nombres de la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_start_failed
+  description: Error al iniciar la transacción implícita. Cause no se traduce.
+  other: "no se pudo iniciar la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_pin_failed
+  description: Error al fijar el espacio de nombres. Cause no se traduce.
+  other: "no se pudo fijar el espacio de nombres de la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_configure_failed
+  description: Error al configurar la transacción implícita. Cause no se traduce.
+  other: "no se pudo configurar la transacción implícita: {{.Cause}}"
+- id: cyphercore.implicit_transaction_wal_begin_failed
+  description: Error al escribir el inicio en WAL. Cause no se traduce.
+  other: "no se pudo escribir el inicio de la transacción en WAL: {{.Cause}}"
+- id: cyphercore.implicit_transaction_commit_failed
+  description: Error al confirmar la transacción. Cause no se traduce.
+  other: "error al confirmar la transacción: {{.Cause}}"
+- id: cyphercore.embedding_configured_required
+  description: WITH EMBEDDING requiere un generador configurado.
+  other: WITH EMBEDDING requiere un generador de incrustaciones configurado
+- id: cyphercore.embedding_chunk_failed
+  description: Error al fragmentar para incrustación. NodeID y Cause no se traducen.
+  other: "WITH EMBEDDING no pudo fragmentar el nodo {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_node_failed
+  description: Error al generar la incrustación. NodeID y Cause no se traducen.
+  other: "WITH EMBEDDING no pudo generar la incrustación del nodo {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_empty_vector
+  description: La incrustación no produjo un vector. NodeID no se traduce.
+  other: WITH EMBEDDING devolvió un vector vacío para el nodo {{.NodeID}}
+- id: cyphercore.optional_match_required
+  description: OPTIONAL no está seguido de MATCH.
+  other: OPTIONAL debe estar seguido de MATCH
+- id: cyphercore.unterminated_string_literal
+  description: Literal de cadena Cypher sin terminar.
+  other: literal de cadena sin terminar
+- id: cyphercore.parse_failed
+  description: Error de análisis Cypher. Cause no se traduce.
+  other: "error de análisis: {{.Cause}}"
+- id: cyphercore.case_envelope_invalid
+  description: La expresión CASE no tiene la estructura requerida.
+  other: "expresión CASE no válida: debe comenzar con CASE y terminar con END"
+- id: cyphercore.case_when_required
+  description: La expresión CASE no tiene una cláusula WHEN.
+  other: la expresión CASE debe tener al menos una cláusula WHEN
+- id: cyphercore.case_then_required
+  description: La cláusula WHEN no tiene THEN. Section no se traduce.
+  other: "la cláusula WHEN debe tener THEN: {{.Section}}"
+- id: cyphercore.fulltext_unexpected_token
+  description: Token inesperado en consulta de texto completo. Token no se traduce.
+  other: "no se puede analizar la consulta: token inesperado {{.Token}}"
+- id: cyphercore.fulltext_number_after_boost_expected
+  description: Falta un valor numérico de refuerzo.
+  other: "no se puede analizar la consulta: se esperaba un número después de ^"
+- id: cyphercore.fulltext_bad_boost
+  description: Valor de refuerzo no válido. Boost no se traduce.
+  other: "no se puede analizar la consulta: refuerzo no válido {{.Boost}}"
+- id: cyphercore.fulltext_closing_parenthesis_required
+  description: Falta el paréntesis de cierre.
+  other: "no se puede analizar la consulta: falta ')'"
+- id: cyphercore.fulltext_range_to_required
+  description: Falta TO en el rango.
+  other: "no se puede analizar la consulta: se esperaba TO en el rango"
+- id: cyphercore.fulltext_range_close_required
+  description: Falta el delimitador de cierre del rango.
+  other: "no se puede analizar la consulta: se esperaba ] o } para cerrar el rango"
+- id: cyphercore.fulltext_range_endpoint_required
+  description: Falta un extremo del rango.
+  other: "no se puede analizar la consulta: se esperaba un extremo del rango"
+- id: cyphercore.fulltext_bad_regex
+  description: Expresión regular no válida. Pattern y Cause no se traducen.
+  other: "no se puede analizar la consulta: expresión regular no válida /{{.Pattern}}/: {{.Cause}}"
+- id: cyphercore.fulltext_bad_wildcard
+  description: Comodín no válido. Cause no se traduce.
+  other: "no se puede analizar la consulta: comodín no válido: {{.Cause}}"
+- id: cyphercore.index_hint_not_found
+  description: El índice solicitado no existe. Hint, Label y Property no se traducen.
+  other: "no se encontró ningún índice para la sugerencia: {{.Hint}} (el índice en :{{.Label}}({{.Property}}) no existe)"
+- id: cyphercore.execution_plan_build_failed
+  description: Error al crear el plan de ejecución. Cause no se traduce.
+  other: "no se pudo crear el plan de ejecución: {{.Cause}}"
+- id: cyphercore.typed_decode_row_failed
+  description: Error al decodificar una fila tipada. Cause no se traduce.
+  other: "no se pudo decodificar la fila: {{.Cause}}"
+- id: cyphercore.typed_destination_pointer_required
+  description: El destino tipado debe ser un puntero válido.
+  other: el destino debe ser un puntero no nulo
+- id: cyphercore.typed_destination_unsupported
+  description: Tipo de destino no admitido. Kind no se traduce.
+  other: "tipo de destino no admitido: {{.Kind}}"
+- id: cyphercore.typed_field_failed
+  description: Error al asignar un campo. Field y Cause no se traducen.
+  other: "campo {{.Field}}: {{.Cause}}"
+- id: cyphercore.typed_time_parse_failed
+  description: Error al analizar una hora. Value no se traduce.
+  other: "no se puede analizar la hora: {{.Value}}"
+- id: cyphercore.typed_assignment_failed
+  description: Asignación tipada incompatible. Los tipos no se traducen.
+  other: "no se puede asignar {{.ValueType}} a {{.DestinationType}}"
+- id: cyphercore.embedder_not_configured
+  description: No hay un generador de incrustaciones configurado.
+  other: no hay un generador de incrustaciones configurado
+- id: cyphercore.embedding_no_output
+  description: La incrustación de consulta no produjo vectores.
+  other: no se pudo generar la incrustación de la consulta (no se produjeron incrustaciones)

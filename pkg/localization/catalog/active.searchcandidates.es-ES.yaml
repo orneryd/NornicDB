@@ -1,0 +1,21 @@
+- id: search.gpu_kmeans_clustered_index_required
+  description: Error directo de generación de candidatos k-means por GPU cuando no hay un índice agrupado.
+  other: la generación de candidatos k-means por GPU requiere un índice agrupado
+- id: search.cluster_hnsw_lookup_not_configured
+  description: Error directo de IVF-HNSW cuando no está configurada la búsqueda de índices por grupo.
+  other: búsqueda HNSW por grupo no configurada
+- id: search.ivfpq_index_not_configured
+  description: Error directo de IVF/PQ cuando no está disponible su índice.
+  other: índice IVFPQ no configurado
+- id: search.cluster_query_dimensions_mismatch
+  description: Error de dimensiones en la búsqueda por grupos. QueryDimensions e IndexDimensions son valores numéricos.
+  other: "error de búsqueda por grupos: las dimensiones de la consulta {{.QueryDimensions}} != las dimensiones del índice {{.IndexDimensions}}"
+- id: search.cluster_search_failed
+  description: Error de generación de candidatos por grupos. Cause no se traduce.
+  other: "error de búsqueda por grupos: {{.Cause}}"
+- id: search.hnsw_index_creation_failed
+  description: Error al crear un índice HNSW. Cause no se traduce.
+  other: "no se pudo crear el índice HNSW: {{.Cause}}"
+- id: search.vector_index_nil
+  description: Error de inicialización cuando no existe el índice vectorial.
+  other: el índice vectorial es nulo

@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Receipt represents a mutation receipt tied to WAL sequencing.
@@ -24,13 +24,13 @@ type Receipt struct {
 // NewReceipt creates a receipt and computes its hash.
 func NewReceipt(txID string, walSeqStart, walSeqEnd uint64, database string, timestamp time.Time) (*Receipt, error) {
 	if txID == "" {
-		return nil, errors.New("receipt: tx_id is required")
+		return nil, localizedError(localization.StorageClientReceiptTransactionIDRequired(), nil)
 	}
 	if walSeqStart == 0 || walSeqEnd == 0 {
-		return nil, errors.New("receipt: wal sequence must be non-zero")
+		return nil, localizedError(localization.StorageClientReceiptWALSequenceRequired(), nil)
 	}
 	if walSeqEnd < walSeqStart {
-		return nil, fmt.Errorf("receipt: wal_seq_end (%d) < wal_seq_start (%d)", walSeqEnd, walSeqStart)
+		return nil, localizedError(localization.StorageClientReceiptWALRangeInvalid(walSeqEnd, walSeqStart), nil)
 	}
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
@@ -52,7 +52,7 @@ func NewReceipt(txID string, walSeqStart, walSeqEnd uint64, database string, tim
 // UpdateHash recomputes the receipt hash from canonical fields.
 func (r *Receipt) UpdateHash() error {
 	if r == nil {
-		return errors.New("receipt: nil receiver")
+		return localizedError(localization.StorageClientReceiptNilReceiver(), nil)
 	}
 	hash, err := computeReceiptHash(r)
 	if err != nil {
@@ -80,7 +80,7 @@ func computeReceiptHash(r *Receipt) (string, error) {
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("receipt: hash marshal failed: %w", err)
+		return "", localizedError(localization.StorageClientReceiptHashMarshalFailed(err), err)
 	}
 
 	sum := sha256.Sum256(data)

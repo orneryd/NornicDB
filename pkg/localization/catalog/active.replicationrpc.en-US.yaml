@@ -1,0 +1,36 @@
+- id: replication.rpc.encode_failed
+  description: Replication RPC encoding failure. Operation and Cause are untranslated diagnostics.
+  other: "encode{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}}"
+- id: replication.rpc.decode_failed
+  description: Replication RPC decoding failure. Operation and Cause are untranslated diagnostics.
+  other: "decode{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}}"
+- id: replication.rpc.not_connected
+  description: Replication RPC attempted without a peer connection.
+  other: not connected
+- id: replication.rpc.write_failed
+  description: Replication RPC wire write failure. Cause is untranslated diagnostic text.
+  other: "write: {{.Cause}}"
+- id: replication.rpc.connection_closed
+  description: Peer connection closed while awaiting an RPC response.
+  other: connection closed
+- id: replication.rpc.command_required
+  description: Missing forwarded replication command.
+  other: nil command
+- id: replication.rpc.remote_apply_failed
+  description: Remote apply failure. Cause is untranslated diagnostic text received over the wire.
+  other: "{{.Cause}}"
+- id: replication.rpc.authentication_fields_missing
+  description: Missing replication RPC authentication fields.
+  other: missing authentication fields
+- id: replication.rpc.timestamp_outside_allowed_skew
+  description: Replication RPC timestamp outside the authentication window.
+  other: timestamp outside allowed skew
+- id: replication.rpc.invalid_signature
+  description: Invalid replication RPC message signature.
+  other: invalid signature
+- id: replication.rpc.read_failed
+  description: Replication RPC wire read failure. Cause is untranslated diagnostic text.
+  other: "{{.Cause}}"
+- id: replication.rpc.message_too_large
+  description: Replication RPC message exceeds its configured byte limit.
+  other: "message too large: {{.Actual}} > {{.Maximum}}"

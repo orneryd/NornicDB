@@ -2,8 +2,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // parseSetMergeMapLiteralStrict parses an inline map literal used by SET +=.
@@ -12,7 +13,7 @@ import (
 func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s string) (map[string]interface{}, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
-		return nil, fmt.Errorf("map literal must be enclosed in { ... }")
+		return nil, localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
 	}
 
 	inner := strings.TrimSpace(s[1 : len(s)-1])
@@ -25,21 +26,21 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
-			return nil, fmt.Errorf("empty map entry")
+			return nil, localizedError(localization.CypherMergeMapEntryEmpty(), nil)
 		}
 
 		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return nil, fmt.Errorf("invalid map entry %q", pair)
+			return nil, localizedError(localization.CypherMergeMapEntryInvalid(pair), nil)
 		}
 
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		if key == "" {
-			return nil, fmt.Errorf("empty map key")
+			return nil, localizedError(localization.CypherMergeMapKeyEmpty(), nil)
 		}
 		value := strings.TrimSpace(pair[colonIdx+1:])
 		if value == "" {
-			return nil, fmt.Errorf("empty map value for key %q", key)
+			return nil, localizedError(localization.CypherMergeMapValueEmpty(key), nil)
 		}
 
 		props[key] = e.parseValue(ctx, value)

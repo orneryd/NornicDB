@@ -1,0 +1,162 @@
+- id: storageschema.constraint_already_exists
+  description: Expanded pseudo-locale constraint creation conflict.
+  other: '[!! constraint "{{.Name}}" already exists !!]'
+- id: storageschema.constraint_different_allowed_values
+  description: Expanded pseudo-locale domain constraint conflict.
+  other: '[!! constraint "{{.Name}}" already exists with different allowed values !!]'
+- id: storageschema.constraint_different_max_count
+  description: Expanded pseudo-locale cardinality constraint conflict.
+  other: '[!! constraint "{{.Name}}" already exists with different max count ({{.ExistingMaxCount}} vs {{.RequestedMaxCount}}) !!]'
+- id: storageschema.constraint_different_schema_or_type
+  description: Expanded pseudo-locale schema or type conflict.
+  other: '[!! constraint "{{.Name}}" already exists with different schema or type !!]'
+- id: storageschema.conflicting_policy
+  description: Expanded pseudo-locale relationship policy conflict.
+  other: '[!! conflicting policy: cannot have both ALLOWED and DISALLOWED for {{.SourceLabel}}-[:{{.RelationshipType}}]->{{.TargetLabel}} (constraint "{{.ExistingName}}") !!]'
+- id: storageschema.conflicting_domain_constraint
+  description: Expanded pseudo-locale domain constraint conflict.
+  other: '[!! conflicting domain constraint "{{.Name}}" already exists on same schema with different allowed values !!]'
+- id: storageschema.conflicting_cardinality_constraint
+  description: Expanded pseudo-locale cardinality constraint conflict.
+  other: '[!! conflicting cardinality constraint "{{.Name}}" already exists on {{.Direction}} {{.Label}} with max count {{.ExistingMaxCount}} (new: {{.RequestedMaxCount}}) !!]'
+- id: storageschema.equivalent_constraint_already_exists
+  description: Expanded pseudo-locale equivalent constraint conflict.
+  other: '[!! equivalent constraint "{{.Name}}" already exists on same schema !!]'
+- id: storageschema.conflicting_constraint_already_exists
+  description: Expanded pseudo-locale incompatible constraint conflict.
+  other: '[!! conflicting constraint "{{.Name}}" already exists on same schema !!]'
+- id: storageschema.unique_constraint_violation
+  description: Expanded pseudo-locale unique constraint violation.
+  other: "[!! Node({{.Label}}) already exists with {{.Property}} = {{.Value}} !!]"
+- id: storageschema.composite_index_min_properties
+  description: Expanded pseudo-locale composite index validation.
+  other: "[!! composite index requires at least 2 properties, got {{.Count}} !!]"
+- id: storageschema.range_index_properties_required
+  description: Expanded pseudo-locale range index property validation.
+  other: "[!! range index requires at least one property !!]"
+- id: storageschema.range_index_not_found
+  description: Expanded pseudo-locale missing range index.
+  other: "[!! range index {{.Name}} not found !!]"
+- id: storageschema.range_index_numeric_value_required
+  description: Expanded pseudo-locale range index numeric validation.
+  other: "[!! range index only supports numeric values, got {{.Type}} !!]"
+- id: storageschema.index_not_found
+  description: Expanded pseudo-locale missing schema index.
+  other: '[!! index "{{.Name}}" does not exist !!]'
+- id: storageschema.constraint_not_found
+  description: Expanded pseudo-locale missing schema constraint.
+  other: '[!! constraint "{{.Name}}" does not exist !!]'
+- id: storageschema.property_index_not_found
+  description: Expanded pseudo-locale missing property index.
+  other: "[!! property index {{.Label}}:{{.Property}} not found !!]"
+- id: storageschema.decay_profile_bundle_already_exists
+  description: Expanded pseudo-locale duplicate decay profile bundle.
+  other: '[!! decay profile bundle "{{.Name}}" already exists !!]'
+- id: storageschema.decay_profile_binding_already_exists
+  description: Expanded pseudo-locale duplicate decay profile binding.
+  other: '[!! decay profile binding "{{.Name}}" already exists !!]'
+- id: storageschema.decay_profile_bundle_not_found
+  description: Expanded pseudo-locale missing decay profile bundle.
+  other: '[!! decay profile bundle "{{.Name}}" not found !!]'
+- id: storageschema.decay_profile_bundle_referenced
+  description: Expanded pseudo-locale referenced decay profile bundle.
+  other: '[!! cannot drop decay profile bundle "{{.Name}}": referenced by active binding !!]'
+- id: storageschema.decay_profile_not_found
+  description: Expanded pseudo-locale missing decay profile.
+  other: '[!! decay profile "{{.Name}}" not found !!]'
+- id: storageschema.promotion_profile_already_exists
+  description: Expanded pseudo-locale duplicate promotion profile.
+  other: '[!! promotion profile "{{.Name}}" already exists !!]'
+- id: storageschema.promotion_profile_not_found
+  description: Expanded pseudo-locale missing promotion profile.
+  other: '[!! promotion profile "{{.Name}}" not found !!]'
+- id: storageschema.promotion_profile_referenced
+  description: Expanded pseudo-locale referenced promotion profile.
+  other: '[!! cannot drop promotion profile "{{.Name}}": referenced by active promotion policy !!]'
+- id: storageschema.promotion_policy_already_exists
+  description: Expanded pseudo-locale duplicate promotion policy.
+  other: '[!! promotion policy "{{.Name}}" already exists !!]'
+- id: storageschema.promotion_profile_when_clause_not_found
+  description: Expanded pseudo-locale missing WHEN-clause promotion profile.
+  other: '[!! promotion profile "{{.Name}}" not found (referenced in WHEN clause) !!]'
+- id: storageschema.promotion_policy_not_found
+  description: Expanded pseudo-locale missing promotion policy.
+  other: '[!! promotion policy "{{.Name}}" not found !!]'
+- id: storageschema.decay_edge_binding_conflict
+  description: Expanded pseudo-locale edge binding conflict.
+  other: '[!! edge type "{{.EdgeType}}" already has a decay profile binding "{{.BindingName}}" !!]'
+- id: storageschema.decay_label_binding_conflict
+  description: Expanded pseudo-locale label binding conflict.
+  other: '[!! label set {{.Labels}} already has a decay profile binding "{{.BindingName}}" !!]'
+- id: storageschema.decay_structural_index_conflict
+  description: Expanded pseudo-locale structural index conflict.
+  other: '[!! property "{{.Property}}" is in a structural index and cannot have a decay rule !!]'
+- id: storageschema.decay_profile_bundle_name_required
+  description: Expanded pseudo-locale required decay bundle name.
+  other: "[!! decay profile bundle name is required !!]"
+- id: storageschema.invalid_decay_function
+  description: Expanded pseudo-locale invalid decay function.
+  other: '[!! invalid decay function: "{{.Function}}" !!]'
+- id: storageschema.invalid_score_from_mode
+  description: Expanded pseudo-locale invalid score-from mode.
+  other: '[!! invalid score-from mode: "{{.Mode}}" !!]'
+- id: storageschema.invalid_scope_type
+  description: Expanded pseudo-locale invalid scope type.
+  other: '[!! invalid scope type: "{{.Scope}}" !!]'
+- id: storageschema.score_from_property_required
+  description: Expanded pseudo-locale required custom score property.
+  other: "[!! scoreFromProperty is required when scoreFrom is CUSTOM !!]"
+- id: storageschema.visibility_threshold_out_of_range
+  description: Expanded pseudo-locale visibility threshold validation.
+  other: '[!! visibilityThreshold must be between 0 and 1, got {{printf "%.6f" .Value}} !!]'
+- id: storageschema.score_floor_out_of_range
+  description: Expanded pseudo-locale score floor validation.
+  other: '[!! scoreFloor must be between 0 and 1, got {{printf "%.6f" .Value}} !!]'
+- id: storageschema.promotion_profile_name_required
+  description: Expanded pseudo-locale required promotion profile name.
+  other: "[!! promotion profile name is required !!]"
+- id: storageschema.multiplier_non_negative
+  description: Expanded pseudo-locale promotion multiplier validation.
+  other: '[!! multiplier must be non-negative, got {{printf "%.6f" .Value}} !!]'
+- id: storageschema.score_cap_out_of_range
+  description: Expanded pseudo-locale score cap validation.
+  other: '[!! scoreCap must be between 0 and 1, got {{printf "%.6f" .Value}} !!]'
+- id: storageschema.unknown_option
+  description: Expanded pseudo-locale unknown policy option.
+  other: '[!! unknown option: "{{.Option}}" !!]'
+- id: storageschema.constraint_contract_already_exists
+  description: Expanded pseudo-locale duplicate constraint contract.
+  other: '[!! constraint contract "{{.Name}}" already exists !!]'
+- id: storageschema.constraint_contract_name_conflict
+  description: Expanded pseudo-locale constraint contract name conflict.
+  other: '[!! constraint contract "{{.Name}}" conflicts with an existing constraint name !!]'
+- id: storageschema.scan_nodes_failed
+  description: Expanded pseudo-locale node scan failure.
+  other: "[!! scanning nodes: {{.Cause}} !!]"
+- id: storageschema.scan_relationships_failed
+  description: Expanded pseudo-locale relationship scan failure.
+  other: "[!! scanning relationships: {{.Cause}} !!]"
+- id: storageschema.unsupported_contract_target_entity_type
+  description: Expanded pseudo-locale unsupported contract target type.
+  other: "[!! unsupported constraint contract target entity type: {{.EntityType}} !!]"
+- id: storageschema.constraint_contract_invalid
+  description: Expanded pseudo-locale invalid constraint contract predicate.
+  other: '[!! constraint contract {{.Name}} invalid: predicate "{{.Predicate}}": {{.Cause}} !!]'
+- id: storageschema.constraint_contract_violated
+  description: Expanded pseudo-locale constraint contract violation.
+  other: '[!! constraint contract {{.Name}} violated: predicate "{{.Predicate}}" evaluated to false !!]'
+- id: storageschema.unsupported_node_predicate
+  description: Expanded pseudo-locale unsupported node predicate.
+  other: "[!! unsupported node predicate !!]"
+- id: storageschema.missing_relationship_endpoint
+  description: Expanded pseudo-locale missing relationship endpoint.
+  other: "[!! missing relationship endpoint !!]"
+- id: storageschema.unsupported_relationship_predicate
+  description: Expanded pseudo-locale unsupported relationship predicate.
+  other: "[!! unsupported relationship predicate !!]"
+- id: storageschema.unsupported_constraint_pattern
+  description: Expanded pseudo-locale unsupported constraint pattern.
+  other: '[!! unsupported pattern "{{.Pattern}}" !!]'
+- id: storageschema.unsupported_constraint_literal
+  description: Expanded pseudo-locale unsupported constraint literal.
+  other: '[!! unsupported literal "{{.Literal}}" !!]'

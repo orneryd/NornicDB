@@ -1,0 +1,12 @@
+- id: cypherantlr.parse_empty_query
+  description: Empty query passed to the ANTLR Parse entrypoint.
+  other: empty query
+- id: cypherantlr.parse_syntax_error
+  description: ANTLR Parse syntax failure. Detail is an untranslated parser diagnostic.
+  other: "syntax error: {{.Detail}}"
+- id: cypherantlr.validate_empty_query
+  description: Empty query passed to the ANTLR Validate entrypoint.
+  other: empty query
+- id: cypherantlr.validate_syntax_error
+  description: ANTLR Validate syntax failure. Detail is an untranslated parser diagnostic.
+  other: "syntax error: {{.Detail}}"

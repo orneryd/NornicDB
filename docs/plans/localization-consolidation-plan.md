@@ -588,8 +588,9 @@ behavior and default English remain unchanged in protocol compatibility tests.
 
 ### Phase 3: Core Errors And Returned Messages
 
-Status: in progress. Initial client-reaching `pkg/search` and `pkg/multidb`
-families are migrated with sentinel and wrapped-cause compatibility tests.
+Status: complete. Client-reaching errors in `pkg/storage`, `pkg/cypher`,
+`pkg/search`, `pkg/nornicdb`, `pkg/replication`, and `pkg/multidb` use typed
+message descriptors with sentinel and wrapped-cause compatibility tests.
 
 Migrate package by package, starting with `pkg/storage`, `pkg/cypher`,
 `pkg/search`, `pkg/nornicdb`, `pkg/replication`, and `pkg/multidb`.
@@ -601,6 +602,11 @@ sentences.
 
 Exit criteria: no reviewed client-facing inline English remains in these
 packages and all sentinel/classification tests still pass.
+
+Reviewed deferrals are stable machine sentinels, private parser/registration
+invariants, storage codec and WAL corruption diagnostics, plugin/APOC scope,
+and operator-only startup or recovery diagnostics. These remain machine text
+or belong to the later procedure-metadata and native-message phases.
 
 ### Phase 4: Procedure Metadata And CLI
 

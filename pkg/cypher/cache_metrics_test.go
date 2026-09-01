@@ -99,7 +99,7 @@ func TestQueryResultCache_BridgeIntoCacheBag(t *testing.T) {
 // emits a cache_evictions_total{cache="query_result", reason="lru"} event.
 // reason values come from the closed observability.AllowedEvictionReasons
 // enum {lru, ttl, capacity, manual} — anything else would be a forbidden
-// label cardinality bomb caught at registration via Phase 3 D-03a.
+// label cardinality bomb caught at registration by the forbidden-label discipline.
 func TestCacheEvictions_ClosedReasonEnum(t *testing.T) {
 	_, cb, _ := newCacheBagsForTest(t)
 	sc := NewSmartQueryCache(2) // tiny so LRU eviction triggers

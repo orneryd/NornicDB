@@ -99,6 +99,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ReplicationMode defines how the node participates in replication.
@@ -555,45 +556,45 @@ func (c *Config) Validate() error {
 
 	case ModeHAStandby:
 		if c.HAStandby.Role == "" {
-			return fmt.Errorf("ha_standby mode requires NORNICDB_CLUSTER_HA_ROLE (primary or standby)")
+			return localizedError(localization.ReplicationConfigHARoleRequired(), nil)
 		}
 		if c.HAStandby.Role != "primary" && c.HAStandby.Role != "standby" {
-			return fmt.Errorf("invalid HA role: %s (must be 'primary' or 'standby')", c.HAStandby.Role)
+			return localizedError(localization.ReplicationConfigInvalidHARole(c.HAStandby.Role), nil)
 		}
 		if c.HAStandby.PeerAddr == "" {
-			return fmt.Errorf("ha_standby mode requires NORNICDB_CLUSTER_HA_PEER_ADDR")
+			return localizedError(localization.ReplicationConfigHAPeerAddressRequired(), nil)
 		}
 		if c.HAStandby.SyncMode == "" {
 			c.HAStandby.SyncMode = SyncAsync
 		}
 		if c.HAStandby.SyncMode != SyncAsync && c.HAStandby.SyncMode != SyncQuorum {
-			return fmt.Errorf("invalid HA sync mode: %s (must be 'async' or 'quorum')", c.HAStandby.SyncMode)
+			return localizedError(localization.ReplicationConfigInvalidHASyncMode(string(c.HAStandby.SyncMode)), nil)
 		}
 
 	case ModeRaft:
 		if c.Raft.Bootstrap && len(c.Raft.Peers) == 0 {
 			// Bootstrap node can start alone, others will join
 		} else if !c.Raft.Bootstrap && len(c.Raft.Peers) == 0 {
-			return fmt.Errorf("raft mode requires NORNICDB_CLUSTER_RAFT_PEERS or NORNICDB_CLUSTER_RAFT_BOOTSTRAP=true")
+			return localizedError(localization.ReplicationConfigRaftPeersRequired(), nil)
 		}
 
 	case ModeMultiRegion:
 		if c.MultiRegion.RegionID == "" {
-			return fmt.Errorf("multi_region mode requires NORNICDB_CLUSTER_REGION_ID")
+			return localizedError(localization.ReplicationConfigRegionIDRequired(), nil)
 		}
 		if c.MultiRegion.CrossRegionSyncMode == "" {
 			c.MultiRegion.CrossRegionSyncMode = SyncAsync
 		}
 		if c.MultiRegion.CrossRegionSyncMode != SyncAsync && c.MultiRegion.CrossRegionSyncMode != SyncQuorum {
-			return fmt.Errorf("invalid cross-region sync mode: %s (must be 'async' or 'quorum')", c.MultiRegion.CrossRegionSyncMode)
+			return localizedError(localization.ReplicationConfigInvalidCrossRegionSyncMode(string(c.MultiRegion.CrossRegionSyncMode)), nil)
 		}
 
 	default:
-		return fmt.Errorf("unknown replication mode: %s", c.Mode)
+		return localizedError(localization.ReplicationConfigUnknownMode(c.Mode), nil)
 	}
 
 	if c.NodeID == "" {
-		return fmt.Errorf("NORNICDB_CLUSTER_NODE_ID is required")
+		return localizedError(localization.ReplicationConfigNodeIDRequired(), nil)
 	}
 
 	// TLS validation for non-standalone modes
@@ -604,7 +605,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.ReplicationSecret != "" && len(c.ReplicationSecret) < 32 {
-		return fmt.Errorf("replication secret must be at least 32 characters")
+		return localizedError(localization.ReplicationConfigSecretTooShort(32), nil)
 	}
 
 	return nil
@@ -620,15 +621,15 @@ func (c *Config) validateTLS() error {
 
 	// If TLS is enabled, cert and key are required
 	if c.TLS.CertFile == "" {
-		return fmt.Errorf("TLS enabled but NORNICDB_CLUSTER_TLS_CERT_FILE not set")
+		return localizedError(localization.ReplicationConfigTLSCertRequired(), nil)
 	}
 	if c.TLS.KeyFile == "" {
-		return fmt.Errorf("TLS enabled but NORNICDB_CLUSTER_TLS_KEY_FILE not set")
+		return localizedError(localization.ReplicationConfigTLSKeyRequired(), nil)
 	}
 
 	// Verify mTLS configuration
 	if c.TLS.VerifyClient && c.TLS.CAFile == "" {
-		return fmt.Errorf("TLS client verification enabled but NORNICDB_CLUSTER_TLS_CA_FILE not set")
+		return localizedError(localization.ReplicationConfigTLSCARequired(), nil)
 	}
 
 	// Warn about insecure configurations (but allow for testing)
@@ -641,7 +642,7 @@ func (c *Config) validateTLS() error {
 	case "", "1.2", "1.3":
 		// Valid
 	default:
-		return fmt.Errorf("invalid TLS min version: %s (must be '1.2' or '1.3')", c.TLS.MinVersion)
+		return localizedError(localization.ReplicationConfigInvalidTLSMinVersion(c.TLS.MinVersion), nil)
 	}
 
 	return nil

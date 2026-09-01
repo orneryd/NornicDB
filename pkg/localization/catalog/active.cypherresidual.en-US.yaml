@@ -1,0 +1,68 @@
+- id: cypherresidual.with_clause_not_found
+  other: 'WITH clause not found in query: "{{.Query}}"'
+- id: cypherresidual.unwind_clause_not_found
+  other: 'UNWIND clause not found in query: "{{.Query}}"'
+- id: cypherresidual.union_clause_not_found
+  other: 'UNION clause not found in query: "{{.Query}}"'
+- id: cypherresidual.union_all_clause_not_found
+  other: 'UNION ALL clause not found in query: "{{.Query}}"'
+- id: cypherresidual.union_branch_failed
+  other: 'error in UNION query {{.Branch}} ("{{.Query}}"): {{.Cause}}'
+- id: cypherresidual.union_column_count_mismatch
+  other: "UNION queries must return the same number of columns (got {{.Expected}} and {{.Actual}})"
+- id: cypherresidual.optional_match_not_found
+  other: 'OPTIONAL MATCH not found in query: "{{.Query}}"'
+- id: cypherresidual.compound_optional_match_not_found
+  other: 'OPTIONAL MATCH not found in compound query: "{{.Query}}"'
+- id: cypherresidual.match_node_pattern_parse_failed
+  other: 'could not parse node pattern from MATCH clause: "{{.Pattern}}"'
+- id: cypherresidual.initial_nodes_lookup_failed
+  other: "failed to get initial nodes: {{.Cause}}"
+- id: cypherresidual.sum_arithmetic_term_unsupported
+  other: "unsupported SUM arithmetic term: {{.Term}}"
+- id: cypherresidual.sum_numeric_required
+  other: 'SUM() requires numeric values, got {{.ValueType}} in expression "{{.Expression}}"'
+- id: cypherresidual.return_clause_required
+  other: "RETURN clause required"
+- id: cypherresidual.foreach_clause_not_found
+  other: 'FOREACH clause not found in query: "{{.Query}}"'
+- id: cypherresidual.load_csv_unsupported
+  other: "LOAD CSV is not supported in NornicDB embedded mode"
+- id: cypherresidual.empty_label_after_colon
+  other: "empty label name after colon in pattern: {{.Pattern}}"
+- id: cypherresidual.property_map_syntax_invalid
+  other: "invalid property map syntax in pattern: {{.Pattern}}"
+- id: cypherresidual.relationship_connector_expected
+  other: "invalid relationship pattern: expected -[ or <-[, got: {{.Connector}}"
+- id: cypherresidual.create_relationship_invalid
+  other: "invalid relationship pattern in CREATE: {{.Pattern}}"
+- id: cypherresidual.with_item_invalid
+  other: 'invalid WITH item: "{{.Item}}"'
+- id: cypherresidual.create_set_scope_entity_required
+  other: 'WITH item "{{.Item}}" does not resolve to a node or relationship in CREATE...SET scope'
+- id: cypherresidual.create_with_expression_invalid
+  other: 'invalid CREATE...WITH query: invalid WITH expression "{{.Expression}}"'
+- id: cypherresidual.merge_pattern_invalid
+  other: "invalid pattern: {{.Pattern}}"
+- id: cypherresidual.set_merge_map_or_parameter_required
+  other: 'SET += requires a map or parameter (got: "{{.Value}}")'
+- id: cypherresidual.set_assignment_invalid
+  other: 'invalid SET assignment: "{{.Assignment}}" (expected n.property = value or n:Label)'
+- id: cypherresidual.set_entity_assignment_invalid
+  other: 'invalid SET assignment: "{{.Assignment}}" (expected variable.property = value or variable = {property: value}): {{.Cause}}'
+- id: cypherresidual.collect_subquery_syntax_invalid
+  other: "invalid COLLECT subquery syntax"
+- id: cypherresidual.collect_subquery_return_required
+  other: "COLLECT subquery must have a RETURN clause"
+- id: cypherresidual.collect_subquery_execution_failed
+  other: "COLLECT subquery execution failed: {{.Cause}}"
+- id: cypherresidual.policy_disallowed
+  other: 'policy constraint "{{.Name}}" violated: ({{.SourceLabel}})-[:{{.EdgeType}}]->({{.TargetLabel}}) is DISALLOWED'
+- id: cypherresidual.policy_allowed_required
+  other: "policy constraint violated: no ALLOWED policy permits edge of type {{.EdgeType}} with these endpoint labels"
+- id: cypherresidual.composite_show_target_required
+  other: "{{.Code}}: {{.Command}} on composite databases requires a constituent target. Use USE <composite>.<alias> {{.Command}}"
+- id: cypherresidual.show_aliases_manager_unavailable
+  other: "database manager not available - SHOW ALIASES requires multi-database support"
+- id: cypherresidual.show_aliases_syntax_invalid
+  other: "invalid SHOW ALIASES syntax"

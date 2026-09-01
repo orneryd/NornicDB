@@ -1,0 +1,27 @@
+- id: cyphergraphprocedures.graph_name_required
+  description: Falta el nombre del grafo proyectado. Procedure no se traduce.
+  other: "se requiere el nombre del grafo para {{.Procedure}}"
+- id: cyphergraphprocedures.stream_nodes_failed
+  description: Error al transmitir nodos de la proyección. Cause no se traduce.
+  other: "no se pudieron transmitir los nodos: {{.Cause}}"
+- id: cyphergraphprocedures.stream_edges_failed
+  description: Error al transmitir aristas de la proyección. Cause no se traduce.
+  other: "no se pudieron transmitir las aristas: {{.Cause}}"
+- id: cyphergraphprocedures.graph_does_not_exist
+  description: Falta el grafo proyectado. Graph no se traduce.
+  other: "el grafo '{{.Graph}}' no existe"
+- id: cyphergraphprocedures.graph_does_not_exist_project_first
+  description: Falta la proyección de grafo de FastRP. Graph y gds.graph.project no se traducen.
+  other: "el grafo '{{.Graph}}' no existe. Créelo primero con gds.graph.project"
+- id: cyphergraphprocedures.build_graph_failed
+  description: Error al construir el grafo de predicción de enlaces. Cause no se traduce.
+  other: "no se pudo construir el grafo: {{.Cause}}"
+- id: cyphergraphprocedures.invalid_procedure_call_syntax
+  description: Llamada a procedimiento de predicción de enlaces no válida.
+  other: sintaxis de llamada a procedimiento no válida
+- id: cyphergraphprocedures.variable_not_found
+  description: Variable de consulta no resuelta. Variable y QuotedVariable no se traducen.
+  other: "no se encontró la variable {{.QuotedVariable}} en el contexto de la consulta (id({{.Variable}}) no se puede resolver)"
+- id: cyphergraphprocedures.source_node_required
+  description: Falta el parámetro sourceNode. sourceNode no se traduce.
+  other: se requiere el parámetro sourceNode

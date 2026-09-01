@@ -1,8 +1,7 @@
 package cypher
 
 import (
-	"fmt"
-
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -100,5 +99,5 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // clients that pattern-match on that message keep working against
 // NornicDB.
 func residualRelationshipDeleteError(nodeID storage.NodeID) error {
-	return fmt.Errorf("Cannot delete node %s, because it still has relationships. To delete this node, you must first delete its relationships (or use DETACH DELETE)", nodeID)
+	return localizedError(localization.CypherTransactionsDeleteResidualRelationships(string(nodeID)), nil)
 }

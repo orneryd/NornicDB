@@ -1,7 +1,7 @@
 // CALL procedure implementations for NornicDB.
 // This file contains all CALL procedures for Neo4j compatibility and NornicDB extensions.
 //
-// Phase 3: Core Procedures Implementation
+// Core procedure implementation.
 // =======================================
 //
 // Critical Neo4j-compatible procedures:
@@ -28,6 +28,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -413,7 +414,7 @@ func expectedReturnColumnsFromTail(tail string) []string {
 
 func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
 	if seed == nil {
-		return nil, fmt.Errorf("CALL tail execution requires seed result")
+		return nil, localizedError(localization.CypherCommandRoutingCallTailSeedRequired(), nil)
 	}
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
@@ -931,11 +932,11 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 	params := getParamsFromContext(ctx)
 	limit, ok := resolveOptionalIntLiteralOrParam(ctx, plan.limitToken)
 	if !ok {
-		return nil, fmt.Errorf("invalid CALL tail LIMIT: %s", plan.limitToken)
+		return nil, localizedError(localization.CypherCommandRoutingCallTailLimitInvalid(plan.limitToken), nil)
 	}
 	skip, ok := resolveOptionalIntLiteralOrParam(ctx, plan.skipToken)
 	if !ok {
-		return nil, fmt.Errorf("invalid CALL tail SKIP: %s", plan.skipToken)
+		return nil, localizedError(localization.CypherCommandRoutingCallTailSkipInvalid(plan.skipToken), nil)
 	}
 
 	result := &ExecuteResult{
@@ -3729,7 +3730,7 @@ func (e *StorageExecutor) evaluateYieldWhere(ctx context.Context, whereExpr stri
 	case nil:
 		return false, nil
 	default:
-		return false, fmt.Errorf("WHERE expression did not evaluate to boolean: %v", result)
+		return false, localizedError(localization.CypherCommandRoutingWhereBooleanRequired(fmt.Sprint(result)), nil)
 	}
 }
 
@@ -3992,7 +3993,7 @@ func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*Exec
 	default:
 		// Extract procedure name for clearer error
 		procName := extractProcedureName(callCypher)
-		return nil, fmt.Errorf("unknown procedure: %s (try SHOW PROCEDURES for available procedures)", procName)
+		return nil, localizedError(localization.CypherCommandRoutingUnknownProcedure(procName), nil)
 	}
 
 	// Return error if procedure failed

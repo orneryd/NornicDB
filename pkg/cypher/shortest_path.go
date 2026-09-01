@@ -9,9 +9,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -36,15 +36,15 @@ func (e *StorageExecutor) parseShortestPathQuery(ctx context.Context, cypher str
 
 	funcName, pattern, funcIdx, ok := extractShortestPathCall(cypher)
 	if !ok {
-		return nil, fmt.Errorf("not a shortest path query")
+		return nil, localizedError(localization.CypherMatchingShortestPathQueryExpected(), nil)
 	}
 	query.findAll = strings.EqualFold(funcName, "allShortestPaths")
 	if pattern == "" {
-		return nil, fmt.Errorf("invalid shortestPath syntax")
+		return nil, localizedError(localization.CypherMatchingShortestPathSyntaxInvalid(), nil)
 	}
 	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil {
-		return nil, fmt.Errorf("invalid path pattern: %s", pattern)
+		return nil, localizedError(localization.CypherMatchingPathPatternInvalid(pattern), nil)
 	}
 	query.startNode = match.StartNode
 	query.endNode = match.EndNode
@@ -270,7 +270,7 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 		// MATCH clause — refuse rather than silently scanning every node and
 		// running BFS from each one (which produces a multi-second hang on
 		// any non-trivial graph).
-		return nil, fmt.Errorf("shortestPath: could not resolve start variable %q from preceding MATCH clause", query.startNode.variable)
+		return nil, localizedError(localization.CypherMatchingShortestPathStartVariableUnresolved(query.startNode.variable), nil)
 	} else if len(query.startNode.labels) > 0 {
 		startNodes, _ = e.storage.GetNodesByLabel(query.startNode.labels[0])
 		if len(query.startNode.properties) > 0 {
@@ -289,7 +289,7 @@ func (e *StorageExecutor) executeShortestPathQuery(ctx context.Context, query *S
 	if endIsVarRef && query.endVarBinding != nil {
 		endNodes = []*storage.Node{query.endVarBinding}
 	} else if endIsVarRef {
-		return nil, fmt.Errorf("shortestPath: could not resolve end variable %q from preceding MATCH clause", query.endNode.variable)
+		return nil, localizedError(localization.CypherMatchingShortestPathEndVariableUnresolved(query.endNode.variable), nil)
 	} else if len(query.endNode.labels) > 0 {
 		endNodes, _ = e.storage.GetNodesByLabel(query.endNode.labels[0])
 		if len(query.endNode.properties) > 0 {

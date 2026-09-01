@@ -1,0 +1,81 @@
+- id: cypheradmin.database_manager_unavailable
+  description: Expanded pseudo-locale database manager response.
+  other: "[!! database manager not available - {{.Command}} requires multi-database support !!]"
+- id: cypheradmin.invalid_syntax
+  description: Expanded pseudo-locale invalid admin syntax.
+  other: "[!! invalid {{.Command}} syntax !!]"
+- id: cypheradmin.database_name_expected
+  description: Expanded pseudo-locale missing database name.
+  other: "[!! invalid {{.Command}} syntax: database name expected !!]"
+- id: cypheradmin.database_name_empty
+  description: Expanded pseudo-locale empty database name.
+  other: "[!! invalid {{.Command}} syntax: database name cannot be empty !!]"
+- id: cypheradmin.invalid_database_name
+  description: Expanded pseudo-locale invalid database name.
+  other: "[!! invalid database name: '{{.Database}}' (cannot contain whitespace) !!]"
+- id: cypheradmin.database_already_exists
+  description: Expanded pseudo-locale database conflict.
+  other: "[!! database '{{.Database}}' already exists !!]"
+- id: cypheradmin.create_database_failed
+  description: Expanded pseudo-locale database creation failure.
+  other: "[!! failed to create database '{{.Database}}': {{.Cause}} !!]"
+- id: cypheradmin.invalid_identifier
+  description: Expanded pseudo-locale invalid identifier.
+  other: "[!! invalid identifier {{.Identifier}}: nested backticks are not supported !!]"
+- id: cypheradmin.database_does_not_exist
+  description: Expanded pseudo-locale missing database.
+  other: "[!! database '{{.Database}}' does not exist !!]"
+- id: cypheradmin.drop_database_failed
+  description: Expanded pseudo-locale database deletion failure.
+  other: "[!! failed to drop database '{{.Database}}': {{.Cause}} !!]"
+- id: cypheradmin.alias_name_expected
+  description: Expanded pseudo-locale missing alias name.
+  other: "[!! invalid {{.Command}} syntax: alias name expected !!]"
+- id: cypheradmin.term_expected
+  description: Expanded pseudo-locale missing command term.
+  other: "[!! invalid {{.Command}} syntax: {{.Term}} expected !!]"
+- id: cypheradmin.clause_expected
+  description: Expanded pseudo-locale missing command clause.
+  other: "[!! invalid {{.Command}} syntax: {{.Clause}} clause expected !!]"
+- id: cypheradmin.alias_name_empty
+  description: Expanded pseudo-locale empty alias name.
+  other: "[!! invalid {{.Command}} syntax: alias name cannot be empty !!]"
+- id: cypheradmin.invalid_alias_name
+  description: Expanded pseudo-locale invalid alias name.
+  other: "[!! invalid alias name: '{{.Alias}}' (cannot contain whitespace) !!]"
+- id: cypheradmin.create_alias_failed
+  description: Expanded pseudo-locale alias creation failure.
+  other: "[!! failed to create alias '{{.Alias}}' for database '{{.Database}}': {{.Cause}} !!]"
+- id: cypheradmin.alias_does_not_exist
+  description: Expanded pseudo-locale missing alias.
+  other: "[!! alias '{{.Alias}}' does not exist !!]"
+- id: cypheradmin.drop_alias_failed
+  description: Expanded pseudo-locale alias deletion failure.
+  other: "[!! failed to drop alias '{{.Alias}}': {{.Cause}} !!]"
+- id: cypheradmin.keyword_expected
+  description: Expanded pseudo-locale missing command keyword.
+  other: "[!! invalid {{.Command}} syntax: {{.Keyword}} keyword expected !!]"
+- id: cypheradmin.database_not_found
+  description: Expanded pseudo-locale database lookup failure.
+  other: "[!! database '{{.Database}}' not found: {{.Cause}} !!]"
+- id: cypheradmin.invalid_limits_type
+  description: Expanded pseudo-locale invalid limits type.
+  other: "[!! invalid limits type returned from database manager !!]"
+- id: cypheradmin.limit_assignment_expected
+  description: Expanded pseudo-locale missing limit assignment.
+  other: "[!! invalid ALTER DATABASE syntax: limit assignment expected !!]"
+- id: cypheradmin.invalid_limit_assignment
+  description: Expanded pseudo-locale invalid limit assignment.
+  other: "[!! invalid limit assignment syntax: expected 'limit_name = value', got '{{.Assignment}}' !!]"
+- id: cypheradmin.invalid_limit_value
+  description: Expanded pseudo-locale invalid numeric limit.
+  other: "[!! invalid {{.Limit}} value: {{.Cause}} !!]"
+- id: cypheradmin.invalid_duration_limit_value
+  description: Expanded pseudo-locale invalid duration limit.
+  other: "[!! invalid {{.Limit}} value (expected duration like '60s' or '5m'): {{.Cause}} !!]"
+- id: cypheradmin.unknown_limit_name
+  description: Expanded pseudo-locale unknown limit key.
+  other: "[!! unknown limit name: '{{.Limit}}' (supported: {{.Supported}}) !!]"
+- id: cypheradmin.set_database_limits_failed
+  description: Expanded pseudo-locale database limit update failure.
+  other: "[!! failed to set limits for database '{{.Database}}': {{.Cause}} !!]"

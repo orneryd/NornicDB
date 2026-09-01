@@ -30,7 +30,6 @@ package cypher
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"math"
 	mathrand "math/rand"
 	"runtime"
@@ -39,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -110,7 +110,7 @@ func (e *StorageExecutor) callGdsGraphProject(cypher string) (*ExecuteResult, er
 		graphName = extractGraphNameFromReturn(cypher)
 	}
 	if graphName == "" {
-		return nil, fmt.Errorf("graph name required for gds.graph.project")
+		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.graph.project"), nil)
 	}
 
 	// Determine node labels and relationship types
@@ -221,7 +221,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to stream nodes: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresStreamNodesFailed(err), err)
 	}
 	projection.NodeCount = len(projection.NodeIDs)
 
@@ -292,7 +292,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to stream edges: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
 	projection.RelationshipCount = relCount
 
@@ -324,7 +324,7 @@ func (e *StorageExecutor) callGdsGraphList() (*ExecuteResult, error) {
 func (e *StorageExecutor) callGdsGraphDrop(cypher string) (*ExecuteResult, error) {
 	graphName := extractStringArg(cypher, "gds.graph.drop")
 	if graphName == "" {
-		return nil, fmt.Errorf("graph name required for gds.graph.drop")
+		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.graph.drop"), nil)
 	}
 
 	projectionsMu.Lock()
@@ -335,7 +335,7 @@ func (e *StorageExecutor) callGdsGraphDrop(cypher string) (*ExecuteResult, error
 	projectionsMu.Unlock()
 
 	if !exists {
-		return nil, fmt.Errorf("graph '%s' does not exist", graphName)
+		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(graphName), nil)
 	}
 
 	return &ExecuteResult{
@@ -366,7 +366,7 @@ func (e *StorageExecutor) callGdsFastRPStream(cypher string) (*ExecuteResult, er
 	// Parse graph name
 	graphName := extractStringArg(cypher, "gds.fastrp.stream")
 	if graphName == "" {
-		return nil, fmt.Errorf("graph name required for gds.fastRP.stream")
+		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.fastRP.stream"), nil)
 	}
 
 	// Get projection
@@ -375,7 +375,7 @@ func (e *StorageExecutor) callGdsFastRPStream(cypher string) (*ExecuteResult, er
 	projectionsMu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("graph '%s' does not exist. Create it with gds.graph.project first", graphName)
+		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExistProjectFirst(graphName), nil)
 	}
 
 	// Parse config
@@ -401,7 +401,7 @@ func (e *StorageExecutor) callGdsFastRPStats(cypher string) (*ExecuteResult, err
 	// Parse graph name
 	graphName := extractStringArg(cypher, "gds.fastrp.stats")
 	if graphName == "" {
-		return nil, fmt.Errorf("graph name required for gds.fastRP.stats")
+		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.fastRP.stats"), nil)
 	}
 
 	// Get projection
@@ -410,7 +410,7 @@ func (e *StorageExecutor) callGdsFastRPStats(cypher string) (*ExecuteResult, err
 	projectionsMu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("graph '%s' does not exist", graphName)
+		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(graphName), nil)
 	}
 
 	// Parse config

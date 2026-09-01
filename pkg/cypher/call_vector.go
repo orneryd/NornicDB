@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -36,7 +37,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
 	indexName, k, input, err := e.parseVectorQueryParams(cypher)
 	if err != nil {
-		return nil, fmt.Errorf("vector query parse error: %w", err)
+		return nil, localizedError(localization.CypherSpecializedCallsVectorQueryParseFailed(err), err)
 	}
 
 	// Resolve the query vector
@@ -48,11 +49,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	} else if input.stringQuery != "" {
 		// String query - embed server-side (NornicDB enhancement)
 		if e.embedder == nil {
-			return nil, fmt.Errorf("string query provided but no embedder configured; use vector array or configure embedding service")
+			return nil, localizedError(localization.CypherSpecializedCallsStringQueryEmbedderRequired(), nil)
 		}
 		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
 		if embedErr != nil {
-			return nil, fmt.Errorf("failed to embed query '%s': %w", input.stringQuery, embedErr)
+			return nil, localizedError(localization.CypherSpecializedCallsEmbedQueryTextFailed(input.stringQuery, embedErr), embedErr)
 		}
 		queryVector = embedded
 	} else if input.paramName != "" {
@@ -70,7 +71,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 		paramValue, exists := params[input.paramName]
 		if !exists {
 			// Parameter not found in provided parameters
-			return nil, fmt.Errorf("parameter $%s not provided", input.paramName)
+			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(input.paramName), nil)
 		}
 
 		// Convert parameter value to []float32
@@ -96,21 +97,21 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 				case int64:
 					queryVector = append(queryVector, float32(v))
 				default:
-					return nil, fmt.Errorf("parameter $%s contains non-numeric value: %T", input.paramName, v)
+					return nil, localizedError(localization.CypherSpecializedCallsParameterNonNumeric(input.paramName, fmt.Sprintf("%T", v)), nil)
 				}
 			}
 		case string:
 			// String parameter - embed it
 			if e.embedder == nil {
-				return nil, fmt.Errorf("parameter $%s is a string but no embedder configured; provide vector array or configure embedding service", input.paramName)
+				return nil, localizedError(localization.CypherSpecializedCallsParameterStringEmbedderRequired(input.paramName), nil)
 			}
 			embedded, embedErr := e.embedVectorQueryText(ctx, val)
 			if embedErr != nil {
-				return nil, fmt.Errorf("failed to embed parameter $%s value '%s': %w", input.paramName, val, embedErr)
+				return nil, localizedError(localization.CypherSpecializedCallsEmbedParameterFailed(input.paramName, val, embedErr), embedErr)
 			}
 			queryVector = embedded
 		default:
-			return nil, fmt.Errorf("parameter $%s has unsupported type for vector query: %T (expected []float32, []float64, []interface{}, or string)", input.paramName, val)
+			return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, fmt.Sprintf("%T", val)), nil)
 		}
 	} else {
 		// No query input provided - check if this might be a substituted invalid parameter
@@ -134,12 +135,12 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 			if len(unsupportedParams) > 0 {
 				// Found parameters with unsupported types - provide specific error
 				paramList := strings.Join(unsupportedParams, ", ")
-				return nil, fmt.Errorf("no query vector or search text provided - parameter(s) %s have unsupported type (expected []float32, []float64, []interface{}, or string)", paramList)
+				return nil, localizedError(localization.CypherSpecializedCallsUnsupportedParameters(paramList), nil)
 			}
 			// Parameters exist but all have supported types - might be a different issue
-			return nil, fmt.Errorf("no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)")
+			return nil, localizedError(localization.CypherSpecializedCallsQueryInputPossiblyUnsupported(), nil)
 		}
-		return nil, fmt.Errorf("no query vector or search text provided")
+		return nil, localizedError(localization.CypherSpecializedCallsQueryInputRequired(), nil)
 	}
 
 	result := &ExecuteResult{
@@ -192,7 +193,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 	if !useService {
 		nodeScores, ok := e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, k, queryVector, true, wantDims)
 		if !ok {
-			return nil, fmt.Errorf("vector query failed")
+			return nil, localizedError(localization.CypherSpecializedCallsVectorQueryFailed(), nil)
 		}
 		for _, hit := range nodeScores {
 			result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
@@ -253,27 +254,27 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 // Syntax: CALL db.index.vector.embed('query text') YIELD embedding
 func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.embedder == nil {
-		return nil, fmt.Errorf("no embedder configured")
+		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
 	}
 
 	upper := strings.ToUpper(cypher)
 	procIdx := strings.Index(upper, "DB.INDEX.VECTOR.EMBED")
 	if procIdx == -1 {
-		return nil, fmt.Errorf("invalid db.index.vector.embed syntax")
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedInvalidSyntax(), nil)
 	}
 	parenStart := strings.Index(cypher[procIdx:], "(")
 	if parenStart == -1 {
-		return nil, fmt.Errorf("db.index.vector.embed requires one argument")
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedArgumentRequired(), nil)
 	}
 	parenStart += procIdx
 	parenEnd := e.findMatchingParen(cypher, parenStart)
 	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in db.index.vector.embed")
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedUnmatchedParenthesis(), nil)
 	}
 
 	arg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
 	if arg == "" {
-		return nil, fmt.Errorf("db.index.vector.embed requires non-empty text")
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}
 
 	var text string
@@ -281,33 +282,33 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher str
 		name := strings.TrimPrefix(arg, "$")
 		params := getParamsFromContext(ctx)
 		if params == nil {
-			return nil, fmt.Errorf("parameter $%s not provided", name)
+			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
 		}
 		value, ok := params[name]
 		if !ok {
-			return nil, fmt.Errorf("parameter $%s not provided", name)
+			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
 		}
 		s, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("db.index.vector.embed parameter $%s must be STRING", name)
+			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedParameterString(name), nil)
 		}
 		text = s
 	} else {
 		value := e.parseValue(ctx, arg)
 		s, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("db.index.vector.embed requires STRING text")
+			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedStringRequired(), nil)
 		}
 		text = s
 	}
 
 	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("db.index.vector.embed requires non-empty text")
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}
 
 	embedding, err := embedQueryChunked(ctx, e.embedder, text)
 	if err != nil {
-		return nil, fmt.Errorf("failed to embed query: %w", err)
+		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedFailed(err), err)
 	}
 
 	return &ExecuteResult{
@@ -341,14 +342,14 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")
 	}
 	if callIdx == -1 {
-		return "", 0, nil, fmt.Errorf("vector query procedure not found")
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(), nil)
 	}
 
 	// Find the opening parenthesis
 	rest := cypher[callIdx:]
 	parenIdx := strings.Index(rest, "(")
 	if parenIdx == -1 {
-		return "", 0, nil, fmt.Errorf("missing parameters")
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
 	}
 
 	// Find matching closing parenthesis (while respecting quoted strings).
@@ -389,7 +390,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		}
 	}
 	if endIdx == -1 {
-		return "", 0, nil, fmt.Errorf("unmatched parenthesis")
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
 	}
 
 	params := parenContent[:endIdx]

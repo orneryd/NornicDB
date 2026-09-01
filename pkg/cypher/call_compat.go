@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -399,7 +400,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	// queryInput can be: [0.1, 0.2, ...] OR 'search text' OR $param
 	indexName, k, input, err := e.parseVectorQueryParams(cypher)
 	if err != nil {
-		return nil, fmt.Errorf("vector query parse error: %w", err)
+		return nil, localizedError(localization.CypherProceduresVectorQueryParseFailed(err), err)
 	}
 
 	// Resolve the query vector (same logic as queryNodes)
@@ -411,11 +412,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	} else if input.stringQuery != "" {
 		// String query - embed server-side (NornicDB enhancement)
 		if e.embedder == nil {
-			return nil, fmt.Errorf("string query provided but no embedder configured; use vector array or configure embedding service")
+			return nil, localizedError(localization.CypherProceduresStringQueryEmbedderRequired(), nil)
 		}
 		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
 		if embedErr != nil {
-			return nil, fmt.Errorf("failed to embed query '%s': %w", input.stringQuery, embedErr)
+			return nil, localizedError(localization.CypherProceduresEmbedQueryFailed(input.stringQuery, embedErr), embedErr)
 		}
 		queryVector = embedded
 	} else if input.paramName != "" {
@@ -432,7 +433,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 		paramValue, exists := params[input.paramName]
 		if !exists {
 			// Parameter not found in provided parameters
-			return nil, fmt.Errorf("parameter $%s not provided", input.paramName)
+			return nil, localizedError(localization.CypherProceduresParameterNotProvided(input.paramName), nil)
 		}
 
 		// Convert parameter value to []float32
@@ -458,21 +459,21 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 				case int64:
 					queryVector = append(queryVector, float32(v))
 				default:
-					return nil, fmt.Errorf("parameter $%s contains non-numeric value: %T", input.paramName, v)
+					return nil, localizedError(localization.CypherProceduresParameterNonNumeric(input.paramName, fmt.Sprintf("%T", v)), nil)
 				}
 			}
 		case string:
 			// String parameter - embed it
 			if e.embedder == nil {
-				return nil, fmt.Errorf("parameter $%s is a string but no embedder configured; provide vector array or configure embedding service", input.paramName)
+				return nil, localizedError(localization.CypherProceduresParameterStringEmbedderRequired(input.paramName), nil)
 			}
 			embedded, embedErr := e.embedVectorQueryText(ctx, val)
 			if embedErr != nil {
-				return nil, fmt.Errorf("failed to embed parameter $%s value '%s': %w", input.paramName, val, embedErr)
+				return nil, localizedError(localization.CypherProceduresEmbedParameterFailed(input.paramName, val, embedErr), embedErr)
 			}
 			queryVector = embedded
 		default:
-			return nil, fmt.Errorf("parameter $%s has unsupported type for vector query: %T (expected []float32, []float64, []interface{}, or string)", input.paramName, val)
+			return nil, localizedError(localization.CypherProceduresParameterUnsupportedType(input.paramName, fmt.Sprintf("%T", val)), nil)
 		}
 	} else {
 		// No query input provided - check if this might be a substituted invalid parameter
@@ -496,12 +497,12 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 			if len(unsupportedParams) > 0 {
 				// Found parameters with unsupported types - provide specific error
 				paramList := strings.Join(unsupportedParams, ", ")
-				return nil, fmt.Errorf("no query vector or search text provided - parameter(s) %s have unsupported type (expected []float32, []float64, []interface{}, or string)", paramList)
+				return nil, localizedError(localization.CypherProceduresUnsupportedParameters(paramList), nil)
 			}
 			// Parameters exist but all have supported types - might be a different issue
-			return nil, fmt.Errorf("no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)")
+			return nil, localizedError(localization.CypherProceduresQueryInputPossiblyUnsupported(), nil)
 		}
-		return nil, fmt.Errorf("no query vector or search text provided")
+		return nil, localizedError(localization.CypherProceduresQueryInputRequired(), nil)
 	}
 
 	result := &ExecuteResult{
@@ -622,20 +623,20 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, 
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "CREATENODEINDEX")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.vector.createNodeIndex syntax")
+		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(false), nil)
 	}
 
 	remainder := cypher[idx:]
 	openParen := strings.Index(remainder, "(")
 	closeParen := strings.LastIndex(remainder, ")")
 	if openParen < 0 || closeParen < 0 {
-		return nil, fmt.Errorf("invalid syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(true), nil)
 	}
 
 	args := remainder[openParen+1 : closeParen]
 	parts := strings.Split(args, ",")
 	if len(parts) < 4 {
-		return nil, fmt.Errorf("db.index.vector.createNodeIndex requires at least 4 arguments: indexName, label, property, dimension")
+		return nil, localizedError(localization.CypherProceduresVectorCreateNodeArgumentsRequired(), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -654,7 +655,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, 
 	schema := e.storage.GetSchema()
 	err := schema.AddVectorIndexForEntity(indexName, label, property, dimension, similarity, storage.ConstraintEntityNode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create vector index: %w", err)
+		return nil, localizedError(localization.CypherProceduresCreateVectorIndexFailed(err), err)
 	}
 
 	e.registerVectorSpace(indexName, label, property, dimension, similarity)
@@ -671,20 +672,20 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.vector.createRelationshipIndex syntax")
+		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipInvalidSyntax(false), nil)
 	}
 
 	// Parse arguments similar to createNodeIndex
 	argsStart := strings.Index(cypher[idx:], "(")
 	argsEnd := strings.LastIndex(cypher[idx:], ")")
 	if argsStart < 0 || argsEnd < 0 {
-		return nil, fmt.Errorf("invalid db.index.vector.createRelationshipIndex syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipInvalidSyntax(true), nil)
 	}
 
 	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
 	parts := e.splitArgsSimple(argsStr)
 	if len(parts) < 4 {
-		return nil, fmt.Errorf("db.index.vector.createRelationshipIndex requires at least 4 arguments: indexName, relationshipType, property, dimension")
+		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipArguments(), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -692,7 +693,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	property := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
 	dimension, err := strconv.Atoi(strings.TrimSpace(parts[3]))
 	if err != nil {
-		return nil, fmt.Errorf("invalid dimension: %w", err)
+		return nil, localizedError(localization.CypherProceduresInvalidDimension(err), err)
 	}
 
 	similarity := "cosine"
@@ -705,7 +706,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 	// Use relationship type as "label" for index naming
 	err = schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create relationship vector index: %w", err)
+		return nil, localizedError(localization.CypherProceduresCreateRelationshipVectorIndexFailed(err), err)
 	}
 
 	e.registerVectorSpace(indexName, relType, property, dimension, similarity)
@@ -722,19 +723,19 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "CREATENODEINDEX")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.createNodeIndex syntax")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(false), nil)
 	}
 
 	argsStart := strings.Index(cypher[idx:], "(")
 	argsEnd := strings.LastIndex(cypher[idx:], ")")
 	if argsStart < 0 || argsEnd < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.createNodeIndex syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(true), nil)
 	}
 
 	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
 	parts := e.splitArgsRespectingArrays(argsStr)
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("db.index.fulltext.createNodeIndex requires at least 3 arguments: indexName, labels, properties")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeArgumentsRequired(), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -749,7 +750,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 	schema := e.storage.GetSchema()
 	err := schema.AddFulltextIndex(indexName, labels, properties)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create fulltext index: %w", err)
+		return nil, localizedError(localization.CypherProceduresCreateFulltextIndexFailed(err), err)
 	}
 
 	return &ExecuteResult{
@@ -764,19 +765,19 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.createRelationshipIndex syntax")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(false), nil)
 	}
 
 	argsStart := strings.Index(cypher[idx:], "(")
 	argsEnd := strings.LastIndex(cypher[idx:], ")")
 	if argsStart < 0 || argsEnd < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.createRelationshipIndex syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(true), nil)
 	}
 
 	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
 	parts := e.splitArgsRespectingArrays(argsStr)
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("db.index.fulltext.createRelationshipIndex requires at least 3 arguments: indexName, relationshipTypes, properties")
+		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipArguments(), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -791,7 +792,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 	schema := e.storage.GetSchema()
 	err := schema.AddFulltextIndex(indexName, relTypes, properties)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create relationship fulltext index: %w", err)
+		return nil, localizedError(localization.CypherProceduresCreateRelationshipFulltextIndexFailed(err), err)
 	}
 
 	return &ExecuteResult{
@@ -805,13 +806,13 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult, error) {
 	idx := findKeywordIndex(cypher, "DROP")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.drop syntax")
+		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(false), nil)
 	}
 
 	argsStart := strings.Index(cypher[idx:], "(")
 	argsEnd := strings.LastIndex(cypher[idx:], ")")
 	if argsStart < 0 || argsEnd < 0 {
-		return nil, fmt.Errorf("invalid db.index.fulltext.drop syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(true), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
@@ -828,13 +829,13 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult
 func (e *StorageExecutor) callDbIndexVectorDrop(cypher string) (*ExecuteResult, error) {
 	idx := findKeywordIndex(cypher, "DROP")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.index.vector.drop syntax")
+		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(false), nil)
 	}
 
 	argsStart := strings.Index(cypher[idx:], "(")
 	argsEnd := strings.LastIndex(cypher[idx:], ")")
 	if argsStart < 0 || argsEnd < 0 {
-		return nil, fmt.Errorf("invalid db.index.vector.drop syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(true), nil)
 	}
 
 	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
@@ -940,14 +941,14 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "SETNODEVECTORPROPERTY")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.create.setNodeVectorProperty syntax")
+		return nil, localizedError(localization.CypherProceduresSetNodeVectorInvalidSyntax(), nil)
 	}
 
 	remainder := cypher[idx:]
 	openParen := strings.Index(remainder, "(")
 	closeParen := strings.LastIndex(remainder, ")")
 	if openParen < 0 || closeParen < 0 {
-		return nil, fmt.Errorf("db.create.setNodeVectorProperty: missing parentheses (expected db.create.setNodeVectorProperty(nodeId, 'key', [vector]))")
+		return nil, localizedError(localization.CypherProceduresSetNodeVectorParenthesesRequired(), nil)
 	}
 
 	argsStr := remainder[openParen+1 : closeParen]
@@ -955,7 +956,7 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 	// Extract nodeId (first arg)
 	commaIdx := strings.Index(argsStr, ",")
 	if commaIdx < 0 {
-		return nil, fmt.Errorf("db.create.setNodeVectorProperty: requires 3 arguments (nodeId, propertyKey, vector)")
+		return nil, localizedError(localization.CypherProceduresSetNodeVectorArgumentsRequired(), nil)
 	}
 	nodeIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
 	argsStr = argsStr[commaIdx+1:]
@@ -963,7 +964,7 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 	// Extract property key (second arg)
 	commaIdx = strings.Index(argsStr, ",")
 	if commaIdx < 0 {
-		return nil, fmt.Errorf("db.create.setNodeVectorProperty: missing vector argument (expected nodeId, propertyKey, [vector])")
+		return nil, localizedError(localization.CypherProceduresSetNodeVectorArgumentRequired(), nil)
 	}
 	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
 	argsStr = argsStr[commaIdx+1:]
@@ -983,14 +984,14 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 	nodeID := storage.NodeID(nodeIDStr)
 	node, err := store.GetNode(nodeID)
 	if err != nil {
-		return nil, fmt.Errorf("node not found: %s", nodeIDStr)
+		return nil, localizedError(localization.CypherProceduresNodeNotFound(nodeIDStr), nil)
 	}
 
 	// Set the vector property
 	node.Properties[propertyKey] = vector
 	err = store.UpdateNode(node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update node: %w", err)
+		return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 	}
 	e.notifyNodeMutated(string(node.ID))
 
@@ -1008,14 +1009,14 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "SETRELATIONSHIPVECTORPROPERTY")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid db.create.setRelationshipVectorProperty syntax")
+		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorInvalidSyntax(), nil)
 	}
 
 	remainder := cypher[idx:]
 	openParen := strings.Index(remainder, "(")
 	closeParen := strings.LastIndex(remainder, ")")
 	if openParen < 0 || closeParen < 0 {
-		return nil, fmt.Errorf("db.create.setRelationshipVectorProperty: missing parentheses (expected db.create.setRelationshipVectorProperty(relId, 'key', [vector]))")
+		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorParentheses(), nil)
 	}
 
 	argsStr := remainder[openParen+1 : closeParen]
@@ -1023,7 +1024,7 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 	// Extract relId (first arg)
 	commaIdx := strings.Index(argsStr, ",")
 	if commaIdx < 0 {
-		return nil, fmt.Errorf("db.create.setRelationshipVectorProperty: requires 3 arguments (relId, propertyKey, vector)")
+		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorArguments(), nil)
 	}
 	relIDStr := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
 	argsStr = argsStr[commaIdx+1:]
@@ -1031,7 +1032,7 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 	// Extract property key (second arg)
 	commaIdx = strings.Index(argsStr, ",")
 	if commaIdx < 0 {
-		return nil, fmt.Errorf("db.create.setRelationshipVectorProperty: missing vector argument (expected relId, propertyKey, [vector])")
+		return nil, localizedError(localization.CypherProceduresSetRelationshipVectorArgument(), nil)
 	}
 	propertyKey := strings.Trim(strings.TrimSpace(argsStr[:commaIdx]), "'\"")
 	argsStr = argsStr[commaIdx+1:]
@@ -1051,14 +1052,14 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 	relID := storage.EdgeID(relIDStr)
 	rel, err := store.GetEdge(relID)
 	if err != nil {
-		return nil, fmt.Errorf("relationship not found: %s", relIDStr)
+		return nil, localizedError(localization.CypherProceduresRelationshipNotFound(relIDStr), nil)
 	}
 
 	// Set the vector property
 	rel.Properties[propertyKey] = vector
 	err = store.UpdateEdge(rel)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update relationship: %w", err)
+		return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 	}
 	e.notifyEdgeMutated(string(rel.ID))
 
@@ -1079,14 +1080,14 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Check if there's an active transaction
 	if e.txContext == nil || !e.txContext.active {
-		return nil, fmt.Errorf("tx.setMetaData() requires an active transaction. Use BEGIN TRANSACTION first")
+		return nil, localizedError(localization.CypherProceduresMetadataActiveTransactionRequired(), nil)
 	}
 
 	// Extract metadata object from Cypher: CALL tx.setMetaData({key: value})
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, "SETMETADATA")
 	if idx < 0 {
-		return nil, fmt.Errorf("invalid tx.setMetaData syntax")
+		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
 	}
 
 	// Find opening parenthesis
@@ -1094,30 +1095,30 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) 
 	openParen := strings.Index(remainder, "(")
 	closeParen := strings.LastIndex(remainder, ")")
 	if openParen < 0 || closeParen < 0 {
-		return nil, fmt.Errorf("invalid tx.setMetaData syntax: missing parentheses")
+		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(true), nil)
 	}
 
 	// Extract the metadata object string: {key: value}
 	argsStr := strings.TrimSpace(remainder[openParen+1 : closeParen])
 	if argsStr == "" {
-		return nil, fmt.Errorf("tx.setMetaData requires a metadata object: {key: value}")
+		return nil, localizedError(localization.CypherProceduresMetadataObjectRequired(), nil)
 	}
 
 	// Parse the metadata object
 	metadata := e.parseProperties(ctx, argsStr)
 	if len(metadata) == 0 {
-		return nil, fmt.Errorf("tx.setMetaData requires at least one key-value pair")
+		return nil, localizedError(localization.CypherProceduresMetadataEntryRequired(), nil)
 	}
 
 	// Get the transaction and set metadata
 	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
 	if !ok {
-		return nil, fmt.Errorf("transaction type not supported for metadata")
+		return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
 	}
 
 	err := tx.SetMetadata(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to set transaction metadata: %w", err)
+		return nil, localizedError(localization.CypherProceduresSetMetadataFailed(err), err)
 	}
 
 	return &ExecuteResult{

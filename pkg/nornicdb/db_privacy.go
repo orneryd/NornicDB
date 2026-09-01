@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -44,10 +45,10 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	}
 
 	if consent.UserID == "" {
-		return fmt.Errorf("user_id is required")
+		return localizedError(localization.NornicDBCoreConsentUserIDRequired(), nil)
 	}
 	if consent.Purpose == "" {
-		return fmt.Errorf("purpose is required")
+		return localizedError(localization.NornicDBCoreConsentPurposeRequired(), nil)
 	}
 
 	// Set timestamp if not provided
@@ -61,7 +62,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	// Check if consent already exists
 	existingNode, err := db.storage.GetNode(consentID)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return fmt.Errorf("checking existing consent: %w", err)
+		return localizedError(localization.NornicDBCoreConsentExistingCheckFailed(err), err)
 	}
 
 	props := map[string]interface{}{
@@ -115,7 +116,7 @@ func (db *DB) HasConsent(ctx context.Context, userID, purpose string) (bool, err
 		if errors.Is(err, storage.ErrNotFound) {
 			return false, nil // No consent record = no consent given
 		}
-		return false, fmt.Errorf("checking consent: %w", err)
+		return false, localizedError(localization.NornicDBCoreConsentCheckFailed(err), err)
 	}
 
 	given, ok := node.Properties["given"].(bool)
@@ -159,7 +160,7 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 			_, err := db.storage.CreateNode(node)
 			return err
 		}
-		return fmt.Errorf("getting consent: %w", err)
+		return localizedError(localization.NornicDBCoreConsentGetFailed(err), err)
 	}
 
 	// Update existing consent to revoked
@@ -203,7 +204,7 @@ func (db *DB) GetUserConsents(ctx context.Context, userID string) ([]Consent, er
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("streaming consent nodes: %w", err)
+		return nil, localizedError(localization.NornicDBCoreConsentStreamFailed(err), err)
 	}
 
 	return consents, nil

@@ -12,6 +12,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Compile-time interface assertion.
@@ -74,10 +75,10 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	uri := strings.TrimSpace(cfg.URI)
 	database := strings.TrimSpace(cfg.Database)
 	if uri == "" {
-		return nil, fmt.Errorf("remote engine URI cannot be empty")
+		return nil, localizedError(localization.StorageRemoteURIRequired(), nil)
 	}
 	if database == "" {
-		return nil, fmt.Errorf("remote engine database cannot be empty")
+		return nil, localizedError(localization.StorageRemoteDatabaseRequired(), nil)
 	}
 
 	var transport remoteTransport
@@ -96,7 +97,7 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 		strings.HasPrefix(lower, "https://"):
 		transport, err = newHTTPTransport(uri, database, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported remote engine URI scheme: %s (expected bolt://, neo4j://, http://, or https://)", uri)
+		return nil, localizedError(localization.StorageRemoteURISchemeUnsupported(uri), nil)
 	}
 	if err != nil {
 		return nil, err
@@ -126,7 +127,7 @@ func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransp
 	auth := buildNeo4jAuth(cfg)
 	driver, err := neo4j.NewDriverWithContext(uri, auth)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Bolt driver: %w", err)
+		return nil, localizedError(localization.StorageRemoteBoltDriverCreateFailed(err), err)
 	}
 	return &boltTransport{driver: driver, database: database}, nil
 }
@@ -207,7 +208,7 @@ func executeManagedStatement(
 		}
 		columns, err := result.Keys()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get result keys: %w", err)
+			return nil, localizedError(localization.StorageRemoteResultKeysFailed(err), err)
 		}
 		for result.Next(ctx) {
 			onRecord(columns, result.Record())
@@ -277,7 +278,7 @@ func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params
 	}
 	columns, err := result.Keys()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get result keys: %w", err)
+		return nil, nil, localizedError(localization.StorageRemoteResultKeysFailed(err), err)
 	}
 	rows := make([][]interface{}, 0)
 	for result.Next(ctx) {
@@ -465,11 +466,11 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	}
 	var txResp remoteTxResponse
 	if err := json.Unmarshal(respBody, &txResp); err != nil {
-		return nil, fmt.Errorf("remote tx decode failed (status=%d): %w", resp.StatusCode, err)
+		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(txResp.Errors) > 0 {
 		first := txResp.Errors[0]
-		return nil, fmt.Errorf("%s: %s", first.Code, first.Message)
+		return nil, localizedError(localization.StorageRemoteError(first.Code, first.Message), nil)
 	}
 	return &txResp, nil
 }
@@ -547,13 +548,13 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &openResp); err != nil {
-		return nil, fmt.Errorf("remote tx open decode failed (status=%d): %w", resp.StatusCode, err)
+		return nil, localizedError(localization.StorageRemoteTransactionOpenDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(openResp.Errors) > 0 {
-		return nil, fmt.Errorf("%s: %s", openResp.Errors[0].Code, openResp.Errors[0].Message)
+		return nil, localizedError(localization.StorageRemoteError(openResp.Errors[0].Code, openResp.Errors[0].Message), nil)
 	}
 	if strings.TrimSpace(openResp.Commit) == "" {
-		return nil, fmt.Errorf("remote tx open returned empty commit URL")
+		return nil, localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
 	}
 	executeURL := strings.TrimSuffix(openResp.Commit, "/commit")
 	return &httpCypherTx{
@@ -568,7 +569,7 @@ func (h *httpTransport) close() error { return nil }
 
 func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	if t.closed {
-		return nil, nil, fmt.Errorf("remote transaction is closed")
+		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
 		Statements: []remoteStatement{{Statement: statement, Parameters: params}},
@@ -637,7 +638,7 @@ func asMap(v interface{}) map[string]interface{} {
 func valueToNode(v interface{}) (*Node, error) {
 	m := asMap(v)
 	if m == nil {
-		return nil, fmt.Errorf("expected node map, got %T", v)
+		return nil, localizedError(localization.StorageRemoteNodeMapExpected(fmt.Sprintf("%T", v)), nil)
 	}
 	props := asMap(m["properties"])
 	if props == nil {
@@ -671,7 +672,7 @@ func valueToNode(v interface{}) (*Node, error) {
 func valueToEdge(v interface{}) (*Edge, error) {
 	m := asMap(v)
 	if m == nil {
-		return nil, fmt.Errorf("expected relationship map, got %T", v)
+		return nil, localizedError(localization.StorageRemoteRelationshipMapExpected(fmt.Sprintf("%T", v)), nil)
 	}
 	props := asMap(m["properties"])
 	if props == nil {
@@ -747,7 +748,7 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 		return "", err
 	}
 	if len(rows) == 0 || len(rows[0]) == 0 {
-		return "", fmt.Errorf("remote create node returned no rows")
+		return "", localizedError(localization.StorageRemoteCreateNodeNoRows(), nil)
 	}
 	created, err := valueToNode(rows[0][0])
 	if err != nil {
@@ -1225,7 +1226,7 @@ func (r *RemoteEngine) EdgeCount() (int64, error) {
 }
 
 func (r *RemoteEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	return 0, 0, fmt.Errorf("DeleteByPrefix is not supported for remote engines (prefix=%s)", prefix)
+	return 0, 0, localizedError(localization.StorageRemoteDeletePrefixUnsupported(prefix), nil)
 }
 
 // QueryCypher executes an arbitrary Cypher query against the remote instance

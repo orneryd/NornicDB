@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -410,8 +411,7 @@ func ValidateIndexHints(schema *storage.SchemaManager, hints []IndexHint) error 
 			key := fmt.Sprintf("%s:%s", strings.ToLower(hint.Label), strings.ToLower(hint.Property))
 			if !indexMap[key] {
 				// Neo4j returns a specific error for missing indexes
-				return fmt.Errorf("no index found for hint: %s (index on :%s(%s) does not exist)",
-					hint.String(), hint.Label, hint.Property)
+				return localizedError(localization.CypherCoreIndexHintNotFound(hint.String(), hint.Label, hint.Property), nil)
 			}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -33,7 +34,8 @@ func (e *StorageExecutor) preprocessShellCommands(ctx context.Context, cypher st
 	}
 
 	if strings.HasPrefix(remaining, ":") {
-		return "", ctx, nil, fmt.Errorf("unknown command: %s", strings.Split(strings.TrimSpace(remaining), "\n")[0])
+		command := strings.Split(strings.TrimSpace(remaining), "\n")[0]
+		return "", ctx, nil, localizedError(localization.CypherCommandRoutingUnknownCommand(command), nil)
 	}
 
 	if lastResult == nil {
@@ -174,7 +176,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command strin
 	trimmed := strings.TrimSpace(strings.TrimSuffix(command, ";"))
 	parts := strings.Fields(trimmed)
 	if len(parts) == 0 {
-		return nil, ctx, fmt.Errorf("empty command")
+		return nil, ctx, localizedError(localization.CypherCommandRoutingEmptyCommand(), nil)
 	}
 
 	name := strings.ToLower(parts[0])
@@ -186,7 +188,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command strin
 	switch name {
 	case ":use":
 		if args == "" {
-			return nil, ctx, fmt.Errorf(":use requires a database name")
+			return nil, ctx, localizedError(localization.CypherCommandRoutingShellUseDatabaseRequired(), nil)
 		}
 		dbName := strings.Fields(args)[0]
 		ctx = context.WithValue(ctx, ctxKeyUseDatabase, dbName)
@@ -198,7 +200,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command strin
 		result, err := e.executeParamCommand(ctx, args, explicitParams)
 		return result, ctx, err
 	default:
-		return nil, ctx, fmt.Errorf("unknown command: %s", parts[0])
+		return nil, ctx, localizedError(localization.CypherCommandRoutingUnknownCommand(parts[0]), nil)
 	}
 }
 
@@ -226,7 +228,7 @@ func (e *StorageExecutor) executeParamCommand(ctx context.Context, args string, 
 		return nil, err
 	}
 	if len(paramMap) == 0 {
-		return nil, fmt.Errorf("parameter expression must evaluate to a map")
+		return nil, localizedError(localization.CypherCommandRoutingParameterMapRequired(), nil)
 	}
 
 	e.setShellParams(paramMap)
@@ -239,7 +241,7 @@ func (e *StorageExecutor) executeParamCommand(ctx context.Context, args string, 
 func parseParamCommandToMapExpression(input string) (string, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
-		return "", fmt.Errorf(":param requires an argument")
+		return "", localizedError(localization.CypherCommandRoutingParameterArgumentRequired(), nil)
 	}
 	if strings.HasPrefix(trimmed, "{") {
 		return trimmed, nil
@@ -259,12 +261,12 @@ func parseParamCommandToMapExpression(input string) (string, error) {
 			continue
 		}
 		if value == "" {
-			return "", fmt.Errorf(":param value cannot be empty")
+			return "", localizedError(localization.CypherCommandRoutingParameterValueRequired(), nil)
 		}
 		return fmt.Sprintf("{%s: %s}", key, value), nil
 	}
 
-	return "", fmt.Errorf("incorrect usage: expected :param clear, :param list, :param {a: 1}, or :param key => value")
+	return "", localizedError(localization.CypherCommandRoutingParameterUsage(), nil)
 }
 
 func splitArrowParamSyntax(input string) (string, string, bool) {
@@ -310,20 +312,20 @@ func normalizeParamMap(value interface{}) (map[string]interface{}, error) {
 		for key, val := range typed {
 			keyStr, ok := key.(string)
 			if !ok {
-				return nil, fmt.Errorf("parameter map keys must be strings")
+				return nil, localizedError(localization.CypherCommandRoutingParameterMapKeysStrings(), nil)
 			}
 			out[keyStr] = val
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("parameter expression must evaluate to a map")
+		return nil, localizedError(localization.CypherCommandRoutingParameterMapRequired(), nil)
 	}
 }
 
 func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExpr string, params map[string]interface{}) (map[string]interface{}, error) {
 	trimmed := strings.TrimSpace(mapExpr)
 	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
-		return nil, fmt.Errorf("parameter expression must evaluate to a map")
+		return nil, localizedError(localization.CypherCommandRoutingParameterMapRequired(), nil)
 	}
 	inner := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	if inner == "" {
@@ -335,29 +337,30 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
-			return nil, fmt.Errorf("empty map entry")
+			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryEmpty(), nil)
 		}
 		colonIdx := topLevelColonIndex(pair)
 		if colonIdx <= 0 || colonIdx >= len(pair)-1 {
-			return nil, fmt.Errorf("invalid map entry %q", pair)
+			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
 
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 		if key == "" || valueExpr == "" {
-			return nil, fmt.Errorf("invalid map entry %q", pair)
+			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
 
 		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
 		if err != nil {
-			return nil, fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)
+			cause := fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)
+			return nil, localizedError(localization.CypherCommandRoutingParameterEvaluationFailed(key, err), cause)
 		}
 		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
-			return nil, fmt.Errorf("%w: parameter %s produced no value", nerrors.ErrExpressionEvaluationFailed, key)
+			return nil, localizedError(localization.CypherCommandRoutingParameterProducedNoValue(key), nerrors.ErrExpressionEvaluationFailed)
 		}
 		value := result.Rows[0][0]
 		if isUnevaluatedParameterExpression(valueExpr, value) {
-			return nil, fmt.Errorf("%w: parameter %s unresolved expression %q", nerrors.ErrExpressionEvaluationFailed, key, strings.TrimSpace(valueExpr))
+			return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, strings.TrimSpace(valueExpr)), nerrors.ErrExpressionEvaluationFailed)
 		}
 		out[key] = value
 	}

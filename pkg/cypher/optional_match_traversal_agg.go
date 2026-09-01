@@ -29,6 +29,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -131,7 +132,7 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 	trimmed := strings.TrimSpace(expr)
 	open := strings.Index(trimmed, "(")
 	if open <= 0 || !strings.HasSuffix(trimmed, ")") {
-		return spec, fmt.Errorf("not a whole aggregate call: %q", trimmed)
+		return spec, localizedError(localization.CypherMatchingAggregateCallExpected(trimmed), nil)
 	}
 	name := strings.ToLower(strings.TrimSpace(trimmed[:open]))
 	for _, fn := range traversalAggFnNames {
@@ -141,7 +142,7 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 		}
 	}
 	if spec.fn == "" {
-		return spec, fmt.Errorf("not a whole aggregate call: %q", trimmed)
+		return spec, localizedError(localization.CypherMatchingAggregateCallExpected(trimmed), nil)
 	}
 	inner := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
 	if spec.fn == "count" && inner == "*" {
@@ -153,7 +154,7 @@ func parseTraversalAggregateCall(expr string) (traversalAggSpec, error) {
 		inner = strings.TrimSpace(inner[len("DISTINCT"):])
 	}
 	if inner == "" {
-		return spec, fmt.Errorf("insufficient parameters for function '%s'", spec.fn)
+		return spec, localizedError(localization.CypherMatchingFunctionParametersInsufficient(spec.fn), nil)
 	}
 	spec.inner = inner
 	return spec, nil

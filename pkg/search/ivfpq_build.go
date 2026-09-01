@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -19,13 +20,13 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		ctx = context.Background()
 	}
 	if vfs == nil {
-		return nil, nil, fmt.Errorf("vector file store is required")
+		return nil, nil, localizedError(localization.SearchIVFPQVectorStoreRequired(), nil)
 	}
 	if profile.Dimensions <= 0 {
-		return nil, nil, fmt.Errorf("invalid dimensions")
+		return nil, nil, localizedError(localization.SearchIVFPQDimensionsInvalid(), nil)
 	}
 	if profile.PQSegments <= 0 || profile.Dimensions%profile.PQSegments != 0 {
-		return nil, nil, fmt.Errorf("invalid pq segments: dimensions=%d segments=%d", profile.Dimensions, profile.PQSegments)
+		return nil, nil, localizedError(localization.SearchIVFPQSegmentsInvalid(profile.Dimensions, profile.PQSegments), nil)
 	}
 	start := time.Now()
 	rng := rand.New(rand.NewSource(ivfpqTrainSeed))
@@ -35,17 +36,17 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		return nil, nil, err
 	}
 	if len(training) < profile.IVFLists {
-		return nil, nil, fmt.Errorf("insufficient training vectors (%d) for ivf lists (%d)", len(training), profile.IVFLists)
+		return nil, nil, localizedError(localization.SearchIVFPQTrainingVectorsInsufficient(len(training), profile.IVFLists), nil)
 	}
 
 	centroids, err := ivfpqTrainKMeans(ctx, training, profile.IVFLists, profile.KMeansMaxIterations, rng)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ivf coarse training failed: %w", err)
+		return nil, nil, localizedError(localization.SearchIVFCoarseTrainingFailed(err), err)
 	}
 	centroidNorm := normalizeCentroids(centroids)
 	codebooks, err := ivfpqTrainPQCodebooks(ctx, training, centroids, profile, rng)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pq codebook training failed: %w", err)
+		return nil, nil, localizedError(localization.SearchPQCodebookTrainingFailed(err), err)
 	}
 
 	lists := make([]ivfpqList, profile.IVFLists)

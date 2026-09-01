@@ -3,8 +3,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // QueryType represents the type of Cypher query.
@@ -199,7 +200,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		return nil, err
 	}
 	if len(tokens) == 0 {
-		return nil, fmt.Errorf("empty query")
+		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
 	// Simple top-down parser
@@ -221,7 +222,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 				query.Clauses = append(query.Clauses, clause)
 				pos = newPos
 			} else {
-				return nil, fmt.Errorf("OPTIONAL must be followed by MATCH")
+				return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
 			}
 
 		case "CREATE":
@@ -361,7 +362,7 @@ func tokenize(cypher string) ([]string, error) {
 	}
 
 	if inString {
-		return nil, fmt.Errorf("unterminated string literal")
+		return nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
 	}
 
 	if current.Len() > 0 {
@@ -389,7 +390,7 @@ func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params m
 	// Parse query
 	query, err := e.parser.Parse(cypher)
 	if err != nil {
-		return nil, fmt.Errorf("parse error: %w", err)
+		return nil, localizedError(localization.CypherCoreParseFailed(err), err)
 	}
 
 	// Add parameters

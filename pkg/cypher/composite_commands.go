@@ -3,9 +3,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
@@ -27,37 +27,37 @@ func parseCypherValueToken(tok string) (string, error) {
 
 func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface{}, error) {
 	if *idx >= len(tokens) || !strings.EqualFold(tokens[*idx], "ALIAS") {
-		return nil, fmt.Errorf("invalid constituent syntax: ALIAS expected")
+		return nil, localizedError(localization.CypherCompositeConstituentAliasExpected(), nil)
 	}
 	*idx = *idx + 1
 
 	if *idx >= len(tokens) {
-		return nil, fmt.Errorf("invalid constituent syntax: alias name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeConstituentAliasNameEmpty(), nil)
 	}
 	aliasName, err := parseCypherValueToken(tokens[*idx])
 	if err != nil {
-		return nil, fmt.Errorf("invalid constituent syntax: alias name: %w", err)
+		return nil, localizedError(localization.CypherCompositeConstituentAliasNameInvalid(err), err)
 	}
 	*idx = *idx + 1
 	if strings.TrimSpace(aliasName) == "" {
-		return nil, fmt.Errorf("invalid constituent syntax: alias name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeConstituentAliasNameEmpty(), nil)
 	}
 
 	if *idx+1 >= len(tokens) || !strings.EqualFold(tokens[*idx], "FOR") || !strings.EqualFold(tokens[*idx+1], "DATABASE") {
-		return nil, fmt.Errorf("invalid constituent syntax: FOR DATABASE expected")
+		return nil, localizedError(localization.CypherCompositeConstituentForDatabaseExpected(), nil)
 	}
 	*idx += 2
 
 	if *idx >= len(tokens) {
-		return nil, fmt.Errorf("invalid constituent syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeConstituentDatabaseNameEmpty(), nil)
 	}
 	constituentDbName, err := parseCypherValueToken(tokens[*idx])
 	if err != nil {
-		return nil, fmt.Errorf("invalid constituent syntax: database name: %w", err)
+		return nil, localizedError(localization.CypherCompositeConstituentDatabaseNameInvalid(err), err)
 	}
 	*idx = *idx + 1
 	if strings.TrimSpace(constituentDbName) == "" {
-		return nil, fmt.Errorf("invalid constituent syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeConstituentDatabaseNameEmpty(), nil)
 	}
 
 	ref := map[string]interface{}{
@@ -78,15 +78,15 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		case strings.EqualFold(tokens[*idx], "AT"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: remote URI expected after AT")
+				return nil, localizedError(localization.CypherCompositeConstituentRemoteURIExpected(), nil)
 			}
 			uri, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: remote URI: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentRemoteURIInvalid(err), err)
 			}
 			*idx = *idx + 1
 			if strings.TrimSpace(uri) == "" {
-				return nil, fmt.Errorf("invalid constituent syntax: remote URI cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentRemoteURIEmpty(), nil)
 			}
 			ref["uri"] = uri
 			ref["type"] = "remote"
@@ -94,15 +94,15 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		case strings.EqualFold(tokens[*idx], "USER"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: user cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentUserEmpty(), nil)
 			}
 			user, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: user: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentUserInvalid(err), err)
 			}
 			*idx = *idx + 1
 			if strings.TrimSpace(user) == "" {
-				return nil, fmt.Errorf("invalid constituent syntax: user cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentUserEmpty(), nil)
 			}
 			ref["user"] = user
 			hasUserPassword = true
@@ -110,15 +110,15 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		case strings.EqualFold(tokens[*idx], "PASSWORD"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: password cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentPasswordEmpty(), nil)
 			}
 			password, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: password: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentPasswordInvalid(err), err)
 			}
 			*idx = *idx + 1
 			if strings.TrimSpace(password) == "" {
-				return nil, fmt.Errorf("invalid constituent syntax: password cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentPasswordEmpty(), nil)
 			}
 			ref["password"] = password
 			hasUserPassword = true
@@ -126,7 +126,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		case strings.EqualFold(tokens[*idx], "OIDC"):
 			*idx = *idx + 1
 			if *idx+1 >= len(tokens) || !strings.EqualFold(tokens[*idx], "CREDENTIAL") || !strings.EqualFold(tokens[*idx+1], "FORWARDING") {
-				return nil, fmt.Errorf("invalid constituent syntax: OIDC CREDENTIAL FORWARDING expected")
+				return nil, localizedError(localization.CypherCompositeConstituentOIDCCredentialExpected(), nil)
 			}
 			*idx += 2
 			hasOIDCForwarding = true
@@ -134,50 +134,50 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		case strings.EqualFold(tokens[*idx], "SECRET"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) || !strings.EqualFold(tokens[*idx], "REF") {
-				return nil, fmt.Errorf("invalid constituent syntax: SECRET REF expected")
+				return nil, localizedError(localization.CypherCompositeConstituentSecretRefExpected(), nil)
 			}
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: secret ref cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentSecretRefEmpty(), nil)
 			}
 			secretRef, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: secret ref: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentSecretRefInvalid(err), err)
 			}
 			*idx = *idx + 1
 			if strings.TrimSpace(secretRef) == "" {
-				return nil, fmt.Errorf("invalid constituent syntax: secret ref cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentSecretRefEmpty(), nil)
 			}
 			ref["secret_ref"] = secretRef
 
 		case strings.EqualFold(tokens[*idx], "TYPE"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: type cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentTypeEmpty(), nil)
 			}
 			typeVal, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: type: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentTypeInvalid(err), err)
 			}
 			*idx = *idx + 1
 			typeVal = strings.ToLower(strings.TrimSpace(typeVal))
 			if typeVal != "local" && typeVal != "remote" {
-				return nil, fmt.Errorf("invalid constituent syntax: type must be local or remote")
+				return nil, localizedError(localization.CypherCompositeConstituentTypeUnsupported(), nil)
 			}
 			// Reject contradictory AT + TYPE local: AT implies remote.
 			if existingType, ok := ref["type"]; ok && existingType == "remote" && typeVal == "local" {
-				return nil, fmt.Errorf("invalid constituent syntax: TYPE local contradicts AT (remote URI already specified)")
+				return nil, localizedError(localization.CypherCompositeConstituentTypeContradictsAT(), nil)
 			}
 			ref["type"] = typeVal
 
 		case strings.EqualFold(tokens[*idx], "ACCESS"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
-				return nil, fmt.Errorf("invalid constituent syntax: access mode cannot be empty")
+				return nil, localizedError(localization.CypherCompositeConstituentAccessModeEmpty(), nil)
 			}
 			accessVal, err := parseCypherValueToken(tokens[*idx])
 			if err != nil {
-				return nil, fmt.Errorf("invalid constituent syntax: access mode: %w", err)
+				return nil, localizedError(localization.CypherCompositeConstituentAccessModeInvalid(err), err)
 			}
 			*idx = *idx + 1
 			accessVal = strings.ToLower(strings.TrimSpace(accessVal))
@@ -185,32 +185,32 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			case "read", "write", "read_write":
 				ref["access_mode"] = accessVal
 			default:
-				return nil, fmt.Errorf("invalid constituent syntax: access mode must be read, write, or read_write")
+				return nil, localizedError(localization.CypherCompositeConstituentAccessModeUnsupported(), nil)
 			}
 
 		default:
-			return nil, fmt.Errorf("invalid constituent syntax: unexpected token '%s'", tokens[*idx])
+			return nil, localizedError(localization.CypherCompositeConstituentUnexpectedToken(tokens[*idx]), nil)
 		}
 	}
 
 	if t, _ := ref["type"].(string); t == "remote" {
 		switch {
 		case hasOIDCForwarding && hasUserPassword:
-			return nil, fmt.Errorf("invalid constituent syntax: cannot combine OIDC CREDENTIAL FORWARDING with USER/PASSWORD")
+			return nil, localizedError(localization.CypherCompositeConstituentAuthModesConflict(), nil)
 		case hasUserPassword:
 			user, _ := ref["user"].(string)
 			password, _ := ref["password"].(string)
 			user = strings.TrimSpace(user)
 			password = strings.TrimSpace(password)
 			if user == "" || password == "" {
-				return nil, fmt.Errorf("invalid constituent syntax: USER and PASSWORD must both be provided")
+				return nil, localizedError(localization.CypherCompositeConstituentUserPasswordRequired(), nil)
 			}
 			ref["auth_mode"] = "user_password"
 		default:
 			ref["auth_mode"] = "oidc_forwarding"
 		}
 	} else if hasUserPassword || hasOIDCForwarding {
-		return nil, fmt.Errorf("invalid constituent syntax: USER/PASSWORD and OIDC CREDENTIAL FORWARDING require a remote constituent (AT '<url>' or TYPE remote)")
+		return nil, localizedError(localization.CypherCompositeConstituentRemoteRequired(), nil)
 	}
 
 	return ref, nil
@@ -235,13 +235,13 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 //	  ALIAS tenant_a FOR DATABASE tenant_a
 func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - CREATE COMPOSITE DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("CREATE COMPOSITE DATABASE"), nil)
 	}
 
 	// Find "CREATE COMPOSITE DATABASE" keyword position
 	createIdx := findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE")
 	if createIdx == -1 {
-		return nil, fmt.Errorf("invalid CREATE COMPOSITE DATABASE syntax")
+		return nil, localizedError(localization.CypherCompositeCreateInvalidSyntax(), nil)
 	}
 
 	// Skip "CREATE COMPOSITE DATABASE" and whitespace
@@ -272,7 +272,7 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid CREATE COMPOSITE DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherCompositeCreateDatabaseNameExpected(), nil)
 	}
 
 	// Extract composite database name (until newline or end)
@@ -283,7 +283,7 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 
 	dbName := strings.TrimSpace(cypher[startPos:dbNameEnd])
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid CREATE COMPOSITE DATABASE syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeCreateDatabaseNameEmpty(), nil)
 	}
 
 	// Check for IF NOT EXISTS after database name.
@@ -315,7 +315,7 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	if remaining != "" {
 		tokens, err := tokenize(remaining)
 		if err != nil {
-			return nil, fmt.Errorf("invalid CREATE COMPOSITE DATABASE syntax: %w", err)
+			return nil, localizedError(localization.CypherCompositeCreateTokenizeFailed(err), err)
 		}
 		idx := 0
 		for idx < len(tokens) {
@@ -328,13 +328,13 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	}
 
 	if len(constituents) == 0 {
-		return nil, fmt.Errorf("invalid CREATE COMPOSITE DATABASE syntax: at least one constituent required")
+		return nil, localizedError(localization.CypherCompositeCreateConstituentRequired(), nil)
 	}
 
 	// Create composite database
 	err := e.dbManager.CreateCompositeDatabase(dbName, constituents)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create composite database '%s': %w", dbName, err)
+		return nil, localizedError(localization.CypherCompositeCreateDatabaseFailed(dbName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -346,13 +346,13 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 // executeDropCompositeDatabase handles DROP COMPOSITE DATABASE command.
 func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - DROP COMPOSITE DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("DROP COMPOSITE DATABASE"), nil)
 	}
 
 	// Find "DROP COMPOSITE DATABASE" keyword position
 	dropIdx := findMultiWordKeywordIndex(cypher, "DROP", "COMPOSITE DATABASE")
 	if dropIdx == -1 {
-		return nil, fmt.Errorf("invalid DROP COMPOSITE DATABASE syntax")
+		return nil, localizedError(localization.CypherCompositeDropInvalidSyntax(), nil)
 	}
 
 	// Skip "DROP COMPOSITE DATABASE" and whitespace
@@ -383,7 +383,7 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid DROP COMPOSITE DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherCompositeDropDatabaseNameExpected(), nil)
 	}
 
 	// Extract database name
@@ -394,13 +394,13 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 	dbName = strings.ReplaceAll(dbName, "\r", "")
 
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid DROP COMPOSITE DATABASE syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeDropDatabaseNameEmpty(), nil)
 	}
 
 	// Drop composite database
 	err := e.dbManager.DropCompositeDatabase(dbName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to drop composite database '%s': %w", dbName, err)
+		return nil, localizedError(localization.CypherCompositeDropDatabaseFailed(dbName, err), err)
 	}
 
 	return &ExecuteResult{
@@ -412,7 +412,7 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 // executeShowCompositeDatabases handles SHOW COMPOSITE DATABASES command.
 func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - SHOW COMPOSITE DATABASES requires multi-database support")
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
 
 	compositeDbs := e.dbManager.ListCompositeDatabases()
@@ -431,13 +431,13 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
 func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - SHOW CONSTITUENTS requires multi-database support")
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}
 
 	// Find "SHOW CONSTITUENTS" keyword position
 	showIdx := findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS")
 	if showIdx == -1 {
-		return nil, fmt.Errorf("invalid SHOW CONSTITUENTS syntax")
+		return nil, localizedError(localization.CypherCompositeShowConstituentsInvalidSyntax(), nil)
 	}
 
 	// Check for "FOR COMPOSITE DATABASE"
@@ -480,13 +480,13 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 	}
 
 	if compositeName == "" {
-		return nil, fmt.Errorf("invalid SHOW CONSTITUENTS syntax: FOR COMPOSITE DATABASE name expected")
+		return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
 	}
 
 	// Get constituents
 	constituents, err := e.dbManager.GetCompositeConstituents(compositeName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get constituents: %w", err)
+		return nil, localizedError(localization.CypherCompositeGetConstituentsFailed(err), err)
 	}
 
 	rows := make([][]interface{}, len(constituents))
@@ -545,14 +545,14 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 //	  DROP ALIAS tenant_c
 func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available - ALTER COMPOSITE DATABASE requires multi-database support")
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("ALTER COMPOSITE DATABASE"), nil)
 	}
 
 	// Find "ALTER COMPOSITE DATABASE" keyword position
 	// First find "ALTER COMPOSITE", then check for "DATABASE"
 	alterIdx := findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE")
 	if alterIdx == -1 {
-		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax")
+		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
 	}
 
 	// Check that "DATABASE" follows "COMPOSITE"
@@ -566,10 +566,10 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 			afterComposite++
 		}
 		if afterComposite+len("DATABASE") > len(cypher) || !strings.EqualFold(cypher[afterComposite:afterComposite+len("DATABASE")], "DATABASE") {
-			return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: DATABASE expected after COMPOSITE")
+			return nil, localizedError(localization.CypherCompositeAlterDatabaseKeywordExpected(), nil)
 		}
 	} else {
-		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax")
+		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
 	}
 
 	// Skip "ALTER COMPOSITE DATABASE" and whitespace
@@ -600,7 +600,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 	}
 
 	if startPos >= len(cypher) {
-		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: database name expected")
+		return nil, localizedError(localization.CypherCompositeAlterDatabaseNameExpected(), nil)
 	}
 
 	// Extract composite database name (until newline or whitespace)
@@ -611,7 +611,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	dbName := strings.TrimSpace(cypher[startPos:dbNameEnd])
 	if dbName == "" {
-		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: database name cannot be empty")
+		return nil, localizedError(localization.CypherCompositeAlterDatabaseNameEmpty(), nil)
 	}
 
 	// Check for ADD or DROP
@@ -621,10 +621,10 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 	if strings.HasPrefix(upperRemaining, "ADD ALIAS") {
 		tokens, err := tokenize(remaining)
 		if err != nil {
-			return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: %w", err)
+			return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
 		}
 		if len(tokens) < 2 || !strings.EqualFold(tokens[0], "ADD") || !strings.EqualFold(tokens[1], "ALIAS") {
-			return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS expected")
+			return nil, localizedError(localization.CypherCompositeAlterAddAliasExpected(), nil)
 		}
 		idx := 1
 		constituent, err := parseConstituentFromTokens(tokens, &idx)
@@ -632,7 +632,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 			return nil, err
 		}
 		if idx != len(tokens) {
-			return nil, fmt.Errorf("invalid ADD ALIAS syntax: unexpected token '%s'", tokens[idx])
+			return nil, localizedError(localization.CypherCompositeAddAliasUnexpectedToken(tokens[idx]), nil)
 		}
 		aliasName, _ := constituent["alias"].(string)
 		constituentDbName, _ := constituent["database_name"].(string)
@@ -640,7 +640,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		// Add constituent using the interface
 		err = e.dbManager.AddConstituent(dbName, constituent)
 		if err != nil {
-			return nil, fmt.Errorf("failed to add constituent to composite database '%s': %w", dbName, err)
+			return nil, localizedError(localization.CypherCompositeAddConstituentFailed(dbName, err), err)
 		}
 
 		return &ExecuteResult{
@@ -662,7 +662,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		// DROP ALIAS alias
 		dropIdx := findMultiWordKeywordIndex(remaining, "DROP", "ALIAS")
 		if dropIdx == -1 {
-			return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: DROP ALIAS expected")
+			return nil, localizedError(localization.CypherCompositeAlterDropAliasExpected(), nil)
 		}
 
 		// Skip "DROP ALIAS" and whitespace
@@ -690,13 +690,13 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		aliasName = strings.ReplaceAll(aliasName, "\r", "")
 
 		if aliasName == "" {
-			return nil, fmt.Errorf("invalid DROP ALIAS syntax: alias name cannot be empty")
+			return nil, localizedError(localization.CypherCompositeDropAliasNameEmpty(), nil)
 		}
 
 		// Remove constituent
 		err := e.dbManager.RemoveConstituent(dbName, aliasName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to remove constituent from composite database '%s': %w", dbName, err)
+			return nil, localizedError(localization.CypherCompositeRemoveConstituentFailed(dbName, err), err)
 		}
 
 		return &ExecuteResult{
@@ -705,6 +705,6 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		}, nil
 
 	} else {
-		return nil, fmt.Errorf("invalid ALTER COMPOSITE DATABASE syntax: ADD ALIAS or DROP ALIAS expected")
+		return nil, localizedError(localization.CypherCompositeAlterActionExpected(), nil)
 	}
 }

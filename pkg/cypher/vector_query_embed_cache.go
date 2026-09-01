@@ -2,8 +2,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 const maxVectorQueryEmbedCacheEntries = 2048
@@ -29,7 +30,7 @@ func cloneFloat32Slice(src []float32) []float32 {
 
 func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string) ([]float32, error) {
 	if e.embedder == nil {
-		return nil, fmt.Errorf("no embedder configured")
+		return nil, localizedError(localization.CypherCoreEmbedderNotConfigured(), nil)
 	}
 	key := canonicalizeVectorQueryText(text)
 	if key == "" {

@@ -1,0 +1,162 @@
+- id: storageschema.constraint_already_exists
+  description: Schema constraint creation conflict. Name is an untranslated constraint identifier.
+  other: 'constraint "{{.Name}}" already exists'
+- id: storageschema.constraint_different_allowed_values
+  description: Domain constraint name conflict. Name is an untranslated constraint identifier.
+  other: 'constraint "{{.Name}}" already exists with different allowed values'
+- id: storageschema.constraint_different_max_count
+  description: Cardinality constraint name conflict. Name is an untranslated constraint identifier.
+  other: 'constraint "{{.Name}}" already exists with different max count ({{.ExistingMaxCount}} vs {{.RequestedMaxCount}})'
+- id: storageschema.constraint_different_schema_or_type
+  description: Constraint name conflict across schemas or types. Name is untranslated.
+  other: 'constraint "{{.Name}}" already exists with different schema or type'
+- id: storageschema.conflicting_policy
+  description: Relationship policy conflict. Labels, relationship type, and constraint name are untranslated identifiers.
+  other: 'conflicting policy: cannot have both ALLOWED and DISALLOWED for {{.SourceLabel}}-[:{{.RelationshipType}}]->{{.TargetLabel}} (constraint "{{.ExistingName}}")'
+- id: storageschema.conflicting_domain_constraint
+  description: Domain constraint conflict. Name is an untranslated constraint identifier.
+  other: 'conflicting domain constraint "{{.Name}}" already exists on same schema with different allowed values'
+- id: storageschema.conflicting_cardinality_constraint
+  description: Cardinality constraint conflict. Name, direction, and label are untranslated identifiers.
+  other: 'conflicting cardinality constraint "{{.Name}}" already exists on {{.Direction}} {{.Label}} with max count {{.ExistingMaxCount}} (new: {{.RequestedMaxCount}})'
+- id: storageschema.equivalent_constraint_already_exists
+  description: Equivalent constraint conflict. Name is an untranslated constraint identifier.
+  other: 'equivalent constraint "{{.Name}}" already exists on same schema'
+- id: storageschema.conflicting_constraint_already_exists
+  description: Incompatible constraint conflict. Name is an untranslated constraint identifier.
+  other: 'conflicting constraint "{{.Name}}" already exists on same schema'
+- id: storageschema.unique_constraint_violation
+  description: Unique constraint violation. Label, property, and value are untranslated data.
+  other: "Node({{.Label}}) already exists with {{.Property}} = {{.Value}}"
+- id: storageschema.composite_index_min_properties
+  description: Composite index validation with the supplied property count.
+  other: composite index requires at least 2 properties, got {{.Count}}
+- id: storageschema.range_index_properties_required
+  description: Range index validation when no properties are supplied.
+  other: range index requires at least one property
+- id: storageschema.range_index_not_found
+  description: Missing range index. Name is an untranslated index identifier.
+  other: range index {{.Name}} not found
+- id: storageschema.range_index_numeric_value_required
+  description: Range index validation for a nonnumeric value. Type is an untranslated Go type.
+  other: range index only supports numeric values, got {{.Type}}
+- id: storageschema.index_not_found
+  description: Missing schema index. Name is an untranslated index identifier.
+  other: 'index "{{.Name}}" does not exist'
+- id: storageschema.constraint_not_found
+  description: Missing schema constraint. Name is an untranslated constraint identifier.
+  other: 'constraint "{{.Name}}" does not exist'
+- id: storageschema.property_index_not_found
+  description: Missing property index. Label and property are untranslated identifiers.
+  other: property index {{.Label}}:{{.Property}} not found
+- id: storageschema.decay_profile_bundle_already_exists
+  description: Duplicate decay profile bundle. Name is an untranslated profile identifier.
+  other: 'decay profile bundle "{{.Name}}" already exists'
+- id: storageschema.decay_profile_binding_already_exists
+  description: Duplicate decay profile binding. Name is an untranslated binding identifier.
+  other: 'decay profile binding "{{.Name}}" already exists'
+- id: storageschema.decay_profile_bundle_not_found
+  description: Missing decay profile bundle. Name is an untranslated profile identifier.
+  other: 'decay profile bundle "{{.Name}}" not found'
+- id: storageschema.decay_profile_bundle_referenced
+  description: Decay profile bundle drop blocked by an active binding. Name is untranslated.
+  other: 'cannot drop decay profile bundle "{{.Name}}": referenced by active binding'
+- id: storageschema.decay_profile_not_found
+  description: Missing decay profile. Name is an untranslated profile identifier.
+  other: 'decay profile "{{.Name}}" not found'
+- id: storageschema.promotion_profile_already_exists
+  description: Duplicate promotion profile. Name is an untranslated profile identifier.
+  other: 'promotion profile "{{.Name}}" already exists'
+- id: storageschema.promotion_profile_not_found
+  description: Missing promotion profile. Name is an untranslated profile identifier.
+  other: 'promotion profile "{{.Name}}" not found'
+- id: storageschema.promotion_profile_referenced
+  description: Promotion profile drop blocked by an active policy. Name is untranslated.
+  other: 'cannot drop promotion profile "{{.Name}}": referenced by active promotion policy'
+- id: storageschema.promotion_policy_already_exists
+  description: Duplicate promotion policy. Name is an untranslated policy identifier.
+  other: 'promotion policy "{{.Name}}" already exists'
+- id: storageschema.promotion_profile_when_clause_not_found
+  description: Missing promotion profile referenced by a WHEN clause. Name is untranslated.
+  other: 'promotion profile "{{.Name}}" not found (referenced in WHEN clause)'
+- id: storageschema.promotion_policy_not_found
+  description: Missing promotion policy. Name is an untranslated policy identifier.
+  other: 'promotion policy "{{.Name}}" not found'
+- id: storageschema.decay_edge_binding_conflict
+  description: Duplicate decay binding for an edge type. EdgeType and BindingName are untranslated identifiers.
+  other: 'edge type "{{.EdgeType}}" already has a decay profile binding "{{.BindingName}}"'
+- id: storageschema.decay_label_binding_conflict
+  description: Duplicate decay binding for a label set. Labels and BindingName are untranslated identifiers.
+  other: 'label set {{.Labels}} already has a decay profile binding "{{.BindingName}}"'
+- id: storageschema.decay_structural_index_conflict
+  description: Decay rule conflicts with a structural index. Property is untranslated.
+  other: 'property "{{.Property}}" is in a structural index and cannot have a decay rule'
+- id: storageschema.decay_profile_bundle_name_required
+  description: Decay profile bundle validation when the name is empty.
+  other: decay profile bundle name is required
+- id: storageschema.invalid_decay_function
+  description: Invalid decay function. Function is an untranslated enum value.
+  other: 'invalid decay function: "{{.Function}}"'
+- id: storageschema.invalid_score_from_mode
+  description: Invalid score-from mode. Mode is an untranslated enum value.
+  other: 'invalid score-from mode: "{{.Mode}}"'
+- id: storageschema.invalid_scope_type
+  description: Invalid knowledge policy scope. Scope is an untranslated enum value.
+  other: 'invalid scope type: "{{.Scope}}"'
+- id: storageschema.score_from_property_required
+  description: Custom score source validation. Field names and CUSTOM are machine identifiers.
+  other: scoreFromProperty is required when scoreFrom is CUSTOM
+- id: storageschema.visibility_threshold_out_of_range
+  description: Visibility threshold validation with the supplied numeric value.
+  other: 'visibilityThreshold must be between 0 and 1, got {{printf "%.6f" .Value}}'
+- id: storageschema.score_floor_out_of_range
+  description: Score floor validation with the supplied numeric value.
+  other: 'scoreFloor must be between 0 and 1, got {{printf "%.6f" .Value}}'
+- id: storageschema.promotion_profile_name_required
+  description: Promotion profile validation when the name is empty.
+  other: promotion profile name is required
+- id: storageschema.multiplier_non_negative
+  description: Promotion multiplier validation with the supplied numeric value.
+  other: 'multiplier must be non-negative, got {{printf "%.6f" .Value}}'
+- id: storageschema.score_cap_out_of_range
+  description: Score cap validation with the supplied numeric value.
+  other: 'scoreCap must be between 0 and 1, got {{printf "%.6f" .Value}}'
+- id: storageschema.unknown_option
+  description: Unknown knowledge policy option. Option is an untranslated field identifier.
+  other: 'unknown option: "{{.Option}}"'
+- id: storageschema.constraint_contract_already_exists
+  description: Duplicate constraint contract. Name is an untranslated contract identifier.
+  other: 'constraint contract "{{.Name}}" already exists'
+- id: storageschema.constraint_contract_name_conflict
+  description: Constraint contract name conflicts with a primitive constraint. Name is untranslated.
+  other: 'constraint contract "{{.Name}}" conflicts with an existing constraint name'
+- id: storageschema.scan_nodes_failed
+  description: Constraint contract node scan failure. Cause is untranslated diagnostic text.
+  other: "scanning nodes: {{.Cause}}"
+- id: storageschema.scan_relationships_failed
+  description: Constraint contract relationship scan failure. Cause is untranslated diagnostic text.
+  other: "scanning relationships: {{.Cause}}"
+- id: storageschema.unsupported_contract_target_entity_type
+  description: Unsupported constraint contract target. EntityType is an untranslated type identifier.
+  other: "unsupported constraint contract target entity type: {{.EntityType}}"
+- id: storageschema.constraint_contract_invalid
+  description: Invalid constraint contract predicate. Name, Predicate, and Cause are untranslated diagnostics.
+  other: 'constraint contract {{.Name}} invalid: predicate "{{.Predicate}}": {{.Cause}}'
+- id: storageschema.constraint_contract_violated
+  description: Constraint contract predicate violation. Name and Predicate are untranslated.
+  other: 'constraint contract {{.Name}} violated: predicate "{{.Predicate}}" evaluated to false'
+- id: storageschema.unsupported_node_predicate
+  description: Unsupported node predicate in a constraint contract.
+  other: unsupported node predicate
+- id: storageschema.missing_relationship_endpoint
+  description: Constraint contract evaluation cannot load a relationship endpoint.
+  other: missing relationship endpoint
+- id: storageschema.unsupported_relationship_predicate
+  description: Unsupported relationship predicate in a constraint contract.
+  other: unsupported relationship predicate
+- id: storageschema.unsupported_constraint_pattern
+  description: Unsupported constraint contract graph pattern. Pattern is untranslated source text.
+  other: 'unsupported pattern "{{.Pattern}}"'
+- id: storageschema.unsupported_constraint_literal
+  description: Unsupported constraint contract literal. Literal is untranslated source text.
+  other: 'unsupported literal "{{.Literal}}"'

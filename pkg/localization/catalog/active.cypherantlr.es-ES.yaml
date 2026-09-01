@@ -1,0 +1,12 @@
+- id: cypherantlr.parse_empty_query
+  description: Consulta vacía pasada al punto de entrada ANTLR Parse.
+  other: consulta vacía
+- id: cypherantlr.parse_syntax_error
+  description: Error de sintaxis de ANTLR Parse. Detail no se traduce.
+  other: "error de sintaxis: {{.Detail}}"
+- id: cypherantlr.validate_empty_query
+  description: Consulta vacía pasada al punto de entrada ANTLR Validate.
+  other: consulta vacía
+- id: cypherantlr.validate_syntax_error
+  description: Error de sintaxis de ANTLR Validate. Detail no se traduce.
+  other: "error de sintaxis: {{.Detail}}"

@@ -3,9 +3,9 @@ package multidb
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -31,7 +31,7 @@ func (m *DatabaseManager) loadMetadata() error {
 	if data, ok := node.Properties["data"].(string); ok {
 		var databases map[string]*DatabaseInfo
 		if err := json.Unmarshal([]byte(data), &databases); err != nil {
-			return fmt.Errorf("failed to parse database metadata: %w", err)
+			return localizedError(localization.MultidbMetadataParseFailed(err), err)
 		}
 		m.databases = databases
 	}
@@ -44,7 +44,7 @@ func (m *DatabaseManager) persistMetadata() error {
 	// Serialize metadata
 	data, err := json.Marshal(m.databases)
 	if err != nil {
-		return fmt.Errorf("failed to serialize database metadata: %w", err)
+		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
 	}
 
 	// Use system namespace to store metadata

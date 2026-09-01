@@ -1,0 +1,3 @@
+- id: nornicdb.retention_sweep_budget_exhausted
+  description: Error de control del barrido de retención cuando se alcanza el presupuesto configurado. Budget es un recuento numérico.
+  other: "presupuesto del barrido agotado ({{.Budget}} registros)"

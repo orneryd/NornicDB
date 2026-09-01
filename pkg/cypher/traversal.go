@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -196,7 +197,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Cont
 	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil {
-		return result, fmt.Errorf("invalid traversal pattern: %s", pattern)
+		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
 
 	// Store the path variable for path functions (relationships(path), nodes(path), length(path))

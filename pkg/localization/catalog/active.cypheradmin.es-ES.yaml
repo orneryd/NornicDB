@@ -1,0 +1,81 @@
+- id: cypheradmin.database_manager_unavailable
+  description: Error de comando administrativo de Cypher. Command no se traduce.
+  other: "el administrador de bases de datos no está disponible; {{.Command}} requiere compatibilidad con varias bases de datos"
+- id: cypheradmin.invalid_syntax
+  description: Error de sintaxis administrativa de Cypher. Command no se traduce.
+  other: "sintaxis de {{.Command}} no válida"
+- id: cypheradmin.database_name_expected
+  description: Falta el nombre de la base de datos. Command no se traduce.
+  other: "sintaxis de {{.Command}} no válida: se esperaba el nombre de la base de datos"
+- id: cypheradmin.database_name_empty
+  description: Nombre de base de datos vacío. Command no se traduce.
+  other: "sintaxis de {{.Command}} no válida: el nombre de la base de datos no puede estar vacío"
+- id: cypheradmin.invalid_database_name
+  description: Nombre de base de datos no válido. Database no se traduce.
+  other: "nombre de base de datos no válido: '{{.Database}}' (no puede contener espacios en blanco)"
+- id: cypheradmin.database_already_exists
+  description: Conflicto al crear una base de datos. Database no se traduce.
+  other: "la base de datos '{{.Database}}' ya existe"
+- id: cypheradmin.create_database_failed
+  description: Error al crear una base de datos. Database y Cause no se traducen.
+  other: "no se pudo crear la base de datos '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.invalid_identifier
+  description: Identificador de Cypher no válido. Identifier no se traduce.
+  other: "identificador {{.Identifier}} no válido: no se admiten acentos graves anidados"
+- id: cypheradmin.database_does_not_exist
+  description: Falta la base de datos que se va a eliminar. Database no se traduce.
+  other: "la base de datos '{{.Database}}' no existe"
+- id: cypheradmin.drop_database_failed
+  description: Error al eliminar una base de datos. Database y Cause no se traducen.
+  other: "no se pudo eliminar la base de datos '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_name_expected
+  description: Falta el nombre del alias. Command no se traduce.
+  other: "sintaxis de {{.Command}} no válida: se esperaba el nombre del alias"
+- id: cypheradmin.term_expected
+  description: Falta un término del comando. Command y Term no se traducen.
+  other: "sintaxis de {{.Command}} no válida: se esperaba {{.Term}}"
+- id: cypheradmin.clause_expected
+  description: Falta una cláusula del comando. Command y Clause no se traducen.
+  other: "sintaxis de {{.Command}} no válida: se esperaba la cláusula {{.Clause}}"
+- id: cypheradmin.alias_name_empty
+  description: Nombre de alias vacío. Command no se traduce.
+  other: "sintaxis de {{.Command}} no válida: el nombre del alias no puede estar vacío"
+- id: cypheradmin.invalid_alias_name
+  description: Nombre de alias no válido. Alias no se traduce.
+  other: "nombre de alias no válido: '{{.Alias}}' (no puede contener espacios en blanco)"
+- id: cypheradmin.create_alias_failed
+  description: Error al crear un alias. Alias, Database y Cause no se traducen.
+  other: "no se pudo crear el alias '{{.Alias}}' para la base de datos '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_does_not_exist
+  description: Falta el alias que se va a eliminar. Alias no se traduce.
+  other: "el alias '{{.Alias}}' no existe"
+- id: cypheradmin.drop_alias_failed
+  description: Error al eliminar un alias. Alias y Cause no se traducen.
+  other: "no se pudo eliminar el alias '{{.Alias}}': {{.Cause}}"
+- id: cypheradmin.keyword_expected
+  description: Falta una palabra clave. Command y Keyword no se traducen.
+  other: "sintaxis de {{.Command}} no válida: se esperaba la palabra clave {{.Keyword}}"
+- id: cypheradmin.database_not_found
+  description: Error de búsqueda de base de datos. Database y Cause no se traducen.
+  other: "no se encontró la base de datos '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.invalid_limits_type
+  description: Tipo de límites inesperado devuelto por el administrador.
+  other: el administrador de bases de datos devolvió un tipo de límites no válido
+- id: cypheradmin.limit_assignment_expected
+  description: Falta una asignación de límite de ALTER DATABASE.
+  other: "sintaxis de ALTER DATABASE no válida: se esperaba una asignación de límite"
+- id: cypheradmin.invalid_limit_assignment
+  description: Asignación de límite no válida. Assignment y limit_name = value no se traducen.
+  other: "sintaxis de asignación de límite no válida: se esperaba 'limit_name = value', se obtuvo '{{.Assignment}}'"
+- id: cypheradmin.invalid_limit_value
+  description: Valor de límite numérico no válido. Limit y Cause no se traducen.
+  other: "valor de {{.Limit}} no válido: {{.Cause}}"
+- id: cypheradmin.invalid_duration_limit_value
+  description: Duración de límite no válida. Limit, los ejemplos y Cause no se traducen.
+  other: "valor de {{.Limit}} no válido (se esperaba una duración como '60s' o '5m'): {{.Cause}}"
+- id: cypheradmin.unknown_limit_name
+  description: Clave de límite desconocida. Limit y Supported no se traducen.
+  other: "nombre de límite desconocido: '{{.Limit}}' (admitidos: {{.Supported}})"
+- id: cypheradmin.set_database_limits_failed
+  description: Error al actualizar límites. Database y Cause no se traducen.
+  other: "no se pudieron establecer los límites de la base de datos '{{.Database}}': {{.Cause}}"

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -429,11 +430,9 @@ func (ae *AsyncEngine) Flush() error {
 			details = result.FirstDeleteError
 		}
 		if details != "" {
-			return fmt.Errorf("flush incomplete: %d nodes failed, %d edges failed, %d deletes failed (%s)",
-				result.NodesFailed, result.EdgesFailed, result.DeletesFailed, details)
+			return localizedError(localization.StorageClientAsyncFlushIncompleteDetailed(result.NodesFailed, result.EdgesFailed, result.DeletesFailed, details), nil)
 		}
-		return fmt.Errorf("flush incomplete: %d nodes failed, %d edges failed, %d deletes failed",
-			result.NodesFailed, result.EdgesFailed, result.DeletesFailed)
+		return localizedError(localization.StorageClientAsyncFlushIncomplete(result.NodesFailed, result.EdgesFailed, result.DeletesFailed), nil)
 	}
 	if result.NodesWritten+result.EdgesWritten+result.NodesDeleted+result.EdgesDeleted > 0 {
 		ae.lastFlush = time.Now()
@@ -750,6 +749,7 @@ func (ae *AsyncEngine) flushNodeWithRebase(pending, baseline *Node) error {
 		return nil
 	}
 
+	// Internal flush diagnostic: exported flush errors carry this text as Details.
 	return fmt.Errorf("failed to apply async node update for %s after %d attempts", pending.ID, asyncNodeRebaseMaxAttempts)
 }
 
@@ -2252,24 +2252,12 @@ func (ae *AsyncEngine) Close() error {
 		result = FlushResult{}
 	}
 
-	// Build error message if there are issues
+	// Report final flush state if there are issues.
 	if result.HasErrors() || pendingNodes > 0 || pendingEdges > 0 {
-		var errMsg string
-		if result.HasErrors() {
-			errMsg = fmt.Sprintf("flush errors: %d nodes failed, %d edges failed, %d deletes failed",
-				result.NodesFailed, result.EdgesFailed, result.DeletesFailed)
-		}
-		if pendingNodes > 0 || pendingEdges > 0 || pendingNodeDeletes > 0 || pendingEdgeDeletes > 0 {
-			if errMsg != "" {
-				errMsg += "; "
-			}
-			errMsg += fmt.Sprintf("unflushed: %d nodes, %d edges, %d node deletes, %d edge deletes (POTENTIAL DATA LOSS)",
-				pendingNodes, pendingEdges, pendingNodeDeletes, pendingEdgeDeletes)
-		}
 		if engineErr != nil {
-			return fmt.Errorf("%s; engine close: %w", errMsg, engineErr)
+			return localizedError(localization.StorageClientAsyncCloseEngineFailed(result.NodesFailed, result.EdgesFailed, result.DeletesFailed, pendingNodes, pendingEdges, pendingNodeDeletes, pendingEdgeDeletes, engineErr), engineErr)
 		}
-		return fmt.Errorf("async engine close: %s", errMsg)
+		return localizedError(localization.StorageClientAsyncCloseFailed(result.NodesFailed, result.EdgesFailed, result.DeletesFailed, pendingNodes, pendingEdges, pendingNodeDeletes, pendingEdgeDeletes), nil)
 	}
 
 	return engineErr
@@ -2587,7 +2575,7 @@ func (ae *AsyncEngine) resolveNamespace(nodeID NodeID) (string, bool, error) {
 			return ns, false, nil
 		}
 	}
-	return "", false, fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: %s", nodeID)
+	return "", false, localizedError(localization.StorageClientNodeIDNamespaceRequired(string(nodeID)), nil)
 }
 
 func (ae *AsyncEngine) checkExistenceConstraint(node *Node, c Constraint) error {

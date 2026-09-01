@@ -1,0 +1,81 @@
+- id: cypheradmin.database_manager_unavailable
+  description: Cypher admin command failure. Command is untranslated Cypher syntax.
+  other: "database manager not available - {{.Command}} requires multi-database support"
+- id: cypheradmin.invalid_syntax
+  description: Cypher admin syntax failure. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax"
+- id: cypheradmin.database_name_expected
+  description: Missing database name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: database name expected"
+- id: cypheradmin.database_name_empty
+  description: Empty database name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: database name cannot be empty"
+- id: cypheradmin.invalid_database_name
+  description: Invalid database name. Database is an untranslated identifier.
+  other: "invalid database name: '{{.Database}}' (cannot contain whitespace)"
+- id: cypheradmin.database_already_exists
+  description: Database creation conflict. Database is an untranslated identifier.
+  other: "database '{{.Database}}' already exists"
+- id: cypheradmin.create_database_failed
+  description: Database creation wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to create database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.invalid_identifier
+  description: Invalid quoted Cypher identifier. Identifier includes its untranslated Go quoting.
+  other: "invalid identifier {{.Identifier}}: nested backticks are not supported"
+- id: cypheradmin.database_does_not_exist
+  description: Missing database during deletion. Database is an untranslated identifier.
+  other: "database '{{.Database}}' does not exist"
+- id: cypheradmin.drop_database_failed
+  description: Database deletion wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to drop database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_name_expected
+  description: Missing alias name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: alias name expected"
+- id: cypheradmin.term_expected
+  description: Missing command term. Command and Term are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Term}} expected"
+- id: cypheradmin.clause_expected
+  description: Missing command clause. Command and Clause are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Clause}} clause expected"
+- id: cypheradmin.alias_name_empty
+  description: Empty alias name. Command is untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: alias name cannot be empty"
+- id: cypheradmin.invalid_alias_name
+  description: Invalid alias name. Alias is an untranslated identifier.
+  other: "invalid alias name: '{{.Alias}}' (cannot contain whitespace)"
+- id: cypheradmin.create_alias_failed
+  description: Alias creation wrapper. Alias, Database, and Cause are untranslated diagnostic values.
+  other: "failed to create alias '{{.Alias}}' for database '{{.Database}}': {{.Cause}}"
+- id: cypheradmin.alias_does_not_exist
+  description: Missing alias during deletion. Alias is an untranslated identifier.
+  other: "alias '{{.Alias}}' does not exist"
+- id: cypheradmin.drop_alias_failed
+  description: Alias deletion wrapper. Alias and Cause are untranslated diagnostic values.
+  other: "failed to drop alias '{{.Alias}}': {{.Cause}}"
+- id: cypheradmin.keyword_expected
+  description: Missing keyword. Command and Keyword are untranslated Cypher syntax.
+  other: "invalid {{.Command}} syntax: {{.Keyword}} keyword expected"
+- id: cypheradmin.database_not_found
+  description: Database lookup wrapper. Database and Cause are untranslated diagnostic values.
+  other: "database '{{.Database}}' not found: {{.Cause}}"
+- id: cypheradmin.invalid_limits_type
+  description: Unexpected database manager limits response type.
+  other: invalid limits type returned from database manager
+- id: cypheradmin.limit_assignment_expected
+  description: Missing ALTER DATABASE limit assignment. ALTER DATABASE is Cypher syntax.
+  other: "invalid ALTER DATABASE syntax: limit assignment expected"
+- id: cypheradmin.invalid_limit_assignment
+  description: Malformed limit assignment. Assignment and limit_name = value are untranslated machine values.
+  other: "invalid limit assignment syntax: expected 'limit_name = value', got '{{.Assignment}}'"
+- id: cypheradmin.invalid_limit_value
+  description: Invalid numeric limit. Limit and Cause are untranslated diagnostic values.
+  other: "invalid {{.Limit}} value: {{.Cause}}"
+- id: cypheradmin.invalid_duration_limit_value
+  description: Invalid duration limit. Limit, duration examples, and Cause are untranslated machine values.
+  other: "invalid {{.Limit}} value (expected duration like '60s' or '5m'): {{.Cause}}"
+- id: cypheradmin.unknown_limit_name
+  description: Unknown limit key. Limit and Supported are untranslated machine identifiers.
+  other: "unknown limit name: '{{.Limit}}' (supported: {{.Supported}})"
+- id: cypheradmin.set_database_limits_failed
+  description: Database limit update wrapper. Database and Cause are untranslated diagnostic values.
+  other: "failed to set limits for database '{{.Database}}': {{.Cause}}"

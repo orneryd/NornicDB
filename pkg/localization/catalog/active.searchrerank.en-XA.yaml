@@ -1,0 +1,18 @@
+- id: search.rerank_request_marshal_failed
+  description: Expanded pseudo-locale rerank request serialization failure.
+  other: "[!! failed to marshal request: {{.Cause}} !!]"
+- id: search.rerank_request_creation_failed
+  description: Expanded pseudo-locale rerank HTTP request construction failure.
+  other: "[!! failed to create request: {{.Cause}} !!]"
+- id: search.rerank_request_failed
+  description: Expanded pseudo-locale rerank HTTP request failure.
+  other: "[!! rerank request failed: {{.Cause}} !!]"
+- id: search.rerank_api_status
+  description: Expanded pseudo-locale rerank API HTTP status failure.
+  other: "[!! rerank API returned status {{.Status}} !!]"
+- id: search.rerank_response_parse_failed
+  description: Expanded pseudo-locale rerank API response decoding failure.
+  other: "[!! failed to parse response: {{.Cause}} !!]"
+- id: search.rerank_response_unrecognized
+  description: Expanded pseudo-locale unsupported rerank response shape.
+  other: "[!! unable to parse rerank response !!]"

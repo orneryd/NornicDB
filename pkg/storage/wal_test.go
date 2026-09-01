@@ -1398,7 +1398,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: &Node{ID: "n1", Labels: []string{"Modified"}}}, "test"))
 		wal.Close()
 
-		// Phase 3: Recover
+		// Recover.
 		recovered, err := RecoverFromWAL(walDir, snapshotPath)
 		require.NoError(t, err)
 

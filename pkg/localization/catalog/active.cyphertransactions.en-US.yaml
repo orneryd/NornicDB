@@ -1,0 +1,96 @@
+- id: cyphertransactions.already_active
+  description: Explicit transaction already active.
+  other: transaction already active
+- id: cyphertransactions.engine_unsupported
+  description: Storage engine lacks transaction support.
+  other: engine does not support transactions
+- id: cyphertransactions.prime_namespace_failed
+  description: Transaction namespace initialization failure. Cause is untranslated diagnostic text.
+  other: "failed to prime transaction namespace: {{.Cause}}"
+- id: cyphertransactions.start_failed
+  description: Transaction start failure. Cause is untranslated diagnostic text.
+  other: "failed to start transaction: {{.Cause}}"
+- id: cyphertransactions.pin_namespace_failed
+  description: Transaction namespace pinning failure. Cause is untranslated diagnostic text.
+  other: "failed to pin transaction namespace: {{.Cause}}"
+- id: cyphertransactions.configure_failed
+  description: Transaction configuration failure. Cause is untranslated diagnostic text.
+  other: "failed to configure transaction: {{.Cause}}"
+- id: cyphertransactions.wal_begin_failed
+  description: WAL transaction-begin write failure. WAL and Cause are untranslated machine values.
+  other: "failed to write WAL tx begin: {{.Cause}}"
+- id: cyphertransactions.no_active
+  description: No explicit transaction is active.
+  other: no active transaction
+- id: cyphertransactions.unknown_type
+  description: Internal transaction implementation is unknown.
+  other: unknown transaction type
+- id: cyphertransactions.commit_failed
+  description: Transaction commit failure. Cause is untranslated diagnostic text.
+  other: "commit failed: {{.Cause}}"
+- id: cyphertransactions.rollback_failed
+  description: Transaction rollback failure. Cause is untranslated diagnostic text.
+  other: "rollback failed: {{.Cause}}"
+- id: cyphertransactions.show_in_transaction_unsupported
+  description: Unsupported SHOW command in a transaction. Query is untranslated Cypher text.
+  other: "unsupported SHOW command in transaction: {{.Query}}"
+- id: cyphertransactions.query_in_transaction_unsupported
+  description: Unsupported query in a transaction. Query is untranslated Cypher text.
+  other: "unsupported query type in transaction: {{.Query}}"
+- id: cyphertransactions.invalid_script_action
+  description: Invalid transaction script action. Action is an untranslated machine keyword.
+  other: "invalid transaction script action: {{.Action}}"
+- id: cyphertransactions.case_block_missing
+  description: Transaction script lacks a CASE block. CASE is untranslated Cypher syntax.
+  other: "invalid transaction CASE script: missing CASE block"
+- id: cyphertransactions.case_syntax_invalid
+  description: Invalid transaction CASE syntax. Cypher keywords are untranslated.
+  other: "invalid transaction CASE syntax: expected CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT"
+- id: cyphertransactions.condition_not_boolean
+  description: Transaction condition produced a non-boolean value. Value is untranslated diagnostic data.
+  other: "condition expression did not evaluate to boolean: {{.Value}}"
+- id: cyphertransactions.query_type_unsupported
+  description: Unsupported query type. QueryType and Supported are untranslated machine keywords.
+  other: "unsupported query type: {{.QueryType}} (supported: {{.Supported}})"
+- id: cyphertransactions.return_clause_not_found
+  description: Missing RETURN clause. Query includes untranslated Go quoting.
+  other: "RETURN clause not found in query: {{.Query}}"
+- id: cyphertransactions.syntax_start_invalid
+  description: Query starts with an invalid clause. ValidClauses contains untranslated Cypher keywords.
+  other: "syntax error: query must start with a valid clause ({{.ValidClauses}})"
+- id: cyphertransactions.syntax_unbalanced_at
+  description: Closing bracket lacks an opener. Position is an untranslated byte offset.
+  other: "syntax error: unbalanced brackets at position {{.Position}}"
+- id: cyphertransactions.syntax_unbalanced_parentheses
+  description: Query has unbalanced parentheses.
+  other: "syntax error: unbalanced parentheses"
+- id: cyphertransactions.syntax_unbalanced_square_brackets
+  description: Query has unbalanced square brackets.
+  other: "syntax error: unbalanced square brackets"
+- id: cyphertransactions.syntax_unbalanced_curly_braces
+  description: Query has unbalanced curly braces.
+  other: "syntax error: unbalanced curly braces"
+- id: cyphertransactions.syntax_unclosed_quote
+  description: Query has an unclosed quote.
+  other: "syntax error: unclosed quote"
+- id: cyphertransactions.delete_residual_relationships
+  description: Plain DELETE targets a connected node. NodeID and DETACH DELETE are untranslated machine values.
+  other: "Cannot delete node {{.NodeID}}, because it still has relationships. To delete this node, you must first delete its relationships (or use DETACH DELETE)"
+- id: cyphertransactions.match_with_unwind_clauses_required
+  description: Compound MATCH WITH UNWIND query lacks required clauses. Keywords and example are untranslated Cypher syntax.
+  other: "MATCH, WITH, UNWIND, and RETURN clauses required (e.g., MATCH (n) WITH n UNWIND n.items AS item RETURN item)"
+- id: cyphertransactions.storage_failed
+  description: Storage lookup failure. Cause is untranslated diagnostic text.
+  other: "storage error: {{.Cause}}"
+- id: cyphertransactions.unwind_as_required
+  description: UNWIND lacks AS. Keywords and example are untranslated Cypher syntax.
+  other: "UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)"
+- id: cyphertransactions.order_by_parse_failed
+  description: ORDER BY parsing failure. ORDER BY is untranslated Cypher syntax.
+  other: failed to parse ORDER BY clause
+- id: cyphertransactions.multi_match_return_required
+  description: Multi-MATCH query lacks RETURN. Keywords are untranslated Cypher syntax.
+  other: multi-MATCH query requires RETURN clause
+- id: cyphertransactions.multiple_match_expected
+  description: Multi-MATCH route received fewer than two MATCH clauses. MATCH is untranslated Cypher syntax.
+  other: expected multiple MATCH clauses

@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -23,7 +23,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
-		return nil, fmt.Errorf("empty query")
+		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err

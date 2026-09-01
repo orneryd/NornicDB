@@ -1,0 +1,6 @@
+- id: cypherinvariants.pipeline_create_failed
+  description: Error de CREATE en la canalización. Cause no se traduce.
+  other: "CREATE en la canalización produjo un error: {{.Cause}}"
+- id: cypherinvariants.delete_by_prefix_transaction_unsupported
+  description: DeleteByPrefix no se puede ejecutar dentro de una transacción. DeleteByPrefix no se traduce.
+  other: DeleteByPrefix no se admite dentro del contexto de una transacción

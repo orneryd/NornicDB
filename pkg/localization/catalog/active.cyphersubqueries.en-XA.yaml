@@ -1,0 +1,147 @@
+- id: cyphersubqueries.call_not_found
+  description: Expanded pseudo-locale missing CALL error.
+  other: "[!! CALL not found in query !!]"
+- id: cyphersubqueries.match_before_call_not_found
+  description: Expanded pseudo-locale missing MATCH error.
+  other: "[!! MATCH not found before CALL !!]"
+- id: cyphersubqueries.node_pattern_invalid
+  description: Expanded pseudo-locale invalid node pattern.
+  other: "[!! could not parse node pattern: {{.Pattern}} !!]"
+- id: cyphersubqueries.outer_match_bindings_failed
+  description: Expanded pseudo-locale outer MATCH binding failure.
+  other: "[!! failed to evaluate outer MATCH bindings: {{.Cause}} !!]"
+- id: cyphersubqueries.node_load_failed
+  description: Expanded pseudo-locale node loading failure.
+  other: "[!! failed to get nodes: {{.Cause}} !!]"
+- id: cyphersubqueries.call_for_node_failed
+  description: Expanded pseudo-locale bound-node CALL failure.
+  other: "[!! failed to execute CALL for node {{.Node}}: {{.Cause}} !!]"
+- id: cyphersubqueries.outer_match_seeds_failed
+  description: Expanded pseudo-locale outer MATCH seed failure.
+  other: "[!! failed to evaluate outer MATCH seeds: {{.Cause}} !!]"
+- id: cyphersubqueries.call_body_empty
+  description: Expanded pseudo-locale empty CALL body.
+  other: "[!! invalid CALL {} subquery: empty body !!]"
+- id: cyphersubqueries.use_clause_failed
+  description: Expanded pseudo-locale USE clause failure.
+  other: "[!! CALL subquery USE clause error: {{.Cause}} !!]"
+- id: cyphersubqueries.use_database_failed
+  description: Expanded pseudo-locale USE database failure.
+  other: "[!! CALL subquery USE {{.Database}} failed: {{.Cause}} !!]"
+- id: cyphersubqueries.correlated_union_parse_failed
+  description: Expanded pseudo-locale correlated UNION parse failure.
+  other: "[!! failed to parse UNION branches in correlated CALL subquery !!]"
+- id: cyphersubqueries.union_with_imports_failed
+  description: Expanded pseudo-locale UNION WITH import failure.
+  other: "[!! failed to parse UNION branch {{.Branch}} WITH imports: {{.Cause}} !!]"
+- id: cyphersubqueries.static_union_branch_failed
+  description: Expanded pseudo-locale static UNION branch failure.
+  other: "[!! failed static UNION subquery branch {{.Branch}}: {{.Cause}} !!]"
+- id: cyphersubqueries.correlated_union_branch_failed
+  description: Expanded pseudo-locale correlated UNION branch failure.
+  other: "[!! failed correlated UNION subquery branch {{.Branch}} for seed {{.Seed}}: {{.Cause}} !!]"
+- id: cyphersubqueries.union_column_count_mismatch
+  description: Expanded pseudo-locale UNION column mismatch.
+  other: "[!! UNION queries must return the same number of columns (got {{.First}} and {{.Second}}) !!]"
+- id: cyphersubqueries.correlated_import_failed
+  description: Expanded pseudo-locale correlated import failure.
+  other: "[!! failed to resolve correlated import {{.Import}}: {{.Cause}} !!]"
+- id: cyphersubqueries.optional_import_fallback_failed
+  description: Expanded pseudo-locale optional import fallback failure.
+  other: "[!! failed optional import fallback for {{.Import}}: {{.Cause}} !!]"
+- id: cyphersubqueries.with_import_unknown_variable
+  description: Expanded pseudo-locale unknown WITH import.
+  other: "[!! CALL subquery WITH imports unknown variable: {{.Variable}} !!]"
+- id: cyphersubqueries.correlated_variable_empty
+  description: Expanded pseudo-locale empty correlated variable.
+  other: "[!! empty correlated variable !!]"
+- id: cyphersubqueries.outer_match_projection_missing
+  description: Expanded pseudo-locale missing outer MATCH projection.
+  other: "[!! outer MATCH did not project correlated variable {{.Variable}} !!]"
+- id: cyphersubqueries.call_body_expected
+  description: Expanded pseudo-locale expected CALL body.
+  other: "[!! invalid CALL {} subquery: empty body (expected CALL { <query> }) !!]"
+- id: cyphersubqueries.call_error
+  description: Expanded pseudo-locale CALL execution failure.
+  other: "[!! CALL subquery error: {{.Cause}} !!]"
+- id: cyphersubqueries.transaction_import_shape_unsupported
+  description: Expanded pseudo-locale unsupported transaction import.
+  other: "[!! unsupported CALL ({{.Variable}}) IN TRANSACTIONS import shape !!]"
+- id: cyphersubqueries.transaction_body_empty
+  description: Expanded pseudo-locale empty transaction body.
+  other: "[!! invalid CALL ({{.Variable}}) IN TRANSACTIONS: empty body !!]"
+- id: cyphersubqueries.transaction_batch_failed
+  description: Expanded pseudo-locale transaction batch failure.
+  other: "[!! CALL ({{.Variable}}) IN TRANSACTIONS batch {{.Batch}} failed: {{.Cause}} !!]"
+- id: cyphersubqueries.execution_failed
+  description: Expanded pseudo-locale subquery execution failure.
+  other: "[!! subquery execution failed: {{.Cause}} !!]"
+- id: cyphersubqueries.first_batch_failed
+  description: Expanded pseudo-locale first batch failure.
+  other: "[!! batch 1 failed: {{.Cause}} !!]"
+- id: cyphersubqueries.batch_failed
+  description: Expanded pseudo-locale iterative batch failure.
+  other: "[!! batch {{.Batch}} failed: {{.Cause}} !!]"
+- id: cyphersubqueries.batch_progress_failed
+  description: Expanded pseudo-locale counted batch failure.
+  other: "[!! batch {{.Batch}}/{{.Total}} failed: {{.Cause}} !!]"
+- id: cyphersubqueries.after_call_clause_unsupported
+  description: Expanded pseudo-locale unsupported post-CALL clause.
+  other: "[!! unsupported clause after CALL {}: {{.Clause}} (supported: RETURN, ORDER BY, SKIP, LIMIT) !!]"
+- id: cyphersubqueries.chained_transactions_unsupported
+  description: Expanded pseudo-locale unsupported chained transaction.
+  other: "[!! CALL {} IN TRANSACTIONS is not supported in chained CALL subqueries (batchSize={{.BatchSize}}) !!]"
+- id: cyphersubqueries.with_query_clause_required
+  description: Expanded pseudo-locale missing query after WITH.
+  other: "[!! invalid CALL {} subquery: WITH must be followed by a query clause !!]"
+- id: cyphersubqueries.with_body_empty
+  description: Expanded pseudo-locale empty body after WITH.
+  other: "[!! invalid CALL {} subquery: empty query body after WITH !!]"
+- id: cyphersubqueries.with_import_expression_invalid
+  description: Expanded pseudo-locale invalid WITH import expression.
+  other: "[!! invalid WITH import expression: {{.Expression}} !!]"
+- id: cyphersubqueries.with_imports_required
+  description: Expanded pseudo-locale missing WITH imports.
+  other: "[!! invalid CALL {} subquery: WITH clause does not import variables !!]"
+- id: cyphersubqueries.seed_row_missing_variable
+  description: Expanded pseudo-locale missing seed-row variable.
+  other: "[!! CALL subquery seed row missing variable: {{.Variable}} !!]"
+- id: cyphersubqueries.batched_lookup_failed
+  description: Expanded pseudo-locale batched lookup failure.
+  other: "[!! batched correlated CALL lookup failed: {{.Cause}} !!]"
+- id: cyphersubqueries.batched_lookup_columns_unexpected
+  description: Expanded pseudo-locale unexpected lookup columns.
+  other: "[!! batched correlated CALL lookup produced unexpected columns: {{.Columns}} !!]"
+- id: cyphersubqueries.rag_candidates_required
+  description: Expanded pseudo-locale missing rerank candidates.
+  other: "[!! db.rerank requires non-empty candidates !!]"
+- id: cyphersubqueries.inference_manager_unavailable
+  description: Expanded pseudo-locale missing inference manager.
+  other: "[!! inference manager is not configured !!]"
+- id: cyphersubqueries.infer_messages_empty
+  description: Expanded pseudo-locale empty infer messages.
+  other: "[!! db.infer messages cannot be empty !!]"
+- id: cyphersubqueries.infer_prompt_or_messages_required
+  description: Expanded pseudo-locale missing infer input.
+  other: "[!! db.infer requires prompt or messages !!]"
+- id: cyphersubqueries.query_required
+  description: Expanded pseudo-locale missing query.
+  other: "[!! query is required !!]"
+- id: cyphersubqueries.rag_syntax_invalid
+  description: Expanded pseudo-locale invalid RAG syntax.
+  other: "[!! invalid {{.Procedure}} syntax !!]"
+- id: cyphersubqueries.rag_request_argument_required
+  description: Expanded pseudo-locale missing RAG request argument.
+  other: "[!! {{.Procedure}} requires a request argument !!]"
+- id: cyphersubqueries.rag_parenthesis_unmatched
+  description: Expanded pseudo-locale unmatched RAG parenthesis.
+  other: "[!! unmatched parenthesis in {{.Procedure}} !!]"
+- id: cyphersubqueries.rag_parameter_must_be_map
+  description: Expanded pseudo-locale invalid RAG parameter type.
+  other: "[!! {{.Procedure}} parameter {{.Parameter}} must be a map !!]"
+- id: cyphersubqueries.rag_request_must_be_map_literal
+  description: Expanded pseudo-locale invalid RAG request form.
+  other: "[!! {{.Procedure}} request must be a map literal !!]"
+- id: cyphersubqueries.rag_candidate_id_required
+  description: Expanded pseudo-locale missing rerank candidate id.
+  other: "[!! db.rerank candidate id is required !!]"

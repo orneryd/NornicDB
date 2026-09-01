@@ -4,10 +4,10 @@ package storage
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
 
@@ -19,13 +19,13 @@ func (b *BadgerEngine) Backup(path string) error {
 	defer b.mu.RUnlock()
 
 	if b.closed {
-		return ErrStorageClosed
+		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
 	// Create backup file
 	f, err := security.CreateRootedFile(path, 0o600)
 	if err != nil {
-		return fmt.Errorf("failed to create backup file: %w", err)
+		return localizedError(localization.StorageClientBackupFileCreateFailed(path, err), err)
 	}
 	defer f.Close()
 
@@ -35,17 +35,17 @@ func (b *BadgerEngine) Backup(path string) error {
 	// Stream backup (since=0 means full backup)
 	_, err = b.db.Backup(buf, 0)
 	if err != nil {
-		return fmt.Errorf("backup failed: %w", err)
+		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 
 	// Flush buffer
 	if err := buf.Flush(); err != nil {
-		return fmt.Errorf("failed to flush backup: %w", err)
+		return localizedError(localization.StorageClientBackupFlushFailed(err), err)
 	}
 
 	// Sync to disk
 	if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync backup: %w", err)
+		return localizedError(localization.StorageClientBackupSyncFailed(err), err)
 	}
 
 	return nil
@@ -60,7 +60,7 @@ func (b *BadgerEngine) Backup(path string) error {
 // those index keyspaces and deleting entries whose suffix IDs match the prefix.
 func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	if prefix == "" {
-		return 0, 0, fmt.Errorf("prefix cannot be empty")
+		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
 
 	if err := b.ensureOpen(); err != nil {
@@ -110,7 +110,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	for _, p := range dropPrefixes {
 		if err := b.db.DropPrefix(p); err != nil {
-			return 0, 0, fmt.Errorf("failed to drop prefix %x: %w", p[0], err)
+			return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(p[0], err), err)
 		}
 	}
 
@@ -167,10 +167,10 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	// Clean up secondary indexes where the db prefix appears in the suffix.
 	if err := deleteIndexEntriesBySuffixPrefix(prefixLabelIndex); err != nil {
-		return 0, 0, fmt.Errorf("failed to clean label index: %w", err)
+		return 0, 0, localizedError(localization.StorageClientCleanLabelIndexFailed(err), err)
 	}
 	if err := deleteIndexEntriesBySuffixPrefix(prefixEdgeTypeIndex); err != nil {
-		return 0, 0, fmt.Errorf("failed to clean edge type index: %w", err)
+		return 0, 0, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
 	}
 
 	// Clear/adjust caches and cached counters.

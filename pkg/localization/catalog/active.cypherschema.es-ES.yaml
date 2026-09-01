@@ -1,0 +1,74 @@
+- id: cypherschema.composite_ddl_not_allowed
+  other: "{{.Code}}: el DDL de esquema en bases de datos compuestas requiere un destino constituyente. Use USE <composite>.<alias> para dirigirse a un constituyente específico"
+- id: cypherschema.unknown_command
+  other: "comando de esquema desconocido: {{.Statement}}"
+- id: cypherschema.flush_pending_writes_failed
+  other: "no se pudieron vaciar las escrituras asíncronas pendientes antes del DDL de esquema: {{.Cause}}"
+- id: cypherschema.constraint_properties_required
+  other: "la restricción {{.Kind}} requiere propiedades"
+- id: cypherschema.temporal_relationship_arity_required
+  other: "la restricción TEMPORAL requiere al menos 3 propiedades (key..., valid_from, valid_to)"
+- id: cypherschema.temporal_node_arity_required
+  other: "la restricción TEMPORAL requiere 3 propiedades (key, valid_from, valid_to)"
+- id: cypherschema.domain_value_list_invalid
+  other: "lista de valores de dominio no válida: {{.Cause}}"
+- id: cypherschema.domain_allowed_value_required
+  other: la restricción DOMAIN requiere al menos un valor permitido
+- id: cypherschema.invalid_syntax
+  other: "sintaxis de {{.Subject}} no válida"
+- id: cypherschema.name_required
+  other: "sintaxis de {{.Command}} no válida: se requiere el nombre de {{.Entity}}"
+- id: cypherschema.range_index_single_property_required
+  other: "RANGE INDEX solo admite una propiedad; se obtuvieron {{.Count}}"
+- id: cypherschema.create_range_index_failed
+  other: "no se pudo crear el índice de rango: {{.Cause}}"
+- id: cypherschema.invalid_identifier_segment
+  other: segmento de identificador no válido
+- id: cypherschema.invalid_if_not_exists_clause
+  other: cláusula IF NOT EXISTS no válida
+- id: cypherschema.empty_clause
+  other: "cláusula {{.Clause}} vacía"
+- id: cypherschema.invalid_clause
+  other: "cláusula {{.Clause}} no válida"
+- id: cypherschema.missing_keyword
+  other: "falta {{.Keyword}}"
+- id: cypherschema.invalid_keyword
+  other: "{{.Keyword}} no válido"
+- id: cypherschema.invalid_trailing_syntax
+  other: sintaxis final no válida
+- id: cypherschema.index_properties_required
+  other: no se especificaron propiedades para el índice
+- id: cypherschema.index_name_required
+  other: falta el nombre del índice
+- id: cypherschema.fulltext_properties_required
+  other: no se encontraron propiedades en la definición del índice de texto completo
+- id: cypherschema.empty_statement
+  other: sentencia vacía
+- id: cypherschema.invalid_pattern
+  other: "patrón {{.Pattern}} no válido"
+- id: cypherschema.unsupported_predicate
+  other: "predicado {{.Predicate}} no admitido"
+- id: cypherschema.unsupported_create_constraint_shape
+  other: forma de CREATE CONSTRAINT no admitida
+- id: cypherschema.positive_max_count_required
+  other: "MAX COUNT debe ser un entero positivo; se obtuvo {{.Value}}"
+- id: cypherschema.backfill_index_failed
+  other: "no se pudo rellenar el índice para la etiqueta {{.Label}}: {{.Cause}}"
+- id: cypherschema.backfill_property_index_failed
+  other: "no se pudo rellenar el índice de propiedad {{.Label}}({{.Property}}): {{.Cause}}"
+- id: cypherschema.unsupported_property_type
+  other: "tipo de propiedad no admitido: {{.Type}}"
+- id: cypherschema.manager_unavailable
+  other: el administrador de esquemas no está disponible
+- id: cypherschema.add_fulltext_relationship_index_failed
+  other: "no se pudo agregar el índice de texto completo de relaciones: {{.Cause}}"
+- id: cypherschema.add_fulltext_index_failed
+  other: "no se pudo agregar el índice de texto completo: {{.Cause}}"
+- id: cypherschema.unterminated_string
+  other: "cadena sin terminar: {{.Raw}}"
+- id: cypherschema.contract_entry_required
+  other: el contrato de restricción requiere al menos una entrada de bloque
+- id: cypherschema.malformed_require_block
+  other: bloque REQUIRE con formato incorrecto
+- id: cypherschema.nested_contract_entry_unsupported
+  other: "las entradas FOR ... REQUIRE anidadas no se admiten dentro de bloques REQUIRE; cree una restricción de bloque dirigida independiente como {{.Entry}}"

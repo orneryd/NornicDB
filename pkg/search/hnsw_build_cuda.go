@@ -4,10 +4,10 @@ package search
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu/cuda"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // CudaHNSWBuildAccelerator uses CUDA cosine/top-k kernels for HNSW
@@ -24,7 +24,7 @@ type CudaHNSWBuildAccelerator struct {
 // NewCudaHNSWBuildAccelerator creates a CUDA-backed HNSW build accelerator.
 func NewCudaHNSWBuildAccelerator() (*CudaHNSWBuildAccelerator, error) {
 	if !cuda.IsAvailable() {
-		return nil, cuda.ErrCUDANotAvailable
+		return nil, localizedError(localization.SearchCUDANotAvailable(), cuda.ErrCUDANotAvailable)
 	}
 	device, err := cuda.NewDevice(0)
 	if err != nil {
@@ -39,7 +39,7 @@ func NewCudaHNSWBuildAccelerator() (*CudaHNSWBuildAccelerator, error) {
 
 func (a *CudaHNSWBuildAccelerator) Prepare(dim int, _ int) error {
 	if dim <= 0 {
-		return fmt.Errorf("invalid HNSW GPU build dimension %d", dim)
+		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
 	a.dim = dim
 	return nil

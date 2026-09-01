@@ -46,11 +46,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Reranker is a Stage-2 reranking component.
@@ -263,12 +264,12 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, localizedError(localization.SearchRerankRequestMarshalFailed(err), err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", ce.config.APIURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, localizedError(localization.SearchRerankRequestCreationFailed(err), err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -278,12 +279,12 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 
 	resp, err := ce.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("rerank request failed: %w", err)
+		return nil, localizedError(localization.SearchRerankRequestFailed(err), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("rerank API returned status %d", resp.StatusCode)
+		return nil, localizedError(localization.SearchRerankAPIStatus(resp.StatusCode), nil)
 	}
 
 	// Parse response - handle multiple formats
@@ -305,7 +306,7 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, localizedError(localization.SearchRerankResponseParseFailed(err), err)
 	}
 
 	scores := make([]float64, len(candidates))
@@ -336,7 +337,7 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 		return scores, nil
 	}
 
-	return nil, fmt.Errorf("unable to parse rerank response")
+	return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
 }
 
 // IsAvailable checks if the reranking service is available.

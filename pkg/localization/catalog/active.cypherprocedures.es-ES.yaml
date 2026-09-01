@@ -1,0 +1,126 @@
+- id: cypherprocedures.vector_query_parse_failed
+  other: "error al analizar la consulta vectorial: {{.Cause}}"
+- id: cypherprocedures.string_query_embedder_required
+  other: "se proporcionó una consulta de texto, pero no hay ningún generador de embeddings configurado; use un vector o configure el servicio de embeddings"
+- id: cypherprocedures.embed_query_failed
+  other: "no se pudo generar el embedding de la consulta '{{.Query}}': {{.Cause}}"
+- id: cypherprocedures.parameter_not_provided
+  other: "no se proporcionó el parámetro ${{.Parameter}}"
+- id: cypherprocedures.parameter_non_numeric
+  other: "el parámetro ${{.Parameter}} contiene un valor no numérico: {{.ValueType}}"
+- id: cypherprocedures.parameter_string_embedder_required
+  other: "el parámetro ${{.Parameter}} es una cadena, pero no hay ningún generador de embeddings configurado; proporcione un vector o configure el servicio de embeddings"
+- id: cypherprocedures.embed_parameter_failed
+  other: "no se pudo generar el embedding del valor '{{.Value}}' del parámetro ${{.Parameter}}: {{.Cause}}"
+- id: cypherprocedures.parameter_unsupported_type
+  other: "el parámetro ${{.Parameter}} tiene un tipo no compatible con la consulta vectorial: {{.ValueType}} (se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherprocedures.unsupported_parameters
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda; los parámetros {{.Parameters}} tienen un tipo no compatible (se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherprocedures.query_input_possibly_unsupported
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda (es posible que el parámetro tenga un tipo no compatible; se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherprocedures.query_input_required
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda"
+- id: cypherprocedures.vector_create_node_invalid_syntax
+  other: "{{if .Parentheses}}sintaxis no válida: faltan los paréntesis{{else}}sintaxis de db.index.vector.createNodeIndex no válida{{end}}"
+- id: cypherprocedures.vector_create_node_arguments_required
+  other: "db.index.vector.createNodeIndex requiere al menos 4 argumentos: indexName, label, property, dimension"
+- id: cypherprocedures.create_vector_index_failed
+  other: "no se pudo crear el índice vectorial: {{.Cause}}"
+- id: cypherprocedures.vector_create_relationship_invalid_syntax
+  other: "sintaxis de db.index.vector.createRelationshipIndex no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.vector_create_relationship_arguments_required
+  other: "db.index.vector.createRelationshipIndex requiere al menos 4 argumentos: indexName, relationshipType, property, dimension"
+- id: cypherprocedures.invalid_dimension
+  other: "dimensión no válida: {{.Cause}}"
+- id: cypherprocedures.create_relationship_vector_index_failed
+  other: "no se pudo crear el índice vectorial de relaciones: {{.Cause}}"
+- id: cypherprocedures.fulltext_create_node_invalid_syntax
+  other: "sintaxis de db.index.fulltext.createNodeIndex no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.fulltext_create_node_arguments_required
+  other: "db.index.fulltext.createNodeIndex requiere al menos 3 argumentos: indexName, labels, properties"
+- id: cypherprocedures.create_fulltext_index_failed
+  other: "no se pudo crear el índice de texto completo: {{.Cause}}"
+- id: cypherprocedures.fulltext_create_relationship_invalid_syntax
+  other: "sintaxis de db.index.fulltext.createRelationshipIndex no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.fulltext_create_relationship_arguments_required
+  other: "db.index.fulltext.createRelationshipIndex requiere al menos 3 argumentos: indexName, relationshipTypes, properties"
+- id: cypherprocedures.create_relationship_fulltext_index_failed
+  other: "no se pudo crear el índice de texto completo de relaciones: {{.Cause}}"
+- id: cypherprocedures.fulltext_drop_invalid_syntax
+  other: "sintaxis de db.index.fulltext.drop no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.vector_drop_invalid_syntax
+  other: "sintaxis de db.index.vector.drop no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.set_node_vector_invalid_syntax
+  other: "sintaxis de db.create.setNodeVectorProperty no válida"
+- id: cypherprocedures.set_node_vector_parentheses_required
+  other: "db.create.setNodeVectorProperty: faltan los paréntesis (se esperaba db.create.setNodeVectorProperty(nodeId, 'key', [vector]))"
+- id: cypherprocedures.set_node_vector_arguments_required
+  other: "db.create.setNodeVectorProperty: requiere 3 argumentos (nodeId, propertyKey, vector)"
+- id: cypherprocedures.set_node_vector_argument_required
+  other: "db.create.setNodeVectorProperty: falta el argumento vector (se esperaba nodeId, propertyKey, [vector])"
+- id: cypherprocedures.node_not_found
+  other: "no se encontró el nodo: {{.Node}}"
+- id: cypherprocedures.update_node_failed
+  other: "no se pudo actualizar el nodo: {{.Cause}}"
+- id: cypherprocedures.set_relationship_vector_invalid_syntax
+  other: "sintaxis de db.create.setRelationshipVectorProperty no válida"
+- id: cypherprocedures.set_relationship_vector_parentheses_required
+  other: "db.create.setRelationshipVectorProperty: faltan los paréntesis (se esperaba db.create.setRelationshipVectorProperty(relId, 'key', [vector]))"
+- id: cypherprocedures.set_relationship_vector_arguments_required
+  other: "db.create.setRelationshipVectorProperty: requiere 3 argumentos (relId, propertyKey, vector)"
+- id: cypherprocedures.set_relationship_vector_argument_required
+  other: "db.create.setRelationshipVectorProperty: falta el argumento vector (se esperaba relId, propertyKey, [vector])"
+- id: cypherprocedures.relationship_not_found
+  other: "no se encontró la relación: {{.Relationship}}"
+- id: cypherprocedures.update_relationship_failed
+  other: "no se pudo actualizar la relación: {{.Cause}}"
+- id: cypherprocedures.metadata_active_transaction_required
+  other: "tx.setMetaData() requiere una transacción activa. Use BEGIN TRANSACTION primero"
+- id: cypherprocedures.metadata_invalid_syntax
+  other: "sintaxis de tx.setMetaData no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.metadata_object_required
+  other: "tx.setMetaData requiere un objeto de metadatos: {key: value}"
+- id: cypherprocedures.metadata_entry_required
+  other: "tx.setMetaData requiere al menos un par clave-valor"
+- id: cypherprocedures.metadata_transaction_unsupported
+  other: "el tipo de transacción no admite metadatos"
+- id: cypherprocedures.set_metadata_failed
+  other: "no se pudieron establecer los metadatos de la transacción: {{.Cause}}"
+- id: cypherprocedures.create_in_transaction
+  other: "CREATE PROCEDURE no se permite dentro de una transacción activa"
+- id: cypherprocedures.create_invalid_syntax
+  other: "sintaxis de CREATE PROCEDURE no válida"
+- id: cypherprocedures.body_required
+  other: "el cuerpo del procedimiento no puede estar vacío"
+- id: cypherprocedures.already_exists
+  other: "el procedimiento {{.Procedure}} ya existe"
+- id: cypherprocedures.encode_record_failed
+  other: "no se pudo codificar el registro del procedimiento: {{.Cause}}"
+- id: cypherprocedures.update_catalog_failed
+  other: "no se pudo actualizar el catálogo de procedimientos: {{.Cause}}"
+- id: cypherprocedures.persist_catalog_failed
+  other: "no se pudo guardar el catálogo de procedimientos: {{.Cause}}"
+- id: cypherprocedures.drop_in_transaction
+  other: "DROP PROCEDURE no se permite dentro de una transacción activa"
+- id: cypherprocedures.drop_invalid_syntax
+  other: "sintaxis de DROP PROCEDURE no válida"
+- id: cypherprocedures.drop_failed
+  other: "no se pudo eliminar el procedimiento {{.Procedure}}: {{.Cause}}"
+- id: cypherprocedures.registry_reload_failed
+  other: "no se pudo recargar el registro de procedimientos de Cypher: {{.Cause}}"
+- id: cypherprocedures.catalog_read_failed
+  other: "no se pudo leer el catálogo de procedimientos de Cypher: {{.Cause}}"
+- id: cypherprocedures.catalog_record_decode_failed
+  other: "no se pudo decodificar el registro del catálogo de procedimientos de Cypher: node={{.Node}}"
+- id: cypherprocedures.catalog_record_invalid
+  other: "el registro del catálogo de procedimientos de Cypher no es válido: node={{.Node}}"
+- id: cypherprocedures.invalid_argument_name
+  other: "nombre de argumento de procedimiento no válido: {{.Argument}}"
+- id: cypherprocedures.duplicate_argument
+  other: "argumento de procedimiento duplicado: {{.Argument}}"
+- id: cypherprocedures.invalid_mode
+  other: "modo de procedimiento no válido: {{.Mode}}"
+- id: cypherprocedures.read_contains_write
+  other: "el cuerpo del procedimiento READ contiene operaciones de escritura"
+- id: cypherprocedures.argument_count
+  other: "el procedimiento {{.Procedure}} requiere {{.Expected}} argumentos; se recibieron {{.Actual}}"

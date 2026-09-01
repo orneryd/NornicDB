@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Bulk Operations
@@ -63,7 +64,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 		for _, node := range nodes {
 			dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 			if !ok {
-				return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: %s", node.ID)
+				return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 			}
 			schema := b.GetSchemaForNamespace(dbName)
 			if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
@@ -72,7 +73,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 
 			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 			if err != nil {
-				return fmt.Errorf("failed to encode node: %w", err)
+				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 			}
 
 			if err := txn.Set(nodeKey(node.ID), data); err != nil {
@@ -88,7 +89,7 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 					}
 					for _, kv := range kvs {
 						if err := txn.Set(kv.key, kv.val); err != nil {
-							return fmt.Errorf("failed to store embedding chunk %d: %w", i, err)
+							return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(i, err), err)
 						}
 					}
 				}
@@ -150,7 +151,7 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 	for _, node := range nodes {
 		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 		if !ok {
-			return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: %s", node.ID)
+			return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 		}
 		schema := b.GetSchemaForNamespace(dbName)
 		if schema == nil {
@@ -296,7 +297,7 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 			edgeNS, _, _ := ParseDatabasePrefix(string(edge.ID))
 			data, err := b.encodeEdgeInTxn(txn, edgeNS, edge)
 			if err != nil {
-				return fmt.Errorf("failed to encode edge: %w", err)
+				return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 			}
 
 			if err := txn.Set(edgeKey(edge.ID), data); err != nil {

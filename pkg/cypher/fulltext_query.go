@@ -33,12 +33,13 @@
 package cypher
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ---------------------------------------------------------------------------
@@ -612,7 +613,7 @@ func ParseFulltextQuery(input string) (*FulltextQuery, error) {
 		return nil, err
 	}
 	if p.peek().kind != tkEOF {
-		return nil, fmt.Errorf("query cannot be parsed: unexpected token %q", p.peek().text)
+		return nil, localizedError(localization.CypherCoreFulltextUnexpectedToken(p.peek().text), nil)
 	}
 	// If the top-level node is a lone MustNot (e.g. bare `NOT term` or
 	// `-term`), wrap it in a boolean node with an implicit MatchAll so
@@ -793,12 +794,12 @@ func (p *ftParser) parseClause() (ftNode, error) {
 	if p.peek().kind == tkCaret {
 		p.advance()
 		if p.peek().kind != tkTerm {
-			return nil, fmt.Errorf("query cannot be parsed: expected number after ^")
+			return nil, localizedError(localization.CypherCoreFulltextNumberAfterBoostExpected(), nil)
 		}
 		nTok := p.advance()
 		b, err := strconv.ParseFloat(nTok.text, 64)
 		if err != nil {
-			return nil, fmt.Errorf("query cannot be parsed: bad boost %q", nTok.text)
+			return nil, localizedError(localization.CypherCoreFulltextBadBoost(nTok.text, err), err)
 		}
 		node = &ftBoostNode{inner: node, boost: b}
 	}
@@ -819,7 +820,7 @@ func (p *ftParser) parsePrimary() (ftNode, error) {
 			return nil, err
 		}
 		if p.peek().kind != tkRParen {
-			return nil, fmt.Errorf("query cannot be parsed: missing ')'")
+			return nil, localizedError(localization.CypherCoreFulltextClosingParenthesisRequired(), nil)
 		}
 		p.advance()
 		return inner, nil
@@ -834,7 +835,7 @@ func (p *ftParser) parsePrimary() (ftNode, error) {
 	case tkQuoted, tkRegex, tkStar, tkQuestion, tkLBrack, tkLBrace:
 		return p.parseAtom("")
 	}
-	return nil, fmt.Errorf("query cannot be parsed: unexpected token %q", tk.text)
+	return nil, localizedError(localization.CypherCoreFulltextUnexpectedToken(tk.text), nil)
 }
 
 // parseFieldValue is the RHS of `field:` — a group, range, atom, or a
@@ -848,7 +849,7 @@ func (p *ftParser) parseFieldValue(field string) (ftNode, error) {
 			return nil, err
 		}
 		if p.peek().kind != tkRParen {
-			return nil, fmt.Errorf("query cannot be parsed: missing ')'")
+			return nil, localizedError(localization.CypherCoreFulltextClosingParenthesisRequired(), nil)
 		}
 		p.advance()
 		return rebindField(inner, field), nil
@@ -876,7 +877,7 @@ func (p *ftParser) parseRange(field string) (ftNode, error) {
 		return nil, err
 	}
 	if p.peek().kind != tkTo {
-		return nil, fmt.Errorf("query cannot be parsed: expected TO in range")
+		return nil, localizedError(localization.CypherCoreFulltextRangeTORequired(), nil)
 	}
 	p.advance()
 	hi, err := p.rangeTerm()
@@ -885,7 +886,7 @@ func (p *ftParser) parseRange(field string) (ftNode, error) {
 	}
 	closeTok := p.advance()
 	if closeTok.kind != tkRBrack && closeTok.kind != tkRBrace {
-		return nil, fmt.Errorf("query cannot be parsed: expected ] or } to close range")
+		return nil, localizedError(localization.CypherCoreFulltextRangeCloseRequired(), nil)
 	}
 	hiIncl := closeTok.kind == tkRBrack
 	return &ftLeafNode{
@@ -904,7 +905,7 @@ func (p *ftParser) rangeTerm() (string, error) {
 		p.advance()
 		return "*", nil
 	}
-	return "", fmt.Errorf("query cannot be parsed: expected range endpoint")
+	return "", localizedError(localization.CypherCoreFulltextRangeEndpointRequired(), nil)
 }
 
 // parseAtom parses a single leaf value (term/phrase/wildcard/regex/fuzzy)
@@ -930,7 +931,7 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 		p.advance()
 		re, err := regexp.Compile("(?i)" + tk.text)
 		if err != nil {
-			return nil, fmt.Errorf("query cannot be parsed: bad regex /%s/: %v", tk.text, err)
+			return nil, localizedError(localization.CypherCoreFulltextBadRegex(tk.text, err), err)
 		}
 		return &ftLeafNode{field: field, pattern: patRegex{re: re}}, nil
 	case tkStar, tkQuestion:
@@ -957,7 +958,7 @@ func (p *ftParser) parseAtom(field string) (ftNode, error) {
 		}
 		return &ftLeafNode{field: field, pattern: patTerm{term: strings.ToLower(text)}}, nil
 	}
-	return nil, fmt.Errorf("query cannot be parsed: unexpected token %q", tk.text)
+	return nil, localizedError(localization.CypherCoreFulltextUnexpectedToken(tk.text), nil)
 }
 
 // followsWildcardChar peeks for a wildcard char immediately following the
@@ -994,7 +995,7 @@ func (p *ftParser) parseWildcard(field, prefix string) (ftNode, error) {
 	}
 	re, err := regexp.Compile("(?i)^" + b.String() + "$")
 	if err != nil {
-		return nil, fmt.Errorf("query cannot be parsed: bad wildcard: %v", err)
+		return nil, localizedError(localization.CypherCoreFulltextBadWildcard(err), err)
 	}
 	return &ftLeafNode{field: field, pattern: patWildcard{re: re}}, nil
 }

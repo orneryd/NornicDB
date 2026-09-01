@@ -3,9 +3,10 @@ package replication
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"os"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // NewDefaultTransportFromConfig creates a ClusterTransport using replication config.
@@ -41,17 +42,17 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 func buildTLSConfigs(cfg TLSConfig) (*tls.Config, *tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load TLS cert/key: %w", err)
+		return nil, nil, localizedError(localization.ReplicationTransportLoadTLSCertKeyFailed(err), err)
 	}
 
 	rootCAs := x509.NewCertPool()
 	if cfg.CAFile != "" {
 		caBytes, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read TLS CA file: %w", err)
+			return nil, nil, localizedError(localization.ReplicationTransportReadTLSCAFailed(err), err)
 		}
 		if !rootCAs.AppendCertsFromPEM(caBytes) {
-			return nil, nil, fmt.Errorf("invalid TLS CA file")
+			return nil, nil, localizedError(localization.ReplicationTransportInvalidTLSCA(), nil)
 		}
 	}
 
@@ -100,7 +101,7 @@ func parseTLSVersion(version string) (uint16, error) {
 	case "1.3":
 		return tls.VersionTLS13, nil
 	default:
-		return 0, fmt.Errorf("invalid TLS min version: %s (must be '1.2' or '1.3')", version)
+		return 0, localizedError(localization.ReplicationConfigInvalidTLSMinVersion(version), nil)
 	}
 }
 
@@ -125,7 +126,7 @@ func parseCipherSuites(values []string) ([]uint16, error) {
 			out = append(out, id)
 			continue
 		}
-		return nil, fmt.Errorf("unknown TLS cipher suite: %s", v)
+		return nil, localizedError(localization.ReplicationTransportUnknownTLSCipherSuite(v), nil)
 	}
 	return out, nil
 }

@@ -5,7 +5,6 @@
 package multidb
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -133,12 +132,12 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 			// Resolve alias if needed
 			actualName, err := m.resolveDatabaseInternal(ref.DatabaseName)
 			if err != nil {
-				return fmt.Errorf("constituent database '%s' not found: %w", ref.DatabaseName, err)
+				return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
 			}
 
 			// Cannot use composite database as constituent (prevent cycles)
 			if info, exists := m.databases[actualName]; exists && info.Type == "composite" {
-				return fmt.Errorf("cannot use composite database '%s' as constituent", actualName)
+				return localizedError(localization.MultidbCompositeDatabaseAsConstituent(actualName), nil)
 			}
 		}
 	}
@@ -147,7 +146,7 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 	aliasMap := make(map[string]bool)
 	for _, ref := range constituents {
 		if aliasMap[ref.Alias] {
-			return fmt.Errorf("duplicate constituent alias: '%s'", ref.Alias)
+			return localizedError(localization.MultidbCompositeDuplicateAlias(ref.Alias), nil)
 		}
 		aliasMap[ref.Alias] = true
 	}
@@ -160,7 +159,7 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 		if ref.Type == "remote" && strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
 			ciphertext, err := m.encryptRemotePassword(ref.Password)
 			if err != nil {
-				return fmt.Errorf("failed to secure remote credentials for alias '%s': %w", ref.Alias, err)
+				return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
 			}
 			ref.Password = ciphertext
 		}
@@ -194,7 +193,7 @@ func (m *DatabaseManager) DropCompositeDatabase(name string) error {
 	}
 
 	if info.Type != "composite" {
-		return fmt.Errorf("database '%s' is not a composite database", name)
+		return localizedError(localization.MultidbCompositeDatabaseNotComposite(name), nil)
 	}
 
 	// Remove from metadata
@@ -205,7 +204,7 @@ func (m *DatabaseManager) DropCompositeDatabase(name string) error {
 		// If persistence fails, restore the database to maintain consistency
 		// This prevents the database from being dropped in memory but still existing in storage
 		m.databases[name] = info
-		return fmt.Errorf("failed to persist metadata after drop: %w", err)
+		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
 
 	return nil
@@ -222,7 +221,7 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 	}
 
 	if info.Type != "composite" {
-		return fmt.Errorf("database '%s' is not a composite database", compositeName)
+		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
 	// Validate constituent
@@ -234,14 +233,14 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 	if constituent.Type == "local" {
 		_, err := m.resolveDatabaseInternal(constituent.DatabaseName)
 		if err != nil {
-			return fmt.Errorf("constituent database '%s' not found: %w", constituent.DatabaseName, err)
+			return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(constituent.DatabaseName, err), err)
 		}
 	}
 
 	// Check for duplicate alias
 	for _, existing := range info.Constituents {
 		if existing.Alias == constituent.Alias {
-			return fmt.Errorf("constituent alias '%s' already exists", constituent.Alias)
+			return localizedError(localization.MultidbCompositeAliasExists(constituent.Alias), nil)
 		}
 	}
 
@@ -249,7 +248,7 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 	if encrypted.Type == "remote" && strings.EqualFold(strings.TrimSpace(encrypted.AuthMode), "user_password") {
 		ciphertext, err := m.encryptRemotePassword(encrypted.Password)
 		if err != nil {
-			return fmt.Errorf("failed to secure remote credentials for alias '%s': %w", encrypted.Alias, err)
+			return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(encrypted.Alias, err), err)
 		}
 		encrypted.Password = ciphertext
 	}
@@ -272,7 +271,7 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 	}
 
 	if info.Type != "composite" {
-		return fmt.Errorf("database '%s' is not a composite database", compositeName)
+		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
 	// Find and remove constituent
@@ -284,7 +283,7 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 		}
 	}
 
-	return fmt.Errorf("constituent alias '%s' not found", alias)
+	return localizedError(localization.MultidbCompositeAliasNotFound(alias), nil)
 }
 
 // GetCompositeConstituents returns the list of constituents for a composite database.
@@ -298,7 +297,7 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 	}
 
 	if info.Type != "composite" {
-		return nil, fmt.Errorf("database '%s' is not a composite database", compositeName)
+		return nil, localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
 	// Return a copy

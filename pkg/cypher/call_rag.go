@@ -3,11 +3,11 @@ package cypher
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -40,7 +40,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, cypher string) (*Exe
 		return nil, err
 	}
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("db.rerank requires non-empty candidates")
+		return nil, localizedError(localization.CypherSubqueriesRAGCandidatesRequired(), nil)
 	}
 
 	opts := search.DefaultSearchOptions()
@@ -86,7 +86,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, cypher string) (*Exec
 	}
 	manager := e.GetInferenceManager()
 	if manager == nil {
-		return nil, fmt.Errorf("inference manager is not configured")
+		return nil, localizedError(localization.CypherSubqueriesInferenceManagerUnavailable(), nil)
 	}
 
 	start := time.Now()
@@ -118,7 +118,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, cypher string) (*Exec
 	if messagesRaw, ok := req["messages"]; ok {
 		msgs := toChatMessages(messagesRaw)
 		if len(msgs) == 0 {
-			return nil, fmt.Errorf("db.infer messages cannot be empty")
+			return nil, localizedError(localization.CypherSubqueriesInferMessagesEmpty(), nil)
 		}
 		chatReq := heimdall.ChatRequest{
 			Model:       stringOr(req["model"], ""),
@@ -152,7 +152,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, cypher string) (*Exec
 	} else {
 		prompt := stringOr(req["prompt"], stringOr(req["query"], ""))
 		if strings.TrimSpace(prompt) == "" {
-			return nil, fmt.Errorf("db.infer requires prompt or messages")
+			return nil, localizedError(localization.CypherSubqueriesInferPromptOrMessagesRequired(), nil)
 		}
 		text, err = manager.Generate(ctx, prompt, params)
 		if err != nil {
@@ -181,7 +181,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, cypher string) (*Exec
 func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
 	query := stringOr(req["query"], stringOr(req["text"], ""))
 	if strings.TrimSpace(query) == "" {
-		return nil, fmt.Errorf("query is required")
+		return nil, localizedError(localization.CypherSubqueriesQueryRequired(), nil)
 	}
 
 	opts := search.GetAdaptiveRRFConfig(query)
@@ -281,16 +281,16 @@ func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, 
 	upper := strings.ToUpper(cypher)
 	idx := strings.Index(upper, procName)
 	if idx == -1 {
-		return nil, fmt.Errorf("invalid %s syntax", strings.ToLower(procName))
+		return nil, localizedError(localization.CypherSubqueriesRAGSyntaxInvalid(strings.ToLower(procName)), nil)
 	}
 	parenStart := strings.Index(cypher[idx:], "(")
 	if parenStart == -1 {
-		return nil, fmt.Errorf("%s requires a request argument", strings.ToLower(procName))
+		return nil, localizedError(localization.CypherSubqueriesRAGRequestArgumentRequired(strings.ToLower(procName)), nil)
 	}
 	parenStart += idx
 	parenEnd := e.findMatchingParen(cypher, parenStart)
 	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in %s", strings.ToLower(procName))
+		return nil, localizedError(localization.CypherSubqueriesRAGParenthesisUnmatched(strings.ToLower(procName)), nil)
 	}
 	rawArg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
 	if rawArg == "" {
@@ -307,13 +307,13 @@ func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, 
 				return req, nil
 			}
 		}
-		return nil, fmt.Errorf("%s parameter %s must be a map", strings.ToLower(procName), rawArg)
+		return nil, localizedError(localization.CypherSubqueriesRAGParameterMustBeMap(strings.ToLower(procName), rawArg), nil)
 	}
 	if (strings.HasPrefix(rawArg, "'") && strings.HasSuffix(rawArg, "'")) ||
 		(strings.HasPrefix(rawArg, "\"") && strings.HasSuffix(rawArg, "\"")) {
 		return map[string]interface{}{"query": strings.Trim(rawArg, "\"'")}, nil
 	}
-	return nil, fmt.Errorf("%s request must be a map literal", strings.ToLower(procName))
+	return nil, localizedError(localization.CypherSubqueriesRAGRequestMustBeMapLiteral(strings.ToLower(procName)), nil)
 }
 
 func toChatMessages(v interface{}) []heimdall.ChatMessage {
@@ -352,7 +352,7 @@ func parseRerankCandidates(raw interface{}) ([]search.RerankCandidate, error) {
 		content := stringOr(firstPresent(row, "content", "text"), "")
 		score, _ := ragToFloat64(firstPresent(row, "score", "bi_score", "rrf_score"))
 		if strings.TrimSpace(id) == "" {
-			return nil, fmt.Errorf("db.rerank candidate id is required")
+			return nil, localizedError(localization.CypherSubqueriesRAGCandidateIDRequired(), nil)
 		}
 		out = append(out, search.RerankCandidate{
 			ID:      id,

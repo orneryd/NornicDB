@@ -63,11 +63,11 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -168,7 +168,7 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, c
 	// Build graph from storage
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	// Run algorithm
@@ -274,7 +274,7 @@ func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Conte
 
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	predictions := linkpredict.CommonNeighbors(graph, config.SourceNode, config.TopK)
@@ -291,7 +291,7 @@ func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Co
 
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	predictions := linkpredict.ResourceAllocation(graph, config.SourceNode, config.TopK)
@@ -308,7 +308,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx contex
 
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	predictions := linkpredict.PreferentialAttachment(graph, config.SourceNode, config.TopK)
@@ -325,7 +325,7 @@ func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, cyph
 
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	predictions := linkpredict.Jaccard(graph, config.SourceNode, config.TopK)
@@ -346,7 +346,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, cyph
 	// Build graph
 	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build graph: %w", err)
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 	}
 
 	// Create hybrid scorer
@@ -413,7 +413,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher 
 	paramEnd := strings.LastIndex(cypher, ")")
 
 	if paramStart == -1 || paramEnd == -1 || paramEnd <= paramStart {
-		return nil, fmt.Errorf("invalid procedure call syntax")
+		return nil, localizedError(localization.CypherGraphProceduresInvalidProcedureCallSyntax(), nil)
 	}
 
 	params := strings.TrimSpace(cypher[paramStart+1 : paramEnd])
@@ -463,7 +463,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher 
 					// If evaluation returned nil, the variable wasn't found in nodeVars
 					// Extract variable name for better error message
 					if varName, ok := parseIDFunctionVariable(value); ok {
-						return nil, fmt.Errorf("variable %q not found in query context (id(%s) cannot be resolved)", varName, varName)
+						return nil, localizedError(localization.CypherGraphProceduresVariableNotFound(varName), nil)
 					}
 				}
 				// Fallback: Extract node variable from id(...) call
@@ -509,7 +509,7 @@ func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher 
 	}
 
 	if config.SourceNode == "" {
-		return nil, fmt.Errorf("sourceNode parameter required")
+		return nil, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
 	}
 
 	return config, nil

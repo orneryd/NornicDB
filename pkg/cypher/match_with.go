@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -18,7 +19,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if withIdx == -1 || returnIdx == -1 {
-		return nil, fmt.Errorf("WITH and RETURN clauses required")
+		return nil, localizedError(localization.CypherMatchingWithReturnClausesRequired(), nil)
 	}
 
 	// Check for UNWIND between WITH and RETURN - delegate to specialized handler
@@ -78,7 +79,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("storage error: %w", err)
+		return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 	}
 
 	// Apply property filter from MATCH pattern (e.g., {name: 'Alice'})
@@ -470,7 +471,7 @@ func (e *StorageExecutor) executeMatchWithClause(ctx context.Context, cypher str
 		ks, ke := trimKeywordWSBounds("ORDER BY")
 		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
 		if !ok {
-			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+			return nil, localizedError(localization.CypherMatchingOrderByParseFailed(), nil)
 		}
 
 		orderPart := cypher[orderByEnd:]
@@ -852,7 +853,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if withIdx == -1 || optMatchIdx == -1 || returnIdx == -1 {
-		return nil, fmt.Errorf("WITH, OPTIONAL MATCH, and RETURN clauses required")
+		return nil, localizedError(localization.CypherMatchingWithOptionalMatchReturnClausesRequired(), nil)
 	}
 
 	// Extract MATCH part (before WITH)
@@ -883,7 +884,7 @@ func (e *StorageExecutor) executeMatchWithOptionalMatch(ctx context.Context, cyp
 	// Get matching nodes (index-backed when possible)
 	nodes, err := e.collectOptionalMatchInitialNodes(ctx, nodePattern, matchWhereClause, matchPartRaw, params)
 	if err != nil {
-		return nil, fmt.Errorf("storage error: %w", err)
+		return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 	}
 
 	// Extract WITH clause section (between WITH and OPTIONAL MATCH)

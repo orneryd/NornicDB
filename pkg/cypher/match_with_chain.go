@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -168,7 +168,7 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 
 	pattern := e.parseNodePattern(ctx, patternPart)
 	if pattern.variable == "" {
-		return nil, "", fmt.Errorf("invalid MATCH pattern: missing variable in %q", clause)
+		return nil, "", localizedError(localization.CypherMatchingMatchPatternVariableMissing(clause), nil)
 	}
 
 	var nodes []*storage.Node

@@ -1,0 +1,57 @@
+- id: storagecomposite.constituent_not_found
+  description: Error de búsqueda de un constituyente. Alias no se traduce.
+  other: "no se encontró el constituyente '{{.Alias}}'"
+- id: storagecomposite.no_writable_constituents
+  description: Error de escritura cuando ningún constituyente acepta escrituras.
+  other: no hay constituyentes disponibles para escritura
+- id: storagecomposite.write_target_ambiguous
+  description: Error de enrutamiento de escritura. USE <composite.constituent> y properties.database_id no se traducen.
+  other: "destino de escritura compuesto ambiguo: use USE <composite.constituent> o establezca properties.database_id en un constituyente con permiso de escritura"
+- id: storagecomposite.edge_required
+  description: Error de validación de una relación nula.
+  other: la relación no puede ser nula
+- id: storagecomposite.read_only_start_node
+  description: Error de enrutamiento de una relación. Alias no se traduce.
+  other: "el nodo inicial se encontró en el constituyente de solo lectura '{{.Alias}}'; no se puede crear la relación"
+- id: storagecomposite.start_node_not_found
+  description: Error de enrutamiento cuando ningún constituyente contiene el nodo inicial.
+  other: no se encontró el nodo inicial en ningún constituyente
+- id: storagecomposite.constituent_query_failed
+  description: Contenedor de error de consulta. Alias y Cause no se traducen.
+  other: "error al consultar el constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.bulk_write_target_ambiguous
+  description: Error de enrutamiento de escritura masiva. USE <composite.constituent> y properties.database_id no se traducen.
+  other: "destino de escritura compuesto ambiguo en la creación masiva: use USE <composite.constituent> o establezca properties.database_id"
+- id: storagecomposite.constituent_lookup_failed
+  description: Contenedor de error de búsqueda durante una escritura masiva. Alias y Cause no se traducen.
+  other: "no se pudo obtener el constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.node_bulk_create_failed
+  description: Contenedor de error de creación masiva de nodos. Alias y Cause no se traducen.
+  other: "no se pudieron crear nodos en el constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.start_node_check_failed
+  description: Contenedor de error de búsqueda del nodo inicial. Cause no se traduce.
+  other: "error al comprobar el nodo inicial: {{.Cause}}"
+- id: storagecomposite.edge_bulk_create_failed
+  description: Contenedor de error de creación masiva de relaciones. Alias y Cause no se traducen.
+  other: "no se pudieron crear relaciones en el constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.default_constituent_lookup_failed
+  description: Contenedor de error de búsqueda del constituyente predeterminado. Cause no se traduce.
+  other: "no se pudo obtener el constituyente predeterminado: {{.Cause}}"
+- id: storagecomposite.unrouted_edge_bulk_create_failed
+  description: Contenedor de error de creación masiva de relaciones sin enrutar. Cause no se traduce.
+  other: "no se pudieron crear las relaciones sin enrutar: {{.Cause}}"
+- id: storagecomposite.constituent_close_failed
+  description: Contenedor de error de cierre. Alias y Cause no se traducen.
+  other: "error al cerrar el constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.node_count_failed
+  description: Contenedor de error de recuento de nodos. Alias y Cause no se traducen.
+  other: "error al contar los nodos del constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.edge_count_failed
+  description: Contenedor de error de recuento de relaciones. Alias y Cause no se traducen.
+  other: "error al contar las relaciones del constituyente '{{.Alias}}': {{.Cause}}"
+- id: storagecomposite.delete_by_prefix_unsupported
+  description: Operación compuesta no admitida. DeleteByPrefix no se traduce.
+  other: DeleteByPrefix no se admite en bases de datos compuestas; elimine los datos de las bases de datos constituyentes
+- id: storagecomposite.constituent_stream_failed
+  description: Contenedor de error de transmisión. Alias y Cause no se traducen.
+  other: "error al transmitir desde el constituyente '{{.Alias}}': {{.Cause}}"

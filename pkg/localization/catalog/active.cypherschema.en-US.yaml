@@ -1,0 +1,111 @@
+- id: cypherschema.composite_ddl_not_allowed
+  description: Composite schema DDL rejection. Code and Cypher syntax are untranslated machine data.
+  other: "{{.Code}}: Schema DDL on composite databases requires a constituent target. Use USE <composite>.<alias> to target a specific constituent"
+- id: cypherschema.unknown_command
+  description: Unknown schema command. Statement is untranslated Cypher input.
+  other: "unknown schema command: {{.Statement}}"
+- id: cypherschema.flush_pending_writes_failed
+  description: Async write flush failure. Cause is untranslated diagnostic data.
+  other: "flush pending async writes before schema DDL: {{.Cause}}"
+- id: cypherschema.constraint_properties_required
+  description: Constraint property requirement. Kind is an untranslated schema keyword.
+  other: "{{.Kind}} constraint requires properties"
+- id: cypherschema.temporal_relationship_arity_required
+  description: Relationship temporal constraint property requirement. Property roles are machine identifiers.
+  other: "TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)"
+- id: cypherschema.temporal_node_arity_required
+  description: Node temporal constraint property requirement. Property roles are machine identifiers.
+  other: "TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)"
+- id: cypherschema.domain_value_list_invalid
+  description: Domain value parser failure. Cause is untranslated diagnostic data.
+  other: "invalid domain value list: {{.Cause}}"
+- id: cypherschema.domain_allowed_value_required
+  description: Empty domain constraint value set. DOMAIN is untranslated syntax.
+  other: "DOMAIN constraint requires at least one allowed value"
+- id: cypherschema.invalid_syntax
+  description: Invalid DDL syntax. Subject is untranslated Cypher syntax.
+  other: "invalid {{.Subject}} syntax"
+- id: cypherschema.name_required
+  description: Missing schema entity name. Command and Entity are untranslated syntax.
+  other: "invalid {{.Command}} syntax: {{.Entity}} name required"
+- id: cypherschema.range_index_single_property_required
+  description: RANGE INDEX property arity failure. Count and keyword are untranslated.
+  other: "RANGE INDEX only supports single property, got {{.Count}}"
+- id: cypherschema.create_range_index_failed
+  description: Range index storage failure. Cause is untranslated diagnostic data.
+  other: "failed to create range index: {{.Cause}}"
+- id: cypherschema.invalid_identifier_segment
+  description: Invalid DDL identifier segment.
+  other: invalid identifier segment
+- id: cypherschema.invalid_if_not_exists_clause
+  description: Invalid IF NOT EXISTS clause. Keywords are untranslated.
+  other: invalid IF NOT EXISTS clause
+- id: cypherschema.empty_clause
+  description: Empty parser clause. Clause is an untranslated keyword.
+  other: "empty {{.Clause}} clause"
+- id: cypherschema.invalid_clause
+  description: Invalid parser clause. Clause is untranslated syntax.
+  other: "invalid {{.Clause}} clause"
+- id: cypherschema.missing_keyword
+  description: Missing parser keyword. Keyword is untranslated Cypher syntax.
+  other: "missing {{.Keyword}}"
+- id: cypherschema.invalid_keyword
+  description: Invalid parser keyword state. Keyword is untranslated Cypher syntax.
+  other: "invalid {{.Keyword}}"
+- id: cypherschema.invalid_trailing_syntax
+  description: Unexpected trailing DDL syntax.
+  other: invalid trailing syntax
+- id: cypherschema.index_properties_required
+  description: Index definition without properties.
+  other: no properties specified for index
+- id: cypherschema.index_name_required
+  description: Fulltext index definition without a name.
+  other: missing index name
+- id: cypherschema.fulltext_properties_required
+  description: Fulltext index definition without properties.
+  other: no properties found in fulltext index definition
+- id: cypherschema.empty_statement
+  description: Empty DDL parser input.
+  other: empty statement
+- id: cypherschema.invalid_pattern
+  description: Invalid DDL pattern. Pattern is untranslated Cypher syntax.
+  other: "invalid {{.Pattern}} pattern"
+- id: cypherschema.unsupported_predicate
+  description: Unsupported constraint predicate. Predicate is untranslated schema syntax.
+  other: "unsupported {{.Predicate}} predicate"
+- id: cypherschema.unsupported_create_constraint_shape
+  description: Unsupported CREATE CONSTRAINT statement shape. Keywords are untranslated.
+  other: unsupported CREATE CONSTRAINT shape
+- id: cypherschema.positive_max_count_required
+  description: Invalid MAX COUNT value. Value retains source quoting.
+  other: "MAX COUNT must be a positive integer, got {{.Value}}"
+- id: cypherschema.backfill_index_failed
+  description: Index backfill lookup failure. Label and Cause are untranslated values.
+  other: "failed to backfill index for label {{.Label}}: {{.Cause}}"
+- id: cypherschema.backfill_property_index_failed
+  description: Property index backfill failure. Label, Property, and Cause are untranslated values.
+  other: "failed to backfill property index {{.Label}}({{.Property}}): {{.Cause}}"
+- id: cypherschema.unsupported_property_type
+  description: Unsupported property type. Type is untranslated schema syntax.
+  other: "unsupported property type: {{.Type}}"
+- id: cypherschema.manager_unavailable
+  description: Missing schema manager.
+  other: schema manager not available
+- id: cypherschema.add_fulltext_relationship_index_failed
+  description: Fulltext relationship index storage failure. Cause is untranslated.
+  other: "failed to add fulltext relationship index: {{.Cause}}"
+- id: cypherschema.add_fulltext_index_failed
+  description: Fulltext node index storage failure. Cause is untranslated.
+  other: "failed to add fulltext index: {{.Cause}}"
+- id: cypherschema.unterminated_string
+  description: Unterminated domain literal. Raw is untranslated source input.
+  other: "unterminated string: {{.Raw}}"
+- id: cypherschema.contract_entry_required
+  description: Constraint contract without entries.
+  other: constraint contract requires at least one block entry
+- id: cypherschema.malformed_require_block
+  description: Malformed constraint contract REQUIRE block. REQUIRE is untranslated.
+  other: malformed REQUIRE block
+- id: cypherschema.nested_contract_entry_unsupported
+  description: Unsupported nested contract entry. Entry is untranslated Cypher input.
+  other: "nested FOR ... REQUIRE entries are not supported inside REQUIRE blocks; create a separate targeted block constraint such as {{.Entry}}"

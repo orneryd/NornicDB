@@ -1,0 +1,36 @@
+- id: replication.rpc.encode_failed
+  description: Error de codificación de RPC de replicación. Operation y Cause no se traducen.
+  other: "no se pudo codificar{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}}"
+- id: replication.rpc.decode_failed
+  description: Error de decodificación de RPC de replicación. Operation y Cause no se traducen.
+  other: "no se pudo decodificar{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}}"
+- id: replication.rpc.not_connected
+  description: RPC de replicación intentada sin conexión con el par.
+  other: sin conexión
+- id: replication.rpc.write_failed
+  description: Error de escritura de RPC de replicación. Cause no se traduce.
+  other: "error de escritura: {{.Cause}}"
+- id: replication.rpc.connection_closed
+  description: La conexión con el par se cerró mientras se esperaba una respuesta RPC.
+  other: conexión cerrada
+- id: replication.rpc.command_required
+  description: Falta el comando de replicación reenviado.
+  other: el comando es nulo
+- id: replication.rpc.remote_apply_failed
+  description: Error de aplicación remota. Cause no se traduce.
+  other: "{{.Cause}}"
+- id: replication.rpc.authentication_fields_missing
+  description: Faltan campos de autenticación de RPC de replicación.
+  other: faltan campos de autenticación
+- id: replication.rpc.timestamp_outside_allowed_skew
+  description: La marca de tiempo de RPC está fuera de la ventana de autenticación.
+  other: la marca de tiempo está fuera del desfase permitido
+- id: replication.rpc.invalid_signature
+  description: Firma de mensaje de RPC de replicación no válida.
+  other: firma no válida
+- id: replication.rpc.read_failed
+  description: Error de lectura de RPC de replicación. Cause no se traduce.
+  other: "{{.Cause}}"
+- id: replication.rpc.message_too_large
+  description: El mensaje de RPC de replicación supera el límite configurado.
+  other: "mensaje demasiado grande: {{.Actual}} > {{.Maximum}}"

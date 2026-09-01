@@ -1,0 +1,188 @@
+- id: storage.remote.uri_required
+  other: el URI del motor remoto no puede estar vacío
+- id: storage.remote.database_required
+  other: la base de datos del motor remoto no puede estar vacía
+- id: storage.remote.uri_scheme_unsupported
+  other: "esquema de URI del motor remoto no compatible: {{.URI}} (se esperaba bolt://, neo4j://, http:// o https://)"
+- id: storage.remote.bolt_driver_create_failed
+  other: "no se pudo crear el controlador Bolt: {{.Cause}}"
+- id: storage.remote.result_keys_failed
+  other: "no se pudieron obtener las claves del resultado: {{.Cause}}"
+- id: storage.remote.transaction_decode_failed
+  other: "no se pudo decodificar la transacción remota (estado={{.Status}}): {{.Cause}}"
+- id: storage.remote.error
+  other: "{{.Code}}: {{.Detail}}"
+- id: storage.remote.transaction_open_decode_failed
+  other: "no se pudo decodificar la apertura de la transacción remota (estado={{.Status}}): {{.Cause}}"
+- id: storage.remote.transaction_commit_url_missing
+  other: la apertura de la transacción remota devolvió una URL de confirmación vacía
+- id: storage.remote.transaction_closed
+  other: la transacción remota está cerrada
+- id: storage.remote.node_map_expected
+  other: "se esperaba un mapa de nodo, se obtuvo {{.ActualType}}"
+- id: storage.remote.relationship_map_expected
+  other: "se esperaba un mapa de relación, se obtuvo {{.ActualType}}"
+- id: storage.remote.create_node_no_rows
+  other: la creación remota del nodo no devolvió filas
+- id: storage.remote.delete_prefix_unsupported
+  other: "DeleteByPrefix no es compatible con motores remotos (prefijo={{.Prefix}})"
+- id: storage.property.invalid_value
+  other: 'valor de propiedad no válido para la clave {{printf "%q" .Key}}: {{.Cause}}'
+- id: storage.property.invalid_index
+  other: "índice {{.Index}}: {{.Cause}}"
+- id: storage.property.invalid_map_key
+  other: 'clave {{printf "%q" .Key}}: {{.Cause}}'
+- id: storage.property.type_unsupported
+  other: "tipo de valor de propiedad no compatible {{.ActualType}}"
+- id: storage.validation.unknown_constraint_type
+  other: "tipo de restricción desconocido: {{.ConstraintType}}"
+- id: storage.validation.refresh_unique_scan_failed
+  other: "actualizar valores de restricción única: explorar nodos: {{.Cause}}"
+- id: storage.validation.refresh_unique_failed
+  other: "actualizar valores de restricción única: {{.Cause}}"
+- id: storage.validation.scan_edges_failed
+  other: "al explorar relaciones: {{.Cause}}"
+- id: storage.validation.relationship_constraint_type_unsupported
+  other: "tipo de restricción de relación no compatible: {{.ConstraintType}}"
+- id: storage.validation.relationship_unique_duplicate
+  other: "No se puede crear la restricción UNIQUE en la relación: las relaciones {{.FirstEdgeID}} y {{.SecondEdgeID}} tienen ambas {{.Property}}={{.Value}}"
+- id: storage.validation.relationship_composite_duplicate
+  other: "No se puede crear la restricción UNIQUE en la relación: las relaciones {{.FirstEdgeID}} y {{.SecondEdgeID}} tienen la clave compuesta duplicada {{.Key}}"
+- id: storage.validation.relationship_property_missing
+  other: "No se puede crear la restricción en la relación: a la relación {{.EdgeID}} le falta la propiedad obligatoria {{.Property}}"
+- id: storage.validation.edge_key_null
+  other: "la relación {{.EdgeID}} tiene {{.Property}} nulo"
+- id: storage.validation.temporal_properties_at_least_three
+  other: "la restricción TEMPORAL requiere al menos 3 propiedades (clave..., valid_from, valid_to)"
+- id: storage.validation.temporal_creation_failed
+  other: "No se puede crear la restricción TEMPORAL: {{.Detail}}"
+- id: storage.validation.temporal_edge_invalid
+  other: "No se puede crear la restricción TEMPORAL: la relación {{.EdgeID}} tiene {{.Property}} no válido"
+- id: storage.validation.temporal_edges_overlap
+  other: "No se puede crear la restricción TEMPORAL: solapamiento entre las relaciones {{.FirstEdgeID}} y {{.SecondEdgeID}}"
+- id: storage.validation.domain_property_count
+  other: "la restricción DOMAIN requiere exactamente 1 propiedad, se obtuvieron {{.Actual}}"
+- id: storage.validation.domain_allowed_values_required
+  other: la restricción DOMAIN requiere al menos un valor permitido
+- id: storage.validation.scan_nodes_failed
+  other: "al explorar nodos: {{.Cause}}"
+- id: storage.validation.domain_node_invalid
+  other: "No se puede crear la restricción DOMAIN: el nodo {{.NodeID}} tiene {{.Property}}={{.Value}}, que no está entre los valores permitidos {{.AllowedValues}}"
+- id: storage.validation.domain_edge_invalid
+  other: "No se puede crear la restricción DOMAIN: la relación {{.EdgeID}} tiene {{.Property}}={{.Value}}, que no está entre los valores permitidos {{.AllowedValues}}"
+- id: storage.validation.cardinality_creation_exceeded
+  other: "No se puede crear la restricción CARDINALITY: el nodo {{.NodeID}} tiene {{.Count}} relaciones {{.RelationshipType}} {{.Direction}}, superando el máximo de {{.MaxCount}}"
+- id: storage.validation.disallowed_policy_creation
+  other: "No se puede crear la directiva DISALLOWED: la relación {{.EdgeID}} conecta {{.StartNodeID}} (:{{.SourceLabel}}) con {{.EndNodeID}} (:{{.TargetLabel}}) mediante :{{.RelationshipType}}"
+- id: storage.validation.allowed_policy_creation
+  other: "No se puede crear la directiva ALLOWED: la relación existente {{.EdgeID}} conecta {{.StartNodeID}} con {{.EndNodeID}} mediante :{{.RelationshipType}} y no está cubierta por ningún par ALLOWED"
+- id: storage.validation.unique_property_count
+  other: "la restricción UNIQUE requiere exactamente 1 propiedad, se obtuvieron {{.Actual}}"
+- id: storage.validation.node_unique_duplicate
+  other: "No se puede crear la restricción UNIQUE: los nodos {{.FirstNodeID}} y {{.SecondNodeID}} tienen ambos {{.Property}}={{.Value}}"
+- id: storage.validation.node_key_property_required
+  other: la restricción NODE KEY requiere al menos 1 propiedad
+- id: storage.validation.node_key_null_creation
+  other: "No se puede crear la restricción NODE KEY: el nodo {{.NodeID}} tiene un valor nulo para la propiedad {{.Property}}"
+- id: storage.validation.node_key_duplicate_creation
+  other: "No se puede crear la restricción NODE KEY: los nodos {{.FirstNodeID}} y {{.SecondNodeID}} tienen ambos la clave compuesta {{.Properties}}={{.Values}}"
+- id: storage.validation.exists_property_count
+  other: "la restricción EXISTS requiere exactamente 1 propiedad, se obtuvieron {{.Actual}}"
+- id: storage.validation.node_exists_missing_creation
+  other: "No se puede crear la restricción EXISTS: al nodo {{.NodeID}} le falta la propiedad obligatoria {{.Property}}"
+- id: storage.validation.temporal_properties_exactly_three
+  other: "la restricción TEMPORAL requiere 3 propiedades (clave, valid_from, valid_to)"
+- id: storage.validation.temporal_node_key_null_creation
+  other: "No se puede crear la restricción TEMPORAL: el nodo {{.NodeID}} tiene {{.Property}} nulo"
+- id: storage.validation.temporal_node_invalid_creation
+  other: "No se puede crear la restricción TEMPORAL: el nodo {{.NodeID}} tiene {{.Property}} no válido"
+- id: storage.validation.temporal_nodes_overlap_creation
+  other: "No se puede crear la restricción TEMPORAL: solapamiento entre {{.FirstNodeID}} y {{.SecondNodeID}}"
+- id: storage.validation.relationship_unique_property_count
+  other: la restricción UNIQUE en relaciones requiere exactamente 1 propiedad
+- id: storage.validation.relationship_exists_property_count
+  other: la restricción EXISTS en relaciones requiere exactamente 1 propiedad
+- id: storage.validation.relationship_exists_missing
+  other: "No se puede crear la restricción EXISTS en la relación: a la relación {{.EdgeID}} le falta la propiedad obligatoria {{.Property}}"
+- id: storage.validation.expected_type
+  other: "se esperaba {{.ExpectedType}}, se obtuvo {{.ActualType}}"
+- id: storage.validation.unknown_property_type
+  other: "tipo de propiedad desconocido: {{.PropertyType}}"
+- id: storage.validation.node_property_invalid
+  other: "nodo {{.NodeID}}, propiedad {{.Property}}: {{.Cause}}"
+- id: storage.validation.relationship_property_invalid
+  other: "relación {{.EdgeID}}, propiedad {{.Property}}: {{.Cause}}"
+- id: storage.transaction.engine_closed
+  other: el motor está cerrado
+- id: storage.transaction.namespace_required
+  other: el espacio de nombres no puede estar vacío
+- id: storage.transaction.cross_namespace
+  other: 'la transacción abarca varios espacios de nombres: fijada en {{printf "%q" .PinnedNamespace}}, se intentó {{printf "%q" .AttemptedNamespace}}'
+- id: storage.transaction.id_namespace_required
+  other: "el ID debe tener un prefijo de espacio de nombres (p. ej., 'nornic:node-123'); se obtuvo: {{.ID}}"
+- id: storage.transaction.start_node_missing
+  other: "el nodo inicial {{.NodeID}} no existe"
+- id: storage.transaction.end_node_missing
+  other: "el nodo final {{.NodeID}} no existe"
+- id: storage.transaction.constraint_violation
+  other: "infracción de restricción: {{.Cause}}"
+- id: storage.transaction.commit_namespace_missing
+  other: "confirmación: la transacción tiene escrituras pero no un espacio de nombres fijado"
+- id: storage.transaction.commit_conflict
+  other: "conflicto detectado: una transacción simultánea modificó los datos antes de la confirmación: {{.Cause}}"
+- id: storage.transaction.metadata_too_large
+  other: "los metadatos de la transacción son demasiado grandes: {{.Actual}} caracteres (máximo {{.Maximum}})"
+- id: storage.transaction.edge_changed
+  other: "conflicto detectado: la relación {{.EdgeID}} cambió después de iniciar la transacción"
+- id: storage.transaction.node_changed
+  other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción"
+- id: storage.transaction.node_changed_detailed
+  other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción (head={{.Head}}, readTS={{.ReadTimestamp}})"
+- id: storage.transaction.concurrent_modification
+  other: "conflicto detectado: una transacción simultánea modificó los datos antes de la confirmación"
+- id: storage.transaction.endpoint_deleted
+  other: "conflicto detectado: el nodo extremo {{.NodeID}} se eliminó después de iniciar la transacción"
+- id: storage.transaction.adjacent_edge_changed
+  other: "conflicto detectado: el nodo {{.NodeID}} tiene una relación adyacente {{.EdgeID}} que cambió después de iniciar la transacción"
+- id: storage.validation.property_domain_invalid
+  other: "el valor {{.Value}} de la propiedad {{.Property}} no está entre los valores permitidos {{.AllowedValues}}"
+- id: storage.validation.property_type_required
+  other: "la propiedad {{.Property}} debe ser {{.ExpectedType}} ({{.Cause}})"
+- id: storage.validation.node_unique_in_transaction
+  other: "ya existe un nodo con {{.Property}}={{.Value}} en la transacción"
+- id: storage.validation.node_unique_existing
+  other: "ya existe un nodo con {{.Property}}={{.Value}} (nodeID: {{.NodeID}})"
+- id: storage.validation.node_unique_concurrent
+  other: "ya existe un nodo con {{.Property}}={{.Value}} (reclamado por una confirmación simultánea)"
+- id: storage.validation.node_key_null
+  other: "la propiedad NODE KEY {{.Property}} no puede ser nula"
+- id: storage.validation.node_key_in_transaction
+  other: "ya existe un nodo con la clave {{.Properties}}={{.Values}} en la transacción"
+- id: storage.validation.node_composite_key_existing
+  other: "ya existe un nodo con la clave compuesta {{.Properties}}={{.Values}} (nodeID: {{.NodeID}})"
+- id: storage.validation.required_property_missing
+  other: "la propiedad {{.Property}} es obligatoria, pero falta"
+- id: storage.validation.temporal_key_null
+  other: "la propiedad clave TEMPORAL {{.Property}} no puede ser nula"
+- id: storage.validation.temporal_start_invalid
+  other: "la propiedad inicial TEMPORAL {{.Property}} debe ser una fecha y hora"
+- id: storage.validation.temporal_node_required
+  other: "la restricción TEMPORAL requiere {{.Property}} para el nodo {{.NodeID}}"
+- id: storage.validation.temporal_node_overlap
+  other: "infracción de restricción TEMPORAL: solapamiento con el nodo {{.NodeID}} para {{.Property}}={{.Value}}"
+- id: storage.validation.relationship_unique_existing
+  other: "ya existe una relación con {{.Property}}={{.Value}} (edgeID: {{.EdgeID}})"
+- id: storage.validation.relationship_composite_existing
+  other: "ya existe una relación con una clave compuesta duplicada (edgeID: {{.EdgeID}})"
+- id: storage.validation.temporal_edge_overlap
+  other: "infracción de restricción TEMPORAL: solapamiento con la relación {{.EdgeID}} para key={{.Key}}"
+- id: storage.validation.cardinality_exceeded
+  other: "añadir esta relación superaría el recuento máximo {{.Direction}} de {{.MaxCount}} para el tipo de relación {{.RelationshipType}} en el nodo {{.NodeID}} (actual: {{.Current}})"
+- id: storage.validation.disallowed_policy
+  other: 'infracción de directiva DISALLOWED: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) está prohibida (restricción {{printf "%q" .ConstraintName}})'
+- id: storage.validation.allowed_policy
+  other: "infracción de directiva ALLOWED: ninguna directiva ALLOWED permite (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}})"
+- id: storage.validation.label_change_disallowed
+  other: 'el cambio de etiqueta infringiría la directiva DISALLOWED: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) (restricción {{printf "%q" .ConstraintName}})'
+- id: storage.validation.label_change_allowed
+  other: "el cambio de etiqueta infringiría la directiva ALLOWED: ninguna directiva ALLOWED permite (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}})"

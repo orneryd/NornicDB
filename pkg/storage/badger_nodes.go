@@ -2,12 +2,12 @@
 package storage
 
 import (
-	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Node Operations
@@ -27,7 +27,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
 	if !strings.Contains(string(node.ID), ":") {
-		return "", fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
+		return "", localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
 
 	if err := b.ensureOpen(); err != nil {
@@ -42,7 +42,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 	dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 	if !ok {
-		return "", fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: %s", node.ID)
+		return "", localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 	}
 	schema := b.GetSchemaForNamespace(dbName)
 
@@ -67,10 +67,10 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 		if err != nil {
-			return fmt.Errorf("failed to encode node: %w", err)
+			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 		}
 		if err := txn.Set(key, data); err != nil {
-			return fmt.Errorf("failed to write node: %w", err)
+			return localizedError(localization.StorageClientNodeWriteFailed(err), err)
 		}
 		if embeddingsSeparate {
 			persistSeparateEmbeddings = true
@@ -79,10 +79,10 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		for _, label := range node.Labels {
 			lblKey, err := b.labelIndexKeyString(txn, label, node.ID)
 			if err != nil {
-				return fmt.Errorf("failed to build label index key: %w", err)
+				return localizedError(localization.StorageClientNodeLabelIndexKeyBuildFailed(err), err)
 			}
 			if err := txn.Set(lblKey, []byte{}); err != nil {
-				return fmt.Errorf("failed to write label index: %w", err)
+				return localizedError(localization.StorageClientNodeLabelIndexWriteFailed(err), err)
 			}
 		}
 		if err := b.adjustNodeLabelCountsInTxn(txn, dbName, nil, node.Labels); err != nil {
@@ -93,11 +93,11 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 			TargetScope: "NODE",
 			IndexKeys:   b.collectNodeIndexKeys(node.ID, node.Labels),
 		}); err != nil {
-			return fmt.Errorf("failed to write index catalog: %w", err)
+			return localizedError(localization.StorageClientNodeIndexCatalogWriteFailed(err), err)
 		}
 		if b.shouldIndexPendingEmbed(node) {
 			if err := txn.Set(pendingEmbedKey(node.ID), []byte{}); err != nil {
-				return fmt.Errorf("failed to write pending embed index: %w", err)
+				return localizedError(localization.StorageClientNodePendingEmbedIndexWriteFailed(err), err)
 			}
 		}
 		if err := b.applyTemporalIndexesForNodeChangeInTxn(txn, dbName, schema, nil, node); err != nil {
@@ -248,7 +248,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
 	if !strings.Contains(string(node.ID), ":") {
-		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
+		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
 
 	if err := b.ensureOpen(); err != nil {
@@ -257,7 +257,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 	if !ok {
-		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: %s", node.ID)
+		return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 	}
 	schema := b.GetSchemaForNamespace(dbName)
 
@@ -285,7 +285,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			}
 			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 			if err != nil {
-				return fmt.Errorf("failed to encode node: %w", err)
+				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 			}
 			if err := txn.Set(key, data); err != nil {
 				return err
@@ -366,7 +366,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// Serialize and store updated node (may store embeddings separately if too large)
 		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
 		if err != nil {
-			return fmt.Errorf("failed to encode node: %w", err)
+			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 		}
 
 		if err := txn.Set(key, data); err != nil {
@@ -386,7 +386,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			defer it.Close()
 			for it.Rewind(); it.Valid(); it.Next() {
 				if err := txn.Delete(it.Item().Key()); err != nil {
-					return fmt.Errorf("failed to delete old embedding chunk: %w", err)
+					return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
 				}
 			}
 		}
@@ -496,7 +496,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 	}
 	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
 	if !strings.Contains(string(node.ID), ":") {
-		return fmt.Errorf("node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: %s", node.ID)
+		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
 
 	if err := b.ensureOpen(); err != nil {
@@ -550,7 +550,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 		// Serialize and store updated node (may store embeddings separately if too large)
 		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, namespaceForNodeID(node.ID), existing)
 		if err != nil {
-			return fmt.Errorf("failed to encode node: %w", err)
+			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 		}
 
 		if err := txn.Set(key, data); err != nil {
@@ -570,7 +570,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 			defer embIt.Close()
 			for embIt.Rewind(); embIt.Valid(); embIt.Next() {
 				if err := txn.Delete(embIt.Item().Key()); err != nil {
-					return fmt.Errorf("failed to delete old embedding chunk: %w", err)
+					return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
 				}
 			}
 		}
@@ -604,7 +604,7 @@ func (b *BadgerEngine) UpdateNodeEmbedding(node *Node) error {
 
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
 	if err := b.deleteEmbeddingChunksBatched(nodeID); err != nil {
-		return fmt.Errorf("failed to delete old embedding chunks: %w", err)
+		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
 	}
 	if len(embeddings) == 0 {
 		return nil
@@ -688,14 +688,14 @@ func (b *BadgerEngine) writeEmbeddingChunksBatched(nodeID NodeID, embeddings [][
 					break
 				}
 				if err := txn.Set(entry.kv.key, entry.kv.val); err != nil {
-					return fmt.Errorf("failed to store embedding chunk %d: %w", entry.chunkIndex, err)
+					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(entry.chunkIndex, err), err)
 				}
 				next = i + 1
 				entriesWritten++
 				bytesUsed += entryBytes
 			}
 			if entriesWritten == 0 {
-				return fmt.Errorf("failed to store embedding payload for chunk %d: entry exceeds per-txn write budget", pending[start].chunkIndex)
+				return localizedError(localization.StorageClientNodeEmbeddingPayloadBudgetExceeded(pending[start].chunkIndex), nil)
 			}
 			return nil
 		})

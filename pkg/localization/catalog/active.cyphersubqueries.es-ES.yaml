@@ -1,0 +1,147 @@
+- id: cyphersubqueries.call_not_found
+  description: Falta la palabra clave CALL en una consulta de Cypher.
+  other: no se encontró CALL en la consulta
+- id: cyphersubqueries.match_before_call_not_found
+  description: Falta MATCH antes de CALL. Las palabras clave no se traducen.
+  other: no se encontró MATCH antes de CALL
+- id: cyphersubqueries.node_pattern_invalid
+  description: Patrón de nodo no válido. Pattern no se traduce.
+  other: "no se pudo analizar el patrón de nodo: {{.Pattern}}"
+- id: cyphersubqueries.outer_match_bindings_failed
+  description: Error de enlaces del MATCH externo. Cause no se traduce.
+  other: "no se pudieron evaluar los enlaces del MATCH externo: {{.Cause}}"
+- id: cyphersubqueries.node_load_failed
+  description: Error al cargar nodos. Cause no se traduce.
+  other: "no se pudieron obtener los nodos: {{.Cause}}"
+- id: cyphersubqueries.call_for_node_failed
+  description: Error de procedimiento para un nodo. Node y Cause no se traducen.
+  other: "no se pudo ejecutar CALL para el nodo {{.Node}}: {{.Cause}}"
+- id: cyphersubqueries.outer_match_seeds_failed
+  description: Error de semillas del MATCH externo. Cause no se traduce.
+  other: "no se pudieron evaluar las semillas del MATCH externo: {{.Cause}}"
+- id: cyphersubqueries.call_body_empty
+  description: Cuerpo vacío de subconsulta CALL. La sintaxis no se traduce.
+  other: "subconsulta CALL {} no válida: cuerpo vacío"
+- id: cyphersubqueries.use_clause_failed
+  description: Error de cláusula USE de CALL. Cause no se traduce.
+  other: "error en la cláusula USE de la subconsulta CALL: {{.Cause}}"
+- id: cyphersubqueries.use_database_failed
+  description: Error de base de datos USE de CALL. Database y Cause no se traducen.
+  other: "error de CALL subquery USE {{.Database}}: {{.Cause}}"
+- id: cyphersubqueries.correlated_union_parse_failed
+  description: Error al analizar UNION correlacionado. Las palabras clave no se traducen.
+  other: no se pudieron analizar las ramas UNION de la subconsulta CALL correlacionada
+- id: cyphersubqueries.union_with_imports_failed
+  description: Error al analizar importaciones WITH. Branch y Cause no se traducen.
+  other: "no se pudieron analizar las importaciones WITH de la rama UNION {{.Branch}}: {{.Cause}}"
+- id: cyphersubqueries.static_union_branch_failed
+  description: Error de rama UNION estática. Branch y Cause no se traducen.
+  other: "error en la rama {{.Branch}} de la subconsulta UNION estática: {{.Cause}}"
+- id: cyphersubqueries.correlated_union_branch_failed
+  description: Error de rama UNION correlacionada. Branch, Seed y Cause no se traducen.
+  other: "error en la rama {{.Branch}} de la subconsulta UNION correlacionada para la semilla {{.Seed}}: {{.Cause}}"
+- id: cyphersubqueries.union_column_count_mismatch
+  description: Proyecciones UNION incompatibles. First y Second no se traducen.
+  other: "las consultas UNION deben devolver el mismo número de columnas (se obtuvieron {{.First}} y {{.Second}})"
+- id: cyphersubqueries.correlated_import_failed
+  description: Error al resolver una importación correlacionada. Import y Cause no se traducen.
+  other: "no se pudo resolver la importación correlacionada {{.Import}}: {{.Cause}}"
+- id: cyphersubqueries.optional_import_fallback_failed
+  description: Error de reserva de importación opcional. Import y Cause no se traducen.
+  other: "error en la reserva de importación opcional para {{.Import}}: {{.Cause}}"
+- id: cyphersubqueries.with_import_unknown_variable
+  description: Importación WITH desconocida. Variable no se traduce.
+  other: "WITH de la subconsulta CALL importa una variable desconocida: {{.Variable}}"
+- id: cyphersubqueries.correlated_variable_empty
+  description: Variable correlacionada vacía.
+  other: variable correlacionada vacía
+- id: cyphersubqueries.outer_match_projection_missing
+  description: Falta una proyección del MATCH externo. Variable no se traduce.
+  other: "el MATCH externo no proyectó la variable correlacionada {{.Variable}}"
+- id: cyphersubqueries.call_body_expected
+  description: Cuerpo vacío de CALL con sintaxis esperada. La sintaxis no se traduce.
+  other: "subconsulta CALL {} no válida: cuerpo vacío (se esperaba CALL { <query> })"
+- id: cyphersubqueries.call_error
+  description: Error de ejecución de subconsulta CALL. Cause no se traduce.
+  other: "error de subconsulta CALL: {{.Cause}}"
+- id: cyphersubqueries.transaction_import_shape_unsupported
+  description: Importación transaccional CALL no admitida. Variable no se traduce.
+  other: "forma de importación de CALL ({{.Variable}}) IN TRANSACTIONS no admitida"
+- id: cyphersubqueries.transaction_body_empty
+  description: Cuerpo transaccional CALL vacío. Variable no se traduce.
+  other: "CALL ({{.Variable}}) IN TRANSACTIONS no válido: cuerpo vacío"
+- id: cyphersubqueries.transaction_batch_failed
+  description: Error de lote transaccional CALL. Variable, Batch y Cause no se traducen.
+  other: "error en el lote {{.Batch}} de CALL ({{.Variable}}) IN TRANSACTIONS: {{.Cause}}"
+- id: cyphersubqueries.execution_failed
+  description: Error de ejecución de subconsulta. Cause no se traduce.
+  other: "error de ejecución de subconsulta: {{.Cause}}"
+- id: cyphersubqueries.first_batch_failed
+  description: Error del primer lote. Cause no se traduce.
+  other: "error en el lote 1: {{.Cause}}"
+- id: cyphersubqueries.batch_failed
+  description: Error de lote iterativo. Batch y Cause no se traducen.
+  other: "error en el lote {{.Batch}}: {{.Cause}}"
+- id: cyphersubqueries.batch_progress_failed
+  description: Error de lote contado. Batch, Total y Cause no se traducen.
+  other: "error en el lote {{.Batch}}/{{.Total}}: {{.Cause}}"
+- id: cyphersubqueries.after_call_clause_unsupported
+  description: Cláusula no admitida después de CALL. Clause y las palabras clave no se traducen.
+  other: "cláusula no admitida después de CALL {}: {{.Clause}} (admitidas: RETURN, ORDER BY, SKIP, LIMIT)"
+- id: cyphersubqueries.chained_transactions_unsupported
+  description: CALL transaccional encadenado no admitido. BatchSize no se traduce.
+  other: "CALL {} IN TRANSACTIONS no se admite en subconsultas CALL encadenadas (batchSize={{.BatchSize}})"
+- id: cyphersubqueries.with_query_clause_required
+  description: A la importación WITH le falta una cláusula de consulta.
+  other: "subconsulta CALL {} no válida: WITH debe ir seguido de una cláusula de consulta"
+- id: cyphersubqueries.with_body_empty
+  description: La importación WITH tiene un cuerpo de consulta vacío.
+  other: "subconsulta CALL {} no válida: cuerpo de consulta vacío después de WITH"
+- id: cyphersubqueries.with_import_expression_invalid
+  description: Expresión de importación WITH no válida. Expression no se traduce.
+  other: "expresión de importación WITH no válida: {{.Expression}}"
+- id: cyphersubqueries.with_imports_required
+  description: La cláusula WITH no importa variables.
+  other: "subconsulta CALL {} no válida: la cláusula WITH no importa variables"
+- id: cyphersubqueries.seed_row_missing_variable
+  description: A la fila semilla le falta una variable. Variable no se traduce.
+  other: "a la fila semilla de la subconsulta CALL le falta la variable: {{.Variable}}"
+- id: cyphersubqueries.batched_lookup_failed
+  description: Error de búsqueda CALL correlacionada por lotes. Cause no se traduce.
+  other: "error en la búsqueda CALL correlacionada por lotes: {{.Cause}}"
+- id: cyphersubqueries.batched_lookup_columns_unexpected
+  description: La búsqueda CALL devolvió columnas inesperadas. Columns no se traduce.
+  other: "la búsqueda CALL correlacionada por lotes produjo columnas inesperadas: {{.Columns}}"
+- id: cyphersubqueries.rag_candidates_required
+  description: db.rerank requiere candidatos. El nombre del procedimiento no se traduce.
+  other: db.rerank requiere candidatos no vacíos
+- id: cyphersubqueries.inference_manager_unavailable
+  description: Error de configuración del servicio de inferencia.
+  other: el administrador de inferencia no está configurado
+- id: cyphersubqueries.infer_messages_empty
+  description: db.infer no recibió mensajes válidos.
+  other: los mensajes de db.infer no pueden estar vacíos
+- id: cyphersubqueries.infer_prompt_or_messages_required
+  description: db.infer no tiene entrada.
+  other: db.infer requiere prompt o messages
+- id: cyphersubqueries.query_required
+  description: La solicitud de recuperación no tiene texto de consulta.
+  other: se requiere query
+- id: cyphersubqueries.rag_syntax_invalid
+  description: Sintaxis de procedimiento RAG no válida. Procedure no se traduce.
+  other: "sintaxis de {{.Procedure}} no válida"
+- id: cyphersubqueries.rag_request_argument_required
+  description: Al procedimiento RAG le falta un argumento. Procedure no se traduce.
+  other: "{{.Procedure}} requiere un argumento de solicitud"
+- id: cyphersubqueries.rag_parenthesis_unmatched
+  description: El procedimiento RAG tiene sintaxis sin cerrar. Procedure no se traduce.
+  other: "paréntesis sin pareja en {{.Procedure}}"
+- id: cyphersubqueries.rag_parameter_must_be_map
+  description: El parámetro RAG tiene un tipo incorrecto. Procedure y Parameter no se traducen.
+  other: "el parámetro {{.Parameter}} de {{.Procedure}} debe ser un mapa"
+- id: cyphersubqueries.rag_request_must_be_map_literal
+  description: El argumento RAG tiene una forma incorrecta. Procedure no se traduce.
+  other: "la solicitud de {{.Procedure}} debe ser un literal de mapa"
+- id: cyphersubqueries.rag_candidate_id_required
+  description: A un candidato de db.rerank le falta id.
+  other: se requiere el id del candidato de db.rerank
