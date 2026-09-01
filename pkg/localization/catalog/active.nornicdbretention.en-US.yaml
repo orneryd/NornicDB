@@ -1,0 +1,3 @@
+- id: nornicdb.retention_sweep_budget_exhausted
+  description: Retention sweep control-flow error when the configured record budget is reached. Budget is a numeric record count.
+  other: "sweep budget exhausted ({{.Budget}} records)"

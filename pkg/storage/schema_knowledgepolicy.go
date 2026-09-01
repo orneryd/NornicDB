@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // CreateDecayProfileBundle adds a decay profile bundle to the schema.
@@ -22,7 +22,7 @@ func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayPr
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("decay profile bundle %q already exists", bundle.Name)
+		return localizedError(localization.StorageSchemaDecayProfileBundleAlreadyExists(bundle.Name), nil)
 	}
 
 	if err := validateDecayProfileBundle(&bundle); err != nil {
@@ -49,13 +49,13 @@ func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.Decay
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("decay profile binding %q already exists", binding.Name)
+		return localizedError(localization.StorageSchemaDecayProfileBindingAlreadyExists(binding.Name), nil)
 	}
 
 	if binding.ProfileRef != "" && sm.decayProfileBundles != nil {
 		if _, ok := sm.decayProfileBundles[binding.ProfileRef]; !ok {
 			sm.mu.Unlock()
-			return fmt.Errorf("decay profile bundle %q not found", binding.ProfileRef)
+			return localizedError(localization.StorageSchemaDecayProfileBundleNotFound(binding.ProfileRef), nil)
 		}
 	}
 
@@ -78,7 +78,7 @@ func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
 		if _, exists := sm.decayProfileBundles[name]; exists {
 			if sm.isBundleReferenced(name) {
 				sm.mu.Unlock()
-				return fmt.Errorf("cannot drop decay profile bundle %q: referenced by active binding", name)
+				return localizedError(localization.StorageSchemaDecayProfileBundleReferenced(name), nil)
 			}
 			delete(sm.decayProfileBundles, name)
 			return sm.finishKnowledgePolicyMutationLocked()
@@ -97,7 +97,7 @@ func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
 		return nil
 	}
 	sm.mu.Unlock()
-	return fmt.Errorf("decay profile %q not found", name)
+	return localizedError(localization.StorageSchemaDecayProfileNotFound(name), nil)
 }
 
 // AlterDecayProfile updates options on an existing decay profile bundle.
@@ -106,12 +106,12 @@ func (sm *SchemaManager) AlterDecayProfile(name string, updates map[string]inter
 
 	if sm.decayProfileBundles == nil {
 		sm.mu.Unlock()
-		return fmt.Errorf("decay profile bundle %q not found", name)
+		return localizedError(localization.StorageSchemaDecayProfileBundleNotFound(name), nil)
 	}
 	bundle, ok := sm.decayProfileBundles[name]
 	if !ok {
 		sm.mu.Unlock()
-		return fmt.Errorf("decay profile bundle %q not found", name)
+		return localizedError(localization.StorageSchemaDecayProfileBundleNotFound(name), nil)
 	}
 
 	if err := applyBundleUpdates(bundle, updates); err != nil {
@@ -155,7 +155,7 @@ func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.Promotio
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion profile %q already exists", profile.Name)
+		return localizedError(localization.StorageSchemaPromotionProfileAlreadyExists(profile.Name), nil)
 	}
 
 	if err := validatePromotionProfile(&profile); err != nil {
@@ -178,7 +178,7 @@ func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) err
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion profile %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
 	}
 
 	if _, exists := sm.promotionProfiles[name]; !exists {
@@ -187,12 +187,12 @@ func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) err
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion profile %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
 	}
 
 	if sm.isPromotionProfileReferenced(name) {
 		sm.mu.Unlock()
-		return fmt.Errorf("cannot drop promotion profile %q: referenced by active promotion policy", name)
+		return localizedError(localization.StorageSchemaPromotionProfileReferenced(name), nil)
 	}
 
 	delete(sm.promotionProfiles, name)
@@ -205,12 +205,12 @@ func (sm *SchemaManager) AlterPromotionProfile(name string, updates map[string]i
 
 	if sm.promotionProfiles == nil {
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion profile %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
 	}
 	profile, ok := sm.promotionProfiles[name]
 	if !ok {
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion profile %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionProfileNotFound(name), nil)
 	}
 
 	if err := applyPromotionProfileUpdates(profile, updates); err != nil {
@@ -245,18 +245,18 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 		if len(ifNotExists) > 0 && ifNotExists[0] {
 			return nil
 		}
-		return fmt.Errorf("promotion policy %q already exists", policy.Name)
+		return localizedError(localization.StorageSchemaPromotionPolicyAlreadyExists(policy.Name), nil)
 	}
 
 	for _, wc := range policy.WhenClauses {
 		if wc.ProfileRef != "" {
 			if sm.promotionProfiles == nil {
 				sm.mu.Unlock()
-				return fmt.Errorf("promotion profile %q not found (referenced in WHEN clause)", wc.ProfileRef)
+				return localizedError(localization.StorageSchemaPromotionProfileWhenClauseNotFound(wc.ProfileRef), nil)
 			}
 			if _, ok := sm.promotionProfiles[wc.ProfileRef]; !ok {
 				sm.mu.Unlock()
-				return fmt.Errorf("promotion profile %q not found (referenced in WHEN clause)", wc.ProfileRef)
+				return localizedError(localization.StorageSchemaPromotionProfileWhenClauseNotFound(wc.ProfileRef), nil)
 			}
 		}
 	}
@@ -277,7 +277,7 @@ func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) erro
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion policy %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 
 	if _, exists := sm.promotionPolicies[name]; !exists {
@@ -286,7 +286,7 @@ func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) erro
 			return nil
 		}
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion policy %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 
 	delete(sm.promotionPolicies, name)
@@ -299,11 +299,11 @@ func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]in
 
 	if sm.promotionPolicies == nil {
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion policy %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 	if _, ok := sm.promotionPolicies[name]; !ok {
 		sm.mu.Unlock()
-		return fmt.Errorf("promotion policy %q not found", name)
+		return localizedError(localization.StorageSchemaPromotionPolicyNotFound(name), nil)
 	}
 
 	policy := sm.promotionPolicies[name]
@@ -409,21 +409,21 @@ func (sm *SchemaManager) validateBindingTarget(binding *knowledgepolicy.DecayPro
 	if binding.IsEdge {
 		for _, existingBinding := range sm.decayProfileBindings {
 			if existingBinding.IsEdge && existingBinding.TargetEdgeType == binding.TargetEdgeType && existingBinding.Name != binding.Name {
-				return fmt.Errorf("edge type %q already has a decay profile binding %q", binding.TargetEdgeType, existingBinding.Name)
+				return localizedError(localization.StorageSchemaDecayEdgeBindingConflict(binding.TargetEdgeType, existingBinding.Name), nil)
 			}
 		}
 	} else if !binding.IsWildcard && len(binding.TargetLabels) > 0 {
 		targetKey := sortedLabelKey(binding.TargetLabels)
 		for _, existingBinding := range sm.decayProfileBindings {
 			if !existingBinding.IsEdge && !existingBinding.IsWildcard && sortedLabelKey(existingBinding.TargetLabels) == targetKey && existingBinding.Name != binding.Name {
-				return fmt.Errorf("label set %v already has a decay profile binding %q", binding.TargetLabels, existingBinding.Name)
+				return localizedError(localization.StorageSchemaDecayLabelBindingConflict(binding.TargetLabels, existingBinding.Name), nil)
 			}
 		}
 	}
 
 	for _, rule := range binding.PropertyRules {
 		if sm.isPropertyInStructuralIndex(binding.TargetLabels, rule.PropertyPath) {
-			return fmt.Errorf("property %q is in a structural index and cannot have a decay rule", rule.PropertyPath)
+			return localizedError(localization.StorageSchemaDecayStructuralIndexConflict(rule.PropertyPath), nil)
 		}
 	}
 
@@ -463,44 +463,44 @@ func sortedLabelKey(labels []string) string {
 
 func validateDecayProfileBundle(b *knowledgepolicy.DecayProfileBundle) error {
 	if b.Name == "" {
-		return fmt.Errorf("decay profile bundle name is required")
+		return localizedError(localization.StorageSchemaDecayProfileBundleNameRequired(), nil)
 	}
 	if !knowledgepolicy.ValidDecayFunctions[b.Function] {
-		return fmt.Errorf("invalid decay function: %q", b.Function)
+		return localizedError(localization.StorageSchemaInvalidDecayFunction(b.Function), nil)
 	}
 	if !knowledgepolicy.ValidScoreFromModes[b.ScoreFrom] {
-		return fmt.Errorf("invalid score-from mode: %q", b.ScoreFrom)
+		return localizedError(localization.StorageSchemaInvalidScoreFromMode(b.ScoreFrom), nil)
 	}
 	if !knowledgepolicy.ValidScopeTypes[b.Scope] {
-		return fmt.Errorf("invalid scope type: %q", b.Scope)
+		return localizedError(localization.StorageSchemaInvalidScopeType(b.Scope), nil)
 	}
 	if b.ScoreFrom == knowledgepolicy.ScoreFromCustom && b.ScoreFromProperty == "" {
-		return fmt.Errorf("scoreFromProperty is required when scoreFrom is CUSTOM")
+		return localizedError(localization.StorageSchemaScoreFromPropertyRequired(), nil)
 	}
 	if b.VisibilityThreshold < 0 || b.VisibilityThreshold > 1 {
-		return fmt.Errorf("visibilityThreshold must be between 0 and 1, got %f", b.VisibilityThreshold)
+		return localizedError(localization.StorageSchemaVisibilityThresholdOutOfRange(b.VisibilityThreshold), nil)
 	}
 	if b.ScoreFloor < 0 || b.ScoreFloor > 1 {
-		return fmt.Errorf("scoreFloor must be between 0 and 1, got %f", b.ScoreFloor)
+		return localizedError(localization.StorageSchemaScoreFloorOutOfRange(b.ScoreFloor), nil)
 	}
 	return nil
 }
 
 func validatePromotionProfile(p *knowledgepolicy.PromotionProfileDef) error {
 	if p.Name == "" {
-		return fmt.Errorf("promotion profile name is required")
+		return localizedError(localization.StorageSchemaPromotionProfileNameRequired(), nil)
 	}
 	if !knowledgepolicy.ValidScopeTypes[p.Scope] {
-		return fmt.Errorf("invalid scope type: %q", p.Scope)
+		return localizedError(localization.StorageSchemaInvalidScopeType(p.Scope), nil)
 	}
 	if p.Multiplier < 0 {
-		return fmt.Errorf("multiplier must be non-negative, got %f", p.Multiplier)
+		return localizedError(localization.StorageSchemaMultiplierNonNegative(p.Multiplier), nil)
 	}
 	if p.ScoreCap < 0 || p.ScoreCap > 1 {
-		return fmt.Errorf("scoreCap must be between 0 and 1, got %f", p.ScoreCap)
+		return localizedError(localization.StorageSchemaScoreCapOutOfRange(p.ScoreCap), nil)
 	}
 	if p.ScoreFloor < 0 || p.ScoreFloor > 1 {
-		return fmt.Errorf("scoreFloor must be between 0 and 1, got %f", p.ScoreFloor)
+		return localizedError(localization.StorageSchemaScoreFloorOutOfRange(p.ScoreFloor), nil)
 	}
 	return nil
 }
@@ -524,7 +524,7 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 			if s, ok := v.(string); ok {
 				fn := knowledgepolicy.DecayFunction(s)
 				if !knowledgepolicy.ValidDecayFunctions[fn] {
-					return fmt.Errorf("invalid decay function: %q", s)
+					return localizedError(localization.StorageSchemaInvalidDecayFunction(s), nil)
 				}
 				bundle.Function = fn
 			}
@@ -540,7 +540,7 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 			if s, ok := v.(string); ok {
 				mode := knowledgepolicy.ScoreFromMode(s)
 				if !knowledgepolicy.ValidScoreFromModes[mode] {
-					return fmt.Errorf("invalid score-from mode: %q", s)
+					return localizedError(localization.StorageSchemaInvalidScoreFromMode(s), nil)
 				}
 				bundle.ScoreFrom = mode
 			}
@@ -549,7 +549,7 @@ func applyBundleUpdates(bundle *knowledgepolicy.DecayProfileBundle, updates map[
 				bundle.ScoreFromProperty = s
 			}
 		default:
-			return fmt.Errorf("unknown option: %q", k)
+			return localizedError(localization.StorageSchemaUnknownOption(k), nil)
 		}
 	}
 	return nil
@@ -575,7 +575,7 @@ func applyPromotionProfileUpdates(profile *knowledgepolicy.PromotionProfileDef, 
 				profile.Enabled = b
 			}
 		default:
-			return fmt.Errorf("unknown option: %q", k)
+			return localizedError(localization.StorageSchemaUnknownOption(k), nil)
 		}
 	}
 	return nil

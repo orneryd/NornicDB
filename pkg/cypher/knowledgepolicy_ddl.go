@@ -1,11 +1,11 @@
 package cypher
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Allocation-free keyword scanning helpers for DDL parsing.
@@ -331,7 +331,7 @@ func parseCreateDecayProfile(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after CREATE DECAY PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("CREATE DECAY PROFILE"), nil)
 	}
 	i = kpSkipSpaces(s, i)
 
@@ -343,7 +343,7 @@ func parseCreateDecayProfile(s string, i int) (interface{}, bool, error) {
 		return parseDecayProfileBinding(name, s, j)
 	}
 
-	return nil, false, fmt.Errorf("expected OPTIONS or FOR after profile name %q", name)
+	return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfterProfileName("OPTIONS or FOR", name), nil)
 }
 
 func kpScanQuotedName(s string, i int) (string, int) {
@@ -371,7 +371,7 @@ func kpScanName(s string, i int) (string, int) {
 func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, error) {
 	body, j := kpScanBraceBlock(s, i)
 	if j < 0 {
-		return nil, false, fmt.Errorf("expected { after OPTIONS")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "OPTIONS"), nil)
 	}
 	_ = j
 
@@ -388,43 +388,43 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 		case "halflifeseconds":
 			n, err := strconv.ParseInt(rawVal, 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid halfLifeSeconds: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("halfLifeSeconds", rawVal, false), err)
 			}
 			bundle.HalfLifeSeconds = n
 		case "visibilitythreshold":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid visibilityThreshold: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("visibilityThreshold", rawVal, false), err)
 			}
 			bundle.VisibilityThreshold = f
 		case "scorefloor":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid scoreFloor: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFloor", rawVal, false), err)
 			}
 			bundle.ScoreFloor = f
 		case "function":
 			fn := knowledgepolicy.DecayFunction(strings.Trim(rawVal, "'\""))
 			if !knowledgepolicy.ValidDecayFunctions[fn] {
-				return fmt.Errorf("invalid decay function: %q", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("decay function", rawVal, true), nil)
 			}
 			bundle.Function = fn
 		case "scope":
 			sc := knowledgepolicy.ScopeType(strings.ToUpper(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
-				return fmt.Errorf("invalid scope: %q", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
 			bundle.Scope = sc
 		case "decayenabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
-				return fmt.Errorf("invalid decayEnabled: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("decayEnabled", rawVal, false), err)
 			}
 			bundle.DecayEnabled = b
 		case "scorefrom":
 			mode := knowledgepolicy.ScoreFromMode(strings.ToUpper(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScoreFromModes[mode] {
-				return fmt.Errorf("invalid scoreFrom: %q", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFrom", rawVal, true), nil)
 			}
 			bundle.ScoreFrom = mode
 		case "scorefromproperty":
@@ -432,11 +432,11 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 		case "enabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
-				return fmt.Errorf("invalid enabled: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("enabled", rawVal, false), err)
 			}
 			bundle.Enabled = b
 		default:
-			return fmt.Errorf("unknown option: %q", key)
+			return localizedError(localization.CypherKnowledgePolicyUnknownOption(key), nil)
 		}
 		return nil
 	}); err != nil {
@@ -465,7 +465,7 @@ func parseDecayProfileBinding(name, s string, i int) (interface{}, bool, error) 
 		j = kpSkipSpaces(s, j)
 		body, k := kpScanBraceBlock(s, j)
 		if k < 0 {
-			return nil, false, fmt.Errorf("expected { after APPLY")
+			return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "APPLY"), nil)
 		}
 		_ = k
 
@@ -507,7 +507,7 @@ func parseForTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding
 			i++
 			label, j := kpScanIdent(s, i)
 			if label == "" {
-				return binding, i, fmt.Errorf("expected label after ':'")
+				return binding, i, localizedError(localization.CypherKnowledgePolicyLabelExpectedAfterColon(), nil)
 			}
 			labels = append(labels, label)
 			i = j
@@ -525,7 +525,7 @@ func parseForTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding
 
 func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding) (knowledgepolicy.DecayProfileBinding, int, error) {
 	if i >= len(s) || s[i] != '(' {
-		return binding, i, fmt.Errorf("expected '(' for edge pattern")
+		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedFor("'('"), nil)
 	}
 	i++
 	i = kpSkipSpaces(s, i)
@@ -535,11 +535,11 @@ func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBindin
 	i = kpSkipSpaces(s, i)
 
 	if i >= len(s) || s[i] != '-' {
-		return binding, i, fmt.Errorf("expected '-' in edge pattern")
+		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("'-'"), nil)
 	}
 	i++
 	if i >= len(s) || s[i] != '[' {
-		return binding, i, fmt.Errorf("expected '[' in edge pattern")
+		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("'['"), nil)
 	}
 	i++
 	i = kpSkipSpaces(s, i)
@@ -551,7 +551,7 @@ func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBindin
 		i++
 		edgeType, j := kpScanIdent(s, i)
 		if edgeType == "" {
-			return binding, i, fmt.Errorf("expected edge type after ':'")
+			return binding, i, localizedError(localization.CypherKnowledgePolicyEdgeTypeExpectedAfterColon(), nil)
 		}
 		binding.TargetEdgeType = edgeType
 		binding.IsEdge = true
@@ -594,7 +594,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				k = kpSkipSpaces(body, k)
 				ref, l := kpScanName(body, k)
 				if ref == "" {
-					return fmt.Errorf("expected profile name after DECAY PROFILE")
+					return localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("DECAY PROFILE"), nil)
 				}
 				binding.ProfileRef = ref
 				i = l
@@ -607,7 +607,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				}
 				f, l, ok := kpScanNumber(body, k)
 				if !ok {
-					return fmt.Errorf("expected number after DECAY VISIBILITY THRESHOLD")
+					return localizedError(localization.CypherKnowledgePolicyNumberExpectedAfter("DECAY VISIBILITY THRESHOLD"), nil)
 				}
 				binding.VisibilityThreshold = &f
 				i = l
@@ -619,7 +619,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 					l = kpSkipSpaces(body, l)
 					n, m, ok := kpScanInt(body, l)
 					if !ok {
-						return fmt.Errorf("expected seconds after DECAY HALF LIFE")
+						return localizedError(localization.CypherKnowledgePolicySecondsExpectedAfter("DECAY HALF LIFE"), nil)
 					}
 					binding.HalfLifeSeconds = n
 					i = m
@@ -630,7 +630,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				k = kpSkipSpaces(body, k)
 				f, l, ok := kpScanNumber(body, k)
 				if !ok {
-					return fmt.Errorf("expected number after DECAY FLOOR")
+					return localizedError(localization.CypherKnowledgePolicyNumberExpectedAfter("DECAY FLOOR"), nil)
 				}
 				binding.ScoreFloor = f
 				i = l
@@ -760,7 +760,7 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after ALTER DECAY PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("ALTER DECAY PROFILE"), nil)
 	}
 
 	i = kpSkipSpaces(s, i)
@@ -769,7 +769,7 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 		if k := kpMatchKeywordAt(s, j, "OPTIONS"); k > 0 {
 			body, l := kpScanBraceBlock(s, k)
 			if l < 0 {
-				return nil, false, fmt.Errorf("expected { after SET OPTIONS")
+				return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "SET OPTIONS"), nil)
 			}
 			_ = l
 			updates := make(map[string]interface{})
@@ -783,7 +783,7 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 		}
 	}
 
-	return nil, false, fmt.Errorf("expected SET OPTIONS after ALTER DECAY PROFILE %s", name)
+	return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("SET OPTIONS", "ALTER DECAY PROFILE "+name), nil)
 }
 
 func parseDropDecayProfile(s string, i int) (interface{}, bool, error) {
@@ -800,7 +800,7 @@ func parseDropDecayProfile(s string, i int) (interface{}, bool, error) {
 
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after DROP DECAY PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("DROP DECAY PROFILE"), nil)
 	}
 
 	return &DropDecayProfileCmd{Name: name, IfExists: ifExists}, true, nil
@@ -810,19 +810,19 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after CREATE PROMOTION PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("CREATE PROMOTION PROFILE"), nil)
 	}
 
 	i = kpSkipSpaces(s, i)
 	if j := kpMatchKeywordAt(s, i, "OPTIONS"); j < 0 {
-		return nil, false, fmt.Errorf("expected OPTIONS after profile name %q", name)
+		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfterProfileName("OPTIONS", name), nil)
 	} else {
 		i = j
 	}
 
 	body, j := kpScanBraceBlock(s, i)
 	if j < 0 {
-		return nil, false, fmt.Errorf("expected { after OPTIONS")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "OPTIONS"), nil)
 	}
 	_ = j
 
@@ -837,35 +837,35 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 		case "scope":
 			sc := knowledgepolicy.ScopeType(strings.ToUpper(strings.Trim(rawVal, "'\"")))
 			if !knowledgepolicy.ValidScopeTypes[sc] {
-				return fmt.Errorf("invalid scope: %q", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scope", rawVal, true), nil)
 			}
 			profile.Scope = sc
 		case "multiplier":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid multiplier: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("multiplier", rawVal, false), err)
 			}
 			profile.Multiplier = f
 		case "scorefloor":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid scoreFloor: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreFloor", rawVal, false), err)
 			}
 			profile.ScoreFloor = f
 		case "scorecap":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid scoreCap: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("scoreCap", rawVal, false), err)
 			}
 			profile.ScoreCap = f
 		case "enabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
-				return fmt.Errorf("invalid enabled: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("enabled", rawVal, false), err)
 			}
 			profile.Enabled = b
 		default:
-			return fmt.Errorf("unknown option: %q", key)
+			return localizedError(localization.CypherKnowledgePolicyUnknownOption(key), nil)
 		}
 		return nil
 	}); err != nil {
@@ -879,7 +879,7 @@ func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after ALTER PROMOTION PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("ALTER PROMOTION PROFILE"), nil)
 	}
 
 	i = kpSkipSpaces(s, i)
@@ -888,7 +888,7 @@ func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
 		if k := kpMatchKeywordAt(s, j, "OPTIONS"); k > 0 {
 			body, l := kpScanBraceBlock(s, k)
 			if l < 0 {
-				return nil, false, fmt.Errorf("expected { after SET OPTIONS")
+				return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "SET OPTIONS"), nil)
 			}
 			_ = l
 			updates := make(map[string]interface{})
@@ -902,7 +902,7 @@ func parseAlterPromotionProfile(s string, i int) (interface{}, bool, error) {
 		}
 	}
 
-	return nil, false, fmt.Errorf("expected SET OPTIONS after ALTER PROMOTION PROFILE %s", name)
+	return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("SET OPTIONS", "ALTER PROMOTION PROFILE "+name), nil)
 }
 
 func parseDropPromotionProfile(s string, i int) (interface{}, bool, error) {
@@ -919,7 +919,7 @@ func parseDropPromotionProfile(s string, i int) (interface{}, bool, error) {
 
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected profile name after DROP PROMOTION PROFILE")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("DROP PROMOTION PROFILE"), nil)
 	}
 
 	return &DropPromotionProfileCmd{Name: name, IfExists: ifExists}, true, nil
@@ -929,7 +929,7 @@ func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected policy name after CREATE PROMOTION POLICY")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyPolicyNameExpectedAfter("CREATE PROMOTION POLICY"), nil)
 	}
 
 	i = kpSkipSpaces(s, i)
@@ -959,7 +959,7 @@ func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
 		j = kpSkipSpaces(s, j)
 		body, k := kpScanBraceBlock(s, j)
 		if k < 0 {
-			return nil, false, fmt.Errorf("expected { after APPLY")
+			return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "APPLY"), nil)
 		}
 		_ = k
 
@@ -985,7 +985,7 @@ func parsePolicyApplyBlock(body string, policy *knowledgepolicy.PromotionPolicyD
 				k = kpSkipSpaces(body, k)
 				accessBody, l := kpScanBraceBlock(body, k)
 				if l < 0 {
-					return fmt.Errorf("expected { after ON ACCESS")
+					return localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "ON ACCESS"), nil)
 				}
 				onAccess, err := parseOnAccessBlock(accessBody)
 				if err != nil {
@@ -1042,7 +1042,7 @@ func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, 
 				if k < len(body) && body[k] == '{' {
 					cfgBody, l := kpScanBraceBlock(body, k)
 					if l < 0 {
-						return nil, fmt.Errorf("expected } in KALMAN config block")
+						return nil, localizedError(localization.CypherKnowledgePolicyKalmanClosingBraceExpected(), nil)
 					}
 					if err := parseKalmanConfigBlock(cfgBody, kalmanCfg); err != nil {
 						return nil, err
@@ -1061,7 +1061,7 @@ func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, 
 			j = kpSkipSpaces(body, j)
 			expr, l := scanToNextStatement(body, j)
 			if expr == "" {
-				return nil, fmt.Errorf("expected expression after SET")
+				return nil, localizedError(localization.CypherKnowledgePolicyExpressionExpectedAfterSet(), nil)
 			}
 			mut := knowledgepolicy.OnAccessMutation{
 				Expression: strings.TrimSpace(expr),
@@ -1085,30 +1085,30 @@ func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) erro
 		case "q":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid q: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("q", rawVal, false), err)
 			}
 			cfg.Q = f
 		case "r":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid r: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("r", rawVal, false), err)
 			}
 			cfg.R = f
 			hasR = true
 		case "variancescale":
 			f, err := strconv.ParseFloat(rawVal, 64)
 			if err != nil {
-				return fmt.Errorf("invalid varianceScale: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("varianceScale", rawVal, false), err)
 			}
 			cfg.VarianceScale = f
 		case "windowsize":
 			n, err := strconv.Atoi(rawVal)
 			if err != nil {
-				return fmt.Errorf("invalid windowSize: %s", rawVal)
+				return localizedError(localization.CypherKnowledgePolicyInvalidValue("windowSize", rawVal, false), err)
 			}
 			cfg.WindowSize = n
 		default:
-			return fmt.Errorf("unknown Kalman config key: %q", key)
+			return localizedError(localization.CypherKnowledgePolicyUnknownKalmanConfigKey(key), nil)
 		}
 		return nil
 	}); err != nil {
@@ -1154,7 +1154,7 @@ func parsePolicyWhenClause(s string, i int) (knowledgepolicy.PromotionPolicyWhen
 	}
 
 	if applyIdx < 0 {
-		return clause, i, fmt.Errorf("expected APPLY after WHEN predicate")
+		return clause, i, localizedError(localization.CypherKnowledgePolicyExpectedAfter("APPLY", "WHEN predicate"), nil)
 	}
 
 	clause.Predicate = strings.TrimSpace(s[predStart:applyIdx])
@@ -1169,12 +1169,12 @@ func parsePolicyWhenClause(s string, i int) (knowledgepolicy.PromotionPolicyWhen
 				ref, l = kpScanIdent(s, k)
 			}
 			if ref == "" {
-				return clause, i, fmt.Errorf("expected profile name after APPLY PROFILE")
+				return clause, i, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("APPLY PROFILE"), nil)
 			}
 			clause.ProfileRef = ref
 			i = l
 		} else {
-			return clause, i, fmt.Errorf("expected PROFILE after APPLY")
+			return clause, i, localizedError(localization.CypherKnowledgePolicyExpectedAfter("PROFILE", "APPLY"), nil)
 		}
 	}
 
@@ -1185,7 +1185,7 @@ func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
 	i = kpSkipSpaces(s, i)
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected policy name after ALTER PROMOTION POLICY")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyPolicyNameExpectedAfter("ALTER PROMOTION POLICY"), nil)
 	}
 
 	i = kpSkipSpaces(s, i)
@@ -1196,7 +1196,7 @@ func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
 		if k := kpMatchKeywordAt(s, j, "OPTIONS"); k > 0 {
 			body, l := kpScanBraceBlock(s, k)
 			if l < 0 {
-				return nil, false, fmt.Errorf("expected { after SET OPTIONS")
+				return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "SET OPTIONS"), nil)
 			}
 			_ = l
 			if err := parseOptionsMap(body, func(key, rawVal string) error {
@@ -1234,7 +1234,7 @@ func parseDropPromotionPolicy(s string, i int) (interface{}, bool, error) {
 
 	name, i := kpScanName(s, i)
 	if name == "" {
-		return nil, false, fmt.Errorf("expected policy name after DROP PROMOTION POLICY")
+		return nil, false, localizedError(localization.CypherKnowledgePolicyPolicyNameExpectedAfter("DROP PROMOTION POLICY"), nil)
 	}
 
 	return &DropPromotionPolicyCmd{Name: name, IfExists: ifExists}, true, nil

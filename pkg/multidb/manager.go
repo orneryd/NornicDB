@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -382,7 +383,7 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 	prefix := name + ":"
 	nodesDeleted, edgesDeleted, err := m.inner.DeleteByPrefix(prefix)
 	if err != nil {
-		return fmt.Errorf("failed to delete database data: %w", err)
+		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
 	}
 
 	// Update metadata with deletion info (for logging/debugging)
@@ -397,7 +398,7 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 		// If persistence fails, restore the database to maintain consistency
 		// This prevents the database from being dropped in memory but still existing in storage
 		m.databases[name] = info
-		return fmt.Errorf("failed to persist metadata after drop: %w", err)
+		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
 
 	return nil
@@ -440,7 +441,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 			if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
 				decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
 				if decErr != nil {
-					return nil, fmt.Errorf("failed to resolve remote credentials for constituent '%s': %w", runtimeRef.Alias, decErr)
+					return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
 				}
 				runtimeRef.Password = decrypted
 			}
@@ -477,25 +478,25 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
 					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
 					if decErr != nil {
-						return nil, fmt.Errorf("failed to resolve remote credentials for constituent '%s': %w", runtimeRef.Alias, decErr)
+						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
 					}
 					runtimeRef.Password = decrypted
 				}
 				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
 				if err != nil {
-					return nil, fmt.Errorf("failed to get remote storage for constituent '%s': %w", ref.Alias, err)
+					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
 				}
 			default:
 				// Resolve actual database name (might be an alias)
 				actualName, err = m.resolveDatabaseInternal(ref.DatabaseName)
 				if err != nil {
-					return nil, fmt.Errorf("constituent database '%s' not found: %w", ref.DatabaseName, err)
+					return nil, localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
 				}
 
 				// Get storage for constituent
 				constituentStorage, err = m.getStorageInternal(actualName)
 				if err != nil {
-					return nil, fmt.Errorf("failed to get storage for constituent '%s': %w", ref.DatabaseName, err)
+					return nil, localizedError(localization.MultidbManagerGetConstituentStorageFailed(ref.DatabaseName, err), err)
 				}
 			}
 
@@ -587,14 +588,14 @@ func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error
 // Must be called with lock held.
 func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken string) (storage.Engine, error) {
 	if m.remoteEngineFactory == nil {
-		return nil, fmt.Errorf("remote constituent '%s' cannot be opened: remote engine factory is not configured", ref.Alias)
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.Alias), nil)
 	}
 	engine, err := m.remoteEngineFactory(ref, authToken)
 	if err != nil {
 		return nil, err
 	}
 	if engine == nil {
-		return nil, fmt.Errorf("remote engine factory returned nil for constituent '%s'", ref.Alias)
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryReturnedNil(ref.Alias), nil)
 	}
 	return engine, nil
 }
@@ -694,7 +695,7 @@ func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
 	}
 
 	if status != "online" && status != "offline" {
-		return fmt.Errorf("invalid status: %s (must be 'online' or 'offline')", status)
+		return localizedError(localization.MultidbManagerInvalidStatus(status), nil)
 	}
 
 	info.Status = status
@@ -867,14 +868,14 @@ func (m *DatabaseManager) validateAliasName(alias string) error {
 
 	// Alias cannot contain whitespace
 	if strings.ContainsAny(alias, " \t\n\r") {
-		return fmt.Errorf("%w: '%s' (cannot contain whitespace)", ErrInvalidAliasName, alias)
+		return localizedError(localization.MultidbManagerAliasContainsWhitespace(alias, ErrInvalidAliasName), ErrInvalidAliasName)
 	}
 
 	// Alias cannot be reserved names
 	reserved := []string{"system", m.config.DefaultDatabase}
 	for _, reservedName := range reserved {
 		if alias == reservedName {
-			return fmt.Errorf("%w: '%s' (reserved name)", ErrInvalidAliasName, alias)
+			return localizedError(localization.MultidbManagerAliasReserved(alias, ErrInvalidAliasName), ErrInvalidAliasName)
 		}
 	}
 

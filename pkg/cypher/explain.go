@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ExecutionMode represents how a query should be executed
@@ -95,7 +97,7 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build execution plan: %w", err)
+		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
 	plan.Mode = ModeExplain
 	result := &ExecuteResult{
@@ -111,7 +113,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	// Build the plan first
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build execution plan: %w", err)
+		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
 	plan.Mode = ModeProfile
 

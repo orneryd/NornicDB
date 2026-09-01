@@ -1,0 +1,74 @@
+- id: cypherschema.composite_ddl_not_allowed
+  other: "[!! {{.Code}}: Schema DDL on composite databases requires a constituent target. Use USE <composite>.<alias> to target a specific constituent !!]"
+- id: cypherschema.unknown_command
+  other: "[!! unknown schema command: {{.Statement}} !!]"
+- id: cypherschema.flush_pending_writes_failed
+  other: "[!! flush pending async writes before schema DDL: {{.Cause}} !!]"
+- id: cypherschema.constraint_properties_required
+  other: "[!! {{.Kind}} constraint requires properties !!]"
+- id: cypherschema.temporal_relationship_arity_required
+  other: "[!! TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to) !!]"
+- id: cypherschema.temporal_node_arity_required
+  other: "[!! TEMPORAL constraint requires 3 properties (key, valid_from, valid_to) !!]"
+- id: cypherschema.domain_value_list_invalid
+  other: "[!! invalid domain value list: {{.Cause}} !!]"
+- id: cypherschema.domain_allowed_value_required
+  other: "[!! DOMAIN constraint requires at least one allowed value !!]"
+- id: cypherschema.invalid_syntax
+  other: "[!! invalid {{.Subject}} syntax !!]"
+- id: cypherschema.name_required
+  other: "[!! invalid {{.Command}} syntax: {{.Entity}} name required !!]"
+- id: cypherschema.range_index_single_property_required
+  other: "[!! RANGE INDEX only supports single property, got {{.Count}} !!]"
+- id: cypherschema.create_range_index_failed
+  other: "[!! failed to create range index: {{.Cause}} !!]"
+- id: cypherschema.invalid_identifier_segment
+  other: "[!! invalid identifier segment !!]"
+- id: cypherschema.invalid_if_not_exists_clause
+  other: "[!! invalid IF NOT EXISTS clause !!]"
+- id: cypherschema.empty_clause
+  other: "[!! empty {{.Clause}} clause !!]"
+- id: cypherschema.invalid_clause
+  other: "[!! invalid {{.Clause}} clause !!]"
+- id: cypherschema.missing_keyword
+  other: "[!! missing {{.Keyword}} !!]"
+- id: cypherschema.invalid_keyword
+  other: "[!! invalid {{.Keyword}} !!]"
+- id: cypherschema.invalid_trailing_syntax
+  other: "[!! invalid trailing syntax !!]"
+- id: cypherschema.index_properties_required
+  other: "[!! no properties specified for index !!]"
+- id: cypherschema.index_name_required
+  other: "[!! missing index name !!]"
+- id: cypherschema.fulltext_properties_required
+  other: "[!! no properties found in fulltext index definition !!]"
+- id: cypherschema.empty_statement
+  other: "[!! empty statement !!]"
+- id: cypherschema.invalid_pattern
+  other: "[!! invalid {{.Pattern}} pattern !!]"
+- id: cypherschema.unsupported_predicate
+  other: "[!! unsupported {{.Predicate}} predicate !!]"
+- id: cypherschema.unsupported_create_constraint_shape
+  other: "[!! unsupported CREATE CONSTRAINT shape !!]"
+- id: cypherschema.positive_max_count_required
+  other: "[!! MAX COUNT must be a positive integer, got {{.Value}} !!]"
+- id: cypherschema.backfill_index_failed
+  other: "[!! failed to backfill index for label {{.Label}}: {{.Cause}} !!]"
+- id: cypherschema.backfill_property_index_failed
+  other: "[!! failed to backfill property index {{.Label}}({{.Property}}): {{.Cause}} !!]"
+- id: cypherschema.unsupported_property_type
+  other: "[!! unsupported property type: {{.Type}} !!]"
+- id: cypherschema.manager_unavailable
+  other: "[!! schema manager not available !!]"
+- id: cypherschema.add_fulltext_relationship_index_failed
+  other: "[!! failed to add fulltext relationship index: {{.Cause}} !!]"
+- id: cypherschema.add_fulltext_index_failed
+  other: "[!! failed to add fulltext index: {{.Cause}} !!]"
+- id: cypherschema.unterminated_string
+  other: "[!! unterminated string: {{.Raw}} !!]"
+- id: cypherschema.contract_entry_required
+  other: "[!! constraint contract requires at least one block entry !!]"
+- id: cypherschema.malformed_require_block
+  other: "[!! malformed REQUIRE block !!]"
+- id: cypherschema.nested_contract_entry_unsupported
+  other: "[!! nested FOR ... REQUIRE entries are not supported inside REQUIRE blocks; create a separate targeted block constraint such as {{.Entry}} !!]"

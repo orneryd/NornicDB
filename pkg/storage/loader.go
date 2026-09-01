@@ -103,6 +103,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // LoadFromNeo4jJSON loads nodes and edges from Neo4j APOC JSON export format.
@@ -156,13 +158,13 @@ func LoadFromNeo4jJSON(engine Engine, dir string) error {
 	// Load nodes first (edges need nodes to exist)
 	nodesPath := filepath.Join(dir, "nodes.json")
 	if err := loadNodesFile(engine, nodesPath); err != nil {
-		return fmt.Errorf("loading nodes: %w", err)
+		return localizedError(localization.StorageLoaderLoadingNodes(nodesPath, err), err)
 	}
 
 	// Load relationships
 	relsPath := filepath.Join(dir, "relationships.json")
 	if err := loadRelationshipsFile(engine, relsPath); err != nil {
-		return fmt.Errorf("loading relationships: %w", err)
+		return localizedError(localization.StorageLoaderLoadingRelationships(relsPath, err), err)
 	}
 
 	return nil
@@ -217,25 +219,25 @@ func LoadFromNeo4jJSON(engine Engine, dir string) error {
 func LoadFromNeo4jExport(engine Engine, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("opening file: %w", err)
+		return localizedError(localization.StorageLoaderOpeningFile(path, err), err)
 	}
 	defer file.Close()
 
 	var export Neo4jExport
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&export); err != nil {
-		return fmt.Errorf("decoding JSON: %w", err)
+		return localizedError(localization.StorageLoaderDecodingJSON(err), err)
 	}
 
 	nodes, edges := FromNeo4jExport(&export)
 
 	// Bulk insert for efficiency
 	if err := engine.BulkCreateNodes(nodes); err != nil {
-		return fmt.Errorf("creating nodes: %w", err)
+		return localizedError(localization.StorageLoaderCreatingNodes(err), err)
 	}
 
 	if err := engine.BulkCreateEdges(edges); err != nil {
-		return fmt.Errorf("creating edges: %w", err)
+		return localizedError(localization.StorageLoaderCreatingEdges(err), err)
 	}
 
 	return nil
@@ -314,33 +316,33 @@ func SaveToNeo4jExport(engine Engine, path string) error {
 	// Use ExportableEngine interface which both MemoryEngine and BadgerEngine implement
 	exportable, ok := engine.(ExportableEngine)
 	if !ok {
-		return fmt.Errorf("SaveToNeo4jExport: engine type %T does not support full export", engine)
+		return localizedError(localization.StorageLoaderExportEngineUnsupported(fmt.Sprintf("%T", engine)), nil)
 	}
 
 	var err error
 	allNodes, err = exportable.AllNodes()
 	if err != nil {
-		return fmt.Errorf("getting all nodes: %w", err)
+		return localizedError(localization.StorageLoaderGettingAllNodes(err), err)
 	}
 
 	// Collect all edges
 	allEdges, err := exportable.AllEdges()
 	if err != nil {
-		return fmt.Errorf("getting all edges: %w", err)
+		return localizedError(localization.StorageLoaderGettingAllEdges(err), err)
 	}
 
 	export := ToNeo4jExport(allNodes, allEdges)
 
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
+		return localizedError(localization.StorageLoaderCreatingFile(path, err), err)
 	}
 	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(export); err != nil {
-		return fmt.Errorf("encoding JSON: %w", err)
+		return localizedError(localization.StorageLoaderEncodingJSON(err), err)
 	}
 
 	return nil
@@ -378,19 +380,19 @@ func loadNodesFromReader(engine Engine, r io.Reader) error {
 
 		var neo4jNode Neo4jNode
 		if err := json.Unmarshal(line, &neo4jNode); err != nil {
-			return fmt.Errorf("parsing node JSON: %w", err)
+			return localizedError(localization.StorageLoaderParsingNodeJSON(err), err)
 		}
 
 		node, err := nodeFromNeo4j(&neo4jNode)
 		if err != nil {
-			return fmt.Errorf("converting node: %w", err)
+			return localizedError(localization.StorageLoaderConvertingNode(err), err)
 		}
 
 		nodes = append(nodes, node)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning file: %w", err)
+		return localizedError(localization.StorageLoaderScanningFile(err), err)
 	}
 
 	if len(nodes) > 0 {
@@ -430,19 +432,19 @@ func loadRelationshipsFromReader(engine Engine, r io.Reader) error {
 
 		var neo4jRel Neo4jRelationship
 		if err := json.Unmarshal(line, &neo4jRel); err != nil {
-			return fmt.Errorf("parsing relationship JSON: %w", err)
+			return localizedError(localization.StorageLoaderParsingRelationshipJSON(err), err)
 		}
 
 		edge, err := edgeFromNeo4j(&neo4jRel)
 		if err != nil {
-			return fmt.Errorf("converting relationship: %w", err)
+			return localizedError(localization.StorageLoaderConvertingRelationship(err), err)
 		}
 
 		edges = append(edges, edge)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning file: %w", err)
+		return localizedError(localization.StorageLoaderScanningFile(err), err)
 	}
 
 	if len(edges) > 0 {
@@ -541,26 +543,26 @@ func FindNodeNeedingEmbedding(engine Engine) *Node {
 func GenericSaveToNeo4jExport(engine ExportableEngine, path string) error {
 	nodes, err := engine.AllNodes()
 	if err != nil {
-		return fmt.Errorf("getting nodes: %w", err)
+		return localizedError(localization.StorageLoaderGettingNodes(err), err)
 	}
 
 	edges, err := engine.AllEdges()
 	if err != nil {
-		return fmt.Errorf("getting edges: %w", err)
+		return localizedError(localization.StorageLoaderGettingEdges(err), err)
 	}
 
 	export := ToNeo4jExport(nodes, edges)
 
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
+		return localizedError(localization.StorageLoaderCreatingFile(path, err), err)
 	}
 	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(export); err != nil {
-		return fmt.Errorf("encoding JSON: %w", err)
+		return localizedError(localization.StorageLoaderEncodingJSON(err), err)
 	}
 
 	return nil

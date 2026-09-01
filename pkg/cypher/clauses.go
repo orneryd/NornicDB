@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -97,7 +98,7 @@ func (e *StorageExecutor) executeWith(ctx context.Context, cypher string) (*Exec
 
 	withIdx := findKeywordIndex(cypher, "WITH")
 	if withIdx == -1 {
-		return nil, fmt.Errorf("WITH clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualWithClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	remainderStart := withIdx + 4
@@ -562,18 +563,18 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 
 	// Check for unsupported map keys() function
 	if strings.Contains(upper, "KEYS(") && strings.Contains(upper, "UNWIND") {
-		return nil, fmt.Errorf("keys() function with UNWIND is not supported in this context")
+		return nil, localizedError(localization.CypherMutationsUnwindKeysUnsupported(), nil)
 	}
 
 	unwindIdx := findKeywordIndex(cypher, "UNWIND")
 	if unwindIdx == -1 {
-		return nil, fmt.Errorf("UNWIND clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	afterUnwind := cypher[unwindIdx+6:]
 	asRelIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
 	if asRelIdx == -1 {
-		return nil, fmt.Errorf("UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
+		return nil, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
 
 	asIdx := unwindIdx + 6 + asRelIdx
@@ -601,15 +602,15 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 	if strings.HasPrefix(strings.TrimSpace(listExpr), "$") {
 		paramName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(listExpr), "$"))
 		if paramName == "" {
-			return nil, fmt.Errorf("UNWIND requires a valid parameter name after $")
+			return nil, localizedError(localization.CypherMutationsUnwindParameterNameRequired(), nil)
 		}
 		unwindParamName = paramName
 		if params == nil {
-			return nil, fmt.Errorf("UNWIND parameter $%s requires parameters to be provided", paramName)
+			return nil, localizedError(localization.CypherMutationsUnwindParametersRequired(paramName), nil)
 		}
 		paramValue, exists := params[paramName]
 		if !exists {
-			return nil, fmt.Errorf("UNWIND parameter $%s not found in provided parameters", paramName)
+			return nil, localizedError(localization.CypherMutationsUnwindParameterNotFound(paramName), nil)
 		}
 		list = paramValue
 	} else {
@@ -754,7 +755,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 						mutationResult, err = e.executeInternal(ctx, substitutedFull, params)
 					}
 					if err != nil {
-						return nil, fmt.Errorf("UNWIND mutation failed: %w", err)
+						return nil, localizedError(localization.CypherMutationsUnwindMutationFailed(err), err)
 					}
 					if mutationResult != nil {
 						addQueryStats(result.Stats, mutationResult.Stats)
@@ -878,7 +879,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 					}
 				}
 				if err != nil {
-					return nil, fmt.Errorf("UNWIND mutation failed: %w", err)
+					return nil, localizedError(localization.CypherMutationsUnwindMutationFailed(err), err)
 				}
 
 				// Accumulate stats when available. Some execution paths can return a
@@ -975,7 +976,7 @@ func (e *StorageExecutor) executeUnwind(ctx context.Context, cypher string) (*Ex
 			callParams[variable] = item
 			subResult, err := e.Execute(ctx, substitutedQuery, callParams)
 			if err != nil {
-				return nil, fmt.Errorf("UNWIND MATCH failed: %w", err)
+				return nil, localizedError(localization.CypherMutationsUnwindMatchFailed(err), err)
 			}
 			if subResult == nil {
 				continue
@@ -2249,7 +2250,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					}
 					actualID, err := store.CreateNode(node)
 					if err != nil {
-						return nil, true, fmt.Errorf("UNWIND MERGE chain create failed: %w", err)
+						return nil, true, localizedError(localization.CypherMutationsUnwindMergeCreateFailed(err), err)
 					}
 					node.ID = actualID
 					batchCreatedNodes[node.ID] = struct{}{}
@@ -2279,7 +2280,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					}
 					if needsUpdate {
 						if err := store.UpdateNode(node); err != nil {
-							return nil, true, fmt.Errorf("UNWIND MERGE chain update failed: %w", err)
+							return nil, true, localizedError(localization.CypherMutationsUnwindMergeUpdateFailed(err), err)
 						}
 						e.cacheMergeNode(nodePlan.labels, matchProps, node)
 						notifyOnce(node.ID)
@@ -2329,7 +2330,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					}
 					if needsUpdate {
 						if err := store.UpdateNode(node); err != nil {
-							return nil, true, fmt.Errorf("UNWIND MATCH chain update failed: %w", err)
+							return nil, true, localizedError(localization.CypherMutationsUnwindMatchUpdateFailed(err), err)
 						}
 						if !lookupPlan.anyLabel {
 							e.cacheMergeNode(lookupPlan.labels, matchProps, node)
@@ -2369,7 +2370,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 			}
 			edge, relKey, err := findRelationship(fromNode, toNode, relPlan.relType, matchProps)
 			if err != nil {
-				return nil, true, fmt.Errorf("UNWIND MERGE chain relationship lookup failed: %w", err)
+				return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipLookupFailed(err), err)
 			}
 			relationshipChanged := false
 			if edge == nil {
@@ -2381,11 +2382,11 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					Properties: cloneNodePropertiesMap(matchProps),
 				}
 				if _, err := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues); err != nil {
-					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", err)
+					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(err), err)
 				}
 				createdEdge, created, err := createRelationshipForMerge(e, store, edge, matchProps)
 				if err != nil {
-					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship create failed: %w", err)
+					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipCreateFailed(err), err)
 				}
 				edge = createdEdge
 				relationshipCache[relKey] = edge
@@ -2394,19 +2395,19 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 					result.Stats.RelationshipsCreated++
 					relationshipChanged = true
 				} else if changed, assignErr := applyRelationshipAssignments(createdEdge, relPlan.setAssignments, rowValues); assignErr != nil {
-					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", assignErr)
+					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(assignErr), assignErr)
 				} else if changed {
 					if err := store.UpdateEdge(createdEdge); err != nil {
-						return nil, true, fmt.Errorf("UNWIND MERGE chain relationship update failed: %w", err)
+						return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipUpdateFailed(err), err)
 					}
 					relationshipCache[relKey] = createdEdge
 					relationshipChanged = true
 				}
 			} else if changed, assignErr := applyRelationshipAssignments(edge, relPlan.setAssignments, rowValues); assignErr != nil {
-				return nil, true, fmt.Errorf("UNWIND MERGE chain relationship assignment failed: %w", assignErr)
+				return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipAssignmentFailed(assignErr), assignErr)
 			} else if changed {
 				if err := store.UpdateEdge(edge); err != nil {
-					return nil, true, fmt.Errorf("UNWIND MERGE chain relationship update failed: %w", err)
+					return nil, true, localizedError(localization.CypherMutationsUnwindRelationshipUpdateFailed(err), err)
 				}
 				relationshipCache[relKey] = edge
 				relationshipChanged = true
@@ -2924,11 +2925,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 
 		if err := mergeHop(o, chainNodes[0]); err != nil {
-			return nil, true, fmt.Errorf("UNWIND fixed-chain merge failed: %w", err)
+			return nil, true, localizedError(localization.CypherMutationsUnwindFixedChainFailed(err), err)
 		}
 		for i := 0; i < len(chainNodes)-1; i++ {
 			if err := mergeHop(chainNodes[i], chainNodes[i+1]); err != nil {
-				return nil, true, fmt.Errorf("UNWIND fixed-chain merge failed: %w", err)
+				return nil, true, localizedError(localization.CypherMutationsUnwindFixedChainFailed(err), err)
 			}
 		}
 		matchedCount++
@@ -3274,13 +3275,13 @@ func (e *StorageExecutor) executeDoubleUnwind(ctx context.Context, cypher string
 	// Parse first UNWIND
 	firstUnwindIdx := findKeywordIndex(cypher, "UNWIND")
 	if firstUnwindIdx == -1 {
-		return nil, fmt.Errorf("UNWIND clause not found")
+		return nil, localizedError(localization.CypherMutationsUnwindClauseMissing(), nil)
 	}
 
 	afterFirst := cypher[firstUnwindIdx+6:]
 	firstAsIdx := findKeywordNotInBrackets(afterFirst, " AS ")
 	if firstAsIdx == -1 {
-		return nil, fmt.Errorf("first UNWIND requires AS clause")
+		return nil, localizedError(localization.CypherMutationsUnwindFirstASRequired(), nil)
 	}
 
 	firstListExpr := strings.TrimSpace(afterFirst[:firstAsIdx])
@@ -3293,20 +3294,20 @@ func (e *StorageExecutor) executeDoubleUnwind(ctx context.Context, cypher string
 	// Get first variable name
 	varEndIdx := strings.IndexAny(afterFirstAs, " \t\n")
 	if varEndIdx == -1 {
-		return nil, fmt.Errorf("malformed double UNWIND")
+		return nil, localizedError(localization.CypherMutationsUnwindDoubleMalformed(), nil)
 	}
 	firstVar := afterFirstAs[:varEndIdx]
 	restQuery := strings.TrimSpace(afterFirstAs[varEndIdx:])
 
 	// Parse second UNWIND
 	if !strings.HasPrefix(strings.ToUpper(restQuery), "UNWIND") {
-		return nil, fmt.Errorf("expected second UNWIND")
+		return nil, localizedError(localization.CypherMutationsUnwindSecondExpected(), nil)
 	}
 
 	afterSecond := restQuery[6:]
 	secondAsIdx := findKeywordNotInBrackets(afterSecond, " AS ")
 	if secondAsIdx == -1 {
-		return nil, fmt.Errorf("second UNWIND requires AS clause")
+		return nil, localizedError(localization.CypherMutationsUnwindSecondASRequired(), nil)
 	}
 
 	secondListExpr := strings.TrimSpace(afterSecond[:secondAsIdx])
@@ -3436,13 +3437,13 @@ func (e *StorageExecutor) executeDoubleUnwind(ctx context.Context, cypher string
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
 	queries, splitAll, ok := splitTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
-		return nil, fmt.Errorf("UNION clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if unionAll != splitAll {
 		if unionAll {
-			return nil, fmt.Errorf("UNION ALL clause not found in query: %q", truncateQuery(cypher, 80))
+			return nil, localizedError(localization.CypherResidualUnionAllClauseNotFound(truncateQuery(cypher, 80)), nil)
 		}
-		return nil, fmt.Errorf("UNION clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	// Execute all queries and combine results
@@ -3452,7 +3453,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	for i, query := range queries {
 		result, err := e.executeInternal(ctx, query, nil)
 		if err != nil {
-			return nil, fmt.Errorf("error in UNION query %d (%q): %w", i+1, truncateQuery(query, 50), err)
+			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
 		// Some execution branches can return empty column metadata when no rows are produced,
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
@@ -3475,7 +3476,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		} else {
 			// Validate column count matches
 			if len(combinedResult.Columns) != len(result.Columns) {
-				return nil, fmt.Errorf("UNION queries must return the same number of columns (got %d and %d)", len(combinedResult.Columns), len(result.Columns))
+				return nil, localizedError(localization.CypherResidualUnionColumnCountMismatch(len(combinedResult.Columns), len(result.Columns)), nil)
 			}
 		}
 
@@ -3516,7 +3517,7 @@ func (e *StorageExecutor) executeOptionalMatch(ctx context.Context, cypher strin
 	upper := strings.ToUpper(cypher)
 	optMatchIdx := strings.Index(upper, "OPTIONAL MATCH")
 	if optMatchIdx == -1 {
-		return nil, fmt.Errorf("OPTIONAL MATCH not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualOptionalMatchNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	modifiedQuery := cypher[:optMatchIdx] + "MATCH" + cypher[optMatchIdx+14:]
@@ -3584,7 +3585,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 	// Find OPTIONAL MATCH position
 	optMatchIdx := findKeywordIndex(cypher, "OPTIONAL MATCH")
 	if optMatchIdx == -1 {
-		return nil, fmt.Errorf("OPTIONAL MATCH not found in compound query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualCompoundOptionalMatchNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	// Find WITH or RETURN after OPTIONAL MATCH
@@ -3655,7 +3656,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 
 	nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 	if nodePattern.variable == "" {
-		return nil, fmt.Errorf("could not parse node pattern from MATCH clause: %q", truncateQuery(nodePatternStr, 50))
+		return nil, localizedError(localization.CypherResidualMatchNodePatternParseFailed(truncateQuery(nodePatternStr, 50)), nil)
 	}
 
 	// Extract WHERE clause content if present
@@ -3678,7 +3679,7 @@ func (e *StorageExecutor) executeCompoundMatchOptionalMatch(ctx context.Context,
 	// Collect initial MATCH nodes with index-backed candidates when possible.
 	initialNodes, err := e.collectOptionalMatchInitialNodes(ctx, nodePattern, whereClause, rawWhereClause, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get initial nodes: %w", err)
+		return nil, localizedError(localization.CypherResidualInitialNodesLookupFailed(err), err)
 	}
 
 	// Parse the OPTIONAL MATCH relationship pattern
@@ -4165,7 +4166,7 @@ func (e *StorageExecutor) executeJoinedRowsWithOptionalMatch(ctx context.Context
 	optMatchIdx := findKeywordIndex(query, "OPTIONAL MATCH")
 	returnIdx := findKeywordIndex(query, "RETURN")
 	if withIdx == -1 || optMatchIdx == -1 || returnIdx == -1 {
-		return nil, fmt.Errorf("WITH, OPTIONAL MATCH, and RETURN clauses required")
+		return nil, localizedError(localization.CypherMutationsWithOptionalReturnRequired(), nil)
 	}
 
 	withSection := strings.TrimSpace(query[withIdx+4 : optMatchIdx])
@@ -4375,7 +4376,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 	// Find RETURN clause
 	returnIdx := findKeywordIndex(restOfQuery, "RETURN")
 	if returnIdx == -1 {
-		return nil, fmt.Errorf("RETURN clause required after WITH")
+		return nil, localizedError(localization.CypherMutationsWithReturnRequired(), nil)
 	}
 
 	// First, check for CASE WHEN expressions in the first WITH clause and evaluate them
@@ -4575,7 +4576,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 				evalTerm := func(term string) (float64, bool, error) {
 					inner, _, ok := extractFuncArgsWithSuffix(strings.TrimSpace(term), "sum")
 					if !ok {
-						return 0, false, fmt.Errorf("unsupported SUM arithmetic term: %s", strings.TrimSpace(term))
+						return 0, false, localizedError(localization.CypherResidualSumArithmeticTermUnsupported(strings.TrimSpace(term)), nil)
 					}
 					sumVal := float64(0)
 					hasNonNull := false
@@ -4595,7 +4596,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 						}
 						num, ok := toFloat64(val)
 						if !ok {
-							return 0, false, fmt.Errorf("SUM() requires numeric values, got %T in expression %q", val, strings.TrimSpace(inner))
+							return 0, false, localizedError(localization.CypherResidualSumNumericRequired(val, strings.TrimSpace(inner)), nil)
 						}
 						hasNonNull = true
 						sumVal += num
@@ -4678,7 +4679,7 @@ func (e *StorageExecutor) processWithAggregation(ctx context.Context, rows []joi
 				}
 				num, ok := toFloat64(val)
 				if !ok {
-					return nil, fmt.Errorf("SUM() requires numeric values, got %T in expression %q", val, inner)
+					return nil, localizedError(localization.CypherResidualSumNumericRequired(val, inner), nil)
 				}
 				hasNonNull = true
 				sumVal += num
@@ -4986,7 +4987,7 @@ func (e *StorageExecutor) processGroupedWithAggregation(ctx context.Context, row
 					}
 					num, ok := toFloat64(val)
 					if !ok {
-						return nil, fmt.Errorf("SUM() requires numeric values, got %T in expression %q", val, inner)
+						return nil, localizedError(localization.CypherResidualSumNumericRequired(val, inner), nil)
 					}
 					sum += num
 					hasNonNull = true
@@ -5043,7 +5044,7 @@ func (e *StorageExecutor) processGroupedWithAggregation(ctx context.Context, row
 func (e *StorageExecutor) buildJoinedResult(ctx context.Context, rows []joinedRow, sourceVar, targetVar, relVar, restOfQuery string) (*ExecuteResult, error) {
 	returnIdx := findKeywordIndex(restOfQuery, "RETURN")
 	if returnIdx == -1 {
-		return nil, fmt.Errorf("RETURN clause required")
+		return nil, localizedError(localization.CypherResidualReturnClauseRequired(), nil)
 	}
 
 	returnClause := stripTrailingReturnClauses(strings.TrimSpace(restOfQuery[returnIdx+6:]))
@@ -5299,12 +5300,12 @@ func (e *StorageExecutor) executeForeach(ctx context.Context, cypher string) (*E
 func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge) (*ExecuteResult, error) {
 	foreachIdx := findKeywordIndex(cypher, "FOREACH")
 	if foreachIdx == -1 {
-		return nil, fmt.Errorf("FOREACH clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherResidualForeachClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	parenStart := strings.Index(cypher[foreachIdx:], "(")
 	if parenStart == -1 {
-		return nil, fmt.Errorf("FOREACH requires parentheses (e.g., FOREACH (x IN list | SET ...))")
+		return nil, localizedError(localization.CypherMutationsForeachParenthesesRequired(), nil)
 	}
 	parenStart += foreachIdx
 
@@ -5319,14 +5320,14 @@ func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher 
 		parenEnd++
 	}
 	if depth != 0 {
-		return nil, fmt.Errorf("FOREACH requires balanced parentheses")
+		return nil, localizedError(localization.CypherMutationsForeachBalancedParenthesesRequired(), nil)
 	}
 
 	inner := strings.TrimSpace(cypher[parenStart+1 : parenEnd-1])
 
 	inIdx := strings.Index(strings.ToUpper(inner), " IN ")
 	if inIdx == -1 {
-		return nil, fmt.Errorf("FOREACH requires IN clause (e.g., FOREACH (x IN list | SET ...))")
+		return nil, localizedError(localization.CypherMutationsForeachInRequired(), nil)
 	}
 
 	variable := strings.TrimSpace(inner[:inIdx])
@@ -5334,7 +5335,7 @@ func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher 
 
 	pipeIdx := strings.Index(remainder, "|")
 	if pipeIdx == -1 {
-		return nil, fmt.Errorf("FOREACH requires | separator")
+		return nil, localizedError(localization.CypherMutationsForeachSeparatorRequired(), nil)
 	}
 
 	listExpr := strings.TrimSpace(remainder[:pipeIdx])
@@ -5416,7 +5417,7 @@ func (e *StorageExecutor) executeForeachWithContext(ctx context.Context, cypher 
 
 // executeLoadCSV handles LOAD CSV clause
 func (e *StorageExecutor) executeLoadCSV(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	return nil, fmt.Errorf("LOAD CSV is not supported in NornicDB embedded mode")
+	return nil, localizedError(localization.CypherResidualLoadCSVUnsupported(), nil)
 }
 
 // ========================================

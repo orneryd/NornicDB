@@ -3,7 +3,6 @@ package replication
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -77,7 +77,7 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 
 	// Create WAL directory if needed
 	if err := os.MkdirAll(walDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create WAL directory: %w", err)
+		return nil, localizedError(localization.ReplicationStorageWALDirectoryCreateFailed(err), err)
 	}
 
 	// Create persistent WAL
@@ -88,7 +88,7 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 
 	wal, err := storage.NewWAL(walDir, walConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create WAL: %w", err)
+		return nil, localizedError(localization.ReplicationStorageWALCreateFailed(err), err)
 	}
 
 	adapter := &StorageAdapter{
@@ -131,7 +131,7 @@ func (a *StorageAdapter) SetExecutor(executor *cypher.StorageExecutor) {
 // WAL writes are now asynchronous for better performance.
 func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	if cmd == nil {
-		return fmt.Errorf("nil command")
+		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
 	}
 
 	// Record in persistent WAL (write-ahead logging)
@@ -158,7 +158,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		a.walMu.Lock()
 		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
 			a.walMu.Unlock()
-			return fmt.Errorf("failed to append to WAL: %w", err)
+			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 		}
 		pos := a.wal.Sequence()
 		a.walPosition.Store(pos)
@@ -199,7 +199,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	case CmdBulkDeleteEdges:
 		execErr = a.applyBulkDeleteEdges(cmd.Data)
 	default:
-		execErr = fmt.Errorf("unknown command type: %d", cmd.Type)
+		execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
 	}
 
 	// Try to get position from async write (non-blocking, best-effort)
@@ -291,7 +291,7 @@ func (a *StorageAdapter) flushWALBatch() {
 		if err := a.wal.Append(storage.OperationType("replication_command"), req.record); err != nil {
 			// Send error to waiting request
 			select {
-			case req.errCh <- fmt.Errorf("failed to append to WAL: %w", err):
+			case req.errCh <- localizedError(localization.ReplicationStorageWALAppendFailed(err), err):
 			default:
 			}
 			positions = append(positions, 0) // Placeholder for failed entry
@@ -338,7 +338,7 @@ func (a *StorageAdapter) flushWALBatch() {
 func (a *StorageAdapter) applyCreateNode(data []byte) error {
 	node, err := decodeNodePayload(data)
 	if err != nil {
-		return fmt.Errorf("decode node: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
 	}
 	_, err = a.engine.CreateNode(node)
 	return err
@@ -348,7 +348,7 @@ func (a *StorageAdapter) applyCreateNode(data []byte) error {
 func (a *StorageAdapter) applyUpdateNode(data []byte) error {
 	node, err := decodeNodePayload(data)
 	if err != nil {
-		return fmt.Errorf("decode node: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
 	}
 	return a.engine.UpdateNode(node)
 }
@@ -369,7 +369,7 @@ func (a *StorageAdapter) applyDeleteNode(data []byte) error {
 func (a *StorageAdapter) applyCreateEdge(data []byte) error {
 	edge, err := decodeEdgePayload(data)
 	if err != nil {
-		return fmt.Errorf("decode edge: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
 	}
 	return a.engine.CreateEdge(edge)
 }
@@ -377,7 +377,7 @@ func (a *StorageAdapter) applyCreateEdge(data []byte) error {
 func (a *StorageAdapter) applyUpdateEdge(data []byte) error {
 	edge, err := decodeEdgePayload(data)
 	if err != nil {
-		return fmt.Errorf("decode edge: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
 	}
 	return a.engine.UpdateEdge(edge)
 }
@@ -388,7 +388,7 @@ func (a *StorageAdapter) applyDeleteEdge(data []byte) error {
 		EdgeID string
 	}
 	if err := decodeGob(data, &req); err != nil {
-		return fmt.Errorf("decode delete edge request: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeDeleteEdgeFailed(err), err)
 	}
 	return a.engine.DeleteEdge(storage.EdgeID(req.EdgeID))
 }
@@ -401,7 +401,7 @@ func (a *StorageAdapter) applySetProperty(data []byte) error {
 		Value  interface{}
 	}
 	if err := decodeGob(data, &req); err != nil {
-		return fmt.Errorf("decode set property request: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeSetPropertyFailed(err), err)
 	}
 
 	// Get node, update property, save
@@ -423,7 +423,7 @@ func (a *StorageAdapter) applyBatchWrite(data []byte) error {
 		Edges [][]byte
 	}
 	if err := decodeGob(data, &batch); err != nil {
-		return fmt.Errorf("decode batch: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeBatchFailed(err), err)
 	}
 
 	for _, nodeBytes := range batch.Nodes {
@@ -452,10 +452,10 @@ func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
 		Prefix string
 	}
 	if err := decodeGob(data, &req); err != nil {
-		return fmt.Errorf("decode delete by prefix request: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
 	}
 	if req.Prefix == "" {
-		return fmt.Errorf("prefix is required")
+		return localizedError(localization.ReplicationStoragePrefixRequired(), nil)
 	}
 	_, _, err := a.engine.DeleteByPrefix(req.Prefix)
 	return err
@@ -464,7 +464,7 @@ func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
 func (a *StorageAdapter) applyBulkCreateNodes(data []byte) error {
 	var encoded [][]byte
 	if err := decodeGob(data, &encoded); err != nil {
-		return fmt.Errorf("decode bulk create nodes: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeBulkCreateNodesFailed(err), err)
 	}
 	nodes := make([]*storage.Node, 0, len(encoded))
 	for _, b := range encoded {
@@ -480,7 +480,7 @@ func (a *StorageAdapter) applyBulkCreateNodes(data []byte) error {
 func (a *StorageAdapter) applyBulkCreateEdges(data []byte) error {
 	var encoded [][]byte
 	if err := decodeGob(data, &encoded); err != nil {
-		return fmt.Errorf("decode bulk create edges: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeBulkCreateEdgesFailed(err), err)
 	}
 	edges := make([]*storage.Edge, 0, len(encoded))
 	for _, b := range encoded {
@@ -496,7 +496,7 @@ func (a *StorageAdapter) applyBulkCreateEdges(data []byte) error {
 func (a *StorageAdapter) applyBulkDeleteNodes(data []byte) error {
 	var ids []storage.NodeID
 	if err := decodeGob(data, &ids); err != nil {
-		return fmt.Errorf("decode bulk delete nodes: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeBulkDeleteNodesFailed(err), err)
 	}
 	return a.engine.BulkDeleteNodes(ids)
 }
@@ -504,7 +504,7 @@ func (a *StorageAdapter) applyBulkDeleteNodes(data []byte) error {
 func (a *StorageAdapter) applyBulkDeleteEdges(data []byte) error {
 	var ids []storage.EdgeID
 	if err := decodeGob(data, &ids); err != nil {
-		return fmt.Errorf("decode bulk delete edges: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeBulkDeleteEdgesFailed(err), err)
 	}
 	return a.engine.BulkDeleteEdges(ids)
 }
@@ -513,7 +513,7 @@ func (a *StorageAdapter) applyBulkDeleteEdges(data []byte) error {
 // The data should be a JSON object with "query" (string) and optional "params" (map[string]interface{}).
 func (a *StorageAdapter) applyCypher(data []byte) error {
 	if a.executor == nil {
-		return fmt.Errorf("cypher executor not available - cannot execute Cypher command")
+		return localizedError(localization.ReplicationStorageCypherUnavailable(), nil)
 	}
 
 	// Parse Cypher command data
@@ -523,11 +523,11 @@ func (a *StorageAdapter) applyCypher(data []byte) error {
 	}
 
 	if err := decodeGob(data, &cypherCmd); err != nil {
-		return fmt.Errorf("unmarshal cypher command: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeCypherFailed(err), err)
 	}
 
 	if cypherCmd.Query == "" {
-		return fmt.Errorf("cypher query is empty")
+		return localizedError(localization.ReplicationStorageCypherQueryEmpty(), nil)
 	}
 
 	// Execute the Cypher query
@@ -535,7 +535,7 @@ func (a *StorageAdapter) applyCypher(data []byte) error {
 	ctx := context.Background()
 	_, err := a.executor.Execute(ctx, cypherCmd.Query, cypherCmd.Params)
 	if err != nil {
-		return fmt.Errorf("execute cypher query: %w", err)
+		return localizedError(localization.ReplicationStorageExecuteCypherFailed(err), err)
 	}
 
 	return nil
@@ -586,7 +586,7 @@ func (a *StorageAdapter) FlushWAL() error {
 	case <-barrier.posCh:
 	case err := <-barrier.errCh:
 		if err != nil {
-			return fmt.Errorf("flush wal: %w", err)
+			return localizedError(localization.ReplicationStorageFlushWALFailed(err), err)
 		}
 	case <-a.walStopCh:
 		// Adapter closing; drop barrier wait.
@@ -689,7 +689,7 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 		if strings.Contains(errStr, "no such file") || strings.Contains(errStr, "not found") {
 			return []*WALEntry{}, nil
 		}
-		return nil, fmt.Errorf("failed to read WAL entries: %w", err)
+		return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 	}
 
 	var entries []*WALEntry
@@ -759,12 +759,12 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 	// Get all nodes and edges
 	nodes, err := a.engine.AllNodes()
 	if err != nil {
-		return fmt.Errorf("get all nodes: %w", err)
+		return localizedError(localization.ReplicationStorageGetAllNodesFailed(err), err)
 	}
 
 	edges, err := a.engine.AllEdges()
 	if err != nil {
-		return fmt.Errorf("get all edges: %w", err)
+		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
 
 	snapshot := struct {
@@ -779,7 +779,7 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 
 	data, err := encodeGob(snapshot)
 	if err != nil {
-		return fmt.Errorf("encode snapshot: %w", err)
+		return localizedError(localization.ReplicationStorageEncodeSnapshotFailed(err), err)
 	}
 
 	_, err = w.Write(data)
@@ -790,7 +790,7 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return fmt.Errorf("read snapshot: %w", err)
+		return localizedError(localization.ReplicationStorageReadSnapshotFailed(err), err)
 	}
 
 	var snapshot struct {
@@ -800,20 +800,20 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	}
 
 	if err := decodeGob(data, &snapshot); err != nil {
-		return fmt.Errorf("decode snapshot: %w", err)
+		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)
 	}
 
 	// Restore nodes
 	for _, node := range snapshot.Nodes {
 		if _, err := a.engine.CreateNode(node); err != nil {
-			return fmt.Errorf("restore node: %w", err)
+			return localizedError(localization.ReplicationStorageRestoreNodeFailed(err), err)
 		}
 	}
 
 	// Restore edges
 	for _, edge := range snapshot.Edges {
 		if err := a.engine.CreateEdge(edge); err != nil {
-			return fmt.Errorf("restore edge: %w", err)
+			return localizedError(localization.ReplicationStorageRestoreEdgeFailed(err), err)
 		}
 	}
 

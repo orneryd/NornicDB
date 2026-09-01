@@ -1,10 +1,10 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -534,5 +534,5 @@ func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
 func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	// DeleteByPrefix is not supported within a transaction context.
 	// This operation should be performed outside of a transaction.
-	return 0, 0, fmt.Errorf("DeleteByPrefix not supported within transaction context")
+	return 0, 0, localizedError(localization.CypherInvariantsDeleteByPrefixTransactionUnsupported(), nil)
 }

@@ -1,0 +1,18 @@
+- id: search.rerank_request_marshal_failed
+  description: Rerank client failure while serializing an API request. Cause is diagnostic text and is not translated.
+  other: "failed to marshal request: {{.Cause}}"
+- id: search.rerank_request_creation_failed
+  description: Rerank client failure while constructing an HTTP request. Cause is diagnostic text and is not translated.
+  other: "failed to create request: {{.Cause}}"
+- id: search.rerank_request_failed
+  description: Rerank client HTTP request failure. Cause is diagnostic text and is not translated.
+  other: "rerank request failed: {{.Cause}}"
+- id: search.rerank_api_status
+  description: Rerank API response with a non-success HTTP status. Status is a numeric HTTP status code.
+  other: "rerank API returned status {{.Status}}"
+- id: search.rerank_response_parse_failed
+  description: Rerank client failure while decoding an API response. Cause is diagnostic text and is not translated.
+  other: "failed to parse response: {{.Cause}}"
+- id: search.rerank_response_unrecognized
+  description: Rerank API response that does not match a supported response shape.
+  other: unable to parse rerank response

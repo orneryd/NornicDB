@@ -1,0 +1,68 @@
+- id: cypherresidual.with_clause_not_found
+  other: 'cláusula WITH no encontrada en la consulta: "{{.Query}}"'
+- id: cypherresidual.unwind_clause_not_found
+  other: 'cláusula UNWIND no encontrada en la consulta: "{{.Query}}"'
+- id: cypherresidual.union_clause_not_found
+  other: 'cláusula UNION no encontrada en la consulta: "{{.Query}}"'
+- id: cypherresidual.union_all_clause_not_found
+  other: 'cláusula UNION ALL no encontrada en la consulta: "{{.Query}}"'
+- id: cypherresidual.union_branch_failed
+  other: 'error en la consulta UNION {{.Branch}} ("{{.Query}}"): {{.Cause}}'
+- id: cypherresidual.union_column_count_mismatch
+  other: "las consultas UNION deben devolver el mismo número de columnas (se obtuvieron {{.Expected}} y {{.Actual}})"
+- id: cypherresidual.optional_match_not_found
+  other: 'OPTIONAL MATCH no encontrado en la consulta: "{{.Query}}"'
+- id: cypherresidual.compound_optional_match_not_found
+  other: 'OPTIONAL MATCH no encontrado en la consulta compuesta: "{{.Query}}"'
+- id: cypherresidual.match_node_pattern_parse_failed
+  other: 'no se pudo analizar el patrón de nodo de la cláusula MATCH: "{{.Pattern}}"'
+- id: cypherresidual.initial_nodes_lookup_failed
+  other: "no se pudieron obtener los nodos iniciales: {{.Cause}}"
+- id: cypherresidual.sum_arithmetic_term_unsupported
+  other: "término aritmético SUM no compatible: {{.Term}}"
+- id: cypherresidual.sum_numeric_required
+  other: 'SUM() requiere valores numéricos; se obtuvo {{.ValueType}} en la expresión "{{.Expression}}"'
+- id: cypherresidual.return_clause_required
+  other: "se requiere la cláusula RETURN"
+- id: cypherresidual.foreach_clause_not_found
+  other: 'cláusula FOREACH no encontrada en la consulta: "{{.Query}}"'
+- id: cypherresidual.load_csv_unsupported
+  other: "LOAD CSV no es compatible con el modo integrado de NornicDB"
+- id: cypherresidual.empty_label_after_colon
+  other: "nombre de etiqueta vacío después de los dos puntos en el patrón: {{.Pattern}}"
+- id: cypherresidual.property_map_syntax_invalid
+  other: "sintaxis de mapa de propiedades no válida en el patrón: {{.Pattern}}"
+- id: cypherresidual.relationship_connector_expected
+  other: "patrón de relación no válido: se esperaba -[ o <-[, se obtuvo: {{.Connector}}"
+- id: cypherresidual.create_relationship_invalid
+  other: "patrón de relación no válido en CREATE: {{.Pattern}}"
+- id: cypherresidual.with_item_invalid
+  other: 'elemento WITH no válido: "{{.Item}}"'
+- id: cypherresidual.create_set_scope_entity_required
+  other: 'el elemento WITH "{{.Item}}" no se resuelve como nodo o relación en el ámbito CREATE...SET'
+- id: cypherresidual.create_with_expression_invalid
+  other: 'consulta CREATE...WITH no válida: expresión WITH no válida "{{.Expression}}"'
+- id: cypherresidual.merge_pattern_invalid
+  other: "patrón no válido: {{.Pattern}}"
+- id: cypherresidual.set_merge_map_or_parameter_required
+  other: 'SET += requiere un mapa o parámetro (recibido: "{{.Value}}")'
+- id: cypherresidual.set_assignment_invalid
+  other: 'asignación SET no válida: "{{.Assignment}}" (se esperaba n.property = value o n:Label)'
+- id: cypherresidual.set_entity_assignment_invalid
+  other: 'asignación SET no válida: "{{.Assignment}}" (se esperaba variable.property = value o variable = {property: value}): {{.Cause}}'
+- id: cypherresidual.collect_subquery_syntax_invalid
+  other: "sintaxis de subconsulta COLLECT no válida"
+- id: cypherresidual.collect_subquery_return_required
+  other: "la subconsulta COLLECT debe tener una cláusula RETURN"
+- id: cypherresidual.collect_subquery_execution_failed
+  other: "error al ejecutar la subconsulta COLLECT: {{.Cause}}"
+- id: cypherresidual.policy_disallowed
+  other: 'restricción de política "{{.Name}}" infringida: ({{.SourceLabel}})-[:{{.EdgeType}}]->({{.TargetLabel}}) está DISALLOWED'
+- id: cypherresidual.policy_allowed_required
+  other: "restricción de política infringida: ninguna política ALLOWED permite una arista de tipo {{.EdgeType}} con estas etiquetas de extremo"
+- id: cypherresidual.composite_show_target_required
+  other: "{{.Code}}: {{.Command}} en bases de datos compuestas requiere un destino constituyente. Use USE <composite>.<alias> {{.Command}}"
+- id: cypherresidual.show_aliases_manager_unavailable
+  other: "el administrador de bases de datos no está disponible; SHOW ALIASES requiere compatibilidad con varias bases de datos"
+- id: cypherresidual.show_aliases_syntax_invalid
+  other: "sintaxis SHOW ALIASES no válida"

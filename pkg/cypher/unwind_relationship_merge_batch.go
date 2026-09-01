@@ -2,12 +2,12 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -112,7 +112,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		start := bindings[plan.merge.startVar]
 		end := bindings[plan.merge.endVar]
 		if start == nil || end == nil {
-			return nil, true, fmt.Errorf("MERGE relationship endpoints are not bound: %s, %s", plan.merge.startVar, plan.merge.endVar)
+			return nil, true, localizedError(localization.CypherMergeRelationshipEndpointsNotBound(plan.merge.startVar, plan.merge.endVar), nil)
 		}
 
 		props := normalizeRelationshipBatchRowProperties(row, plan.vectorSetters)
@@ -168,7 +168,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		selected, err := selectRelationshipMergeCreateID(store, edge, matchProps)
 		if err != nil {
-			return nil, true, fmt.Errorf("select relationship MERGE identity: %w", err)
+			return nil, true, localizedError(localization.CypherMergeSelectRelationshipIdentityFailed(err), err)
 		}
 		if selected != nil {
 			updated := &storage.Edge{
@@ -195,13 +195,13 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 
 	for _, edge := range updates {
 		if err := store.UpdateEdge(edge); err != nil {
-			return nil, true, fmt.Errorf("UpdateEdge: %w", err)
+			return nil, true, localizedError(localization.CypherMergeUpdateEdgeFailed(err), err)
 		}
 		e.indexMutatedEdge(edge)
 	}
 	if len(pendingCreates) > 0 {
 		if err := store.BulkCreateEdges(pendingCreates); err != nil {
-			return nil, true, fmt.Errorf("BulkCreateEdges: %w", err)
+			return nil, true, localizedError(localization.CypherMergeBulkCreateEdgesFailed(err), err)
 		}
 		for _, edge := range pendingCreates {
 			e.indexMutatedEdge(edge)
@@ -590,7 +590,7 @@ func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, 
 	idx := make(map[string]*storage.Node, len(distinct))
 	nodes, err := store.GetNodesByLabel(key.label)
 	if err != nil {
-		return nil, false, fmt.Errorf("GetNodesByLabel(%s): %w", key.label, err)
+		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
 	unique := true
 	for _, node := range nodes {
@@ -710,7 +710,7 @@ func lookupRelationshipBatchExistingEdge(
 	}
 	edges, err := store.GetEdgesBetween(startID, endID)
 	if err != nil {
-		return nil, fmt.Errorf("GetEdgesBetween(%s,%s): %w", startID, endID, err)
+		return nil, localizedError(localization.CypherMergeGetEdgesBetweenFailed(string(startID), string(endID), err), err)
 	}
 	for _, edge := range edges {
 		if edge == nil || edge.Type != merge.relType || edge.Properties == nil {

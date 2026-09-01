@@ -1,0 +1,27 @@
+- id: cyphergraphprocedures.graph_name_required
+  description: Missing projected graph name. Procedure is an untranslated GDS procedure identifier.
+  other: "graph name required for {{.Procedure}}"
+- id: cyphergraphprocedures.stream_nodes_failed
+  description: Projection node-stream failure. Cause is untranslated diagnostic text.
+  other: "failed to stream nodes: {{.Cause}}"
+- id: cyphergraphprocedures.stream_edges_failed
+  description: Projection edge-stream failure. Cause is untranslated diagnostic text.
+  other: "failed to stream edges: {{.Cause}}"
+- id: cyphergraphprocedures.graph_does_not_exist
+  description: Missing projected graph. Graph is an untranslated identifier.
+  other: "graph '{{.Graph}}' does not exist"
+- id: cyphergraphprocedures.graph_does_not_exist_project_first
+  description: Missing FastRP graph projection. Graph and gds.graph.project are untranslated identifiers.
+  other: "graph '{{.Graph}}' does not exist. Create it with gds.graph.project first"
+- id: cyphergraphprocedures.build_graph_failed
+  description: Link-prediction graph build failure. Cause is untranslated diagnostic text.
+  other: "failed to build graph: {{.Cause}}"
+- id: cyphergraphprocedures.invalid_procedure_call_syntax
+  description: Malformed link-prediction procedure call.
+  other: invalid procedure call syntax
+- id: cyphergraphprocedures.variable_not_found
+  description: Unresolved query variable. Variable and QuotedVariable are untranslated identifiers.
+  other: "variable {{.QuotedVariable}} not found in query context (id({{.Variable}}) cannot be resolved)"
+- id: cyphergraphprocedures.source_node_required
+  description: Missing sourceNode parameter. sourceNode is an untranslated machine identifier.
+  other: sourceNode parameter required

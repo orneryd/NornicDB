@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -21,7 +22,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if matchIdx == -1 || withIdx == -1 || unwindIdx == -1 || returnIdx == -1 {
-		return nil, fmt.Errorf("MATCH, WITH, UNWIND, and RETURN clauses required (e.g., MATCH (n) WITH n UNWIND n.items AS item RETURN item)")
+		return nil, localizedError(localization.CypherTransactionsMatchWithUnwindClausesRequired(), nil)
 	}
 
 	// Step 1: Parse MATCH clause
@@ -51,7 +52,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("storage error: %w", err)
+		return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
 	}
 
 	if len(nodePattern.properties) > 0 {
@@ -110,7 +111,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 	unwindSection := strings.TrimSpace(cypher[unwindIdx+7:]) // Skip " UNWIND "
 	asIdx := strings.Index(strings.ToUpper(unwindSection), " AS ")
 	if asIdx == -1 {
-		return nil, fmt.Errorf("UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
+		return nil, localizedError(localization.CypherTransactionsUnwindASRequired(), nil)
 	}
 
 	unwindExpr := strings.TrimSpace(unwindSection[:asIdx])
@@ -270,7 +271,7 @@ func (e *StorageExecutor) executeMatchWithUnwind(ctx context.Context, cypher str
 		ks, ke := trimKeywordWSBounds("ORDER BY")
 		orderByEnd, ok := keywordMatchAt(cypher, orderByIdx, "ORDER BY", ks, ke)
 		if !ok {
-			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+			return nil, localizedError(localization.CypherTransactionsOrderByParseFailed(), nil)
 		}
 
 		orderPart := cypher[orderByEnd:]
@@ -324,7 +325,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	// Find RETURN and WHERE positions
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 	if returnIdx == -1 {
-		return nil, fmt.Errorf("multi-MATCH query requires RETURN clause")
+		return nil, localizedError(localization.CypherTransactionsMultiMatchReturnRequired(), nil)
 	}
 
 	// Extract WHERE clause if present (between last MATCH pattern and RETURN).
@@ -351,7 +352,7 @@ func (e *StorageExecutor) executeMultiMatch(ctx context.Context, cypher string) 
 	// Split MATCH clauses
 	matchClauses := splitMatchClauses(cypher, whereIdx, returnIdx)
 	if len(matchClauses) < 2 {
-		return nil, fmt.Errorf("expected multiple MATCH clauses")
+		return nil, localizedError(localization.CypherTransactionsMultipleMatchExpected(), nil)
 	}
 
 	// Execute first MATCH and get initial bindings. relBindings is
@@ -1341,7 +1342,7 @@ func (e *StorageExecutor) executeCartesianProductMatch(
 				nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("storage error: %w", err)
+				return nil, localizedError(localization.CypherTransactionsStorageFailed(err), err)
 			}
 		}
 

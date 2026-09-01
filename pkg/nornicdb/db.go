@@ -49,6 +49,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/retention"
@@ -62,17 +63,17 @@ import (
 
 // Errors returned by DB operations.
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrInvalidID    = errors.New("invalid ID")
-	ErrClosed       = errors.New("database is closed")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrNotFound     = localizedError(localization.NornicDBCoreNotFound(), nil)
+	ErrInvalidID    = localizedError(localization.NornicDBCoreInvalidID(), nil)
+	ErrClosed       = localizedError(localization.NornicDBCoreDatabaseClosed(), nil)
+	ErrInvalidInput = localizedError(localization.NornicDBCoreInvalidInput(), nil)
 
 	// ErrQueryEmbeddingDimensionMismatch is returned when the query is embedded
 	// with global embedder dimensions that do not match the database's resolved
 	// embedding dimensions (e.g. per-DB override), which would cause vector
 	// search to return no results. Use EmbedQueryForDB and align config or use
 	// the same dimensions for the index and query.
-	ErrQueryEmbeddingDimensionMismatch = errors.New("query embedding dimension mismatch")
+	ErrQueryEmbeddingDimensionMismatch = localizedError(localization.NornicDBCoreQueryEmbeddingDimensionMismatch(), nil)
 )
 
 // generateID creates a unique UUID.
@@ -644,7 +645,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			case "password":
 				// Require password if password-based encryption is enabled
 				if config.Database.EncryptionPassword == "" {
-					return nil, fmt.Errorf("encryption is enabled but no password was provided")
+					return nil, localizedError(localization.NornicDBCoreEncryptionPasswordRequired(), nil)
 				}
 				// Load or generate salt for this database
 				saltFile := dataDir + "/db.salt"
@@ -656,14 +657,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					// Generate new salt for new encrypted database
 					salt = make([]byte, 32)
 					if _, err := rand.Read(salt); err != nil {
-						return nil, fmt.Errorf("failed to generate encryption salt: %w", err)
+						return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
 					}
 					// Persist salt (required for decryption after restart)
 					if err := os.MkdirAll(dataDir, 0700); err != nil {
-						return nil, fmt.Errorf("failed to create data directory: %w", err)
+						return nil, localizedError(localization.NornicDBCoreDataDirectoryCreateFailed(err), err)
 					}
 					if err := os.WriteFile(saltFile, salt, 0600); err != nil {
-						return nil, fmt.Errorf("failed to save encryption salt: %w", err)
+						return nil, localizedError(localization.NornicDBCoreEncryptionSaltSaveFailed(err), err)
 					}
 					fmt.Println("🔐 Generated new encryption salt")
 				}
@@ -733,7 +734,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			} else {
 				log.Printf("🔧 Auto-recover skipped: enabled=%t env(NORNICDB_AUTO_RECOVER_ON_CORRUPTION)=%q corruption_suspected=%t encryption_enabled=%t",
 					autoRecoverEnabled, os.Getenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION"), corruptionSuspected, config.Database.EncryptionEnabled)
-				return nil, fmt.Errorf("failed to open persistent storage: %w", err)
+				return nil, localizedError(localization.NornicDBCorePersistentStorageOpenFailed(err), err)
 			}
 		}
 		if config.Database.MVCCLifecycleEnabled {
@@ -875,7 +876,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
 			badgerEngine.Close()
-			return nil, fmt.Errorf("failed to initialize WAL: %w", err)
+			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
 		}
 		db.wal = wal
 
@@ -1117,7 +1118,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			db.closed = true
 			db.mu.Unlock()
 			_ = db.closeInternal()
-			return nil, fmt.Errorf("init inference: %w", err)
+			return nil, localizedError(localization.NornicDBCoreInferenceInitializeFailed(err), err)
 		}
 	}
 
@@ -1471,13 +1472,13 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 
 	adapter, err := replication.NewStorageAdapterWithWAL(base, replCfg.DataDir+"/wal")
 	if err != nil {
-		return nil, fmt.Errorf("replication: create storage adapter: %w", err)
+		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 
 	replicator, err := replication.NewReplicator(replCfg, adapter)
 	if err != nil {
 		_ = adapter.Close()
-		return nil, fmt.Errorf("replication: create replicator: %w", err)
+		return nil, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
 	}
 
 	transport := replication.NewDefaultTransport(&replication.ClusterTransportConfig{
@@ -1498,7 +1499,7 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 		_ = transport.Close()
 		_ = replicator.Shutdown()
 		_ = adapter.Close()
-		return nil, fmt.Errorf("replication: start: %w", err)
+		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
 	}
 
 	db.replicator = replicator
@@ -1863,18 +1864,18 @@ func (db *DB) Close() error {
 // is a direct method-value pass.
 func (db *DB) HealthCheck(ctx context.Context) error {
 	if db == nil {
-		return errors.New("nornicdb: nil DB")
+		return localizedError(localization.NornicDBCoreNilDatabase(), nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if db.storage == nil {
-		return errors.New("nornicdb: storage engine not initialized")
+		return localizedError(localization.NornicDBCoreStorageEngineNotInitialized(), nil)
 	}
 	// Real probe: NodeCount returns storage.ErrStorageClosed on a closed
 	// engine; treat any error as "not responsive right now."
 	if _, err := db.storage.NodeCount(); err != nil {
-		return fmt.Errorf("nornicdb: storage probe: %w", err)
+		return localizedError(localization.NornicDBCoreStorageProbeFailed(err), err)
 	}
 	return nil
 }
@@ -1987,7 +1988,7 @@ func (db *DB) closeInternal() error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("close errors: %v", errs)
+		return localizedError(localization.NornicDBCoreCloseFailed(fmt.Sprint(errs)), errors.Join(errs...))
 	}
 	return nil
 }
@@ -2018,7 +2019,7 @@ func (db *DB) PendingEmbeddingsCount() int {
 // after triggering embedding work and before building or evaluating an index.
 func (db *DB) WaitForEmbeddings(ctx context.Context) error {
 	if db.embedQueue == nil {
-		return fmt.Errorf("auto-embed not enabled")
+		return localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
 	db.embedQueue.TriggerImmediate()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -2197,7 +2198,7 @@ func (db *DB) VectorIndexDimensions() int {
 // The worker runs automatically, but this can be used to trigger immediate processing.
 func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
 	if db.embedQueue == nil {
-		return 0, fmt.Errorf("auto-embed not enabled")
+		return 0, localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
 	db.embedQueue.TriggerImmediate()
 	return 0, nil // Worker will process in background
@@ -2208,7 +2209,7 @@ func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
 // which is necessary when regenerating all embeddings after ClearAllEmbeddings.
 func (db *DB) ResetEmbedWorker() error {
 	if db.embedQueue == nil {
-		return fmt.Errorf("auto-embed not enabled")
+		return localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
 	db.embedQueue.Reset()
 	return nil
@@ -2253,7 +2254,7 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 		return badgerStorage.ClearAllEmbeddings()
 	}
 
-	return 0, fmt.Errorf("storage engine does not support ClearAllEmbeddings")
+	return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 }
 
 // embedQueryChunksWithEmbedder runs query chunking and embeds each chunk.
@@ -2315,8 +2316,7 @@ func (db *DB) validateQueryEmbeddingDimensions(dbName string, vec []float32) err
 		return nil
 	}
 	if len(vec) != resolvedDims {
-		return fmt.Errorf("database %q: %w (index dims %d, query dims %d)",
-			dbName, ErrQueryEmbeddingDimensionMismatch, resolvedDims, len(vec))
+		return localizedError(localization.NornicDBCoreQueryDimensionMismatchForDatabase(dbName, resolvedDims, len(vec)), ErrQueryEmbeddingDimensionMismatch)
 	}
 	return nil
 }

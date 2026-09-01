@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -272,13 +273,13 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 
 	if len(pendingNodes) > 0 {
 		if err := store.BulkCreateNodes(pendingNodes); err != nil {
-			return nil, true, fmt.Errorf("BulkCreateNodes: %w", err)
+			return nil, true, localizedError(localization.CypherMergeBulkCreateNodesFailed(err), err)
 		}
 		result.Stats.NodesCreated += len(pendingNodes)
 	}
 	if len(pendingEdges) > 0 {
 		if err := store.BulkCreateEdges(pendingEdges); err != nil {
-			return nil, true, fmt.Errorf("BulkCreateEdges: %w", err)
+			return nil, true, localizedError(localization.CypherMergeBulkCreateEdgesFailed(err), err)
 		}
 		result.Stats.RelationshipsCreated += len(pendingEdges)
 	}
@@ -373,11 +374,11 @@ func (e *StorageExecutor) planUnwindMultiMatchCreateRowIndexed(
 	for _, c := range plan.edgeCreates {
 		start, ok := bound[c.startVar]
 		if !ok || start == nil {
-			return fmt.Errorf("CREATE edge: start variable %q not bound", c.startVar)
+			return localizedError(localization.CypherMergeCreateEdgeStartNotBound(c.startVar), nil)
 		}
 		end, ok := bound[c.endVar]
 		if !ok || end == nil {
-			return fmt.Errorf("CREATE edge: end variable %q not bound", c.endVar)
+			return localizedError(localization.CypherMergeCreateEdgeEndNotBound(c.endVar), nil)
 		}
 		edge := &storage.Edge{
 			ID:         storage.EdgeID(e.generateID()),

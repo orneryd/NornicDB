@@ -1,0 +1,96 @@
+- id: cyphertransactions.already_active
+  description: Expanded pseudo-locale active transaction error.
+  other: "[!! transaction already active !!]"
+- id: cyphertransactions.engine_unsupported
+  description: Expanded pseudo-locale unsupported engine error.
+  other: "[!! engine does not support transactions !!]"
+- id: cyphertransactions.prime_namespace_failed
+  description: Expanded pseudo-locale namespace initialization failure.
+  other: "[!! failed to prime transaction namespace: {{.Cause}} !!]"
+- id: cyphertransactions.start_failed
+  description: Expanded pseudo-locale transaction start failure.
+  other: "[!! failed to start transaction: {{.Cause}} !!]"
+- id: cyphertransactions.pin_namespace_failed
+  description: Expanded pseudo-locale namespace pinning failure.
+  other: "[!! failed to pin transaction namespace: {{.Cause}} !!]"
+- id: cyphertransactions.configure_failed
+  description: Expanded pseudo-locale transaction configuration failure.
+  other: "[!! failed to configure transaction: {{.Cause}} !!]"
+- id: cyphertransactions.wal_begin_failed
+  description: Expanded pseudo-locale WAL begin failure.
+  other: "[!! failed to write WAL tx begin: {{.Cause}} !!]"
+- id: cyphertransactions.no_active
+  description: Expanded pseudo-locale missing transaction error.
+  other: "[!! no active transaction !!]"
+- id: cyphertransactions.unknown_type
+  description: Expanded pseudo-locale unknown transaction type.
+  other: "[!! unknown transaction type !!]"
+- id: cyphertransactions.commit_failed
+  description: Expanded pseudo-locale commit failure.
+  other: "[!! commit failed: {{.Cause}} !!]"
+- id: cyphertransactions.rollback_failed
+  description: Expanded pseudo-locale rollback failure.
+  other: "[!! rollback failed: {{.Cause}} !!]"
+- id: cyphertransactions.show_in_transaction_unsupported
+  description: Expanded pseudo-locale unsupported SHOW command.
+  other: "[!! unsupported SHOW command in transaction: {{.Query}} !!]"
+- id: cyphertransactions.query_in_transaction_unsupported
+  description: Expanded pseudo-locale unsupported transaction query.
+  other: "[!! unsupported query type in transaction: {{.Query}} !!]"
+- id: cyphertransactions.invalid_script_action
+  description: Expanded pseudo-locale invalid script action.
+  other: "[!! invalid transaction script action: {{.Action}} !!]"
+- id: cyphertransactions.case_block_missing
+  description: Expanded pseudo-locale missing CASE block.
+  other: "[!! invalid transaction CASE script: missing CASE block !!]"
+- id: cyphertransactions.case_syntax_invalid
+  description: Expanded pseudo-locale invalid CASE syntax.
+  other: "[!! invalid transaction CASE syntax: expected CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT !!]"
+- id: cyphertransactions.condition_not_boolean
+  description: Expanded pseudo-locale non-boolean condition.
+  other: "[!! condition expression did not evaluate to boolean: {{.Value}} !!]"
+- id: cyphertransactions.query_type_unsupported
+  description: Expanded pseudo-locale unsupported query type.
+  other: "[!! unsupported query type: {{.QueryType}} (supported: {{.Supported}}) !!]"
+- id: cyphertransactions.return_clause_not_found
+  description: Expanded pseudo-locale missing RETURN clause.
+  other: "[!! RETURN clause not found in query: {{.Query}} !!]"
+- id: cyphertransactions.syntax_start_invalid
+  description: Expanded pseudo-locale invalid start clause.
+  other: "[!! syntax error: query must start with a valid clause ({{.ValidClauses}}) !!]"
+- id: cyphertransactions.syntax_unbalanced_at
+  description: Expanded pseudo-locale unbalanced delimiter position.
+  other: "[!! syntax error: unbalanced brackets at position {{.Position}} !!]"
+- id: cyphertransactions.syntax_unbalanced_parentheses
+  description: Expanded pseudo-locale unbalanced parentheses.
+  other: "[!! syntax error: unbalanced parentheses !!]"
+- id: cyphertransactions.syntax_unbalanced_square_brackets
+  description: Expanded pseudo-locale unbalanced square brackets.
+  other: "[!! syntax error: unbalanced square brackets !!]"
+- id: cyphertransactions.syntax_unbalanced_curly_braces
+  description: Expanded pseudo-locale unbalanced curly braces.
+  other: "[!! syntax error: unbalanced curly braces !!]"
+- id: cyphertransactions.syntax_unclosed_quote
+  description: Expanded pseudo-locale unclosed quote.
+  other: "[!! syntax error: unclosed quote !!]"
+- id: cyphertransactions.delete_residual_relationships
+  description: Expanded pseudo-locale residual relationship delete error.
+  other: "[!! Cannot delete node {{.NodeID}}, because it still has relationships. To delete this node, you must first delete its relationships (or use DETACH DELETE) !!]"
+- id: cyphertransactions.match_with_unwind_clauses_required
+  description: Expanded pseudo-locale missing MATCH WITH UNWIND clauses.
+  other: "[!! MATCH, WITH, UNWIND, and RETURN clauses required (e.g., MATCH (n) WITH n UNWIND n.items AS item RETURN item) !!]"
+- id: cyphertransactions.storage_failed
+  description: Expanded pseudo-locale storage failure.
+  other: "[!! storage error: {{.Cause}} !!]"
+- id: cyphertransactions.unwind_as_required
+  description: Expanded pseudo-locale missing UNWIND AS clause.
+  other: "[!! UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x) !!]"
+- id: cyphertransactions.order_by_parse_failed
+  description: Expanded pseudo-locale ORDER BY parse failure.
+  other: "[!! failed to parse ORDER BY clause !!]"
+- id: cyphertransactions.multi_match_return_required
+  description: Expanded pseudo-locale missing multi-MATCH RETURN.
+  other: "[!! multi-MATCH query requires RETURN clause !!]"
+- id: cyphertransactions.multiple_match_expected
+  description: Expanded pseudo-locale expected multiple MATCH clauses.
+  other: "[!! expected multiple MATCH clauses !!]"

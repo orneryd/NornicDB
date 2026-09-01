@@ -158,14 +158,14 @@ func (v *VectorFileStore) readHeader() error {
 		return err
 	}
 	if string(buf[:4]) != vecFileMagic {
-		return fmt.Errorf("invalid vector file magic")
+		return localizedError(localization.SearchVectorFileMagicInvalid(), nil)
 	}
 	if buf[4] != vecFileVersion {
-		return fmt.Errorf("unsupported vector file version %d", buf[4])
+		return localizedError(localization.SearchVectorFileVersionUnsupported(buf[4]), nil)
 	}
 	dim := int(binary.LittleEndian.Uint32(buf[5:9]))
 	if dim != v.dimensions {
-		return fmt.Errorf("vector file dimensions %d != store dimensions %d", dim, v.dimensions)
+		return localizedError(localization.SearchVectorFileDimensionsMismatch(dim, v.dimensions), nil)
 	}
 	return nil
 }
@@ -543,7 +543,7 @@ func (v *VectorFileStore) Load() error {
 		return v.rebuildIndexFromVecLocked()
 	}
 	if meta.Dimensions != v.dimensions {
-		return fmt.Errorf("meta dimensions %d != store dimensions %d", meta.Dimensions, v.dimensions)
+		return localizedError(localization.SearchVectorMetaDimensionsMismatch(meta.Dimensions, v.dimensions), nil)
 	}
 	if meta.IDToOffset != nil {
 		v.idToOff = meta.IDToOffset

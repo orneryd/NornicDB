@@ -1,0 +1,62 @@
+- id: storage.client.async.flush_incomplete_detailed
+  other: "[!! flush incomplete: {{.NodesFailed}} nodes failed, {{.EdgesFailed}} edges failed, {{.DeletesFailed}} deletes failed ({{.Details}}) !!]"
+- id: storage.client.async.flush_incomplete
+  other: "[!! flush incomplete: {{.NodesFailed}} nodes failed, {{.EdgesFailed}} edges failed, {{.DeletesFailed}} deletes failed !!]"
+- id: storage.client.async.close_failed
+  other: "[!! async engine close: {{if .HasFlushErrors}}flush errors: {{.NodesFailed}} nodes failed, {{.EdgesFailed}} edges failed, {{.DeletesFailed}} deletes failed{{if .HasUnflushed}}; {{end}}{{end}}{{if .HasUnflushed}}unflushed: {{.PendingNodes}} nodes, {{.PendingEdges}} edges, {{.PendingNodeDeletes}} node deletes, {{.PendingEdgeDeletes}} edge deletes (POTENTIAL DATA LOSS){{end}} !!]"
+- id: storage.client.async.close_engine_failed
+  other: "[!! {{if .HasFlushErrors}}flush errors: {{.NodesFailed}} nodes failed, {{.EdgesFailed}} edges failed, {{.DeletesFailed}} deletes failed{{if .HasUnflushed}}; {{end}}{{end}}{{if .HasUnflushed}}unflushed: {{.PendingNodes}} nodes, {{.PendingEdges}} edges, {{.PendingNodeDeletes}} node deletes, {{.PendingEdgeDeletes}} edge deletes (POTENTIAL DATA LOSS){{end}}; engine close: {{.Cause}} !!]"
+- id: storage.client.node.id_namespace_unprefixed
+  other: "[!! node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: {{.NodeID}} !!]"
+- id: storage.client.node.id_namespace_required
+  other: "[!! node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: {{.NodeID}} !!]"
+- id: storage.client.node.encode_failed
+  other: "[!! failed to encode node: {{.Cause}} !!]"
+- id: storage.client.node.write_failed
+  other: "[!! failed to write node: {{.Cause}} !!]"
+- id: storage.client.node.label_index_key_build_failed
+  other: "[!! failed to build label index key: {{.Cause}} !!]"
+- id: storage.client.node.label_index_write_failed
+  other: "[!! failed to write label index: {{.Cause}} !!]"
+- id: storage.client.node.index_catalog_write_failed
+  other: "[!! failed to write index catalog: {{.Cause}} !!]"
+- id: storage.client.node.pending_embed_index_write_failed
+  other: "[!! failed to write pending embed index: {{.Cause}} !!]"
+- id: storage.client.node.embedding_chunk_delete_failed
+  other: "[!! failed to delete old embedding chunk: {{.Cause}} !!]"
+- id: storage.client.node.embedding_chunks_delete_failed
+  other: "[!! failed to delete old embedding chunks: {{.Cause}} !!]"
+- id: storage.client.node.embedding_chunk_store_failed
+  other: "[!! failed to store embedding chunk {{.ChunkIndex}}: {{.Cause}} !!]"
+- id: storage.client.node.embedding_payload_budget_exceeded
+  other: "[!! failed to store embedding payload for chunk {{.ChunkIndex}}: entry exceeds per-txn write budget !!]"
+- id: storage.client.edge.encode_failed
+  other: "[!! failed to encode edge: {{.Cause}} !!]"
+- id: storage.client.receipt.transaction_id_required
+  other: "[!! receipt: tx_id is required !!]"
+- id: storage.client.receipt.wal_sequence_required
+  other: "[!! receipt: wal sequence must be non-zero !!]"
+- id: storage.client.receipt.wal_range_invalid
+  other: "[!! receipt: wal_seq_end ({{.WALSeqEnd}}) < wal_seq_start ({{.WALSeqStart}}) !!]"
+- id: storage.client.receipt.nil_receiver
+  other: "[!! receipt: nil receiver !!]"
+- id: storage.client.receipt.hash_marshal_failed
+  other: "[!! receipt: hash marshal failed: {{.Cause}} !!]"
+- id: storage.client.storage_closed
+  other: "[!! storage closed !!]"
+- id: storage.client.backup.file_create_failed
+  other: "[!! failed to create backup file: {{.Cause}} !!]"
+- id: storage.client.backup.failed
+  other: "[!! backup failed: {{.Cause}} !!]"
+- id: storage.client.backup.flush_failed
+  other: "[!! failed to flush backup: {{.Cause}} !!]"
+- id: storage.client.backup.sync_failed
+  other: "[!! failed to sync backup: {{.Cause}} !!]"
+- id: storage.client.delete_prefix.required
+  other: "[!! prefix cannot be empty !!]"
+- id: storage.client.delete_prefix.drop_failed
+  other: '[!! failed to drop prefix {{printf "%x" .Prefix}}: {{.Cause}} !!]'
+- id: storage.client.delete_prefix.clean_label_index_failed
+  other: "[!! failed to clean label index: {{.Cause}} !!]"
+- id: storage.client.delete_prefix.clean_edge_type_index_failed
+  other: "[!! failed to clean edge type index: {{.Cause}} !!]"

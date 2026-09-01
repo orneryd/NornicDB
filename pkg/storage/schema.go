@@ -19,6 +19,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -211,22 +212,22 @@ func NewSchemaManager() *SchemaManager {
 
 func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) error {
 	if _, exists := sm.constraintContracts[c.Name]; exists {
-		return fmt.Errorf("constraint %q already exists", c.Name)
+		return localizedError(localization.StorageSchemaConstraintAlreadyExists(c.Name), nil)
 	}
 	if existing, exists := sm.constraints[c.Name]; exists {
 		if constraintSchemaKey(existing) == constraintSchemaKey(c) && existing.Type == c.Type {
 			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
-				return fmt.Errorf("constraint %q already exists with different allowed values", c.Name)
+				return localizedError(localization.StorageSchemaConstraintDifferentAllowedValues(c.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
-				return fmt.Errorf("constraint %q already exists with different max count (%d vs %d)", c.Name, existing.MaxCount, c.MaxCount)
+				return localizedError(localization.StorageSchemaConstraintDifferentMaxCount(c.Name, existing.MaxCount, c.MaxCount), nil)
 			}
 			if silentOnDuplicate {
 				return nil
 			}
-			return fmt.Errorf("constraint %q already exists", c.Name)
+			return localizedError(localization.StorageSchemaConstraintAlreadyExists(c.Name), nil)
 		}
-		return fmt.Errorf("constraint %q already exists with different schema or type", c.Name)
+		return localizedError(localization.StorageSchemaConstraintDifferentSchemaOrType(c.Name), nil)
 	}
 
 	newKey := constraintSchemaKey(c)
@@ -237,27 +238,27 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 				c.Label == existing.Label &&
 				c.SourceLabel == existing.SourceLabel && c.TargetLabel == existing.TargetLabel &&
 				c.PolicyMode != existing.PolicyMode {
-				return fmt.Errorf("conflicting policy: cannot have both ALLOWED and DISALLOWED for %s-[:%s]->%s (constraint %q)", c.SourceLabel, c.Label, c.TargetLabel, existing.Name)
+				return localizedError(localization.StorageSchemaConflictingPolicy(c.SourceLabel, c.Label, c.TargetLabel, existing.Name), nil)
 			}
 			continue
 		}
 		if existing.Type == c.Type {
 			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
-				return fmt.Errorf("conflicting domain constraint %q already exists on same schema with different allowed values", existing.Name)
+				return localizedError(localization.StorageSchemaConflictingDomainConstraint(existing.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
-				return fmt.Errorf("conflicting cardinality constraint %q already exists on %s %s with max count %d (new: %d)", existing.Name, existing.Direction, existing.Label, existing.MaxCount, c.MaxCount)
+				return localizedError(localization.StorageSchemaConflictingCardinalityConstraint(existing.Name, existing.Direction, existing.Label, existing.MaxCount, c.MaxCount), nil)
 			}
 			if silentOnDuplicate {
 				return nil
 			}
-			return fmt.Errorf("equivalent constraint %q already exists on same schema", existing.Name)
+			return localizedError(localization.StorageSchemaEquivalentConstraintAlreadyExists(existing.Name), nil)
 		}
 		if (c.Type == ConstraintUnique && existing.Type == ConstraintRelationshipKey) ||
 			(c.Type == ConstraintRelationshipKey && existing.Type == ConstraintUnique) ||
 			(c.Type == ConstraintUnique && existing.Type == ConstraintNodeKey) ||
 			(c.Type == ConstraintNodeKey && existing.Type == ConstraintUnique) {
-			return fmt.Errorf("conflicting constraint %q already exists on same schema", existing.Name)
+			return localizedError(localization.StorageSchemaConflictingConstraintAlreadyExists(existing.Name), nil)
 		}
 	}
 
@@ -527,7 +528,7 @@ func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNot
 		if silent {
 			return nil
 		}
-		return fmt.Errorf("constraint %q already exists", name)
+		return localizedError(localization.StorageSchemaConstraintAlreadyExists(name), nil)
 	}
 
 	// Add to uniqueConstraints (for value tracking during CheckUniqueConstraint)
@@ -615,10 +616,10 @@ func (sm *SchemaManager) addPropertyTypeConstraintValueLocked(ptc PropertyTypeCo
 		if ifNotExists {
 			return nil
 		}
-		return fmt.Errorf("constraint %q already exists", ptc.Name)
+		return localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
 	}
 	if _, exists := sm.constraintContracts[ptc.Name]; exists {
-		return fmt.Errorf("constraint %q already exists", ptc.Name)
+		return localizedError(localization.StorageSchemaConstraintAlreadyExists(ptc.Name), nil)
 	}
 	sm.propertyTypeConstraints[ptc.Name] = ptc
 	return nil
@@ -646,7 +647,7 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 
 	if existingNode, found := constraint.values[valueKey]; found {
 		if existingNode != excludeNode {
-			return fmt.Errorf("Node(%s) already exists with %s = %v", label, property, value)
+			return localizedError(localization.StorageSchemaUniqueConstraintViolation(label, property, value), nil)
 		}
 	}
 
@@ -952,7 +953,7 @@ func (sm *SchemaManager) AddPropertyIndex(name, label string, properties []strin
 //   - WHERE country = 'US' (prefix match, uses first property only)
 func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []string) error {
 	if len(properties) < 2 {
-		return fmt.Errorf("composite index requires at least 2 properties, got %d", len(properties))
+		return localizedError(localization.StorageSchemaCompositeIndexMinProperties(len(properties)), nil)
 	}
 
 	sm.mu.Lock()
@@ -1289,7 +1290,7 @@ func (sm *SchemaManager) AddRangeIndex(name, label, property string) error {
 // For standalone CREATE INDEX forms, properties may contain one or more fields.
 func (sm *SchemaManager) AddRangeIndexForEntity(name, label string, properties []string, entityType ConstraintEntityType) error {
 	if len(properties) == 0 {
-		return fmt.Errorf("range index requires at least one property")
+		return localizedError(localization.StorageSchemaRangeIndexPropertiesRequired(), nil)
 	}
 
 	sm.mu.Lock()
@@ -1356,13 +1357,13 @@ func (sm *SchemaManager) RangeIndexInsert(name string, nodeID NodeID, value inte
 	sm.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("range index %s not found", name)
+		return localizedError(localization.StorageSchemaRangeIndexNotFound(name), nil)
 	}
 
 	// Convert value to float64 for comparison
 	numVal, ok := convert.ToFloat64(value)
 	if !ok {
-		return fmt.Errorf("range index only supports numeric values, got %T", value)
+		return localizedError(localization.StorageSchemaRangeIndexNumericValueRequired(value), nil)
 	}
 
 	idx.mu.Lock()
@@ -1397,7 +1398,7 @@ func (sm *SchemaManager) RangeIndexDelete(name string, nodeID NodeID) error {
 	sm.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("range index %s not found", name)
+		return localizedError(localization.StorageSchemaRangeIndexNotFound(name), nil)
 	}
 
 	idx.mu.Lock()
@@ -1423,7 +1424,7 @@ func (sm *SchemaManager) RangeQuery(name string, minVal, maxVal interface{}, inc
 	sm.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("range index %s not found", name)
+		return nil, localizedError(localization.StorageSchemaRangeIndexNotFound(name), nil)
 	}
 
 	idx.mu.RLock()
@@ -1628,7 +1629,7 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	}
 
 	if d.kind == "" {
-		return fmt.Errorf("index %q does not exist", name)
+		return localizedError(localization.StorageSchemaIndexNotFound(name), nil)
 	}
 
 	// Stash the old value for rollback, then delete.
@@ -1717,7 +1718,7 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 		droppedTypeConstraint = &ptc
 		delete(sm.propertyTypeConstraints, name)
 	} else {
-		return fmt.Errorf("constraint %q does not exist", name)
+		return localizedError(localization.StorageSchemaConstraintNotFound(name), nil)
 	}
 
 	if sm.persist != nil {
@@ -1896,7 +1897,7 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 	sm.mu.Unlock()
 
 	if !exists {
-		return fmt.Errorf("property index %s:%s not found", label, property)
+		return localizedError(localization.StorageSchemaPropertyIndexNotFound(label, property), nil)
 	}
 
 	idx.mu.Lock()

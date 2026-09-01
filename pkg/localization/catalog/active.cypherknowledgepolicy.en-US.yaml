@@ -1,0 +1,96 @@
+- id: cypherknowledgepolicy.expected_after
+  description: Missing parser term. Expected and After are untranslated Cypher syntax or machine terms.
+  other: "expected {{.Expected}} after {{.After}}"
+- id: cypherknowledgepolicy.profile_name_expected_after
+  description: Missing profile name. After is untranslated Cypher syntax.
+  other: "expected profile name after {{.After}}"
+- id: cypherknowledgepolicy.expected_after_profile_name
+  description: Missing syntax after a profile name. Expected and DisplayName are untranslated machine values.
+  other: "expected {{.Expected}} after profile name {{.DisplayName}}"
+- id: cypherknowledgepolicy.policy_name_expected_after
+  description: Missing policy name. After is untranslated Cypher syntax.
+  other: "expected policy name after {{.After}}"
+- id: cypherknowledgepolicy.label_expected_after_colon
+  description: Missing node label after Cypher syntax.
+  other: "expected label after ':'"
+- id: cypherknowledgepolicy.edge_type_expected_after_colon
+  description: Missing edge type after Cypher syntax.
+  other: "expected edge type after ':'"
+- id: cypherknowledgepolicy.edge_pattern_expected_for
+  description: Missing edge-pattern symbol. Expected is untranslated Cypher syntax.
+  other: "expected {{.Expected}} for edge pattern"
+- id: cypherknowledgepolicy.edge_pattern_expected_in
+  description: Missing edge-pattern symbol. Expected is untranslated Cypher syntax.
+  other: "expected {{.Expected}} in edge pattern"
+- id: cypherknowledgepolicy.number_expected_after
+  description: Missing numeric value. After is untranslated Cypher syntax.
+  other: "expected number after {{.After}}"
+- id: cypherknowledgepolicy.seconds_expected_after
+  description: Missing duration value. After is untranslated Cypher syntax.
+  other: "expected seconds after {{.After}}"
+- id: cypherknowledgepolicy.kalman_closing_brace_expected
+  description: Unterminated Kalman configuration block. KALMAN is Cypher syntax.
+  other: "expected } in KALMAN config block"
+- id: cypherknowledgepolicy.expression_expected_after_set
+  description: Missing SET expression. SET is Cypher syntax.
+  other: "expected expression after SET"
+- id: cypherknowledgepolicy.invalid_value
+  description: Invalid knowledge-policy value. Field and DisplayValue are untranslated machine values.
+  other: "invalid {{.Field}}: {{.DisplayValue}}"
+- id: cypherknowledgepolicy.unknown_option
+  description: Unknown profile option. DisplayOption is an untranslated quoted key.
+  other: "unknown option: {{.DisplayOption}}"
+- id: cypherknowledgepolicy.unknown_kalman_config_key
+  description: Unknown Kalman configuration key. DisplayKey is an untranslated quoted key.
+  other: "unknown Kalman config key: {{.DisplayKey}}"
+- id: cypherknowledgepolicy.unsupported_command
+  description: Unsupported knowledge-policy command. Command is untranslated Cypher text.
+  other: "unsupported knowledge policy command: {{.Command}}"
+- id: cypherknowledgepolicy.schema_manager_unavailable
+  description: Knowledge-policy schema support is unavailable.
+  other: schema manager unavailable
+- id: cypherknowledgepolicy.unsupported_command_type
+  description: Unsupported parsed command type. CommandType is an untranslated Go type.
+  other: "unsupported knowledge policy command type {{.CommandType}}"
+- id: cypherknowledgepolicy.operation_failed
+  description: Knowledge-policy schema operation failed. Operation and Cause are untranslated diagnostics; exact cause text is preserved.
+  other: "{{.Cause}}"
+- id: cypherknowledgepolicy.resolve_target_required
+  description: Knowledge-policy resolve procedure requires a target selector. Procedure and argument names are machine identifiers.
+  other: nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType
+- id: cypherknowledgepolicy.binding_table_unavailable
+  description: Compiled knowledge-policy bindings are unavailable.
+  other: knowledge policy binding table unavailable
+- id: cypherknowledgepolicy.entity_not_found
+  description: Entity lookup failed. EntityID is an untranslated identifier.
+  other: "entity not found: {{.EntityID}}"
+- id: cypherknowledgepolicy.argument_string_required
+  description: Procedure argument has the wrong type. Position is a machine value.
+  other: "argument {{.Position}} must be a string"
+- id: cypherknowledgepolicy.deindex_badger_required
+  description: Deindex status is unsupported by the current storage backend. BadgerDB is a product name.
+  other: deindex status requires BadgerDB storage backend
+- id: cypherknowledgepolicy.decay_options_map_required
+  description: Decay function options have the wrong type. Function names and ValueType are untranslated machine values.
+  other: "decayScore/decay options must be a map, got {{.ValueType}}"
+- id: cypherknowledgepolicy.unknown_decay_option
+  description: Unknown decay function option. DisplayOption is an untranslated quoted key.
+  other: "unknown decay option key: {{.DisplayOption}}"
+- id: cypherknowledgepolicy.reason_no_entity_argument
+  description: Neutral decay result reason.
+  other: no entity argument
+- id: cypherknowledgepolicy.reason_entity_not_found
+  description: Neutral decay result reason.
+  other: entity not found
+- id: cypherknowledgepolicy.reason_no_badger_engine
+  description: Neutral decay result reason. BadgerEngine is an untranslated type name.
+  other: no BadgerEngine
+- id: cypherknowledgepolicy.reason_decay_disabled
+  description: Neutral decay result reason.
+  other: decay subsystem disabled
+- id: cypherknowledgepolicy.reason_no_decay_profile
+  description: Neutral decay result reason.
+  other: no decay profile
+- id: cypherknowledgepolicy.reason_no_decay
+  description: Neutral decay result reason.
+  other: no decay

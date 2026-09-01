@@ -1,9 +1,10 @@
 package cypher
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // extractCallArguments parses top-level CALL arguments as interface{} literals.
@@ -194,7 +195,7 @@ func validateYieldColumnsExist(columns []string, yield *yieldClause) error {
 	}
 	for _, item := range yield.items {
 		if _, ok := available[item.name]; !ok {
-			return fmt.Errorf("unknown YIELD column: %s", item.name)
+			return localizedError(localization.CypherCommandRoutingUnknownYieldColumn(item.name), nil)
 		}
 	}
 	return nil

@@ -1,8 +1,7 @@
 package multidb
 
 import (
-	"fmt"
-
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -87,24 +86,24 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 
 	nodes, err := engine.AllNodes()
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get all nodes for size calculation: %w", err)
+		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesForSizeCalculationFailed(err), err)
 	}
 	for _, node := range nodes {
 		size, sizeErr := calculateNodeSize(node)
 		if sizeErr != nil {
-			return 0, 0, fmt.Errorf("failed to calculate node size: %w", sizeErr)
+			return 0, 0, localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
 		}
 		nodeSize += size
 	}
 
 	edges, err := engine.AllEdges()
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get all edges for size calculation: %w", err)
+		return 0, 0, localizedError(localization.MultidbStorageGetAllEdgesForSizeCalculationFailed(err), err)
 	}
 	for _, edge := range edges {
 		size, sizeErr := calculateEdgeSize(edge)
 		if sizeErr != nil {
-			return 0, 0, fmt.Errorf("failed to calculate edge size: %w", sizeErr)
+			return 0, 0, localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)
 		}
 		edgeSize += size
 	}

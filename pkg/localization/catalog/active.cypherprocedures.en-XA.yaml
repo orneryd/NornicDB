@@ -1,0 +1,126 @@
+- id: cypherprocedures.vector_query_parse_failed
+  other: "[!! vector query parse error: {{.Cause}} !!]"
+- id: cypherprocedures.string_query_embedder_required
+  other: "[!! string query provided but no embedder configured; use vector array or configure embedding service !!]"
+- id: cypherprocedures.embed_query_failed
+  other: "[!! failed to embed query '{{.Query}}': {{.Cause}} !!]"
+- id: cypherprocedures.parameter_not_provided
+  other: "[!! parameter ${{.Parameter}} not provided !!]"
+- id: cypherprocedures.parameter_non_numeric
+  other: "[!! parameter ${{.Parameter}} contains non-numeric value: {{.ValueType}} !!]"
+- id: cypherprocedures.parameter_string_embedder_required
+  other: "[!! parameter ${{.Parameter}} is a string but no embedder configured; provide vector array or configure embedding service !!]"
+- id: cypherprocedures.embed_parameter_failed
+  other: "[!! failed to embed parameter ${{.Parameter}} value '{{.Value}}': {{.Cause}} !!]"
+- id: cypherprocedures.parameter_unsupported_type
+  other: "[!! parameter ${{.Parameter}} has unsupported type for vector query: {{.ValueType}} (expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherprocedures.unsupported_parameters
+  other: "[!! no query vector or search text provided - parameter(s) {{.Parameters}} have unsupported type (expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherprocedures.query_input_possibly_unsupported
+  other: "[!! no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string) !!]"
+- id: cypherprocedures.query_input_required
+  other: "[!! no query vector or search text provided !!]"
+- id: cypherprocedures.vector_create_node_invalid_syntax
+  other: "[!! {{if .Parentheses}}invalid syntax: missing parentheses{{else}}invalid db.index.vector.createNodeIndex syntax{{end}} !!]"
+- id: cypherprocedures.vector_create_node_arguments_required
+  other: "[!! db.index.vector.createNodeIndex requires at least 4 arguments: indexName, label, property, dimension !!]"
+- id: cypherprocedures.create_vector_index_failed
+  other: "[!! failed to create vector index: {{.Cause}} !!]"
+- id: cypherprocedures.vector_create_relationship_invalid_syntax
+  other: "[!! invalid db.index.vector.createRelationshipIndex syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.vector_create_relationship_arguments_required
+  other: "[!! db.index.vector.createRelationshipIndex requires at least 4 arguments: indexName, relationshipType, property, dimension !!]"
+- id: cypherprocedures.invalid_dimension
+  other: "[!! invalid dimension: {{.Cause}} !!]"
+- id: cypherprocedures.create_relationship_vector_index_failed
+  other: "[!! failed to create relationship vector index: {{.Cause}} !!]"
+- id: cypherprocedures.fulltext_create_node_invalid_syntax
+  other: "[!! invalid db.index.fulltext.createNodeIndex syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.fulltext_create_node_arguments_required
+  other: "[!! db.index.fulltext.createNodeIndex requires at least 3 arguments: indexName, labels, properties !!]"
+- id: cypherprocedures.create_fulltext_index_failed
+  other: "[!! failed to create fulltext index: {{.Cause}} !!]"
+- id: cypherprocedures.fulltext_create_relationship_invalid_syntax
+  other: "[!! invalid db.index.fulltext.createRelationshipIndex syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.fulltext_create_relationship_arguments_required
+  other: "[!! db.index.fulltext.createRelationshipIndex requires at least 3 arguments: indexName, relationshipTypes, properties !!]"
+- id: cypherprocedures.create_relationship_fulltext_index_failed
+  other: "[!! failed to create relationship fulltext index: {{.Cause}} !!]"
+- id: cypherprocedures.fulltext_drop_invalid_syntax
+  other: "[!! invalid db.index.fulltext.drop syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.vector_drop_invalid_syntax
+  other: "[!! invalid db.index.vector.drop syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.set_node_vector_invalid_syntax
+  other: "[!! invalid db.create.setNodeVectorProperty syntax !!]"
+- id: cypherprocedures.set_node_vector_parentheses_required
+  other: "[!! db.create.setNodeVectorProperty: missing parentheses (expected db.create.setNodeVectorProperty(nodeId, 'key', [vector])) !!]"
+- id: cypherprocedures.set_node_vector_arguments_required
+  other: "[!! db.create.setNodeVectorProperty: requires 3 arguments (nodeId, propertyKey, vector) !!]"
+- id: cypherprocedures.set_node_vector_argument_required
+  other: "[!! db.create.setNodeVectorProperty: missing vector argument (expected nodeId, propertyKey, [vector]) !!]"
+- id: cypherprocedures.node_not_found
+  other: "[!! node not found: {{.Node}} !!]"
+- id: cypherprocedures.update_node_failed
+  other: "[!! failed to update node: {{.Cause}} !!]"
+- id: cypherprocedures.set_relationship_vector_invalid_syntax
+  other: "[!! invalid db.create.setRelationshipVectorProperty syntax !!]"
+- id: cypherprocedures.set_relationship_vector_parentheses_required
+  other: "[!! db.create.setRelationshipVectorProperty: missing parentheses (expected db.create.setRelationshipVectorProperty(relId, 'key', [vector])) !!]"
+- id: cypherprocedures.set_relationship_vector_arguments_required
+  other: "[!! db.create.setRelationshipVectorProperty: requires 3 arguments (relId, propertyKey, vector) !!]"
+- id: cypherprocedures.set_relationship_vector_argument_required
+  other: "[!! db.create.setRelationshipVectorProperty: missing vector argument (expected relId, propertyKey, [vector]) !!]"
+- id: cypherprocedures.relationship_not_found
+  other: "[!! relationship not found: {{.Relationship}} !!]"
+- id: cypherprocedures.update_relationship_failed
+  other: "[!! failed to update relationship: {{.Cause}} !!]"
+- id: cypherprocedures.metadata_active_transaction_required
+  other: "[!! tx.setMetaData() requires an active transaction. Use BEGIN TRANSACTION first !!]"
+- id: cypherprocedures.metadata_invalid_syntax
+  other: "[!! invalid tx.setMetaData syntax{{if .Parentheses}}: missing parentheses{{end}} !!]"
+- id: cypherprocedures.metadata_object_required
+  other: "[!! tx.setMetaData requires a metadata object: {key: value} !!]"
+- id: cypherprocedures.metadata_entry_required
+  other: "[!! tx.setMetaData requires at least one key-value pair !!]"
+- id: cypherprocedures.metadata_transaction_unsupported
+  other: "[!! transaction type not supported for metadata !!]"
+- id: cypherprocedures.set_metadata_failed
+  other: "[!! failed to set transaction metadata: {{.Cause}} !!]"
+- id: cypherprocedures.create_in_transaction
+  other: "[!! CREATE PROCEDURE is not allowed inside an active transaction !!]"
+- id: cypherprocedures.create_invalid_syntax
+  other: "[!! invalid CREATE PROCEDURE syntax !!]"
+- id: cypherprocedures.body_required
+  other: "[!! procedure body cannot be empty !!]"
+- id: cypherprocedures.already_exists
+  other: "[!! procedure {{.Procedure}} already exists !!]"
+- id: cypherprocedures.encode_record_failed
+  other: "[!! failed to encode procedure record: {{.Cause}} !!]"
+- id: cypherprocedures.update_catalog_failed
+  other: "[!! failed to update procedure catalog: {{.Cause}} !!]"
+- id: cypherprocedures.persist_catalog_failed
+  other: "[!! failed to persist procedure catalog: {{.Cause}} !!]"
+- id: cypherprocedures.drop_in_transaction
+  other: "[!! DROP PROCEDURE is not allowed inside an active transaction !!]"
+- id: cypherprocedures.drop_invalid_syntax
+  other: "[!! invalid DROP PROCEDURE syntax !!]"
+- id: cypherprocedures.drop_failed
+  other: "[!! failed to drop procedure {{.Procedure}}: {{.Cause}} !!]"
+- id: cypherprocedures.registry_reload_failed
+  other: "[!! cypher: procedure registry reload failed: {{.Cause}} !!]"
+- id: cypherprocedures.catalog_read_failed
+  other: "[!! cypher: procedure catalog read failed: {{.Cause}} !!]"
+- id: cypherprocedures.catalog_record_decode_failed
+  other: "[!! cypher: procedure catalog record decode failed: node={{.Node}} !!]"
+- id: cypherprocedures.catalog_record_invalid
+  other: "[!! cypher: procedure catalog record invalid: node={{.Node}} !!]"
+- id: cypherprocedures.invalid_argument_name
+  other: "[!! invalid procedure argument name: {{.Argument}} !!]"
+- id: cypherprocedures.duplicate_argument
+  other: "[!! duplicate procedure argument: {{.Argument}} !!]"
+- id: cypherprocedures.invalid_mode
+  other: "[!! invalid procedure mode: {{.Mode}} !!]"
+- id: cypherprocedures.read_contains_write
+  other: "[!! READ procedure body contains write operations !!]"
+- id: cypherprocedures.argument_count
+  other: "[!! procedure {{.Procedure}} requires {{.Expected}} arguments, got {{.Actual}} !!]"

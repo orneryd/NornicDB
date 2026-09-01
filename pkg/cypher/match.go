@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -208,7 +209,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(upper, "MATCH")), "RETURN") {
 		// MATCH with no pattern or MATCH followed immediately by RETURN
 		if !strings.Contains(upper, "(") {
-			return nil, fmt.Errorf("MATCH clause requires a pattern")
+			return nil, localizedError(localization.CypherMatchingMatchPatternRequired(), nil)
 		}
 	}
 
@@ -216,7 +217,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	if strings.Contains(trimmed, "MATCH") {
 		afterMatch := strings.TrimSpace(trimmed[5:]) // Skip "MATCH"
 		if strings.HasPrefix(afterMatch, "[") && !strings.Contains(strings.Split(afterMatch, "]")[0], "(") {
-			return nil, fmt.Errorf("MATCH clause requires a node pattern, not just a relationship pattern")
+			return nil, localizedError(localization.CypherMatchingMatchNodePatternRequired(), nil)
 		}
 	}
 
@@ -231,11 +232,11 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 			}
 		}
 		if returnPart == "" {
-			return nil, fmt.Errorf("RETURN clause requires at least one expression")
+			return nil, localizedError(localization.CypherMatchingReturnExpressionRequired(), nil)
 		}
 		for _, item := range splitTopLevelCommaKeepEmpty(returnPart) {
 			if strings.TrimSpace(item) == "" {
-				return nil, fmt.Errorf("RETURN clause contains empty expression")
+				return nil, localizedError(localization.CypherMatchingReturnExpressionEmpty(), nil)
 			}
 		}
 	}
@@ -561,7 +562,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 						if stats, ok := e.storage.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
 							count, err = stats.NodeCountByLabel(nodePattern.labels[0])
 							if err != nil {
-								return nil, fmt.Errorf("storage error: %w", err)
+								return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 							}
 							result.Rows = [][]interface{}{{count}}
 							return result, nil
@@ -572,21 +573,21 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 					// Count nodes with specific label
 					nodes, err := e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
 					if err != nil {
-						return nil, fmt.Errorf("storage error: %w", err)
+						return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 					}
 					count = int64(len(nodes))
 				} else {
 					if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
 						nodes, err := e.loadNodesWithTemporalViewport(ctx, nil)
 						if err != nil {
-							return nil, fmt.Errorf("storage error: %w", err)
+							return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 						}
 						count = int64(len(nodes))
 					} else {
 						// Count all nodes - use O(1) NodeCount()
 						count, err = e.storage.NodeCount()
 						if err != nil {
-							return nil, fmt.Errorf("storage error: %w", err)
+							return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 						}
 					}
 				}
@@ -763,7 +764,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 	if !usedPropertyIndex {
 		nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, wherePart, streamingLimit)
 		if err != nil {
-			return nil, fmt.Errorf("storage error: %w", err)
+			return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 		}
 	} else if len(nodes) == 0 && whereIdx > 0 {
 		// Preserve Cypher correctness when index metadata exists but candidate sets are stale/empty.
@@ -773,7 +774,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 		e.markOuterScanFallbackUsed()
 		nodes, err = e.collectNodesWithStreaming(ctx, nodePattern.labels, nodePattern.properties, nodePattern.variable, wherePart, streamingLimit)
 		if err != nil {
-			return nil, fmt.Errorf("storage error: %w", err)
+			return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 		}
 	}
 
@@ -903,7 +904,7 @@ func (e *StorageExecutor) executeMatch(ctx context.Context, cypher string) (*Exe
 				// Execute the subquery with the current node as context
 				collected, err := e.evaluateCollectSubquery(ctx, node, nodePattern.variable, item.expr)
 				if err != nil {
-					return nil, fmt.Errorf("COLLECT subquery failed: %w", err)
+					return nil, localizedError(localization.CypherMatchingCollectSubqueryFailed(err), err)
 				}
 				row[j] = collected
 			} else {

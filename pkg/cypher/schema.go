@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -61,9 +62,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 // executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
 func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
-		return nil, fmt.Errorf("Neo.ClientError.Statement.NotAllowed: " +
-			"Schema DDL on composite databases requires a constituent target. " +
-			"Use USE <composite>.<alias> to target a specific constituent")
+		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
 	if err := flushPendingAsyncWritesBeforeSchemaDDL(e.storage); err != nil {
 		return nil, err
@@ -88,7 +87,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	} else if strings.Contains(upper, "CREATE INDEX") {
 		result, err = e.executeCreateIndex(ctx, cypher)
 	} else {
-		return nil, fmt.Errorf("unknown schema command: %s", cypher)
+		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
 
 	// Invalidate query cache — cached SHOW INDEXES/CONSTRAINTS results are now stale.
@@ -110,7 +109,7 @@ func flushPendingAsyncWritesBeforeSchemaDDL(engine storage.Engine) error {
 		}); ok {
 			if async.HasPendingWrites() {
 				if err := async.Flush(); err != nil {
-					return fmt.Errorf("flush pending async writes before schema DDL: %w", err)
+					return localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
 				}
 			}
 		}
@@ -145,7 +144,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 
 	if parsed, err := e.parseCreateConstraintNodeKeyDDL(cypher); err == nil {
 		if len(parsed.properties) == 0 {
-			return nil, fmt.Errorf("NODE KEY constraint requires properties")
+			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
@@ -171,7 +170,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintTemporalDDL(cypher); err == nil {
 		if parsed.isRelationship {
 			if len(parsed.properties) < 3 {
-				return nil, fmt.Errorf("TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)")
+				return nil, localizedError(localization.CypherSchemaTemporalRelationshipArityRequired(), nil)
 			}
 			constraintName := parsed.name
 			if constraintName == "" {
@@ -194,7 +193,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 
 		if len(parsed.properties) != 3 {
-			return nil, fmt.Errorf("TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)")
+			return nil, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
@@ -218,10 +217,10 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintDomainDDL(cypher); err == nil {
 		allowedValues, err := parseDomainValueList(parsed.allowedRaw)
 		if err != nil {
-			return nil, fmt.Errorf("invalid domain value list: %w", err)
+			return nil, localizedError(localization.CypherSchemaDomainValueListInvalid(err), err)
 		}
 		if len(allowedValues) == 0 {
-			return nil, fmt.Errorf("DOMAIN constraint requires at least one allowed value")
+			return nil, localizedError(localization.CypherSchemaDomainAllowedValueRequired(), nil)
 		}
 		constraintName := parsed.name
 		if constraintName == "" {
@@ -416,9 +415,9 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if parsed, err := e.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher); err == nil {
 		if len(parsed.properties) == 0 {
 			if parsed.kind == "rel_key" {
-				return nil, fmt.Errorf("RELATIONSHIP KEY constraint requires properties")
+				return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
 			}
-			return nil, fmt.Errorf("UNIQUE constraint requires properties")
+			return nil, localizedError(localization.CypherSchemaConstraintPropertiesRequired("UNIQUE"), nil)
 		}
 
 		constraint := storage.Constraint{
@@ -453,7 +452,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 
 	// Relationship property type branches are handled by parseCreateConstraintTypeDDL.
 
-	return nil, fmt.Errorf("invalid CREATE CONSTRAINT syntax")
+	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 }
 
 // executeDropIndex handles DROP INDEX commands.
@@ -464,9 +463,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 //	DROP INDEX index_name IF EXISTS
 func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
-		return nil, fmt.Errorf("Neo.ClientError.Statement.NotAllowed: " +
-			"Schema DDL on composite databases requires a constituent target. " +
-			"Use USE <composite>.<alias> to target a specific constituent")
+		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
 
 	trimmed := strings.TrimSpace(cypher)
@@ -475,7 +472,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 	// Strip "DROP INDEX" prefix.
 	rest := strings.TrimSpace(trimmed[len("DROP INDEX"):])
 	if rest == "" {
-		return nil, fmt.Errorf("invalid DROP INDEX syntax: index name required")
+		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
 	}
 
 	ifExists := false
@@ -493,7 +490,7 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		name = strings.ReplaceAll(name[1:len(name)-1], "``", "`")
 	}
 	if name == "" {
-		return nil, fmt.Errorf("invalid DROP INDEX syntax: index name required")
+		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
 	}
 
 	// Look up the schema entry BEFORE dropping it so we can also tear down
@@ -539,12 +536,12 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 	trimmed := strings.TrimSpace(cypher)
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
-		return nil, fmt.Errorf("invalid DROP CONSTRAINT syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 
 	rest := strings.TrimSpace(trimmed[len("DROP CONSTRAINT"):])
 	if rest == "" {
-		return nil, fmt.Errorf("invalid DROP CONSTRAINT syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 
 	ifExists := false
@@ -560,14 +557,14 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 	}
 
 	if rest == "" {
-		return nil, fmt.Errorf("invalid DROP CONSTRAINT syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 	if !strings.HasPrefix(strings.TrimSpace(rest), "`") && len(strings.Fields(rest)) > 1 {
-		return nil, fmt.Errorf("invalid DROP CONSTRAINT syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 	name := normalizeIdentifierToken(rest)
 	if name == "" {
-		return nil, fmt.Errorf("invalid DROP CONSTRAINT syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 
 	if err := e.storage.GetSchema().DropConstraint(name); err != nil {
@@ -646,7 +643,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 
-	return nil, fmt.Errorf("invalid CREATE INDEX syntax")
+	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE INDEX"), nil)
 }
 
 // executeCreateRangeIndex handles CREATE RANGE INDEX commands.
@@ -659,14 +656,14 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE RANGE INDEX")
 	if err != nil {
-		return nil, fmt.Errorf("invalid CREATE RANGE INDEX syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
 	}
 	if parsed.isRelationship {
-		return nil, fmt.Errorf("invalid CREATE RANGE INDEX syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
 	}
 
 	if len(parsed.properties) != 1 {
-		return nil, fmt.Errorf("RANGE INDEX only supports single property, got %d", len(parsed.properties))
+		return nil, localizedError(localization.CypherSchemaRangeIndexSinglePropertyRequired(len(parsed.properties)), nil)
 	}
 
 	indexName := parsed.indexName
@@ -675,7 +672,7 @@ func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher st
 	}
 
 	if err := e.storage.GetSchema().AddRangeIndex(indexName, parsed.label, parsed.properties[0]); err != nil {
-		return nil, fmt.Errorf("failed to create range index: %w", err)
+		return nil, localizedError(localization.CypherSchemaCreateRangeIndexFailed(err), err)
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -704,18 +701,18 @@ func parseOptionalDDLName(segment string) (string, error) {
 	ifPos := keywordIndexFrom(segment, "IF NOT EXISTS", 0, defaultKeywordScanOpts())
 	if ifPos < 0 {
 		if !isValidDDLIdentifierSegment(segment) {
-			return "", fmt.Errorf("invalid identifier segment")
+			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 		}
 		name := normalizeIdentifierToken(segment)
 		if name == "" {
-			return "", fmt.Errorf("invalid identifier segment")
+			return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 		}
 		return name, nil
 	}
 
 	ifEnd, ok := keywordSpanAt(segment, ifPos, "IF NOT EXISTS")
 	if !ok || strings.TrimSpace(segment[ifEnd:]) != "" {
-		return "", fmt.Errorf("invalid IF NOT EXISTS clause")
+		return "", localizedError(localization.CypherSchemaInvalidIfNotExistsClause(), nil)
 	}
 
 	namePart := strings.TrimSpace(segment[:ifPos])
@@ -723,11 +720,11 @@ func parseOptionalDDLName(segment string) (string, error) {
 		return "", nil
 	}
 	if !isValidDDLIdentifierSegment(namePart) {
-		return "", fmt.Errorf("invalid identifier segment")
+		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 	}
 	name := normalizeIdentifierToken(namePart)
 	if name == "" {
-		return "", fmt.Errorf("invalid identifier segment")
+		return "", localizedError(localization.CypherSchemaInvalidIdentifierSegment(), nil)
 	}
 	return name, nil
 }
@@ -749,13 +746,13 @@ func isValidDDLIdentifierSegment(s string) bool {
 func extractIndexPropertiesSegment(onClause string) (string, string, error) {
 	onClause = strings.TrimSpace(onClause)
 	if onClause == "" {
-		return "", "", fmt.Errorf("empty ON clause")
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
 	}
 
 	if strings.HasPrefix(onClause, "(") {
 		inside, rest, ok := extractParenSection(onClause)
 		if !ok {
-			return "", "", fmt.Errorf("invalid ON clause")
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
 		}
 		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
 	}
@@ -770,53 +767,53 @@ func extractIndexPropertiesSegment(onClause string) (string, string, error) {
 func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
 	forClause = strings.TrimSpace(forClause)
 	if forClause == "" {
-		return "", "", false, fmt.Errorf("empty FOR clause")
+		return "", "", false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
 	}
 
 	if strings.Contains(forClause, "[") {
 		bracketStart := strings.Index(forClause, "[")
 		if bracketStart < 0 {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
 		if !ok {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 
 		prefix := strings.TrimSpace(forClause[:bracketStart])
 		suffix := strings.TrimSpace(rest)
 		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 
 		colon := strings.Index(inside, ":")
 		if colon < 0 {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 		relRaw := strings.TrimSpace(inside[colon+1:])
 		if relRaw == "" {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 		relType := normalizeIdentifierToken(relRaw)
 		if relType == "" {
-			return "", "", false, fmt.Errorf("invalid relationship FOR clause")
+			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 		return "", relType, true, nil
 	}
 
 	inside, rest, ok := extractParenSection(forClause)
 	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", false, fmt.Errorf("invalid node FOR clause")
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
 	}
 
 	colon := strings.Index(inside, ":")
 	if colon < 0 {
-		return "", "", false, fmt.Errorf("invalid node FOR clause")
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
 	}
 	labelRaw := strings.TrimSpace(inside[colon+1:])
 	label = normalizeIdentifierToken(labelRaw)
 	if label == "" {
-		return "", "", false, fmt.Errorf("invalid node FOR clause")
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
 	}
 	return label, "", false, nil
 }
@@ -824,34 +821,34 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedCreateIndexDDL{}, fmt.Errorf("empty statement")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, prefixKeyword, 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, prefixKeyword)
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("missing FOR")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid FOR")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 
 	onPos := keywordIndexFrom(q, "ON", forEnd, defaultKeywordScanOpts())
 	if onPos < 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("missing ON")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
 	}
 	onEnd, ok := keywordSpanAt(q, onPos, "ON")
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid ON")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -869,12 +866,12 @@ func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword strin
 		return parsedCreateIndexDDL{}, err
 	}
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 
 	properties := e.parseQualifiedIndexProperties(propsSegment)
 	if len(properties) == 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("no properties specified for index")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
 	}
 
 	return parsedCreateIndexDDL{
@@ -890,25 +887,25 @@ func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword strin
 func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher string) (parsedCreateIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedCreateIndexDDL{}, fmt.Errorf("empty statement")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, "CREATE INDEX", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE INDEX")
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	onPos := keywordIndexFrom(q, "ON", prefixEnd, defaultKeywordScanOpts())
 	if onPos < 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("missing ON")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
 	}
 	onEnd, ok := keywordSpanAt(q, onPos, "ON")
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid ON")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:onPos])
@@ -918,31 +915,31 @@ func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher string) (parsedCreate
 
 	onClause := strings.TrimSpace(q[onEnd:])
 	if !strings.HasPrefix(onClause, ":") {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid legacy ON clause")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
 	onClause = strings.TrimSpace(onClause[1:])
 
 	openParen := strings.Index(onClause, "(")
 	if openParen < 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid legacy ON clause")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
 	label := normalizeIdentifierToken(strings.TrimSpace(onClause[:openParen]))
 	if label == "" {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid legacy ON clause")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
 
 	inside, tail, ok := extractParenSection(onClause[openParen:])
 	if !ok {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid legacy ON clause")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
 	tail = strings.TrimSpace(tail)
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateIndexDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 
 	properties := e.parseIndexProperties(inside)
 	if len(properties) == 0 {
-		return parsedCreateIndexDDL{}, fmt.Errorf("no properties specified for index")
+		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
 	}
 
 	return parsedCreateIndexDDL{
@@ -1084,25 +1081,25 @@ func parseCreateFulltextForPattern(forClause string) (label string, relationship
 func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
 	onClause = strings.TrimSpace(onClause)
 	if onClause == "" {
-		return "", "", fmt.Errorf("empty ON clause")
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
 	}
 
 	if startsWithKeywordFold(onClause, "EACH") {
 		eachEnd, ok := keywordSpanAt(onClause, 0, "EACH")
 		if !ok {
-			return "", "", fmt.Errorf("invalid EACH clause")
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("EACH"), nil)
 		}
 		onClause = strings.TrimSpace(onClause[eachEnd:])
 	}
 
 	if onClause == "" {
-		return "", "", fmt.Errorf("empty ON clause")
+		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
 	}
 
 	if strings.HasPrefix(onClause, "[") {
 		inside, rest, ok := extractBracketSection(onClause)
 		if !ok {
-			return "", "", fmt.Errorf("invalid ON EACH clause")
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON EACH"), nil)
 		}
 		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
 	}
@@ -1110,7 +1107,7 @@ func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
 	if strings.HasPrefix(onClause, "(") {
 		inside, rest, ok := extractParenSection(onClause)
 		if !ok {
-			return "", "", fmt.Errorf("invalid ON clause")
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
 		}
 		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
 	}
@@ -1125,34 +1122,34 @@ func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
 func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCreateFulltextIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("empty statement")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, "CREATE FULLTEXT INDEX", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE FULLTEXT INDEX")
 	if !ok {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("missing FOR")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("invalid FOR")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 
 	onPos := keywordIndexFrom(q, "ON", forEnd, defaultKeywordScanOpts())
 	if onPos < 0 {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("missing ON")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ON"), nil)
 	}
 	onEnd, ok := keywordSpanAt(q, onPos, "ON")
 	if !ok {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("invalid ON")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1160,7 +1157,7 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 		return parsedCreateFulltextIndexDDL{}, err
 	}
 	if name == "" {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("missing index name")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaIndexNameRequired(), nil)
 	}
 
 	label, relationshipTypes, isRelationship, err := parseCreateFulltextForPattern(q[forEnd:onPos])
@@ -1173,12 +1170,12 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 		return parsedCreateFulltextIndexDDL{}, err
 	}
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 
 	properties := e.parseQualifiedIndexProperties(propsSegment)
 	if len(properties) == 0 {
-		return parsedCreateFulltextIndexDDL{}, fmt.Errorf("no properties found in fulltext index definition")
+		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaFulltextPropertiesRequired(), nil)
 	}
 
 	return parsedCreateFulltextIndexDDL{
@@ -1381,16 +1378,16 @@ func (e *StorageExecutor) parseNodeKeyPropertyList(expr string) ([]string, bool)
 func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsedNodeKeyConstraintDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedNodeKeyConstraintDDL{}, fmt.Errorf("empty statement")
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
@@ -1399,15 +1396,15 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsed
 	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
 		forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid FOR")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 		}
 		reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 		if reqPos < 0 {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("missing REQUIRE")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 		}
 		reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid REQUIRE")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 		}
 
 		name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1417,16 +1414,16 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsed
 
 		label, _, isRelationship, err := parseCreateIndexForPattern(q[forEnd:reqPos])
 		if err != nil || isRelationship {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid NODE KEY pattern")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("NODE KEY"), nil)
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		props, ok := e.parseNodeKeyPropertyList(predicateExpr)
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("unsupported NODE KEY predicate")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
 		}
 		return parsedNodeKeyConstraintDDL{name: name, label: label, properties: props}, nil
 	}
@@ -1434,15 +1431,15 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsed
 	if onPos >= 0 {
 		onEnd, ok := keywordSpanAt(q, onPos, "ON")
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid ON")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 		}
 		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
 		if assertPos < 0 {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("missing ASSERT")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
 		}
 		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid ASSERT")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
 		}
 
 		_, err := parseOptionalDDLName(q[prefixEnd:onPos])
@@ -1451,21 +1448,21 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(cypher string) (parsed
 		}
 		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
 		if err != nil || isRelationship {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid ASSERT pattern")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		props, ok := e.parseNodeKeyPropertyList(predicateExpr)
 		if !ok {
-			return parsedNodeKeyConstraintDDL{}, fmt.Errorf("unsupported NODE KEY predicate")
+			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
 		}
 		return parsedNodeKeyConstraintDDL{name: "", label: label, properties: props}, nil
 	}
 
-	return parsedNodeKeyConstraintDDL{}, fmt.Errorf("unsupported CREATE CONSTRAINT shape")
+	return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
 }
 
 func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predicateExpr string) (string, []string, bool) {
@@ -1506,32 +1503,32 @@ func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predica
 func (e *StorageExecutor) parseCreateConstraintForRequireDDL(cypher string) (parsedConstraintForRequireDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("empty statement")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("invalid prefix")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("invalid prefix")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("missing FOR")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("invalid FOR")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 	if reqPos < 0 {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("missing REQUIRE")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
 	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 	if !ok {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("invalid REQUIRE")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1544,7 +1541,7 @@ func (e *StorageExecutor) parseCreateConstraintForRequireDDL(cypher string) (par
 	}
 	requireExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedConstraintForRequireDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedConstraintForRequireDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 	out := parsedConstraintForRequireDDL{name: name, isRelationship: isRelationship, requireExpr: requireExpr}
 	if isRelationship {
@@ -1589,7 +1586,7 @@ func (e *StorageExecutor) parseCreateConstraintTemporalDDL(cypher string) (parse
 	}
 	props, ok := e.parseTemporalConstraintPredicate(parsed.requireExpr)
 	if !ok {
-		return parsedTemporalConstraintDDL{}, fmt.Errorf("unsupported temporal predicate")
+		return parsedTemporalConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("temporal"), nil)
 	}
 	return parsedTemporalConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, properties: props}, nil
 }
@@ -1626,7 +1623,7 @@ func (e *StorageExecutor) parseCreateConstraintDomainDDL(cypher string) (parsedD
 	}
 	property, allowedRaw, ok := parseDomainConstraintPredicate(parsed.requireExpr)
 	if !ok {
-		return parsedDomainConstraintDDL{}, fmt.Errorf("unsupported domain predicate")
+		return parsedDomainConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("domain"), nil)
 	}
 	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw}, nil
 }
@@ -1690,31 +1687,31 @@ func parseCardinalityRequireExpr(requireExpr string) (int, bool) {
 func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(cypher string) (parsedCardinalityConstraintDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("empty statement")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("missing FOR")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid FOR")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 	if reqPos < 0 {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("missing REQUIRE")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
 	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 	if !ok {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid REQUIRE")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1723,11 +1720,11 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(cypher string) (pa
 	}
 	relType, direction, ok := parseRelationshipForDirection(q[forEnd:reqPos])
 	if !ok {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid cardinality FOR pattern")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("cardinality FOR"), nil)
 	}
 	requireExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 	maxCount, ok := parseCardinalityRequireExpr(requireExpr)
 	if !ok {
@@ -1746,13 +1743,13 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(cypher string) (pa
 					if digitsOnly {
 						v, convErr := strconv.Atoi(raw)
 						if convErr != nil || v < 1 {
-							return parsedCardinalityConstraintDDL{}, fmt.Errorf("MAX COUNT must be a positive integer, got %q", raw)
+							return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaPositiveMaxCountRequired(raw), convErr)
 						}
 					}
 				}
 			}
 		}
-		return parsedCardinalityConstraintDDL{}, fmt.Errorf("invalid cardinality require clause")
+		return parsedCardinalityConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("cardinality require"), nil)
 	}
 
 	return parsedCardinalityConstraintDDL{name: name, relType: relType, direction: direction, maxCount: maxCount}, nil
@@ -1847,31 +1844,31 @@ func parsePolicyModeRequireExpr(requireExpr string) (string, bool) {
 func (e *StorageExecutor) parseCreateConstraintPolicyDDL(cypher string) (parsedPolicyConstraintDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("empty statement")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("missing FOR")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid FOR")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 	if reqPos < 0 {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("missing REQUIRE")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
 	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 	if !ok {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid REQUIRE")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1880,15 +1877,15 @@ func (e *StorageExecutor) parseCreateConstraintPolicyDDL(cypher string) (parsedP
 	}
 	source, relType, target, ok := parsePolicyForClause(q[forEnd:reqPos])
 	if !ok {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid policy FOR pattern")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("policy FOR"), nil)
 	}
 	requireExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 	mode, ok := parsePolicyModeRequireExpr(requireExpr)
 	if !ok {
-		return parsedPolicyConstraintDDL{}, fmt.Errorf("invalid policy require clause")
+		return parsedPolicyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidClause("policy require"), nil)
 	}
 
 	return parsedPolicyConstraintDDL{name: name, sourceLabel: source, relType: relType, targetLabel: target, policyMode: mode}, nil
@@ -1897,32 +1894,32 @@ func (e *StorageExecutor) parseCreateConstraintPolicyDDL(cypher string) (parsedP
 func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("empty statement")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid prefix")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid prefix")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("missing FOR")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid FOR")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 	if reqPos < 0 {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("missing REQUIRE")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
 	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 	if !ok {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid REQUIRE")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 
 	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1932,16 +1929,16 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 
 	_, relType, isRelationship, err := parseCreateIndexForPattern(q[forEnd:reqPos])
 	if err != nil || !isRelationship {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid relationship FOR pattern")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
 	}
 
 	predicateExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("invalid trailing syntax")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 	}
 	kind, props, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(predicateExpr)
 	if !ok {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, fmt.Errorf("unsupported relationship key/unique predicate")
+		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
 
 	return parsedRelationshipKeyOrCompositeUniqueDDL{name: name, label: relType, properties: props, kind: kind}, nil
@@ -1950,16 +1947,16 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTypeConstraintDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedTypeConstraintDDL{}, fmt.Errorf("empty statement")
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedTypeConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedTypeConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
@@ -1968,15 +1965,15 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTyp
 	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
 		forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid FOR")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 		}
 		reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 		if reqPos < 0 {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("missing REQUIRE")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 		}
 		reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid REQUIRE")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 		}
 
 		name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -1991,11 +1988,11 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTyp
 
 		predicateExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		property, typeName, ok := parseConstraintTypePredicate(predicateExpr)
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("unsupported type predicate")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
 		}
 		expectedType, err := parsePropertyType(typeName)
 		if err != nil {
@@ -2014,15 +2011,15 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTyp
 	if onPos >= 0 {
 		onEnd, ok := keywordSpanAt(q, onPos, "ON")
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid ON")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 		}
 		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
 		if assertPos < 0 {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("missing ASSERT")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
 		}
 		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid ASSERT")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
 		}
 
 		name, err := parseOptionalDDLName(q[prefixEnd:onPos])
@@ -2031,16 +2028,16 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTyp
 		}
 		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
 		if err != nil || isRelationship {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid ASSERT pattern")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		property, typeName, ok := parseConstraintTypePredicate(predicateExpr)
 		if !ok {
-			return parsedTypeConstraintDDL{}, fmt.Errorf("unsupported type predicate")
+			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
 		}
 		expectedType, err := parsePropertyType(typeName)
 		if err != nil {
@@ -2049,22 +2046,22 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(cypher string) (parsedTyp
 		return parsedTypeConstraintDDL{name: name, label: label, property: property, expectedType: expectedType}, nil
 	}
 
-	return parsedTypeConstraintDDL{}, fmt.Errorf("unsupported CREATE CONSTRAINT shape")
+	return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
 }
 
 func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) (parsedSimplePropertyConstraintDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("empty statement")
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
 	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
-		return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid prefix")
+		return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 
 	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
@@ -2073,15 +2070,15 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 	if forPos >= 0 && (onPos < 0 || forPos < onPos) {
 		forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid FOR")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 		}
 		reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 		if reqPos < 0 {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("missing REQUIRE")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 		}
 		reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid REQUIRE")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 		}
 
 		name, err := parseOptionalDDLName(q[prefixEnd:forPos])
@@ -2096,11 +2093,11 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 
 		predicateExpr, tail := splitDDLOptionsTail(q[reqEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		kind, property, ok := parseConstraintPredicate(predicateExpr)
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("unsupported constraint predicate")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
 		}
 
 		out := parsedSimplePropertyConstraintDDL{name: name, property: property, kind: kind, isRelationship: isRelationship}
@@ -2115,15 +2112,15 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 	if onPos >= 0 {
 		onEnd, ok := keywordSpanAt(q, onPos, "ON")
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid ON")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
 		}
 		assertPos := keywordIndexFrom(q, "ASSERT", onEnd, defaultKeywordScanOpts())
 		if assertPos < 0 {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("missing ASSERT")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
 		}
 		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid ASSERT")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
 		}
 
 		name, err := parseOptionalDDLName(q[prefixEnd:onPos])
@@ -2133,21 +2130,21 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(cypher string) 
 
 		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
 		if err != nil || isRelationship {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid ASSERT pattern")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(q[assertEnd:])
 		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("invalid trailing syntax")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
 		}
 		kind, property, ok := parseConstraintPredicate(predicateExpr)
 		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("unsupported constraint predicate")
+			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
 		}
 		return parsedSimplePropertyConstraintDDL{name: name, label: label, property: property, kind: kind, isRelationship: false}, nil
 	}
 
-	return parsedSimplePropertyConstraintDDL{}, fmt.Errorf("unsupported CREATE CONSTRAINT shape")
+	return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
 }
 
 // parseIndexProperties parses property list from index ON clause.
@@ -2173,7 +2170,7 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 
 	nodes, err := e.storage.GetNodesByLabel(label)
 	if err != nil {
-		return fmt.Errorf("failed to backfill index for label %s: %w", label, err)
+		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
 	}
 	for _, node := range nodes {
 		if node == nil || node.Properties == nil {
@@ -2185,7 +2182,7 @@ func (e *StorageExecutor) backfillPropertyIndex(label string, properties []strin
 		}
 		nodeID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)
 		if err := schema.PropertyIndexInsert(label, property, nodeID, value); err != nil {
-			return fmt.Errorf("failed to backfill property index %s(%s): %w", label, property, err)
+			return localizedError(localization.CypherSchemaBackfillPropertyIndexFailed(label, property, err), err)
 		}
 	}
 	return nil
@@ -2252,7 +2249,7 @@ func parsePropertyType(typeName string) (storage.PropertyType, error) {
 	case "LOCAL DATETIME", "LOCALDATETIME":
 		return storage.PropertyTypeLocalDateTime, nil
 	default:
-		return "", fmt.Errorf("unsupported property type: %s", typeName)
+		return "", localizedError(localization.CypherSchemaUnsupportedPropertyType(typeName), nil)
 	}
 }
 
@@ -2273,7 +2270,7 @@ func parsePropertyType(typeName string) (storage.PropertyType, error) {
 func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema manager not available")
+		return nil, localizedError(localization.CypherSchemaManagerUnavailable(), nil)
 	}
 
 	parsed, err := e.parseCreateFulltextIndexDDL(cypher)
@@ -2283,13 +2280,13 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 
 	if parsed.isRelationship {
 		if err := schema.AddFulltextRelationshipIndex(parsed.indexName, parsed.relationshipTypes, parsed.properties); err != nil {
-			return nil, fmt.Errorf("failed to add fulltext relationship index: %w", err)
+			return nil, localizedError(localization.CypherSchemaAddFulltextRelationshipIndexFailed(err), err)
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 
 	if err := schema.AddFulltextIndex(parsed.indexName, []string{parsed.label}, parsed.properties); err != nil {
-		return nil, fmt.Errorf("failed to add fulltext index: %w", err)
+		return nil, localizedError(localization.CypherSchemaAddFulltextIndexFailed(err), err)
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -2316,7 +2313,7 @@ func parseDomainValueList(raw string) ([]interface{}, error) {
 			// Single-quoted string
 			end := strings.Index(raw[1:], "'")
 			if end < 0 {
-				return nil, fmt.Errorf("unterminated string: %s", raw)
+				return nil, localizedError(localization.CypherSchemaUnterminatedString(raw), nil)
 			}
 			token = raw[1 : end+1]
 			values = append(values, token)
@@ -2325,7 +2322,7 @@ func parseDomainValueList(raw string) ([]interface{}, error) {
 			// Double-quoted string
 			end := strings.Index(raw[1:], "\"")
 			if end < 0 {
-				return nil, fmt.Errorf("unterminated string: %s", raw)
+				return nil, localizedError(localization.CypherSchemaUnterminatedString(raw), nil)
 			}
 			token = raw[1 : end+1]
 			values = append(values, token)
@@ -2434,12 +2431,12 @@ func normalizeIdentifierToken(v string) string {
 func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE VECTOR INDEX")
 	if err != nil {
-		return nil, fmt.Errorf("invalid CREATE VECTOR INDEX syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
 	}
 	if len(parsed.properties) != 1 || parsed.indexName == "" ||
 		(!parsed.isRelationship && parsed.label == "") ||
 		(parsed.isRelationship && parsed.relationshipType == "") {
-		return nil, fmt.Errorf("invalid CREATE VECTOR INDEX syntax")
+		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)
 	}
 
 	indexName := parsed.indexName

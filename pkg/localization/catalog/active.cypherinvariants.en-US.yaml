@@ -1,0 +1,6 @@
+- id: cypherinvariants.pipeline_create_failed
+  description: Pipeline CREATE wrapper. Cause is an untranslated diagnostic value.
+  other: "pipeline CREATE failed: {{.Cause}}"
+- id: cypherinvariants.delete_by_prefix_transaction_unsupported
+  description: DeleteByPrefix cannot run inside a transaction. DeleteByPrefix is an untranslated API method name.
+  other: DeleteByPrefix not supported within transaction context

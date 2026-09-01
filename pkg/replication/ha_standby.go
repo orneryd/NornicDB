@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -229,7 +230,7 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 		transport, err := NewDefaultTransportFromConfig(r.config)
 		if err != nil {
 			r.mu.Unlock()
-			return fmt.Errorf("init transport: %w", err)
+			return localizedError(localization.ReplicationHAInitTransportFailed(err), err)
 		}
 		r.transport = transport
 	}
@@ -246,12 +247,12 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 	if r.isPrimary.Load() {
 		if err := r.startPrimary(ctx); err != nil {
 			r.started.Store(false)
-			return fmt.Errorf("start primary: %w", err)
+			return localizedError(localization.ReplicationHAStartPrimaryFailed(err), err)
 		}
 	} else {
 		if err := r.startStandby(ctx); err != nil {
 			r.started.Store(false)
-			return fmt.Errorf("start standby: %w", err)
+			return localizedError(localization.ReplicationHAStartStandbyFailed(err), err)
 		}
 	}
 
@@ -551,7 +552,7 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 
 	// Flush any pending WAL
 	if err := r.walApplier.Flush(); err != nil {
-		return fmt.Errorf("flush WAL: %w", err)
+		return localizedError(localization.ReplicationHAFlushWALFailed(err), err)
 	}
 
 	r.mu.Lock()
@@ -654,7 +655,7 @@ func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("replication ack timeout (mode=%s, target=%d): %w", mode, target, ctx.Err())
+			return localizedError(localization.ReplicationHAAckTimedOut(string(mode), target, ctx.Err()), ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -780,7 +781,7 @@ func (r *HAStandbyReplicator) NodeID() string {
 // HandleWALBatch handles incoming WAL batch (for standby).
 func (r *HAStandbyReplicator) HandleWALBatch(entries []*WALEntry) (*WALBatchResponse, error) {
 	if r.isPrimary.Load() {
-		return nil, fmt.Errorf("primary cannot receive WAL")
+		return nil, localizedError(localization.ReplicationHAPrimaryCannotReceiveWAL(), nil)
 	}
 
 	r.mu.Lock()

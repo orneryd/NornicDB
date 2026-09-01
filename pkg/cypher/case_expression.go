@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -46,7 +47,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 
 	// Remove CASE and END keywords
 	if !strings.HasPrefix(upper, "CASE") || !strings.HasSuffix(upper, "END") {
-		return nil, fmt.Errorf("invalid CASE expression: must start with CASE and end with END")
+		return nil, localizedError(localization.CypherCoreCaseEnvelopeInvalid(), nil)
 	}
 
 	// Extract the content between CASE and END
@@ -60,7 +61,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	// Simple CASE has an expression after CASE before the first WHEN
 	firstWhenIdx := indexCaseInsensitive(content, "WHEN")
 	if firstWhenIdx == -1 {
-		return nil, fmt.Errorf("CASE expression must have at least one WHEN clause")
+		return nil, localizedError(localization.CypherCoreCaseWhenRequired(), nil)
 	}
 
 	beforeFirstWhen := strings.TrimSpace(content[:firstWhenIdx])
@@ -116,7 +117,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	}
 
 	if len(ce.whenClauses) == 0 {
-		return nil, fmt.Errorf("CASE expression must have at least one WHEN clause")
+		return nil, localizedError(localization.CypherCoreCaseWhenRequired(), nil)
 	}
 
 	return ce, nil
@@ -127,7 +128,7 @@ func parseWhenClause(section string, isSimple bool) (caseWhenClause, error) {
 	// Find THEN keyword
 	thenIdx := indexCaseInsensitive(section, "THEN")
 	if thenIdx == -1 {
-		return caseWhenClause{}, fmt.Errorf("WHEN clause must have THEN: %s", section)
+		return caseWhenClause{}, localizedError(localization.CypherCoreCaseThenRequired(section), nil)
 	}
 
 	conditionPart := strings.TrimSpace(section[:thenIdx])

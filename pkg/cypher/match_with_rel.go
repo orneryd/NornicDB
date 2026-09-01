@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -105,7 +106,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	// Parse the traversal pattern
 	matches := e.parseTraversalPattern(ctx, patternForParsing)
 	if matches == nil {
-		return result, fmt.Errorf("invalid traversal pattern: %s", patternForParsing)
+		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(patternForParsing), nil)
 	}
 
 	// Set the path variable in matches for buildPathContext to use
@@ -117,7 +118,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 	// withAndReturn starts with "WITH ..."
 	returnIdx := findKeywordIndex(withAndReturn, "RETURN")
 	if returnIdx == -1 {
-		return nil, fmt.Errorf("RETURN clause required after WITH")
+		return nil, localizedError(localization.CypherMatchingReturnAfterWithRequired(), nil)
 	}
 
 	// Extract WITH clause section
@@ -173,7 +174,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		ks, ke := trimKeywordWSBounds("ORDER BY")
 		orderByEnd, ok := keywordMatchAt(returnPart, orderByIdx, "ORDER BY", ks, ke)
 		if !ok {
-			return nil, fmt.Errorf("failed to parse ORDER BY clause")
+			return nil, localizedError(localization.CypherMatchingOrderByParseFailed(), nil)
 		}
 
 		afterReturn := returnPart[orderByEnd:]
@@ -192,7 +193,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		ks, ke := trimKeywordWSBounds("SKIP")
 		skipEnd, ok := keywordMatchAt(withAndReturn[returnIdx:], idx, "SKIP", ks, ke)
 		if !ok {
-			return nil, fmt.Errorf("failed to parse SKIP clause")
+			return nil, localizedError(localization.CypherMatchingSkipParseFailed(), nil)
 		}
 		skipPart := withAndReturn[returnIdx+skipEnd:]
 		endIdx := len(skipPart)
@@ -209,7 +210,7 @@ func (e *StorageExecutor) executeMatchRelationshipsWithClause(ctx context.Contex
 		ks, ke := trimKeywordWSBounds("LIMIT")
 		limitEnd, ok := keywordMatchAt(withAndReturn[returnIdx:], idx, "LIMIT", ks, ke)
 		if !ok {
-			return nil, fmt.Errorf("failed to parse LIMIT clause")
+			return nil, localizedError(localization.CypherMatchingLimitParseFailed(), nil)
 		}
 		limitPart := withAndReturn[returnIdx+limitEnd:]
 		endIdx := len(limitPart)

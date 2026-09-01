@@ -1,0 +1,27 @@
+- id: cyphergraphprocedures.graph_name_required
+  description: Expanded pseudo-locale missing projected graph name.
+  other: "[!! graph name required for {{.Procedure}} !!]"
+- id: cyphergraphprocedures.stream_nodes_failed
+  description: Expanded pseudo-locale projection node-stream failure.
+  other: "[!! failed to stream nodes: {{.Cause}} !!]"
+- id: cyphergraphprocedures.stream_edges_failed
+  description: Expanded pseudo-locale projection edge-stream failure.
+  other: "[!! failed to stream edges: {{.Cause}} !!]"
+- id: cyphergraphprocedures.graph_does_not_exist
+  description: Expanded pseudo-locale missing projected graph.
+  other: "[!! graph '{{.Graph}}' does not exist !!]"
+- id: cyphergraphprocedures.graph_does_not_exist_project_first
+  description: Expanded pseudo-locale missing FastRP graph projection.
+  other: "[!! graph '{{.Graph}}' does not exist. Create it with gds.graph.project first !!]"
+- id: cyphergraphprocedures.build_graph_failed
+  description: Expanded pseudo-locale link-prediction graph build failure.
+  other: "[!! failed to build graph: {{.Cause}} !!]"
+- id: cyphergraphprocedures.invalid_procedure_call_syntax
+  description: Expanded pseudo-locale malformed procedure call.
+  other: "[!! invalid procedure call syntax !!]"
+- id: cyphergraphprocedures.variable_not_found
+  description: Expanded pseudo-locale unresolved query variable.
+  other: "[!! variable {{.QuotedVariable}} not found in query context (id({{.Variable}}) cannot be resolved) !!]"
+- id: cyphergraphprocedures.source_node_required
+  description: Expanded pseudo-locale missing sourceNode parameter.
+  other: "[!! sourceNode parameter required !!]"

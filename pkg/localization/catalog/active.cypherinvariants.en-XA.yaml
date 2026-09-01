@@ -1,0 +1,6 @@
+- id: cypherinvariants.pipeline_create_failed
+  description: Expanded pseudo-locale pipeline CREATE failure.
+  other: "[!! pipeline CREATE failed: {{.Cause}} !!]"
+- id: cypherinvariants.delete_by_prefix_transaction_unsupported
+  description: Expanded pseudo-locale unsupported transactional DeleteByPrefix operation.
+  other: "[!! DeleteByPrefix not supported within transaction context !!]"

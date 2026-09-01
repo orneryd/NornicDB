@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu/metal"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -71,7 +72,7 @@ func NewCPUHNSWBuildAccelerator() *CPUHNSWBuildAccelerator {
 
 func (a *CPUHNSWBuildAccelerator) Prepare(dim int, _ int) error {
 	if dim <= 0 {
-		return fmt.Errorf("invalid HNSW GPU build dimension %d", dim)
+		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
 	a.dim = dim
 	return nil
@@ -141,7 +142,7 @@ func NewMetalHNSWBuildAccelerator() (*MetalHNSWBuildAccelerator, error) {
 
 func (a *MetalHNSWBuildAccelerator) Prepare(dim int, _ int) error {
 	if dim <= 0 {
-		return fmt.Errorf("invalid HNSW GPU build dimension %d", dim)
+		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
 	a.dim = dim
 	return nil
@@ -561,7 +562,7 @@ func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
 		log.Printf("[HNSW] Using Metal GPU accelerator")
 		return accel, nil
 	}
-	return nil, fmt.Errorf("no GPU accelerator available")
+	return nil, localizedError(localization.SearchGPUAcceleratorUnavailable(), nil)
 }
 
 func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator, accel HNSWBuildAccelerator) (*HNSWIndex, hnswBuildStats, error) {

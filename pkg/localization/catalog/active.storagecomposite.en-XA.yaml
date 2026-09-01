@@ -1,0 +1,57 @@
+- id: storagecomposite.constituent_not_found
+  description: Expanded pseudo-locale composite constituent lookup failure.
+  other: "[!! constituent '{{.Alias}}' not found !!]"
+- id: storagecomposite.no_writable_constituents
+  description: Expanded pseudo-locale missing writable constituent failure.
+  other: "[!! no writable constituents available !!]"
+- id: storagecomposite.write_target_ambiguous
+  description: Expanded pseudo-locale ambiguous write routing failure.
+  other: "[!! ambiguous composite write target: use USE <composite.constituent> or set properties.database_id to a writable constituent !!]"
+- id: storagecomposite.edge_required
+  description: Expanded pseudo-locale nil edge validation failure.
+  other: "[!! edge cannot be nil !!]"
+- id: storagecomposite.read_only_start_node
+  description: Expanded pseudo-locale read-only start-node failure.
+  other: "[!! start node found in read-only constituent '{{.Alias}}', cannot create edge !!]"
+- id: storagecomposite.start_node_not_found
+  description: Expanded pseudo-locale missing start-node failure.
+  other: "[!! start node not found in any constituent !!]"
+- id: storagecomposite.constituent_query_failed
+  description: Expanded pseudo-locale constituent query wrapper.
+  other: "[!! error querying constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.bulk_write_target_ambiguous
+  description: Expanded pseudo-locale ambiguous bulk-write routing failure.
+  other: "[!! ambiguous composite write target in bulk create: use USE <composite.constituent> or set properties.database_id !!]"
+- id: storagecomposite.constituent_lookup_failed
+  description: Expanded pseudo-locale constituent lookup wrapper.
+  other: "[!! failed to get constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.node_bulk_create_failed
+  description: Expanded pseudo-locale node bulk-create wrapper.
+  other: "[!! failed to create nodes in constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.start_node_check_failed
+  description: Expanded pseudo-locale start-node lookup wrapper.
+  other: "[!! error checking start node: {{.Cause}} !!]"
+- id: storagecomposite.edge_bulk_create_failed
+  description: Expanded pseudo-locale edge bulk-create wrapper.
+  other: "[!! failed to create edges in constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.default_constituent_lookup_failed
+  description: Expanded pseudo-locale default constituent lookup wrapper.
+  other: "[!! failed to get default constituent: {{.Cause}} !!]"
+- id: storagecomposite.unrouted_edge_bulk_create_failed
+  description: Expanded pseudo-locale unrouted edge bulk-create wrapper.
+  other: "[!! failed to create unrouted edges: {{.Cause}} !!]"
+- id: storagecomposite.constituent_close_failed
+  description: Expanded pseudo-locale constituent close wrapper.
+  other: "[!! error closing constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.node_count_failed
+  description: Expanded pseudo-locale constituent node-count wrapper.
+  other: "[!! error counting nodes in constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.edge_count_failed
+  description: Expanded pseudo-locale constituent edge-count wrapper.
+  other: "[!! error counting edges in constituent '{{.Alias}}': {{.Cause}} !!]"
+- id: storagecomposite.delete_by_prefix_unsupported
+  description: Expanded pseudo-locale unsupported DeleteByPrefix operation.
+  other: "[!! DeleteByPrefix not supported on composite databases - delete from constituent databases instead !!]"
+- id: storagecomposite.constituent_stream_failed
+  description: Expanded pseudo-locale constituent stream wrapper.
+  other: "[!! error streaming from constituent '{{.Alias}}': {{.Cause}} !!]"

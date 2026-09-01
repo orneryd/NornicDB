@@ -1,0 +1,84 @@
+- id: cyphermatching.match_pattern_required
+  description: La cláusula MATCH no tiene patrón. MATCH no se traduce.
+  other: la cláusula MATCH requiere un patrón
+- id: cyphermatching.match_node_pattern_required
+  description: MATCH comienza con una relación en lugar de un nodo. Las palabras clave no se traducen.
+  other: la cláusula MATCH requiere un patrón de nodo, no solo un patrón de relación
+- id: cyphermatching.return_expression_required
+  description: La cláusula RETURN no tiene expresión de proyección. RETURN no se traduce.
+  other: la cláusula RETURN requiere al menos una expresión
+- id: cyphermatching.return_expression_empty
+  description: La cláusula RETURN contiene una expresión de proyección vacía. RETURN no se traduce.
+  other: la cláusula RETURN contiene una expresión vacía
+- id: cyphermatching.storage_failed
+  description: Error de almacenamiento durante la coincidencia. Cause no se traduce.
+  other: "error de almacenamiento: {{.Cause}}"
+- id: cyphermatching.collect_subquery_failed
+  description: Error al ejecutar la subconsulta COLLECT. Cause no se traduce.
+  other: "error de subconsulta COLLECT: {{.Cause}}"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Faltan las cláusulas MATCH y UNWIND requeridas. La sintaxis no se traduce.
+  other: "se requieren las cláusulas MATCH y UNWIND (p. ej., MATCH (n) UNWIND n.items AS item RETURN item)"
+- id: cyphermatching.unwind_as_required
+  description: UNWIND no tiene enlace AS. La sintaxis no se traduce.
+  other: "UNWIND requiere una cláusula AS (p. ej., UNWIND [1,2,3] AS x)"
+- id: cyphermatching.with_return_clauses_required
+  description: Falta una cláusula WITH o RETURN requerida. Las palabras clave no se traducen.
+  other: se requieren las cláusulas WITH y RETURN
+- id: cyphermatching.with_optional_match_return_clauses_required
+  description: Falta una cláusula WITH, OPTIONAL MATCH o RETURN requerida. Las palabras clave no se traducen.
+  other: se requieren las cláusulas WITH, OPTIONAL MATCH y RETURN
+- id: cyphermatching.order_by_parse_failed
+  description: Error al analizar ORDER BY. Las palabras clave no se traducen.
+  other: no se pudo analizar la cláusula ORDER BY
+- id: cyphermatching.match_pattern_variable_missing
+  description: Al patrón MATCH le falta una variable. Clause conserva las comillas de Go.
+  other: "patrón MATCH no válido: falta una variable en {{.Clause}}"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Patrón de recorrido no válido. Pattern no se traduce.
+  other: "patrón de recorrido no válido: {{.Pattern}}"
+- id: cyphermatching.return_after_with_required
+  description: La cláusula WITH no tiene un RETURN posterior. Las palabras clave no se traducen.
+  other: se requiere una cláusula RETURN después de WITH
+- id: cyphermatching.skip_parse_failed
+  description: Error al analizar SKIP. SKIP no se traduce.
+  other: no se pudo analizar la cláusula SKIP
+- id: cyphermatching.limit_parse_failed
+  description: Error al analizar LIMIT. LIMIT no se traduce.
+  other: no se pudo analizar la cláusula LIMIT
+- id: cyphermatching.shortest_path_query_expected
+  description: La consulta no contiene una función de ruta más corta.
+  other: no es una consulta de ruta más corta
+- id: cyphermatching.shortest_path_syntax_invalid
+  description: Sintaxis de shortestPath no válida. El nombre de función no se traduce.
+  other: sintaxis de shortestPath no válida
+- id: cyphermatching.path_pattern_invalid
+  description: Patrón de ruta más corta no válido. Pattern no se traduce.
+  other: "patrón de ruta no válido: {{.Pattern}}"
+- id: cyphermatching.shortest_path_start_variable_unresolved
+  description: No se puede resolver la variable inicial de shortestPath. Variable conserva las comillas de Go.
+  other: "shortestPath: no se pudo resolver la variable inicial {{.Variable}} de la cláusula MATCH anterior"
+- id: cyphermatching.shortest_path_end_variable_unresolved
+  description: No se puede resolver la variable final de shortestPath. Variable conserva las comillas de Go.
+  other: "shortestPath: no se pudo resolver la variable final {{.Variable}} de la cláusula MATCH anterior"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: Al patrón OPTIONAL MATCH le falta el primer nodo. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo inicial"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: El primer nodo del patrón OPTIONAL MATCH no está terminado. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} tiene un nodo inicial sin terminar"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: Al patrón OPTIONAL MATCH le falta el nodo de destino. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} no tiene un nodo de destino"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: El nodo de destino del patrón OPTIONAL MATCH no está terminado. Pattern conserva las comillas de Go.
+  other: "el patrón de coincidencia opcional {{.Pattern}} tiene un nodo de destino sin terminar"
+- id: cyphermatching.initial_traversal_match_failed
+  description: Error al ejecutar el MATCH de recorrido inicial. Cause no se traduce.
+  other: "no se pudo ejecutar el MATCH de recorrido inicial: {{.Cause}}"
+- id: cyphermatching.aggregate_call_expected
+  description: La expresión no es una llamada de agregado completa. Expression conserva las comillas de Go.
+  other: "no es una llamada de agregado completa: {{.Expression}}"
+- id: cyphermatching.function_parameters_insufficient
+  description: La función de agregado tiene pocos parámetros. Function no se traduce.
+  other: "parámetros insuficientes para la función '{{.Function}}'"

@@ -112,7 +112,6 @@ package cypher
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -126,6 +125,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1217,7 +1217,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if cypher == "" {
-		return nil, fmt.Errorf("empty query")
+		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.
@@ -1241,7 +1241,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// per RISK-1 corrected classifier. Observation pre-execute so the
 		// counter reflects intent regardless of execution outcome (errors
 		// still bucket by intended op_type, matching how queries_total works
-		// in Phase 3 reference catalogs).
+		// in the reference catalogs).
 		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "fabric"))
 		inExplicitTx := e.txContext != nil && e.txContext.active
@@ -1322,9 +1322,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// System/admin commands (SHOW DATABASES, CREATE/DROP DATABASE, ALTER, SHOW COMPOSITE,
 	// SHOW CONSTITUENTS, SHOW ALIASES, SHOW LIMITS, BEGIN, COMMIT, ROLLBACK) are allowed.
 	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) {
-		return nil, fmt.Errorf("Neo.ClientError.Statement.NotAllowed: " +
-			"Queries on composite databases require explicit graph targeting. " +
-			"Use USE <composite>.<alias> to target a specific constituent")
+		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
 	// Merge session-scoped shell parameters with per-call parameters.
@@ -1938,19 +1936,19 @@ func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher st
 
 		for _, label := range nodePattern.labels {
 			if !isValidIdentifier(label) {
-				return nil, fmt.Errorf("invalid label name: %q (must be alphanumeric starting with letter or underscore)", label), true
+				return nil, localizedError(localization.CypherCoreInvalidLabelName(label), nil), true
 			}
 			if containsReservedKeyword(label) {
-				return nil, fmt.Errorf("invalid label name: %q (contains reserved keyword)", label), true
+				return nil, localizedError(localization.CypherCoreInvalidLabelReserved(label), nil), true
 			}
 		}
 
 		for key, val := range nodePattern.properties {
 			if !isValidIdentifier(key) {
-				return nil, fmt.Errorf("invalid property key: %q (must be alphanumeric starting with letter or underscore)", key), true
+				return nil, localizedError(localization.CypherCoreInvalidPropertyKey(key), nil), true
 			}
 			if _, ok := val.(invalidPropertyValue); ok {
-				return nil, fmt.Errorf("invalid property value for key %q: malformed syntax", key), true
+				return nil, localizedError(localization.CypherCoreInvalidPropertyValue(key), nil), true
 			}
 		}
 
@@ -2086,7 +2084,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	// This is less safe but maintains backward compatibility
 	if txEngine == nil {
 		if inlineEmbeddingEnabled {
-			return nil, fmt.Errorf("WITH EMBEDDING requires transaction-capable storage")
+			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
@@ -2126,18 +2124,18 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	if engines.namespace != "" {
 		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
 			if err := primer.EnsureNamespaceMVCC(engines.namespace); err != nil {
-				return nil, fmt.Errorf("failed to prime implicit transaction namespace: %w", err)
+				return nil, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
 			}
 		}
 	}
 	tx, err := txEngine.BeginTransaction()
 	if err != nil {
-		return nil, fmt.Errorf("failed to start implicit transaction: %w", err)
+		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
 	}
 	if engines.namespace != "" {
 		if err := tx.SetNamespace(engines.namespace); err != nil {
 			_ = tx.Rollback()
-			return nil, fmt.Errorf("failed to pin implicit transaction namespace: %w", err)
+			return nil, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
 		}
 	}
 
@@ -2145,11 +2143,11 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	// This avoids duplicate per-operation checks and improves write throughput.
 	if err := tx.SetDeferredConstraintValidation(true); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("failed to configure implicit transaction: %w", err)
+		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
 	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("failed to configure implicit transaction: %w", err)
+		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
 	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
 	// Flush and the async engine's ticker-driven flush coalesce durability
@@ -2157,7 +2155,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	// batch into a 300µs syscall for no user-visible benefit.
 	if err := tx.SetImplicit(true); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("failed to configure implicit transaction: %w", err)
+		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
 
 	// Optional WAL transaction markers for receipts.
@@ -2171,7 +2169,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 			walSeqStart, err = wal.AppendTxBegin(dbName, txID, nil)
 			if err != nil {
 				_ = tx.Rollback()
-				return nil, fmt.Errorf("failed to write WAL tx begin: %w", err)
+				return nil, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
 			}
 		}
 	}
@@ -2246,7 +2244,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 		// implicit transaction: ..." which broke the consumer-pinned classifier; aligned
 		// with pkg/cypher/transaction.go:181 so the explicit and implicit paths produce the
 		// same wire shape.
-		return nil, fmt.Errorf("commit failed: %w", err)
+		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
 	}
 
 	// Attach receipt metadata if WAL markers were recorded.
@@ -2287,7 +2285,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		return nil
 	}
 	if e.embedder == nil {
-		return fmt.Errorf("WITH EMBEDDING requires configured embedder")
+		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
 	store := e.getStorage(ctx)
 	for id := range ids {
@@ -2304,7 +2302,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		text := embeddingutil.BuildText(node.Properties, node.Labels, e.inlineEmbeddingTextOptions)
 		chunks, err := e.embedder.ChunkText(text, e.inlineEmbeddingChunkSize, e.inlineEmbeddingChunkOverlap)
 		if err != nil {
-			return fmt.Errorf("WITH EMBEDDING chunking failed for node %s: %w", id, err)
+			return localizedError(localization.CypherCoreEmbeddingChunkFailed(id, err), err)
 		}
 		if len(chunks) == 0 {
 			chunks = []string{text}
@@ -2313,10 +2311,10 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		for _, chunk := range chunks {
 			emb, err := e.embedder.Embed(ctx, chunk)
 			if err != nil {
-				return fmt.Errorf("WITH EMBEDDING embed failed for node %s: %w", id, err)
+				return localizedError(localization.CypherCoreEmbeddingNodeFailed(id, err), err)
 			}
 			if len(emb) == 0 {
-				return fmt.Errorf("WITH EMBEDDING embed returned empty vector for node %s", id)
+				return localizedError(localization.CypherCoreEmbeddingEmptyVector(id), nil)
 			}
 			embeddings = append(embeddings, emb)
 		}

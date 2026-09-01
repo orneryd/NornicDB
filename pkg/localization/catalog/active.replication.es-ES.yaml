@@ -1,0 +1,249 @@
+- id: replication.not_leader
+  description: Escritura rechazada por un nodo que no es líder.
+  other: el nodo no es líder
+- id: replication.no_leader
+  description: No hay ningún líder disponible.
+  other: no hay ningún líder disponible
+- id: replication.operation_timed_out
+  description: Tiempo de espera agotado en una operación de replicación.
+  other: la operación agotó el tiempo de espera
+- id: replication.closed
+  description: Operación sobre un replicador cerrado.
+  other: el replicador está cerrado
+- id: replication.standby_mode
+  description: Escritura intentada en un nodo en espera.
+  other: el nodo está en modo de espera
+- id: replication.not_ready
+  description: La replicación aún no está lista.
+  other: el replicador no está listo
+- id: replication.config.ha_role_required
+  description: Falta el rol de HA. Los valores son identificadores que no se traducen.
+  other: "el modo {{.Mode}} requiere {{.EnvVar}} ({{.PrimaryRole}} o {{.StandbyRole}})"
+- id: replication.config.invalid_ha_role
+  description: Rol de HA no válido. Los roles no se traducen.
+  other: "rol de HA no válido: {{.Role}} (debe ser '{{.PrimaryRole}}' o '{{.StandbyRole}}')"
+- id: replication.config.ha_peer_address_required
+  description: Falta la dirección del par de HA. Los valores no se traducen.
+  other: "el modo {{.Mode}} requiere {{.EnvVar}}"
+- id: replication.config.invalid_ha_sync_mode
+  description: Modo de sincronización de HA no válido. Los modos no se traducen.
+  other: "modo de sincronización de HA no válido: {{.SyncMode}} (debe ser '{{.AsyncMode}}' o '{{.QuorumMode}}')"
+- id: replication.config.raft_peers_required
+  description: Falta la configuración de pares o arranque de Raft. Los valores no se traducen.
+  other: "el modo {{.Mode}} requiere {{.PeersEnvVar}} o {{.BootstrapEnvVar}}=true"
+- id: replication.config.region_id_required
+  description: Falta el identificador de región. Los valores no se traducen.
+  other: "el modo {{.Mode}} requiere {{.EnvVar}}"
+- id: replication.config.invalid_cross_region_sync_mode
+  description: Modo de sincronización entre regiones no válido. Los modos no se traducen.
+  other: "modo de sincronización entre regiones no válido: {{.SyncMode}} (debe ser '{{.AsyncMode}}' o '{{.QuorumMode}}')"
+- id: replication.config.unknown_mode
+  description: Modo de replicación desconocido. Mode no se traduce.
+  other: "modo de replicación desconocido: {{.Mode}}"
+- id: replication.config.node_id_required
+  description: Falta el identificador de nodo. EnvVar no se traduce.
+  other: "se requiere {{.EnvVar}}"
+- id: replication.config.secret_too_short
+  description: Secreto de replicación demasiado corto.
+  other: "el secreto de replicación debe tener al menos {{.MinLength}} caracteres"
+- id: replication.config.tls_cert_required
+  description: Falta la ruta del certificado TLS. EnvVar no se traduce.
+  other: "TLS está habilitado, pero no se estableció {{.EnvVar}}"
+- id: replication.config.tls_key_required
+  description: Falta la ruta de la clave TLS. EnvVar no se traduce.
+  other: "TLS está habilitado, pero no se estableció {{.EnvVar}}"
+- id: replication.config.tls_ca_required
+  description: Falta la ruta de la CA para verificar clientes. EnvVar no se traduce.
+  other: "la verificación de clientes TLS está habilitada, pero no se estableció {{.EnvVar}}"
+- id: replication.config.invalid_tls_min_version
+  description: Versión mínima de TLS no válida. Las versiones no se traducen.
+  other: "versión mínima de TLS no válida: {{.Version}} (debe ser '{{.TLS12}}' o '{{.TLS13}}')"
+- id: replication.transport.closed
+  description: Operación sobre un transporte cerrado.
+  other: el transporte está cerrado
+- id: replication.transport.connect_failed
+  description: Error al conectar con un par. Address y Cause no se traducen.
+  other: "error al conectar con {{.Address}}: {{.Cause}}"
+- id: replication.transport.listen_failed
+  description: Error al iniciar el listener. Address y Cause no se traducen.
+  other: "error al escuchar en {{.Address}}: {{.Cause}}"
+- id: replication.transport.load_tls_cert_key_failed
+  description: Error al cargar la identidad TLS. Cause no se traduce.
+  other: "error al cargar el certificado o la clave TLS: {{.Cause}}"
+- id: replication.transport.read_tls_ca_failed
+  description: Error al leer la CA de TLS. Cause no se traduce.
+  other: "error al leer el archivo de CA de TLS: {{.Cause}}"
+- id: replication.transport.invalid_tls_ca
+  description: El archivo de CA no contiene certificados válidos.
+  other: archivo de CA de TLS no válido
+- id: replication.transport.unknown_tls_cipher_suite
+  description: Suite de cifrado desconocida. CipherSuite no se traduce.
+  other: "suite de cifrado TLS desconocida: {{.CipherSuite}}"
+- id: replication.ha.init_transport_failed
+  description: Error al inicializar el transporte de HA. Cause no se traduce.
+  other: "error al inicializar el transporte: {{.Cause}}"
+- id: replication.ha.start_primary_failed
+  description: Error al iniciar el nodo primario. Cause no se traduce.
+  other: "error al iniciar el nodo primario: {{.Cause}}"
+- id: replication.ha.start_standby_failed
+  description: Error al iniciar el nodo en espera. Cause no se traduce.
+  other: "error al iniciar el nodo en espera: {{.Cause}}"
+- id: replication.ha.flush_wal_failed
+  description: Error al vaciar el WAL. Cause no se traduce.
+  other: "error al vaciar el WAL: {{.Cause}}"
+- id: replication.ha.ack_timed_out
+  description: Tiempo de espera agotado al esperar confirmación. Los valores no se traducen.
+  other: "se agotó el tiempo de espera de confirmación de replicación (mode={{.SyncMode}}, target={{.Target}}): {{.Cause}}"
+- id: replication.ha.primary_cannot_receive_wal
+  description: Se envió un lote de WAL al nodo primario.
+  other: el nodo primario no puede recibir el WAL
+- id: replication.raft.vote_request_required
+  description: Solicitud de voto de Raft nula.
+  other: la solicitud de voto es nula
+- id: replication.raft.append_entries_request_required
+  description: Solicitud AppendEntries de Raft nula.
+  other: la solicitud de adición de entradas es nula
+- id: replication.raft.init_transport_failed
+  description: Error al inicializar el transporte de Raft. Cause no se traduce.
+  other: "error al inicializar el transporte: {{.Cause}}"
+- id: replication.raft.send_vote_request_failed
+  description: Error en el RPC de voto. Cause no se traduce.
+  other: "error al enviar la solicitud de voto: {{.Cause}}"
+- id: replication.raft.send_append_entries_failed
+  description: Error en el RPC AppendEntries. Cause no se traduce.
+  other: "error al enviar la adición de entradas: {{.Cause}}"
+- id: replication.raft.commit_timed_out
+  description: Tiempo de espera agotado al confirmar. Timeout no se traduce.
+  other: "se agotó el tiempo de espera de confirmación después de {{.Timeout}}"
+- id: replication.raft.transport_not_configured
+  description: No se configuró el transporte de Raft.
+  other: no hay ningún transporte configurado
+- id: replication.raft.connect_peer_failed
+  description: Error al conectar con un par de Raft. Address y Cause no se traducen.
+  other: "error al conectar con {{.Address}}: {{.Cause}}"
+- id: replication.raft.forward_to_leader_failed
+  description: Error al reenviar una escritura al líder. Cause no se traduce.
+  other: "error al reenviar al líder: {{.Cause}}"
+- id: replication.raft.apply_queue_full
+  description: La cola de aplicación de Raft está llena.
+  other: la cola de aplicación está llena
+- id: replication.raft.apply_timed_out
+  description: Tiempo de espera agotado al aplicar una operación de Raft.
+  other: se agotó el tiempo de espera de aplicación
+- id: replication.storage.wal_directory_create_failed
+  description: Error al crear el directorio del WAL. Cause no se traduce.
+  other: "error al crear el directorio del WAL: {{.Cause}}"
+- id: replication.storage.wal_create_failed
+  description: Error al crear el WAL. Cause no se traduce.
+  other: "error al crear el WAL: {{.Cause}}"
+- id: replication.storage.command_required
+  description: Comando nulo para el adaptador de almacenamiento.
+  other: el comando es nulo
+- id: replication.storage.wal_append_failed
+  description: Error al añadir datos al WAL. Cause no se traduce.
+  other: "error al añadir datos al WAL: {{.Cause}}"
+- id: replication.storage.unknown_command_type
+  description: Tipo de comando desconocido. CommandType no se traduce.
+  other: "tipo de comando desconocido: {{.CommandType}}"
+- id: replication.storage.decode_node_failed
+  description: Error al decodificar un nodo. Cause no se traduce.
+  other: "error al decodificar el nodo: {{.Cause}}"
+- id: replication.storage.decode_edge_failed
+  description: Error al decodificar una relación. Cause no se traduce.
+  other: "error al decodificar la relación: {{.Cause}}"
+- id: replication.storage.decode_delete_edge_failed
+  description: Error al decodificar una eliminación de relación. Cause no se traduce.
+  other: "error al decodificar la solicitud de eliminación de relación: {{.Cause}}"
+- id: replication.storage.decode_set_property_failed
+  description: Error al decodificar una asignación de propiedad. Cause no se traduce.
+  other: "error al decodificar la solicitud de asignación de propiedad: {{.Cause}}"
+- id: replication.storage.decode_batch_failed
+  description: Error al decodificar un lote. Cause no se traduce.
+  other: "error al decodificar el lote: {{.Cause}}"
+- id: replication.storage.decode_delete_prefix_failed
+  description: Error al decodificar una eliminación por prefijo. Cause no se traduce.
+  other: "error al decodificar la solicitud de eliminación por prefijo: {{.Cause}}"
+- id: replication.storage.prefix_required
+  description: Se requiere un prefijo para la eliminación.
+  other: se requiere el prefijo
+- id: replication.storage.decode_bulk_create_nodes_failed
+  description: Error al decodificar la creación masiva de nodos. Cause no se traduce.
+  other: "error al decodificar la creación masiva de nodos: {{.Cause}}"
+- id: replication.storage.decode_bulk_create_edges_failed
+  description: Error al decodificar la creación masiva de relaciones. Cause no se traduce.
+  other: "error al decodificar la creación masiva de relaciones: {{.Cause}}"
+- id: replication.storage.decode_bulk_delete_nodes_failed
+  description: Error al decodificar la eliminación masiva de nodos. Cause no se traduce.
+  other: "error al decodificar la eliminación masiva de nodos: {{.Cause}}"
+- id: replication.storage.decode_bulk_delete_edges_failed
+  description: Error al decodificar la eliminación masiva de relaciones. Cause no se traduce.
+  other: "error al decodificar la eliminación masiva de relaciones: {{.Cause}}"
+- id: replication.storage.cypher_executor_unavailable
+  description: No hay ejecutor de Cypher para el comando replicado.
+  other: el ejecutor de Cypher no está disponible; no se puede ejecutar el comando Cypher
+- id: replication.storage.decode_cypher_command_failed
+  description: Error al decodificar un comando Cypher. Cause no se traduce.
+  other: "error al deserializar el comando Cypher: {{.Cause}}"
+- id: replication.storage.cypher_query_empty
+  description: Consulta Cypher replicada vacía.
+  other: la consulta Cypher está vacía
+- id: replication.storage.execute_cypher_failed
+  description: Error al ejecutar Cypher replicado. Cause no se traduce.
+  other: "error al ejecutar la consulta Cypher: {{.Cause}}"
+- id: replication.storage.flush_wal_failed
+  description: Error al vaciar el WAL del adaptador. Cause no se traduce.
+  other: "error al vaciar el wal: {{.Cause}}"
+- id: replication.storage.read_wal_entries_failed
+  description: Error al leer entradas del WAL. Cause no se traduce.
+  other: "error al leer las entradas del WAL: {{.Cause}}"
+- id: replication.storage.get_all_nodes_failed
+  description: Error al enumerar nodos para una instantánea. Cause no se traduce.
+  other: "error al obtener todos los nodos: {{.Cause}}"
+- id: replication.storage.get_all_edges_failed
+  description: Error al enumerar relaciones para una instantánea. Cause no se traduce.
+  other: "error al obtener todas las relaciones: {{.Cause}}"
+- id: replication.storage.encode_snapshot_failed
+  description: Error al codificar una instantánea. Cause no se traduce.
+  other: "error al codificar la instantánea: {{.Cause}}"
+- id: replication.storage.read_snapshot_failed
+  description: Error al leer una instantánea. Cause no se traduce.
+  other: "error al leer la instantánea: {{.Cause}}"
+- id: replication.storage.decode_snapshot_failed
+  description: Error al decodificar una instantánea. Cause no se traduce.
+  other: "error al decodificar la instantánea: {{.Cause}}"
+- id: replication.storage.restore_node_failed
+  description: Error al restaurar un nodo. Cause no se traduce.
+  other: "error al restaurar el nodo: {{.Cause}}"
+- id: replication.storage.restore_edge_failed
+  description: Error al restaurar una relación. Cause no se traduce.
+  other: "error al restaurar la relación: {{.Cause}}"
+- id: replication.engine.node_required
+  description: Validación de nodo nulo del motor replicado.
+  other: el nodo es nulo
+- id: replication.engine.edge_required
+  description: Validación de relación nula del motor replicado.
+  other: la relación es nula
+- id: replication.engine.encode_node_failed
+  description: Error al codificar un nodo replicado. Cause no se traduce.
+  other: "error al codificar el nodo: {{.Cause}}"
+- id: replication.engine.encode_edge_failed
+  description: Error al codificar una relación replicada. Cause no se traduce.
+  other: "error al codificar la relación: {{.Cause}}"
+- id: replication.engine.encode_delete_edge_failed
+  description: Error al codificar una eliminación de relación. Cause no se traduce.
+  other: "error al codificar la solicitud de eliminación de relación: {{.Cause}}"
+- id: replication.engine.encode_bulk_create_nodes_failed
+  description: Error al codificar la creación masiva de nodos. Cause no se traduce.
+  other: "error al codificar la creación masiva de nodos: {{.Cause}}"
+- id: replication.engine.encode_bulk_create_edges_failed
+  description: Error al codificar la creación masiva de relaciones. Cause no se traduce.
+  other: "error al codificar la creación masiva de relaciones: {{.Cause}}"
+- id: replication.engine.encode_bulk_delete_nodes_failed
+  description: Error al codificar la eliminación masiva de nodos. Cause no se traduce.
+  other: "error al codificar la eliminación masiva de nodos: {{.Cause}}"
+- id: replication.engine.encode_bulk_delete_edges_failed
+  description: Error al codificar la eliminación masiva de relaciones. Cause no se traduce.
+  other: "error al codificar la eliminación masiva de relaciones: {{.Cause}}"
+- id: replication.engine.encode_delete_prefix_failed
+  description: Error al codificar una eliminación por prefijo. Cause no se traduce.
+  other: "error al codificar la eliminación por prefijo: {{.Cause}}"

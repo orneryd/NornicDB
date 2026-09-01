@@ -4,10 +4,10 @@ package search
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu/vulkan"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // VulkanHNSWBuildAccelerator uses Vulkan compute shaders for HNSW
@@ -25,7 +25,7 @@ type VulkanHNSWBuildAccelerator struct {
 // NewVulkanHNSWBuildAccelerator creates a Vulkan-backed HNSW build accelerator.
 func NewVulkanHNSWBuildAccelerator() (*VulkanHNSWBuildAccelerator, error) {
 	if !vulkan.IsAvailable() {
-		return nil, fmt.Errorf("vulkan: Vulkan is not available on this system")
+		return nil, localizedError(localization.SearchVulkanNotAvailable(), vulkan.ErrVulkanNotAvailable)
 	}
 	device, err := vulkan.NewDevice(0)
 	if err != nil {
@@ -46,7 +46,7 @@ func NewVulkanHNSWBuildAccelerator() (*VulkanHNSWBuildAccelerator, error) {
 
 func (a *VulkanHNSWBuildAccelerator) Prepare(dim int, _ int) error {
 	if dim <= 0 {
-		return fmt.Errorf("invalid HNSW GPU build dimension %d", dim)
+		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
 	a.dim = dim
 	return nil
@@ -61,7 +61,7 @@ func (a *VulkanHNSWBuildAccelerator) candidateSearch(ctx context.Context, querie
 		return make([][]int, len(queries)), make([][]float32, len(queries)), ctx.Err()
 	}
 	if a.device == nil || a.compute == nil {
-		return nil, nil, fmt.Errorf("vulkan: device not initialized")
+		return nil, nil, localizedError(localization.SearchVulkanDeviceNotInitialized(), nil)
 	}
 	if topK > 256 {
 		topK = 256
@@ -200,7 +200,7 @@ func (a *VulkanHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, q
 		return make([][]uint32, len(queries)), make([][]float32, len(queries)), ctx.Err()
 	}
 	if a.device == nil || a.compute == nil {
-		return nil, nil, fmt.Errorf("vulkan: device not initialized")
+		return nil, nil, localizedError(localization.SearchVulkanDeviceNotInitialized(), nil)
 	}
 	if topK > 256 {
 		topK = 256

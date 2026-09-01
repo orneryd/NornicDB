@@ -2,10 +2,10 @@ package multidb
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -455,11 +455,11 @@ func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 func (t *sizeTrackingEngine) connectedEdgeBytes(id storage.NodeID) (int64, error) {
 	outgoing, err := t.Engine.GetOutgoingEdges(id)
 	if err != nil {
-		return 0, fmt.Errorf("get outgoing edges: %w", err)
+		return 0, localizedError(localization.MultidbStorageGetOutgoingEdgesFailed(err), err)
 	}
 	incoming, err := t.Engine.GetIncomingEdges(id)
 	if err != nil {
-		return 0, fmt.Errorf("get incoming edges: %w", err)
+		return 0, localizedError(localization.MultidbStorageGetIncomingEdgesFailed(err), err)
 	}
 	seen := make(map[storage.EdgeID]struct{}, len(outgoing)+len(incoming))
 	var total int64

@@ -2,10 +2,10 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type clusterHNSWLookup func(clusterID int) *HNSWIndex
@@ -43,10 +43,10 @@ func (g *IVFHNSWCandidateGen) SetClusterSelector(fn func(ctx context.Context, qu
 
 func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
 	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, fmt.Errorf("cluster index not clustered")
+		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
 	if g.getClusterHNSW == nil {
-		return nil, fmt.Errorf("cluster HNSW lookup not configured")
+		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -163,27 +164,27 @@ func (e *StorageExecutor) evalDecay(
 	inner := extractFuncArgs(expr, "decay")
 	args := e.splitFunctionArgs(inner)
 	if len(args) == 0 {
-		return decayDisabledMap("no entity argument")
+		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback)
 	}
 
 	ent, ok := e.resolveEntityForDecay(args[0], nodes, rels)
 	if !ok {
-		return decayDisabledMap("entity not found")
+		return decayDisabledMap(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback)
 	}
 
 	be, nowNanos, ok := e.getDecayContext()
 	if !ok {
-		return decayDisabledMap("no BadgerEngine")
+		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback)
 	}
 	if !be.IsDecayEnabled() {
 		e.logDecayMismatchOnce()
-		return decayDisabledMap("decay subsystem disabled")
+		return decayDisabledMap(localization.CypherKnowledgePolicyReasonDecayDisabled().Fallback)
 	}
 
 	ns := storage.ExtractNamespaceFromID(ent.entityID)
 	scorer := be.ScorerForNamespace(ns)
 	if scorer == nil {
-		return decayDisabledMap("no decay profile")
+		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback)
 	}
 
 	var accessMeta *knowledgepolicy.AccessMetaEntry
@@ -265,9 +266,9 @@ func resolutionToMap(res knowledgepolicy.ScoringResolution) map[string]interface
 	applies := !res.NoDecay && res.ResolvedDecayProfileID != ""
 	reason := ""
 	if res.NoDecay {
-		reason = "no decay"
+		reason = localization.CypherKnowledgePolicyReasonNoDecay().Fallback
 	} else if res.ResolvedDecayProfileID == "" {
-		reason = "no decay profile"
+		reason = localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback
 		applies = false
 	}
 	return map[string]interface{}{
@@ -314,7 +315,7 @@ func validateDecayOptions(
 	val := e.evaluateExpressionWithContext(ctx, optExpr, nodes, rels)
 	m, ok := val.(map[string]interface{})
 	if !ok {
-		return "", fmt.Errorf("decayScore/decay options must be a map, got %T", val)
+		return "", localizedError(localization.CypherKnowledgePolicyDecayOptionsMapRequired(fmt.Sprintf("%T", val)), nil)
 	}
 	var property string
 	for k, v := range m {
@@ -323,7 +324,7 @@ func validateDecayOptions(
 			s, _ := v.(string)
 			property = s
 		default:
-			return "", fmt.Errorf("unknown decay option key: %q", k)
+			return "", localizedError(localization.CypherKnowledgePolicyUnknownDecayOption(k), nil)
 		}
 	}
 	return property, nil

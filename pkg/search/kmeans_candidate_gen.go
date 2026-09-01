@@ -23,9 +23,9 @@ package search
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // KMeansCandidateGen implements CandidateGenerator using k-means cluster routing.
@@ -85,7 +85,7 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 		return bruteGen.SearchCandidates(ctx, query, limit, minSimilarity)
 	}
 	if dims := k.clusterIndex.Dimensions(); dims > 0 && len(query) != dims {
-		return nil, fmt.Errorf("cluster search failed: query dimensions %d != index dimensions %d", len(query), dims)
+		return nil, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
 	}
 
 	candidateLimit := boundCandidateLimit(limit)
@@ -103,7 +103,7 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 		results, err = k.clusterIndex.SearchWithClusters(query, candidateLimit, k.numClustersToSearch)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("cluster search failed: %w", err)
+		return nil, localizedError(localization.SearchClusterFailed(err), err)
 	}
 
 	if len(results) == 0 {

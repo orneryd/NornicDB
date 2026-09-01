@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -25,7 +26,7 @@ const deleteStreamingBatchSize = 500
 func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
 	pattern = strings.TrimSpace(pattern)
 	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
-		return "", nil, nil, fmt.Errorf("invalid pattern: %s", pattern)
+		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern), nil)
 	}
 	pattern = pattern[1 : len(pattern)-1]
 
@@ -102,7 +103,7 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	}
 
 	if matchIdx == -1 || deleteIdx == -1 {
-		return nil, fmt.Errorf("DELETE requires a MATCH clause first (e.g., MATCH (n) DELETE n)")
+		return nil, localizedError(localization.CypherMutationsDeleteMatchRequired(), nil)
 	}
 
 	// Parse the delete target variable(s) - e.g., "DELETE n" or "DETACH DELETE n"
@@ -136,14 +137,14 @@ func (e *StorageExecutor) executeDelete(ctx context.Context, cypher string) (*Ex
 	deleteVars := strings.TrimSpace(deleteClause)
 
 	if deleteVars == "" {
-		return nil, fmt.Errorf("DELETE clause must specify variable(s) to delete (e.g., DELETE n)")
+		return nil, localizedError(localization.CypherMutationsDeleteVariablesRequired(), nil)
 	}
 
 	// For DETACH DELETE, ensure deleteIdx points to "DETACH DELETE", not bare "DETACH".
 	if detach && deleteIdx > 0 {
 		checkSubstring := strings.ToUpper(strings.TrimSpace(cypher[deleteIdx:]))
 		if strings.HasPrefix(checkSubstring, "DETACH ") && !strings.HasPrefix(checkSubstring, "DETACH DELETE ") {
-			return nil, fmt.Errorf("DETACH DELETE requires both DETACH and DELETE keywords together")
+			return nil, localizedError(localization.CypherMutationsDetachDeleteKeywordsRequired(), nil)
 		}
 	}
 
@@ -893,7 +894,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	returnIdx := findKeywordIndex(normalized, "RETURN")
 
 	if matchIdx == -1 || setIdx == -1 {
-		return nil, fmt.Errorf("SET requires a MATCH clause first (e.g., MATCH (n) SET n.property = value)")
+		return nil, localizedError(localization.CypherMutationsSetMatchRequired(), nil)
 	}
 
 	// Execute MATCH/WITH pipeline first and retain row scope for SET expression
@@ -964,7 +965,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 	assignments := e.splitSetAssignmentsRespectingBrackets(setPartForAssignments)
 
 	if len(assignments) == 0 || (len(assignments) == 1 && strings.TrimSpace(assignments[0]) == "") {
-		return nil, fmt.Errorf("SET clause requires at least one assignment")
+		return nil, localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 	}
 
 	colIndex := make(map[string]int, len(matchResult.Columns))
@@ -987,7 +988,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			leftVar := strings.TrimSpace(assignment[:plusEqIdx])
 			right := strings.TrimSpace(assignment[plusEqIdx+2:])
 			if leftVar == "" {
-				return nil, fmt.Errorf("SET += requires a variable target")
+				return nil, localizedError(localization.CypherMutationsSetMergeVariableRequired(), nil)
 			}
 			validAssignments++
 			variable = leftVar
@@ -998,21 +999,21 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			if strings.HasPrefix(right, "{") {
 				parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
 				if err != nil {
-					return nil, fmt.Errorf("failed to parse properties in SET +=: %w", err)
+					return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 				}
 				propsToMerge = parsedProps
 			} else if strings.HasPrefix(right, "$") {
 				paramName := strings.TrimSpace(right[1:])
 				if paramName == "" {
-					return nil, fmt.Errorf("SET += requires a valid parameter name after $")
+					return nil, localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
 				}
 				params := getParamsFromContext(ctx)
 				if params == nil {
-					return nil, fmt.Errorf("SET += parameter $%s requires parameters to be provided", paramName)
+					return nil, localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
 				}
 				paramValue, exists := params[paramName]
 				if !exists {
-					return nil, fmt.Errorf("SET += parameter $%s not found in provided parameters", paramName)
+					return nil, localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
 				}
 				propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
 				if err != nil {
@@ -1023,7 +1024,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			} else if isValidIdentifier(right) {
 				mapVarName = right
 			} else {
-				return nil, fmt.Errorf("SET += requires a map or parameter (got: %q)", right)
+				return nil, localizedError(localization.CypherResidualSetMergeMapOrParameterRequired(right), nil)
 			}
 
 			targetIdx, hasTargetIdx := colIndex[leftVar]
@@ -1032,7 +1033,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				propsForRow := propsToMerge
 				if mapVarName != "" && !paramMapUsed {
 					if !hasMapIdx || mapIdx >= len(row) {
-						return nil, fmt.Errorf("SET += requires a map variable in scope (missing %q)", mapVarName)
+						return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
 					}
 					propsMap, err := normalizePropsMap(row[mapIdx], fmt.Sprintf("variable %s", mapVarName))
 					if err != nil {
@@ -1049,7 +1050,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 							result.Stats.PropertiesSet++
 						}
 						if err := store.UpdateNode(node); err != nil {
-							return nil, fmt.Errorf("SET %s +=: %w", leftVar, err)
+							return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
 						}
 						e.notifyNodeMutated(string(node.ID))
 						updated = true
@@ -1069,7 +1070,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 						result.Stats.PropertiesSet++
 					}
 					if err := store.UpdateNode(node); err != nil {
-						return nil, fmt.Errorf("SET %s +=: %w", leftVar, err)
+						return nil, localizedError(localization.CypherMutationsSetMergeUpdateFailed(leftVar, err), err)
 					}
 					e.notifyNodeMutated(string(node.ID))
 				}
@@ -1092,10 +1093,10 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				}
 				if labelVar != "" && labelName != "" {
 					if !isValidIdentifier(labelName) {
-						return nil, fmt.Errorf("invalid label name: %q (must be alphanumeric starting with letter or underscore)", labelName)
+						return nil, localizedError(localization.CypherMutationsInvalidLabelName(labelName), nil)
 					}
 					if containsReservedKeyword(labelName) {
-						return nil, fmt.Errorf("invalid label name: %q (contains reserved keyword)", labelName)
+						return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(labelName), nil)
 					}
 					validAssignments++
 					variable = labelVar
@@ -1137,7 +1138,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					continue
 				}
 			}
-			return nil, fmt.Errorf("invalid SET assignment: %q (expected n.property = value or n:Label)", assignment)
+			return nil, localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
 		}
 
 		left := strings.TrimSpace(assignment[:eqIdx])
@@ -1188,15 +1189,15 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			if strings.HasPrefix(right, "$") {
 				paramName := strings.TrimSpace(right[1:])
 				if paramName == "" {
-					return nil, fmt.Errorf("SET assignment requires a valid parameter name after $")
+					return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
 				}
 				params := getParamsFromContext(ctx)
 				if params == nil {
-					return nil, fmt.Errorf("SET assignment parameter $%s requires parameters to be provided", paramName)
+					return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
 				}
 				paramValue, exists := params[paramName]
 				if !exists {
-					return nil, fmt.Errorf("SET assignment parameter $%s not found in provided parameters", paramName)
+					return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
 				}
 				return normalizePropValue(paramValue), nil
 			}
@@ -1210,7 +1211,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 			variable = strings.TrimSpace(left)
 			targetIdx, hasTargetIdx := colIndex[variable]
 			if !hasTargetIdx {
-				return nil, fmt.Errorf("unknown variable in SET clause: %s", variable)
+				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 			}
 			// Replace properties on matched entities: SET n = { ... }
 			for _, row := range matchResult.Rows {
@@ -1220,7 +1221,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				}
 				props, err := normalizePropsMap(propValue, "SET assignment")
 				if err != nil {
-					return nil, fmt.Errorf("invalid SET assignment: %q (expected variable.property = value or variable = {property: value}): %w", assignment, err)
+					return nil, localizedError(localization.CypherResidualSetEntityAssignmentInvalid(assignment, err), err)
 				}
 				if targetIdx >= len(row) {
 					continue
@@ -1232,7 +1233,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					}
 					entity.Properties = cloneStringAnyMap(props)
 					if err := store.UpdateNode(entity); err != nil {
-						return nil, fmt.Errorf("SET %s =: %w", variable, err)
+						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
 					}
 					result.Stats.PropertiesSet++
 					e.notifyNodeMutated(string(entity.ID))
@@ -1242,12 +1243,12 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 					}
 					entity.Properties = cloneStringAnyMap(props)
 					if err := store.UpdateEdge(entity); err != nil {
-						return nil, fmt.Errorf("SET %s =: %w", variable, err)
+						return nil, localizedError(localization.CypherMutationsSetEntityReplaceFailed(variable, err), err)
 					}
 					result.Stats.PropertiesSet++
 					e.notifyEdgeMutated(string(entity.ID))
 				default:
-					return nil, fmt.Errorf("SET %s = requires a node or relationship", variable)
+					return nil, localizedError(localization.CypherMutationsSetEntityRequired(variable), nil)
 				}
 			}
 			continue
@@ -1256,7 +1257,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 		propName := parts[1]
 		targetIdx, hasTargetIdx := colIndex[variable]
 		if !hasTargetIdx {
-			return nil, fmt.Errorf("unknown variable in SET clause: %s", variable)
+			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(variable), nil)
 		}
 
 		// Update the target variable only; other entities may be carried in row scope.
@@ -1275,7 +1276,7 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				}
 				setNodeProperty(entity, propName, propValue)
 				if err := store.UpdateNode(entity); err != nil {
-					return nil, fmt.Errorf("SET %s.%s: %w", variable, propName, err)
+					return nil, localizedError(localization.CypherMutationsSetPropertyFailed(variable, propName, err), err)
 				}
 				result.Stats.PropertiesSet++
 				e.notifyNodeMutated(string(entity.ID))
@@ -1288,12 +1289,12 @@ func (e *StorageExecutor) executeSet(ctx context.Context, cypher string) (*Execu
 				}
 				entity.Properties[propName] = propValue
 				if err := store.UpdateEdge(entity); err != nil {
-					return nil, fmt.Errorf("SET %s.%s: %w", variable, propName, err)
+					return nil, localizedError(localization.CypherMutationsSetPropertyFailed(variable, propName, err), err)
 				}
 				result.Stats.PropertiesSet++
 				e.notifyEdgeMutated(string(entity.ID))
 			default:
-				return nil, fmt.Errorf("SET %s.%s requires a node or relationship", variable, propName)
+				return nil, localizedError(localization.CypherMutationsSetPropertyEntityRequired(variable, propName), nil)
 			}
 		}
 	}
@@ -1630,24 +1631,24 @@ func firstPostSetClauseIndex(setTail string) int {
 func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailingPart string, matchResult *ExecuteResult, result *ExecuteResult) (*ExecuteResult, error) {
 	unwindPart := strings.TrimSpace(trailingPart)
 	if !strings.HasPrefix(strings.ToUpper(unwindPart), "UNWIND ") {
-		return nil, fmt.Errorf("UNWIND clause expected")
+		return nil, localizedError(localization.CypherMutationsUnwindClauseExpected(), nil)
 	}
 	unwindPart = strings.TrimSpace(unwindPart[len("UNWIND "):])
 
 	asIdx := findKeywordIndex(unwindPart, "AS")
 	if asIdx <= 0 {
-		return nil, fmt.Errorf("UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
+		return nil, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
 
 	unwindExpr := strings.TrimSpace(unwindPart[:asIdx])
 	afterAs := strings.TrimSpace(unwindPart[asIdx+2:])
 	if afterAs == "" {
-		return nil, fmt.Errorf("UNWIND requires a variable after AS")
+		return nil, localizedError(localization.CypherMutationsUnwindVariableRequired(), nil)
 	}
 
 	returnIdx := findKeywordIndex(afterAs, "RETURN")
 	if returnIdx <= 0 {
-		return nil, fmt.Errorf("UNWIND in SET query requires RETURN clause")
+		return nil, localizedError(localization.CypherMutationsUnwindSetReturnRequired(), nil)
 	}
 
 	unwindVar := strings.TrimSpace(afterAs[:returnIdx])
@@ -1655,7 +1656,7 @@ func (e *StorageExecutor) executeSetTrailingUnwind(ctx context.Context, trailing
 		unwindVar = fields[0]
 	}
 	if unwindVar == "" {
-		return nil, fmt.Errorf("UNWIND requires a non-empty AS variable")
+		return nil, localizedError(localization.CypherMutationsUnwindASVariableNonEmpty(), nil)
 	}
 
 	returnClause := strings.TrimSpace(afterAs[returnIdx+6:])
@@ -1750,7 +1751,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 	}
 	withClause := strings.TrimSpace(trailingPart[len("WITH "):returnIdx])
 	if withClause == "" {
-		return nil, true, fmt.Errorf("WITH clause requires at least one expression")
+		return nil, true, localizedError(localization.CypherMutationsWithExpressionRequired(), nil)
 	}
 	for _, kw := range []string{"ORDER BY", "LIMIT", "SKIP", "UNWIND", "OPTIONAL MATCH", "MATCH", "CALL"} {
 		if findKeywordIndex(withClause, kw) >= 0 {
@@ -1774,7 +1775,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 			expr := strings.TrimSpace(item[:asIdx])
 			alias := strings.TrimSpace(item[asIdx+2:])
 			if expr == "" || alias == "" {
-				return nil, true, fmt.Errorf("invalid WITH item: %q", item)
+				return nil, true, localizedError(localization.CypherResidualWithItemInvalid(item), nil)
 			}
 			parsedWith = append(parsedWith, withExpr{expr: expr, alias: alias})
 			continue
@@ -1782,7 +1783,7 @@ func (e *StorageExecutor) executeSetTrailingWithReturn(ctx context.Context, trai
 		parsedWith = append(parsedWith, withExpr{expr: item, alias: item})
 	}
 	if len(parsedWith) == 0 {
-		return nil, true, fmt.Errorf("WITH clause requires at least one expression")
+		return nil, true, localizedError(localization.CypherMutationsWithExpressionRequired(), nil)
 	}
 
 	returnClause := strings.TrimSpace(trailingPart[returnIdx+len("RETURN"):])
@@ -1988,7 +1989,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 	// Parse: n += $properties or n += {key: value}
 	plusEqIdx := strings.Index(setPart, "+=")
 	if plusEqIdx == -1 {
-		return nil, fmt.Errorf("expected += operator")
+		return nil, localizedError(localization.CypherMutationsSetMergeOperatorExpected(), nil)
 	}
 
 	variable := strings.TrimSpace(setPart[:plusEqIdx])
@@ -2003,7 +2004,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 		// Inline properties: {key: value, ...}
 		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, right)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse properties in SET +=: %w", err)
+			return nil, localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 		}
 		propsToMerge = parsedProps
 	} else if strings.HasPrefix(right, "$") {
@@ -2011,19 +2012,19 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 		// Extract parameter name (remove $ prefix)
 		paramName := strings.TrimSpace(right[1:])
 		if paramName == "" {
-			return nil, fmt.Errorf("SET += requires a valid parameter name after $")
+			return nil, localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
 		}
 
 		// Retrieve parameters from context
 		params := getParamsFromContext(ctx)
 		if params == nil {
-			return nil, fmt.Errorf("SET += parameter $%s requires parameters to be provided", paramName)
+			return nil, localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
 		}
 
 		// Look up the parameter value
 		paramValue, exists := params[paramName]
 		if !exists {
-			return nil, fmt.Errorf("SET += parameter $%s not found in provided parameters", paramName)
+			return nil, localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
 		}
 
 		propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
@@ -2036,7 +2037,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 		// Map variable: SET n += props
 		mapVarName = right
 	} else {
-		return nil, fmt.Errorf("SET += requires a map or parameter (got: %q)", right)
+		return nil, localizedError(localization.CypherResidualSetMergeMapOrParameterRequired(right), nil)
 	}
 
 	// Collect updated nodes for RETURN
@@ -2053,7 +2054,7 @@ func (e *StorageExecutor) executeSetMerge(ctx context.Context, matchResult *Exec
 		propsForRow := propsToMerge
 		if mapVarName != "" && !paramMapUsed {
 			if !hasMapIdx || mapIdx >= len(row) {
-				return nil, fmt.Errorf("SET += requires a map variable in scope (missing %q)", mapVarName)
+				return nil, localizedError(localization.CypherMutationsSetMergeMapScopeRequired(mapVarName), nil)
 			}
 			propsMap, err := normalizePropsMap(row[mapIdx], fmt.Sprintf("variable %s", mapVarName))
 			if err != nil {
@@ -2137,13 +2138,13 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 		for k, v := range genericMap {
 			keyStr, ok := k.(string)
 			if !ok {
-				return nil, fmt.Errorf("SET += %s must be a map with string keys, got key type %T", source, k)
+				return nil, localizedError(localization.CypherMutationsSetMergeStringKeysRequired(source, fmt.Sprintf("%T", k)), nil)
 			}
 			propsMap[keyStr] = normalizePropValue(v)
 		}
 		return propsMap, nil
 	}
-	return nil, fmt.Errorf("SET += %s must be a map, got type %T", source, value)
+	return nil, localizedError(localization.CypherMutationsSetMergeMapRequired(source, fmt.Sprintf("%T", value)), nil)
 }
 
 func normalizePropValue(value interface{}) interface{} {
@@ -2214,7 +2215,7 @@ func (e *StorageExecutor) executeRemove(ctx context.Context, cypher string) (*Ex
 	returnIdx := findKeywordIndex(normalized, "RETURN")
 
 	if matchIdx == -1 || removeIdx == -1 {
-		return nil, fmt.Errorf("REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)")
+		return nil, localizedError(localization.CypherMutationsRemoveMatchRequired(), nil)
 	}
 
 	// Execute the MATCH/WITH pipeline while preserving every entity that can
@@ -2825,7 +2826,7 @@ func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *sto
 	// Extract the subquery body from COLLECT { ... }
 	subqueryBody := e.extractCollectSubquery(subquery)
 	if subqueryBody == "" {
-		return nil, fmt.Errorf("invalid COLLECT subquery syntax")
+		return nil, localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
 	}
 
 	// The subquery body should be a complete query like:
@@ -2856,13 +2857,13 @@ func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *sto
 		substitutedQuery = beforeReturn + newWhere + afterReturn
 	} else {
 		// No RETURN clause - this shouldn't happen, but handle it
-		return nil, fmt.Errorf("COLLECT subquery must have a RETURN clause")
+		return nil, localizedError(localization.CypherResidualCollectSubqueryReturnRequired(), nil)
 	}
 
 	// Execute the subquery
 	subqueryResult, err := e.executeInternal(ctx, substitutedQuery, nil)
 	if err != nil {
-		return nil, fmt.Errorf("COLLECT subquery execution failed: %w", err)
+		return nil, localizedError(localization.CypherResidualCollectSubqueryExecutionFailed(err), err)
 	}
 
 	// Collect all values from the first column of the subquery result
@@ -3856,8 +3857,7 @@ func checkPolicyForEdge(edgeType string, sourceLabels, targetLabels []string, po
 		}
 		if p.PolicyMode == "DISALLOWED" {
 			if sliceContains(sourceLabels, p.SourceLabel) && sliceContains(targetLabels, p.TargetLabel) {
-				return fmt.Errorf("policy constraint %q violated: (%s)-[:%s]->(%s) is DISALLOWED",
-					p.Name, p.SourceLabel, edgeType, p.TargetLabel)
+				return localizedError(localization.CypherResidualPolicyDisallowed(p.Name, p.SourceLabel, edgeType, p.TargetLabel), nil)
 			}
 		} else if p.PolicyMode == "ALLOWED" {
 			relevantAllowed = append(relevantAllowed, p)
@@ -3874,7 +3874,7 @@ func checkPolicyForEdge(edgeType string, sourceLabels, targetLabels []string, po
 			}
 		}
 		if !matched {
-			return fmt.Errorf("policy constraint violated: no ALLOWED policy permits edge of type %s with these endpoint labels", edgeType)
+			return localizedError(localization.CypherResidualPolicyAllowedRequired(edgeType), nil)
 		}
 	}
 

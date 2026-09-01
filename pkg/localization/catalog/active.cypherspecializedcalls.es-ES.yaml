@@ -1,0 +1,106 @@
+- id: cypherspecializedcalls.vector_query_parse_failed
+  other: "error al analizar la consulta vectorial: {{.Cause}}"
+- id: cypherspecializedcalls.string_query_embedder_required
+  other: "se proporcionó una consulta de texto, pero no hay ningún generador de embeddings configurado; use un vector o configure el servicio de embeddings"
+- id: cypherspecializedcalls.embed_query_text_failed
+  other: "no se pudo generar el embedding de la consulta '{{.Query}}': {{.Cause}}"
+- id: cypherspecializedcalls.parameter_not_provided
+  other: "no se proporcionó el parámetro ${{.Parameter}}"
+- id: cypherspecializedcalls.parameter_non_numeric
+  other: "el parámetro ${{.Parameter}} contiene un valor no numérico: {{.ValueType}}"
+- id: cypherspecializedcalls.parameter_string_embedder_required
+  other: "el parámetro ${{.Parameter}} es una cadena, pero no hay ningún generador de embeddings configurado; proporcione un vector o configure el servicio de embeddings"
+- id: cypherspecializedcalls.embed_parameter_failed
+  other: "no se pudo generar el embedding del valor '{{.Value}}' del parámetro ${{.Parameter}}: {{.Cause}}"
+- id: cypherspecializedcalls.parameter_unsupported_type
+  other: "el parámetro ${{.Parameter}} tiene un tipo no compatible con la consulta vectorial: {{.ValueType}} (se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherspecializedcalls.unsupported_parameters
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda; los parámetros {{.Parameters}} tienen un tipo no compatible (se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherspecializedcalls.query_input_possibly_unsupported
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda (es posible que el parámetro tenga un tipo no compatible; se esperaba []float32, []float64, []interface{} o string)"
+- id: cypherspecializedcalls.query_input_required
+  other: "no se proporcionó un vector de consulta ni texto de búsqueda"
+- id: cypherspecializedcalls.vector_query_failed
+  other: "la consulta vectorial falló"
+- id: cypherspecializedcalls.embedder_not_configured
+  other: "no hay ningún generador de embeddings configurado"
+- id: cypherspecializedcalls.vector_embed_invalid_syntax
+  other: "sintaxis de db.index.vector.embed no válida"
+- id: cypherspecializedcalls.vector_embed_argument_required
+  other: "db.index.vector.embed requiere un argumento"
+- id: cypherspecializedcalls.vector_embed_unmatched_parenthesis
+  other: "paréntesis sin pareja en db.index.vector.embed"
+- id: cypherspecializedcalls.vector_embed_text_required
+  other: "db.index.vector.embed requiere texto no vacío"
+- id: cypherspecializedcalls.vector_embed_parameter_string
+  other: "el parámetro ${{.Parameter}} de db.index.vector.embed debe ser STRING"
+- id: cypherspecializedcalls.vector_embed_string_required
+  other: "db.index.vector.embed requiere texto STRING"
+- id: cypherspecializedcalls.vector_embed_failed
+  other: "no se pudo generar el embedding de la consulta: {{.Cause}}"
+- id: cypherspecializedcalls.vector_procedure_not_found
+  other: "no se encontró el procedimiento de consulta vectorial"
+- id: cypherspecializedcalls.vector_parameters_missing
+  other: "faltan parámetros"
+- id: cypherspecializedcalls.vector_unmatched_parenthesis
+  other: "paréntesis sin pareja"
+- id: cypherspecializedcalls.fulltext_index_not_found
+  other: "no existe tal índice de esquema de texto completo: {{.Index}}"
+- id: cypherspecializedcalls.fulltext_argument_count
+  other: "sintaxis de consulta de texto completo no válida: se esperaban 2 o 3 argumentos"
+- id: cypherspecializedcalls.procedure_options_map_required
+  other: "las opciones del procedimiento deben ser un MAP"
+- id: cypherspecializedcalls.fulltext_option_invalid
+  other: "opción de texto completo options.{{.Option}} no válida: {{.Value}}"
+- id: cypherspecializedcalls.temporal_assert_argument_count
+  other: "db.temporal.assertNoOverlap requiere 7 parámetros más systemTime y systemSequence opcionales"
+- id: cypherspecializedcalls.datetime_required
+  other: "{{.Argument}} debe ser una fecha y hora válida"
+- id: cypherspecializedcalls.temporal_read_nodes_failed
+  other: "no se pudieron leer los nodos de la etiqueta {{.Label}}: {{.Cause}}"
+- id: cypherspecializedcalls.temporal_overlap
+  other: "se detectó un solapamiento temporal para {{.Property}}={{.Value}}"
+- id: cypherspecializedcalls.temporal_asof_argument_count
+  other: "db.temporal.asOf requiere 6 parámetros más systemTime y systemSequence opcionales"
+- id: cypherspecializedcalls.temporal_lookup_failed
+  other: "la búsqueda temporal falló para la etiqueta {{.Label}}: {{.Cause}}"
+- id: cypherspecializedcalls.temporal_invalid_syntax
+  other: "sintaxis de {{.Procedure}} no válida"
+- id: cypherspecializedcalls.temporal_closing_parenthesis
+  other: "falta el paréntesis de cierre en {{.Procedure}}"
+- id: cypherspecializedcalls.argument_required
+  other: "{{.Argument}} es obligatorio"
+- id: cypherspecializedcalls.argument_empty
+  other: "{{.Argument}} no puede estar vacío"
+- id: cypherspecializedcalls.unsigned_non_negative
+  other: "{{.Argument}} debe ser no negativo"
+- id: cypherspecializedcalls.unsigned_whole_non_negative
+  other: "{{.Argument}} debe ser un número entero no negativo"
+- id: cypherspecializedcalls.unsigned_valid
+  other: "{{.Argument}} debe ser un uint64 válido"
+- id: cypherspecializedcalls.txlog_invalid_syntax
+  other: "sintaxis de {{.Procedure}} no válida"
+- id: cypherspecializedcalls.txlog_closing_parenthesis
+  other: "falta el paréntesis de cierre en {{.Procedure}}"
+- id: cypherspecializedcalls.txlog_entries_argument_required
+  other: "db.txlog.entries requiere al menos el parámetro fromSeq"
+- id: cypherspecializedcalls.txlog_invalid_sequence
+  other: "{{.Argument}} no válido: {{.Cause}}"
+- id: cypherspecializedcalls.txlog_from_sequence_positive
+  other: "fromSeq debe ser mayor que 0"
+- id: cypherspecializedcalls.wal_unavailable
+  other: "WAL no está disponible (base de datos solo en memoria)"
+- id: cypherspecializedcalls.wal_config_unavailable
+  other: "la configuración de WAL no está disponible"
+- id: cypherspecializedcalls.wal_directory_not_configured
+  other: "el directorio de WAL no está configurado"
+- id: cypherspecializedcalls.txlog_sequence_order
+  other: "toSeq debe ser >= fromSeq"
+- id: cypherspecializedcalls.txlog_read_entries_failed
+  other: "no se pudieron leer las entradas de WAL: {{.Cause}}"
+- id: cypherspecializedcalls.txlog_by_id_argument_required
+  other: "db.txlog.byTxId requiere el parámetro txId"
+- id: cypherspecializedcalls.txlog_id_empty
+  other: "txId no puede estar vacío"
+- id: cypherspecializedcalls.txlog_find_entries_failed
+  other: "no se pudieron buscar las entradas de WAL: {{.Cause}}"

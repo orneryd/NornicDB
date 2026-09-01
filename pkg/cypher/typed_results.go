@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // TypedExecuteResult wraps query results with typed row access.
@@ -39,7 +41,7 @@ func TypedExecute[T any](ctx context.Context, exec *StorageExecutor, cypher stri
 	for _, row := range rawResult.Rows {
 		var decoded T
 		if err := decodeRow(rawResult.Columns, row, &decoded); err != nil {
-			return nil, fmt.Errorf("failed to decode row: %w", err)
+			return nil, localizedError(localization.CypherCoreTypedDecodeRowFailed(err), err)
 		}
 		typedRows = append(typedRows, decoded)
 	}
@@ -56,7 +58,7 @@ func TypedExecute[T any](ctx context.Context, exec *StorageExecutor, cypher stri
 func decodeRow(columns []string, values []interface{}, dest interface{}) error {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
-		return fmt.Errorf("dest must be a non-nil pointer")
+		return localizedError(localization.CypherCoreTypedDestinationPointerRequired(), nil)
 	}
 
 	destElem := destVal.Elem()
@@ -81,7 +83,7 @@ func decodeRow(columns []string, values []interface{}, dest interface{}) error {
 		return decodeStruct(columns, values, destElem)
 	}
 
-	return fmt.Errorf("unsupported destination type: %v", destElem.Kind())
+	return localizedError(localization.CypherCoreTypedDestinationUnsupported(destElem.Kind().String()), nil)
 }
 
 // decodeStruct decodes column/value pairs into a struct
@@ -135,7 +137,7 @@ func decodeStruct(columns []string, values []interface{}, destElem reflect.Value
 		}
 
 		if err := assignValue(field, values[i]); err != nil {
-			return fmt.Errorf("field %s: %w", col, err)
+			return localizedError(localization.CypherCoreTypedFieldFailed(col, err), err)
 		}
 	}
 
@@ -181,7 +183,7 @@ func decodeMap(m map[string]interface{}, destElem reflect.Value) error {
 		}
 
 		if err := assignValue(fieldVal, val); err != nil {
-			return fmt.Errorf("field %s: %w", name, err)
+			return localizedError(localization.CypherCoreTypedFieldFailed(name, err), err)
 		}
 	}
 
@@ -208,7 +210,7 @@ func assignValue(field reflect.Value, val interface{}) error {
 				t, err = time.Parse("2006-01-02 15:04:05", v)
 			}
 			if err != nil {
-				return fmt.Errorf("cannot parse time: %v", v)
+				return localizedError(localization.CypherCoreTypedTimeParseFailed(v, err), err)
 			}
 			field.Set(reflect.ValueOf(t))
 			return nil
@@ -261,7 +263,7 @@ func assignValue(field reflect.Value, val interface{}) error {
 		return nil
 	}
 
-	return fmt.Errorf("cannot assign %T to %v", val, field.Type())
+	return localizedError(localization.CypherCoreTypedAssignmentFailed(val, field.Type().String()), nil)
 }
 
 // ============================================

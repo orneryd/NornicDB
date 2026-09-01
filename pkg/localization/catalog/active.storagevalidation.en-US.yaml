@@ -1,0 +1,188 @@
+- id: storage.remote.uri_required
+  other: remote engine URI cannot be empty
+- id: storage.remote.database_required
+  other: remote engine database cannot be empty
+- id: storage.remote.uri_scheme_unsupported
+  other: "unsupported remote engine URI scheme: {{.URI}} (expected bolt://, neo4j://, http://, or https://)"
+- id: storage.remote.bolt_driver_create_failed
+  other: "failed to create Bolt driver: {{.Cause}}"
+- id: storage.remote.result_keys_failed
+  other: "failed to get result keys: {{.Cause}}"
+- id: storage.remote.transaction_decode_failed
+  other: "remote tx decode failed (status={{.Status}}): {{.Cause}}"
+- id: storage.remote.error
+  other: "{{.Code}}: {{.Detail}}"
+- id: storage.remote.transaction_open_decode_failed
+  other: "remote tx open decode failed (status={{.Status}}): {{.Cause}}"
+- id: storage.remote.transaction_commit_url_missing
+  other: remote tx open returned empty commit URL
+- id: storage.remote.transaction_closed
+  other: remote transaction is closed
+- id: storage.remote.node_map_expected
+  other: "expected node map, got {{.ActualType}}"
+- id: storage.remote.relationship_map_expected
+  other: "expected relationship map, got {{.ActualType}}"
+- id: storage.remote.create_node_no_rows
+  other: remote create node returned no rows
+- id: storage.remote.delete_prefix_unsupported
+  other: "DeleteByPrefix is not supported for remote engines (prefix={{.Prefix}})"
+- id: storage.property.invalid_value
+  other: 'invalid property value for key {{printf "%q" .Key}}: {{.Cause}}'
+- id: storage.property.invalid_index
+  other: "index {{.Index}}: {{.Cause}}"
+- id: storage.property.invalid_map_key
+  other: 'key {{printf "%q" .Key}}: {{.Cause}}'
+- id: storage.property.type_unsupported
+  other: "unsupported property value type {{.ActualType}}"
+- id: storage.validation.unknown_constraint_type
+  other: "unknown constraint type: {{.ConstraintType}}"
+- id: storage.validation.refresh_unique_scan_failed
+  other: "refresh unique constraint values: scan nodes: {{.Cause}}"
+- id: storage.validation.refresh_unique_failed
+  other: "refresh unique constraint values: {{.Cause}}"
+- id: storage.validation.scan_edges_failed
+  other: "scanning edges: {{.Cause}}"
+- id: storage.validation.relationship_constraint_type_unsupported
+  other: "unsupported relationship constraint type: {{.ConstraintType}}"
+- id: storage.validation.relationship_unique_duplicate
+  other: "Cannot create UNIQUE constraint on relationship: edges {{.FirstEdgeID}} and {{.SecondEdgeID}} both have {{.Property}}={{.Value}}"
+- id: storage.validation.relationship_composite_duplicate
+  other: "Cannot create UNIQUE constraint on relationship: edges {{.FirstEdgeID}} and {{.SecondEdgeID}} have duplicate composite key {{.Key}}"
+- id: storage.validation.relationship_property_missing
+  other: "Cannot create constraint on relationship: edge {{.EdgeID}} is missing required property {{.Property}}"
+- id: storage.validation.edge_key_null
+  other: "edge {{.EdgeID}} has null {{.Property}}"
+- id: storage.validation.temporal_properties_at_least_three
+  other: "TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)"
+- id: storage.validation.temporal_creation_failed
+  other: "Cannot create TEMPORAL constraint: {{.Detail}}"
+- id: storage.validation.temporal_edge_invalid
+  other: "Cannot create TEMPORAL constraint: edge {{.EdgeID}} has invalid {{.Property}}"
+- id: storage.validation.temporal_edges_overlap
+  other: "Cannot create TEMPORAL constraint: overlap between edges {{.FirstEdgeID}} and {{.SecondEdgeID}}"
+- id: storage.validation.domain_property_count
+  other: "DOMAIN constraint requires exactly 1 property, got {{.Actual}}"
+- id: storage.validation.domain_allowed_values_required
+  other: DOMAIN constraint requires at least one allowed value
+- id: storage.validation.scan_nodes_failed
+  other: "scanning nodes: {{.Cause}}"
+- id: storage.validation.domain_node_invalid
+  other: "Cannot create DOMAIN constraint: node {{.NodeID}} has {{.Property}}={{.Value}} which is not in allowed values {{.AllowedValues}}"
+- id: storage.validation.domain_edge_invalid
+  other: "Cannot create DOMAIN constraint: edge {{.EdgeID}} has {{.Property}}={{.Value}} which is not in allowed values {{.AllowedValues}}"
+- id: storage.validation.cardinality_creation_exceeded
+  other: "Cannot create CARDINALITY constraint: node {{.NodeID}} has {{.Count}} {{.Direction}} {{.RelationshipType}} edges, exceeding max count {{.MaxCount}}"
+- id: storage.validation.disallowed_policy_creation
+  other: "Cannot create DISALLOWED policy: edge {{.EdgeID}} connects {{.StartNodeID}} (:{{.SourceLabel}}) to {{.EndNodeID}} (:{{.TargetLabel}}) via :{{.RelationshipType}}"
+- id: storage.validation.allowed_policy_creation
+  other: "Cannot create ALLOWED policy: existing edge {{.EdgeID}} connects {{.StartNodeID}} to {{.EndNodeID}} via :{{.RelationshipType}}, which is not covered by any ALLOWED pair"
+- id: storage.validation.unique_property_count
+  other: "UNIQUE constraint requires exactly 1 property, got {{.Actual}}"
+- id: storage.validation.node_unique_duplicate
+  other: "Cannot create UNIQUE constraint: nodes {{.FirstNodeID}} and {{.SecondNodeID}} both have {{.Property}}={{.Value}}"
+- id: storage.validation.node_key_property_required
+  other: NODE KEY constraint requires at least 1 property
+- id: storage.validation.node_key_null_creation
+  other: "Cannot create NODE KEY constraint: node {{.NodeID}} has null value for property {{.Property}}"
+- id: storage.validation.node_key_duplicate_creation
+  other: "Cannot create NODE KEY constraint: nodes {{.FirstNodeID}} and {{.SecondNodeID}} both have composite key {{.Properties}}={{.Values}}"
+- id: storage.validation.exists_property_count
+  other: "EXISTS constraint requires exactly 1 property, got {{.Actual}}"
+- id: storage.validation.node_exists_missing_creation
+  other: "Cannot create EXISTS constraint: node {{.NodeID}} is missing required property {{.Property}}"
+- id: storage.validation.temporal_properties_exactly_three
+  other: "TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)"
+- id: storage.validation.temporal_node_key_null_creation
+  other: "Cannot create TEMPORAL constraint: node {{.NodeID}} has null {{.Property}}"
+- id: storage.validation.temporal_node_invalid_creation
+  other: "Cannot create TEMPORAL constraint: node {{.NodeID}} has invalid {{.Property}}"
+- id: storage.validation.temporal_nodes_overlap_creation
+  other: "Cannot create TEMPORAL constraint: overlap between {{.FirstNodeID}} and {{.SecondNodeID}}"
+- id: storage.validation.relationship_unique_property_count
+  other: UNIQUE constraint on relationships requires exactly 1 property
+- id: storage.validation.relationship_exists_property_count
+  other: EXISTS constraint on relationships requires exactly 1 property
+- id: storage.validation.relationship_exists_missing
+  other: "Cannot create EXISTS constraint on relationship: edge {{.EdgeID}} is missing required property {{.Property}}"
+- id: storage.validation.expected_type
+  other: "expected {{.ExpectedType}}, got {{.ActualType}}"
+- id: storage.validation.unknown_property_type
+  other: "unknown property type: {{.PropertyType}}"
+- id: storage.validation.node_property_invalid
+  other: "node {{.NodeID}} property {{.Property}}: {{.Cause}}"
+- id: storage.validation.relationship_property_invalid
+  other: "relationship {{.EdgeID}} property {{.Property}}: {{.Cause}}"
+- id: storage.transaction.engine_closed
+  other: engine is closed
+- id: storage.transaction.namespace_required
+  other: namespace must be non-empty
+- id: storage.transaction.cross_namespace
+  other: 'transaction spans multiple namespaces: pinned to {{printf "%q" .PinnedNamespace}}, attempted {{printf "%q" .AttemptedNamespace}}'
+- id: storage.transaction.id_namespace_required
+  other: "ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: {{.ID}}"
+- id: storage.transaction.start_node_missing
+  other: "start node {{.NodeID}} does not exist"
+- id: storage.transaction.end_node_missing
+  other: "end node {{.NodeID}} does not exist"
+- id: storage.transaction.constraint_violation
+  other: "constraint violation: {{.Cause}}"
+- id: storage.transaction.commit_namespace_missing
+  other: "commit: transaction has writes but no pinned namespace"
+- id: storage.transaction.commit_conflict
+  other: "conflict detected: concurrent transaction modified data before commit: {{.Cause}}"
+- id: storage.transaction.metadata_too_large
+  other: "transaction metadata too large: {{.Actual}} chars (max {{.Maximum}})"
+- id: storage.transaction.edge_changed
+  other: "conflict detected: edge {{.EdgeID}} changed after transaction start"
+- id: storage.transaction.node_changed
+  other: "conflict detected: node {{.NodeID}} changed after transaction start"
+- id: storage.transaction.node_changed_detailed
+  other: "conflict detected: node {{.NodeID}} changed after transaction start (head={{.Head}}, readTS={{.ReadTimestamp}})"
+- id: storage.transaction.concurrent_modification
+  other: "conflict detected: concurrent transaction modified data before commit"
+- id: storage.transaction.endpoint_deleted
+  other: "conflict detected: endpoint node {{.NodeID}} was deleted after transaction start"
+- id: storage.transaction.adjacent_edge_changed
+  other: "conflict detected: node {{.NodeID}} has adjacent edge {{.EdgeID}} changed after transaction start"
+- id: storage.validation.property_domain_invalid
+  other: "Property {{.Property}} value {{.Value}} is not in allowed values {{.AllowedValues}}"
+- id: storage.validation.property_type_required
+  other: "Property {{.Property}} must be {{.ExpectedType}} ({{.Cause}})"
+- id: storage.validation.node_unique_in_transaction
+  other: "Node with {{.Property}}={{.Value}} already exists in transaction"
+- id: storage.validation.node_unique_existing
+  other: "Node with {{.Property}}={{.Value}} already exists (nodeID: {{.NodeID}})"
+- id: storage.validation.node_unique_concurrent
+  other: "Node with {{.Property}}={{.Value}} already exists (claimed by concurrent commit)"
+- id: storage.validation.node_key_null
+  other: "NODE KEY property {{.Property}} cannot be null"
+- id: storage.validation.node_key_in_transaction
+  other: "Node with key {{.Properties}}={{.Values}} already exists in transaction"
+- id: storage.validation.node_composite_key_existing
+  other: "Node with composite key {{.Properties}}={{.Values}} already exists (nodeID: {{.NodeID}})"
+- id: storage.validation.required_property_missing
+  other: "Property {{.Property}} is required but missing"
+- id: storage.validation.temporal_key_null
+  other: "TEMPORAL key property {{.Property}} cannot be null"
+- id: storage.validation.temporal_start_invalid
+  other: "TEMPORAL start property {{.Property}} must be a datetime"
+- id: storage.validation.temporal_node_required
+  other: "TEMPORAL constraint requires {{.Property}} for node {{.NodeID}}"
+- id: storage.validation.temporal_node_overlap
+  other: "TEMPORAL constraint violation: overlap with node {{.NodeID}} for {{.Property}}={{.Value}}"
+- id: storage.validation.relationship_unique_existing
+  other: "Relationship with {{.Property}}={{.Value}} already exists (edgeID: {{.EdgeID}})"
+- id: storage.validation.relationship_composite_existing
+  other: "Relationship with duplicate composite key already exists (edgeID: {{.EdgeID}})"
+- id: storage.validation.temporal_edge_overlap
+  other: "TEMPORAL constraint violation: overlap with edge {{.EdgeID}} for key={{.Key}}"
+- id: storage.validation.cardinality_exceeded
+  other: "Adding this edge would exceed max {{.Direction}} count of {{.MaxCount}} for relationship type {{.RelationshipType}} on node {{.NodeID}} (current: {{.Current}})"
+- id: storage.validation.disallowed_policy
+  other: 'DISALLOWED policy violation: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) is forbidden (constraint {{printf "%q" .ConstraintName}})'
+- id: storage.validation.allowed_policy
+  other: "ALLOWED policy violation: no ALLOWED policy permits (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}})"
+- id: storage.validation.label_change_disallowed
+  other: 'Label change would violate DISALLOWED policy: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) (constraint {{printf "%q" .ConstraintName}})'
+- id: storage.validation.label_change_allowed
+  other: "Label change would violate ALLOWED policy: no ALLOWED policy permits (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}})"

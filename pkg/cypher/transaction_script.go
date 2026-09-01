@@ -2,10 +2,10 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -98,7 +98,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		return e.handleRollback()
 	default:
 		_, _ = e.handleRollback()
-		return nil, fmt.Errorf("invalid transaction script action: %s", action)
+		return nil, localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil)
 	}
 }
 
@@ -106,14 +106,14 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	upper := strings.ToUpper(scriptBody)
 	caseIdx := strings.Index(upper, "CASE")
 	if caseIdx <= 0 {
-		return nil, fmt.Errorf("invalid transaction CASE script: missing CASE block")
+		return nil, localizedError(localization.CypherTransactionsCaseBlockMissing(), nil)
 	}
 
 	callQuery := strings.TrimSpace(scriptBody[:caseIdx])
 	caseBlock := strings.TrimSpace(scriptBody[caseIdx:])
 	matches := txCaseRollbackPattern.FindStringSubmatch(caseBlock)
 	if len(matches) != 3 {
-		return nil, fmt.Errorf("invalid transaction CASE syntax: expected CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT")
+		return nil, localizedError(localization.CypherTransactionsCaseSyntaxInvalid(), nil)
 	}
 	conditionExpr := strings.TrimSpace(matches[1])
 	returnExpr := strings.TrimSpace(matches[2])
@@ -228,6 +228,6 @@ func (e *StorageExecutor) evaluateConditionExpression(ctx context.Context, expr 
 	case nil:
 		return false, nil
 	default:
-		return false, fmt.Errorf("condition expression did not evaluate to boolean: %v", v)
+		return false, localizedError(localization.CypherTransactionsConditionNotBoolean(v), nil)
 	}
 }

@@ -2,10 +2,10 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -25,30 +25,30 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string)
 	upper := strings.ToUpper(cypher)
 	startIdx := strings.Index(upper, "DB.TXLOG.ENTRIES(")
 	if startIdx == -1 {
-		return nil, fmt.Errorf("invalid db.txlog.entries syntax")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.entries"), nil)
 	}
 
 	// Extract parameters
 	paramStart := startIdx + len("DB.TXLOG.ENTRIES(")
 	paramEnd := strings.Index(cypher[paramStart:], ")")
 	if paramEnd == -1 {
-		return nil, fmt.Errorf("missing closing parenthesis in db.txlog.entries")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogClosingParenthesis("db.txlog.entries"), nil)
 	}
 	paramsStr := strings.TrimSpace(cypher[paramStart : paramStart+paramEnd])
 
 	// Parse parameters (comma-separated)
 	parts := strings.Split(paramsStr, ",")
 	if len(parts) < 1 {
-		return nil, fmt.Errorf("db.txlog.entries requires at least fromSeq parameter")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogEntriesArgumentRequired(), nil)
 	}
 
 	fromSeqStr := strings.TrimSpace(parts[0])
 	fromSeq, err := strconv.ParseUint(fromSeqStr, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid fromSeq: %w", err)
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSequence("fromSeq", err), err)
 	}
 	if fromSeq == 0 {
-		return nil, fmt.Errorf("fromSeq must be greater than 0")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogFromSequencePositive(), nil)
 	}
 
 	var toSeq uint64
@@ -57,7 +57,7 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string)
 		if toSeqStr != "" && toSeqStr != "0" {
 			toSeq, err = strconv.ParseUint(toSeqStr, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid toSeq: %w", err)
+				return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSequence("toSeq", err), err)
 			}
 		}
 	}
@@ -65,31 +65,31 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, cypher string)
 	// Get WAL directory
 	wal, _ := e.resolveWALAndDatabase()
 	if wal == nil {
-		return nil, fmt.Errorf("WAL not available (memory-only database)")
+		return nil, localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
 	}
 
 	// Get WAL directory from config
 	walCfg := wal.Config()
 	if walCfg == nil {
-		return nil, fmt.Errorf("WAL config not available")
+		return nil, localizedError(localization.CypherSpecializedCallsWALConfigUnavailable(), nil)
 	}
 	walDir := walCfg.Dir
 	if walDir == "" {
-		return nil, fmt.Errorf("WAL directory not configured")
+		return nil, localizedError(localization.CypherSpecializedCallsWALDirectoryNotConfigured(), nil)
 	}
 
 	// Read entries
 	var entries []storage.WALEntry
 	if toSeq > 0 {
 		if toSeq < fromSeq {
-			return nil, fmt.Errorf("toSeq must be >= fromSeq")
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogSequenceOrder(), nil)
 		}
 		entries, err = storage.ReadWALEntriesRangeFromDir(walDir, fromSeq, toSeq)
 	} else {
 		entries, err = storage.ReadWALEntriesAfterFromDir(walDir, fromSeq-1) // -1 because After is exclusive
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to read WAL entries: %w", err)
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogReadEntriesFailed(err), err)
 	}
 
 	// Build result
@@ -125,28 +125,28 @@ func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, cypher string) 
 	upper := strings.ToUpper(cypher)
 	startIdx := strings.Index(upper, "DB.TXLOG.BYTXID(")
 	if startIdx == -1 {
-		return nil, fmt.Errorf("invalid db.txlog.byTxId syntax")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogInvalidSyntax("db.txlog.byTxId"), nil)
 	}
 
 	// Extract parameters
 	paramStart := startIdx + len("DB.TXLOG.BYTXID(")
 	paramEnd := strings.Index(cypher[paramStart:], ")")
 	if paramEnd == -1 {
-		return nil, fmt.Errorf("missing closing parenthesis in db.txlog.byTxId")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogClosingParenthesis("db.txlog.byTxId"), nil)
 	}
 	paramsStr := strings.TrimSpace(cypher[paramStart : paramStart+paramEnd])
 
 	// Parse parameters (comma-separated, first is string, second is optional int)
 	parts := strings.Split(paramsStr, ",")
 	if len(parts) < 1 {
-		return nil, fmt.Errorf("db.txlog.byTxId requires txId parameter")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogByIDArgumentRequired(), nil)
 	}
 
 	// Extract txId (remove quotes if present)
 	txIDStr := strings.TrimSpace(parts[0])
 	txIDStr = strings.Trim(txIDStr, `"'`)
 	if txIDStr == "" {
-		return nil, fmt.Errorf("txId cannot be empty")
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogIDEmpty(), nil)
 	}
 
 	var maxEntries int
@@ -163,22 +163,22 @@ func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, cypher string) 
 	// Get WAL directory
 	wal, _ := e.resolveWALAndDatabase()
 	if wal == nil {
-		return nil, fmt.Errorf("WAL not available (memory-only database)")
+		return nil, localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
 	}
 
 	walCfg := wal.Config()
 	if walCfg == nil {
-		return nil, fmt.Errorf("WAL config not available")
+		return nil, localizedError(localization.CypherSpecializedCallsWALConfigUnavailable(), nil)
 	}
 	walDir := walCfg.Dir
 	if walDir == "" {
-		return nil, fmt.Errorf("WAL directory not configured")
+		return nil, localizedError(localization.CypherSpecializedCallsWALDirectoryNotConfigured(), nil)
 	}
 
 	// Find entries by tx_id
 	entries, err := storage.FindWALEntriesByTxID(walDir, txIDStr, maxEntries)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find WAL entries: %w", err)
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogFindEntriesFailed(err), err)
 	}
 
 	// Build result

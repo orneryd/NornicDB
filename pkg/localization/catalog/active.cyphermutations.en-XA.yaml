@@ -1,0 +1,201 @@
+---
+- id: cyphermutations.invalid_label_name
+  other: '[!! invalid label name: "{{.Label}}" (must be alphanumeric starting with letter or underscore) !!]'
+- id: cyphermutations.invalid_label_reserved
+  other: '[!! invalid label name: "{{.Label}}" (contains reserved keyword) !!]'
+- id: cyphermutations.invalid_property_key
+  other: '[!! invalid property key: "{{.Property}}" (must be alphanumeric starting with letter or underscore) !!]'
+- id: cyphermutations.invalid_property_value
+  other: '[!! invalid property value for key "{{.Property}}": malformed syntax !!]'
+- id: cyphermutations.create_node_failed
+  other: "[!! failed to create node: {{.Cause}} !!]"
+- id: cyphermutations.create_source_node_failed
+  other: "[!! failed to create source node: {{.Cause}} !!]"
+- id: cyphermutations.create_target_node_failed
+  other: "[!! failed to create target node: {{.Cause}} !!]"
+- id: cyphermutations.invalid_relationship_type
+  other: '[!! invalid relationship type: "{{.RelationshipType}}" (must be alphanumeric starting with letter or underscore) !!]'
+- id: cyphermutations.invalid_relationship_property_key
+  other: '[!! invalid relationship property key: "{{.Property}}" (must be alphanumeric starting with letter or underscore) !!]'
+- id: cyphermutations.create_relationship_failed
+  other: "[!! failed to create relationship: {{.Cause}} !!]"
+- id: cyphermutations.invalid_property_map_cause
+  other: "[!! invalid property map syntax in pattern: {{.Cause}} !!]"
+- id: cyphermutations.relationship_pattern_must_start_node
+  other: "[!! invalid relationship pattern: must start with ( !!]"
+- id: cyphermutations.relationship_pattern_unmatched_parenthesis
+  other: "[!! invalid relationship pattern: unmatched parenthesis !!]"
+- id: cyphermutations.relationship_pattern_unmatched_bracket
+  other: "[!! invalid relationship pattern: unmatched bracket !!]"
+- id: cyphermutations.relationship_pattern_forward_node_expected
+  other: "[!! invalid relationship pattern: expected -( after ] !!]"
+- id: cyphermutations.relationship_pattern_arrow_node_expected
+  other: "[!! invalid relationship pattern: expected ->( after ] !!]"
+- id: cyphermutations.relationship_pattern_second_node_unmatched_parenthesis
+  other: "[!! invalid relationship pattern: unmatched parenthesis for second node !!]"
+- id: cyphermutations.match_label_lookup_failed
+  other: '[!! failed to get nodes by label "{{.Label}}" in MATCH segment: {{.Cause}} !!]'
+- id: cyphermutations.match_all_nodes_failed
+  other: "[!! failed to get all nodes in MATCH segment: {{.Cause}} !!]"
+- id: cyphermutations.relationship_existence_check_failed
+  other: "[!! failed relationship existence check for {{.StartVariable}}-[:{{.RelationshipType}}]->{{.EndVariable}}: {{.Cause}} !!]"
+- id: cyphermutations.add_label_failed
+  other: "[!! failed to add label: {{.Cause}} !!]"
+- id: cyphermutations.set_assignment_parameter_name_required
+  other: "[!! SET assignment requires a valid parameter name after $ !!]"
+- id: cyphermutations.set_assignment_parameters_required
+  other: "[!! SET assignment parameter ${{.Parameter}} requires parameters to be provided !!]"
+- id: cyphermutations.set_assignment_parameter_not_found
+  other: "[!! SET assignment parameter ${{.Parameter}} not found in provided parameters !!]"
+- id: cyphermutations.replace_node_properties_failed
+  other: "[!! failed to replace node properties: {{.Cause}} !!]"
+- id: cyphermutations.replace_edge_properties_failed
+  other: "[!! failed to replace edge properties: {{.Cause}} !!]"
+- id: cyphermutations.unknown_set_variable
+  other: "[!! unknown variable in SET clause: {{.Variable}} !!]"
+- id: cyphermutations.update_node_property_failed
+  other: "[!! failed to update node property: {{.Cause}} !!]"
+- id: cyphermutations.update_edge_property_failed
+  other: "[!! failed to update edge property: {{.Cause}} !!]"
+- id: cyphermutations.resolve_source_node_failed
+  other: "[!! failed to resolve source node: {{.Cause}} !!]"
+- id: cyphermutations.resolve_target_node_failed
+  other: "[!! failed to resolve target node: {{.Cause}} !!]"
+- id: cyphermutations.relationship_properties_invalid
+  other: "[!! invalid relationship properties !!]"
+- id: cyphermutations.variable_not_found
+  other: "[!! variable '{{.Variable}}' not found (have: {{.Available}}) !!]"
+- id: cyphermutations.create_with_delete_invalid
+  other: "[!! invalid CREATE...WITH...DELETE query !!]"
+- id: cyphermutations.create_failed
+  other: "[!! CREATE failed: {{.Cause}} !!]"
+- id: cyphermutations.delete_failed
+  other: "[!! DELETE failed: {{.Cause}} !!]"
+- id: cyphermutations.create_set_clause_missing
+  other: "[!! SET clause not found in CREATE...SET query !!]"
+- id: cyphermutations.create_in_create_set_failed
+  other: "[!! CREATE failed in CREATE...SET: {{.Cause}} !!]"
+- id: cyphermutations.create_set_with_continuation_required
+  other: "[!! WITH in CREATE...SET requires CREATE or RETURN clause !!]"
+- id: cyphermutations.with_clause_empty
+  other: "[!! WITH clause cannot be empty !!]"
+- id: cyphermutations.create_set_trailing_clause_unsupported
+  other: "[!! unsupported clause after SET in CREATE...SET query: {{.Clause}} !!]"
+- id: cyphermutations.set_merge_syntax_invalid
+  other: "[!! invalid SET += syntax !!]"
+- id: cyphermutations.set_merge_parameter_name_required
+  other: "[!! SET += requires a valid parameter name after $ !!]"
+- id: cyphermutations.set_merge_parameters_required
+  other: "[!! SET += parameter ${{.Parameter}} requires parameters to be provided !!]"
+- id: cyphermutations.set_merge_parameter_not_found
+  other: "[!! SET += parameter ${{.Parameter}} not found in provided parameters !!]"
+- id: cyphermutations.set_merge_parse_failed
+  other: "[!! failed to parse properties in SET +=: {{.Cause}} !!]"
+- id: cyphermutations.set_merge_map_literal_required
+  other: "[!! failed to parse properties in SET +=: map literal must be enclosed in { ... } !!]"
+- id: cyphermutations.set_merge_map_variable_not_found
+  other: '[!! SET += map variable "{{.Variable}}" not found in scope !!]'
+- id: cyphermutations.update_node_failed
+  other: "[!! failed to update node: {{.Cause}} !!]"
+- id: cyphermutations.update_edge_failed
+  other: "[!! failed to update edge: {{.Cause}} !!]"
+- id: cyphermutations.unknown_set_merge_variable
+  other: "[!! unknown variable in SET +=: {{.Variable}} !!]"
+- id: cyphermutations.relationship_create_failed
+  other: "[!! relationship CREATE failed: {{.Cause}} !!]"
+- id: cyphermutations.node_create_failed
+  other: "[!! node CREATE failed: {{.Cause}} !!]"
+- id: cyphermutations.delete_match_required
+  other: "[!! DELETE requires a MATCH clause first (e.g., MATCH (n) DELETE n) !!]"
+- id: cyphermutations.delete_variables_required
+  other: "[!! DELETE clause must specify variable(s) to delete (e.g., DELETE n) !!]"
+- id: cyphermutations.detach_delete_keywords_required
+  other: "[!! DETACH DELETE requires both DETACH and DELETE keywords together !!]"
+- id: cyphermutations.set_match_required
+  other: "[!! SET requires a MATCH clause first (e.g., MATCH (n) SET n.property = value) !!]"
+- id: cyphermutations.set_assignment_required
+  other: "[!! SET clause requires at least one assignment !!]"
+- id: cyphermutations.set_merge_variable_required
+  other: "[!! SET += requires a variable target !!]"
+- id: cyphermutations.set_merge_map_scope_required
+  other: '[!! SET += requires a map variable in scope (missing "{{.Variable}}") !!]'
+- id: cyphermutations.set_merge_update_failed
+  other: "[!! SET {{.Variable}} +=: {{.Cause}} !!]"
+- id: cyphermutations.set_entity_replace_failed
+  other: "[!! SET {{.Variable}} =: {{.Cause}} !!]"
+- id: cyphermutations.set_entity_required
+  other: "[!! SET {{.Variable}} = requires a node or relationship !!]"
+- id: cyphermutations.set_property_failed
+  other: "[!! SET {{.Variable}}.{{.Property}}: {{.Cause}} !!]"
+- id: cyphermutations.set_property_entity_required
+  other: "[!! SET {{.Variable}}.{{.Property}} requires a node or relationship !!]"
+- id: cyphermutations.unwind_clause_expected
+  other: "[!! UNWIND clause expected !!]"
+- id: cyphermutations.unwind_as_required
+  other: "[!! UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x) !!]"
+- id: cyphermutations.unwind_variable_required
+  other: "[!! UNWIND requires a variable after AS !!]"
+- id: cyphermutations.unwind_set_return_required
+  other: "[!! UNWIND in SET query requires RETURN clause !!]"
+- id: cyphermutations.unwind_as_variable_non_empty
+  other: "[!! UNWIND requires a non-empty AS variable !!]"
+- id: cyphermutations.with_expression_required
+  other: "[!! WITH clause requires at least one expression !!]"
+- id: cyphermutations.set_merge_operator_expected
+  other: "[!! expected += operator !!]"
+- id: cyphermutations.set_merge_string_keys_required
+  other: "[!! SET += {{.Source}} must be a map with string keys, got key type {{.KeyType}} !!]"
+- id: cyphermutations.set_merge_map_required
+  other: "[!! SET += {{.Source}} must be a map, got type {{.ValueType}} !!]"
+- id: cyphermutations.remove_match_required
+  other: "[!! REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property) !!]"
+- id: cyphermutations.unwind_keys_unsupported
+  other: "[!! keys() function with UNWIND is not supported in this context !!]"
+- id: cyphermutations.unwind_parameter_name_required
+  other: "[!! UNWIND requires a valid parameter name after $ !!]"
+- id: cyphermutations.unwind_parameters_required
+  other: "[!! UNWIND parameter ${{.Parameter}} requires parameters to be provided !!]"
+- id: cyphermutations.unwind_parameter_not_found
+  other: "[!! UNWIND parameter ${{.Parameter}} not found in provided parameters !!]"
+- id: cyphermutations.unwind_mutation_failed
+  other: "[!! UNWIND mutation failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_match_failed
+  other: "[!! UNWIND MATCH failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_merge_create_failed
+  other: "[!! UNWIND MERGE chain create failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_merge_update_failed
+  other: "[!! UNWIND MERGE chain update failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_match_update_failed
+  other: "[!! UNWIND MATCH chain update failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_relationship_lookup_failed
+  other: "[!! UNWIND MERGE chain relationship lookup failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_relationship_assignment_failed
+  other: "[!! UNWIND MERGE chain relationship assignment failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_relationship_create_failed
+  other: "[!! UNWIND MERGE chain relationship create failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_relationship_update_failed
+  other: "[!! UNWIND MERGE chain relationship update failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_fixed_chain_failed
+  other: "[!! UNWIND fixed-chain merge failed: {{.Cause}} !!]"
+- id: cyphermutations.unwind_clause_missing
+  other: "[!! UNWIND clause not found !!]"
+- id: cyphermutations.unwind_first_as_required
+  other: "[!! first UNWIND requires AS clause !!]"
+- id: cyphermutations.unwind_double_malformed
+  other: "[!! malformed double UNWIND !!]"
+- id: cyphermutations.unwind_second_expected
+  other: "[!! expected second UNWIND !!]"
+- id: cyphermutations.unwind_second_as_required
+  other: "[!! second UNWIND requires AS clause !!]"
+- id: cyphermutations.with_optional_return_required
+  other: "[!! WITH, OPTIONAL MATCH, and RETURN clauses required !!]"
+- id: cyphermutations.with_return_required
+  other: "[!! RETURN clause required after WITH !!]"
+- id: cyphermutations.foreach_parentheses_required
+  other: "[!! FOREACH requires parentheses (e.g., FOREACH (x IN list | SET ...)) !!]"
+- id: cyphermutations.foreach_balanced_parentheses_required
+  other: "[!! FOREACH requires balanced parentheses !!]"
+- id: cyphermutations.foreach_in_required
+  other: "[!! FOREACH requires IN clause (e.g., FOREACH (x IN list | SET ...)) !!]"
+- id: cyphermutations.foreach_separator_required
+  other: "[!! FOREACH requires | separator !!]"

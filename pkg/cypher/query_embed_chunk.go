@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
@@ -18,7 +18,7 @@ import (
 // sequential embedding stay provider-specific without importing embed.
 func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string) ([]float32, error) {
 	if embedder == nil {
-		return nil, fmt.Errorf("no embedder configured")
+		return nil, localizedError(localization.CypherCoreEmbedderNotConfigured(), nil)
 	}
 
 	const (
@@ -70,7 +70,7 @@ func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string)
 		if firstErr != nil {
 			return nil, firstErr
 		}
-		return nil, fmt.Errorf("failed to embed query (no embeddings produced)")
+		return nil, localizedError(localization.CypherCoreEmbeddingNoOutput(), nil)
 	}
 
 	inv := float32(1.0 / float32(count))

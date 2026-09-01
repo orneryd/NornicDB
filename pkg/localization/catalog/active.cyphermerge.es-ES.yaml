@@ -1,0 +1,124 @@
+- id: cyphermerge.clause_not_found
+  other: 'no se encontró la cláusula MERGE en la consulta: "{{.Query}}"'
+- id: cyphermerge.create_node_failed
+  other: "no se pudo crear el nodo en MERGE: {{.Cause}}"
+- id: cyphermerge.invalid_match_query
+  other: "consulta MATCH ... MERGE no válida"
+- id: cyphermerge.match_execution_failed
+  other: "no se pudo ejecutar MATCH: {{.Cause}}"
+- id: cyphermerge.unwind_as_required
+  other: "UNWIND requiere una cláusula AS en la consulta MATCH ... UNWIND ... MERGE"
+- id: cyphermerge.unwind_parameter_not_found
+  other: "no se encontró el parámetro UNWIND ${{.Parameter}} o es nulo"
+- id: cyphermerge.match_label_lookup_failed
+  other: 'no se pudieron obtener los nodos con la etiqueta "{{.Label}}": {{.Cause}}'
+- id: cyphermerge.match_all_nodes_failed
+  other: "no se pudieron obtener todos los nodos para MATCH: {{.Cause}}"
+- id: cyphermerge.malformed_relationship_pattern
+  other: "patrón de relación incorrecto: {{.Pattern}}"
+- id: cyphermerge.find_relationship_failed
+  other: "no se pudo buscar la relación para MERGE: {{.Cause}}"
+- id: cyphermerge.create_relationship_failed
+  other: "no se pudo crear la relación: {{.Cause}}"
+- id: cyphermerge.update_edge_property_failed
+  other: "no se pudo actualizar la propiedad de la relación: {{.Cause}}"
+- id: cyphermerge.initial_merge_failed
+  other: "falló el MERGE inicial: {{.Cause}}"
+- id: cyphermerge.foreach_failed
+  other: "FOREACH falló: {{.Cause}}"
+- id: cyphermerge.segment_clause_not_found
+  other: "no se encontró MERGE en el segmento"
+- id: cyphermerge.create_node_segment_failed
+  other: "no se pudo crear el nodo: {{.Cause}}"
+- id: cyphermerge.match_segment_clause_not_found
+  other: "no se encontró MATCH en el segmento"
+- id: cyphermerge.node_pattern_parse_failed
+  other: "no se pudo analizar el patrón de nodo: {{.Pattern}}"
+- id: cyphermerge.relationship_start_missing
+  other: 'patrón de relación no válido: falta el nodo inicial en "{{.Pattern}}"'
+- id: cyphermerge.relationship_start_paren_missing
+  other: 'patrón de relación no válido: falta el paréntesis de cierre del nodo inicial en "{{.Pattern}}"'
+- id: cyphermerge.relationship_brackets_missing
+  other: 'patrón de relación no válido: faltan los corchetes de relación (se esperaba -[tipo]-> o -[tipo]-) en "{{.Pattern}}"'
+- id: cyphermerge.relationship_end_missing
+  other: 'patrón de relación no válido: falta el nodo final en "{{.Pattern}}"'
+- id: cyphermerge.start_variable_not_bound
+  other: "la variable del nodo inicial '{{.Variable}}' no está en el contexto (disponibles: {{.Available}})"
+- id: cyphermerge.end_variable_not_bound
+  other: "la variable del nodo final '{{.Variable}}' no está en el contexto (disponibles: {{.Available}})"
+- id: cyphermerge.find_relationship_segment_failed
+  other: "no se pudo buscar la relación para el segmento MERGE: {{.Cause}}"
+- id: cyphermerge.relationship_failed
+  other: "falló el MERGE de relación: {{.Cause}}"
+- id: cyphermerge.node_failed
+  other: "falló el MERGE de nodo: {{.Cause}}"
+- id: cyphermerge.optional_match_failed
+  other: "OPTIONAL MATCH falló: {{.Cause}}"
+- id: cyphermerge.match_failed
+  other: "MATCH falló: {{.Cause}}"
+- id: cyphermerge.create_node_variable_required
+  other: "el nodo CREATE debe tener un nombre de variable"
+- id: cyphermerge.invalid_label_name
+  other: 'nombre de etiqueta no válido: "{{.Label}}"'
+- id: cyphermerge.invalid_property_key
+  other: 'clave de propiedad no válida: "{{.Property}}"'
+- id: cyphermerge.invalid_property_value
+  other: 'valor de propiedad no válido para la clave "{{.Property}}"'
+- id: cyphermerge.pipeline_create_node_failed
+  other: "no se pudo crear el nodo: {{.Cause}}"
+- id: cyphermerge.relationship_pattern_parse_failed
+  other: "no se pudo analizar el patrón de relación: {{.Cause}}"
+- id: cyphermerge.variable_not_found
+  other: "no se encontró la variable en el contexto: {{.Content}}"
+- id: cyphermerge.inline_node_create_failed
+  other: "no se pudo crear el nodo en línea: {{.Cause}}"
+- id: cyphermerge.source_resolution_failed
+  other: "origen {{.Variable}}: {{.Cause}}"
+- id: cyphermerge.target_resolution_failed
+  other: "destino {{.Variable}}: {{.Cause}}"
+- id: cyphermerge.source_node_id_empty
+  other: "el nodo de origen {{.Variable}} tiene un ID vacío"
+- id: cyphermerge.target_node_id_empty
+  other: "el nodo de destino {{.Variable}} tiene un ID vacío"
+- id: cyphermerge.relationship_type_required
+  other: "se requiere el tipo de relación"
+- id: cyphermerge.create_edge_failed
+  other: "no se pudo crear la relación: {{.Cause}}"
+- id: cyphermerge.unknown_function
+  other: "función desconocida: {{.Function}}"
+- id: cyphermerge.pipeline_with_required
+  other: "la canalización requiere WITH"
+- id: cyphermerge.match_pattern_variable_required
+  other: "el patrón MATCH debe tener una variable"
+- id: cyphermerge.relationship_create_collisions
+  other: "la creación de la relación MERGE falló después de {{.Attempts}} colisiones de ID de relación"
+- id: cyphermerge.relationship_identity_exhausted
+  other: "la identidad de propiedad de la relación MERGE no tiene una clave de almacenamiento libre"
+- id: cyphermerge.map_literal_enclosure_required
+  other: "el mapa literal debe estar delimitado por { ... }"
+- id: cyphermerge.map_entry_empty
+  other: "entrada de mapa vacía"
+- id: cyphermerge.map_entry_invalid
+  other: 'entrada de mapa no válida "{{.Entry}}"'
+- id: cyphermerge.map_key_empty
+  other: "clave de mapa vacía"
+- id: cyphermerge.map_value_empty
+  other: 'valor de mapa vacío para la clave "{{.Key}}"'
+- id: cyphermerge.bulk_create_nodes_failed
+  other: "BulkCreateNodes: {{.Cause}}"
+- id: cyphermerge.bulk_create_edges_failed
+  other: "BulkCreateEdges: {{.Cause}}"
+- id: cyphermerge.create_edge_start_not_bound
+  other: 'CREATE de relación: la variable inicial "{{.Variable}}" no está vinculada'
+- id: cyphermerge.create_edge_end_not_bound
+  other: 'CREATE de relación: la variable final "{{.Variable}}" no está vinculada'
+- id: cyphermerge.relationship_endpoints_not_bound
+  other: "los extremos de la relación MERGE no están vinculados: {{.StartVariable}}, {{.EndVariable}}"
+- id: cyphermerge.select_relationship_identity_failed
+  other: "no se pudo seleccionar la identidad de la relación MERGE: {{.Cause}}"
+- id: cyphermerge.update_edge_failed
+  other: "UpdateEdge: {{.Cause}}"
+- id: cyphermerge.get_nodes_by_label_failed
+  other: "GetNodesByLabel({{.Label}}): {{.Cause}}"
+- id: cyphermerge.get_edges_between_failed
+  other: "GetEdgesBetween({{.StartID}},{{.EndID}}): {{.Cause}}"

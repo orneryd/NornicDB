@@ -1,0 +1,225 @@
+- id: nornicdbcore.not_found
+  description: Error genérico al buscar una entidad de base de datos.
+  other: no se encontró
+- id: nornicdbcore.invalid_id
+  description: Error de validación del identificador de una entidad.
+  other: ID no válido
+- id: nornicdbcore.database_closed
+  description: Operación intentada después de cerrar la base de datos.
+  other: la base de datos está cerrada
+- id: nornicdbcore.invalid_input
+  description: Error genérico de validación de entrada.
+  other: entrada no válida
+- id: nornicdbcore.query_embedding_dimension_mismatch
+  description: Las dimensiones de la consulta y del índice son incompatibles.
+  other: las dimensiones del embedding de consulta no coinciden
+- id: nornicdbcore.cypher_row_decode_failed
+  description: Error al decodificar una fila Cypher. Cause no se traduce.
+  other: "no se pudo decodificar la fila: {{.Cause}}"
+- id: nornicdbcore.decode_destination_required
+  description: El destino de decodificación debe ser un puntero no nulo. dest no se traduce.
+  other: dest debe ser un puntero no nulo
+- id: nornicdbcore.decode_field_failed
+  description: Error al decodificar un campo. Field y Cause no se traducen.
+  other: "campo {{.Field}}: {{.Cause}}"
+- id: nornicdbcore.decode_assignment_failed
+  description: Error de asignación tipada. Los tipos no se traducen.
+  other: "no se puede asignar {{.ValueType}} a {{.TargetType}}"
+- id: nornicdbcore.node_id_required
+  description: El identificador de nodo proporcionado está vacío.
+  other: el ID del nodo no debe estar vacío
+- id: nornicdbcore.node_already_exists
+  description: El identificador de nodo proporcionado ya existe. NodeID no se traduce.
+  other: 'el nodo {{printf "%q" .NodeID}} ya existe'
+- id: nornicdbcore.source_node_not_found
+  description: No se encontró el nodo de origen de la relación.
+  other: no se encontró el nodo de origen
+- id: nornicdbcore.target_node_not_found
+  description: No se encontró el nodo de destino de la relación.
+  other: no se encontró el nodo de destino
+- id: nornicdbcore.search_service_not_initialized
+  description: El servicio de búsqueda predeterminado no está disponible.
+  other: el servicio de búsqueda no está inicializado
+- id: nornicdbcore.find_similar_limit_invalid
+  description: La búsqueda de similitud requiere un límite positivo.
+  other: el límite debe ser mayor que 0
+- id: nornicdbcore.node_embedding_missing
+  description: El nodo de origen no tiene embedding.
+  other: el nodo no tiene embedding
+- id: nornicdbcore.schema_manager_not_initialized
+  description: La administración del esquema no está disponible.
+  other: el administrador de esquemas no está inicializado
+- id: nornicdbcore.index_type_unsupported
+  description: Tipo de índice no admitido. IndexType y los nombres de opciones no se traducen.
+  other: "tipo de índice no admitido: {{.IndexType}} (use: property, fulltext, vector, range)"
+- id: nornicdbcore.backup_nodes_read_failed
+  description: Error al leer nodos para una copia de seguridad. Cause no se traduce.
+  other: "no se pudieron obtener los nodos: {{.Cause}}"
+- id: nornicdbcore.backup_edges_read_failed
+  description: Error al leer relaciones para una copia de seguridad. Cause no se traduce.
+  other: "no se pudieron obtener las relaciones: {{.Cause}}"
+- id: nornicdbcore.backup_marshal_failed
+  description: Error al serializar una copia de seguridad. Cause no se traduce.
+  other: "no se pudo serializar la copia de seguridad: {{.Cause}}"
+- id: nornicdbcore.backup_write_failed
+  description: Error al guardar una copia de seguridad. Cause no se traduce.
+  other: "no se pudo escribir la copia de seguridad: {{.Cause}}"
+- id: nornicdbcore.backup_read_failed
+  description: Error al leer una copia de seguridad. Cause no se traduce.
+  other: "no se pudo leer la copia de seguridad: {{.Cause}}"
+- id: nornicdbcore.backup_parse_failed
+  description: Error al deserializar una copia de seguridad. Cause no se traduce.
+  other: "no se pudo analizar la copia de seguridad: {{.Cause}}"
+- id: nornicdbcore.restore_node_failed
+  description: Error al restaurar un nodo. NodeID y Cause no se traducen.
+  other: "no se pudo restaurar el nodo {{.NodeID}}: {{.Cause}}"
+- id: nornicdbcore.restore_edge_failed
+  description: Error al restaurar una relación. EdgeID y Cause no se traducen.
+  other: "no se pudo restaurar la relación {{.EdgeID}}: {{.Cause}}"
+- id: nornicdbcore.restore_temporal_indexes_failed
+  description: Error al reconstruir índices temporales después de restaurar. Cause no se traduce.
+  other: "no se pudieron reconstruir los índices temporales después de la restauración: {{.Cause}}"
+- id: nornicdbcore.restore_mvcc_heads_failed
+  description: Error al reconstruir cabeceras MVCC después de restaurar. Cause no se traduce.
+  other: "no se pudieron reconstruir las cabeceras MVCC después de la restauración: {{.Cause}}"
+- id: nornicdbcore.encryption_password_required
+  description: El cifrado por contraseña está habilitado sin contraseña.
+  other: el cifrado está habilitado, pero no se proporcionó ninguna contraseña
+- id: nornicdbcore.encryption_salt_generate_failed
+  description: Error al generar el salt de cifrado. Cause no se traduce.
+  other: "no se pudo generar el salt de cifrado: {{.Cause}}"
+- id: nornicdbcore.data_directory_create_failed
+  description: Error al crear el directorio de datos. Cause no se traduce.
+  other: "no se pudo crear el directorio de datos: {{.Cause}}"
+- id: nornicdbcore.encryption_salt_save_failed
+  description: Error al guardar el salt de cifrado. Cause no se traduce.
+  other: "no se pudo guardar el salt de cifrado: {{.Cause}}"
+- id: nornicdbcore.persistent_storage_open_failed
+  description: Error al abrir el almacenamiento persistente. Cause no se traduce.
+  other: "no se pudo abrir el almacenamiento persistente: {{.Cause}}"
+- id: nornicdbcore.wal_initialize_failed
+  description: Error al inicializar WAL. Cause no se traduce.
+  other: "no se pudo inicializar WAL: {{.Cause}}"
+- id: nornicdbcore.inference_initialize_failed
+  description: Error al inicializar la inferencia. Cause no se traduce.
+  other: "no se pudo inicializar la inferencia: {{.Cause}}"
+- id: nornicdbcore.replication_storage_adapter_create_failed
+  description: Error al crear el adaptador de almacenamiento de replicación. Cause no se traduce.
+  other: "replicación: no se pudo crear el adaptador de almacenamiento: {{.Cause}}"
+- id: nornicdbcore.replication_replicator_create_failed
+  description: Error al crear el replicador. Cause no se traduce.
+  other: "replicación: no se pudo crear el replicador: {{.Cause}}"
+- id: nornicdbcore.replication_start_failed
+  description: Error al iniciar la replicación. Cause no se traduce.
+  other: "replicación: no se pudo iniciar: {{.Cause}}"
+- id: nornicdbcore.nil_database
+  description: Comprobación de estado con un receptor DB nulo. Los identificadores técnicos no se traducen.
+  other: "nornicdb: DB es nil"
+- id: nornicdbcore.storage_engine_not_initialized
+  description: La comprobación de estado no tiene motor de almacenamiento. nornicdb no se traduce.
+  other: "nornicdb: el motor de almacenamiento no está inicializado"
+- id: nornicdbcore.storage_probe_failed
+  description: Error de sondeo del almacenamiento. nornicdb y Cause no se traducen.
+  other: "nornicdb: error al sondear el almacenamiento: {{.Cause}}"
+- id: nornicdbcore.close_failed
+  description: Errores agregados al cerrar la base de datos. Errors no se traduce.
+  other: "errores de cierre: {{.Errors}}"
+- id: nornicdbcore.auto_embed_not_enabled
+  description: El trabajador de embedding automático no está disponible.
+  other: auto-embed no está habilitado
+- id: nornicdbcore.clear_embeddings_unsupported
+  description: El motor no admite la operación técnica ClearAllEmbeddings.
+  other: el motor de almacenamiento no admite ClearAllEmbeddings
+- id: nornicdbcore.query_embedding_dimension_mismatch_for_database
+  description: Diferencia de dimensiones por base de datos. Los valores no se traducen.
+  other: 'base de datos {{printf "%q" .Database}}: las dimensiones del embedding de consulta no coinciden (dimensiones del índice {{.IndexDimensions}}, dimensiones de la consulta {{.QueryDimensions}})'
+- id: nornicdbcore.consent_user_id_required
+  description: El registro de consentimiento requiere el campo técnico user_id.
+  other: se requiere user_id
+- id: nornicdbcore.consent_purpose_required
+  description: El registro de consentimiento requiere un propósito.
+  other: se requiere el propósito
+- id: nornicdbcore.consent_existing_check_failed
+  description: Error al comprobar un consentimiento existente. Cause no se traduce.
+  other: "error al comprobar el consentimiento existente: {{.Cause}}"
+- id: nornicdbcore.consent_check_failed
+  description: Error al comprobar el consentimiento. Cause no se traduce.
+  other: "error al comprobar el consentimiento: {{.Cause}}"
+- id: nornicdbcore.consent_get_failed
+  description: Error al obtener el consentimiento. Cause no se traduce.
+  other: "error al obtener el consentimiento: {{.Cause}}"
+- id: nornicdbcore.consent_stream_failed
+  description: Error al transmitir nodos de consentimiento. Cause no se traduce.
+  other: "error al transmitir los nodos de consentimiento: {{.Cause}}"
+- id: nornicdbcore.search_persistence_database_invalid
+  description: Nombre de base de datos no seguro para persistir la búsqueda. Database no se traduce.
+  other: 'nombre de base de datos no válido para la persistencia de búsqueda: {{printf "%q" .Database}}'
+- id: nornicdbcore.search_system_database_unsupported
+  description: La búsqueda no está disponible para la base de datos system.
+  other: el servicio de búsqueda no está disponible para la base de datos del sistema
+- id: nornicdbcore.search_base_storage_unavailable
+  description: La búsqueda no tiene almacenamiento base. nil no se traduce.
+  other: "el servicio de búsqueda no está disponible: el almacenamiento base es nil"
+- id: nornicdbcore.search_database_not_initialized
+  description: El estado de búsqueda por base de datos no está disponible. Database no se traduce.
+  other: 'el servicio de búsqueda no está inicializado para la base de datos {{printf "%q" .Database}}'
+- id: nornicdbcore.inference_base_storage_unavailable
+  description: La inferencia no tiene almacenamiento base. nil no se traduce.
+  other: "la inferencia no está disponible: el almacenamiento base es nil"
+- id: nornicdbcore.embed_batch_failed
+  description: Error de un microlote de embeddings. Los límites, NodeID y Cause no se traducen.
+  other: "falló el lote {{.Start}}-{{.End}}/{{.Total}} para {{.NodeID}}: {{.Cause}}"
+- id: nornicdbcore.embedding_count_mismatch
+  description: El proveedor devolvió un tamaño de lote inesperado. Los valores no se traducen.
+  other: "el recuento de embeddings no coincide para {{.NodeID}}: se obtuvieron {{.Actual}}, se esperaban {{.Expected}}"
+- id: nornicdbcore.bootstrap_knowledge_policy_failed
+  description: Error al crear la política de conocimiento predeterminada. Namespace y Cause no se traducen.
+  other: 'no se pudo crear la política de conocimiento predeterminada para el espacio de nombres {{printf "%q" .Namespace}}: {{.Cause}}'
+- id: nornicdbcore.bootstrap_ddl_expected
+  description: La entrada predeterminada no era DDL de política de conocimiento.
+  other: no es una instrucción DDL de política de conocimiento
+- id: nornicdbcore.bootstrap_ddl_command_unsupported
+  description: El tipo de comando analizado no se admite. CommandType no se traduce.
+  other: "comando DDL de arranque no admitido {{.CommandType}}"
+- id: nornicdbcore.encryption_master_key_invalid
+  description: Error de validación de la clave maestra. Cause no se traduce.
+  other: "clave maestra de cifrado no válida: {{.Cause}}"
+- id: nornicdbcore.encryption_provider_initialize_failed
+  description: Error al inicializar el proveedor de cifrado. Provider y Cause no se traducen.
+  other: 'no se pudo inicializar el proveedor de cifrado {{printf "%q" .Provider}}: {{.Cause}}'
+- id: nornicdbcore.encryption_dek_metadata_decode_failed
+  description: Error al decodificar metadatos DEK. Cause no se traduce.
+  other: "no se pudieron decodificar los metadatos DEK persistidos: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_provider_mismatch
+  description: El proveedor DEK persistido difiere del configurado. Los proveedores no se traducen.
+  other: 'el DEK persistido se creó con el proveedor {{printf "%q" .PersistedProvider}}, no con {{printf "%q" .ConfiguredProvider}}'
+- id: nornicdbcore.encryption_dek_ciphertext_decode_failed
+  description: Error al decodificar el texto cifrado DEK. Cause no se traduce.
+  other: "no se pudo decodificar el texto cifrado DEK persistido: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_unwrap_failed
+  description: Error al desenvolver el DEK persistido. Cause no se traduce.
+  other: "no se pudo desenvolver el DEK persistido: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_rotate_failed
+  description: Error al rotar el DEK envuelto persistido. Cause no se traduce.
+  other: "no se pudo rotar el DEK envuelto persistido: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_generate_failed
+  description: Error al generar un DEK respaldado por proveedor. Cause no se traduce.
+  other: "no se pudo generar el DEK respaldado por el proveedor: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_empty
+  description: El proveedor devolvió un DEK de texto plano vacío.
+  other: el proveedor devolvió un DEK de texto plano vacío
+- id: nornicdbcore.encryption_dek_directory_create_failed
+  description: Error al crear el directorio de metadatos DEK. Cause no se traduce.
+  other: "no se pudo crear el directorio de datos para los metadatos DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_metadata_encode_failed
+  description: Error al codificar metadatos DEK. Cause no se traduce.
+  other: "no se pudieron codificar los metadatos DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_dek_metadata_persist_failed
+  description: Error al persistir metadatos DEK. Cause no se traduce.
+  other: "no se pudieron persistir los metadatos DEK: {{.Cause}}"
+- id: nornicdbcore.encryption_master_key_required
+  description: El cifrado respaldado por proveedor requiere una clave maestra.
+  other: se requiere una clave maestra para el cifrado respaldado por proveedor
+- id: nornicdbcore.encryption_master_key_length_invalid
+  description: La clave maestra tiene un formato no válido. Los nombres de codificación no se traducen.
+  other: se esperaba una clave de 32 bytes como base64, hex o cadena sin procesar

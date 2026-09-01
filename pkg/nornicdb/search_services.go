@@ -3,7 +3,6 @@ package nornicdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
 	"sort"
@@ -13,6 +12,7 @@ import (
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -157,7 +157,7 @@ func splitQualifiedID(id string) (dbName string, local string, ok bool) {
 
 func searchPersistenceBasePath(dataDir, dbName string) (string, error) {
 	if dbName == "" || dbName == "." || dbName == ".." || strings.ContainsAny(dbName, "/\\\x00") || filepath.IsAbs(dbName) {
-		return "", fmt.Errorf("invalid database name for search persistence: %q", dbName)
+		return "", localizedError(localization.NornicDBCoreSearchPersistenceDatabaseInvalid(dbName), nil)
 	}
 	return filepath.Join(dataDir, "search", dbName), nil
 }
@@ -184,7 +184,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		dbName = db.defaultDatabaseName()
 	}
 	if dbName == "system" {
-		return nil, fmt.Errorf("search service not available for system database")
+		return nil, localizedError(localization.NornicDBCoreSearchSystemDatabaseUnsupported(), nil)
 	}
 
 	dims := db.embeddingDims
@@ -257,7 +257,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 
 	if storageEngine == nil {
 		if db.baseStorage == nil {
-			return nil, fmt.Errorf("search service unavailable: base storage is nil")
+			return nil, localizedError(localization.NornicDBCoreSearchBaseStorageUnavailable(), nil)
 		}
 		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
 	}
@@ -661,7 +661,7 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 	entry, ok := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
 	if !ok || entry == nil {
-		return fmt.Errorf("search service not initialized for database %q", dbName)
+		return localizedError(localization.NornicDBCoreSearchDatabaseNotInitialized(dbName), nil)
 	}
 	db.startSearchIndexBuild(entry, ctx)
 	if ctx == nil {

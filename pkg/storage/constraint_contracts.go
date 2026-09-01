@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ============================================================================
@@ -266,13 +267,13 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 		if ifNotExists && constraintContractEqual(existing, contract) {
 			return nil
 		}
-		return fmt.Errorf("constraint contract %q already exists", contract.Name)
+		return localizedError(localization.StorageSchemaConstraintContractAlreadyExists(contract.Name), nil)
 	}
 	if _, exists := sm.constraints[contract.Name]; exists {
-		return fmt.Errorf("constraint contract %q conflicts with an existing constraint name", contract.Name)
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
 	}
 	if _, exists := sm.propertyTypeConstraints[contract.Name]; exists {
-		return fmt.Errorf("constraint contract %q conflicts with an existing constraint name", contract.Name)
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
 	}
 
 	for _, compiled := range compiledConstraints {
@@ -307,7 +308,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 	case ConstraintEntityNode:
 		nodes, err := engine.GetNodesByLabel(contract.TargetLabelOrType)
 		if err != nil {
-			return fmt.Errorf("scanning nodes: %w", err)
+			return localizedError(localization.StorageSchemaScanNodesFailed(err), err)
 		}
 		for _, node := range nodes {
 			if err := validateConstraintContractForNodeEngine(engine, contract, node); err != nil {
@@ -317,7 +318,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 	case ConstraintEntityRelationship:
 		edges, err := engine.GetEdgesByType(contract.TargetLabelOrType)
 		if err != nil {
-			return fmt.Errorf("scanning relationships: %w", err)
+			return localizedError(localization.StorageSchemaScanRelationshipsFailed(err), err)
 		}
 		for _, edge := range edges {
 			if err := validateConstraintContractForEdgeEngine(engine, contract, edge); err != nil {
@@ -325,7 +326,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 			}
 		}
 	default:
-		return fmt.Errorf("unsupported constraint contract target entity type: %s", contract.TargetEntityType)
+		return localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(contract.TargetEntityType), nil)
 	}
 	return nil
 }
@@ -337,10 +338,10 @@ func validateConstraintContractForNodeEngine(engine Engine, contract ConstraintC
 		}
 		ok, err := evaluateNodeConstraintContractExpressionEngine(engine, node, entry.Expression)
 		if err != nil {
-			return fmt.Errorf("constraint contract %s invalid: predicate %q: %w", contract.Name, entry.Expression, err)
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
 		}
 		if !ok {
-			return fmt.Errorf("constraint contract %s violated: predicate %q evaluated to false", contract.Name, entry.Expression)
+			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
 		}
 	}
 	return nil
@@ -353,10 +354,10 @@ func validateConstraintContractForEdgeEngine(engine Engine, contract ConstraintC
 		}
 		ok, err := evaluateRelationshipConstraintContractExpressionEngine(engine, edge, entry.Expression)
 		if err != nil {
-			return fmt.Errorf("constraint contract %s invalid: predicate %q: %w", contract.Name, entry.Expression, err)
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
 		}
 		if !ok {
-			return fmt.Errorf("constraint contract %s violated: predicate %q evaluated to false", contract.Name, entry.Expression)
+			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
 		}
 	}
 	return nil
@@ -395,7 +396,7 @@ func evaluateNodeConstraintContractExpressionEngine(engine Engine, node *Node, e
 		return count == 0, nil
 	}
 
-	return false, fmt.Errorf("unsupported node predicate")
+	return false, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
 }
 
 func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge *Edge, expr string) (bool, error) {
@@ -419,7 +420,7 @@ func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge 
 			return false, err
 		}
 		if startNode == nil || endNode == nil {
-			return false, fmt.Errorf("missing relationship endpoint")
+			return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
 		}
 		return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
 	}
@@ -430,7 +431,7 @@ func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge 
 		return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
 	}
 
-	return false, fmt.Errorf("unsupported relationship predicate")
+	return false, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
 }
 
 type contractPattern struct {
@@ -664,12 +665,12 @@ func parseConstraintPattern(raw string) (contractPattern, error) {
 
 	// Source node: ( ... )
 	if ccExpectByte(s, p, '(') == -1 {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p++
 	_, p, ok := ccScanNodeContents(s, p)
 	if !ok {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 
 	// Arrow start: - or <-
@@ -681,29 +682,29 @@ func parseConstraintPattern(raw string) (contractPattern, error) {
 	} else if p < len(s) && s[p] == '-' {
 		p++
 	} else {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 
 	// Relationship: [ :TYPE ]
 	p = ccSkipSpaces(s, p)
 	if ccExpectByte(s, p, '[') == -1 {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
 	if ccExpectByte(s, p, ':') == -1 {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
 	relType, next := ccScanIdent(s, p)
 	if relType == "" {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p = next
 	p = ccSkipSpaces(s, p)
 	if ccExpectByte(s, p, ']') == -1 {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p++
 
@@ -715,12 +716,12 @@ func parseConstraintPattern(raw string) (contractPattern, error) {
 			direction = "OUTGOING"
 			p += 2
 		} else {
-			return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 		}
 	} else {
 		// INCOMING: expect -
 		if ccExpectByte(s, p, '-') == -1 {
-			return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 		}
 		p++
 	}
@@ -728,16 +729,16 @@ func parseConstraintPattern(raw string) (contractPattern, error) {
 	// Target node: ( ... )
 	p = ccSkipSpaces(s, p)
 	if ccExpectByte(s, p, '(') == -1 {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 	p++
 	targetLabels, p, ok := ccScanNodeContents(s, p)
 	if !ok {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 
 	if ccSkipSpaces(s, p) != len(s) {
-		return contractPattern{}, fmt.Errorf("unsupported pattern %q", raw)
+		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
 
 	return contractPattern{
@@ -984,7 +985,7 @@ func parseContractLiteral(raw string) (interface{}, error) {
 	if strings.EqualFold(raw, "null") {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("unsupported literal %q", raw)
+	return nil, localizedError(localization.StorageSchemaUnsupportedConstraintLiteral(raw), nil)
 }
 
 func splitTopLevelCSV(raw string) []string {
@@ -1264,10 +1265,10 @@ func (tx *BadgerTransaction) validateConstraintContractsForNodeLocked(node *Node
 			}
 			ok, err := tx.evaluateNodeConstraintContractExpressionLocked(node, entry.Expression)
 			if err != nil {
-				return fmt.Errorf("constraint contract %s invalid: predicate %q: %w", contract.Name, entry.Expression, err)
+				return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
 			}
 			if !ok {
-				return fmt.Errorf("constraint contract %s violated: predicate %q evaluated to false", contract.Name, entry.Expression)
+				return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
 			}
 		}
 	}
@@ -1290,10 +1291,10 @@ func (tx *BadgerTransaction) validateConstraintContractsForEdgeLocked(edge *Edge
 			}
 			ok, err := tx.evaluateRelationshipConstraintContractExpressionLocked(edge, entry.Expression)
 			if err != nil {
-				return fmt.Errorf("constraint contract %s invalid: predicate %q: %w", contract.Name, entry.Expression, err)
+				return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
 			}
 			if !ok {
-				return fmt.Errorf("constraint contract %s violated: predicate %q evaluated to false", contract.Name, entry.Expression)
+				return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
 			}
 		}
 	}
@@ -1329,7 +1330,7 @@ func (tx *BadgerTransaction) evaluateNodeConstraintContractExpressionLocked(node
 		}
 		return count == 0, nil
 	}
-	return false, fmt.Errorf("unsupported node predicate")
+	return false, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
 }
 
 func (tx *BadgerTransaction) evaluateRelationshipConstraintContractExpressionLocked(edge *Edge, expr string) (bool, error) {
@@ -1351,7 +1352,7 @@ func (tx *BadgerTransaction) evaluateRelationshipConstraintContractExpressionLoc
 			return false, err
 		}
 		if startNode == nil || endNode == nil {
-			return false, fmt.Errorf("missing relationship endpoint")
+			return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
 		}
 		return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
 	}
@@ -1360,7 +1361,7 @@ func (tx *BadgerTransaction) evaluateRelationshipConstraintContractExpressionLoc
 	} else if matched {
 		return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
 	}
-	return false, fmt.Errorf("unsupported relationship predicate")
+	return false, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
 }
 
 func (tx *BadgerTransaction) countMatchingPatternEdgesLocked(node *Node, pattern contractPattern) (int, error) {

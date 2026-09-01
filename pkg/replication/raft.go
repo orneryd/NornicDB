@@ -3,13 +3,13 @@ package replication
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -201,7 +201,7 @@ type rpcRequest struct {
 // HandleRaftVote handles an incoming RequestVote RPC via the cluster transport.
 func (r *RaftReplicator) HandleRaftVote(req *RaftVoteRequest) (*RaftVoteResponse, error) {
 	if req == nil {
-		return nil, fmt.Errorf("nil vote request")
+		return nil, localizedError(localization.ReplicationRaftVoteRequestRequired(), nil)
 	}
 	resp := r.handleVoteRequest(&VoteRequest{
 		Term:         req.Term,
@@ -219,7 +219,7 @@ func (r *RaftReplicator) HandleRaftVote(req *RaftVoteRequest) (*RaftVoteResponse
 // HandleRaftAppendEntries handles an incoming AppendEntries RPC via the cluster transport.
 func (r *RaftReplicator) HandleRaftAppendEntries(req *RaftAppendEntriesRequest) (*RaftAppendEntriesResponse, error) {
 	if req == nil {
-		return nil, fmt.Errorf("nil append entries request")
+		return nil, localizedError(localization.ReplicationRaftAppendRequestRequired(), nil)
 	}
 	resp := r.handleAppendEntriesRequest(&AppendEntriesRequest{
 		Term:         req.Term,
@@ -291,7 +291,7 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 	if r.transport == nil {
 		transport, err := NewDefaultTransportFromConfig(r.config)
 		if err != nil {
-			return fmt.Errorf("init transport: %w", err)
+			return localizedError(localization.ReplicationRaftInitTransportFailed(err), err)
 		}
 		r.transport = transport
 	}
@@ -521,7 +521,7 @@ func (r *RaftReplicator) sendVoteRequestRPC(ctx context.Context, conn PeerConnec
 	// Send actual Raft vote request via peer connection
 	raftResp, err := conn.SendRaftVote(ctx, raftReq)
 	if err != nil {
-		return nil, fmt.Errorf("send vote request: %w", err)
+		return nil, localizedError(localization.ReplicationRaftSendVoteFailed(err), err)
 	}
 
 	// Convert response back to internal type
@@ -703,7 +703,7 @@ func (r *RaftReplicator) sendAppendEntriesRPC(ctx context.Context, conn PeerConn
 	// Send actual Raft AppendEntries RPC via peer connection
 	raftResp, err := conn.SendRaftAppendEntries(ctx, raftReq)
 	if err != nil {
-		return nil, fmt.Errorf("send append entries: %w", err)
+		return nil, localizedError(localization.ReplicationRaftSendAppendFailed(err), err)
 	}
 
 	// Convert response back to internal type
@@ -871,7 +871,7 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 			r.futuresMu.Lock()
 			delete(r.futures, future.index)
 			r.futuresMu.Unlock()
-			future.errCh <- fmt.Errorf("commit timeout after %v", r.config.Raft.CommitTimeout)
+			future.errCh <- localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
 			return
 		case <-ticker.C:
 			r.logMu.RLock()
@@ -1030,12 +1030,12 @@ func (r *RaftReplicator) getOrConnectPeer(ctx context.Context, peer PeerConfig) 
 	}
 
 	if r.transport == nil {
-		return nil, fmt.Errorf("no transport configured")
+		return nil, localizedError(localization.ReplicationRaftTransportNotConfigured(), nil)
 	}
 
 	newConn, err := r.transport.Connect(ctx, peer.Addr)
 	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", peer.Addr, err)
+		return nil, localizedError(localization.ReplicationRaftConnectPeerFailed(peer.Addr, err), err)
 	}
 
 	r.peerMu.Lock()
@@ -1339,7 +1339,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		defer cancel()
 		conn, err := r.transport.Connect(fwdCtx, leaderAddr)
 		if err != nil {
-			return fmt.Errorf("forward to leader: %w", err)
+			return localizedError(localization.ReplicationRaftForwardToLeaderFailed(err), err)
 		}
 		if fa, ok := conn.(forwardApplySender); ok {
 			return fa.SendForwardApply(fwdCtx, cmd, timeout)
@@ -1355,14 +1355,14 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	select {
 	case r.applyCh <- future:
 	case <-time.After(timeout):
-		return fmt.Errorf("apply queue full")
+		return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
 	}
 
 	select {
 	case err := <-future.errCh:
 		return err
 	case <-time.After(timeout):
-		return fmt.Errorf("apply timeout")
+		return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
 	}
 }
 

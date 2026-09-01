@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -87,23 +88,23 @@ func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createSt
 	// Parse node pattern to get variable name and properties
 	nodePattern := e.parseNodePattern(ctx, pattern)
 	if nodePattern.variable == "" {
-		return nil, "", fmt.Errorf("CREATE node must have a variable name")
+		return nil, "", localizedError(localization.CypherMergeCreateNodeVariableRequired(), nil)
 	}
 
 	// Validate labels
 	for _, label := range nodePattern.labels {
 		if !isValidIdentifier(label) {
-			return nil, "", fmt.Errorf("invalid label name: %q", label)
+			return nil, "", localizedError(localization.CypherMergeInvalidLabelName(label), nil)
 		}
 	}
 
 	// Validate properties
 	for key, val := range nodePattern.properties {
 		if !isValidIdentifier(key) {
-			return nil, "", fmt.Errorf("invalid property key: %q", key)
+			return nil, "", localizedError(localization.CypherMergeInvalidPropertyKey(key), nil)
 		}
 		if _, ok := val.(invalidPropertyValue); ok {
-			return nil, "", fmt.Errorf("invalid property value for key %q", key)
+			return nil, "", localizedError(localization.CypherMergeInvalidPropertyValue(key), nil)
 		}
 	}
 
@@ -121,7 +122,7 @@ func (e *StorageExecutor) executeCreateNodeSegment(ctx context.Context, createSt
 
 	actualID, err := store.CreateNode(node)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create node: %w", err)
+		return nil, "", localizedError(localization.CypherMergePipelineCreateNodeFailed(err), err)
 	}
 
 	// CRITICAL: Update node ID with the actual stored ID returned from storage.
@@ -148,7 +149,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 	// Parse relationship pattern: (varA)-[varR:Type {props}]->(varB)
 	sourceVar, relContent, targetVar, isReverse, _, err := e.parseCreateRelPatternWithVars(pattern)
 	if err != nil {
-		return fmt.Errorf("failed to parse relationship pattern: %w", err)
+		return localizedError(localization.CypherMergeRelationshipPatternParseFailed(err), err)
 	}
 
 	resolveNode := func(content string) (*storage.Node, error) {
@@ -159,7 +160,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 			}
 		}
 		if len(nodePattern.labels) == 0 && len(nodePattern.properties) == 0 {
-			return nil, fmt.Errorf("variable not found in context: %s", content)
+			return nil, localizedError(localization.CypherMergeVariableNotFound(content), nil)
 		}
 		node := &storage.Node{
 			ID:         storage.NodeID(e.generateID()),
@@ -168,7 +169,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 		}
 		actualID, err := store.CreateNode(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create inline node: %w", err)
+			return nil, localizedError(localization.CypherMergeInlineNodeCreateFailed(err), err)
 		}
 		if actualID != "" {
 			node.ID = actualID
@@ -184,19 +185,19 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 
 	sourceNode, err := resolveNode(sourceVar)
 	if err != nil {
-		return fmt.Errorf("source %s: %w", sourceVar, err)
+		return localizedError(localization.CypherMergeSourceResolutionFailed(sourceVar, err), err)
 	}
 	targetNode, err := resolveNode(targetVar)
 	if err != nil {
-		return fmt.Errorf("target %s: %w", targetVar, err)
+		return localizedError(localization.CypherMergeTargetResolutionFailed(targetVar, err), err)
 	}
 
 	// Validate node IDs are not empty
 	if sourceNode.ID == "" {
-		return fmt.Errorf("source node %s has empty ID", sourceVar)
+		return localizedError(localization.CypherMergeSourceNodeIDEmpty(sourceVar), nil)
 	}
 	if targetNode.ID == "" {
-		return fmt.Errorf("target node %s has empty ID", targetVar)
+		return localizedError(localization.CypherMergeTargetNodeIDEmpty(targetVar), nil)
 	}
 
 	// Parse relationship type and properties from relContent
@@ -227,7 +228,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 	}
 
 	if relType == "" {
-		return fmt.Errorf("relationship type is required")
+		return localizedError(localization.CypherMergeRelationshipTypeRequired(), nil)
 	}
 
 	// Determine start and end nodes based on direction
@@ -250,7 +251,7 @@ func (e *StorageExecutor) executeCreateRelSegment(ctx context.Context, createStm
 	}
 
 	if err := store.CreateEdge(edge); err != nil {
-		return fmt.Errorf("failed to create edge: %w", err)
+		return localizedError(localization.CypherMergeCreateEdgeFailed(err), err)
 	}
 
 	if relVar != "" {
@@ -312,7 +313,7 @@ func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
 			parenIdx := strings.Index(rightSide, "(")
 			funcName := strings.ToUpper(strings.TrimSpace(rightSide[:parenIdx]))
 			if !knownFunctions[funcName] {
-				return fmt.Errorf("unknown function: %s", funcName)
+				return localizedError(localization.CypherMergeUnknownFunction(funcName), nil)
 			}
 		}
 	}
@@ -362,7 +363,7 @@ func (e *StorageExecutor) executeMatchWithPipelineToRows(ctx context.Context, ma
 	// Parse: MATCH (o:Label) WHERE ... WITH ... WITH collect(o) AS orders UNWIND ... WITH ... MATCH (ph:Pharmacy) WITH ... WITH ... WITH o, pharmacies[i % size(pharmacies)] AS pharmacy
 	withIdx := findKeywordIndex(matchPart, "WITH")
 	if withIdx < 0 {
-		return nil, fmt.Errorf("pipeline requires WITH")
+		return nil, localizedError(localization.CypherMergePipelineWithRequired(), nil)
 	}
 	matchSection := strings.TrimSpace(matchPart[:withIdx])
 	// MATCH (o:OrderStatus) WHERE NOT (o)-[:UPDATED_TO]->()
@@ -381,7 +382,7 @@ func (e *StorageExecutor) executeMatchWithPipelineToRows(ctx context.Context, ma
 	}
 	nodeInfo := e.parseNodePattern(ctx, matchPattern)
 	if nodeInfo.variable == "" {
-		return nil, fmt.Errorf("MATCH pattern must have a variable")
+		return nil, localizedError(localization.CypherMergeMatchPatternVariableRequired(), nil)
 	}
 	var nodes []*storage.Node
 	var err error

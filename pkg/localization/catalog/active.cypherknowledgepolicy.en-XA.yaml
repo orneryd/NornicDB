@@ -1,0 +1,96 @@
+- id: cypherknowledgepolicy.expected_after
+  description: Expanded pseudo-locale parser expectation.
+  other: "[!! expected {{.Expected}} after {{.After}} !!]"
+- id: cypherknowledgepolicy.profile_name_expected_after
+  description: Expanded pseudo-locale missing profile name.
+  other: "[!! expected profile name after {{.After}} !!]"
+- id: cypherknowledgepolicy.expected_after_profile_name
+  description: Expanded pseudo-locale missing syntax after a profile name.
+  other: "[!! expected {{.Expected}} after profile name {{.DisplayName}} !!]"
+- id: cypherknowledgepolicy.policy_name_expected_after
+  description: Expanded pseudo-locale missing policy name.
+  other: "[!! expected policy name after {{.After}} !!]"
+- id: cypherknowledgepolicy.label_expected_after_colon
+  description: Expanded pseudo-locale missing label.
+  other: "[!! expected label after ':' !!]"
+- id: cypherknowledgepolicy.edge_type_expected_after_colon
+  description: Expanded pseudo-locale missing edge type.
+  other: "[!! expected edge type after ':' !!]"
+- id: cypherknowledgepolicy.edge_pattern_expected_for
+  description: Expanded pseudo-locale missing edge-pattern symbol.
+  other: "[!! expected {{.Expected}} for edge pattern !!]"
+- id: cypherknowledgepolicy.edge_pattern_expected_in
+  description: Expanded pseudo-locale missing edge-pattern symbol.
+  other: "[!! expected {{.Expected}} in edge pattern !!]"
+- id: cypherknowledgepolicy.number_expected_after
+  description: Expanded pseudo-locale missing number.
+  other: "[!! expected number after {{.After}} !!]"
+- id: cypherknowledgepolicy.seconds_expected_after
+  description: Expanded pseudo-locale missing duration.
+  other: "[!! expected seconds after {{.After}} !!]"
+- id: cypherknowledgepolicy.kalman_closing_brace_expected
+  description: Expanded pseudo-locale unterminated Kalman block.
+  other: "[!! expected } in KALMAN config block !!]"
+- id: cypherknowledgepolicy.expression_expected_after_set
+  description: Expanded pseudo-locale missing SET expression.
+  other: "[!! expected expression after SET !!]"
+- id: cypherknowledgepolicy.invalid_value
+  description: Expanded pseudo-locale invalid value.
+  other: "[!! invalid {{.Field}}: {{.DisplayValue}} !!]"
+- id: cypherknowledgepolicy.unknown_option
+  description: Expanded pseudo-locale unknown option.
+  other: "[!! unknown option: {{.DisplayOption}} !!]"
+- id: cypherknowledgepolicy.unknown_kalman_config_key
+  description: Expanded pseudo-locale unknown Kalman key.
+  other: "[!! unknown Kalman config key: {{.DisplayKey}} !!]"
+- id: cypherknowledgepolicy.unsupported_command
+  description: Expanded pseudo-locale unsupported command.
+  other: "[!! unsupported knowledge policy command: {{.Command}} !!]"
+- id: cypherknowledgepolicy.schema_manager_unavailable
+  description: Expanded pseudo-locale unavailable schema manager.
+  other: "[!! schema manager unavailable !!]"
+- id: cypherknowledgepolicy.unsupported_command_type
+  description: Expanded pseudo-locale unsupported command type.
+  other: "[!! unsupported knowledge policy command type {{.CommandType}} !!]"
+- id: cypherknowledgepolicy.operation_failed
+  description: Exact diagnostic cause remains unchanged in the pseudo-locale.
+  other: "{{.Cause}}"
+- id: cypherknowledgepolicy.resolve_target_required
+  description: Expanded pseudo-locale missing resolve target.
+  other: "[!! nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType !!]"
+- id: cypherknowledgepolicy.binding_table_unavailable
+  description: Expanded pseudo-locale unavailable binding table.
+  other: "[!! knowledge policy binding table unavailable !!]"
+- id: cypherknowledgepolicy.entity_not_found
+  description: Expanded pseudo-locale missing entity.
+  other: "[!! entity not found: {{.EntityID}} !!]"
+- id: cypherknowledgepolicy.argument_string_required
+  description: Expanded pseudo-locale invalid argument type.
+  other: "[!! argument {{.Position}} must be a string !!]"
+- id: cypherknowledgepolicy.deindex_badger_required
+  description: Expanded pseudo-locale deindex backend requirement.
+  other: "[!! deindex status requires BadgerDB storage backend !!]"
+- id: cypherknowledgepolicy.decay_options_map_required
+  description: Expanded pseudo-locale invalid decay options type.
+  other: "[!! decayScore/decay options must be a map, got {{.ValueType}} !!]"
+- id: cypherknowledgepolicy.unknown_decay_option
+  description: Expanded pseudo-locale unknown decay option.
+  other: "[!! unknown decay option key: {{.DisplayOption}} !!]"
+- id: cypherknowledgepolicy.reason_no_entity_argument
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! no entity argument !!]"
+- id: cypherknowledgepolicy.reason_entity_not_found
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! entity not found !!]"
+- id: cypherknowledgepolicy.reason_no_badger_engine
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! no BadgerEngine !!]"
+- id: cypherknowledgepolicy.reason_decay_disabled
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! decay subsystem disabled !!]"
+- id: cypherknowledgepolicy.reason_no_decay_profile
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! no decay profile !!]"
+- id: cypherknowledgepolicy.reason_no_decay
+  description: Expanded pseudo-locale neutral decay reason.
+  other: "[!! no decay !!]"

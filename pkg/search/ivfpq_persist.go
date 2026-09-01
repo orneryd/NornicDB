@@ -2,11 +2,11 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -165,7 +165,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	}
 
 	if vfs == nil {
-		return nil, fmt.Errorf("vector file store unavailable for IVFPQ build")
+		return nil, localizedError(localization.SearchIVFPQVectorStoreUnavailable(), nil)
 	}
 	seedIDs := bm25SeedDocIDs(fulltext)
 	built, stats, err := BuildIVFPQFromVectorStore(ctx, vfs, profile, seedIDs)

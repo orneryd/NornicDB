@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -787,7 +788,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if matchIdx == -1 || unwindIdx == -1 {
-		return nil, fmt.Errorf("MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item)")
+		return nil, localizedError(localization.CypherMatchingMatchUnwindClausesRequired(), nil)
 	}
 
 	// Parse MATCH clause
@@ -818,7 +819,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 		nodes, err = e.loadNodesWithTemporalViewport(ctx, nil)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("storage error: %w", err)
+		return nil, localizedError(localization.CypherMatchingStorageFailed(err), err)
 	}
 
 	// Apply property filter from MATCH pattern
@@ -838,7 +839,7 @@ func (e *StorageExecutor) executeMatchUnwind(ctx context.Context, cypher string)
 	// Find AS keyword
 	asIdx := strings.Index(strings.ToUpper(unwindPart), " AS ")
 	if asIdx == -1 {
-		return nil, fmt.Errorf("UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x)")
+		return nil, localizedError(localization.CypherMatchingUnwindASRequired(), nil)
 	}
 
 	unwindExpr = strings.TrimSpace(unwindPart[:asIdx])

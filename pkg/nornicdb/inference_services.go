@@ -1,11 +1,11 @@
 package nornicdb
 
 import (
-	"fmt"
 	"time"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/inference"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/temporal"
 )
@@ -38,7 +38,7 @@ func (db *DB) getOrCreateInferenceService(dbName string, storageEngine storage.E
 	// Build storage for this database if not provided.
 	if storageEngine == nil {
 		if db.baseStorage == nil {
-			return nil, fmt.Errorf("inference unavailable: base storage is nil")
+			return nil, localizedError(localization.NornicDBCoreInferenceBaseStorageUnavailable(), nil)
 		}
 		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
 	}

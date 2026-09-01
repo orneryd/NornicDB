@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -47,7 +48,7 @@ func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResu
 // handleBegin starts a new explicit transaction.
 func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	if e.txContext != nil && e.txContext.active {
-		return nil, fmt.Errorf("transaction already active")
+		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
 	}
 
 	// Unwrap engine wrappers (Async/WAL/Namespaced) recursively.
@@ -97,28 +98,28 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		BeginTransaction() (*storage.BadgerTransaction, error)
 	})
 	if !ok {
-		return nil, fmt.Errorf("engine does not support transactions")
+		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 	if namespaceHint != "" {
 		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
 			if err := primer.EnsureNamespaceMVCC(namespaceHint); err != nil {
-				return nil, fmt.Errorf("failed to prime transaction namespace: %w", err)
+				return nil, localizedError(localization.CypherTransactionsPrimeNamespaceFailed(err), err)
 			}
 		}
 	}
 	tx, err := txEngine.BeginTransaction()
 	if err != nil {
-		return nil, fmt.Errorf("failed to start transaction: %w", err)
+		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}
 	if namespaceHint != "" {
 		if err := tx.SetNamespace(namespaceHint); err != nil {
 			_ = tx.Rollback()
-			return nil, fmt.Errorf("failed to pin transaction namespace: %w", err)
+			return nil, localizedError(localization.CypherTransactionsPinNamespaceFailed(err), err)
 		}
 	}
 	if err := tx.SetDeferredConstraintValidation(true); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("failed to configure transaction: %w", err)
+		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}
 	txCtx := &TransactionContext{
 		tx:     tx,
@@ -130,7 +131,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		walSeq, walErr := wal.AppendTxBegin(dbName, tx.ID, nil)
 		if walErr != nil {
 			_ = tx.Rollback()
-			return nil, fmt.Errorf("failed to write WAL tx begin: %w", walErr)
+			return nil, localizedError(localization.CypherTransactionsWALBeginFailed(walErr), walErr)
 		}
 		txCtx.wal = wal
 		txCtx.walSeqStart = walSeq
@@ -147,7 +148,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 // handleCommit commits the active transaction.
 func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
-		return nil, fmt.Errorf("no active transaction")
+		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
 
 	// Commit based on transaction type
@@ -164,7 +165,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
 	default:
-		return nil, fmt.Errorf("unknown transaction type")
+		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
 
 	wal := e.txContext.wal
@@ -197,7 +198,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		return nil, fmt.Errorf("commit failed: %w", err)
+		return nil, localizedError(localization.CypherTransactionsCommitFailed(err), err)
 	}
 
 	if e.txContext.fabricRemoteExe != nil {
@@ -222,7 +223,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 // handleRollback rolls back the active transaction.
 func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
-		return nil, fmt.Errorf("no active transaction")
+		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
 
 	// Rollback based on transaction type
@@ -239,7 +240,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 			err = tx.Rollback(nil)
 		}
 	default:
-		return nil, fmt.Errorf("unknown transaction type")
+		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
 
 	if e.txContext.wal != nil && e.txContext.walSeqStart > 0 {
@@ -254,7 +255,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	e.txContext = nil
 
 	if err != nil {
-		return nil, fmt.Errorf("rollback failed: %w", err)
+		return nil, localizedError(localization.CypherTransactionsRollbackFailed(err), err)
 	}
 
 	return &ExecuteResult{
@@ -295,7 +296,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
 	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
 	if !ok {
-		return nil, fmt.Errorf("unknown transaction type")
+		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
 
 	// Recursive execution paths, such as UNWIND ... MATCH ... MERGE fallback
@@ -553,7 +554,7 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 		case strings.HasPrefix(upper, "SHOW LIMITS"):
 			return e.executeShowLimits(ctx, cypher)
 		default:
-			return nil, fmt.Errorf("unsupported SHOW command in transaction: %s", cypher)
+			return nil, localizedError(localization.CypherTransactionsShowInTransactionUnsupported(cypher), nil)
 		}
 	case strings.HasPrefix(upper, "DROP"):
 		if strings.HasPrefix(upper, "DROP DECAY PROFILE") ||
@@ -575,6 +576,6 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 	case strings.HasPrefix(upper, "FOREACH"):
 		return e.executeForeach(ctx, cypher)
 	default:
-		return nil, fmt.Errorf("unsupported query type in transaction: %s", cypher)
+		return nil, localizedError(localization.CypherTransactionsQueryInTransactionUnsupported(cypher), nil)
 	}
 }

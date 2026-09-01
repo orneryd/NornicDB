@@ -83,7 +83,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 		b.schemasMu.Unlock()
 	}
 
-	// Phase 3: rebuild derived unique-constraint value caches from stored nodes.
+	// Rebuild derived unique-constraint value caches from stored nodes.
 	// This keeps CreateNode() fast (in-memory uniqueness checks) and ensures constraints
 	// enforce correctly immediately after restart.
 	for _, ls := range loadedSchemas {

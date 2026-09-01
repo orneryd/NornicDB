@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -79,27 +80,27 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 		}
 		// Check if there's a colon that doesn't have a label after it
 		if strings.Contains(patternBeforeProps, ":") && len(nodePattern.labels) == 0 {
-			return nil, fmt.Errorf("empty label name after colon in pattern: %s", nodePatternStr)
+			return nil, localizedError(localization.CypherResidualEmptyLabelAfterColon(nodePatternStr), nil)
 		}
 
 		// SECURITY: Validate labels to prevent injection attacks
 		for _, label := range nodePattern.labels {
 			if !isValidIdentifier(label) {
-				return nil, fmt.Errorf("invalid label name: %q (must be alphanumeric starting with letter or underscore)", label)
+				return nil, localizedError(localization.CypherMutationsInvalidLabelName(label), nil)
 			}
 			if containsReservedKeyword(label) {
-				return nil, fmt.Errorf("invalid label name: %q (contains reserved keyword)", label)
+				return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(label), nil)
 			}
 		}
 
 		// SECURITY: Validate property keys and values
 		for key, val := range nodePattern.properties {
 			if !isValidIdentifier(key) {
-				return nil, fmt.Errorf("invalid property key: %q (must be alphanumeric starting with letter or underscore)", key)
+				return nil, localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)
 			}
 			// Check for invalid property values (malformed syntax)
 			if _, ok := val.(invalidPropertyValue); ok {
-				return nil, fmt.Errorf("invalid property value for key %q: malformed syntax", key)
+				return nil, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 			}
 		}
 
@@ -112,7 +113,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 
 		actualID, err := store.CreateNode(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create node: %w", err)
+			return nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 		if actualID != "" {
 			node.ID = actualID
@@ -165,7 +166,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				}
 				actualID, err := store.CreateNode(sourceNode)
 				if err != nil {
-					return nil, fmt.Errorf("failed to create source node: %w", err)
+					return nil, localizedError(localization.CypherMutationsCreateSourceNodeFailed(err), err)
 				}
 				if actualID != "" {
 					sourceNode.ID = actualID
@@ -194,7 +195,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				}
 				actualID, err := store.CreateNode(targetNode)
 				if err != nil {
-					return nil, fmt.Errorf("failed to create target node: %w", err)
+					return nil, localizedError(localization.CypherMutationsCreateTargetNodeFailed(err), err)
 				}
 				if actualID != "" {
 					targetNode.ID = actualID
@@ -221,13 +222,13 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 
 			// SECURITY: Validate relationship type
 			if relType != "" && !isValidIdentifier(relType) {
-				return nil, fmt.Errorf("invalid relationship type: %q (must be alphanumeric starting with letter or underscore)", relType)
+				return nil, localizedError(localization.CypherMutationsInvalidRelationshipType(relType), nil)
 			}
 
 			// SECURITY: Validate relationship property keys
 			for key := range relProps {
 				if !isValidIdentifier(key) {
-					return nil, fmt.Errorf("invalid relationship property key: %q (must be alphanumeric starting with letter or underscore)", key)
+					return nil, localizedError(localization.CypherMutationsInvalidRelationshipPropertyKey(key), nil)
 				}
 			}
 
@@ -246,7 +247,7 @@ func (e *StorageExecutor) executeCreate(ctx context.Context, cypher string) (*Ex
 				Properties: relProps,
 			}
 			if err := store.CreateEdge(edge); err != nil {
-				return nil, fmt.Errorf("failed to create relationship: %w", err)
+				return nil, localizedError(localization.CypherMutationsCreateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
 			if relVar != "" {
@@ -366,11 +367,11 @@ func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, 
 	}
 	propsEnd := strings.LastIndex(pattern, "}")
 	if propsEnd < propsStart {
-		return fmt.Errorf("invalid property map syntax in pattern: %s", pattern)
+		return localizedError(localization.CypherResidualPropertyMapSyntaxInvalid(pattern), nil)
 	}
 	propsLiteral := strings.TrimSpace(pattern[propsStart : propsEnd+1])
 	if _, err := e.parseSetMergeMapLiteralStrict(ctx, propsLiteral); err != nil {
-		return fmt.Errorf("invalid property map syntax in pattern: %w", err)
+		return localizedError(localization.CypherMutationsInvalidPropertyMapCause(err), err)
 	}
 	return nil
 }
@@ -454,7 +455,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 
 		actualID, err := store.CreateNode(node)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to create node: %w", err)
+			return nil, nil, nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 		if actualID != "" {
 			node.ID = actualID
@@ -504,7 +505,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 				}
 				actualID, err := store.CreateNode(sourceNode)
 				if err != nil {
-					return nil, nil, nil, fmt.Errorf("failed to create source node: %w", err)
+					return nil, nil, nil, localizedError(localization.CypherMutationsCreateSourceNodeFailed(err), err)
 				}
 				if actualID != "" {
 					sourceNode.ID = actualID
@@ -532,7 +533,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 				}
 				actualID, err := store.CreateNode(targetNode)
 				if err != nil {
-					return nil, nil, nil, fmt.Errorf("failed to create target node: %w", err)
+					return nil, nil, nil, localizedError(localization.CypherMutationsCreateTargetNodeFailed(err), err)
 				}
 				if actualID != "" {
 					targetNode.ID = actualID
@@ -575,7 +576,7 @@ func (e *StorageExecutor) executeCreateWithRefs(ctx context.Context, cypher stri
 			}
 
 			if err := store.CreateEdge(edge); err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to create relationship: %w", err)
+				return nil, nil, nil, localizedError(localization.CypherMutationsCreateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
 
@@ -761,7 +762,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 
 	// Find the first node: (varA)
 	if !strings.HasPrefix(pattern, "(") {
-		return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: must start with (")
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternMustStartNode(), nil)
 	}
 
 	// Find end of first node
@@ -779,7 +780,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 		}
 	}
 	if firstNodeEnd < 0 {
-		return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: unmatched parenthesis")
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedParen(), nil)
 	}
 
 	sourceVar := strings.TrimSpace(pattern[1:firstNodeEnd])
@@ -796,7 +797,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 		isReverse = true
 		relStart = 3 // Skip "<-["
 	} else {
-		return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: expected -[ or <-[, got: %s", rest[:min(20, len(rest))])
+		return "", "", "", false, "", localizedError(localization.CypherResidualRelationshipConnectorExpected(rest[:min(20, len(rest))]), nil)
 	}
 
 	// Find matching ] considering nested brackets in properties
@@ -826,7 +827,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 		}
 	}
 	if relEnd < 0 {
-		return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: unmatched bracket")
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
 	}
 
 	relContent := rest[relStart:relEnd]
@@ -836,12 +837,12 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 	var secondNodeStart int
 	if isReverse {
 		if !strings.HasPrefix(afterRel, "-(") {
-			return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: expected -( after ]")
+			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternForwardExpected(), nil)
 		}
 		secondNodeStart = 2
 	} else {
 		if !strings.HasPrefix(afterRel, "->(") {
-			return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: expected ->( after ]")
+			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternArrowExpected(), nil)
 		}
 		secondNodeStart = 3
 	}
@@ -862,7 +863,7 @@ func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string,
 		}
 	}
 	if secondNodeEnd < 0 {
-		return "", "", "", false, "", fmt.Errorf("invalid relationship pattern: unmatched parenthesis for second node")
+		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternSecondUnmatched(), nil)
 	}
 
 	targetVar := strings.TrimSpace(afterRel[secondNodeStart:secondNodeEnd])
@@ -1484,13 +1485,13 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					var err error
 					matchingNodes, err = store.GetNodesByLabel(nodeInfo.labels[0])
 					if err != nil {
-						return nil, fmt.Errorf("failed to get nodes by label %q in MATCH segment: %w", nodeInfo.labels[0], err)
+						return nil, localizedError(localization.CypherMutationsMatchLabelLookupFailed(nodeInfo.labels[0], err), err)
 					}
 				} else {
 					var err error
 					matchingNodes, err = store.AllNodes()
 					if err != nil {
-						return nil, fmt.Errorf("failed to get all nodes in MATCH segment: %w", err)
+						return nil, localizedError(localization.CypherMutationsMatchAllNodesFailed(err), err)
 					}
 				}
 
@@ -1648,10 +1649,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 						}
 						exists, err := hasRelationshipOfType(store, startNode.ID, endNode.ID, rc.edgeType)
 						if err != nil {
-							return nil, fmt.Errorf(
-								"failed relationship existence check for %s-[:%s]->%s: %w",
-								rc.startVar, rc.edgeType, rc.endVar, err,
-							)
+							return nil, localizedError(localization.CypherMutationsRelationshipExistenceCheckFailed(rc.startVar, rc.edgeType, rc.endVar, err), err)
 						}
 						if exists {
 							keep = false
@@ -1798,10 +1796,10 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 							newLabel = strings.ReplaceAll(newLabel[1:len(newLabel)-1], "``", "`")
 						}
 						if !isValidIdentifier(newLabel) {
-							return nil, fmt.Errorf("invalid label name: %q (must be alphanumeric starting with letter or underscore)", newLabel)
+							return nil, localizedError(localization.CypherMutationsInvalidLabelName(newLabel), nil)
 						}
 						if containsReservedKeyword(newLabel) {
-							return nil, fmt.Errorf("invalid label name: %q (contains reserved keyword)", newLabel)
+							return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(newLabel), nil)
 						}
 						if node, exists := combinedNodeVars[varName]; exists {
 							if !containsString(node.Labels, newLabel) {
@@ -1814,7 +1812,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 								}
 								if err := store.UpdateNode(node); err != nil {
 									node.Labels = oldLabels // restore
-									return nil, fmt.Errorf("failed to add label: %w", err)
+									return nil, localizedError(localization.CypherMutationsAddLabelFailed(err), err)
 								}
 								result.Stats.LabelsAdded++
 								e.notifyNodeMutated(string(node.ID))
@@ -1830,15 +1828,15 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 				if strings.HasPrefix(rightSide, "$") {
 					paramName := strings.TrimSpace(rightSide[1:])
 					if paramName == "" {
-						return nil, fmt.Errorf("SET assignment requires a valid parameter name after $")
+						return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
 					}
 					params := getParamsFromContext(ctx)
 					if params == nil {
-						return nil, fmt.Errorf("SET assignment parameter $%s requires parameters to be provided", paramName)
+						return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
 					}
 					paramValue, exists := params[paramName]
 					if !exists {
-						return nil, fmt.Errorf("SET assignment parameter $%s not found in provided parameters", paramName)
+						return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
 					}
 					value = normalizePropValue(paramValue)
 				}
@@ -1851,19 +1849,19 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					if node, exists := combinedNodeVars[varName]; exists {
 						node.Properties = cloneStringAnyMap(props)
 						if err := store.UpdateNode(node); err != nil {
-							return nil, fmt.Errorf("failed to replace node properties: %w", err)
+							return nil, localizedError(localization.CypherMutationsReplaceNodePropertiesFailed(err), err)
 						}
 						result.Stats.PropertiesSet++
 						e.notifyNodeMutated(string(node.ID))
 					} else if edge, exists := edgeVars[varName]; exists {
 						edge.Properties = cloneStringAnyMap(props)
 						if err := store.UpdateEdge(edge); err != nil {
-							return nil, fmt.Errorf("failed to replace edge properties: %w", err)
+							return nil, localizedError(localization.CypherMutationsReplaceEdgePropertiesFailed(err), err)
 						}
 						result.Stats.PropertiesSet++
 						e.notifyEdgeMutated(string(edge.ID))
 					} else {
-						return nil, fmt.Errorf("unknown variable in SET clause: %s", varName)
+						return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
 					}
 					continue
 				}
@@ -1876,7 +1874,7 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					}
 					node.Properties[propName] = value
 					if err := store.UpdateNode(node); err != nil {
-						return nil, fmt.Errorf("failed to update node property: %w", err)
+						return nil, localizedError(localization.CypherMutationsUpdateNodePropertyFailed(err), err)
 					}
 					result.Stats.PropertiesSet++
 					e.notifyNodeMutated(string(node.ID))
@@ -1886,12 +1884,12 @@ func (e *StorageExecutor) executeMatchCreateBlock(ctx context.Context, block str
 					}
 					edge.Properties[propName] = value
 					if err := store.UpdateEdge(edge); err != nil {
-						return nil, fmt.Errorf("failed to update edge property: %w", err)
+						return nil, localizedError(localization.CypherMutationsUpdateEdgePropertyFailed(err), err)
 					}
 					result.Stats.PropertiesSet++
 					e.notifyEdgeMutated(string(edge.ID))
 				} else {
-					return nil, fmt.Errorf("unknown variable in SET clause: %s", varName)
+					return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
 				}
 			}
 		}
@@ -2047,7 +2045,7 @@ func (e *StorageExecutor) processCreateNode(ctx context.Context, pattern string,
 
 	actualID, err := store.CreateNode(node)
 	if err != nil {
-		return fmt.Errorf("failed to create node: %w", err)
+		return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 	}
 	if actualID != "" {
 		node.ID = actualID
@@ -2070,15 +2068,15 @@ func (e *StorageExecutor) processCreateRelationship(ctx context.Context, pattern
 	// Parse relationship pattern: (a)-[r:TYPE {props}]->(b) or (a)<-[r:TYPE]-(b)
 	sourceContent, relContent, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(pattern)
 	if err != nil {
-		return fmt.Errorf("invalid relationship pattern in CREATE: %s", pattern)
+		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
 	}
 	if strings.TrimSpace(remainder) != "" {
-		return fmt.Errorf("invalid relationship pattern in CREATE: %s", pattern)
+		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
 	}
 
 	relVar, relType, relPropsStr, err := parseCreateRelationshipContent(relContent)
 	if err != nil {
-		return fmt.Errorf("invalid relationship pattern in CREATE: %s", pattern)
+		return localizedError(localization.CypherResidualCreateRelationshipInvalid(pattern), nil)
 	}
 
 	// Default relationship type
@@ -2097,13 +2095,13 @@ func (e *StorageExecutor) processCreateRelationship(ctx context.Context, pattern
 	// Resolve source node - could be a variable reference or inline node definition
 	sourceNode, err := e.resolveOrCreateNode(ctx, sourceContent, nodeVars, result, store)
 	if err != nil {
-		return fmt.Errorf("failed to resolve source node: %w", err)
+		return localizedError(localization.CypherMutationsResolveSourceNodeFailed(err), err)
 	}
 
 	// Resolve target node - could be a variable reference or inline node definition
 	targetNode, err := e.resolveOrCreateNode(ctx, targetContent, nodeVars, result, store)
 	if err != nil {
-		return fmt.Errorf("failed to resolve target node: %w", err)
+		return localizedError(localization.CypherMutationsResolveTargetNodeFailed(err), err)
 	}
 
 	// Handle reverse direction
@@ -2122,7 +2120,7 @@ func (e *StorageExecutor) processCreateRelationship(ctx context.Context, pattern
 	}
 
 	if err := store.CreateEdge(edge); err != nil {
-		return fmt.Errorf("failed to create relationship: %w", err)
+		return localizedError(localization.CypherMutationsCreateRelationshipFailed(err), err)
 	}
 
 	result.Stats.RelationshipsCreated++
@@ -2146,11 +2144,11 @@ func parseCreateRelationshipContent(content string) (relVar string, relType stri
 	if braceStart := strings.Index(content, "{"); braceStart >= 0 {
 		braceEnd := strings.LastIndex(content, "}")
 		if braceEnd < braceStart {
-			return "", "", "", fmt.Errorf("invalid relationship properties")
+			return "", "", "", localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
 		}
 		relPropsStr = strings.TrimSpace(content[braceStart : braceEnd+1])
 		if strings.TrimSpace(content[braceEnd+1:]) != "" {
-			return "", "", "", fmt.Errorf("invalid relationship properties")
+			return "", "", "", localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
 		}
 		head = strings.TrimSpace(content[:braceStart])
 	}
@@ -2185,7 +2183,7 @@ func (e *StorageExecutor) resolveOrCreateNode(ctx context.Context, content strin
 	if isSimpleVariable(content) {
 		node, exists := nodeVars[content]
 		if !exists {
-			return nil, fmt.Errorf("variable '%s' not found (have: %v)", content, getKeys(nodeVars))
+			return nil, localizedError(localization.CypherMutationsVariableNotFound(content, fmt.Sprint(getKeys(nodeVars))), nil)
 		}
 		return node, nil
 	}
@@ -2209,7 +2207,7 @@ func (e *StorageExecutor) resolveOrCreateNode(ctx context.Context, content strin
 
 	actualID, err := store.CreateNode(node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create node: %w", err)
+		return nil, localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 	}
 	if actualID != "" {
 		node.ID = actualID
@@ -2271,7 +2269,7 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 
 	if withIdx < 0 || deleteIdx < 0 {
-		return nil, fmt.Errorf("invalid CREATE...WITH...DELETE query")
+		return nil, localizedError(localization.CypherMutationsCreateWithDeleteInvalid(), nil)
 	}
 
 	// Extract CREATE part (everything before WITH)
@@ -2292,7 +2290,7 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 	// This avoids expensive O(n) scans of GetNodesByLabel/AllEdges
 	createResult, createdVars, createdEdges, err := e.executeCreateWithRefs(ctx, createPart)
 	if err != nil {
-		return nil, fmt.Errorf("CREATE failed: %w", err)
+		return nil, localizedError(localization.CypherMutationsCreateFailed(err), err)
 	}
 	result.Stats.NodesCreated = createResult.Stats.NodesCreated
 	result.Stats.RelationshipsCreated = createResult.Stats.RelationshipsCreated
@@ -2318,13 +2316,13 @@ func (e *StorageExecutor) executeCompoundCreateWithDelete(ctx context.Context, c
 			}
 		}
 		if err := store.DeleteNode(node.ID); err != nil {
-			return nil, fmt.Errorf("DELETE failed: %w", err)
+			return nil, localizedError(localization.CypherMutationsDeleteFailed(err), err)
 		}
 		result.Stats.NodesDeleted++
 		e.removeNodeFromSearch(string(node.ID))
 	} else if edge, exists := createdEdges[deleteTarget]; exists {
 		if err := store.DeleteEdge(edge.ID); err != nil {
-			return nil, fmt.Errorf("DELETE failed: %w", err)
+			return nil, localizedError(localization.CypherMutationsDeleteFailed(err), err)
 		}
 		result.Stats.RelationshipsDeleted++
 	}
@@ -2367,7 +2365,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	setIdx := findKeywordIndex(normalized, "SET")
 
 	if setIdx < 0 {
-		return nil, fmt.Errorf("SET clause not found in CREATE...SET query")
+		return nil, localizedError(localization.CypherMutationsCreateSetClauseMissing(), nil)
 	}
 
 	// Extract CREATE part (everything before SET)
@@ -2402,7 +2400,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 	// Execute CREATE first and get references to created entities
 	createResult, createdNodes, createdEdges, err := e.executeCreateWithRefs(ctx, createPart)
 	if err != nil {
-		return nil, fmt.Errorf("CREATE failed in CREATE...SET: %w", err)
+		return nil, localizedError(localization.CypherMutationsCreateInCreateSetFailed(err), err)
 	}
 	result.Stats.NodesCreated = createResult.Stats.NodesCreated
 	result.Stats.RelationshipsCreated = createResult.Stats.RelationshipsCreated
@@ -2433,10 +2431,10 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 					newLabel = strings.ReplaceAll(newLabel[1:len(newLabel)-1], "``", "`")
 				}
 				if !isValidIdentifier(newLabel) {
-					return nil, fmt.Errorf("invalid label name: %q (must be alphanumeric starting with letter or underscore)", newLabel)
+					return nil, localizedError(localization.CypherMutationsInvalidLabelName(newLabel), nil)
 				}
 				if containsReservedKeyword(newLabel) {
-					return nil, fmt.Errorf("invalid label name: %q (contains reserved keyword)", newLabel)
+					return nil, localizedError(localization.CypherMutationsInvalidLabelReserved(newLabel), nil)
 				}
 				if node, exists := createdNodes[varName]; exists {
 					// Add label to existing node
@@ -2450,7 +2448,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 						}
 						if err := store.UpdateNode(node); err != nil {
 							node.Labels = oldLabels // restore
-							return nil, fmt.Errorf("failed to add label: %w", err)
+							return nil, localizedError(localization.CypherMutationsAddLabelFailed(err), err)
 						}
 						result.Stats.LabelsAdded++
 						e.notifyNodeMutated(string(node.ID))
@@ -2469,15 +2467,15 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 		if strings.HasPrefix(rightSide, "$") {
 			paramName := strings.TrimSpace(rightSide[1:])
 			if paramName == "" {
-				return nil, fmt.Errorf("SET assignment requires a valid parameter name after $")
+				return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNameRequired(), nil)
 			}
 			params := getParamsFromContext(ctx)
 			if params == nil {
-				return nil, fmt.Errorf("SET assignment parameter $%s requires parameters to be provided", paramName)
+				return nil, localizedError(localization.CypherMutationsSetAssignmentParametersRequired(paramName), nil)
 			}
 			paramValue, exists := params[paramName]
 			if !exists {
-				return nil, fmt.Errorf("SET assignment parameter $%s not found in provided parameters", paramName)
+				return nil, localizedError(localization.CypherMutationsSetAssignmentParameterNotFound(paramName), nil)
 			}
 			value = normalizePropValue(paramValue)
 		}
@@ -2490,19 +2488,19 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			if node, exists := createdNodes[varName]; exists {
 				node.Properties = cloneStringAnyMap(props)
 				if err := store.UpdateNode(node); err != nil {
-					return nil, fmt.Errorf("failed to replace node properties: %w", err)
+					return nil, localizedError(localization.CypherMutationsReplaceNodePropertiesFailed(err), err)
 				}
 				result.Stats.PropertiesSet++
 				e.notifyNodeMutated(string(node.ID))
 			} else if edge, exists := createdEdges[varName]; exists {
 				edge.Properties = cloneStringAnyMap(props)
 				if err := store.UpdateEdge(edge); err != nil {
-					return nil, fmt.Errorf("failed to replace edge properties: %w", err)
+					return nil, localizedError(localization.CypherMutationsReplaceEdgePropertiesFailed(err), err)
 				}
 				result.Stats.PropertiesSet++
 				e.notifyEdgeMutated(string(edge.ID))
 			} else {
-				return nil, fmt.Errorf("unknown variable in SET clause: %s", varName)
+				return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
 			}
 			continue
 		}
@@ -2517,7 +2515,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			}
 			node.Properties[propName] = value
 			if err := store.UpdateNode(node); err != nil {
-				return nil, fmt.Errorf("failed to update node property: %w", err)
+				return nil, localizedError(localization.CypherMutationsUpdateNodePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet++
 			e.notifyNodeMutated(string(node.ID))
@@ -2527,12 +2525,12 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			}
 			edge.Properties[propName] = value
 			if err := store.UpdateEdge(edge); err != nil {
-				return nil, fmt.Errorf("failed to update edge property: %w", err)
+				return nil, localizedError(localization.CypherMutationsUpdateEdgePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet++
 			e.notifyEdgeMutated(string(edge.ID))
 		} else {
-			return nil, fmt.Errorf("unknown variable in SET clause: %s", varName)
+			return nil, localizedError(localization.CypherMutationsUnknownSetVariable(varName), nil)
 		}
 	}
 
@@ -2559,12 +2557,12 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 				}
 			}
 			if nextClauseIdx < 0 {
-				return nil, fmt.Errorf("WITH in CREATE...SET requires CREATE or RETURN clause")
+				return nil, localizedError(localization.CypherMutationsCreateSetWithContinuationRequired(), nil)
 			}
 			withProjection := strings.TrimSpace(afterWith[:nextClauseIdx])
 			remainingTrailing = strings.TrimSpace(afterWith[nextClauseIdx:])
 			if withProjection == "" {
-				return nil, fmt.Errorf("WITH clause cannot be empty")
+				return nil, localizedError(localization.CypherMutationsWithClauseEmpty(), nil)
 			}
 
 			projectedNodes := make(map[string]*storage.Node)
@@ -2584,7 +2582,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 					alias = strings.TrimSpace(expr)
 				}
 				if alias == "" {
-					return nil, fmt.Errorf("invalid WITH item: %q", item)
+					return nil, localizedError(localization.CypherResidualWithItemInvalid(item), nil)
 				}
 
 				if node, ok := createdNodes[strings.TrimSpace(expr)]; ok {
@@ -2607,7 +2605,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 						projectedEdges[alias] = v
 					}
 				default:
-					return nil, fmt.Errorf("WITH item %q does not resolve to a node or relationship in CREATE...SET scope", item)
+					return nil, localizedError(localization.CypherResidualCreateSetScopeEntityRequired(item), nil)
 				}
 			}
 
@@ -2636,7 +2634,7 @@ func (e *StorageExecutor) executeCreateSet(ctx context.Context, cypher string) (
 			continue
 		}
 
-		return nil, fmt.Errorf("unsupported clause after SET in CREATE...SET query: %s", strings.Fields(remainingTrailing)[0])
+		return nil, localizedError(localization.CypherMutationsCreateSetTrailingClauseUnsupported(strings.Fields(remainingTrailing)[0]), nil)
 	}
 
 	// Handle RETURN clause
@@ -2749,7 +2747,7 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 	// Parse: n += {prop: value, ...}
 	parts := strings.SplitN(setPart, "+=", 2)
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid SET += syntax")
+		return localizedError(localization.CypherMutationsSetMergeSyntaxInvalid(), nil)
 	}
 
 	varName := strings.TrimSpace(parts[0])
@@ -2760,15 +2758,15 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 		// Parameter reference: $props
 		paramName := strings.TrimSpace(propsStr[1:])
 		if paramName == "" {
-			return fmt.Errorf("SET += requires a valid parameter name after $")
+			return localizedError(localization.CypherMutationsSetMergeParameterNameRequired(), nil)
 		}
 		params := getParamsFromContext(ctx)
 		if params == nil {
-			return fmt.Errorf("SET += parameter $%s requires parameters to be provided", paramName)
+			return localizedError(localization.CypherMutationsSetMergeParametersRequired(paramName), nil)
 		}
 		paramValue, exists := params[paramName]
 		if !exists {
-			return fmt.Errorf("SET += parameter $%s not found in provided parameters", paramName)
+			return localizedError(localization.CypherMutationsSetMergeParameterNotFound(paramName), nil)
 		}
 		propsMap, err := normalizePropsMap(paramValue, fmt.Sprintf("parameter $%s", paramName))
 		if err != nil {
@@ -2779,18 +2777,18 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 		// Inline map literal: {key: value, ...}
 		parsedProps, err := e.parseSetMergeMapLiteralStrict(ctx, propsStr)
 		if err != nil {
-			return fmt.Errorf("failed to parse properties in SET +=: %w", err)
+			return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 		}
 		props = parsedProps
 	} else {
 		if propsStr == "" {
-			return fmt.Errorf("failed to parse properties in SET +=: map literal must be enclosed in { ... }")
+			return localizedError(localization.CypherMutationsSetMergeMapLiteralRequired(), nil)
 		}
 		// Map variable source in scope (e.g. SET n += row or SET n += row.properties).
 		// CREATE...SET execution does not carry row-scope columns, so resolve from params context.
 		sourceVal, found := resolveSetMergeSourceFromParams(getParamsFromContext(ctx), propsStr)
 		if !found {
-			return fmt.Errorf("SET += map variable %q not found in scope", propsStr)
+			return localizedError(localization.CypherMutationsSetMergeMapVariableNotFound(propsStr), nil)
 		}
 		propsMap, err := normalizePropsMap(sourceVal, fmt.Sprintf("variable %s", propsStr))
 		if err != nil {
@@ -2806,7 +2804,7 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 			result.Stats.PropertiesSet++
 		}
 		if err := store.UpdateNode(node); err != nil {
-			return fmt.Errorf("failed to update node: %w", err)
+			return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))
 	} else if edge, exists := createdEdges[varName]; exists {
@@ -2815,11 +2813,11 @@ func (e *StorageExecutor) applySetMergeToCreated(ctx context.Context, setPart st
 			result.Stats.PropertiesSet++
 		}
 		if err := store.UpdateEdge(edge); err != nil {
-			return fmt.Errorf("failed to update edge: %w", err)
+			return localizedError(localization.CypherMutationsUpdateEdgeFailed(err), err)
 		}
 		e.notifyEdgeMutated(string(edge.ID))
 	} else {
-		return fmt.Errorf("unknown variable in SET +=: %s", varName)
+		return localizedError(localization.CypherMutationsUnknownSetMergeVariable(varName), nil)
 	}
 
 	return nil
@@ -2995,13 +2993,13 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				// Relationship CREATE - need to resolve variable references
 				err := e.executeCreateRelSegment(ctx, segment, nodeContext, edgeContext, result)
 				if err != nil {
-					return nil, fmt.Errorf("relationship CREATE failed: %w", err)
+					return nil, localizedError(localization.CypherMutationsRelationshipCreateFailed(err), err)
 				}
 			} else {
 				// Node CREATE
 				node, varName, err := e.executeCreateNodeSegment(ctx, segment)
 				if err != nil {
-					return nil, fmt.Errorf("node CREATE failed: %w", err)
+					return nil, localizedError(localization.CypherMutationsNodeCreateFailed(err), err)
 				}
 				if node != nil && varName != "" {
 					nodeContext[varName] = node
@@ -3042,7 +3040,7 @@ func (e *StorageExecutor) executeMultipleCreates(ctx context.Context, cypher str
 				}
 				val, ok := projectFromRow(row, item.expr)
 				if !ok {
-					return nil, fmt.Errorf("invalid CREATE...WITH query: invalid WITH expression %q", item.expr)
+					return nil, localizedError(localization.CypherResidualCreateWithExpressionInvalid(item.expr), nil)
 				}
 				switch v := val.(type) {
 				case *storage.Node:

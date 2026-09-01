@@ -4722,14 +4722,14 @@ func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedNodeIDs map[string]struct{
 
 func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) error {
 	if s.gpuManager == nil || !s.gpuManager.IsEnabled() {
-		return fmt.Errorf("gpu not enabled")
+		return localizedError(localization.SearchGPUNotEnabled(), nil)
 	}
 	if s.gpuEmbeddingIndex != nil {
 		return nil
 	}
 	dim := s.VectorIndexDimensions()
 	if dim <= 0 {
-		return fmt.Errorf("invalid vector dimensions")
+		return localizedError(localization.SearchVectorDimensionsInvalid(), nil)
 	}
 	cfg := gpu.DefaultEmbeddingIndexConfig(dim)
 	cfg.GPUEnabled = true
@@ -4966,7 +4966,7 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 	// Large dataset: use HNSW (lazy-initialize if needed)
 	hnswIndex, err := s.getOrCreateHNSWIndex(ctx, dimensions)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HNSW index: %w", err)
+		return nil, localizedError(localization.SearchHNSWIndexCreationFailed(err), err)
 	}
 	return &vectorStrategyDescriptor{
 		name:         "HNSW",
@@ -5080,7 +5080,7 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		}
 		log.Printf("[HNSW] 🔨 Built from memory: %d vectors", total)
 	} else {
-		return nil, fmt.Errorf("vector index is nil")
+		return nil, localizedError(localization.SearchVectorIndexNil(), nil)
 	}
 
 	// Install unless someone else won the race.

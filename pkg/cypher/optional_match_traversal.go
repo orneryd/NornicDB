@@ -1,6 +1,14 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/util"
+import (
+	"context"
+	"strconv"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
 
 // Traversal-seeded OPTIONAL MATCH execution.
 //
@@ -19,15 +27,6 @@ import "github.com/orneryd/nornicdb/pkg/util"
 //  3. projection through the real expression evaluator
 //     (evaluateExpressionWithContext), with implicit-grouping aggregation and
 //     ORDER BY / SKIP / LIMIT handling that mirrors buildJoinedResult.
-
-import (
-	"context"
-	"fmt"
-	"strconv"
-	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-)
 
 // traversalOptRow is one joined row in the traversal-seeded OPTIONAL MATCH
 // pipeline. Every bound variable maps to its node or relationship; a variable
@@ -129,11 +128,11 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 
 	openIdx := strings.Index(pattern, "(")
 	if openIdx < 0 {
-		return eps, fmt.Errorf("optional match pattern %q has no node endpoint", truncateQuery(pattern, 60))
+		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointMissing(truncateQuery(pattern, 60)), nil)
 	}
 	closeIdx := strings.Index(pattern[openIdx:], ")")
 	if closeIdx <= 0 {
-		return eps, fmt.Errorf("optional match pattern %q has an unterminated node endpoint", truncateQuery(pattern, 60))
+		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
 	eps.source = e.parseNodePattern(ctx, pattern[openIdx:openIdx+closeIdx+1])
 
@@ -165,11 +164,11 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	}
 	tOpen := strings.Index(rest, "(")
 	if tOpen < 0 {
-		return eps, fmt.Errorf("optional match pattern %q has no target endpoint", truncateQuery(pattern, 60))
+		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointMissing(truncateQuery(pattern, 60)), nil)
 	}
 	tClose := strings.Index(rest[tOpen:], ")")
 	if tClose <= 0 {
-		return eps, fmt.Errorf("optional match pattern %q has an unterminated target endpoint", truncateQuery(pattern, 60))
+		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
 	eps.target = e.parseNodePattern(ctx, rest[tOpen:tOpen+tClose+1])
 	return eps, nil
@@ -226,7 +225,7 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 	matchQuery := "MATCH " + initialSection + " RETURN " + returnVars
 	matchResult, err := e.executeMatch(ctx, matchQuery)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute initial traversal MATCH: %w", err)
+		return nil, localizedError(localization.CypherMatchingInitialTraversalMatchFailed(err), err)
 	}
 
 	rows := make([]traversalOptRow, 0, len(matchResult.Rows))

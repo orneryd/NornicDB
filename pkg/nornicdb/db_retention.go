@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/retention"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -66,7 +67,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 
 	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
 		if processed >= budget {
-			return fmt.Errorf("sweep budget exhausted (%d records)", budget)
+			return localizedError(localization.NornicDBRetentionSweepBudgetExhausted(budget), nil)
 		}
 
 		select {

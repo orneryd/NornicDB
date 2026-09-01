@@ -1,0 +1,126 @@
+- id: cyphercore.empty_query
+  description: Empty Cypher query.
+  other: empty query
+- id: cyphercore.composite_target_required
+  description: Composite query requires an explicit constituent. Code and USE syntax are machine values.
+  other: "{{.Code}}: Queries on composite databases require explicit graph targeting. Use USE <composite>.<alias> to target a specific constituent"
+- id: cyphercore.invalid_label_name
+  description: Invalid label identifier. Label includes untranslated Go quoting.
+  other: "invalid label name: {{.Label}} (must be alphanumeric starting with letter or underscore)"
+- id: cyphercore.invalid_label_reserved
+  description: Reserved label identifier. Label includes untranslated Go quoting.
+  other: "invalid label name: {{.Label}} (contains reserved keyword)"
+- id: cyphercore.invalid_property_key
+  description: Invalid property identifier. Key includes untranslated Go quoting.
+  other: "invalid property key: {{.Key}} (must be alphanumeric starting with letter or underscore)"
+- id: cyphercore.invalid_property_value
+  description: Malformed property value. Key includes untranslated Go quoting.
+  other: "invalid property value for key {{.Key}}: malformed syntax"
+- id: cyphercore.embedding_transaction_storage_required
+  description: WITH EMBEDDING requires transactional storage. Cypher syntax is untranslated.
+  other: WITH EMBEDDING requires transaction-capable storage
+- id: cyphercore.implicit_transaction_prime_failed
+  description: Implicit transaction namespace initialization failed. Cause is untranslated.
+  other: "failed to prime implicit transaction namespace: {{.Cause}}"
+- id: cyphercore.implicit_transaction_start_failed
+  description: Implicit transaction start failed. Cause is untranslated.
+  other: "failed to start implicit transaction: {{.Cause}}"
+- id: cyphercore.implicit_transaction_pin_failed
+  description: Implicit transaction namespace pin failed. Cause is untranslated.
+  other: "failed to pin implicit transaction namespace: {{.Cause}}"
+- id: cyphercore.implicit_transaction_configure_failed
+  description: Implicit transaction configuration failed. Cause is untranslated.
+  other: "failed to configure implicit transaction: {{.Cause}}"
+- id: cyphercore.implicit_transaction_wal_begin_failed
+  description: Implicit transaction WAL begin failed. Cause is untranslated.
+  other: "failed to write WAL tx begin: {{.Cause}}"
+- id: cyphercore.implicit_transaction_commit_failed
+  description: Implicit transaction commit failed. Cause is untranslated.
+  other: "commit failed: {{.Cause}}"
+- id: cyphercore.embedding_configured_required
+  description: WITH EMBEDDING requires an embedder. Cypher syntax is untranslated.
+  other: WITH EMBEDDING requires configured embedder
+- id: cyphercore.embedding_chunk_failed
+  description: Inline embedding chunking failed. NodeID and Cause are untranslated.
+  other: "WITH EMBEDDING chunking failed for node {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_node_failed
+  description: Inline node embedding failed. NodeID and Cause are untranslated.
+  other: "WITH EMBEDDING embed failed for node {{.NodeID}}: {{.Cause}}"
+- id: cyphercore.embedding_empty_vector
+  description: Inline embedding returned no vector. NodeID is untranslated.
+  other: WITH EMBEDDING embed returned empty vector for node {{.NodeID}}
+- id: cyphercore.optional_match_required
+  description: OPTIONAL is not followed by MATCH. Cypher keywords are untranslated.
+  other: OPTIONAL must be followed by MATCH
+- id: cyphercore.unterminated_string_literal
+  description: Cypher string literal is unterminated.
+  other: unterminated string literal
+- id: cyphercore.parse_failed
+  description: Cypher parse wrapper. Cause is untranslated.
+  other: "parse error: {{.Cause}}"
+- id: cyphercore.case_envelope_invalid
+  description: CASE expression lacks its required envelope. Cypher keywords are untranslated.
+  other: "invalid CASE expression: must start with CASE and end with END"
+- id: cyphercore.case_when_required
+  description: CASE expression has no WHEN clause. Cypher keywords are untranslated.
+  other: CASE expression must have at least one WHEN clause
+- id: cyphercore.case_then_required
+  description: WHEN clause lacks THEN. Section is untranslated query text.
+  other: "WHEN clause must have THEN: {{.Section}}"
+- id: cyphercore.fulltext_unexpected_token
+  description: Fulltext parser found an unexpected token. Token includes untranslated Go quoting.
+  other: "query cannot be parsed: unexpected token {{.Token}}"
+- id: cyphercore.fulltext_number_after_boost_expected
+  description: Fulltext boost lacks a numeric value. Caret is query syntax.
+  other: "query cannot be parsed: expected number after ^"
+- id: cyphercore.fulltext_bad_boost
+  description: Fulltext boost is invalid. Boost includes untranslated Go quoting.
+  other: "query cannot be parsed: bad boost {{.Boost}}"
+- id: cyphercore.fulltext_closing_parenthesis_required
+  description: Fulltext group lacks a closing parenthesis.
+  other: "query cannot be parsed: missing ')'"
+- id: cyphercore.fulltext_range_to_required
+  description: Fulltext range lacks TO. TO is query syntax.
+  other: "query cannot be parsed: expected TO in range"
+- id: cyphercore.fulltext_range_close_required
+  description: Fulltext range lacks a closing delimiter.
+  other: "query cannot be parsed: expected ] or } to close range"
+- id: cyphercore.fulltext_range_endpoint_required
+  description: Fulltext range lacks an endpoint.
+  other: "query cannot be parsed: expected range endpoint"
+- id: cyphercore.fulltext_bad_regex
+  description: Fulltext regular expression is invalid. Pattern and Cause are untranslated.
+  other: "query cannot be parsed: bad regex /{{.Pattern}}/: {{.Cause}}"
+- id: cyphercore.fulltext_bad_wildcard
+  description: Fulltext wildcard is invalid. Cause is untranslated.
+  other: "query cannot be parsed: bad wildcard: {{.Cause}}"
+- id: cyphercore.index_hint_not_found
+  description: Requested index hint does not exist. Hint, Label, and Property are untranslated.
+  other: "no index found for hint: {{.Hint}} (index on :{{.Label}}({{.Property}}) does not exist)"
+- id: cyphercore.execution_plan_build_failed
+  description: Execution plan construction failed. Cause is untranslated.
+  other: "failed to build execution plan: {{.Cause}}"
+- id: cyphercore.typed_decode_row_failed
+  description: Typed row decoding failed. Cause is untranslated.
+  other: "failed to decode row: {{.Cause}}"
+- id: cyphercore.typed_destination_pointer_required
+  description: Typed result destination is not a usable pointer.
+  other: dest must be a non-nil pointer
+- id: cyphercore.typed_destination_unsupported
+  description: Typed result destination kind is unsupported. Kind is untranslated.
+  other: "unsupported destination type: {{.Kind}}"
+- id: cyphercore.typed_field_failed
+  description: Typed result field assignment failed. Field and Cause are untranslated.
+  other: "field {{.Field}}: {{.Cause}}"
+- id: cyphercore.typed_time_parse_failed
+  description: Typed result time parsing failed. Value is untranslated.
+  other: "cannot parse time: {{.Value}}"
+- id: cyphercore.typed_assignment_failed
+  description: Typed result assignment is incompatible. Type names are untranslated.
+  other: "cannot assign {{.ValueType}} to {{.DestinationType}}"
+- id: cyphercore.embedder_not_configured
+  description: Query embedding was requested without an embedder.
+  other: no embedder configured
+- id: cyphercore.embedding_no_output
+  description: Query embedding produced no vectors.
+  other: failed to embed query (no embeddings produced)

@@ -1,0 +1,106 @@
+- id: cypherspecializedcalls.vector_query_parse_failed
+  other: "vector query parse error: {{.Cause}}"
+- id: cypherspecializedcalls.string_query_embedder_required
+  other: "string query provided but no embedder configured; use vector array or configure embedding service"
+- id: cypherspecializedcalls.embed_query_text_failed
+  other: "failed to embed query '{{.Query}}': {{.Cause}}"
+- id: cypherspecializedcalls.parameter_not_provided
+  other: "parameter ${{.Parameter}} not provided"
+- id: cypherspecializedcalls.parameter_non_numeric
+  other: "parameter ${{.Parameter}} contains non-numeric value: {{.ValueType}}"
+- id: cypherspecializedcalls.parameter_string_embedder_required
+  other: "parameter ${{.Parameter}} is a string but no embedder configured; provide vector array or configure embedding service"
+- id: cypherspecializedcalls.embed_parameter_failed
+  other: "failed to embed parameter ${{.Parameter}} value '{{.Value}}': {{.Cause}}"
+- id: cypherspecializedcalls.parameter_unsupported_type
+  other: "parameter ${{.Parameter}} has unsupported type for vector query: {{.ValueType}} (expected []float32, []float64, []interface{}, or string)"
+- id: cypherspecializedcalls.unsupported_parameters
+  other: "no query vector or search text provided - parameter(s) {{.Parameters}} have unsupported type (expected []float32, []float64, []interface{}, or string)"
+- id: cypherspecializedcalls.query_input_possibly_unsupported
+  other: "no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)"
+- id: cypherspecializedcalls.query_input_required
+  other: "no query vector or search text provided"
+- id: cypherspecializedcalls.vector_query_failed
+  other: "vector query failed"
+- id: cypherspecializedcalls.embedder_not_configured
+  other: "no embedder configured"
+- id: cypherspecializedcalls.vector_embed_invalid_syntax
+  other: "invalid db.index.vector.embed syntax"
+- id: cypherspecializedcalls.vector_embed_argument_required
+  other: "db.index.vector.embed requires one argument"
+- id: cypherspecializedcalls.vector_embed_unmatched_parenthesis
+  other: "unmatched parenthesis in db.index.vector.embed"
+- id: cypherspecializedcalls.vector_embed_text_required
+  other: "db.index.vector.embed requires non-empty text"
+- id: cypherspecializedcalls.vector_embed_parameter_string
+  other: "db.index.vector.embed parameter ${{.Parameter}} must be STRING"
+- id: cypherspecializedcalls.vector_embed_string_required
+  other: "db.index.vector.embed requires STRING text"
+- id: cypherspecializedcalls.vector_embed_failed
+  other: "failed to embed query: {{.Cause}}"
+- id: cypherspecializedcalls.vector_procedure_not_found
+  other: "vector query procedure not found"
+- id: cypherspecializedcalls.vector_parameters_missing
+  other: "missing parameters"
+- id: cypherspecializedcalls.vector_unmatched_parenthesis
+  other: "unmatched parenthesis"
+- id: cypherspecializedcalls.fulltext_index_not_found
+  other: "there is no such fulltext schema index: {{.Index}}"
+- id: cypherspecializedcalls.fulltext_argument_count
+  other: "invalid fulltext query syntax: expected 2 or 3 arguments"
+- id: cypherspecializedcalls.procedure_options_map_required
+  other: "procedure options must be a MAP"
+- id: cypherspecializedcalls.fulltext_option_invalid
+  other: "invalid fulltext options.{{.Option}}: {{.Value}}"
+- id: cypherspecializedcalls.temporal_assert_argument_count
+  other: "db.temporal.assertNoOverlap requires 7 parameters plus optional systemTime and systemSequence"
+- id: cypherspecializedcalls.datetime_required
+  other: "{{.Argument}} must be a valid datetime"
+- id: cypherspecializedcalls.temporal_read_nodes_failed
+  other: "failed to read nodes for label {{.Label}}: {{.Cause}}"
+- id: cypherspecializedcalls.temporal_overlap
+  other: "temporal overlap detected for {{.Property}}={{.Value}}"
+- id: cypherspecializedcalls.temporal_asof_argument_count
+  other: "db.temporal.asOf requires 6 parameters plus optional systemTime and systemSequence"
+- id: cypherspecializedcalls.temporal_lookup_failed
+  other: "temporal lookup failed for label {{.Label}}: {{.Cause}}"
+- id: cypherspecializedcalls.temporal_invalid_syntax
+  other: "invalid {{.Procedure}} syntax"
+- id: cypherspecializedcalls.temporal_closing_parenthesis
+  other: "missing closing parenthesis in {{.Procedure}}"
+- id: cypherspecializedcalls.argument_required
+  other: "{{.Argument}} is required"
+- id: cypherspecializedcalls.argument_empty
+  other: "{{.Argument}} cannot be empty"
+- id: cypherspecializedcalls.unsigned_non_negative
+  other: "{{.Argument}} must be non-negative"
+- id: cypherspecializedcalls.unsigned_whole_non_negative
+  other: "{{.Argument}} must be a whole non-negative number"
+- id: cypherspecializedcalls.unsigned_valid
+  other: "{{.Argument}} must be a valid uint64"
+- id: cypherspecializedcalls.txlog_invalid_syntax
+  other: "invalid {{.Procedure}} syntax"
+- id: cypherspecializedcalls.txlog_closing_parenthesis
+  other: "missing closing parenthesis in {{.Procedure}}"
+- id: cypherspecializedcalls.txlog_entries_argument_required
+  other: "db.txlog.entries requires at least fromSeq parameter"
+- id: cypherspecializedcalls.txlog_invalid_sequence
+  other: "invalid {{.Argument}}: {{.Cause}}"
+- id: cypherspecializedcalls.txlog_from_sequence_positive
+  other: "fromSeq must be greater than 0"
+- id: cypherspecializedcalls.wal_unavailable
+  other: "WAL not available (memory-only database)"
+- id: cypherspecializedcalls.wal_config_unavailable
+  other: "WAL config not available"
+- id: cypherspecializedcalls.wal_directory_not_configured
+  other: "WAL directory not configured"
+- id: cypherspecializedcalls.txlog_sequence_order
+  other: "toSeq must be >= fromSeq"
+- id: cypherspecializedcalls.txlog_read_entries_failed
+  other: "failed to read WAL entries: {{.Cause}}"
+- id: cypherspecializedcalls.txlog_by_id_argument_required
+  other: "db.txlog.byTxId requires txId parameter"
+- id: cypherspecializedcalls.txlog_id_empty
+  other: "txId cannot be empty"
+- id: cypherspecializedcalls.txlog_find_entries_failed
+  other: "failed to find WAL entries: {{.Cause}}"

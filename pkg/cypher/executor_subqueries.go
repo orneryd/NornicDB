@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -35,14 +36,14 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 	// Find CALL position
 	callIdx := findKeywordIndex(cypher, "CALL")
 	if callIdx == -1 {
-		return nil, fmt.Errorf("CALL not found in query")
+		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}
 
 	// Extract the MATCH part (before CALL)
 	matchPart := strings.TrimSpace(cypher[:callIdx])
 	matchIdx := findKeywordIndex(matchPart, "MATCH")
 	if matchIdx == -1 {
-		return nil, fmt.Errorf("MATCH not found before CALL")
+		return nil, localizedError(localization.CypherSubqueriesMatchBeforeCallNotFound(), nil)
 	}
 
 	// Extract the CALL part and everything after
@@ -64,7 +65,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 	// Parse node pattern to get variable name
 	nodePattern := e.parseNodePattern(ctx, patternOnly)
 	if nodePattern.variable == "" {
-		return nil, fmt.Errorf("could not parse node pattern: %s", patternOnly)
+		return nil, localizedError(localization.CypherSubqueriesNodePatternInvalid(patternOnly), nil)
 	}
 
 	hasOuterPipelineClauses := findKeywordIndex(matchPart, "WITH") >= 0 ||
@@ -81,7 +82,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		// Preserve id/property/index seed fast paths for simple MATCH ... CALL procedure forms.
 		nodes, err = e.seedNodesFromOuterMatch(ctx, matchPart, nodePattern.variable)
 		if err != nil {
-			return nil, fmt.Errorf("failed to evaluate outer MATCH bindings: %w", err)
+			return nil, localizedError(localization.CypherSubqueriesOuterMatchBindingsFailed(err), err)
 		}
 	} else {
 		// For pre-CALL WITH/ORDER/LIMIT query shapes, keep manual node correlation.
@@ -89,7 +90,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		// WITH-aliased pre-call pipelines.
 		nodes, err = e.loadNodesWithTemporalViewport(ctx, nodePattern.labels)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get nodes: %w", err)
+			return nil, localizedError(localization.CypherSubqueriesNodeLoadFailed(err), err)
 		}
 		if len(nodePattern.properties) > 0 {
 			nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
@@ -152,7 +153,7 @@ func (e *StorageExecutor) executeMatchWithCallProcedure(ctx context.Context, cyp
 		// Execute the CALL with evaluated values
 		result, err := e.executeCall(ctx, evaluatedCall)
 		if err != nil {
-			return nil, fmt.Errorf("failed to execute CALL for node %s: %w", node.ID, err)
+			return nil, localizedError(localization.CypherSubqueriesCallForNodeFailed(string(node.ID), err), err)
 		}
 		if result != nil {
 			allResults = append(allResults, result)
@@ -368,7 +369,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	// Find CALL position
 	callIdx := findKeywordIndex(cypher, "CALL")
 	if callIdx == -1 {
-		return nil, fmt.Errorf("CALL not found in query")
+		return nil, localizedError(localization.CypherSubqueriesCallNotFound(), nil)
 	}
 
 	// Extract the outer MATCH + WHERE part (before CALL)
@@ -379,7 +380,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	// ORDER/LIMIT planning, and predicate optimizations are preserved.
 	matchIdx := findKeywordIndex(outerPart, "MATCH")
 	if matchIdx == -1 {
-		return nil, fmt.Errorf("MATCH not found before CALL")
+		return nil, localizedError(localization.CypherSubqueriesMatchBeforeCallNotFound(), nil)
 	}
 
 	// Extract the pattern segment (up to optional WHERE/WITH/RETURN/ORDER/SKIP/LIMIT)
@@ -398,12 +399,12 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	// Parse node pattern to get variable name
 	nodePattern := e.parseNodePattern(ctx, nodePatternStr)
 	if nodePattern.variable == "" {
-		return nil, fmt.Errorf("could not parse node pattern: %s", nodePatternStr)
+		return nil, localizedError(localization.CypherSubqueriesNodePatternInvalid(nodePatternStr), nil)
 	}
 
 	seedNodes, err := e.seedNodesFromOuterMatch(ctx, outerPart, nodePattern.variable)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate outer MATCH seeds: %w", err)
+		return nil, localizedError(localization.CypherSubqueriesOuterMatchSeedsFailed(err), err)
 	}
 
 	// Parse the CALL {} subquery and what comes after
@@ -411,7 +412,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	callImportVars := parseCallSubqueryImportVariables(callPart)
 	subqueryBody, afterCall, inTransactions, batchSize := e.parseCallSubquery(callPart)
 	if subqueryBody == "" {
-		return nil, fmt.Errorf("invalid CALL {} subquery: empty body")
+		return nil, localizedError(localization.CypherSubqueriesCallBodyEmpty(), nil)
 	}
 
 	if len(seedNodes) == 0 {
@@ -429,11 +430,11 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	subqueryExecutor := e
 	if useDB, useRemaining, hasUse, useErr := parseLeadingUseClause(subqueryBody); hasUse || useErr != nil {
 		if useErr != nil {
-			return nil, fmt.Errorf("CALL subquery USE clause error: %w", useErr)
+			return nil, localizedError(localization.CypherSubqueriesUseClauseFailed(useErr), useErr)
 		}
 		scopedExec, resolvedDB, scopeErr := e.scopedExecutorForUse(useDB, GetAuthTokenFromContext(ctx))
 		if scopeErr != nil {
-			return nil, fmt.Errorf("CALL subquery USE %s failed: %w", useDB, scopeErr)
+			return nil, localizedError(localization.CypherSubqueriesUseDatabaseFailed(useDB, scopeErr), scopeErr)
 		}
 		subqueryExecutor = scopedExec
 		subqueryBody = useRemaining
@@ -498,7 +499,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 	if hasUnion {
 		branches, modeAll, splitOK := splitTopLevelUnionBranches(subqueryBody)
 		if !splitOK {
-			return nil, fmt.Errorf("failed to parse UNION branches in correlated CALL subquery")
+			return nil, localizedError(localization.CypherSubqueriesCorrelatedUnionParseFailed(), nil)
 		}
 		unionModeAll = modeAll
 		unionParsed = make([]parsedUnionBranch, 0, len(branches))
@@ -509,7 +510,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			}
 			withVars, innerBody, hasWith, parseErr := parseLeadingWithImports(trimmedBranch)
 			if parseErr != nil {
-				return nil, fmt.Errorf("failed to parse UNION branch %d WITH imports: %w", i+1, parseErr)
+				return nil, localizedError(localization.CypherSubqueriesUnionWithImportsFailed(i+1, parseErr), parseErr)
 			}
 			pb := parsedUnionBranch{
 				withVars:  withVars,
@@ -554,7 +555,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			}
 			branchResult, err := subqueryExecutor.executeInternal(ctx, branch.innerBody, nil)
 			if err != nil {
-				return nil, fmt.Errorf("failed static UNION subquery branch %d: %w", i+1, err)
+				return nil, localizedError(localization.CypherSubqueriesStaticUnionBranchFailed(i+1, err), err)
 			}
 			staticBranchCache[i] = cachedUnionBranch{result: branchResult, valid: true}
 		}
@@ -701,7 +702,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 					branchResult, err = subqueryExecutor.executeInternal(ctx, branch.innerBody, nil)
 				}
 				if err != nil {
-					return nil, fmt.Errorf("failed correlated UNION subquery branch %d for seed %s: %w", i+1, seedID, err)
+					return nil, localizedError(localization.CypherSubqueriesCorrelatedUnionBranchFailed(i+1, seedID, err), err)
 				}
 				e.normalizeUnionBranchColumns(branch.innerBody, branchResult)
 
@@ -711,7 +712,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 						Rows:    make([][]interface{}, 0),
 					}
 				} else if len(perSeed.Columns) != len(branchResult.Columns) {
-					return nil, fmt.Errorf("UNION queries must return the same number of columns (got %d and %d)", len(perSeed.Columns), len(branchResult.Columns))
+					return nil, localizedError(localization.CypherSubqueriesUnionColumnCountMismatch(len(perSeed.Columns), len(branchResult.Columns)), nil)
 				}
 
 				if unionModeAll {
@@ -739,7 +740,7 @@ func (e *StorageExecutor) executeMatchWithCallSubquery(ctx context.Context, cyph
 			}
 
 			if len(combinedResult.Columns) != len(perSeed.Columns) {
-				return nil, fmt.Errorf("UNION queries must return the same number of columns (got %d and %d)", len(combinedResult.Columns), len(perSeed.Columns))
+				return nil, localizedError(localization.CypherSubqueriesUnionColumnCountMismatch(len(combinedResult.Columns), len(perSeed.Columns)), nil)
 			}
 			combinedResult.Rows = append(combinedResult.Rows, perSeed.Rows...)
 			continue
@@ -881,7 +882,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 	outerQuery := strings.TrimSpace(outerPart) + " RETURN " + seedVar + ", " + importVar
 	outerResult, err := e.executeInternal(ctx, outerQuery, nil)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to resolve correlated import %s: %w", importVar, err)
+		return nil, false, localizedError(localization.CypherSubqueriesCorrelatedImportFailed(importVar, err), err)
 	}
 
 	seedCol := -1
@@ -942,7 +943,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
 				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
 				if fallbackErr != nil {
-					return nil, false, fmt.Errorf("failed optional import fallback for %s: %w", importVar, fallbackErr)
+					return nil, false, localizedError(localization.CypherSubqueriesOptionalImportFallbackFailed(importVar, fallbackErr), fallbackErr)
 				}
 				if fallbackRes != nil && len(fallbackRes.Rows) > 0 {
 					importCol := -1
@@ -1065,7 +1066,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 	for _, v := range withVars {
 		idx, ok := colIdx[v]
 		if !ok || idx < 0 || idx >= len(seedRow) {
-			return nil, true, fmt.Errorf("CALL subquery WITH imports unknown variable: %s", v)
+			return nil, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(v), nil)
 		}
 		cols = append(cols, v)
 		row = append(row, seedRow[idx])
@@ -1131,7 +1132,7 @@ func callSubqueryRowDedupKey(row []interface{}) string {
 func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart, variable string) ([]*storage.Node, error) {
 	variable = strings.TrimSpace(variable)
 	if variable == "" {
-		return nil, fmt.Errorf("empty correlated variable")
+		return nil, localizedError(localization.CypherSubqueriesCorrelatedVariableEmpty(), nil)
 	}
 
 	trimmedOuter := strings.TrimSpace(outerPart)
@@ -1259,7 +1260,7 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 		}
 	}
 	if colIdx < 0 {
-		return nil, fmt.Errorf("outer MATCH did not project correlated variable %q", variable)
+		return nil, localizedError(localization.CypherSubqueriesOuterMatchProjectionMissing(variable), nil)
 	}
 
 	seedNodes := make([]*storage.Node, 0, len(outerRes.Rows))
@@ -1348,7 +1349,7 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 	// Extract the subquery body from CALL { ... }
 	subqueryBody, afterCall, inTransactions, batchSize := e.parseCallSubquery(cypher)
 	if subqueryBody == "" {
-		return nil, fmt.Errorf("invalid CALL {} subquery: empty body (expected CALL { <query> })")
+		return nil, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
 	}
 
 	// Check if the subquery body starts with USE — this indicates a fabric
@@ -1357,11 +1358,11 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 	subqueryExecutor := e
 	if useDB, useRemaining, hasUse, useErr := parseLeadingUseClause(subqueryBody); hasUse || useErr != nil {
 		if useErr != nil {
-			return nil, fmt.Errorf("CALL subquery USE clause error: %w", useErr)
+			return nil, localizedError(localization.CypherSubqueriesUseClauseFailed(useErr), useErr)
 		}
 		scopedExec, resolvedDB, scopeErr := e.scopedExecutorForUse(useDB, GetAuthTokenFromContext(ctx))
 		if scopeErr != nil {
-			return nil, fmt.Errorf("CALL subquery USE %s failed: %w", useDB, scopeErr)
+			return nil, localizedError(localization.CypherSubqueriesUseDatabaseFailed(useDB, scopeErr), scopeErr)
 		}
 		subqueryExecutor = scopedExec
 		subqueryBody = useRemaining
@@ -1389,7 +1390,7 @@ func (e *StorageExecutor) executeCallSubquery(ctx context.Context, cypher string
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("CALL subquery error: %w", err)
+		return nil, localizedError(localization.CypherSubqueriesCallError(err), err)
 	}
 
 	// If there's something after CALL { }, process it (e.g., RETURN)
@@ -1524,11 +1525,11 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 		return nil, err
 	}
 	if !hasWith || len(withVars) != 1 || !strings.EqualFold(strings.TrimSpace(withVars[0]), strings.TrimSpace(seedVar)) {
-		return nil, fmt.Errorf("unsupported CALL (%s) IN TRANSACTIONS import shape", seedVar)
+		return nil, localizedError(localization.CypherSubqueriesTransactionImportShapeUnsupported(seedVar), nil)
 	}
 	innerBody = strings.TrimSpace(innerBody)
 	if innerBody == "" {
-		return nil, fmt.Errorf("invalid CALL (%s) IN TRANSACTIONS: empty body", seedVar)
+		return nil, localizedError(localization.CypherSubqueriesTransactionBodyEmpty(seedVar), nil)
 	}
 
 	combined := &ExecuteResult{Columns: []string{}, Rows: make([][]interface{}, 0), Stats: &QueryStats{}}
@@ -1560,7 +1561,7 @@ func (e *StorageExecutor) executeVariableScopeCallInTransactions(ctx context.Con
 		batchCtx := context.WithValue(ctx, paramsKey, batchParams)
 		batchResult, err := e.executeWithImplicitTransaction(batchCtx, batchQuery, strings.ToUpper(batchQuery))
 		if err != nil {
-			return nil, fmt.Errorf("CALL (%s) IN TRANSACTIONS batch %d failed: %w", seedVar, start/batchSize+1, err)
+			return nil, localizedError(localization.CypherSubqueriesTransactionBatchFailed(seedVar, start/batchSize+1, err), err)
 		}
 		if batchResult == nil {
 			continue
@@ -1621,7 +1622,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 		// No write operations - execute once and return (no need for batching)
 		result, err := e.executeInternal(ctx, subquery, nil)
 		if err != nil {
-			return nil, fmt.Errorf("subquery execution failed: %w", err)
+			return nil, localizedError(localization.CypherSubqueriesExecutionFailed(err), err)
 		}
 		return result, nil
 	}
@@ -1658,7 +1659,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 		if !hasBatchableSource {
 			singleResult, err := e.executeWithImplicitTransaction(ctx, subquery, strings.ToUpper(subquery))
 			if err != nil {
-				return nil, fmt.Errorf("batch 1 failed: %w", err)
+				return nil, localizedError(localization.CypherSubqueriesFirstBatchFailed(err), err)
 			}
 			return singleResult, nil
 		}
@@ -1692,7 +1693,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
 			if err != nil {
 				// On error, stop processing and return error
-				return nil, fmt.Errorf("batch %d failed: %w", batchNum+1, err)
+				return nil, localizedError(localization.CypherSubqueriesBatchFailed(batchNum+1, err), err)
 			}
 
 			// If no results, we're done
@@ -1745,7 +1746,7 @@ func (e *StorageExecutor) executeCallInTransactions(ctx context.Context, subquer
 			batchResult, err := e.executeWithImplicitTransaction(ctx, modifiedSubquery, strings.ToUpper(modifiedSubquery))
 			if err != nil {
 				// On error, stop processing and return error
-				return nil, fmt.Errorf("batch %d/%d failed: %w", batchNum+1, numBatches, err)
+				return nil, localizedError(localization.CypherSubqueriesBatchProgressFailed(batchNum+1, numBatches, err), err)
 			}
 
 			// Set columns from first batch if not set
@@ -1937,17 +1938,17 @@ func (e *StorageExecutor) processAfterCallSubquery(ctx context.Context, innerRes
 
 	// Unsupported clause after CALL {}
 	firstWord := strings.Split(upperAfter, " ")[0]
-	return nil, fmt.Errorf("unsupported clause after CALL {}: %s (supported: RETURN, ORDER BY, SKIP, LIMIT)", firstWord)
+	return nil, localizedError(localization.CypherSubqueriesAfterCallClauseUnsupported(firstWord), nil)
 }
 
 func (e *StorageExecutor) executeChainedCallSubquery(ctx context.Context, seedResult *ExecuteResult, callClause string) (*ExecuteResult, error) {
 	subqueryBody, afterCall, inTransactions, batchSize := e.parseCallSubquery(callClause)
 	if subqueryBody == "" {
-		return nil, fmt.Errorf("invalid CALL {} subquery: empty body (expected CALL { <query> })")
+		return nil, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
 	}
 
 	if inTransactions {
-		return nil, fmt.Errorf("CALL {} IN TRANSACTIONS is not supported in chained CALL subqueries (batchSize=%d)", batchSize)
+		return nil, localizedError(localization.CypherSubqueriesChainedTransactionsUnsupported(batchSize), nil)
 	}
 
 	useDB, bodyWithoutUse, hasUse, err := parseLeadingUseClause(subqueryBody)
@@ -1986,7 +1987,7 @@ func (e *StorageExecutor) executeChainedCallSubquery(ctx context.Context, seedRe
 	} else {
 		innerResult, err := targetExec.executeInternal(ctx, subqueryBody, nil)
 		if err != nil {
-			return nil, fmt.Errorf("CALL subquery error: %w", err)
+			return nil, localizedError(localization.CypherSubqueriesCallError(err), err)
 		}
 		combined = crossJoinCallResults(seedResult, innerResult)
 	}
@@ -2045,7 +2046,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 	}
 
 	if nextIdx == len(afterWith) {
-		return nil, "", true, fmt.Errorf("invalid CALL {} subquery: WITH must be followed by a query clause")
+		return nil, "", true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
 	}
 
 	withExpr := strings.TrimSpace(afterWith[:nextIdx])
@@ -2059,7 +2060,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 		}
 	}
 	if innerBody == "" {
-		return nil, "", true, fmt.Errorf("invalid CALL {} subquery: empty query body after WITH")
+		return nil, "", true, localizedError(localization.CypherSubqueriesWithBodyEmpty(), nil)
 	}
 
 	parts := splitReturnExpressions(withExpr)
@@ -2074,7 +2075,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 		if asIdx := strings.Index(upperExpr, " AS "); asIdx >= 0 {
 			alias := strings.TrimSpace(expr[asIdx+4:])
 			if alias == "" {
-				return nil, "", true, fmt.Errorf("invalid WITH import expression: %q", expr)
+				return nil, "", true, localizedError(localization.CypherSubqueriesWithImportExpressionInvalid(expr), nil)
 			}
 			withVars = append(withVars, alias)
 			continue
@@ -2084,7 +2085,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 	}
 
 	if len(withVars) == 0 {
-		return nil, "", true, fmt.Errorf("invalid CALL {} subquery: WITH clause does not import variables")
+		return nil, "", true, localizedError(localization.CypherSubqueriesWithImportsRequired(), nil)
 	}
 
 	return withVars, innerBody, true, nil
@@ -2315,10 +2316,10 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 		for _, varName := range importVars {
 			idx, ok := colMap[varName]
 			if !ok {
-				return nil, fmt.Errorf("CALL subquery WITH imports unknown variable: %s", varName)
+				return nil, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(varName), nil)
 			}
 			if idx < 0 || idx >= len(seedRow) {
-				return nil, fmt.Errorf("CALL subquery seed row missing variable: %s", varName)
+				return nil, localizedError(localization.CypherSubqueriesSeedRowMissingVariable(varName), nil)
 			}
 			seedVal := seedRow[idx]
 			seedNode := (*storage.Node)(nil)
@@ -2368,7 +2369,7 @@ func (e *StorageExecutor) executeCorrelatedCallWithSeedRows(ctx context.Context,
 
 		innerRes, err := e.executeInternal(ctx, correlatedBody, params)
 		if err != nil {
-			return nil, fmt.Errorf("CALL subquery error: %w", err)
+			return nil, localizedError(localization.CypherSubqueriesCallError(err), err)
 		}
 
 		if len(innerRes.Rows) == 0 {
@@ -2524,7 +2525,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	}
 	innerRes, err := e.executeInternal(ctx, rewritten.String(), params)
 	if err != nil {
-		return nil, true, fmt.Errorf("batched correlated CALL lookup failed: %w", err)
+		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupFailed(err), err)
 	}
 
 	if innerRes == nil {
@@ -2534,7 +2535,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 		}, true, nil
 	}
 	if len(innerRes.Columns) == 0 || !strings.EqualFold(strings.TrimSpace(innerRes.Columns[0]), "__call_subquery_lookup_key") {
-		return nil, true, fmt.Errorf("batched correlated CALL lookup produced unexpected columns: %v", innerRes.Columns)
+		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupColumnsUnexpected(fmt.Sprint(innerRes.Columns)), nil)
 	}
 
 	// Keep only inner columns not already present in seed columns and not join-key column.

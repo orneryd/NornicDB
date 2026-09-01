@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/kms"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type persistedProviderDEK struct {
@@ -35,7 +35,7 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 		var err error
 		masterKey, err = decodeProviderMasterKey(strings.TrimSpace(cfg.Database.EncryptionMasterKey))
 		if err != nil {
-			return nil, fmt.Errorf("invalid encryption master key: %w", err)
+			return nil, localizedError(localization.NornicDBCoreEncryptionMasterKeyInvalid(err), err)
 		}
 	}
 	provider, err := kms.NewProvider(kms.FactoryConfig{
@@ -75,7 +75,7 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize encryption provider %q: %w", providerMode, err)
+		return nil, localizedError(localization.NornicDBCoreEncryptionProviderInitializeFailed(providerMode, err), err)
 	}
 	defer kms.CloseProvider(provider)
 
@@ -83,18 +83,18 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 	if raw, readErr := os.ReadFile(metadataPath); readErr == nil {
 		var persisted persistedProviderDEK
 		if err := json.Unmarshal(raw, &persisted); err != nil {
-			return nil, fmt.Errorf("failed to decode persisted DEK metadata: %w", err)
+			return nil, localizedError(localization.NornicDBCoreEncryptionDEKMetadataDecodeFailed(err), err)
 		}
 		if persisted.Provider != "" && persisted.Provider != providerMode {
-			return nil, fmt.Errorf("persisted DEK was created with provider %q, not %q", persisted.Provider, providerMode)
+			return nil, localizedError(localization.NornicDBCoreEncryptionDEKProviderMismatch(persisted.Provider, providerMode), nil)
 		}
 		encDEK, err := base64.StdEncoding.DecodeString(persisted.CiphertextB64)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode persisted DEK ciphertext: %w", err)
+			return nil, localizedError(localization.NornicDBCoreEncryptionDEKCiphertextDecodeFailed(err), err)
 		}
 		plain, err := provider.DecryptDataKey(context.Background(), encDEK, kms.DecryptOpts{KeyURI: persisted.KeyURI})
 		if err != nil {
-			return nil, fmt.Errorf("failed to unwrap persisted DEK: %w", err)
+			return nil, localizedError(localization.NornicDBCoreEncryptionDEKUnwrapFailed(err), err)
 		}
 		if rotationDue(cfg, persisted) {
 			rotated, err := provider.RotateDataKey(context.Background(), encDEK, kms.RotateOpts{
@@ -103,7 +103,7 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 				TTL:    cfg.Database.EncryptionRotationInterval,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("failed to rotate persisted wrapped DEK: %w", err)
+				return nil, localizedError(localization.NornicDBCoreEncryptionDEKRotateFailed(err), err)
 			}
 			if err := persistProviderDEK(metadataPath, providerMode, rotated); err != nil {
 				return nil, err
@@ -121,13 +121,13 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 		Label:     "nornicdb-storage-key",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate provider-backed DEK: %w", err)
+		return nil, localizedError(localization.NornicDBCoreEncryptionDEKGenerateFailed(err), err)
 	}
 	if len(dataKey.Plaintext) == 0 {
-		return nil, fmt.Errorf("provider returned empty plaintext DEK")
+		return nil, localizedError(localization.NornicDBCoreEncryptionDEKEmpty(), nil)
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create data directory for DEK metadata: %w", err)
+		return nil, localizedError(localization.NornicDBCoreEncryptionDEKDirectoryCreateFailed(err), err)
 	}
 
 	if err := persistProviderDEK(metadataPath, providerMode, dataKey); err != nil {
@@ -176,17 +176,17 @@ func persistProviderDEK(metadataPath string, providerMode string, dataKey *kms.D
 	}
 	raw, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to encode DEK metadata: %w", err)
+		return localizedError(localization.NornicDBCoreEncryptionDEKMetadataEncodeFailed(err), err)
 	}
 	if err := os.WriteFile(metadataPath, raw, 0600); err != nil {
-		return fmt.Errorf("failed to persist DEK metadata: %w", err)
+		return localizedError(localization.NornicDBCoreEncryptionDEKMetadataPersistFailed(err), err)
 	}
 	return nil
 }
 
 func decodeProviderMasterKey(value string) ([]byte, error) {
 	if value == "" {
-		return nil, fmt.Errorf("master key is required for provider-backed encryption")
+		return nil, localizedError(localization.NornicDBCoreEncryptionMasterKeyRequired(), nil)
 	}
 	if raw, err := base64.StdEncoding.DecodeString(value); err == nil && len(raw) == 32 {
 		return raw, nil
@@ -198,5 +198,5 @@ func decodeProviderMasterKey(value string) ([]byte, error) {
 	if len(raw) == 32 {
 		return raw, nil
 	}
-	return nil, fmt.Errorf("expected 32-byte key as base64, hex, or raw string")
+	return nil, localizedError(localization.NornicDBCoreEncryptionMasterKeyLengthInvalid(), nil)
 }

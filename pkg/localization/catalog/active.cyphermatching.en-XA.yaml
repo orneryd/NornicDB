@@ -1,0 +1,84 @@
+- id: cyphermatching.match_pattern_required
+  description: Expanded pseudo-locale missing MATCH pattern.
+  other: "[!! MATCH clause requires a pattern !!]"
+- id: cyphermatching.match_node_pattern_required
+  description: Expanded pseudo-locale missing MATCH node pattern.
+  other: "[!! MATCH clause requires a node pattern, not just a relationship pattern !!]"
+- id: cyphermatching.return_expression_required
+  description: Expanded pseudo-locale missing RETURN expression.
+  other: "[!! RETURN clause requires at least one expression !!]"
+- id: cyphermatching.return_expression_empty
+  description: Expanded pseudo-locale empty RETURN expression.
+  other: "[!! RETURN clause contains empty expression !!]"
+- id: cyphermatching.storage_failed
+  description: Expanded pseudo-locale storage failure.
+  other: "[!! storage error: {{.Cause}} !!]"
+- id: cyphermatching.collect_subquery_failed
+  description: Expanded pseudo-locale COLLECT subquery failure.
+  other: "[!! COLLECT subquery failed: {{.Cause}} !!]"
+- id: cyphermatching.match_unwind_clauses_required
+  description: Expanded pseudo-locale missing MATCH or UNWIND clauses.
+  other: "[!! MATCH and UNWIND clauses required (e.g., MATCH (n) UNWIND n.items AS item RETURN item) !!]"
+- id: cyphermatching.unwind_as_required
+  description: Expanded pseudo-locale missing UNWIND AS clause.
+  other: "[!! UNWIND requires AS clause (e.g., UNWIND [1,2,3] AS x) !!]"
+- id: cyphermatching.with_return_clauses_required
+  description: Expanded pseudo-locale missing WITH or RETURN clause.
+  other: "[!! WITH and RETURN clauses required !!]"
+- id: cyphermatching.with_optional_match_return_clauses_required
+  description: Expanded pseudo-locale missing WITH OPTIONAL MATCH RETURN clause.
+  other: "[!! WITH, OPTIONAL MATCH, and RETURN clauses required !!]"
+- id: cyphermatching.order_by_parse_failed
+  description: Expanded pseudo-locale ORDER BY parse failure.
+  other: "[!! failed to parse ORDER BY clause !!]"
+- id: cyphermatching.match_pattern_variable_missing
+  description: Expanded pseudo-locale missing MATCH variable.
+  other: "[!! invalid MATCH pattern: missing variable in {{.Clause}} !!]"
+- id: cyphermatching.traversal_pattern_invalid
+  description: Expanded pseudo-locale invalid traversal pattern.
+  other: "[!! invalid traversal pattern: {{.Pattern}} !!]"
+- id: cyphermatching.return_after_with_required
+  description: Expanded pseudo-locale missing RETURN after WITH.
+  other: "[!! RETURN clause required after WITH !!]"
+- id: cyphermatching.skip_parse_failed
+  description: Expanded pseudo-locale SKIP parse failure.
+  other: "[!! failed to parse SKIP clause !!]"
+- id: cyphermatching.limit_parse_failed
+  description: Expanded pseudo-locale LIMIT parse failure.
+  other: "[!! failed to parse LIMIT clause !!]"
+- id: cyphermatching.shortest_path_query_expected
+  description: Expanded pseudo-locale expected shortest-path query.
+  other: "[!! not a shortest path query !!]"
+- id: cyphermatching.shortest_path_syntax_invalid
+  description: Expanded pseudo-locale invalid shortestPath syntax.
+  other: "[!! invalid shortestPath syntax !!]"
+- id: cyphermatching.path_pattern_invalid
+  description: Expanded pseudo-locale invalid path pattern.
+  other: "[!! invalid path pattern: {{.Pattern}} !!]"
+- id: cyphermatching.shortest_path_start_variable_unresolved
+  description: Expanded pseudo-locale unresolved shortestPath start variable.
+  other: "[!! shortestPath: could not resolve start variable {{.Variable}} from preceding MATCH clause !!]"
+- id: cyphermatching.shortest_path_end_variable_unresolved
+  description: Expanded pseudo-locale unresolved shortestPath end variable.
+  other: "[!! shortestPath: could not resolve end variable {{.Variable}} from preceding MATCH clause !!]"
+- id: cyphermatching.optional_match_node_endpoint_missing
+  description: Expanded pseudo-locale missing optional node endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has no node endpoint !!]"
+- id: cyphermatching.optional_match_node_endpoint_unterminated
+  description: Expanded pseudo-locale unterminated optional node endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has an unterminated node endpoint !!]"
+- id: cyphermatching.optional_match_target_endpoint_missing
+  description: Expanded pseudo-locale missing optional target endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has no target endpoint !!]"
+- id: cyphermatching.optional_match_target_endpoint_unterminated
+  description: Expanded pseudo-locale unterminated optional target endpoint.
+  other: "[!! optional match pattern {{.Pattern}} has an unterminated target endpoint !!]"
+- id: cyphermatching.initial_traversal_match_failed
+  description: Expanded pseudo-locale initial traversal MATCH failure.
+  other: "[!! failed to execute initial traversal MATCH: {{.Cause}} !!]"
+- id: cyphermatching.aggregate_call_expected
+  description: Expanded pseudo-locale expected whole aggregate call.
+  other: "[!! not a whole aggregate call: {{.Expression}} !!]"
+- id: cyphermatching.function_parameters_insufficient
+  description: Expanded pseudo-locale insufficient function parameters.
+  other: "[!! insufficient parameters for function '{{.Function}}' !!]"

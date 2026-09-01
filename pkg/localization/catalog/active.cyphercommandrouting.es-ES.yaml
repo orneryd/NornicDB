@@ -1,0 +1,84 @@
+- id: cyphercommandrouting.unknown_command
+  other: "comando desconocido: {{.Command}}"
+- id: cyphercommandrouting.empty_command
+  other: "comando vacío"
+- id: cyphercommandrouting.shell_use_database_required
+  other: ":use requiere un nombre de base de datos"
+- id: cyphercommandrouting.parameter_map_required
+  other: "la expresión de parámetros debe evaluarse como un mapa"
+- id: cyphercommandrouting.parameter_argument_required
+  other: ":param requiere un argumento"
+- id: cyphercommandrouting.parameter_value_required
+  other: "el valor de :param no puede estar vacío"
+- id: cyphercommandrouting.parameter_usage
+  other: "uso incorrecto: se esperaba :param clear, :param list, :param {a: 1} o :param key => value"
+- id: cyphercommandrouting.parameter_map_keys_strings
+  other: "las claves del mapa de parámetros deben ser cadenas"
+- id: cyphercommandrouting.parameter_map_entry_empty
+  other: "entrada de mapa vacía"
+- id: cyphercommandrouting.parameter_map_entry_invalid
+  other: 'entrada de mapa no válida {{printf "%q" .Entry}}'
+- id: cyphercommandrouting.parameter_evaluation_failed
+  other: "cypher: no se pudo evaluar la expresión: parámetro {{.Parameter}}: {{.Cause}}"
+- id: cyphercommandrouting.parameter_produced_no_value
+  other: "cypher: no se pudo evaluar la expresión: el parámetro {{.Parameter}} no produjo ningún valor"
+- id: cyphercommandrouting.parameter_expression_unresolved
+  other: 'cypher: no se pudo evaluar la expresión: el parámetro {{.Parameter}} contiene una expresión sin resolver {{printf "%q" .Expression}}'
+- id: cyphercommandrouting.call_tail_seed_required
+  other: "la ejecución de la cola de CALL requiere un resultado inicial"
+- id: cyphercommandrouting.call_tail_limit_invalid
+  other: "LIMIT no válido en la cola de CALL: {{.Token}}"
+- id: cyphercommandrouting.call_tail_skip_invalid
+  other: "SKIP no válido en la cola de CALL: {{.Token}}"
+- id: cyphercommandrouting.where_boolean_required
+  other: "la expresión WHERE no se evaluó como un valor booleano: {{.Value}}"
+- id: cyphercommandrouting.unknown_procedure
+  other: "procedimiento desconocido: {{.Procedure}} (pruebe SHOW PROCEDURES para ver los procedimientos disponibles)"
+- id: cyphercommandrouting.fabric_not_prepared
+  other: "la ejecución de Fabric no estaba preparada"
+- id: cyphercommandrouting.fabric_storage_type_invalid
+  other: "el motor de almacenamiento tiene un tipo inesperado para '{{.Database}}'"
+- id: cyphercommandrouting.fabric_prepared_context_invalid
+  other: "la ejecución preparada de Fabric en el contexto no es válida"
+- id: cyphercommandrouting.fabric_constituents_failed
+  other: "no se pudieron obtener los componentes de '{{.Database}}': {{.Cause}}"
+- id: cyphercommandrouting.fabric_shard_transaction_failed
+  other: "no se pudo abrir la transacción del fragmento local para '{{.Database}}': {{.Cause}}"
+- id: cyphercommandrouting.use_database_required
+  other: "la cláusula USE requiere un nombre de base de datos"
+- id: cyphercommandrouting.use_invalid
+  other: "cláusula USE no válida: {{.Cause}}"
+- id: cyphercommandrouting.use_backtick_unterminated
+  other: "cláusula USE no válida: identificador entre acentos graves sin terminar"
+- id: cyphercommandrouting.graph_reference_invalid
+  other: "referencia de grafo no válida"
+- id: cyphercommandrouting.graph_reference_argument_required
+  other: "la referencia de grafo requiere un argumento"
+- id: cyphercommandrouting.graph_reference_open_paren_expected
+  other: "se esperaba '(' en la posición {{.Position}}"
+- id: cyphercommandrouting.graph_reference_unterminated
+  other: "referencia de grafo sin terminar"
+- id: cyphercommandrouting.graph_reference_argument_empty
+  other: "argumento de referencia de grafo vacío"
+- id: cyphercommandrouting.graph_reference_string_unterminated
+  other: "cadena de referencia de grafo sin terminar"
+- id: cyphercommandrouting.backtick_identifier_unterminated
+  other: "identificador entre acentos graves sin terminar"
+- id: cyphercommandrouting.use_constituent_outside_composite
+  other: "USE {{.Target}} falló: el componente '{{.Constituent}}' no forma parte de la base de datos compuesta actual '{{.Composite}}'"
+- id: cyphercommandrouting.use_failed
+  other: "USE {{.Target}} falló: {{.Cause}}"
+- id: cyphercommandrouting.use_backend_unsupported
+  other: "este backend de almacenamiento no admite USE {{.Target}}"
+- id: cyphercommandrouting.use_database_manager_unavailable
+  other: "USE {{.Target}} falló: el administrador de bases de datos no está disponible"
+- id: cyphercommandrouting.use_storage_type_invalid
+  other: "USE {{.Target}} falló: el motor de almacenamiento tiene un tipo inesperado"
+- id: cyphercommandrouting.use_database_not_composite
+  other: "USE {{.Target}} falló: '{{.Database}}' no es una base de datos compuesta"
+- id: cyphercommandrouting.unknown_yield_column
+  other: "columna YIELD desconocida: {{.Column}}"
+- id: cyphercommandrouting.procedure_min_arguments
+  other: "el procedimiento {{.Procedure}} requiere al menos {{.Minimum}} argumentos; se recibieron {{.Actual}}"
+- id: cyphercommandrouting.procedure_max_arguments
+  other: "el procedimiento {{.Procedure}} acepta como máximo {{.Maximum}} argumentos; se recibieron {{.Actual}}"

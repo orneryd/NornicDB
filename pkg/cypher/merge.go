@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -461,7 +462,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 	// Extract the main MERGE pattern - use word boundary detection
 	mergeIdx := findKeywordIndex(cypher, "MERGE")
 	if mergeIdx == -1 {
-		return nil, fmt.Errorf("MERGE clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherMergeClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	// Find ON CREATE SET, ON MATCH SET, standalone SET, and RETURN clauses
@@ -556,7 +557,7 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 		}
 		actualID, err := store.CreateNode(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
+			return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 		}
 		node.ID = actualID
 		e.notifyNodeMutated(string(node.ID))
@@ -613,10 +614,10 @@ func (e *StorageExecutor) executeMerge(ctx context.Context, cypher string) (*Exe
 					existingNode = recoveredNode
 					node = cloneNodeForMergeMutation(recoveredNode)
 				} else {
-					return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
+					return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 				}
 			} else {
-				return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
+				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 		}
 		if existingNode == nil {
@@ -700,7 +701,7 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 	}
 
 	if matchIdx == -1 || mergeIdx == -1 {
-		return nil, fmt.Errorf("invalid MATCH ... MERGE query")
+		return nil, localizedError(localization.CypherMergeInvalidMatchQuery(), nil)
 	}
 
 	// Extract MATCH clause
@@ -741,7 +742,7 @@ func (e *StorageExecutor) executeCompoundMatchMerge(ctx context.Context, cypher 
 	// Execute MATCH to get context
 	matchedNodes, matchedRels, err := e.executeMatchForContext(ctx, matchClause)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute MATCH: %v", err)
+		return nil, localizedError(localization.CypherMergeMatchExecutionFailed(err), nil)
 	}
 	if hasWindow {
 		matchedNodes = applyContextWindow(matchedNodes, windowVar, windowSkip, windowLimit)
@@ -829,7 +830,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 	upperUnwind := strings.ToUpper(unwindPart)
 	asIdx := strings.Index(upperUnwind, " AS ")
 	if asIdx <= 0 {
-		return nil, fmt.Errorf("UNWIND requires AS clause in MATCH ... UNWIND ... MERGE query")
+		return nil, localizedError(localization.CypherMergeUnwindASRequired(), nil)
 	}
 	listExpr := strings.TrimSpace(unwindPart[:asIdx])
 	unwindVar := strings.TrimSpace(unwindPart[asIdx+4:])
@@ -842,7 +843,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 			listVal = params[paramName]
 		}
 		if listVal == nil {
-			return nil, fmt.Errorf("UNWIND parameter $%s not found or is null", paramName)
+			return nil, localizedError(localization.CypherMergeUnwindParameterNotFound(paramName), nil)
 		}
 	} else {
 		// Evaluate inline list expression.
@@ -858,7 +859,7 @@ func (e *StorageExecutor) executeCompoundMatchUnwindMerge(ctx context.Context, c
 	// Execute the MATCH to get context nodes.
 	matchedNodes, matchedRels, err := e.executeMatchForContext(ctx, realMatchClause)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute MATCH: %v", err)
+		return nil, localizedError(localization.CypherMergeMatchExecutionFailed(err), nil)
 	}
 	if len(matchedNodes) == 0 {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}, nil
@@ -1055,13 +1056,13 @@ func (e *StorageExecutor) executeMatchForContext(ctx context.Context, matchClaus
 				var err error
 				candidates, err = store.GetNodesByLabel(nodeInfo.labels[0])
 				if err != nil {
-					return nil, nil, fmt.Errorf("failed to get nodes by label %q: %w", nodeInfo.labels[0], err)
+					return nil, nil, localizedError(localization.CypherMergeMatchLabelLookupFailed(nodeInfo.labels[0], err), err)
 				}
 			} else {
 				var err error
 				candidates, err = store.AllNodes()
 				if err != nil {
-					return nil, nil, fmt.Errorf("failed to get all nodes for match: %w", err)
+					return nil, nil, localizedError(localization.CypherMergeMatchAllNodesFailed(err), err)
 				}
 			}
 		}
@@ -1524,7 +1525,7 @@ func (e *StorageExecutor) executeMatchForContextWithRelationships(ctx context.Co
 	// an implicit empty context. This keeps behavior strict and predictable.
 	if strings.Count(patternPart, "(") != strings.Count(patternPart, ")") ||
 		strings.Count(patternPart, "[") != strings.Count(patternPart, "]") {
-		return nil, relMatches, fmt.Errorf("malformed relationship pattern: %s", patternPart)
+		return nil, relMatches, localizedError(localization.CypherMergeMalformedRelationshipPattern(patternPart), nil)
 	}
 
 	// Extract all variable names from the pattern
@@ -1854,10 +1855,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 					node = recoveredNode
 					e.cacheMergeNode(labels, matchProps, node)
 				} else {
-					return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
+					return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 				}
 			} else {
-				return nil, fmt.Errorf("failed to create node in MERGE: %w", err)
+				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 		}
 		if existingNode == nil {
@@ -2045,7 +2046,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// different property identities remain distinct.
 	existingEdge, err := findRelationshipForMerge(store, startNode.ID, endNode.ID, relType, relProps)
 	if err != nil {
-		return nil, fmt.Errorf("find relationship for MERGE: %w", err)
+		return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 	}
 
 	var edge *storage.Edge
@@ -2062,7 +2063,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		}
 		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, relProps)
 		if createErr != nil {
-			return nil, fmt.Errorf("failed to create relationship: %w", createErr)
+			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 		}
 		edge = createdEdge
 		if created {
@@ -2096,7 +2097,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
 		if propertiesSet := e.applySetToRelationshipWithContext(ctx, edge, relVar, setClause, nodeContext, relContext); propertiesSet > 0 {
 			if err := store.UpdateEdge(edge); err != nil {
-				return nil, fmt.Errorf("failed to update edge property: %w", err)
+				return nil, localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
 			}
 			result.Stats.PropertiesSet += propertiesSet
 			e.notifyEdgeMutated(string(edge.ID))
@@ -2582,14 +2583,14 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 					mergeContent := strings.TrimSpace(initialClause[5:])
 					if strings.Contains(mergeContent, "-[") || strings.Contains(mergeContent, "]-") {
 						if err := e.executeMergeRelSegment(ctx, mergeContent, nodeContext); err != nil {
-							return nil, fmt.Errorf("initial MERGE failed: %w", err)
+							return nil, localizedError(localization.CypherMergeInitialMergeFailed(err), err)
 						}
 						result.Stats.RelationshipsCreated++
 						continue
 					}
 					mergedNode, varName, err := e.executeMergeNodeSegment(ctx, initialClause)
 					if err != nil {
-						return nil, fmt.Errorf("initial MERGE failed: %w", err)
+						return nil, localizedError(localization.CypherMergeInitialMergeFailed(err), err)
 					}
 					if mergedNode != nil && varName != "" {
 						nodeContext[varName] = mergedNode
@@ -2601,7 +2602,7 @@ func (e *StorageExecutor) executeMergeWithChain(ctx context.Context, cypher stri
 				continue
 			}
 			if _, err := e.executeForeachWithContext(ctx, segment, nodeContext, relContext); err != nil {
-				return nil, fmt.Errorf("FOREACH failed: %w", err)
+				return nil, localizedError(localization.CypherMergeForeachFailed(err), err)
 			}
 		} else if strings.HasPrefix(upperSeg, "RETURN") {
 			// RETURN segment: build final result
@@ -2974,7 +2975,7 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 	// Parse: MERGE (varName:Label {props}) [ON CREATE SET ...] [ON MATCH SET ...]
 	mergeIdx := findKeywordIndex(segment, "MERGE")
 	if mergeIdx == -1 {
-		return nil, "", fmt.Errorf("MERGE not found in segment")
+		return nil, "", localizedError(localization.CypherMergeSegmentClauseNotFound(), nil)
 	}
 
 	// Find the pattern end (ON CREATE SET / ON MATCH SET / standalone SET / end of segment)
@@ -3051,10 +3052,10 @@ func (e *StorageExecutor) executeMergeNodeSegment(ctx context.Context, segment s
 					node = recoveredNode
 					e.cacheMergeNode(labels, props, node)
 				} else {
-					return nil, "", fmt.Errorf("failed to create node: %w", err)
+					return nil, "", localizedError(localization.CypherMergeCreateNodeSegmentFailed(err), err)
 				}
 			} else {
-				return nil, "", fmt.Errorf("failed to create node: %w", err)
+				return nil, "", localizedError(localization.CypherMergeCreateNodeSegmentFailed(err), err)
 			}
 		}
 		if existingNode == nil {
@@ -3146,7 +3147,7 @@ func (e *StorageExecutor) executeMatchSegment(ctx context.Context, segment strin
 	// Parse: MATCH (varName:Label {props}) [MERGE ...]
 	matchIdx := findKeywordIndex(segment, "MATCH")
 	if matchIdx == -1 {
-		return nil, "", fmt.Errorf("MATCH not found in segment")
+		return nil, "", localizedError(localization.CypherMergeMatchSegmentClauseNotFound(), nil)
 	}
 
 	// Find the pattern end (MERGE or end of segment)
@@ -3161,7 +3162,7 @@ func (e *StorageExecutor) executeMatchSegment(ctx context.Context, segment strin
 	// Parse the node pattern
 	nodePattern := e.parseNodePattern(ctx, pattern)
 	if nodePattern.variable == "" && len(nodePattern.labels) == 0 {
-		return nil, "", fmt.Errorf("could not parse node pattern: %s", pattern)
+		return nil, "", localizedError(localization.CypherMergeNodePatternParseFailed(pattern), nil)
 	}
 	for key, raw := range nodePattern.properties {
 		ident, ok := raw.(string)
@@ -3220,12 +3221,12 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 	// Extract start node variable
 	startParen := strings.Index(pattern, "(")
 	if startParen == -1 {
-		return fmt.Errorf("invalid relationship pattern: missing start node in %q", pattern)
+		return localizedError(localization.CypherMergeRelationshipStartMissing(pattern), nil)
 	}
 
 	endStartParen := strings.Index(pattern[startParen+1:], ")")
 	if endStartParen == -1 {
-		return fmt.Errorf("invalid relationship pattern: missing start node closing paren in %q", pattern)
+		return localizedError(localization.CypherMergeRelationshipStartParenMissing(pattern), nil)
 	}
 	startVar := strings.TrimSpace(pattern[startParen+1 : startParen+1+endStartParen])
 
@@ -3236,7 +3237,7 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 		relEnd = strings.Index(pattern, "]-")
 	}
 	if relStart == -1 || relEnd == -1 {
-		return fmt.Errorf("invalid relationship pattern: missing relationship brackets (expected -[type]-> or -[type]-) in %q", pattern)
+		return localizedError(localization.CypherMergeRelationshipBracketsMissing(pattern), nil)
 	}
 
 	relContent := pattern[relStart+2 : relEnd]
@@ -3262,7 +3263,7 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 	lastParenStart := strings.LastIndex(pattern, "(")
 	lastParenEnd := strings.LastIndex(pattern, ")")
 	if lastParenStart == -1 || lastParenEnd == -1 || lastParenEnd < lastParenStart {
-		return fmt.Errorf("invalid relationship pattern: missing end node in %q", pattern)
+		return localizedError(localization.CypherMergeRelationshipEndMissing(pattern), nil)
 	}
 	endVar := strings.TrimSpace(pattern[lastParenStart+1 : lastParenEnd])
 
@@ -3271,17 +3272,17 @@ func (e *StorageExecutor) executeMergeRelSegment(ctx context.Context, pattern st
 	endNode, endExists := nodeContext[endVar]
 
 	if !startExists {
-		return fmt.Errorf("start node variable '%s' not in context (available: %v)", startVar, getKeys(nodeContext))
+		return localizedError(localization.CypherMergeStartVariableNotBound(startVar, getKeys(nodeContext)), nil)
 	}
 	if !endExists {
-		return fmt.Errorf("end node variable '%s' not in context (available: %v)", endVar, getKeys(nodeContext))
+		return localizedError(localization.CypherMergeEndVariableNotBound(endVar, getKeys(nodeContext)), nil)
 	}
 
 	// Check the complete relationship pattern, including its identity
 	// properties, rather than collapsing every same-pair/type relationship.
 	existing, err := findRelationshipForMerge(store, startNode.ID, endNode.ID, relType, relProps)
 	if err != nil {
-		return fmt.Errorf("find relationship for MERGE segment: %w", err)
+		return localizedError(localization.CypherMergeFindRelationshipSegmentFailed(err), err)
 	}
 	if existing != nil {
 		return nil
@@ -3360,7 +3361,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 			if strings.Contains(mergeContent, "-[") || strings.Contains(mergeContent, "]-") {
 				mergeResult, err := e.executeMergeWithContext(ctx, segment, nodeContext, relContext)
 				if err != nil {
-					return nil, fmt.Errorf("relationship MERGE failed: %w", err)
+					return nil, localizedError(localization.CypherMergeRelationshipFailed(err), err)
 				}
 				if mergeResult != nil && mergeResult.Stats != nil {
 					result.Stats.RelationshipsCreated += mergeResult.Stats.RelationshipsCreated
@@ -3370,7 +3371,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 				// Node MERGE
 				node, varName, err := e.executeMergeNodeSegment(ctx, segment)
 				if err != nil {
-					return nil, fmt.Errorf("node MERGE failed: %w", err)
+					return nil, localizedError(localization.CypherMergeNodeFailed(err), err)
 				}
 				if node != nil && varName != "" {
 					nodeContext[varName] = node
@@ -3382,7 +3383,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 			}
 			node, varName, err := e.executeMatchSegment(ctx, segment, nodeContext)
 			if err != nil {
-				return nil, fmt.Errorf("OPTIONAL MATCH failed: %w", err)
+				return nil, localizedError(localization.CypherMergeOptionalMatchFailed(err), err)
 			}
 			if varName != "" {
 				// Preserve variable even when nil (OPTIONAL semantics).
@@ -3394,7 +3395,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 			}
 			node, varName, err := e.executeMatchSegment(ctx, segment, nodeContext)
 			if err != nil {
-				return nil, fmt.Errorf("MATCH failed: %w", err)
+				return nil, localizedError(localization.CypherMergeMatchFailed(err), err)
 			}
 			if node == nil {
 				chainBroken = true
@@ -3425,7 +3426,7 @@ func (e *StorageExecutor) executeMultipleMerges(ctx context.Context, cypher stri
 				continue
 			}
 			if _, err := e.executeForeachWithContext(ctx, segment, nodeContext, relContext); err != nil {
-				return nil, fmt.Errorf("FOREACH failed: %w", err)
+				return nil, localizedError(localization.CypherMergeForeachFailed(err), err)
 			}
 		} else if strings.HasPrefix(upperSeg, "RETURN") {
 			// Build result from context

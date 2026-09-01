@@ -1,17 +1,17 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema manager unavailable")
+		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 
 	bundles, bindings := schema.ShowDecayProfiles()
@@ -74,7 +74,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema manager unavailable")
+		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 
 	profiles := schema.ShowPromotionProfiles()
@@ -131,16 +131,16 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 		return nil, err
 	}
 	if entityID == "" && labelsCSV == "" && edgeType == "" {
-		return nil, fmt.Errorf("nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType")
+		return nil, localizedError(localization.CypherKnowledgePolicyResolveTargetRequired(), nil)
 	}
 
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema manager unavailable")
+		return nil, localizedError(localization.CypherKnowledgePolicySchemaManagerUnavailable(), nil)
 	}
 	bt := schema.GetBindingTable()
 	if bt == nil {
-		return nil, fmt.Errorf("knowledge policy binding table unavailable")
+		return nil, localizedError(localization.CypherKnowledgePolicyBindingTableUnavailable(), nil)
 	}
 
 	decayEnabled := false
@@ -164,7 +164,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 			createdNanos := edge.CreatedAt.UnixNano()
 			resolution = scorer.ScoreEdge(entityID, edge.Type, loadAccessMeta(e.storage, entityID), createdNanos, createdNanos, nowNanos)
 		} else {
-			return nil, fmt.Errorf("entity not found: %s", entityID)
+			return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
 		}
 	} else if edgeType != "" {
 		resolution = scorer.ScoreEdge("dry-run", edgeType, nil, nowNanos, nowNanos, nowNanos)
@@ -202,7 +202,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteRe
 	if be == nil {
 		return &ExecuteResult{
 			Columns: columns,
-			Rows:    [][]interface{}{{0, false, "deindex status requires BadgerDB storage backend", "", "", "", nil, ""}},
+			Rows:    [][]interface{}{{0, false, localization.CypherKnowledgePolicyDeindexBadgerRequired().Fallback, "", "", "", nil, ""}},
 		}, nil
 	}
 
@@ -239,7 +239,7 @@ func optionalStringArg(args []interface{}, idx int) (string, error) {
 	}
 	s, ok := args[idx].(string)
 	if !ok {
-		return "", fmt.Errorf("argument %d must be a string", idx+1)
+		return "", localizedError(localization.CypherKnowledgePolicyArgumentStringRequired(idx+1), nil)
 	}
 	return strings.TrimSpace(s), nil
 }

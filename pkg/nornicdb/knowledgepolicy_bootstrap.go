@@ -1,9 +1,8 @@
 package nornicdb
 
 import (
-	"fmt"
-
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -26,7 +25,7 @@ func maybeBootstrapDefaultKnowledgePolicy(base storage.Engine, namespace string)
 
 	for _, stmt := range defaultKnowledgePolicyBootstrapDDL() {
 		if err := applyKnowledgePolicyDDL(schema, stmt); err != nil {
-			return fmt.Errorf("bootstrap default knowledge policy for namespace %q: %w", namespace, err)
+			return localizedError(localization.NornicDBCoreBootstrapKnowledgePolicyFailed(namespace, err), err)
 		}
 	}
 	return nil
@@ -45,7 +44,7 @@ func applyKnowledgePolicyDDL(schema *storage.SchemaManager, stmt string) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("not a knowledge-policy DDL statement")
+		return localizedError(localization.NornicDBCoreBootstrapDDLExpected(), nil)
 	}
 
 	switch c := cmd.(type) {
@@ -58,7 +57,7 @@ func applyKnowledgePolicyDDL(schema *storage.SchemaManager, stmt string) error {
 	case *cypher.CreatePromotionPolicyCmd:
 		return schema.CreatePromotionPolicy(c.Policy)
 	default:
-		return fmt.Errorf("unsupported bootstrap DDL command %T", cmd)
+		return localizedError(localization.NornicDBCoreBootstrapDDLCommandUnsupported(cmd), nil)
 	}
 }
 

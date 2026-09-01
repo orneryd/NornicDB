@@ -3,11 +3,11 @@ package cypher
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"math"
 	"reflect"
 	"strconv"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -156,10 +156,7 @@ func createRelationshipForMerge(
 			if len(matchProps) == 0 || nonReflexiveIdentity {
 				bareAttempts++
 				if bareAttempts >= maxBareCreateAttempts {
-					return nil, false, fmt.Errorf(
-						"relationship MERGE create failed after %d edge ID collisions",
-						maxBareCreateAttempts,
-					)
+					return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxBareCreateAttempts), nil)
 				}
 				edge.ID = storage.EdgeID(e.generateID())
 				continue
@@ -222,7 +219,7 @@ func selectRelationshipMergeCreateID(
 			return candidate, nil
 		}
 	}
-	return nil, fmt.Errorf("relationship MERGE property identity has no free storage key")
+	return nil, localizedError(localization.CypherMergeRelationshipIdentityExhausted(), nil)
 }
 
 func relationshipMatchesMergePattern(

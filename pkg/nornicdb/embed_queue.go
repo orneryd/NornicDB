@@ -11,6 +11,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -920,10 +921,10 @@ func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.Node
 		batch := chunks[start:end]
 		batchEmbeddings, err := ew.embedBatchWithRetry(batch)
 		if err != nil {
-			return nil, fmt.Errorf("batch %d-%d/%d failed for %s: %w", start+1, end, len(chunks), nodeID, err)
+			return nil, localizedError(localization.NornicDBCoreEmbedBatchFailed(start+1, end, len(chunks), string(nodeID), err), err)
 		}
 		if len(batchEmbeddings) != len(batch) {
-			return nil, fmt.Errorf("embedding count mismatch for %s: got %d, expected %d", nodeID, len(batchEmbeddings), len(batch))
+			return nil, localizedError(localization.NornicDBCoreEmbeddingCountMismatch(string(nodeID), len(batchEmbeddings), len(batch)), nil)
 		}
 		allEmbeddings = append(allEmbeddings, batchEmbeddings...)
 	}

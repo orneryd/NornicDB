@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -28,7 +29,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 		return nil, err
 	}
 	if len(args) < 7 || len(args) > 9 {
-		return nil, fmt.Errorf("db.temporal.assertNoOverlap requires 7 parameters plus optional systemTime and systemSequence")
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalAssertArgumentCount(), nil)
 	}
 
 	label, err := coerceStringArg(args[0], "label")
@@ -51,7 +52,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 	keyValue := args[4]
 	newStart, ok := coerceDateTime(args[5])
 	if !ok {
-		return nil, fmt.Errorf("newValidFrom must be a valid datetime")
+		return nil, localizedError(localization.CypherSpecializedCallsDateTimeRequired("newValidFrom"), nil)
 	}
 	newEnd, newHasEnd := coerceDateTimeOptional(args[6])
 	snapshotVersion, hasSnapshot, err := coerceOptionalMVCCVersion(args[7:])
@@ -61,7 +62,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 
 	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read nodes for label %q: %w", label, err)
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
 
 	for _, node := range nodes {
@@ -79,7 +80,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 		existingEnd, existingHasEnd := coerceDateTimeOptional(node.Properties[validToProp])
 
 		if intervalsOverlap(newStart, newEnd, newHasEnd, existingStart, existingEnd, existingHasEnd) {
-			return nil, fmt.Errorf("temporal overlap detected for %s=%v", keyProp, keyValue)
+			return nil, localizedError(localization.CypherSpecializedCallsTemporalOverlap(keyProp, keyValue), nil)
 		}
 	}
 
@@ -101,7 +102,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 		return nil, err
 	}
 	if len(args) < 6 || len(args) > 8 {
-		return nil, fmt.Errorf("db.temporal.asOf requires 6 parameters plus optional systemTime and systemSequence")
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalAsOfArgumentCount(), nil)
 	}
 
 	label, err := coerceStringArg(args[0], "label")
@@ -123,7 +124,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 	}
 	asOf, ok := coerceDateTime(args[5])
 	if !ok {
-		return nil, fmt.Errorf("asOf must be a valid datetime")
+		return nil, localizedError(localization.CypherSpecializedCallsDateTimeRequired("asOf"), nil)
 	}
 	snapshotVersion, hasSnapshot, err := coerceOptionalMVCCVersion(args[6:])
 	if err != nil {
@@ -133,7 +134,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
 		node, err := temporalLookup.GetTemporalNodeAsOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)
 		if err != nil {
-			return nil, fmt.Errorf("temporal lookup failed for label %q: %w", label, err)
+			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}
 		if node != nil {
 			return &ExecuteResult{
@@ -145,7 +146,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 
 	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read nodes for label %q: %w", label, err)
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
 
 	var bestNode interface{}
@@ -195,12 +196,12 @@ func parseTemporalCallArgs(ctx context.Context, cypher, callName string) ([]inte
 	needle := strings.ToUpper(callName) + "("
 	start := strings.Index(upper, needle)
 	if start == -1 {
-		return nil, fmt.Errorf("invalid %s syntax", strings.ToLower(callName))
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalInvalidSyntax(strings.ToLower(callName)), nil)
 	}
 	start += len(needle)
 	endRel := strings.Index(cypher[start:], ")")
 	if endRel == -1 {
-		return nil, fmt.Errorf("missing closing parenthesis in %s", strings.ToLower(callName))
+		return nil, localizedError(localization.CypherSpecializedCallsTemporalClosingParenthesis(strings.ToLower(callName)), nil)
 	}
 	rawArgs := strings.TrimSpace(cypher[start : start+endRel])
 	parts := splitTopLevelComma(rawArgs)
@@ -245,12 +246,12 @@ func resolveTemporalArg(ctx context.Context, raw string) interface{} {
 
 func coerceStringArg(val interface{}, name string) (string, error) {
 	if val == nil {
-		return "", fmt.Errorf("%s is required", name)
+		return "", localizedError(localization.CypherSpecializedCallsArgumentRequired(name), nil)
 	}
 	switch v := val.(type) {
 	case string:
 		if strings.TrimSpace(v) == "" {
-			return "", fmt.Errorf("%s cannot be empty", name)
+			return "", localizedError(localization.CypherSpecializedCallsArgumentEmpty(name), nil)
 		}
 		return v, nil
 	default:
@@ -271,7 +272,7 @@ func coerceOptionalMVCCVersion(args []interface{}) (storage.MVCCVersion, bool, e
 	}
 	commitTime, ok := coerceDateTime(args[0])
 	if !ok {
-		return storage.MVCCVersion{}, false, fmt.Errorf("systemTime must be a valid datetime")
+		return storage.MVCCVersion{}, false, localizedError(localization.CypherSpecializedCallsDateTimeRequired("systemTime"), nil)
 	}
 	version := storage.MVCCVersion{CommitTimestamp: commitTime.UTC(), CommitSequence: ^uint64(0)}
 	if len(args) > 1 {
@@ -288,27 +289,27 @@ func coerceUint64Arg(val interface{}, name string) (uint64, error) {
 	switch v := val.(type) {
 	case int:
 		if v < 0 {
-			return 0, fmt.Errorf("%s must be non-negative", name)
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
 		}
 		return uint64(v), nil
 	case int64:
 		if v < 0 {
-			return 0, fmt.Errorf("%s must be non-negative", name)
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
 		}
 		return uint64(v), nil
 	case float64:
 		if v < 0 || v != float64(uint64(v)) {
-			return 0, fmt.Errorf("%s must be a whole non-negative number", name)
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedWholeNonNegative(name), nil)
 		}
 		return uint64(v), nil
 	case string:
 		parsed, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("%s must be a valid uint64", name)
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 		}
 		return parsed, nil
 	default:
-		return 0, fmt.Errorf("%s must be a valid uint64", name)
+		return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 	}
 }
 

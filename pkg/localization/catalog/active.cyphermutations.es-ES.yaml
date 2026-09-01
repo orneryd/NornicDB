@@ -1,0 +1,200 @@
+- id: cyphermutations.invalid_label_name
+  other: 'nombre de etiqueta no válido: "{{.Label}}" (debe ser alfanumérico y comenzar con una letra o un guion bajo)'
+- id: cyphermutations.invalid_label_reserved
+  other: 'nombre de etiqueta no válido: "{{.Label}}" (contiene una palabra reservada)'
+- id: cyphermutations.invalid_property_key
+  other: 'clave de propiedad no válida: "{{.Property}}" (debe ser alfanumérica y comenzar con una letra o un guion bajo)'
+- id: cyphermutations.invalid_property_value
+  other: 'valor de propiedad no válido para la clave "{{.Property}}": sintaxis incorrecta'
+- id: cyphermutations.create_node_failed
+  other: "no se pudo crear el nodo: {{.Cause}}"
+- id: cyphermutations.create_source_node_failed
+  other: "no se pudo crear el nodo de origen: {{.Cause}}"
+- id: cyphermutations.create_target_node_failed
+  other: "no se pudo crear el nodo de destino: {{.Cause}}"
+- id: cyphermutations.invalid_relationship_type
+  other: 'tipo de relación no válido: "{{.RelationshipType}}" (debe ser alfanumérico y comenzar con una letra o un guion bajo)'
+- id: cyphermutations.invalid_relationship_property_key
+  other: 'clave de propiedad de relación no válida: "{{.Property}}" (debe ser alfanumérica y comenzar con una letra o un guion bajo)'
+- id: cyphermutations.create_relationship_failed
+  other: "no se pudo crear la relación: {{.Cause}}"
+- id: cyphermutations.invalid_property_map_cause
+  other: "sintaxis de mapa de propiedades no válida en el patrón: {{.Cause}}"
+- id: cyphermutations.relationship_pattern_must_start_node
+  other: "patrón de relación no válido: debe comenzar por ("
+- id: cyphermutations.relationship_pattern_unmatched_parenthesis
+  other: "patrón de relación no válido: paréntesis sin pareja"
+- id: cyphermutations.relationship_pattern_unmatched_bracket
+  other: "patrón de relación no válido: corchete sin pareja"
+- id: cyphermutations.relationship_pattern_forward_node_expected
+  other: "patrón de relación no válido: se esperaba -( después de ]"
+- id: cyphermutations.relationship_pattern_arrow_node_expected
+  other: "patrón de relación no válido: se esperaba ->( después de ]"
+- id: cyphermutations.relationship_pattern_second_node_unmatched_parenthesis
+  other: "patrón de relación no válido: paréntesis sin pareja para el segundo nodo"
+- id: cyphermutations.match_label_lookup_failed
+  other: 'no se pudieron obtener los nodos con la etiqueta "{{.Label}}" en el segmento MATCH: {{.Cause}}'
+- id: cyphermutations.match_all_nodes_failed
+  other: "no se pudieron obtener todos los nodos en el segmento MATCH: {{.Cause}}"
+- id: cyphermutations.relationship_existence_check_failed
+  other: "falló la comprobación de existencia de la relación {{.StartVariable}}-[:{{.RelationshipType}}]->{{.EndVariable}}: {{.Cause}}"
+- id: cyphermutations.add_label_failed
+  other: "no se pudo añadir la etiqueta: {{.Cause}}"
+- id: cyphermutations.set_assignment_parameter_name_required
+  other: "la asignación SET requiere un nombre de parámetro válido después de $"
+- id: cyphermutations.set_assignment_parameters_required
+  other: "el parámetro ${{.Parameter}} de la asignación SET requiere que se proporcionen parámetros"
+- id: cyphermutations.set_assignment_parameter_not_found
+  other: "no se encontró el parámetro ${{.Parameter}} de la asignación SET entre los parámetros proporcionados"
+- id: cyphermutations.replace_node_properties_failed
+  other: "no se pudieron reemplazar las propiedades del nodo: {{.Cause}}"
+- id: cyphermutations.replace_edge_properties_failed
+  other: "no se pudieron reemplazar las propiedades de la relación: {{.Cause}}"
+- id: cyphermutations.unknown_set_variable
+  other: "variable desconocida en la cláusula SET: {{.Variable}}"
+- id: cyphermutations.update_node_property_failed
+  other: "no se pudo actualizar la propiedad del nodo: {{.Cause}}"
+- id: cyphermutations.update_edge_property_failed
+  other: "no se pudo actualizar la propiedad de la relación: {{.Cause}}"
+- id: cyphermutations.resolve_source_node_failed
+  other: "no se pudo resolver el nodo de origen: {{.Cause}}"
+- id: cyphermutations.resolve_target_node_failed
+  other: "no se pudo resolver el nodo de destino: {{.Cause}}"
+- id: cyphermutations.relationship_properties_invalid
+  other: "propiedades de relación no válidas"
+- id: cyphermutations.variable_not_found
+  other: "no se encontró la variable '{{.Variable}}' (disponibles: {{.Available}})"
+- id: cyphermutations.create_with_delete_invalid
+  other: "consulta CREATE...WITH...DELETE no válida"
+- id: cyphermutations.create_failed
+  other: "CREATE falló: {{.Cause}}"
+- id: cyphermutations.delete_failed
+  other: "DELETE falló: {{.Cause}}"
+- id: cyphermutations.create_set_clause_missing
+  other: "no se encontró la cláusula SET en la consulta CREATE...SET"
+- id: cyphermutations.create_in_create_set_failed
+  other: "CREATE falló en CREATE...SET: {{.Cause}}"
+- id: cyphermutations.create_set_with_continuation_required
+  other: "WITH en CREATE...SET requiere una cláusula CREATE o RETURN"
+- id: cyphermutations.with_clause_empty
+  other: "la cláusula WITH no puede estar vacía"
+- id: cyphermutations.create_set_trailing_clause_unsupported
+  other: "cláusula no compatible después de SET en la consulta CREATE...SET: {{.Clause}}"
+- id: cyphermutations.set_merge_syntax_invalid
+  other: "sintaxis SET += no válida"
+- id: cyphermutations.set_merge_parameter_name_required
+  other: "SET += requiere un nombre de parámetro válido después de $"
+- id: cyphermutations.set_merge_parameters_required
+  other: "el parámetro ${{.Parameter}} de SET += requiere que se proporcionen parámetros"
+- id: cyphermutations.set_merge_parameter_not_found
+  other: "no se encontró el parámetro ${{.Parameter}} de SET += entre los parámetros proporcionados"
+- id: cyphermutations.set_merge_parse_failed
+  other: "no se pudieron analizar las propiedades de SET +=: {{.Cause}}"
+- id: cyphermutations.set_merge_map_literal_required
+  other: "no se pudieron analizar las propiedades de SET +=: el literal de mapa debe estar entre { ... }"
+- id: cyphermutations.set_merge_map_variable_not_found
+  other: 'no se encontró la variable de mapa "{{.Variable}}" de SET += en el ámbito'
+- id: cyphermutations.update_node_failed
+  other: "no se pudo actualizar el nodo: {{.Cause}}"
+- id: cyphermutations.update_edge_failed
+  other: "no se pudo actualizar la relación: {{.Cause}}"
+- id: cyphermutations.unknown_set_merge_variable
+  other: "variable desconocida en SET +=: {{.Variable}}"
+- id: cyphermutations.relationship_create_failed
+  other: "falló CREATE de la relación: {{.Cause}}"
+- id: cyphermutations.node_create_failed
+  other: "falló CREATE del nodo: {{.Cause}}"
+- id: cyphermutations.delete_match_required
+  other: "DELETE requiere primero una cláusula MATCH (p. ej., MATCH (n) DELETE n)"
+- id: cyphermutations.delete_variables_required
+  other: "la cláusula DELETE debe especificar las variables que se eliminarán (p. ej., DELETE n)"
+- id: cyphermutations.detach_delete_keywords_required
+  other: "DETACH DELETE requiere juntas las palabras clave DETACH y DELETE"
+- id: cyphermutations.set_match_required
+  other: "SET requiere primero una cláusula MATCH (p. ej., MATCH (n) SET n.property = value)"
+- id: cyphermutations.set_assignment_required
+  other: "la cláusula SET requiere al menos una asignación"
+- id: cyphermutations.set_merge_variable_required
+  other: "SET += requiere una variable de destino"
+- id: cyphermutations.set_merge_map_scope_required
+  other: 'SET += requiere una variable de mapa en el ámbito (falta "{{.Variable}}")'
+- id: cyphermutations.set_merge_update_failed
+  other: "SET {{.Variable}} +=: {{.Cause}}"
+- id: cyphermutations.set_entity_replace_failed
+  other: "SET {{.Variable}} =: {{.Cause}}"
+- id: cyphermutations.set_entity_required
+  other: "SET {{.Variable}} = requiere un nodo o una relación"
+- id: cyphermutations.set_property_failed
+  other: "SET {{.Variable}}.{{.Property}}: {{.Cause}}"
+- id: cyphermutations.set_property_entity_required
+  other: "SET {{.Variable}}.{{.Property}} requiere un nodo o una relación"
+- id: cyphermutations.unwind_clause_expected
+  other: "se esperaba una cláusula UNWIND"
+- id: cyphermutations.unwind_as_required
+  other: "UNWIND requiere una cláusula AS (p. ej., UNWIND [1,2,3] AS x)"
+- id: cyphermutations.unwind_variable_required
+  other: "UNWIND requiere una variable después de AS"
+- id: cyphermutations.unwind_set_return_required
+  other: "UNWIND en una consulta SET requiere una cláusula RETURN"
+- id: cyphermutations.unwind_as_variable_non_empty
+  other: "UNWIND requiere una variable AS no vacía"
+- id: cyphermutations.with_expression_required
+  other: "la cláusula WITH requiere al menos una expresión"
+- id: cyphermutations.set_merge_operator_expected
+  other: "se esperaba el operador +="
+- id: cyphermutations.set_merge_string_keys_required
+  other: "SET += {{.Source}} debe ser un mapa con claves de cadena; se obtuvo una clave de tipo {{.KeyType}}"
+- id: cyphermutations.set_merge_map_required
+  other: "SET += {{.Source}} debe ser un mapa; se obtuvo el tipo {{.ValueType}}"
+- id: cyphermutations.remove_match_required
+  other: "REMOVE requiere primero una cláusula MATCH (p. ej., MATCH (n) REMOVE n.property)"
+- id: cyphermutations.unwind_keys_unsupported
+  other: "la función keys() con UNWIND no es compatible en este contexto"
+- id: cyphermutations.unwind_parameter_name_required
+  other: "UNWIND requiere un nombre de parámetro válido después de $"
+- id: cyphermutations.unwind_parameters_required
+  other: "el parámetro ${{.Parameter}} de UNWIND requiere que se proporcionen parámetros"
+- id: cyphermutations.unwind_parameter_not_found
+  other: "no se encontró el parámetro ${{.Parameter}} de UNWIND entre los parámetros proporcionados"
+- id: cyphermutations.unwind_mutation_failed
+  other: "falló la mutación UNWIND: {{.Cause}}"
+- id: cyphermutations.unwind_match_failed
+  other: "falló UNWIND MATCH: {{.Cause}}"
+- id: cyphermutations.unwind_merge_create_failed
+  other: "falló la creación de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_merge_update_failed
+  other: "falló la actualización de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_match_update_failed
+  other: "falló la actualización de la cadena UNWIND MATCH: {{.Cause}}"
+- id: cyphermutations.unwind_relationship_lookup_failed
+  other: "falló la búsqueda de relación de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_relationship_assignment_failed
+  other: "falló la asignación de relación de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_relationship_create_failed
+  other: "falló la creación de relación de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_relationship_update_failed
+  other: "falló la actualización de relación de la cadena UNWIND MERGE: {{.Cause}}"
+- id: cyphermutations.unwind_fixed_chain_failed
+  other: "falló la combinación de cadena fija de UNWIND: {{.Cause}}"
+- id: cyphermutations.unwind_clause_missing
+  other: "no se encontró la cláusula UNWIND"
+- id: cyphermutations.unwind_first_as_required
+  other: "el primer UNWIND requiere una cláusula AS"
+- id: cyphermutations.unwind_double_malformed
+  other: "UNWIND doble con formato incorrecto"
+- id: cyphermutations.unwind_second_expected
+  other: "se esperaba un segundo UNWIND"
+- id: cyphermutations.unwind_second_as_required
+  other: "el segundo UNWIND requiere una cláusula AS"
+- id: cyphermutations.with_optional_return_required
+  other: "se requieren las cláusulas WITH, OPTIONAL MATCH y RETURN"
+- id: cyphermutations.with_return_required
+  other: "se requiere una cláusula RETURN después de WITH"
+- id: cyphermutations.foreach_parentheses_required
+  other: "FOREACH requiere paréntesis (p. ej., FOREACH (x IN list | SET ...))"
+- id: cyphermutations.foreach_balanced_parentheses_required
+  other: "FOREACH requiere paréntesis equilibrados"
+- id: cyphermutations.foreach_in_required
+  other: "FOREACH requiere una cláusula IN (p. ej., FOREACH (x IN list | SET ...))"
+- id: cyphermutations.foreach_separator_required
+  other: "FOREACH requiere el separador |"

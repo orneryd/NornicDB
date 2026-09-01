@@ -1,0 +1,96 @@
+- id: cypherknowledgepolicy.expected_after
+  description: Falta un término del analizador. Expected y After no se traducen.
+  other: "se esperaba {{.Expected}} después de {{.After}}"
+- id: cypherknowledgepolicy.profile_name_expected_after
+  description: Falta el nombre del perfil. After no se traduce.
+  other: "se esperaba el nombre del perfil después de {{.After}}"
+- id: cypherknowledgepolicy.expected_after_profile_name
+  description: Falta sintaxis después del nombre del perfil. Expected y DisplayName no se traducen.
+  other: "se esperaba {{.Expected}} después del nombre del perfil {{.DisplayName}}"
+- id: cypherknowledgepolicy.policy_name_expected_after
+  description: Falta el nombre de la directiva. After no se traduce.
+  other: "se esperaba el nombre de la directiva después de {{.After}}"
+- id: cypherknowledgepolicy.label_expected_after_colon
+  description: Falta una etiqueta de nodo.
+  other: "se esperaba una etiqueta después de ':'"
+- id: cypherknowledgepolicy.edge_type_expected_after_colon
+  description: Falta un tipo de arista.
+  other: "se esperaba un tipo de arista después de ':'"
+- id: cypherknowledgepolicy.edge_pattern_expected_for
+  description: Falta un símbolo del patrón de arista. Expected no se traduce.
+  other: "se esperaba {{.Expected}} para el patrón de arista"
+- id: cypherknowledgepolicy.edge_pattern_expected_in
+  description: Falta un símbolo del patrón de arista. Expected no se traduce.
+  other: "se esperaba {{.Expected}} en el patrón de arista"
+- id: cypherknowledgepolicy.number_expected_after
+  description: Falta un valor numérico. After no se traduce.
+  other: "se esperaba un número después de {{.After}}"
+- id: cypherknowledgepolicy.seconds_expected_after
+  description: Falta un valor de duración. After no se traduce.
+  other: "se esperaban segundos después de {{.After}}"
+- id: cypherknowledgepolicy.kalman_closing_brace_expected
+  description: Bloque de configuración de Kalman sin terminar.
+  other: "se esperaba } en el bloque de configuración KALMAN"
+- id: cypherknowledgepolicy.expression_expected_after_set
+  description: Falta una expresión SET.
+  other: "se esperaba una expresión después de SET"
+- id: cypherknowledgepolicy.invalid_value
+  description: Valor de directiva no válido. Field y DisplayValue no se traducen.
+  other: "valor de {{.Field}} no válido: {{.DisplayValue}}"
+- id: cypherknowledgepolicy.unknown_option
+  description: Opción de perfil desconocida. DisplayOption no se traduce.
+  other: "opción desconocida: {{.DisplayOption}}"
+- id: cypherknowledgepolicy.unknown_kalman_config_key
+  description: Clave de configuración de Kalman desconocida. DisplayKey no se traduce.
+  other: "clave de configuración de Kalman desconocida: {{.DisplayKey}}"
+- id: cypherknowledgepolicy.unsupported_command
+  description: Comando de directiva de conocimiento no compatible. Command no se traduce.
+  other: "comando de directiva de conocimiento no compatible: {{.Command}}"
+- id: cypherknowledgepolicy.schema_manager_unavailable
+  description: La compatibilidad con esquemas no está disponible.
+  other: el administrador de esquemas no está disponible
+- id: cypherknowledgepolicy.unsupported_command_type
+  description: Tipo de comando analizado no compatible. CommandType no se traduce.
+  other: "tipo de comando de directiva de conocimiento no compatible: {{.CommandType}}"
+- id: cypherknowledgepolicy.operation_failed
+  description: Error de operación de esquema. Operation y Cause no se traducen para conservar el diagnóstico exacto.
+  other: "{{.Cause}}"
+- id: cypherknowledgepolicy.resolve_target_required
+  description: El procedimiento resolve requiere un selector de destino. Los identificadores no se traducen.
+  other: nornicdb.knowledgepolicy.resolve requiere entityId, labels o edgeType
+- id: cypherknowledgepolicy.binding_table_unavailable
+  description: Los enlaces compilados no están disponibles.
+  other: la tabla de enlaces de directivas de conocimiento no está disponible
+- id: cypherknowledgepolicy.entity_not_found
+  description: No se encontró la entidad. EntityID no se traduce.
+  other: "no se encontró la entidad: {{.EntityID}}"
+- id: cypherknowledgepolicy.argument_string_required
+  description: El argumento tiene un tipo incorrecto. Position no se traduce.
+  other: "el argumento {{.Position}} debe ser una cadena"
+- id: cypherknowledgepolicy.deindex_badger_required
+  description: El estado de desindexación requiere BadgerDB.
+  other: el estado de desindexación requiere el backend de almacenamiento BadgerDB
+- id: cypherknowledgepolicy.decay_options_map_required
+  description: Las opciones de función tienen un tipo incorrecto. ValueType no se traduce.
+  other: "las opciones de decayScore/decay deben ser un mapa; se obtuvo {{.ValueType}}"
+- id: cypherknowledgepolicy.unknown_decay_option
+  description: Opción de función de decaimiento desconocida. DisplayOption no se traduce.
+  other: "clave de opción de decaimiento desconocida: {{.DisplayOption}}"
+- id: cypherknowledgepolicy.reason_no_entity_argument
+  description: Motivo del resultado neutro de decaimiento.
+  other: no hay ningún argumento de entidad
+- id: cypherknowledgepolicy.reason_entity_not_found
+  description: Motivo del resultado neutro de decaimiento.
+  other: no se encontró la entidad
+- id: cypherknowledgepolicy.reason_no_badger_engine
+  description: Motivo del resultado neutro. BadgerEngine no se traduce.
+  other: no hay ningún BadgerEngine
+- id: cypherknowledgepolicy.reason_decay_disabled
+  description: Motivo del resultado neutro de decaimiento.
+  other: el subsistema de decaimiento está deshabilitado
+- id: cypherknowledgepolicy.reason_no_decay_profile
+  description: Motivo del resultado neutro de decaimiento.
+  other: no hay ningún perfil de decaimiento
+- id: cypherknowledgepolicy.reason_no_decay
+  description: Motivo del resultado neutro de decaimiento.
+  other: sin decaimiento

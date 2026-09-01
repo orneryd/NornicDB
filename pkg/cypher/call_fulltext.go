@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -74,7 +75,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*Execute
 
 	// Neo4j compatibility: error if index doesn't exist and isn't a built-in
 	if len(targetProperties) == 0 && indexName != "" && !builtInIndexes[indexName] {
-		return nil, fmt.Errorf("there is no such fulltext schema index: %s", indexName)
+		return nil, localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 	}
 
 	// Default searchable properties if no index config or using built-in index
@@ -414,7 +415,7 @@ func (e *StorageExecutor) extractFulltextQueryOptions(cypher string) (fulltextQu
 		return opts, nil
 	}
 	if len(parts) > 3 {
-		return opts, fmt.Errorf("invalid fulltext query syntax: expected 2 or 3 arguments")
+		return opts, localizedError(localization.CypherSpecializedCallsFulltextArgumentCount(), nil)
 	}
 
 	raw := strings.TrimSpace(parts[2])
@@ -422,21 +423,21 @@ func (e *StorageExecutor) extractFulltextQueryOptions(cypher string) (fulltextQu
 		return opts, nil
 	}
 	if !strings.HasPrefix(raw, "{") || !strings.HasSuffix(raw, "}") {
-		return opts, fmt.Errorf("procedure options must be a MAP")
+		return opts, localizedError(localization.CypherSpecializedCallsProcedureOptionsMapRequired(), nil)
 	}
 
 	parsed := e.parseMapLiteral(context.Background(), raw)
 	if v, ok := parsed["skip"]; ok {
 		i, convOK := fulltextOptionToInt(v)
 		if !convOK || i < 0 {
-			return opts, fmt.Errorf("invalid fulltext options.skip: %v", v)
+			return opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("skip", v), nil)
 		}
 		opts.skip = i
 	}
 	if v, ok := parsed["limit"]; ok {
 		i, convOK := fulltextOptionToInt(v)
 		if !convOK || i < 0 {
-			return opts, fmt.Errorf("invalid fulltext options.limit: %v", v)
+			return opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("limit", v), nil)
 		}
 		opts.limit = i
 	}

@@ -2,9 +2,9 @@ package search
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -42,7 +42,7 @@ func (g *GPUKMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, 
 
 func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
 	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, fmt.Errorf("gpu k-means candidate gen requires clustered index")
+		return nil, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
 	}
 
 	clusterIDs := []int(nil)

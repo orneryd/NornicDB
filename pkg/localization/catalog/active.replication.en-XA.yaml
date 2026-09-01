@@ -1,0 +1,249 @@
+- id: replication.not_leader
+  description: Expanded pseudo-locale non-leader error.
+  other: "[!! not leader !!]"
+- id: replication.no_leader
+  description: Expanded pseudo-locale missing leader error.
+  other: "[!! no leader available !!]"
+- id: replication.operation_timed_out
+  description: Expanded pseudo-locale operation timeout.
+  other: "[!! operation timed out !!]"
+- id: replication.closed
+  description: Expanded pseudo-locale closed replicator error.
+  other: "[!! replicator is closed !!]"
+- id: replication.standby_mode
+  description: Expanded pseudo-locale standby write error.
+  other: "[!! node is in standby mode !!]"
+- id: replication.not_ready
+  description: Expanded pseudo-locale not-ready error.
+  other: "[!! replicator not ready !!]"
+- id: replication.config.ha_role_required
+  description: Expanded pseudo-locale missing HA role error.
+  other: "[!! {{.Mode}} mode requires {{.EnvVar}} ({{.PrimaryRole}} or {{.StandbyRole}}) !!]"
+- id: replication.config.invalid_ha_role
+  description: Expanded pseudo-locale invalid HA role error.
+  other: "[!! invalid HA role: {{.Role}} (must be '{{.PrimaryRole}}' or '{{.StandbyRole}}') !!]"
+- id: replication.config.ha_peer_address_required
+  description: Expanded pseudo-locale missing HA peer error.
+  other: "[!! {{.Mode}} mode requires {{.EnvVar}} !!]"
+- id: replication.config.invalid_ha_sync_mode
+  description: Expanded pseudo-locale invalid HA sync mode error.
+  other: "[!! invalid HA sync mode: {{.SyncMode}} (must be '{{.AsyncMode}}' or '{{.QuorumMode}}') !!]"
+- id: replication.config.raft_peers_required
+  description: Expanded pseudo-locale missing Raft peer settings error.
+  other: "[!! {{.Mode}} mode requires {{.PeersEnvVar}} or {{.BootstrapEnvVar}}=true !!]"
+- id: replication.config.region_id_required
+  description: Expanded pseudo-locale missing region ID error.
+  other: "[!! {{.Mode}} mode requires {{.EnvVar}} !!]"
+- id: replication.config.invalid_cross_region_sync_mode
+  description: Expanded pseudo-locale invalid cross-region sync mode error.
+  other: "[!! invalid cross-region sync mode: {{.SyncMode}} (must be '{{.AsyncMode}}' or '{{.QuorumMode}}') !!]"
+- id: replication.config.unknown_mode
+  description: Expanded pseudo-locale unknown replication mode error.
+  other: "[!! unknown replication mode: {{.Mode}} !!]"
+- id: replication.config.node_id_required
+  description: Expanded pseudo-locale missing node ID error.
+  other: "[!! {{.EnvVar}} is required !!]"
+- id: replication.config.secret_too_short
+  description: Expanded pseudo-locale short replication secret error.
+  other: "[!! replication secret must be at least {{.MinLength}} characters !!]"
+- id: replication.config.tls_cert_required
+  description: Expanded pseudo-locale missing TLS certificate error.
+  other: "[!! TLS enabled but {{.EnvVar}} not set !!]"
+- id: replication.config.tls_key_required
+  description: Expanded pseudo-locale missing TLS key error.
+  other: "[!! TLS enabled but {{.EnvVar}} not set !!]"
+- id: replication.config.tls_ca_required
+  description: Expanded pseudo-locale missing TLS CA error.
+  other: "[!! TLS client verification enabled but {{.EnvVar}} not set !!]"
+- id: replication.config.invalid_tls_min_version
+  description: Expanded pseudo-locale invalid TLS version error.
+  other: "[!! invalid TLS min version: {{.Version}} (must be '{{.TLS12}}' or '{{.TLS13}}') !!]"
+- id: replication.transport.closed
+  description: Expanded pseudo-locale closed transport error.
+  other: "[!! transport closed !!]"
+- id: replication.transport.connect_failed
+  description: Expanded pseudo-locale peer connection wrapper.
+  other: "[!! connect to {{.Address}}: {{.Cause}} !!]"
+- id: replication.transport.listen_failed
+  description: Expanded pseudo-locale listener wrapper.
+  other: "[!! listen on {{.Address}}: {{.Cause}} !!]"
+- id: replication.transport.load_tls_cert_key_failed
+  description: Expanded pseudo-locale TLS identity wrapper.
+  other: "[!! load TLS cert/key: {{.Cause}} !!]"
+- id: replication.transport.read_tls_ca_failed
+  description: Expanded pseudo-locale TLS CA read wrapper.
+  other: "[!! read TLS CA file: {{.Cause}} !!]"
+- id: replication.transport.invalid_tls_ca
+  description: Expanded pseudo-locale invalid TLS CA error.
+  other: "[!! invalid TLS CA file !!]"
+- id: replication.transport.unknown_tls_cipher_suite
+  description: Expanded pseudo-locale unknown cipher suite error.
+  other: "[!! unknown TLS cipher suite: {{.CipherSuite}} !!]"
+- id: replication.ha.init_transport_failed
+  description: Expanded pseudo-locale HA transport initialization wrapper.
+  other: "[!! init transport: {{.Cause}} !!]"
+- id: replication.ha.start_primary_failed
+  description: Expanded pseudo-locale HA primary startup wrapper.
+  other: "[!! start primary: {{.Cause}} !!]"
+- id: replication.ha.start_standby_failed
+  description: Expanded pseudo-locale HA standby startup wrapper.
+  other: "[!! start standby: {{.Cause}} !!]"
+- id: replication.ha.flush_wal_failed
+  description: Expanded pseudo-locale HA WAL flush wrapper.
+  other: "[!! flush WAL: {{.Cause}} !!]"
+- id: replication.ha.ack_timed_out
+  description: Expanded pseudo-locale replication acknowledgement timeout.
+  other: "[!! replication ack timeout (mode={{.SyncMode}}, target={{.Target}}): {{.Cause}} !!]"
+- id: replication.ha.primary_cannot_receive_wal
+  description: Expanded pseudo-locale primary WAL rejection.
+  other: "[!! primary cannot receive WAL !!]"
+- id: replication.raft.vote_request_required
+  description: Expanded pseudo-locale nil vote request error.
+  other: "[!! nil vote request !!]"
+- id: replication.raft.append_entries_request_required
+  description: Expanded pseudo-locale nil append request error.
+  other: "[!! nil append entries request !!]"
+- id: replication.raft.init_transport_failed
+  description: Expanded pseudo-locale Raft transport initialization wrapper.
+  other: "[!! init transport: {{.Cause}} !!]"
+- id: replication.raft.send_vote_request_failed
+  description: Expanded pseudo-locale vote RPC wrapper.
+  other: "[!! send vote request: {{.Cause}} !!]"
+- id: replication.raft.send_append_entries_failed
+  description: Expanded pseudo-locale append RPC wrapper.
+  other: "[!! send append entries: {{.Cause}} !!]"
+- id: replication.raft.commit_timed_out
+  description: Expanded pseudo-locale Raft commit timeout.
+  other: "[!! commit timeout after {{.Timeout}} !!]"
+- id: replication.raft.transport_not_configured
+  description: Expanded pseudo-locale missing Raft transport error.
+  other: "[!! no transport configured !!]"
+- id: replication.raft.connect_peer_failed
+  description: Expanded pseudo-locale Raft peer connection wrapper.
+  other: "[!! connect to {{.Address}}: {{.Cause}} !!]"
+- id: replication.raft.forward_to_leader_failed
+  description: Expanded pseudo-locale leader forwarding wrapper.
+  other: "[!! forward to leader: {{.Cause}} !!]"
+- id: replication.raft.apply_queue_full
+  description: Expanded pseudo-locale full apply queue error.
+  other: "[!! apply queue full !!]"
+- id: replication.raft.apply_timed_out
+  description: Expanded pseudo-locale apply timeout.
+  other: "[!! apply timeout !!]"
+- id: replication.storage.wal_directory_create_failed
+  description: Expanded pseudo-locale WAL directory wrapper.
+  other: "[!! failed to create WAL directory: {{.Cause}} !!]"
+- id: replication.storage.wal_create_failed
+  description: Expanded pseudo-locale WAL creation wrapper.
+  other: "[!! failed to create WAL: {{.Cause}} !!]"
+- id: replication.storage.command_required
+  description: Expanded pseudo-locale nil command error.
+  other: "[!! nil command !!]"
+- id: replication.storage.wal_append_failed
+  description: Expanded pseudo-locale WAL append wrapper.
+  other: "[!! failed to append to WAL: {{.Cause}} !!]"
+- id: replication.storage.unknown_command_type
+  description: Expanded pseudo-locale unknown command type error.
+  other: "[!! unknown command type: {{.CommandType}} !!]"
+- id: replication.storage.decode_node_failed
+  description: Expanded pseudo-locale node decode wrapper.
+  other: "[!! decode node: {{.Cause}} !!]"
+- id: replication.storage.decode_edge_failed
+  description: Expanded pseudo-locale edge decode wrapper.
+  other: "[!! decode edge: {{.Cause}} !!]"
+- id: replication.storage.decode_delete_edge_failed
+  description: Expanded pseudo-locale delete-edge decode wrapper.
+  other: "[!! decode delete edge request: {{.Cause}} !!]"
+- id: replication.storage.decode_set_property_failed
+  description: Expanded pseudo-locale set-property decode wrapper.
+  other: "[!! decode set property request: {{.Cause}} !!]"
+- id: replication.storage.decode_batch_failed
+  description: Expanded pseudo-locale batch decode wrapper.
+  other: "[!! decode batch: {{.Cause}} !!]"
+- id: replication.storage.decode_delete_prefix_failed
+  description: Expanded pseudo-locale prefix-delete decode wrapper.
+  other: "[!! decode delete by prefix request: {{.Cause}} !!]"
+- id: replication.storage.prefix_required
+  description: Expanded pseudo-locale required prefix error.
+  other: "[!! prefix is required !!]"
+- id: replication.storage.decode_bulk_create_nodes_failed
+  description: Expanded pseudo-locale bulk node-create decode wrapper.
+  other: "[!! decode bulk create nodes: {{.Cause}} !!]"
+- id: replication.storage.decode_bulk_create_edges_failed
+  description: Expanded pseudo-locale bulk edge-create decode wrapper.
+  other: "[!! decode bulk create edges: {{.Cause}} !!]"
+- id: replication.storage.decode_bulk_delete_nodes_failed
+  description: Expanded pseudo-locale bulk node-delete decode wrapper.
+  other: "[!! decode bulk delete nodes: {{.Cause}} !!]"
+- id: replication.storage.decode_bulk_delete_edges_failed
+  description: Expanded pseudo-locale bulk edge-delete decode wrapper.
+  other: "[!! decode bulk delete edges: {{.Cause}} !!]"
+- id: replication.storage.cypher_executor_unavailable
+  description: Expanded pseudo-locale unavailable Cypher executor error.
+  other: "[!! cypher executor not available - cannot execute Cypher command !!]"
+- id: replication.storage.decode_cypher_command_failed
+  description: Expanded pseudo-locale Cypher command decode wrapper.
+  other: "[!! unmarshal cypher command: {{.Cause}} !!]"
+- id: replication.storage.cypher_query_empty
+  description: Expanded pseudo-locale empty Cypher query error.
+  other: "[!! cypher query is empty !!]"
+- id: replication.storage.execute_cypher_failed
+  description: Expanded pseudo-locale Cypher execution wrapper.
+  other: "[!! execute cypher query: {{.Cause}} !!]"
+- id: replication.storage.flush_wal_failed
+  description: Expanded pseudo-locale storage WAL flush wrapper.
+  other: "[!! flush wal: {{.Cause}} !!]"
+- id: replication.storage.read_wal_entries_failed
+  description: Expanded pseudo-locale WAL read wrapper.
+  other: "[!! failed to read WAL entries: {{.Cause}} !!]"
+- id: replication.storage.get_all_nodes_failed
+  description: Expanded pseudo-locale node enumeration wrapper.
+  other: "[!! get all nodes: {{.Cause}} !!]"
+- id: replication.storage.get_all_edges_failed
+  description: Expanded pseudo-locale edge enumeration wrapper.
+  other: "[!! get all edges: {{.Cause}} !!]"
+- id: replication.storage.encode_snapshot_failed
+  description: Expanded pseudo-locale snapshot encode wrapper.
+  other: "[!! encode snapshot: {{.Cause}} !!]"
+- id: replication.storage.read_snapshot_failed
+  description: Expanded pseudo-locale snapshot read wrapper.
+  other: "[!! read snapshot: {{.Cause}} !!]"
+- id: replication.storage.decode_snapshot_failed
+  description: Expanded pseudo-locale snapshot decode wrapper.
+  other: "[!! decode snapshot: {{.Cause}} !!]"
+- id: replication.storage.restore_node_failed
+  description: Expanded pseudo-locale node restore wrapper.
+  other: "[!! restore node: {{.Cause}} !!]"
+- id: replication.storage.restore_edge_failed
+  description: Expanded pseudo-locale edge restore wrapper.
+  other: "[!! restore edge: {{.Cause}} !!]"
+- id: replication.engine.node_required
+  description: Expanded pseudo-locale nil node error.
+  other: "[!! nil node !!]"
+- id: replication.engine.edge_required
+  description: Expanded pseudo-locale nil edge error.
+  other: "[!! nil edge !!]"
+- id: replication.engine.encode_node_failed
+  description: Expanded pseudo-locale node encode wrapper.
+  other: "[!! encode node: {{.Cause}} !!]"
+- id: replication.engine.encode_edge_failed
+  description: Expanded pseudo-locale edge encode wrapper.
+  other: "[!! encode edge: {{.Cause}} !!]"
+- id: replication.engine.encode_delete_edge_failed
+  description: Expanded pseudo-locale delete-edge encode wrapper.
+  other: "[!! encode delete edge request: {{.Cause}} !!]"
+- id: replication.engine.encode_bulk_create_nodes_failed
+  description: Expanded pseudo-locale bulk node-create encode wrapper.
+  other: "[!! encode bulk create nodes: {{.Cause}} !!]"
+- id: replication.engine.encode_bulk_create_edges_failed
+  description: Expanded pseudo-locale bulk edge-create encode wrapper.
+  other: "[!! encode bulk create edges: {{.Cause}} !!]"
+- id: replication.engine.encode_bulk_delete_nodes_failed
+  description: Expanded pseudo-locale bulk node-delete encode wrapper.
+  other: "[!! encode bulk delete nodes: {{.Cause}} !!]"
+- id: replication.engine.encode_bulk_delete_edges_failed
+  description: Expanded pseudo-locale bulk edge-delete encode wrapper.
+  other: "[!! encode bulk delete edges: {{.Cause}} !!]"
+- id: replication.engine.encode_delete_prefix_failed
+  description: Expanded pseudo-locale prefix-delete encode wrapper.
+  other: "[!! encode delete by prefix: {{.Cause}} !!]"

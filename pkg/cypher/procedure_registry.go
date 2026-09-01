@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -171,10 +172,10 @@ func ClearUserProcedures() {
 
 func validateProcedureArgCount(spec ProcedureSpec, args []interface{}) error {
 	if spec.MinArgs > 0 && len(args) < spec.MinArgs {
-		return fmt.Errorf("procedure %s requires at least %d arguments, got %d", spec.Name, spec.MinArgs, len(args))
+		return localizedError(localization.CypherCommandRoutingProcedureMinArguments(spec.Name, spec.MinArgs, len(args)), nil)
 	}
 	if spec.MaxArgs >= 0 && len(args) > spec.MaxArgs {
-		return fmt.Errorf("procedure %s accepts at most %d arguments, got %d", spec.Name, spec.MaxArgs, len(args))
+		return localizedError(localization.CypherCommandRoutingProcedureMaxArguments(spec.Name, spec.MaxArgs, len(args)), nil)
 	}
 	return nil
 }

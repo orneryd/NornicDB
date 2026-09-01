@@ -1,0 +1,36 @@
+- id: storage.loader.loading_nodes
+  other: "[!! loading nodes: {{.Cause}} !!]"
+- id: storage.loader.loading_relationships
+  other: "[!! loading relationships: {{.Cause}} !!]"
+- id: storage.loader.opening_file
+  other: "[!! opening file: {{.Cause}} !!]"
+- id: storage.loader.decoding_json
+  other: "[!! decoding JSON: {{.Cause}} !!]"
+- id: storage.loader.creating_nodes
+  other: "[!! creating nodes: {{.Cause}} !!]"
+- id: storage.loader.creating_edges
+  other: "[!! creating edges: {{.Cause}} !!]"
+- id: storage.loader.export_engine_unsupported
+  other: "[!! SaveToNeo4jExport: engine type {{.EngineType}} does not support full export !!]"
+- id: storage.loader.getting_all_nodes
+  other: "[!! getting all nodes: {{.Cause}} !!]"
+- id: storage.loader.getting_all_edges
+  other: "[!! getting all edges: {{.Cause}} !!]"
+- id: storage.loader.creating_file
+  other: "[!! creating file: {{.Cause}} !!]"
+- id: storage.loader.encoding_json
+  other: "[!! encoding JSON: {{.Cause}} !!]"
+- id: storage.loader.parsing_node_json
+  other: "[!! parsing node JSON: {{.Cause}} !!]"
+- id: storage.loader.converting_node
+  other: "[!! converting node: {{.Cause}} !!]"
+- id: storage.loader.scanning_file
+  other: "[!! scanning file: {{.Cause}} !!]"
+- id: storage.loader.parsing_relationship_json
+  other: "[!! parsing relationship JSON: {{.Cause}} !!]"
+- id: storage.loader.converting_relationship
+  other: "[!! converting relationship: {{.Cause}} !!]"
+- id: storage.loader.getting_nodes
+  other: "[!! getting nodes: {{.Cause}} !!]"
+- id: storage.loader.getting_edges
+  other: "[!! getting edges: {{.Cause}} !!]"

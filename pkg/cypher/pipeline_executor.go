@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -417,7 +418,7 @@ func (e *StorageExecutor) pipelineApplyCreate(ctx context.Context, rows []pipeli
 
 		subResult, refsNodes, _, err := e.executeCreateWithRefsOrCompound(ctx, queryToRun)
 		if err != nil {
-			return nil, nil, true, fmt.Errorf("pipeline CREATE failed: %w", err)
+			return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
 		}
 		if subResult != nil && subResult.Stats != nil {
 			stats.NodesCreated += subResult.Stats.NodesCreated

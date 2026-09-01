@@ -1,0 +1,12 @@
+- id: cypherantlr.parse_empty_query
+  description: Pseudo-localized empty query passed to the ANTLR Parse entrypoint.
+  other: "[!! empty query !!]"
+- id: cypherantlr.parse_syntax_error
+  description: Pseudo-localized ANTLR Parse syntax failure. Detail remains unchanged.
+  other: "[!! syntax error: {{.Detail}} !!]"
+- id: cypherantlr.validate_empty_query
+  description: Pseudo-localized empty query passed to the ANTLR Validate entrypoint.
+  other: "[!! empty query !!]"
+- id: cypherantlr.validate_syntax_error
+  description: Pseudo-localized ANTLR Validate syntax failure. Detail remains unchanged.
+  other: "[!! syntax error: {{.Detail}} !!]"

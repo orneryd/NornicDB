@@ -40,13 +40,14 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // ClusterMessageType identifies cluster protocol messages.
@@ -202,7 +203,7 @@ func (t *ClusterTransport) RegisterHandler(msgType ClusterMessageType, handler M
 // Connect establishes a connection to a peer node.
 func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnection, error) {
 	if t.closed.Load() {
-		return nil, errors.New("transport closed")
+		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
 	}
 
 	// Check for existing connection
@@ -232,7 +233,7 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 		netConn, err = d.DialContext(dialCtx, "tcp", addr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", addr, err)
+		return nil, localizedError(localization.ReplicationTransportConnectFailed(addr, err), err)
 	}
 
 	conn := t.createConnection(addr, netConn)
@@ -271,7 +272,7 @@ func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *Clus
 // Listen starts accepting cluster connections.
 func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler ConnectionHandler) error {
 	if t.closed.Load() {
-		return errors.New("transport closed")
+		return localizedError(localization.ReplicationTransportClosed(), nil)
 	}
 
 	var listener net.Listener
@@ -282,7 +283,7 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 		listener, err = net.Listen("tcp", addr)
 	}
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", addr, err)
+		return localizedError(localization.ReplicationTransportListenFailed(addr, err), err)
 	}
 
 	t.mu.Lock()
@@ -396,7 +397,7 @@ type ClusterConnection struct {
 
 func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*ClusterMessage, error) {
 	if !c.connected.Load() {
-		return nil, errors.New("not connected")
+		return nil, localizedError(localization.ReplicationRPCNotConnected(), nil)
 	}
 	if msg.NodeID == "" && c.transport != nil && c.transport.nodeID != "" {
 		msg.NodeID = c.transport.nodeID
@@ -427,7 +428,7 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 	c.mu.Unlock()
 
 	if err != nil {
-		return nil, fmt.Errorf("write: %w", err)
+		return nil, localizedError(localization.ReplicationRPCWriteFailed(err), err)
 	}
 
 	// Wait for response
@@ -435,7 +436,7 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-c.closeCh:
-		return nil, errors.New("connection closed")
+		return nil, localizedError(localization.ReplicationRPCConnectionClosed(), nil)
 	case resp := <-respCh:
 		return resp, nil
 	}
@@ -472,8 +473,9 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		c.conn.SetReadDeadline(time.Now().Add(readTimeout))
 		msg, err := readClusterMessage(c.reader, c.maxMsgSize)
 		if err != nil {
-			if err != io.EOF {
-				if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+			if !errors.Is(err, io.EOF) {
+				var netErr net.Error
+				if !errors.As(err, &netErr) || !netErr.Timeout() {
 					log.Printf("[Cluster] Read error: %v", err)
 				}
 			}
@@ -553,7 +555,7 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 func (c *ClusterConnection) SendWALBatch(ctx context.Context, entries []*WALEntry) (*WALBatchResponse, error) {
 	payload, err := encodeGob(entries)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -568,7 +570,7 @@ func (c *ClusterConnection) SendWALBatch(ctx context.Context, entries []*WALEntr
 
 	var result WALBatchResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -577,7 +579,7 @@ func (c *ClusterConnection) SendWALBatch(ctx context.Context, entries []*WALEntr
 func (c *ClusterConnection) SendHeartbeat(ctx context.Context, req *HeartbeatRequest) (*HeartbeatResponse, error) {
 	payload, err := encodeGob(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -592,7 +594,7 @@ func (c *ClusterConnection) SendHeartbeat(ctx context.Context, req *HeartbeatReq
 
 	var result HeartbeatResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -601,7 +603,7 @@ func (c *ClusterConnection) SendHeartbeat(ctx context.Context, req *HeartbeatReq
 func (c *ClusterConnection) SendFence(ctx context.Context, req *FenceRequest) (*FenceResponse, error) {
 	payload, err := encodeGob(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -616,7 +618,7 @@ func (c *ClusterConnection) SendFence(ctx context.Context, req *FenceRequest) (*
 
 	var result FenceResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -625,7 +627,7 @@ func (c *ClusterConnection) SendFence(ctx context.Context, req *FenceRequest) (*
 func (c *ClusterConnection) SendPromote(ctx context.Context, req *PromoteRequest) (*PromoteResponse, error) {
 	payload, err := encodeGob(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -640,7 +642,7 @@ func (c *ClusterConnection) SendPromote(ctx context.Context, req *PromoteRequest
 
 	var result PromoteResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -649,7 +651,7 @@ func (c *ClusterConnection) SendPromote(ctx context.Context, req *PromoteRequest
 func (c *ClusterConnection) SendRaftVote(ctx context.Context, req *RaftVoteRequest) (*RaftVoteResponse, error) {
 	payload, err := encodeGob(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -664,7 +666,7 @@ func (c *ClusterConnection) SendRaftVote(ctx context.Context, req *RaftVoteReque
 
 	var result RaftVoteResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -673,7 +675,7 @@ func (c *ClusterConnection) SendRaftVote(ctx context.Context, req *RaftVoteReque
 func (c *ClusterConnection) SendRaftAppendEntries(ctx context.Context, req *RaftAppendEntriesRequest) (*RaftAppendEntriesResponse, error) {
 	payload, err := encodeGob(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
 	}
 
 	msg := &ClusterMessage{
@@ -688,7 +690,7 @@ func (c *ClusterConnection) SendRaftAppendEntries(ctx context.Context, req *Raft
 
 	var result RaftAppendEntriesResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
 	}
 	return &result, nil
 }
@@ -697,11 +699,11 @@ func (c *ClusterConnection) SendRaftAppendEntries(ctx context.Context, req *Raft
 // Used by followers to forward writes to the leader automatically.
 func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	if cmd == nil {
-		return errors.New("nil command")
+		return localizedError(localization.ReplicationRPCCommandRequired(), nil)
 	}
 	payload, err := encodeGob(cmd)
 	if err != nil {
-		return fmt.Errorf("encode command: %w", err)
+		return localizedError(localization.ReplicationRPCEncodeFailed("command", err), err)
 	}
 	msg := &ClusterMessage{
 		Type:    ClusterMsgForwardApply,
@@ -713,10 +715,11 @@ func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, 
 	}
 	var result forwardApplyResponse
 	if err := decodeGob(resp.Payload, &result); err != nil {
-		return fmt.Errorf("decode forward apply response: %w", err)
+		return localizedError(localization.ReplicationRPCDecodeFailed("forward apply response", err), err)
 	}
 	if result.Err != "" {
-		return fmt.Errorf("%s", result.Err)
+		cause := errors.New(result.Err)
+		return localizedError(localization.ReplicationRPCRemoteApplyFailed(result.Err), cause)
 	}
 	return nil
 }
@@ -756,18 +759,18 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 		return nil
 	}
 	if msg.Signature == "" || msg.Timestamp == 0 || msg.NodeID == "" {
-		return errors.New("missing authentication fields")
+		return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
 	}
 	if c.authMaxSkew > 0 {
 		now := time.Now()
 		ts := time.Unix(0, msg.Timestamp)
 		if now.Sub(ts) > c.authMaxSkew || ts.Sub(now) > c.authMaxSkew {
-			return fmt.Errorf("timestamp outside allowed skew")
+			return localizedError(localization.ReplicationRPCTimestampOutsideAllowedSkew(), nil)
 		}
 	}
 	expected := computeMessageSignature(c.authSecret, msg)
 	if !hmac.Equal([]byte(expected), []byte(msg.Signature)) {
-		return errors.New("invalid signature")
+		return localizedError(localization.ReplicationRPCInvalidSignature(), nil)
 	}
 	return nil
 }
@@ -794,22 +797,22 @@ func readClusterMessage(r *bufio.Reader, maxSize int) (*ClusterMessage, error) {
 	// Read length prefix
 	var length uint32
 	if err := binary.Read(r, binary.BigEndian, &length); err != nil {
-		return nil, err
+		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
 
 	if int(length) > maxSize {
-		return nil, fmt.Errorf("message too large: %d > %d", length, maxSize)
+		return nil, localizedError(localization.ReplicationRPCMessageTooLarge(length, maxSize), nil)
 	}
 
 	// Read data
 	data := make([]byte, length)
 	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
+		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
 
 	var msg ClusterMessage
 	if err := decodeGob(data, &msg); err != nil {
-		return nil, err
+		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
 
 	return &msg, nil

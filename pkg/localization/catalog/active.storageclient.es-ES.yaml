@@ -1,0 +1,62 @@
+- id: storage.client.async.flush_incomplete_detailed
+  other: "vaciado incompleto: fallaron {{.NodesFailed}} nodos, {{.EdgesFailed}} relaciones y {{.DeletesFailed}} eliminaciones ({{.Details}})"
+- id: storage.client.async.flush_incomplete
+  other: "vaciado incompleto: fallaron {{.NodesFailed}} nodos, {{.EdgesFailed}} relaciones y {{.DeletesFailed}} eliminaciones"
+- id: storage.client.async.close_failed
+  other: "cierre del motor asíncrono: {{if .HasFlushErrors}}errores de vaciado: fallaron {{.NodesFailed}} nodos, {{.EdgesFailed}} relaciones y {{.DeletesFailed}} eliminaciones{{if .HasUnflushed}}; {{end}}{{end}}{{if .HasUnflushed}}sin vaciar: {{.PendingNodes}} nodos, {{.PendingEdges}} relaciones, {{.PendingNodeDeletes}} eliminaciones de nodos y {{.PendingEdgeDeletes}} eliminaciones de relaciones (POSIBLE PÉRDIDA DE DATOS){{end}}"
+- id: storage.client.async.close_engine_failed
+  other: "{{if .HasFlushErrors}}errores de vaciado: fallaron {{.NodesFailed}} nodos, {{.EdgesFailed}} relaciones y {{.DeletesFailed}} eliminaciones{{if .HasUnflushed}}; {{end}}{{end}}{{if .HasUnflushed}}sin vaciar: {{.PendingNodes}} nodos, {{.PendingEdges}} relaciones, {{.PendingNodeDeletes}} eliminaciones de nodos y {{.PendingEdgeDeletes}} eliminaciones de relaciones (POSIBLE PÉRDIDA DE DATOS){{end}}; cierre del motor: {{.Cause}}"
+- id: storage.client.node.id_namespace_unprefixed
+  other: "el ID del nodo debe tener un prefijo de espacio de nombres (p. ej., 'nornic:node-123'); se obtuvo el ID sin prefijo: {{.NodeID}}"
+- id: storage.client.node.id_namespace_required
+  other: "el ID del nodo debe tener un prefijo de espacio de nombres (p. ej., 'nornic:node-123'); se obtuvo: {{.NodeID}}"
+- id: storage.client.node.encode_failed
+  other: "no se pudo codificar el nodo: {{.Cause}}"
+- id: storage.client.node.write_failed
+  other: "no se pudo escribir el nodo: {{.Cause}}"
+- id: storage.client.node.label_index_key_build_failed
+  other: "no se pudo crear la clave del índice de etiquetas: {{.Cause}}"
+- id: storage.client.node.label_index_write_failed
+  other: "no se pudo escribir el índice de etiquetas: {{.Cause}}"
+- id: storage.client.node.index_catalog_write_failed
+  other: "no se pudo escribir el catálogo de índices: {{.Cause}}"
+- id: storage.client.node.pending_embed_index_write_failed
+  other: "no se pudo escribir el índice de incrustaciones pendientes: {{.Cause}}"
+- id: storage.client.node.embedding_chunk_delete_failed
+  other: "no se pudo eliminar el fragmento de incrustación anterior: {{.Cause}}"
+- id: storage.client.node.embedding_chunks_delete_failed
+  other: "no se pudieron eliminar los fragmentos de incrustación anteriores: {{.Cause}}"
+- id: storage.client.node.embedding_chunk_store_failed
+  other: "no se pudo almacenar el fragmento de incrustación {{.ChunkIndex}}: {{.Cause}}"
+- id: storage.client.node.embedding_payload_budget_exceeded
+  other: "no se pudo almacenar la carga de incrustación del fragmento {{.ChunkIndex}}: la entrada supera el presupuesto de escritura por transacción"
+- id: storage.client.edge.encode_failed
+  other: "no se pudo codificar la relación: {{.Cause}}"
+- id: storage.client.receipt.transaction_id_required
+  other: "recibo: se requiere tx_id"
+- id: storage.client.receipt.wal_sequence_required
+  other: "recibo: la secuencia WAL debe ser distinta de cero"
+- id: storage.client.receipt.wal_range_invalid
+  other: "recibo: wal_seq_end ({{.WALSeqEnd}}) < wal_seq_start ({{.WALSeqStart}})"
+- id: storage.client.receipt.nil_receiver
+  other: "recibo: receptor nulo"
+- id: storage.client.receipt.hash_marshal_failed
+  other: "recibo: no se pudo serializar el hash: {{.Cause}}"
+- id: storage.client.storage_closed
+  other: almacenamiento cerrado
+- id: storage.client.backup.file_create_failed
+  other: "no se pudo crear el archivo de copia de seguridad: {{.Cause}}"
+- id: storage.client.backup.failed
+  other: "falló la copia de seguridad: {{.Cause}}"
+- id: storage.client.backup.flush_failed
+  other: "no se pudo vaciar la copia de seguridad: {{.Cause}}"
+- id: storage.client.backup.sync_failed
+  other: "no se pudo sincronizar la copia de seguridad: {{.Cause}}"
+- id: storage.client.delete_prefix.required
+  other: el prefijo no puede estar vacío
+- id: storage.client.delete_prefix.drop_failed
+  other: 'no se pudo eliminar el prefijo {{printf "%x" .Prefix}}: {{.Cause}}'
+- id: storage.client.delete_prefix.clean_label_index_failed
+  other: "no se pudo limpiar el índice de etiquetas: {{.Cause}}"
+- id: storage.client.delete_prefix.clean_edge_type_index_failed
+  other: "no se pudo limpiar el índice de tipos de relación: {{.Cause}}"

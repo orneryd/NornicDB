@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // CompositeEngine is a storage engine that spans multiple constituent databases.
@@ -173,7 +175,7 @@ func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 
 	engine, exists := c.constituents[alias]
 	if !exists {
-		return nil, fmt.Errorf("constituent '%s' not found", alias)
+		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
 	return engine, nil
 }
@@ -273,13 +275,13 @@ func hashValue(v interface{}) int {
 func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
-		return "", fmt.Errorf("no writable constituents available")
+		return "", localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
 	}
 
 	// Determine routing based on node labels and properties
 	targetConstituent := c.routeWrite("create_node", node.Labels, node.Properties, writeConstituents)
 	if targetConstituent == "" {
-		return "", fmt.Errorf("ambiguous composite write target: use USE <composite.constituent> or set properties.database_id to a writable constituent")
+		return "", localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil)
 	}
 
 	engine, err := c.getConstituent(targetConstituent)
@@ -395,12 +397,12 @@ func (c *CompositeEngine) DeleteNode(id NodeID) error {
 // and if so, try that constituent first. Otherwise try all constituents.
 func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	if edge == nil {
-		return fmt.Errorf("edge cannot be nil")
+		return localizedError(localization.StorageCompositeEdgeRequired(), nil)
 	}
 
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
-		return fmt.Errorf("no writable constituents available")
+		return localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
 	}
 
 	// Check if start node was created in current transaction (following Neo4j pattern)
@@ -538,7 +540,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 		_, err = engine.GetNode(edge.StartNode)
 		if err == nil {
 			// Start node found, but can't write to read-only constituent
-			return fmt.Errorf("start node found in read-only constituent '%s', cannot create edge", alias)
+			return localizedError(localization.StorageCompositeReadOnlyStartNode(alias), nil)
 		}
 		if err != ErrNotFound {
 			return err
@@ -546,7 +548,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	}
 
 	// If we got here, all attempts failed
-	return fmt.Errorf("start node not found in any constituent")
+	return localizedError(localization.StorageCompositeStartNodeNotFound(), nil)
 }
 
 // GetEdge retrieves an edge. Searches all constituents.
@@ -700,7 +702,7 @@ func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 
 		edges, err := engine.GetOutgoingEdges(nodeID)
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add edges we haven't seen before
@@ -730,7 +732,7 @@ func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 
 		edges, err := engine.GetIncomingEdges(nodeID)
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add edges we haven't seen before
@@ -760,7 +762,7 @@ func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error
 
 		edges, err := engine.GetEdgesBetween(startID, endID)
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add edges we haven't seen before
@@ -809,7 +811,7 @@ func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 
 		edges, err := engine.GetEdgesByType(edgeType)
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add edges we haven't seen before
@@ -839,7 +841,7 @@ func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 
 		nodes, err := engine.AllNodes()
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add nodes we haven't seen before
@@ -869,7 +871,7 @@ func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
 
 		edges, err := engine.AllEdges()
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Deduplicate: only add edges we haven't seen before
@@ -1116,7 +1118,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
-		return fmt.Errorf("no writable constituents available")
+		return localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
 	}
 
 	// Group nodes by target constituent
@@ -1124,7 +1126,7 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 	for _, node := range nodes {
 		targetConstituent := c.routeWrite("create_node", node.Labels, node.Properties, writeConstituents)
 		if targetConstituent == "" {
-			return fmt.Errorf("ambiguous composite write target in bulk create: use USE <composite.constituent> or set properties.database_id")
+			return localizedError(localization.StorageCompositeBulkWriteTargetAmbiguous(), nil)
 		}
 		nodeGroups[targetConstituent] = append(nodeGroups[targetConstituent], node)
 	}
@@ -1133,10 +1135,10 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 	for constituent, groupNodes := range nodeGroups {
 		engine, err := c.getConstituent(constituent)
 		if err != nil {
-			return fmt.Errorf("failed to get constituent '%s': %w", constituent, err)
+			return localizedError(localization.StorageCompositeConstituentLookupFailed(constituent, err), err)
 		}
 		if err := engine.BulkCreateNodes(groupNodes); err != nil {
-			return fmt.Errorf("failed to create nodes in constituent '%s': %w", constituent, err)
+			return localizedError(localization.StorageCompositeNodeBulkCreateFailed(constituent, err), err)
 		}
 	}
 
@@ -1147,7 +1149,7 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
-		return fmt.Errorf("no writable constituents available")
+		return localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
 	}
 
 	readConstituents := c.getConstituentsForRead()
@@ -1173,7 +1175,7 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 				break
 			}
 			if err != ErrNotFound {
-				return fmt.Errorf("error checking start node: %w", err)
+				return localizedError(localization.StorageCompositeStartNodeCheckFailed(err), err)
 			}
 		}
 
@@ -1186,10 +1188,10 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 	for constituent, groupEdges := range edgeGroups {
 		engine, err := c.getConstituent(constituent)
 		if err != nil {
-			return fmt.Errorf("failed to get constituent '%s': %w", constituent, err)
+			return localizedError(localization.StorageCompositeConstituentLookupFailed(constituent, err), err)
 		}
 		if err := engine.BulkCreateEdges(groupEdges); err != nil {
-			return fmt.Errorf("failed to create edges in constituent '%s': %w", constituent, err)
+			return localizedError(localization.StorageCompositeEdgeBulkCreateFailed(constituent, err), err)
 		}
 	}
 
@@ -1197,10 +1199,10 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 	if len(unroutedEdges) > 0 {
 		engine, err := c.getConstituent(writeConstituents[0])
 		if err != nil {
-			return fmt.Errorf("failed to get default constituent: %w", err)
+			return localizedError(localization.StorageCompositeDefaultConstituentLookupFailed(err), err)
 		}
 		if err := engine.BulkCreateEdges(unroutedEdges); err != nil {
-			return fmt.Errorf("failed to create unrouted edges: %w", err)
+			return localizedError(localization.StorageCompositeUnroutedEdgeBulkCreateFailed(err), err)
 		}
 	}
 
@@ -1258,7 +1260,7 @@ func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) 
 
 		nodes, err := engine.BatchGetNodes(ids)
 		if err != nil {
-			return nil, fmt.Errorf("error querying constituent '%s': %w", alias, err)
+			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		// Merge results (later constituents override earlier ones if duplicates)
@@ -1282,7 +1284,7 @@ func (c *CompositeEngine) Close() error {
 	var lastErr error
 	for alias, engine := range c.constituents {
 		if err := engine.Close(); err != nil {
-			lastErr = fmt.Errorf("error closing constituent '%s': %w", alias, err)
+			lastErr = localizedError(localization.StorageCompositeConstituentCloseFailed(alias, err), err)
 		}
 	}
 
@@ -1306,7 +1308,7 @@ func (c *CompositeEngine) NodeCount() (int64, error) {
 
 		count, err := engine.NodeCount()
 		if err != nil {
-			return 0, fmt.Errorf("error counting nodes in constituent '%s': %w", alias, err)
+			return 0, localizedError(localization.StorageCompositeNodeCountFailed(alias, err), err)
 		}
 
 		total += count
@@ -1328,7 +1330,7 @@ func (c *CompositeEngine) EdgeCount() (int64, error) {
 
 		count, err := engine.EdgeCount()
 		if err != nil {
-			return 0, fmt.Errorf("error counting edges in constituent '%s': %w", alias, err)
+			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
 		}
 
 		total += count
@@ -1344,7 +1346,7 @@ func (c *CompositeEngine) EdgeCount() (int64, error) {
 // DeleteByPrefix is not supported for composite databases.
 // Composite databases don't have their own data - they're virtual views.
 func (c *CompositeEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	return 0, 0, fmt.Errorf("DeleteByPrefix not supported on composite databases - delete from constituent databases instead")
+	return 0, 0, localizedError(localization.StorageCompositeDeleteByPrefixUnsupported(), nil)
 }
 
 // ============================================================================
@@ -1363,13 +1365,13 @@ func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) e
 
 		if streamer, ok := engine.(StreamingEngine); ok {
 			if err := streamer.StreamNodes(ctx, fn); err != nil {
-				return fmt.Errorf("error streaming from constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
 		} else {
 			// Fallback to AllNodes
 			nodes, err := engine.AllNodes()
 			if err != nil {
-				return fmt.Errorf("error querying constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
 
 			for _, node := range nodes {
@@ -1395,13 +1397,13 @@ func (c *CompositeEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) e
 
 		if streamer, ok := engine.(StreamingEngine); ok {
 			if err := streamer.StreamEdges(ctx, fn); err != nil {
-				return fmt.Errorf("error streaming from constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
 		} else {
 			// Fallback to AllEdges
 			edges, err := engine.AllEdges()
 			if err != nil {
-				return fmt.Errorf("error querying constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
 
 			for _, edge := range edges {
@@ -1427,13 +1429,13 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 
 		if streamer, ok := engine.(StreamingEngine); ok {
 			if err := streamer.StreamNodeChunks(ctx, chunkSize, fn); err != nil {
-				return fmt.Errorf("error streaming from constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
 		} else {
 			// Fallback
 			nodes, err := engine.AllNodes()
 			if err != nil {
-				return fmt.Errorf("error querying constituent '%s': %w", alias, err)
+				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
 
 			for i := 0; i < len(nodes); i += chunkSize {

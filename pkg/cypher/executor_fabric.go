@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -115,7 +116,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 
 func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, prepared *fabricPreparedExec) (*ExecuteResult, error) {
 	if prepared == nil {
-		return nil, fmt.Errorf("fabric execution was not prepared")
+		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
 	catalog := prepared.catalog
 
@@ -131,7 +132,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 				if engine, ok := engineIface.(storage.Engine); ok {
 					return engine, nil
 				}
-				return nil, fmt.Errorf("storage engine has unexpected type for '%s'", dbName)
+				return nil, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(dbName), nil)
 			}
 		}
 		scoped, _, err := e.scopedExecutorForUse(dbName, authToken)
@@ -228,7 +229,7 @@ func (e *StorageExecutor) preparedFabricFromContext(ctx context.Context) (*fabri
 	}
 	prepared, ok := v.(*fabricPreparedExec)
 	if !ok {
-		return nil, fmt.Errorf("invalid prepared fabric execution in context")
+		return nil, localizedError(localization.CypherCommandRoutingFabricPreparedContextInvalid(), nil)
 	}
 	return prepared, nil
 }
@@ -437,7 +438,7 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 		}
 		constituents, err := e.dbManager.GetCompositeConstituents(dbName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get constituents for '%s': %w", dbName, err)
+			return nil, localizedError(localization.CypherCommandRoutingFabricConstituentsFailed(dbName, err), err)
 		}
 		for _, raw := range constituents {
 			ref, ok := toConstituentRef(raw)
@@ -739,7 +740,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 
 	beginCtx := WithAuthToken(ctx, c.authToken)
 	if _, err := txExec.Execute(beginCtx, "BEGIN", nil); err != nil {
-		return nil, fmt.Errorf("failed to open local shard transaction for '%s': %w", dbName, err)
+		return nil, localizedError(localization.CypherCommandRoutingFabricShardTransactionFailed(dbName, err), err)
 	}
 
 	commitFn := func(_ *fabric.SubTransaction) error {

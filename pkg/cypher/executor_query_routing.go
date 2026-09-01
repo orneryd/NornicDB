@@ -8,6 +8,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -462,7 +463,7 @@ skipMatchCallRoute:
 		return e.executeShowLimits(ctx, cypher)
 	default:
 		firstWord := strings.Split(upperQuery, " ")[0]
-		return nil, fmt.Errorf("unsupported query type: %s (supported: MATCH, CREATE, MERGE, DELETE, SET, REMOVE, RETURN, WITH, UNWIND, CALL, FOREACH, LOAD CSV, SHOW, DROP, ALTER)", firstWord)
+		return nil, localizedError(localization.CypherTransactionsQueryTypeUnsupported(firstWord), nil)
 	}
 }
 
@@ -474,7 +475,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 
 	returnIdx := findKeywordIndex(cypher, "RETURN")
 	if returnIdx == -1 {
-		return nil, fmt.Errorf("RETURN clause not found in query: %q", truncateQuery(cypher, 80))
+		return nil, localizedError(localization.CypherTransactionsReturnClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
 	returnClause := strings.TrimSpace(cypher[returnIdx+6:])
@@ -618,7 +619,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return nil
 	}
 	if !hasValidStartKeyword(cypher) {
-		return fmt.Errorf("syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, BEGIN, COMMIT, ROLLBACK, etc.)")
+		return localizedError(localization.CypherTransactionsSyntaxStartInvalid(), nil)
 	}
 
 	parenCount := 0
@@ -656,21 +657,21 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 
 		if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
-			return fmt.Errorf("syntax error: unbalanced brackets at position %d", i)
+			return localizedError(localization.CypherTransactionsSyntaxUnbalancedAt(i), nil)
 		}
 	}
 
 	if parenCount != 0 {
-		return fmt.Errorf("syntax error: unbalanced parentheses")
+		return localizedError(localization.CypherTransactionsSyntaxUnbalancedParentheses(), nil)
 	}
 	if bracketCount != 0 {
-		return fmt.Errorf("syntax error: unbalanced square brackets")
+		return localizedError(localization.CypherTransactionsSyntaxUnbalancedSquareBrackets(), nil)
 	}
 	if braceCount != 0 {
-		return fmt.Errorf("syntax error: unbalanced curly braces")
+		return localizedError(localization.CypherTransactionsSyntaxUnbalancedCurlyBraces(), nil)
 	}
 	if inString {
-		return fmt.Errorf("syntax error: unclosed quote")
+		return localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil)
 	}
 
 	e.markCachedValidSyntax(cypher)

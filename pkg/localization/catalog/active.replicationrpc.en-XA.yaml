@@ -1,0 +1,36 @@
+- id: replication.rpc.encode_failed
+  description: Expanded pseudo-locale replication RPC encoding failure.
+  other: "[!! encode{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}} !!]"
+- id: replication.rpc.decode_failed
+  description: Expanded pseudo-locale replication RPC decoding failure.
+  other: "[!! decode{{if .Operation}} {{.Operation}}{{end}}: {{.Cause}} !!]"
+- id: replication.rpc.not_connected
+  description: Expanded pseudo-locale disconnected replication RPC.
+  other: "[!! not connected !!]"
+- id: replication.rpc.write_failed
+  description: Expanded pseudo-locale replication RPC write failure.
+  other: "[!! write: {{.Cause}} !!]"
+- id: replication.rpc.connection_closed
+  description: Expanded pseudo-locale closed peer connection.
+  other: "[!! connection closed !!]"
+- id: replication.rpc.command_required
+  description: Expanded pseudo-locale missing forwarded command.
+  other: "[!! nil command !!]"
+- id: replication.rpc.remote_apply_failed
+  description: Expanded pseudo-locale remote apply diagnostic.
+  other: "[!! {{.Cause}} !!]"
+- id: replication.rpc.authentication_fields_missing
+  description: Expanded pseudo-locale missing authentication fields.
+  other: "[!! missing authentication fields !!]"
+- id: replication.rpc.timestamp_outside_allowed_skew
+  description: Expanded pseudo-locale timestamp authentication failure.
+  other: "[!! timestamp outside allowed skew !!]"
+- id: replication.rpc.invalid_signature
+  description: Expanded pseudo-locale invalid RPC signature.
+  other: "[!! invalid signature !!]"
+- id: replication.rpc.read_failed
+  description: Expanded pseudo-locale replication RPC read diagnostic.
+  other: "[!! {{.Cause}} !!]"
+- id: replication.rpc.message_too_large
+  description: Expanded pseudo-locale oversized replication RPC message.
+  other: "[!! message too large: {{.Actual}} > {{.Maximum}} !!]"
