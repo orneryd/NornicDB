@@ -7,6 +7,9 @@
 - id: server.invalid_request_body
   description: Respuesta HTTP para un cuerpo de solicitud no válido.
   other: cuerpo de solicitud no válido
+- id: server.invalid_json_body
+  description: Respuesta HTTP de Neo4j para un cuerpo JSON no válido.
+  other: cuerpo JSON no válido
 - id: server.method_post_required
   description: Respuesta HTTP para un endpoint que solo acepta solicitudes POST.
   other: se requiere POST
@@ -19,6 +22,12 @@
 - id: server.method_get_or_put_required
   description: Respuesta HTTP para un endpoint que acepta solicitudes GET o PUT.
   other: se requiere GET o PUT
+- id: server.method_get_put_or_delete_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes GET, PUT o DELETE.
+  other: se requiere GET, PUT o DELETE
+- id: server.method_post_or_delete_required
+  description: Respuesta HTTP para un endpoint que acepta solicitudes POST o DELETE.
+  other: se requiere POST o DELETE
 - id: server.method_not_allowed
   description: Respuesta HTTP cuando un endpoint no acepta el método de la solicitud.
   other: método no permitido
@@ -98,6 +107,9 @@
 - id: server.authentication_not_configured
   description: Respuesta HTTP cuando los servicios de autenticación no están disponibles.
   other: autenticación no configurada
+- id: server.oauth_not_configured
+  description: Respuesta HTTP cuando se usa un endpoint de OAuth sin configuración.
+  other: OAuth no configurado
 - id: server.not_authenticated
   description: Respuesta HTTP cuando la solicitud no tiene un usuario autenticado.
   other: sin autenticar
@@ -113,6 +125,18 @@
 - id: server.not_found
   description: Respuesta HTTP genérica de Neo4j cuando no se encuentra una ruta o recurso.
   other: no encontrado
+- id: server.invalid_gpu_manager_type
+  description: Respuesta HTTP cuando el gestor de GPU tiene un tipo incompatible.
+  other: tipo de gestor de GPU no válido
+- id: server.gpu_manager_not_initialized
+  description: Respuesta HTTP cuando el gestor de GPU todavía no está inicializado.
+  other: gestor de GPU no inicializado
+- id: server.temporal_graph_reconstruction_unsupported
+  description: Respuesta HTTP cuando el motor de almacenamiento no admite la reconstrucción temporal del grafo.
+  other: el motor de almacenamiento configurado no admite la reconstrucción temporal del grafo
+- id: server.temporal_graph_diff_unsupported
+  description: Respuesta HTTP cuando el motor de almacenamiento no admite diferencias temporales del grafo.
+  other: el motor de almacenamiento configurado no admite diferencias temporales del grafo
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

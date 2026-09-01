@@ -10,6 +10,9 @@
 - id: server.invalid_request_body
   description: HTTP response for a malformed or unreadable request body.
   other: invalid request body
+- id: server.invalid_json_body
+  description: Neo4j HTTP response for a malformed JSON request body.
+  other: invalid JSON body
 - id: server.method_post_required
   description: HTTP response for an endpoint that only accepts POST requests.
   other: POST required
@@ -22,6 +25,12 @@
 - id: server.method_get_or_put_required
   description: HTTP response for an endpoint that accepts GET or PUT requests.
   other: GET or PUT required
+- id: server.method_get_put_or_delete_required
+  description: HTTP response for an endpoint that accepts GET, PUT, or DELETE requests.
+  other: GET, PUT, or DELETE required
+- id: server.method_post_or_delete_required
+  description: HTTP response for an endpoint that accepts POST or DELETE requests.
+  other: POST or DELETE required
 - id: server.method_not_allowed
   description: HTTP response when an endpoint does not accept the request method.
   other: method not allowed
@@ -101,6 +110,9 @@
 - id: server.authentication_not_configured
   description: HTTP response when authentication services are unavailable or disabled.
   other: authentication not configured
+- id: server.oauth_not_configured
+  description: HTTP response when an OAuth endpoint is used without OAuth configuration.
+  other: OAuth not configured
 - id: server.not_authenticated
   description: HTTP response when a request has no authenticated principal.
   other: not authenticated
@@ -116,6 +128,18 @@
 - id: server.not_found
   description: Generic Neo4j HTTP response when a route or resource cannot be found.
   other: not found
+- id: server.invalid_gpu_manager_type
+  description: HTTP response when the configured GPU manager has an incompatible implementation type.
+  other: invalid GPU manager type
+- id: server.gpu_manager_not_initialized
+  description: HTTP response when a GPU operation is requested before the GPU manager is initialized.
+  other: GPU manager not initialized
+- id: server.temporal_graph_reconstruction_unsupported
+  description: HTTP response when the configured storage engine cannot reconstruct a temporal graph.
+  other: temporal graph reconstruction is not supported by the configured storage engine
+- id: server.temporal_graph_diff_unsupported
+  description: HTTP response when the configured storage engine cannot compute a temporal graph diff.
+  other: temporal graph diff is not supported by the configured storage engine
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required

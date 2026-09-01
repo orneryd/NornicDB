@@ -94,7 +94,7 @@ func (s *Server) handleRetentionPolicyByID(w http.ResponseWriter, r *http.Reques
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "GET, PUT, or DELETE required", ErrMethodNotAllowed)
+		s.writeGetPutOrDeleteRequired(w, r)
 	}
 }
 

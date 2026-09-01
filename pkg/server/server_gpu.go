@@ -29,7 +29,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 
 	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "invalid GPU manager type", ErrInternalError)
+		s.writeInvalidGPUManagerType(w, r)
 		return
 	}
 
@@ -68,13 +68,13 @@ func (s *Server) handleGPUEnable(w http.ResponseWriter, r *http.Request) {
 
 	gpuManagerIface := s.db.GetGPUManager()
 	if gpuManagerIface == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "GPU manager not initialized", ErrInternalError)
+		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
 
 	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "invalid GPU manager type", ErrInternalError)
+		s.writeInvalidGPUManagerType(w, r)
 		return
 	}
 
@@ -97,13 +97,13 @@ func (s *Server) handleGPUDisable(w http.ResponseWriter, r *http.Request) {
 
 	gpuManagerIface := s.db.GetGPUManager()
 	if gpuManagerIface == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "GPU manager not initialized", ErrInternalError)
+		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
 
 	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "invalid GPU manager type", ErrInternalError)
+		s.writeInvalidGPUManagerType(w, r)
 		return
 	}
 
@@ -141,13 +141,13 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 
 	gpuManagerIface := s.db.GetGPUManager()
 	if gpuManagerIface == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "GPU manager not initialized", ErrInternalError)
+		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
 
 	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "invalid GPU manager type", ErrInternalError)
+		s.writeInvalidGPUManagerType(w, r)
 		return
 	}
 

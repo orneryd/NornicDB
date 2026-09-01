@@ -18,10 +18,13 @@ const (
 	MessageLanguagePackMissing   MessageID = "localization.language_pack_missing"
 	MessageCatalogEntryMissing   MessageID = "localization.catalog_entry_missing"
 	MessageInvalidRequestBody    MessageID = "server.invalid_request_body"
+	MessageInvalidJSONBody       MessageID = "server.invalid_json_body"
 	MessagePostRequired          MessageID = "server.method_post_required"
 	MessageGetRequired           MessageID = "server.method_get_required"
 	MessageGetOrPostRequired     MessageID = "server.method_get_or_post_required"
 	MessageGetOrPutRequired      MessageID = "server.method_get_or_put_required"
+	MessageGetPutDeleteRequired  MessageID = "server.method_get_put_or_delete_required"
+	MessagePostOrDeleteRequired  MessageID = "server.method_post_or_delete_required"
 	MessageMethodNotAllowed      MessageID = "server.method_not_allowed"
 	MessageRequestBodyReadFailed MessageID = "request.body_read_failed"
 	MessageMCPParseError         MessageID = "mcp.parse_error"
@@ -48,11 +51,16 @@ const (
 	MessageDatabaseAccessDenied  MessageID = "security.database_access_denied"
 	MessageDatabaseWriteDenied   MessageID = "security.database_write_denied"
 	MessageAuthNotConfigured     MessageID = "server.authentication_not_configured"
+	MessageOAuthNotConfigured    MessageID = "server.oauth_not_configured"
 	MessageHTTPNotAuthenticated  MessageID = "server.not_authenticated"
 	MessageUserNotFound          MessageID = "server.user_not_found"
 	MessageTransactionNotFound   MessageID = "server.transaction_not_found"
 	MessageRequestFieldRequired  MessageID = "server.request_field_required"
 	MessageNotFound              MessageID = "server.not_found"
+	MessageInvalidGPUManager     MessageID = "server.invalid_gpu_manager_type"
+	MessageGPUManagerUnavailable MessageID = "server.gpu_manager_not_initialized"
+	MessageTemporalReconstruct   MessageID = "server.temporal_graph_reconstruction_unsupported"
+	MessageTemporalDiff          MessageID = "server.temporal_graph_diff_unsupported"
 	MessageSearcherRequired      MessageID = "search.searcher_required"
 	MessageRequestRequired       MessageID = "request.required"
 	MessageQueryRequired         MessageID = "search.query_required"
@@ -87,6 +95,11 @@ func InvalidRequestBody() Message {
 	return Message{ID: MessageInvalidRequestBody, Fallback: "invalid request body"}
 }
 
+// InvalidJSONBody identifies malformed JSON in a request body.
+func InvalidJSONBody() Message {
+	return Message{ID: MessageInvalidJSONBody, Fallback: "invalid JSON body"}
+}
+
 // PostRequired identifies an endpoint that only accepts POST requests.
 func PostRequired() Message {
 	return Message{ID: MessagePostRequired, Fallback: "POST required"}
@@ -105,6 +118,16 @@ func GetOrPostRequired() Message {
 // GetOrPutRequired identifies an endpoint that accepts GET or PUT requests.
 func GetOrPutRequired() Message {
 	return Message{ID: MessageGetOrPutRequired, Fallback: "GET or PUT required"}
+}
+
+// GetPutOrDeleteRequired identifies an endpoint that accepts GET, PUT, or DELETE requests.
+func GetPutOrDeleteRequired() Message {
+	return Message{ID: MessageGetPutDeleteRequired, Fallback: "GET, PUT, or DELETE required"}
+}
+
+// PostOrDeleteRequired identifies an endpoint that accepts POST or DELETE requests.
+func PostOrDeleteRequired() Message {
+	return Message{ID: MessagePostOrDeleteRequired, Fallback: "POST or DELETE required"}
 }
 
 // MethodNotAllowed identifies a request using an unsupported HTTP method.
@@ -286,6 +309,11 @@ func AuthenticationNotConfigured() Message {
 	return Message{ID: MessageAuthNotConfigured, Fallback: "authentication not configured"}
 }
 
+// OAuthNotConfigured identifies an unavailable OAuth integration.
+func OAuthNotConfigured() Message {
+	return Message{ID: MessageOAuthNotConfigured, Fallback: "OAuth not configured"}
+}
+
 // HTTPNotAuthenticated identifies an unauthenticated HTTP request.
 func HTTPNotAuthenticated() Message {
 	return Message{ID: MessageHTTPNotAuthenticated, Fallback: "not authenticated"}
@@ -313,6 +341,26 @@ func RequestFieldRequired(field string) Message {
 // NotFound identifies a generic HTTP resource lookup failure.
 func NotFound() Message {
 	return Message{ID: MessageNotFound, Fallback: "not found"}
+}
+
+// InvalidGPUManagerType identifies an incompatible GPU manager implementation.
+func InvalidGPUManagerType() Message {
+	return Message{ID: MessageInvalidGPUManager, Fallback: "invalid GPU manager type"}
+}
+
+// GPUManagerNotInitialized identifies an unavailable GPU manager.
+func GPUManagerNotInitialized() Message {
+	return Message{ID: MessageGPUManagerUnavailable, Fallback: "GPU manager not initialized"}
+}
+
+// TemporalGraphReconstructionUnsupported identifies unavailable temporal reconstruction support.
+func TemporalGraphReconstructionUnsupported() Message {
+	return Message{ID: MessageTemporalReconstruct, Fallback: "temporal graph reconstruction is not supported by the configured storage engine"}
+}
+
+// TemporalGraphDiffUnsupported identifies unavailable temporal diff support.
+func TemporalGraphDiffUnsupported() Message {
+	return Message{ID: MessageTemporalDiff, Fallback: "temporal graph diff is not supported by the configured storage engine"}
 }
 
 // SearcherRequired identifies missing search-service configuration.

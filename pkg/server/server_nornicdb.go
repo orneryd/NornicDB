@@ -195,7 +195,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 // This allows regeneration with a new model or fixing corrupted embeddings.
 func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		s.writeNeo4jError(w, http.StatusMethodNotAllowed, "Neo.ClientError.Request.Invalid", "POST or DELETE required")
+		s.writeNeo4jPostOrDeleteRequired(w, r)
 		return
 	}
 

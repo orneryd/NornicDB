@@ -130,7 +130,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			Interval string `json:"interval"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "invalid JSON body")
+			s.writeNeo4jInvalidJSONBody(w, r)
 			return
 		}
 		interval, err := time.ParseDuration(strings.TrimSpace(body.Interval))
@@ -204,7 +204,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		Overrides map[string]string `json:"overrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "invalid JSON body")
+		s.writeNeo4jInvalidJSONBody(w, r)
 		return
 	}
 	if body.Overrides == nil {
