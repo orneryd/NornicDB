@@ -262,6 +262,9 @@ index path, while `auto` preserves the existing file-backed build behavior.
 | `db.nornic.query_cache.max_entries`          | `NORNICDB_QUERY_CACHE_SIZE`                 |
 | `db.nornic.query_cache.ttl`                  | `NORNICDB_QUERY_CACHE_TTL`                  |
 
+`db.nornic.query_cache.ttl` is an integer number of milliseconds. For example,
+use `300000` for five minutes. Duration strings such as `5m` are rejected.
+
 #### Activation summary
 
 The key metadata endpoint reports the activation contract for every setting:
@@ -270,8 +273,8 @@ The key metadata endpoint reports the activation contract for every setting:
   layers; search minimum similarity, BM25 engine/enabled/warming, vector
   enabled/warming, and reranker settings. These persist and immediately rebuild
   only the affected database's search service.
-- **In-place cache update:** `db.nornic.query_cache.ttl` and
-  `db.nornic.search_result_cache.max_entries`. These mutate the existing search
+- **In-place cache update:** `db.nornic.search_result_cache.max_entries` and
+  `db.nornic.search_result_cache.ttl`. These mutate the existing search
   result cache without rebuilding the service.
 - **Process restart:** every other registered setting, including embedding
   enablement/cache/property selection, ANN/HNSW/IVF/k-means tuning, workers,

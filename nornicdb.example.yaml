@@ -423,7 +423,7 @@ memory:
 
   # Query cache TTL
   # Env: NORNICDB_QUERY_CACHE_TTL
-  query_cache_ttl: "5m"
+  query_cache_ttl: 300000 # milliseconds
 
 # =============================================================================
 # EMBEDDING WORKER CONFIGURATION

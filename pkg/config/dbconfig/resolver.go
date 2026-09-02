@@ -32,6 +32,8 @@ type ResolvedDbConfig struct {
 	VectorEnabled bool
 	// VectorWarming is "startup" or "lazy". See BM25Warming.
 	VectorWarming               string
+	QueryCacheMaxEntries        int
+	QueryCacheTTL               time.Duration
 	SearchResultCacheMaxEntries int
 	SearchResultCacheTTL        time.Duration
 	BM25MemoryMaxBytes          int64
@@ -63,6 +65,8 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		BM25Warming:                 normalizeWarming(global.Memory.SearchBM25Warming),
 		VectorEnabled:               global.Memory.SearchVectorEnabled,
 		VectorWarming:               normalizeWarming(global.Memory.SearchVectorWarming),
+		QueryCacheMaxEntries:        global.Memory.QueryCacheSize,
+		QueryCacheTTL:               global.Memory.QueryCacheTTL,
 		SearchResultCacheMaxEntries: 1000,
 		SearchResultCacheTTL:        5 * time.Minute,
 		BM25StorageMode:             "memory",
@@ -71,6 +75,12 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 	}
 	if r.EmbeddingDimensions <= 0 {
 		r.EmbeddingDimensions = 1024
+	}
+	if r.QueryCacheTTL <= 0 {
+		r.QueryCacheTTL = 5 * time.Minute
+	}
+	if !global.Memory.QueryCacheEnabled {
+		r.QueryCacheMaxEntries = 0
 	}
 	// Build effective map from global (we'll overlay overrides below).
 	effectiveFromGlobal(global, r.Effective)
@@ -185,7 +195,7 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_EMBED_CHUNK_OVERLAP", strconv.Itoa(c.EmbeddingWorker.ChunkOverlap))
 	setEffective("NORNICDB_MVCC_LIFECYCLE_INTERVAL", c.Database.MVCCLifecycleCycleInterval.String())
 	setEffective("NORNICDB_QUERY_CACHE_SIZE", strconv.Itoa(c.Memory.QueryCacheSize))
-	setEffective("NORNICDB_QUERY_CACHE_TTL", c.Memory.QueryCacheTTL.String())
+	setEffective("NORNICDB_QUERY_CACHE_TTL", strconv.FormatInt(c.Memory.QueryCacheTTL.Milliseconds(), 10))
 	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)
 	setEffective("NORNICDB_AUTO_TLP_ENABLED", boolStr(c.Features.TopologyAutoIntegrationEnabled))
 }
@@ -264,6 +274,16 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 			r.SearchResultCacheTTL = ttl
 		}
 	}
+	if key == "db.nornic.query_cache.ttl" {
+		if milliseconds, err := strconv.ParseInt(value, 10, 64); err == nil && milliseconds > 0 {
+			r.QueryCacheTTL = time.Duration(milliseconds) * time.Millisecond
+		}
+	}
+	if key == "db.nornic.query_cache.max_entries" {
+		if entries, err := strconv.Atoi(value); err == nil && entries >= 0 {
+			r.QueryCacheMaxEntries = entries
+		}
+	}
 	switch key {
 	case "db.nornic.memory.index.bm25.max":
 		r.BM25MemoryMaxBytes, _ = ParseByteSize(value)
@@ -299,10 +319,4 @@ func normalizeBM25Engine(raw string) string {
 	default:
 		return "v2"
 	}
-}
-
-// ParseDuration parses a duration string (e.g. 5m, 30s). Returns 0 on error.
-func ParseDuration(s string) time.Duration {
-	d, _ := time.ParseDuration(strings.TrimSpace(s))
-	return d
 }

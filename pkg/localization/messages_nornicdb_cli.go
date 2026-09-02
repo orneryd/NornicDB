@@ -194,10 +194,10 @@ func NornicDBCLIFlagLowMemory() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagLowMemory, "Use minimal RAM (for resource constrained environments)")
 }
 func NornicDBCLIFlagQueryCacheSize() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagQueryCacheSize, "Query plan cache size (0 to disable)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagQueryCacheSize, "Per-database query result cache size (0 to disable)")
 }
 func NornicDBCLIFlagQueryCacheTTL() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagQueryCacheTTL, "Query plan cache TTL")
+	return nornicDBCLIText(MessageNornicDBCLIFlagQueryCacheTTL, "Per-database query result cache TTL in milliseconds")
 }
 func NornicDBCLIFlagLogQueries() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagLogQueries, "Log all Bolt queries to stdout (for debugging)")

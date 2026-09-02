@@ -669,11 +669,11 @@ type MemoryConfig struct {
 	PoolEnabled bool
 	// PoolMaxSize limits pool memory usage per pool
 	PoolMaxSize int
-	// QueryCacheEnabled controls query plan caching
+	// QueryCacheEnabled controls per-database query-result caching.
 	QueryCacheEnabled bool
-	// QueryCacheSize is the maximum number of cached query plans
+	// QueryCacheSize is the default maximum number of cached query results per database.
 	QueryCacheSize int
-	// QueryCacheTTL is how long cached plans remain valid
+	// QueryCacheTTL is the default lifetime of cached query results per database.
 	QueryCacheTTL time.Duration
 }
 
@@ -1525,7 +1525,7 @@ type YAMLConfig struct {
 		PoolMaxSize                  int     `yaml:"pool_max_size"`
 		QueryCacheEnabled            bool    `yaml:"query_cache_enabled"`
 		QueryCacheSize               int     `yaml:"query_cache_size"`
-		QueryCacheTTL                string  `yaml:"query_cache_ttl"`
+		QueryCacheTTL                int64   `yaml:"query_cache_ttl"`
 	} `yaml:"memory"`
 
 	// Embedding worker configuration
@@ -2493,8 +2493,8 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvInt("NORNICDB_QUERY_CACHE_SIZE", 0); v > 0 {
 		config.Memory.QueryCacheSize = v
 	}
-	if v := getEnvDuration("NORNICDB_QUERY_CACHE_TTL", 0); v > 0 {
-		config.Memory.QueryCacheTTL = v
+	if milliseconds := getEnvInt("NORNICDB_QUERY_CACHE_TTL", 0); milliseconds > 0 {
+		config.Memory.QueryCacheTTL = time.Duration(milliseconds) * time.Millisecond
 	}
 
 	// Embedding worker settings
@@ -3314,10 +3314,8 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Memory.QueryCacheSize > 0 {
 		config.Memory.QueryCacheSize = yamlCfg.Memory.QueryCacheSize
 	}
-	if yamlCfg.Memory.QueryCacheTTL != "" {
-		if d, err := time.ParseDuration(yamlCfg.Memory.QueryCacheTTL); err == nil {
-			config.Memory.QueryCacheTTL = d
-		}
+	if yamlCfg.Memory.QueryCacheTTL > 0 {
+		config.Memory.QueryCacheTTL = time.Duration(yamlCfg.Memory.QueryCacheTTL) * time.Millisecond
 	}
 
 	// === Embedding Worker ===

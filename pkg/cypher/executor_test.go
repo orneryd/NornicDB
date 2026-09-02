@@ -24,6 +24,37 @@ func TestNewStorageExecutor(t *testing.T) {
 	assert.NotNil(t, exec.storage)
 }
 
+func TestStorageExecutorQueryCacheTTLIsDatabaseScoped(t *testing.T) {
+	fast := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 25, 2*time.Second)
+	slow := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 2500, 30*time.Minute)
+	disabled := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, time.Minute)
+
+	fastMaxEntries, fastTTL := fast.QueryCachePolicy()
+	slowMaxEntries, slowTTL := slow.QueryCachePolicy()
+	require.Equal(t, 25, fastMaxEntries)
+	require.Equal(t, 2*time.Second, fastTTL)
+	require.Equal(t, 2500, slowMaxEntries)
+	require.Equal(t, 30*time.Minute, slowTTL)
+	require.Nil(t, disabled.cache)
+	require.Equal(t, fast.queryCacheTTL, fast.cloneWithStorage(fast.storage).queryCacheTTL)
+	require.Equal(t, slow.queryCacheTTL, slow.cloneWithStorage(slow.storage).queryCacheTTL)
+}
+
+func TestStorageExecutorCachesResultsWithDatabaseTTL(t *testing.T) {
+	exec := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 10, 37*time.Second)
+	query := "MATCH (n) RETURN n"
+
+	_, err := exec.Execute(context.Background(), query, nil)
+	require.NoError(t, err)
+
+	key := cacheKeyFNV(query, nil)
+	exec.cache.mu.RLock()
+	entry := exec.cache.cache[key]
+	exec.cache.mu.RUnlock()
+	require.NotNil(t, entry)
+	require.Equal(t, 37*time.Second, entry.ttl)
+}
+
 func TestInvalidateCommittedWriteCaches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	query := "MATCH (n:Repository) RETURN n"

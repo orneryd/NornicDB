@@ -22,7 +22,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
-	"github.com/orneryd/nornicdb/pkg/cache"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -196,7 +195,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	serveCmd.Flags().Bool("pool-enabled", true, text(localization.NornicDBCLIFlagPoolEnabled()))
 	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), text(localization.NornicDBCLIFlagLowMemory()))
 	serveCmd.Flags().Int("query-cache-size", 1000, text(localization.NornicDBCLIFlagQueryCacheSize()))
-	serveCmd.Flags().String("query-cache-ttl", "5m", text(localization.NornicDBCLIFlagQueryCacheTTL()))
+	serveCmd.Flags().Int64("query-cache-ttl", 300000, text(localization.NornicDBCLIFlagQueryCacheTTL()))
 	// Logging flags
 	serveCmd.Flags().Bool("log-queries", getEnvBool("NORNICDB_LOG_QUERIES", false), text(localization.NornicDBCLIFlagLogQueries()))
 	serveCmd.Flags().Int("stdio-log-max-kb", getEnvInt("NORNICDB_STDIO_LOG_MAX_KB", 20480), text(localization.NornicDBCLIFlagStdioLogMaxKB()))
@@ -344,7 +343,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	gcPercent, _ := cmd.Flags().GetInt("gc-percent")
 	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
 	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
-	queryCacheTTL, _ := cmd.Flags().GetString("query-cache-ttl")
+	queryCacheTTL, _ := cmd.Flags().GetInt64("query-cache-ttl")
 	logQueries, _ := cmd.Flags().GetBool("log-queries")
 	stdioLogMaxKB, _ := cmd.Flags().GetInt("stdio-log-max-kb")
 	stdioLogCompactSeconds, _ := cmd.Flags().GetInt("stdio-log-compact-seconds")
@@ -517,8 +516,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cfg.Memory.PoolEnabled = poolEnabled
 	cfg.Memory.QueryCacheEnabled = queryCacheSize > 0
 	cfg.Memory.QueryCacheSize = queryCacheSize
-	if ttl, err := time.ParseDuration(queryCacheTTL); err == nil {
-		cfg.Memory.QueryCacheTTL = ttl
+	if queryCacheTTL > 0 {
+		cfg.Memory.QueryCacheTTL = time.Duration(queryCacheTTL) * time.Millisecond
 	}
 	cfg.Memory.ApplyRuntimeMemory()
 
@@ -527,11 +526,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Enabled: cfg.Memory.PoolEnabled,
 		MaxSize: cfg.Memory.PoolMaxSize,
 	})
-
-	// Configure query cache
-	if cfg.Memory.QueryCacheEnabled {
-		cache.ConfigureGlobalCache(cfg.Memory.QueryCacheSize, cfg.Memory.QueryCacheTTL)
-	}
 
 	commandPrintln(cmd, localization.NornicDBCLIStarting(buildinfo.DisplayVersion()))
 	commandPrintln(cmd, localization.NornicDBCLIDataDirectory(dataDir))

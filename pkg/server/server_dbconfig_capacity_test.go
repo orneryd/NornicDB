@@ -147,7 +147,34 @@ func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
-	require.Equal(t, "17m0s", body["effective"].(map[string]any)["db.nornic.query_cache.ttl"])
+	require.Equal(t, "1020000", body["effective"].(map[string]any)["db.nornic.query_cache.ttl"])
+}
+
+func TestNewExecutorForDatabaseUsesDatabaseQueryCacheTTL(t *testing.T) {
+	server, _ := setupTestServer(t)
+	ctx := context.Background()
+	require.NoError(t, server.dbManager.CreateDatabase("fast-cache"))
+	require.NoError(t, server.dbManager.CreateDatabase("slow-cache"))
+	require.NoError(t, server.dbConfigStore.SetOverrides(ctx, "fast-cache", map[string]string{
+		"db.nornic.query_cache.max_entries": "25",
+		"db.nornic.query_cache.ttl":         "2000",
+	}))
+	require.NoError(t, server.dbConfigStore.SetOverrides(ctx, "slow-cache", map[string]string{
+		"db.nornic.query_cache.max_entries": "2500",
+		"db.nornic.query_cache.ttl":         "1800000",
+	}))
+
+	fast, err := server.newExecutorForDatabase("fast-cache")
+	require.NoError(t, err)
+	slow, err := server.newExecutorForDatabase("slow-cache")
+	require.NoError(t, err)
+
+	fastMaxEntries, fastTTL := fast.QueryCachePolicy()
+	slowMaxEntries, slowTTL := slow.QueryCachePolicy()
+	require.Equal(t, 25, fastMaxEntries)
+	require.Equal(t, 2*time.Second, fastTTL)
+	require.Equal(t, 2500, slowMaxEntries)
+	require.Equal(t, 30*time.Minute, slowTTL)
 }
 
 func TestAdminPutRestartSettingPersistsAcrossDatabaseReopen(t *testing.T) {

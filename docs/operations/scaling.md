@@ -4,11 +4,11 @@
 
 ## Scaling Options
 
-| Strategy | Use Case | Complexity |
-|----------|----------|------------|
-| Vertical | Quick wins | Low |
-| Read Replicas | Read-heavy workloads | Medium |
-| Sharding | Large datasets | High |
+| Strategy      | Use Case             | Complexity |
+| ------------- | -------------------- | ---------- |
+| Vertical      | Quick wins           | Low        |
+| Read Replicas | Read-heavy workloads | Medium     |
+| Sharding      | Large datasets       | High       |
 
 ## Vertical Scaling
 
@@ -22,7 +22,7 @@ services:
       resources:
         limits:
           memory: 8G
-          cpus: '4'
+          cpus: "4"
 ```
 
 ### Memory Optimization
@@ -39,7 +39,7 @@ nornicdb serve \
 ```bash
 nornicdb serve \
   --query-cache-size=5000 \
-  --query-cache-ttl=10m \
+  --query-cache-ttl=600000 \
   --parallel=true \
   --parallel-workers=4
 ```
@@ -96,7 +96,7 @@ server {
         # Route writes to primary
         proxy_pass http://nornicdb_write;
     }
-    
+
     location /nornicdb/search {
         # Route reads to replicas
         proxy_pass http://nornicdb_read;
@@ -139,30 +139,30 @@ spec:
         app: nornicdb
     spec:
       containers:
-      - name: nornicdb
-        image: timothyswt/nornicdb-arm64-metal:latest
-        env:
-        - name: NORNICDB_CLUSTER_MODE
-          value: "raft"
-        - name: NORNICDB_NODE_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        ports:
-        - containerPort: 7474
-        - containerPort: 7687
-        - containerPort: 7000  # Raft port
-        volumeMounts:
-        - name: data
-          mountPath: /data
+        - name: nornicdb
+          image: timothyswt/nornicdb-arm64-metal:latest
+          env:
+            - name: NORNICDB_CLUSTER_MODE
+              value: "raft"
+            - name: NORNICDB_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 7474
+            - containerPort: 7687
+            - containerPort: 7000 # Raft port
+          volumeMounts:
+            - name: data
+              mountPath: /data
   volumeClaimTemplates:
-  - metadata:
-      name: data
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      resources:
-        requests:
-          storage: 10Gi
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
 ```
 
 ## Caching
@@ -170,10 +170,10 @@ spec:
 ### Query Plan Cache
 
 ```bash
-nornicdb serve --query-cache-size=5000 --query-cache-ttl=10m
+nornicdb serve --query-cache-size=5000 --query-cache-ttl=600000
 ```
 
-The query plan cache is in-process. It is sized in entries (`--query-cache-size`, default `1000`; `0` disables) with a TTL (`--query-cache-ttl`, default `5m`).
+The per-database query result cache is sized in entries (`--query-cache-size`, default `1000`; `0` disables) with a TTL in milliseconds (`--query-cache-ttl`, default `300000`).
 
 ### Embedding Cache
 
@@ -230,7 +230,7 @@ groups:
           severity: warning
         annotations:
           summary: "High request rate - consider scaling"
-      
+
       - alert: ReplicationLag
         expr: nornicdb_replication_lag_entries > 1000
         for: 1m
@@ -244,11 +244,11 @@ groups:
 
 ### Sizing Guidelines
 
-| Nodes | Edges | RAM | Storage |
-|-------|-------|-----|---------|
-| 1M | 5M | 4GB | 10GB |
-| 10M | 50M | 16GB | 100GB |
-| 100M | 500M | 64GB | 1TB |
+| Nodes | Edges | RAM  | Storage |
+| ----- | ----- | ---- | ------- |
+| 1M    | 5M    | 4GB  | 10GB    |
+| 10M   | 50M   | 16GB | 100GB   |
+| 100M  | 500M  | 64GB | 1TB     |
 
 ### Growth Projections
 
@@ -265,4 +265,3 @@ curl http://localhost:7474/metrics | grep nornicdb_storage_bytes
 - **[Clustering](../user-guides/clustering.md)** - HA clustering guide
 - **[Cluster Security](cluster-security.md)** - Authentication for clusters
 - **[Clustering Roadmap](../architecture/clustering-roadmap.md)** - Sharding via composite databases
-
