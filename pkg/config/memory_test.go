@@ -178,7 +178,7 @@ func TestLoadFromEnv_RuntimeMemory(t *testing.T) {
 	})
 
 	t.Run("query cache ttl from env", func(t *testing.T) {
-		os.Setenv("NORNICDB_QUERY_CACHE_TTL", "10m")
+		os.Setenv("NORNICDB_QUERY_CACHE_TTL", "600000")
 		defer os.Unsetenv("NORNICDB_QUERY_CACHE_TTL")
 
 		cfg := LoadFromEnv()

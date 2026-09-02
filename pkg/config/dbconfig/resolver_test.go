@@ -2,6 +2,7 @@ package dbconfig
 
 import (
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,27 @@ func TestResolve_Overrides(t *testing.T) {
 	assert.Equal(t, "768", r.Effective["db.nornic.embedding.dimensions"])
 	assert.Equal(t, "0.8", r.Effective["db.nornic.search.min.similarity"])
 	assert.Equal(t, "v2", r.Effective["db.nornic.search.bm25.engine"])
+}
+
+func TestResolve_QueryCacheTTLIsDatabaseScoped(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.QueryCacheTTL = 5 * time.Minute
+
+	fast := Resolve(global, map[string]string{
+		"db.nornic.query_cache.max_entries": "25",
+		"db.nornic.query_cache.ttl":         "2000",
+	})
+	slow := Resolve(global, map[string]string{
+		"db.nornic.query_cache.max_entries": "2500",
+		"db.nornic.query_cache.ttl":         "1800000",
+	})
+
+	require.Equal(t, 25, fast.QueryCacheMaxEntries)
+	require.Equal(t, 2*time.Second, fast.QueryCacheTTL)
+	require.Equal(t, 2500, slow.QueryCacheMaxEntries)
+	require.Equal(t, 30*time.Minute, slow.QueryCacheTTL)
+	require.Equal(t, "2000", fast.Effective["db.nornic.query_cache.ttl"])
+	require.Equal(t, "1800000", slow.Effective["db.nornic.query_cache.ttl"])
 }
 
 func TestResolve_DefaultDimensionsAndIgnoredOverrides(t *testing.T) {

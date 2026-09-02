@@ -302,7 +302,10 @@ type StorageExecutor struct {
 	storage   storage.Engine
 	txContext *TransactionContext // Active transaction context
 	cache     *SmartQueryCache    // Query result cache with label-aware invalidation
-	planCache *QueryPlanCache     // Parsed query plan cache
+	// Query cache policy is immutable and scoped to this executor's database.
+	queryCacheMaxEntries int
+	queryCacheTTL        time.Duration
+	planCache            *QueryPlanCache // Parsed query plan cache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
 	analyzer        *QueryAnalyzer // Query analysis with AST caching
@@ -489,6 +492,8 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		storage:                        override,
 		txContext:                      e.txContext,
 		cache:                          e.cache,
+		queryCacheMaxEntries:           e.queryCacheMaxEntries,
+		queryCacheTTL:                  e.queryCacheTTL,
 		planCache:                      e.planCache,
 		fabricPlanCache:                e.fabricPlanCache,
 		analyzer:                       e.analyzer,
@@ -627,11 +632,44 @@ type InferenceManager interface {
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
 func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	runtimeCfg := config.LoadFromEnv()
+	maxEntries := runtimeCfg.Memory.QueryCacheSize
+	if !runtimeCfg.Memory.QueryCacheEnabled {
+		maxEntries = 0
+	}
+	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL)
+}
+
+// NewStorageExecutorWithQueryCachePolicy creates an executor whose query-result
+// cache capacity and lifetime are scoped to the executor's database. Zero max
+// entries disables caching. A non-positive TTL uses the process default.
+func NewStorageExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+	runtimeCfg := config.LoadFromEnv()
+	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL)
+}
+
+// QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
+func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration) {
+	return e.queryCacheMaxEntries, e.queryCacheTTL
+}
+
+func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+	if queryCacheTTL <= 0 {
+		queryCacheTTL = runtimeCfg.Memory.QueryCacheTTL
+	}
+	if queryCacheTTL <= 0 {
+		queryCacheTTL = 5 * time.Minute
+	}
 	apocCfg := apoccfg.LoadFromEnv()
+	var queryCache *SmartQueryCache
+	if maxEntries > 0 {
+		queryCache = NewSmartQueryCache(maxEntries)
+	}
 	exec := &StorageExecutor{
 		parser:                         NewParser(),
 		storage:                        store,
-		cache:                          NewSmartQueryCache(1000), // Query result cache with label-aware invalidation
+		cache:                          queryCache,
+		queryCacheMaxEntries:           maxEntries,
+		queryCacheTTL:                  queryCacheTTL,
 		planCache:                      NewQueryPlanCache(500),   // Cache 500 parsed query plans
 		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
@@ -1307,14 +1345,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 
 		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
-			ttl := 60 * time.Second
-			if info.HasAggregation {
-				ttl = 1 * time.Second
-			}
-			if info.HasCall || info.HasShow {
-				ttl = 300 * time.Second
-			}
-			e.cache.Put(cypher, mergedParams, result, ttl)
+			e.cache.Put(cypher, mergedParams, result, e.queryCacheTTL)
 		}
 
 		if info.IsWriteQuery && e.cache != nil {
@@ -1522,15 +1553,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// be expensive (edge scans, label scans, COLLECT materialization). Caching them is correctness-preserving as
 	// long as we invalidate on writes (which we do), so we cache them with a shorter TTL by default.
 	if err == nil && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) {
-		// Determine TTL based on query type (using cached analysis)
-		ttl := 60 * time.Second // Default: 60s for data queries
-		if info.HasAggregation {
-			ttl = 1 * time.Second // Conservative TTL for aggregations
-		}
-		if info.HasCall || info.HasShow {
-			ttl = 300 * time.Second // 5 minutes for schema queries
-		}
-		e.cache.Put(cypher, params, result, ttl)
+		e.cache.Put(cypher, params, result, e.queryCacheTTL)
 	}
 
 	// Invalidate caches on write operations (using cached analysis)

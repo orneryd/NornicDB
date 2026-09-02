@@ -131,9 +131,23 @@ func TestResolveIndexCapacityPolicy(t *testing.T) {
 func TestQueryCacheTTLRequiresProcessRestart(t *testing.T) {
 	definition, ok := LookupSetting("db.nornic.query_cache.ttl")
 	require.True(t, ok)
+	require.Equal(t, "number", definition.Type)
+	require.Equal(t, "300000", definition.DefaultValue)
+	require.Contains(t, definition.Description, "milliseconds")
 	require.False(t, definition.Dynamic)
 	require.Equal(t, RestartProcess, definition.RestartLevel)
 	require.Equal(t, HotReloadNone, definition.HotReload)
+}
+
+func TestQueryCacheTTLAcceptsOnlyIntegerMilliseconds(t *testing.T) {
+	value, err := NormalizeSettingValue("db.nornic.query_cache.ttl", "1800000")
+	require.NoError(t, err)
+	require.Equal(t, "1800000", value)
+
+	for _, invalid := range []string{"30m", "2s", "1.5", "-1"} {
+		_, err := NormalizeSettingValue("db.nornic.query_cache.ttl", invalid)
+		require.Error(t, err, invalid)
+	}
 }
 
 func TestEveryEnvironmentAlternativeHasExplicitCanonicalSetting(t *testing.T) {

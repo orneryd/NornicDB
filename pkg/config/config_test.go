@@ -1125,7 +1125,7 @@ memory:
   pool_max_size: 222
   query_cache_enabled: true
   query_cache_size: 333
-  query_cache_ttl: "7m"
+  query_cache_ttl: 420000
 embedding_worker:
   scan_interval: "1m"
   batch_delay: "2s"

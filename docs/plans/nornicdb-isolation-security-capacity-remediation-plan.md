@@ -370,7 +370,7 @@ mutation contract.
 | Canonical setting                                      | Supported environment alternative           | Scope                                  | Default                                         | Activation      |
 | ------------------------------------------------------ | ------------------------------------------- | -------------------------------------- | ----------------------------------------------- | --------------- |
 | `db.nornic.query_cache.max_entries`                    | `NORNICDB_QUERY_CACHE_SIZE`                 | Per database instance                  | Existing 1000 entries                           | Process restart |
-| `db.nornic.query_cache.ttl`                            | `NORNICDB_QUERY_CACHE_TTL`                  | Per database instance                  | Existing 5 minutes                              | Dynamic         |
+| `db.nornic.query_cache.ttl`                            | `NORNICDB_QUERY_CACHE_TTL`                  | Per database instance                  | `300000` milliseconds                           | Process restart |
 | `db.nornic.query_plan_cache.max_entries`               | None                                        | Per database instance                  | Existing 500 entries                            | Process restart |
 | `db.nornic.fabric_plan_cache.max_entries`              | None                                        | Per database instance                  | Existing 500 entries                            | Process restart |
 | `db.nornic.query_analysis_cache.max_entries`           | None                                        | Per database instance                  | Existing 1000 entries                           | Process restart |

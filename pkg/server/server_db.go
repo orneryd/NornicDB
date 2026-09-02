@@ -276,12 +276,14 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 		return nil, err
 	}
 
-	executor := cypher.NewStorageExecutor(storageEngine)
+	overrides := s.dbConfigStore.GetOverrides(dbName)
+	resolved := dbconfig.Resolve(s.processConfig, overrides)
+	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
 		overrides := s.dbConfigStore.GetOverrides(dbName)
-		resolved := dbconfig.Resolve(s.processConfig, overrides)
-		active, _ := s.databaseConfigRuntimeState(dbName, resolved)
+		current := dbconfig.Resolve(s.processConfig, overrides)
+		active, _ := s.databaseConfigRuntimeState(dbName, current)
 		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
 	})
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
@@ -332,7 +334,9 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 		return nil, err
 	}
 
-	executor := cypher.NewStorageExecutor(storageEngine)
+	overrides := s.dbConfigStore.GetOverrides(dbName)
+	resolved := dbconfig.Resolve(s.processConfig, overrides)
+	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 

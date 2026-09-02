@@ -2,29 +2,9 @@ package dbconfig
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
-
-// ============================================================================
-// ParseDuration
-// ============================================================================
-
-func TestParseDuration_Valid(t *testing.T) {
-	assert.Equal(t, 5*time.Minute, ParseDuration("5m"))
-	assert.Equal(t, 30*time.Second, ParseDuration("30s"))
-	assert.Equal(t, 2*time.Hour, ParseDuration("2h"))
-}
-
-func TestParseDuration_Invalid(t *testing.T) {
-	assert.Equal(t, time.Duration(0), ParseDuration("notaduration"))
-	assert.Equal(t, time.Duration(0), ParseDuration(""))
-}
-
-func TestParseDuration_WithSpaces(t *testing.T) {
-	assert.Equal(t, 10*time.Minute, ParseDuration("  10m  "))
-}
 
 // ============================================================================
 // normalizeBM25Engine
