@@ -232,7 +232,9 @@ type Server struct {
 	// Resolver for per-principal mode (Phase 3). When set, used with session roles instead of databaseAccessMode.
 	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	// Resolver for per-DB read/write (Phase 4). When set, used for mutation write check.
-	resolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
+	resolvedAccessResolver    func(roles []string, dbName string) auth.ResolvedAccess
+	databaseConnectionAdmit   func(databaseName string) error
+	databaseConnectionRelease func(databaseName string)
 
 	// Transaction sequence tracking for causal consistency
 	// Tracks the highest committed transaction sequence number across all sessions
@@ -909,6 +911,12 @@ func (s *Server) SetResolvedAccessResolver(resolver func(roles []string, dbName 
 	s.resolvedAccessResolver = resolver
 }
 
+// SetDatabaseConnectionAdmission configures per-database connection admission.
+func (s *Server) SetDatabaseConnectionAdmission(admit func(string) error, release func(string)) {
+	s.databaseConnectionAdmit = admit
+	s.databaseConnectionRelease = release
+}
+
 // ListenAndServe starts the Bolt server and begins accepting connections.
 //
 // The server listens on the configured port and handles incoming Bolt
@@ -1218,6 +1226,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		deferrableOwner.SetDeferFlush(true)
 	}
 	defer func() {
+		session.releaseDatabaseConnection()
 		_ = session.rollbackExplicitTransaction(transactionTerminalDisconnect)
 		if !session.transactionCleanupFailed && session.pendingFlush {
 			if flushable, ok := session.executor.(FlushableExecutor); ok {
@@ -1394,8 +1403,9 @@ type Session struct {
 	connCancel context.CancelFunc
 
 	// Database context (from HELLO message)
-	database string // Database name for this session (defaults to default database)
-	language language.Tag
+	database         string // Database name for this session (defaults to default database)
+	admittedDatabase string
+	language         language.Tag
 
 	// Authentication state
 	authenticated bool            // Whether HELLO auth succeeded
@@ -2002,6 +2012,9 @@ func (s *Session) handleHello(data []byte) error {
 			return s.sendLocalizedFailure("Neo.ClientError.Database.DatabaseNotFound", localization.DatabaseNotFound(dbName))
 		}
 	}
+	if err := s.bindDatabaseConnection(dbName); err != nil {
+		return s.sendFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
+	}
 
 	// Store database for this session
 	s.database = dbName
@@ -2037,6 +2050,28 @@ func (s *Session) handleHello(data []byte) error {
 		"hints":         map[string]any{},
 		"patch_bolt":    []any{"utc"},
 	})
+}
+
+func (s *Session) bindDatabaseConnection(databaseName string) error {
+	if s == nil || s.server == nil || s.admittedDatabase != "" || databaseName == "" || s.server.databaseConnectionAdmit == nil {
+		return nil
+	}
+	if err := s.server.databaseConnectionAdmit(databaseName); err != nil {
+		return err
+	}
+	s.admittedDatabase = databaseName
+	return nil
+}
+
+func (s *Session) releaseDatabaseConnection() {
+	if s == nil || s.server == nil || s.admittedDatabase == "" {
+		return
+	}
+	databaseName := s.admittedDatabase
+	s.admittedDatabase = ""
+	if s.server.databaseConnectionRelease != nil {
+		s.server.databaseConnectionRelease(databaseName)
+	}
 }
 
 // parseHelloAuth parses authentication parameters and database from a HELLO message.

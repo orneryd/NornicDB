@@ -55,6 +55,8 @@ type DatabaseManager struct {
 
 	// Cached database-scoped engines (avoid recreating)
 	engines map[string]storage.Engine
+	// Cached limit checkers share query permits and rate state per database.
+	limitCheckers map[string]*databaseLimitChecker
 
 	// Factory used to create storage engines for remote constituents.
 	remoteEngineFactory RemoteEngineFactory
@@ -157,6 +159,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		databases:           make(map[string]*DatabaseInfo),
 		config:              config,
 		engines:             make(map[string]storage.Engine),
+		limitCheckers:       make(map[string]*databaseLimitChecker),
 		remoteEngineFactory: config.RemoteEngineFactory,
 	}
 	if key := strings.TrimSpace(config.RemoteCredentialEncryptionKey); key != "" {
@@ -203,6 +206,9 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 			}
 		}
 		log.Printf("ℹ️  multidb: storage is read-only; skipping metadata writes and migrations")
+		if err := m.reconcileStorageSizes(); err != nil {
+			return nil, fmt.Errorf("failed to reconcile database storage sizes: %w", err)
+		}
 		return m, nil
 	}
 
@@ -221,8 +227,29 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// namespace as "defaultDb:system:<...>". Remove those leaked nodes so normal
 	// queries against the default database don't show system internals.
 	m.cleanupLeakedSystemNodes()
+	if err := m.reconcileStorageSizes(); err != nil {
+		return nil, fmt.Errorf("failed to reconcile database storage sizes: %w", err)
+	}
 
 	return m, nil
+}
+
+func (m *DatabaseManager) reconcileStorageSizes() error {
+	m.mu.RLock()
+	names := make([]string, 0, len(m.databases))
+	for name, info := range m.databases {
+		if info.Type == "standard" || info.Type == "system" {
+			names = append(names, name)
+		}
+	}
+	m.mu.RUnlock()
+	for _, name := range names {
+		engine := storage.NewNamespacedEngine(m.inner, name)
+		if err := m.ensureStorageSizeInitialized(name, engine); err != nil {
+			return fmt.Errorf("database %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func (m *DatabaseManager) cleanupLeakedSystemNodes() {
@@ -512,11 +539,10 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		return compositeEngine, nil
 	}
 
-	// Create namespaced engine for standard databases
-	// Note: Limit enforcement is handled separately via LimitChecker
-	// which is created on-demand when needed (not stored here)
+	// Create the standard database wrapper chain once per canonical database.
 	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	engine := newSizeTrackingEngine(baseEngine, m, name)
+	checker := m.getOrCreateLimitCheckerLocked(name, info)
+	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
 	m.engines[name] = engine
 
 	return engine, nil
@@ -578,7 +604,8 @@ func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error
 
 	// Create namespaced engine with storage-size tracking.
 	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	engine := newSizeTrackingEngine(baseEngine, m, name)
+	checker := m.getOrCreateLimitCheckerLocked(name, info)
+	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
 	m.engines[name] = engine
 
 	return engine, nil
@@ -841,10 +868,19 @@ func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits)
 		return ErrDatabaseNotFound
 	}
 
+	limits = cloneLimits(limits)
+	previousLimits := info.Limits
 	info.Limits = limits
 	info.UpdatedAt = time.Now()
 
-	return m.persistMetadata()
+	if err := m.persistMetadata(); err != nil {
+		info.Limits = previousLimits
+		return err
+	}
+	if checker := m.limitCheckers[databaseName]; checker != nil {
+		checker.updateLimits(limits)
+	}
+	return nil
 }
 
 // GetDatabaseLimits returns resource limits for a database.
@@ -857,7 +893,24 @@ func (m *DatabaseManager) GetDatabaseLimits(databaseName string) (*Limits, error
 		return nil, ErrDatabaseNotFound
 	}
 
-	return info.Limits, nil
+	return cloneLimits(info.Limits), nil
+}
+
+func (m *DatabaseManager) getOrCreateLimitCheckerLocked(databaseName string, info *DatabaseInfo) *databaseLimitChecker {
+	if checker := m.limitCheckers[databaseName]; checker != nil {
+		return checker
+	}
+	checker := newDatabaseLimitCheckerWithLimits(m, databaseName, info.Limits)
+	m.limitCheckers[databaseName] = checker
+	return checker
+}
+
+func cloneLimits(limits *Limits) *Limits {
+	if limits == nil {
+		return nil
+	}
+	copy := *limits
+	return &copy
 }
 
 // validateAliasName validates an alias name.

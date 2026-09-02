@@ -192,6 +192,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	bm25Engine := search.DefaultBM25Engine()
 	db.dbConfigResolverMu.RLock()
 	resolver := db.dbConfigResolver
+	optionsResolver := db.dbSearchOptionsResolver
 	db.dbConfigResolverMu.RUnlock()
 	if resolver != nil {
 		rd, rs, re := resolver(dbName)
@@ -265,7 +266,12 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	if dims <= 0 {
 		dims = 1024
 	}
-	svc := search.NewServiceWithDimensionsAndBM25Engine(storageEngine, dims, bm25Engine)
+	var serviceOptions *search.ServiceOptions
+	if optionsResolver != nil {
+		resolved := optionsResolver(dbName)
+		serviceOptions = &resolved
+	}
+	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, serviceOptions)
 	svc.SetDefaultMinSimilarity(minSim)
 	if db.config != nil {
 		svc.SetFulltextProperties(db.config.Memory.SearchBM25Properties)
@@ -375,6 +381,16 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	db.searchServicesMu.Unlock()
 
 	return svc, nil
+}
+
+// SetSearchResultCachePolicy applies a dynamic cache policy to an existing database service.
+func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time.Duration) {
+	db.searchServicesMu.RLock()
+	entry, ok := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if ok && entry.svc != nil {
+		entry.svc.SetSearchResultCachePolicy(maxEntries, ttl)
+	}
 }
 
 // SetSearchReranker configures the Stage-2 reranker for all per-database search services.

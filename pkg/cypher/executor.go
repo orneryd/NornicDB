@@ -1381,6 +1381,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		GetQueryLimitChecker() interface {
 			CheckQueryRate() error
 			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
+			GetQueryLimits() interface{}
 		}
 	}); ok {
 		if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
@@ -1477,6 +1478,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err == nil && result != nil {
 		if namespacedEngine, ok := e.storage.(interface {
 			GetQueryLimitChecker() interface {
+				CheckQueryRate() error
+				CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
 				GetQueryLimits() interface{}
 			}
 		}); ok {

@@ -63,11 +63,12 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 		return
 	}
 
-	// Namespaced engine is required because suggestions use local IDs.
-	if db.baseStorage == nil {
+	// Suggestions use local IDs; resolve the manager-owned storage chain so
+	// background relationship writes observe the same quotas as user writes.
+	storageEngine, err := db.resolveDatabaseStorage(dbName)
+	if err != nil {
 		return
 	}
-	storageEngine := storage.NewNamespacedEngine(db.baseStorage, dbName)
 
 	now := time.Now()
 	for _, suggestion := range suggestions {

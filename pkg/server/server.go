@@ -1085,6 +1085,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database manager: %w", err)
 	}
+	db.SetDatabaseStorageResolver(dbManager.GetStorage)
 
 	s := &Server{
 		config:             config,
@@ -1694,6 +1695,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					return true, true, "startup", "startup"
 				}
 				return r.BM25Enabled, r.VectorEnabled, r.BM25Warming, r.VectorWarming
+			})
+			db.SetDbSearchOptionsResolver(func(dbName string) search.ServiceOptions {
+				overrides := dbConfigStore.GetOverrides(dbName)
+				resolved := dbconfig.Resolve(globalConfig, overrides)
+				if resolved == nil {
+					return search.ServiceOptions{DatabaseID: dbName, SearchResultCacheEntries: 1000, SearchResultCacheTTL: 5 * time.Minute}
+				}
+				return search.ServiceOptions{
+					DatabaseID: dbName, SearchResultCacheEntries: resolved.SearchResultCacheMaxEntries,
+					SearchResultCacheTTL: resolved.SearchResultCacheTTL,
+				}
 			})
 			// Per-DB embedder registry: resolve embed config per database for EmbedQueryForDB.
 			db.SetEmbedConfigForDB(func(dbName string) (*embed.Config, error) {

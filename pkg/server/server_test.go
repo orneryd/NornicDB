@@ -4199,6 +4199,11 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		resolver := auth.RequestResolvedAccessResolverFromContext(enriched.Context())
 		require.NotNil(t, resolver)
 		_ = resolver(server.dbManager.DefaultDatabaseName())
+		databaseScope := auth.RequestDatabaseScopeFromContext(enriched.Context())
+		require.NotNil(t, databaseScope)
+		resolvedDatabase, ok := databaseScope.Resolve(server.dbManager.DefaultDatabaseName())
+		require.True(t, ok)
+		require.Equal(t, server.dbManager.DefaultDatabaseName(), resolvedDatabase)
 
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 

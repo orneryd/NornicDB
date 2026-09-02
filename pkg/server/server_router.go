@@ -217,17 +217,21 @@ func (s *Server) registerMCPRoutes(mux *http.ServeMux) {
 
 	// Wrap MCP endpoints with auth - MCP is a powerful API that allows full DB access
 	mux.HandleFunc("/mcp", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		r = s.withBifrostRBAC(r)
 		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermWrite))
+	}, auth.PermRead))
 	mux.HandleFunc("/mcp/initialize", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		r = s.withBifrostRBAC(r)
 		s.mcpServer.ServeHTTP(w, r)
 	}, auth.PermRead))
 	mux.HandleFunc("/mcp/tools/list", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		r = s.withBifrostRBAC(r)
 		s.mcpServer.ServeHTTP(w, r)
 	}, auth.PermRead))
 	mux.HandleFunc("/mcp/tools/call", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		r = s.withBifrostRBAC(r)
 		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermWrite))
+	}, auth.PermRead))
 	mux.HandleFunc("/mcp/health", s.handleHealth) // Health check can remain public
 }
 

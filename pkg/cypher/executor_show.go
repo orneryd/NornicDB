@@ -4,16 +4,80 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ===== SHOW Commands (Neo4j compatibility) =====
+
+func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) (*ExecuteResult, error) {
+	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
+	upper := strings.ToUpper(query)
+	prefix := "SHOW SETTINGS"
+	if !strings.HasPrefix(upper, prefix) {
+		prefix = "SHOW SETTING"
+	}
+	if !strings.HasPrefix(upper, prefix) {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
+	}
+	tail := strings.TrimSpace(query[len(prefix):])
+	for _, field := range strings.Fields(strings.ToUpper(tail)) {
+		switch field {
+		case "YIELD", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT":
+			return nil, localizedError(localization.CypherTransactionsShowInTransactionUnsupported("SHOW SETTINGS "+field), nil)
+		}
+	}
+
+	selected := make(map[string]struct{})
+	if tail != "" {
+		for _, rawName := range strings.Split(tail, ",") {
+			name := strings.Trim(strings.TrimSpace(rawName), "`'\"")
+			if name == "" {
+				return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW SETTINGS"), nil)
+			}
+			selected[name] = struct{}{}
+		}
+	}
+
+	definitions := dbconfig.Settings()
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
+	rows := make([][]interface{}, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if _, duplicate := seen[definition.Name]; duplicate {
+			continue
+		}
+		seen[definition.Name] = struct{}{}
+		if len(selected) > 0 {
+			if _, ok := selected[definition.Name]; !ok {
+				continue
+			}
+		}
+		rows = append(rows, []interface{}{
+			definition.Name,
+			definition.Description,
+			definition.DefaultValue,
+			definition.Dynamic,
+			definition.DefaultValue,
+			definition.DefaultValue,
+			append([]string(nil), definition.ValidValues...),
+			false,
+			definition.Deprecated,
+		})
+	}
+
+	return &ExecuteResult{
+		Columns: []string{"name", "description", "value", "isDynamic", "defaultValue", "startupValue", "validValues", "isExplicitlySet", "isDeprecated"},
+		Rows:    rows,
+	}, nil
+}
 
 // executeShowIndexes handles SHOW INDEXES command
 func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string) (*ExecuteResult, error) {

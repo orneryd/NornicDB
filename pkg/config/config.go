@@ -86,6 +86,9 @@ import (
 // override the D-07 30s default sweep cadence at startup without
 // polluting the on-disk config schema.
 type StorageRuntimeConfig struct {
+	// Mode selects physical storage representation: default or low.
+	// This restart-bound setting is loaded from YAML and has no environment alias.
+	Mode string `yaml:"mode"`
 	// BytesMetricInterval overrides the bytes_metrics_sweeper cadence.
 	// Zero/unset uses storage.DefaultBytesMetricsInterval (30s).
 	BytesMetricInterval time.Duration `yaml:"bytes_metric_interval"`
@@ -1262,6 +1265,26 @@ func (c *Config) Validate() error {
 	if c.Memory.EmbeddingDimensions <= 0 {
 		return fmt.Errorf("invalid embedding dimensions: %d", c.Memory.EmbeddingDimensions)
 	}
+	storageMode := strings.ToLower(strings.TrimSpace(c.Storage.Mode))
+	if storageMode != "default" && storageMode != "low" {
+		return fmt.Errorf("invalid storage mode: %s", c.Storage.Mode)
+	}
+	walSyncMode := strings.ToLower(strings.TrimSpace(c.Database.WALSyncMode))
+	switch walSyncMode {
+	case "none", "immediate":
+	case "batch":
+		if c.Database.WALSyncInterval <= 0 {
+			return fmt.Errorf("WAL sync interval must be positive in batch mode: %s", c.Database.WALSyncInterval)
+		}
+	default:
+		return fmt.Errorf("invalid WAL sync mode: %s", c.Database.WALSyncMode)
+	}
+	if c.Database.AsyncMaxNodeCacheSize < 0 {
+		return fmt.Errorf("invalid async max node cache size: %d", c.Database.AsyncMaxNodeCacheSize)
+	}
+	if c.Database.AsyncMaxEdgeCacheSize < 0 {
+		return fmt.Errorf("invalid async max edge cache size: %d", c.Database.AsyncMaxEdgeCacheSize)
+	}
 
 	providerMode := strings.ToLower(strings.TrimSpace(c.Database.EncryptionProvider))
 	if providerMode == "" {
@@ -1447,6 +1470,7 @@ type YAMLConfig struct {
 	// Storage alias for database
 	Storage struct {
 		Path string `yaml:"path"`
+		Mode string `yaml:"mode"`
 		// BytesMetricInterval is the cadence for the Plan 04-04 D-07
 		// bytes_metrics_sweeper lifecycle.Component. Default 30s when
 		// zero/unset. Configurable for tests + ops who want denser or
@@ -1784,6 +1808,7 @@ func LoadDefaults() *Config {
 	config.Database.MVCCLifecycleCycleInterval = 30 * time.Second
 	config.Database.MVCCLifecycleMaxSnapshotAge = time.Hour
 	config.Database.MVCCLifecycleMaxChainCap = 1000
+	config.Storage.Mode = "default"
 
 	// Server defaults - Bolt
 	config.Server.BoltEnabled = true
@@ -2911,6 +2936,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	// === Database Settings ===
 	if yamlCfg.Storage.Path != "" {
 		config.Database.DataDir = yamlCfg.Storage.Path
+	}
+	if yamlCfg.Storage.Mode != "" {
+		config.Storage.Mode = strings.ToLower(strings.TrimSpace(yamlCfg.Storage.Mode))
 	}
 	if yamlCfg.Database.DataDir != "" {
 		config.Database.DataDir = yamlCfg.Database.DataDir

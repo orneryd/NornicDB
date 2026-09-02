@@ -453,6 +453,9 @@ skipMatchCallRoute:
 		return e.executeShowDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES") == 0:
 		return e.executeShowAliases(ctx, cypher)
+	case findMultiWordKeywordIndex(cypher, "SHOW", "SETTINGS") == 0,
+		findMultiWordKeywordIndex(cypher, "SHOW", "SETTING") == 0:
+		return e.executeShowSettings(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE DATABASE") == 0:
 		return e.executeAlterCompositeDatabase(ctx, cypher)
 	case findMultiWordKeywordIndex(cypher, "ALTER", "DECAY PROFILE") == 0,
