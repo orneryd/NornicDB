@@ -78,6 +78,39 @@ func TestVectorFileStore_CompactionReclaimsObsoleteRecords(t *testing.T) {
 	}
 }
 
+func TestVectorFileStore_FixedStridePayloadAndOrdinalReload(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "vectors")
+	vfs, err := NewVectorFileStore(base, 2)
+	require.NoError(t, err)
+
+	require.NoError(t, vfs.Add("a", []float32{1, 0}))
+	require.NoError(t, vfs.Add(strings.Repeat("long-id-", 100), []float32{0, 1}))
+	require.NoError(t, vfs.Save())
+	require.NoError(t, vfs.Add("uncommitted", []float32{1, 1}))
+	require.NoError(t, vfs.Close())
+
+	info, err := os.Stat(base + ".vec")
+	require.NoError(t, err)
+	require.Equal(t, int64(vecHeaderSize+3*2*4), info.Size())
+
+	reloaded, err := NewVectorFileStore(base, 2)
+	require.NoError(t, err)
+	defer func() { _ = reloaded.Close() }()
+	require.NoError(t, reloaded.Load())
+	info, err = os.Stat(base + ".vec")
+	require.NoError(t, err)
+	require.Equal(t, int64(vecHeaderSize+2*2*4), info.Size())
+
+	first, ok := reloaded.GetVector("a")
+	require.True(t, ok)
+	require.Equal(t, []float32{1, 0}, first)
+	second, ok := reloaded.GetVector(strings.Repeat("long-id-", 100))
+	require.True(t, ok)
+	require.Equal(t, []float32{0, 1}, second)
+	_, ok = reloaded.GetVector("uncommitted")
+	require.False(t, ok)
+}
+
 func TestVectorFileStore_SyncDoesNotBlockAdd(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "vectors")
 	vfs, err := NewVectorFileStore(base, 4)
@@ -202,6 +235,14 @@ func TestVectorFileStore_ScoreCandidatesDotAndScratchHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, scored)
 	require.Equal(t, "a", scored[0].ID)
+
+	reverseScored, err := vfs.scoreCandidatesDot(context.Background(), []float32{1, 0, 0}, []Candidate{
+		{ID: "b"},
+		{ID: "a"},
+	})
+	require.NoError(t, err)
+	require.Len(t, reverseScored, 2)
+	require.Equal(t, "a", reverseScored[0].ID)
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -413,7 +454,7 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.True(t, vfs.Has("id-1"))
 	})
 
-	t.Run("getvector_grows_buffer_for_long_id_and_handles_bad_offset", func(t *testing.T) {
+	t.Run("getvector_handles_long_id_and_bad_ordinal", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "vectors")
 		vfs, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
@@ -426,7 +467,7 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.Len(t, vec, 2)
 
 		vfs.mu.Lock()
-		vfs.idToOff["bad"] = -1
+		vfs.idToOrdinal["bad"] = -1
 		vfs.mu.Unlock()
 		_, ok = vfs.GetVector("bad")
 		require.False(t, ok)
@@ -457,17 +498,13 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.NoError(t, vfs.Add("id-1", []float32{1, 0}))
 		require.NoError(t, vfs.Save())
 
-		// Missing meta -> rebuild from .vec.
+		// IDs are stored only in metadata, so a non-empty slab cannot be loaded without it.
 		require.NoError(t, os.Remove(base+".meta"))
-		require.NoError(t, vfs.Load())
-		_, ok := vfs.GetVector("id-1")
-		require.True(t, ok)
+		require.Error(t, vfs.Load())
 
-		// Corrupt meta -> rebuild from .vec.
+		// Corrupt metadata cannot be reconstructed from payload-only storage.
 		require.NoError(t, os.WriteFile(base+".meta", []byte("not-msgpack"), 0o644))
-		require.NoError(t, vfs.Load())
-		_, ok = vfs.GetVector("id-1")
-		require.True(t, ok)
+		require.Error(t, vfs.Load())
 
 		// Dimension mismatch in meta should error.
 		f, err := os.Create(base + ".meta")
@@ -475,7 +512,8 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.NoError(t, msgpack.NewEncoder(f).Encode(&VectorFileStoreMeta{
 			Version:           vecFileVersion,
 			Dimensions:        3,
-			IDToOffset:        map[string]int64{"id-1": vecHeaderSize},
+			IDToOrdinal:       map[string]int64{"id-1": 0},
+			DataSlots:         1,
 			BuildIndexedCount: 1,
 		}))
 		require.NoError(t, f.Close())
@@ -484,24 +522,14 @@ func TestVectorFileStore_ErrorAndEdgeBranches(t *testing.T) {
 		require.Contains(t, err.Error(), "meta dimensions")
 	})
 
-	t.Run("rebuild_index_and_read_vector_error_paths", func(t *testing.T) {
+	t.Run("load_and_read_vector_error_paths", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "vectors")
 		vfs, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
 		defer func() { _ = vfs.Close() }()
 
-		// Append a truncated record to force unexpected EOF during rebuild.
-		f, err := os.OpenFile(base+".vec", os.O_RDWR|os.O_APPEND, 0o644)
-		require.NoError(t, err)
-		require.NoError(t, binary.Write(f, binary.LittleEndian, uint32(10)))
-		_, err = f.Write([]byte("abc"))
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
-
-		vfs.mu.Lock()
-		err = vfs.rebuildIndexFromVecLocked()
-		vfs.mu.Unlock()
-		require.Error(t, err)
+		require.NoError(t, vfs.Add("id-1", []float32{1, 0}))
+		require.Error(t, vfs.Load())
 
 		vfs.mu.Lock()
 		vfs.file = nil
@@ -538,9 +566,12 @@ func TestVectorFileStore_IterateChunked_UnexpectedEOFOnPartialLength(t *testing.
 
 	f, err := os.OpenFile(base+".vec", os.O_RDWR|os.O_APPEND, 0o644)
 	require.NoError(t, err)
-	_, err = f.Write([]byte{0x01, 0x02}) // partial idLen, triggers unexpected EOF
+	_, err = f.Write([]byte{0x01, 0x02})
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
+	vfs.mu.Lock()
+	vfs.idToOrdinal["partial"] = 0
+	vfs.mu.Unlock()
 
 	err = vfs.IterateChunked(1, func(ids []string, vecs [][]float32) error { return nil })
 	require.Error(t, err)
@@ -564,7 +595,7 @@ func TestVectorFileStore_AdditionalBranchCoverage(t *testing.T) {
 		require.NoError(t, vfs.Sync()) // closed branch returns nil
 	})
 
-	t.Run("rebuild_index_tracks_obsolete_records", func(t *testing.T) {
+	t.Run("load_tracks_obsolete_slots", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "vectors")
 		vfs, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
@@ -573,15 +604,16 @@ func TestVectorFileStore_AdditionalBranchCoverage(t *testing.T) {
 		require.NoError(t, vfs.Add("dup", []float32{1, 0}))
 		require.NoError(t, vfs.Add("dup", []float32{0, 1}))
 		require.NoError(t, vfs.Add("other", []float32{1, 1}))
+		vfs.SetBuildIndexedCount(2)
+		require.NoError(t, vfs.Save())
+		require.NoError(t, vfs.Close())
 
-		vfs.mu.Lock()
-		err = vfs.rebuildIndexFromVecLocked()
-		buildCount := vfs.buildIndexedCount
-		obsolete := vfs.obsoleteCount
-		vfs.mu.Unlock()
+		reloaded, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
-		require.Equal(t, int64(2), buildCount)
-		require.Equal(t, int64(1), obsolete)
+		defer func() { _ = reloaded.Close() }()
+		require.NoError(t, reloaded.Load())
+		require.Equal(t, int64(2), reloaded.buildIndexedCount)
+		require.Equal(t, int64(1), reloaded.obsoleteCount)
 	})
 
 	t.Run("compact_rewrite_error_propagates", func(t *testing.T) {
@@ -598,7 +630,7 @@ func TestVectorFileStore_AdditionalBranchCoverage(t *testing.T) {
 		require.NoError(t, vfs.Add("id-1", []float32{0, 1})) // obsoleteCount=1
 
 		vfs.mu.Lock()
-		vfs.idToOff["id-1"] = -1 // forces readVectorAtLocked failure during rewrite
+		vfs.idToOrdinal["id-1"] = -1 // forces readVectorAtLocked failure during rewrite
 		vfs.mu.Unlock()
 
 		compacted, err := vfs.CompactIfNeeded()
@@ -615,7 +647,7 @@ func TestVectorFileStore_AdditionalBranchCoverage(t *testing.T) {
 
 		require.NoError(t, vfs.Add("id-1", []float32{1, 0}))
 		vfs.mu.Lock()
-		vfs.idToOff["id-1"] = -100 // invalid read offset, branch should continue without panic
+		vfs.idToOrdinal["id-1"] = -100 // invalid ordinal, branch should continue without panic
 		vfs.mu.Unlock()
 
 		scored, err := vfs.scoreCandidatesDot(context.Background(), []float32{1, 0}, []Candidate{{ID: "id-1"}})

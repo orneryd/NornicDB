@@ -1,7 +1,7 @@
 // Package search provides file-backed vector storage for memory-efficient indexing.
 //
 // VectorFileStore implements append-only vector storage: vectors are written to a
-// .vec file and only id→offset metadata is kept in RAM. This allows BuildIndexes
+// fixed-stride .vec file and only ID-to-ordinal metadata is kept in RAM. This allows BuildIndexes
 // to index large datasets without holding 2–3× vector data in memory. Vectors are
 // stored normalized (one copy per id, cosine-only) per the indexing-memory plan.
 package search
@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 
@@ -26,9 +27,10 @@ import (
 )
 
 const (
-	vecFileMagic   = "NVF\n"
-	vecFileVersion = 1
-	vecHeaderSize  = 64
+	vecFileMagic             = "NVF\n"
+	vecFileVersion           = 2
+	vecHeaderSize            = 64
+	vectorScoreReadBatchSize = 1024 * 1024
 )
 
 var (
@@ -36,7 +38,7 @@ var (
 )
 
 // VectorFileStore is an append-only vector store backed by a file.
-// Only id→offset is kept in RAM; vector data lives on disk.
+// Only ID-to-ordinal metadata is kept in RAM; vector data lives on disk.
 // All vectors are stored normalized (one copy per id).
 type VectorFileStore struct {
 	dimensions int
@@ -48,9 +50,10 @@ type VectorFileStore struct {
 	file              *security.RootedFile
 	syncFile          func(*os.File) error
 	writeRecord       func(*os.File, string, []float32) error
-	idToOff           map[string]int64
+	idToOrdinal       map[string]int64
+	nextOrdinal       int64
 	buildIndexedCount int64 // last checkpoint count; persisted in .meta for resume
-	obsoleteCount     int64 // approximate number of stale records in .vec from updates/deletes
+	obsoleteCount     int64 // approximate number of stale slots in .vec from updates/deletes
 	scoreScratchPool  sync.Pool
 	closed            bool
 }
@@ -65,11 +68,11 @@ type vfsScoreScratch struct {
 	batch   []byte
 }
 
-// Has reports whether id is present in the id→offset map.
+// Has reports whether id is present in the id-to-ordinal map.
 func (v *VectorFileStore) Has(id string) bool {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	_, ok := v.idToOff[id]
+	_, ok := v.idToOrdinal[id]
 	return ok
 }
 
@@ -77,7 +80,8 @@ func (v *VectorFileStore) Has(id string) bool {
 type VectorFileStoreMeta struct {
 	Version           int              `msgpack:"v"`
 	Dimensions        int              `msgpack:"dim"`
-	IDToOffset        map[string]int64 `msgpack:"id2off"`
+	IDToOrdinal       map[string]int64 `msgpack:"id2ord"`
+	DataSlots         int64            `msgpack:"slots"`
 	BuildIndexedCount int64            `msgpack:"build_count,omitempty"` // last checkpoint count during BuildIndexes; used for resume
 }
 
@@ -92,10 +96,10 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 	metaPath := vecBasePath + ".meta"
 
 	v := &VectorFileStore{
-		dimensions: dimensions,
-		vecPath:    vecPath,
-		metaPath:   metaPath,
-		idToOff:    make(map[string]int64),
+		dimensions:  dimensions,
+		vecPath:     vecPath,
+		metaPath:    metaPath,
+		idToOrdinal: make(map[string]int64),
 		syncFile: func(f *os.File) error {
 			return f.Sync()
 		},
@@ -119,7 +123,7 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 		return nil, err
 	}
 
-	flags := os.O_RDWR | os.O_CREATE
+	flags := os.O_RDWR | os.O_CREATE | os.O_APPEND
 	var err error
 	v.file, err = security.OpenRootedFile(vecPath, flags, 0o644)
 	if err != nil {
@@ -138,6 +142,18 @@ func NewVectorFileStore(vecBasePath string, dimensions int) (*VectorFileStore, e
 			return nil, err
 		}
 	}
+	stat, err := v.file.Stat()
+	if err != nil {
+		v.file.Close()
+		return nil, err
+	}
+	dataBytes := stat.Size() - vecHeaderSize
+	stride, ok := v.vectorStride()
+	if !ok || dataBytes < 0 || dataBytes%stride != 0 {
+		v.file.Close()
+		return nil, fmt.Errorf("invalid fixed-stride vector file size: %d", stat.Size())
+	}
+	v.nextOrdinal = dataBytes / stride
 
 	return v, nil
 }
@@ -188,10 +204,7 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	writeFn := v.writeRecord
 	v.mu.RUnlock()
 
-	offset, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
+	ordinal := v.nextOrdinal
 	if writeFn == nil {
 		writeFn = writeVectorRecord
 	}
@@ -204,26 +217,27 @@ func (v *VectorFileStore) Add(id string, vec []float32) error {
 	if v.closed {
 		return errVecFileClosed
 	}
-	_, existed := v.idToOff[id]
-	v.idToOff[id] = offset
+	v.nextOrdinal++
+	_, existed := v.idToOrdinal[id]
+	v.idToOrdinal[id] = ordinal
 	if existed {
 		v.obsoleteCount++
 	}
 	return nil
 }
 
-// Remove deletes id from the live id→offset map.
-// The old .vec record is left in-place and reclaimed by compaction.
+// Remove deletes id from the live id-to-ordinal map.
+// The old .vec slot is left in-place and reclaimed by compaction.
 func (v *VectorFileStore) Remove(id string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.closed {
 		return false
 	}
-	if _, ok := v.idToOff[id]; !ok {
+	if _, ok := v.idToOrdinal[id]; !ok {
 		return false
 	}
-	delete(v.idToOff, id)
+	delete(v.idToOrdinal, id)
 	v.obsoleteCount++
 	return true
 }
@@ -232,42 +246,21 @@ func (v *VectorFileStore) Remove(id string) bool {
 func (v *VectorFileStore) GetVector(id string) ([]float32, bool) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	off, ok := v.idToOff[id]
-	if !ok || v.closed || v.file == nil {
+	ordinal, ok := v.idToOrdinal[id]
+	if !ok || ordinal < 0 || ordinal >= v.nextOrdinal || v.closed || v.file == nil {
 		return nil, false
 	}
-	// Read record at offset with a one-read fast path:
-	// [idLen(4)][id][vector(dim*4)].
 	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	if !ok {
 		return nil, false
 	}
-	bufLen, ok := util.SafeIntSum(4, vectorBytes, 256)
-	if !ok {
+	buf := make([]byte, vectorBytes)
+	if _, err := v.file.ReadAt(buf, v.vectorOffset(ordinal)); err != nil {
 		return nil, false
-	}
-	buf := make([]byte, bufLen)
-	if _, err := v.file.ReadAt(buf, off); err != nil && err != io.EOF {
-		return nil, false
-	}
-	idLen := binary.LittleEndian.Uint32(buf[:4])
-	idLenInt := int(idLen)
-	if uint32(idLenInt) != idLen {
-		return nil, false
-	}
-	recSize, ok := util.SafeIntSum(4, idLenInt, vectorBytes)
-	if !ok {
-		return nil, false
-	}
-	if recSize > len(buf) {
-		buf = make([]byte, recSize)
-		if _, err := v.file.ReadAt(buf, off); err != nil {
-			return nil, false
-		}
 	}
 	vec := make([]float32, v.dimensions)
 	for i := 0; i < v.dimensions; i++ {
-		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[4+int(idLen)+i*4:]))
+		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
 	}
 	return vec, true
 }
@@ -295,27 +288,42 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		return nil, nil
 	}
 
-	scratch := v.getScoreScratch(len(candidates), 64*1024)
+	scratch := v.getScoreScratch(len(candidates), vectorScoreReadBatchSize)
 	defer v.putScoreScratch(scratch)
 	offsets := scratch.offsets[:0]
+	offsetsSorted := true
 	for _, cand := range candidates {
-		off, ok := v.idToOff[cand.ID]
-		if !ok {
+		ordinal, ok := v.idToOrdinal[cand.ID]
+		if !ok || ordinal < 0 || ordinal >= v.nextOrdinal {
 			continue
 		}
-		offsets = append(offsets, vfsCandidateOffset{
+		candidateOffset := vfsCandidateOffset{
 			id:     cand.ID,
-			vecOff: off + int64(4+len(cand.ID)),
-		})
+			vecOff: v.vectorOffset(ordinal),
+		}
+		if len(offsets) > 0 && candidateOffset.vecOff < offsets[len(offsets)-1].vecOff {
+			offsetsSorted = false
+		}
+		offsets = append(offsets, candidateOffset)
 	}
 	if len(offsets) == 0 {
 		return nil, nil
 	}
-	sort.Slice(offsets, func(i, j int) bool { return offsets[i].vecOff < offsets[j].vecOff })
+	if !offsetsSorted {
+		slices.SortFunc(offsets, func(a, b vfsCandidateOffset) int {
+			if a.vecOff < b.vecOff {
+				return -1
+			}
+			if a.vecOff > b.vecOff {
+				return 1
+			}
+			return 0
+		})
+	}
 
 	scored := make([]ScoredCandidate, 0, len(candidates))
 	vecBytes := dims * 4
-	maxBatchBytes := 64 * 1024
+	maxBatchBytes := vectorScoreReadBatchSize
 	if vecBytes > maxBatchBytes {
 		maxBatchBytes = vecBytes
 	}
@@ -360,7 +368,15 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		}
 		i = j
 	}
-	sort.Slice(scored, func(i, j int) bool { return scored[i].Score > scored[j].Score })
+	slices.SortFunc(scored, func(a, b ScoredCandidate) int {
+		if a.Score > b.Score {
+			return -1
+		}
+		if a.Score < b.Score {
+			return 1
+		}
+		return 0
+	})
 	return scored, nil
 }
 
@@ -399,7 +415,17 @@ func (v *VectorFileStore) putScoreScratch(s *vfsScoreScratch) {
 func (v *VectorFileStore) Count() int {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	return len(v.idToOff)
+	return len(v.idToOrdinal)
+}
+
+func (v *VectorFileStore) vectorStride() (int64, bool) {
+	bytes, ok := util.SafeIntProduct(v.dimensions, 4)
+	return int64(bytes), ok
+}
+
+func (v *VectorFileStore) vectorOffset(ordinal int64) int64 {
+	stride, _ := v.vectorStride()
+	return vecHeaderSize + ordinal*stride
 }
 
 // GetDimensions returns the vector dimension.
@@ -415,62 +441,43 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 		chunkSize = 10000
 	}
 	v.mu.RLock()
+	defer v.mu.RUnlock()
 	if v.closed {
-		v.mu.RUnlock()
 		return errVecFileClosed
 	}
 	file := v.file
-	v.mu.RUnlock()
 	if file == nil {
 		return errVecFileClosed
-	}
-
-	// Seek to first record (after header)
-	if _, err := file.Seek(vecHeaderSize, io.SeekStart); err != nil {
-		return err
 	}
 
 	ids := make([]string, 0, chunkSize)
 	vecs := make([][]float32, 0, chunkSize)
 	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	if !ok {
-		return fmt.Errorf("vector dimensions overflow rebuild buffer size: %d", v.dimensions)
+		return fmt.Errorf("vector dimensions overflow iteration buffer size: %d", v.dimensions)
 	}
-	bufLen, ok := util.SafeIntSum(4, 256, vectorBytes)
-	if !ok {
-		return fmt.Errorf("vector rebuild buffer size overflow")
+	type ordinalID struct {
+		ordinal int64
+		id      string
 	}
-	buf := make([]byte, bufLen)
-	for {
-		// Read id length
-		if _, err := io.ReadFull(file, buf[:4]); err != nil {
-			if err == io.EOF {
-				break
-			}
+	entries := make([]ordinalID, 0, len(v.idToOrdinal))
+	for id, ordinal := range v.idToOrdinal {
+		entries = append(entries, ordinalID{ordinal: ordinal, id: id})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ordinal < entries[j].ordinal })
+	buf := make([]byte, vectorBytes)
+	for _, entry := range entries {
+		if entry.ordinal < 0 || entry.ordinal >= v.nextOrdinal {
+			return fmt.Errorf("vector ordinal %d for %q is outside %d slots", entry.ordinal, entry.id, v.nextOrdinal)
+		}
+		if _, err := file.ReadAt(buf, v.vectorOffset(entry.ordinal)); err != nil {
 			return err
 		}
-		idLen := binary.LittleEndian.Uint32(buf[:4])
-		recLen, ok := util.SafeIntSum(4, int(idLen), vectorBytes)
-		if !ok {
-			return fmt.Errorf("vector record length overflow for id length %d", idLen)
-		}
-		if recLen > len(buf) {
-			newBuf := make([]byte, recLen)
-			binary.LittleEndian.PutUint32(newBuf[0:4], idLen)
-			buf = newBuf
-		}
-		if _, err := io.ReadFull(file, buf[4:recLen]); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		id := string(buf[4 : 4+idLen])
 		vec := make([]float32, v.dimensions)
 		for i := 0; i < v.dimensions; i++ {
-			vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[4+int(idLen)+i*4:]))
+			vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
 		}
-		ids = append(ids, id)
+		ids = append(ids, entry.id)
 		vecs = append(vecs, vec)
 		if len(ids) >= chunkSize {
 			if err := fn(ids, vecs); err != nil {
@@ -486,9 +493,10 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 	return nil
 }
 
-// Save writes the id→offset map to the .meta file so the store can be loaded later.
-// Copies idToOff under a short lock so the (potentially slow) encode doesn't block Add().
+// Save atomically commits the ID-to-ordinal map after syncing vector payloads.
 func (v *VectorFileStore) Save() error {
+	v.appendMu.Lock()
+	defer v.appendMu.Unlock()
 	v.mu.RLock()
 	if v.closed {
 		v.mu.RUnlock()
@@ -496,33 +504,55 @@ func (v *VectorFileStore) Save() error {
 	}
 	dim := v.dimensions
 	buildCount := v.buildIndexedCount
-	idToOffCopy := make(map[string]int64, len(v.idToOff))
-	for k, o := range v.idToOff {
-		idToOffCopy[k] = o
+	dataSlots := v.nextOrdinal
+	idToOrdinalCopy := make(map[string]int64, len(v.idToOrdinal))
+	for id, ordinal := range v.idToOrdinal {
+		idToOrdinalCopy[id] = ordinal
 	}
+	file := v.file
 	v.mu.RUnlock()
+	if err := file.Sync(); err != nil {
+		return err
+	}
 
 	if err := security.EnsureRootedParent(v.metaPath, 0o755); err != nil {
 		return err
 	}
-	f, err := security.CreateRootedFile(v.metaPath, 0o644)
+	tmpPath := v.metaPath + ".tmp"
+	f, err := security.CreateRootedFile(tmpPath, 0o644)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	enc := msgpack.NewEncoder(f)
-	return enc.Encode(&VectorFileStoreMeta{
+	if err := enc.Encode(&VectorFileStoreMeta{
 		Version:           vecFileVersion,
 		Dimensions:        dim,
-		IDToOffset:        idToOffCopy,
+		IDToOrdinal:       idToOrdinalCopy,
+		DataSlots:         dataSlots,
 		BuildIndexedCount: buildCount,
-	})
+	}); err != nil {
+		_ = f.Close()
+		_ = security.RemoveRootedPath(tmpPath)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = security.RemoveRootedPath(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = security.RemoveRootedPath(tmpPath)
+		return err
+	}
+	return security.RenameRootedFile(tmpPath, v.metaPath)
 }
 
 // Load populates the store from an existing .vec + .meta. The store must be created with
-// NewVectorFileStore(vecBasePath, dimensions); Load then reads the .meta file to populate
-// idToOff. The .vec file is already open from NewVectorFileStore.
+// NewVectorFileStore(vecBasePath, dimensions); Load then reads the committed ID-to-ordinal
+// metadata and discards any uncommitted vector tail.
 func (v *VectorFileStore) Load() error {
+	v.appendMu.Lock()
+	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.closed {
@@ -530,89 +560,42 @@ func (v *VectorFileStore) Load() error {
 	}
 	f, err := security.OpenRootedFile(v.metaPath, os.O_RDONLY, 0)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// No meta; rebuild idToOff from .vec if present.
-			return v.rebuildIndexFromVecLocked()
+		if os.IsNotExist(err) && v.nextOrdinal == 0 {
+			v.idToOrdinal = make(map[string]int64)
+			return nil
 		}
 		return err
 	}
 	defer f.Close()
 	var meta VectorFileStoreMeta
 	if err := util.DecodeMsgpackFile(f.File, &meta); err != nil {
-		// Corrupt meta; rebuild idToOff from .vec.
-		return v.rebuildIndexFromVecLocked()
+		return err
+	}
+	if meta.Version != vecFileVersion {
+		return localizedError(localization.SearchVectorFileVersionUnsupported(byte(meta.Version)), nil)
 	}
 	if meta.Dimensions != v.dimensions {
 		return localizedError(localization.SearchVectorMetaDimensionsMismatch(meta.Dimensions, v.dimensions), nil)
 	}
-	if meta.IDToOffset != nil {
-		v.idToOff = meta.IDToOffset
+	if meta.DataSlots < 0 || meta.DataSlots > v.nextOrdinal {
+		return fmt.Errorf("vector metadata slot count %d exceeds data slots %d", meta.DataSlots, v.nextOrdinal)
 	}
-	if meta.BuildIndexedCount > 0 {
-		v.buildIndexedCount = meta.BuildIndexedCount
+	for id, ordinal := range meta.IDToOrdinal {
+		if ordinal < 0 || ordinal >= meta.DataSlots {
+			return fmt.Errorf("vector metadata ordinal %d for %q is outside %d slots", ordinal, id, meta.DataSlots)
+		}
 	}
-	// Rebuild id→offset from .vec so resume is accurate even if meta is stale.
-	return v.rebuildIndexFromVecLocked()
-}
-
-// rebuildIndexFromVecLocked rebuilds id→offset by scanning the .vec file.
-// Caller must hold v.mu.
-func (v *VectorFileStore) rebuildIndexFromVecLocked() error {
-	if v.closed || v.file == nil {
-		return errVecFileClosed
-	}
-	if _, err := v.file.Seek(vecHeaderSize, io.SeekStart); err != nil {
+	stride, _ := v.vectorStride()
+	if err := v.file.Truncate(vecHeaderSize + meta.DataSlots*stride); err != nil {
 		return err
 	}
-	idToOff := make(map[string]int64)
-	totalRecords := int64(0)
-	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
-	if !ok {
-		return fmt.Errorf("vector dimensions overflow rebuild buffer size: %d", v.dimensions)
+	v.idToOrdinal = meta.IDToOrdinal
+	if v.idToOrdinal == nil {
+		v.idToOrdinal = make(map[string]int64)
 	}
-	bufLen, ok := util.SafeIntSum(4, 256, vectorBytes)
-	if !ok {
-		return fmt.Errorf("vector rebuild buffer size overflow")
-	}
-	buf := make([]byte, bufLen)
-	for {
-		offset, err := v.file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return err
-		}
-		if _, err := io.ReadFull(v.file, buf[:4]); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		idLen := binary.LittleEndian.Uint32(buf[:4])
-		idLenInt := int(idLen)
-		if uint32(idLenInt) != idLen {
-			return fmt.Errorf("vector record id length overflow: %d", idLen)
-		}
-		recLen, ok := util.SafeIntSum(4, idLenInt, vectorBytes)
-		if !ok {
-			return fmt.Errorf("vector record length overflow")
-		}
-		if recLen > len(buf) {
-			newBuf := make([]byte, recLen)
-			binary.LittleEndian.PutUint32(newBuf[0:4], idLen)
-			buf = newBuf
-		}
-		if _, err := io.ReadFull(v.file, buf[4:recLen]); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		id := string(buf[4 : 4+idLen])
-		idToOff[id] = offset
-		totalRecords++
-	}
-	v.idToOff = idToOff
-	v.buildIndexedCount = int64(len(idToOff))
-	v.obsoleteCount = totalRecords - int64(len(idToOff))
+	v.nextOrdinal = meta.DataSlots
+	v.buildIndexedCount = meta.BuildIndexedCount
+	v.obsoleteCount = meta.DataSlots - int64(len(v.idToOrdinal))
 	return nil
 }
 
@@ -648,10 +631,12 @@ func (v *VectorFileStore) Sync() error {
 	return syncFn(file.File)
 }
 
-// CompactIfNeeded rewrites .vec with only live records when stale entries accumulate.
+// CompactIfNeeded rewrites .vec with only live slots when stale entries accumulate.
 // The rewrite is atomic: write temp file, fsync, rename.
 // Returns true when compaction actually ran.
 func (v *VectorFileStore) CompactIfNeeded() (bool, error) {
+	v.appendMu.Lock()
+	defer v.appendMu.Unlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.compactIfNeededLocked()
@@ -674,7 +659,7 @@ func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 		deadRatioThreshold = 0
 	}
 
-	live := int64(len(v.idToOff))
+	live := int64(len(v.idToOrdinal))
 	if live == 0 {
 		// If everything was deleted, shrink back to a header-only file.
 		if v.obsoleteCount == 0 {
@@ -702,8 +687,8 @@ func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 		return false, nil
 	}
 
-	ids := make([]string, 0, len(v.idToOff))
-	for id := range v.idToOff {
+	ids := make([]string, 0, len(v.idToOrdinal))
+	for id := range v.idToOrdinal {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -711,7 +696,7 @@ func (v *VectorFileStore) compactIfNeededLocked() (bool, error) {
 		return false, err
 	}
 	v.obsoleteCount = 0
-	v.buildIndexedCount = int64(len(v.idToOff))
+	v.buildIndexedCount = int64(len(v.idToOrdinal))
 	return true, nil
 }
 
@@ -735,24 +720,20 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 		return err
 	}
 
-	newOffsets := make(map[string]int64, len(ids))
+	newOrdinals := make(map[string]int64, len(ids))
 	for _, id := range ids {
-		oldOffset, ok := v.idToOff[id]
+		oldOrdinal, ok := v.idToOrdinal[id]
 		if !ok {
 			continue
 		}
-		vec, err := v.readVectorAtLocked(oldOffset)
+		vec, err := v.readVectorAtLocked(oldOrdinal)
 		if err != nil {
-			return fmt.Errorf("compact read id %q at offset %d: %w", id, oldOffset, err)
-		}
-		newOffset, err := tmp.Seek(0, io.SeekEnd)
-		if err != nil {
-			return err
+			return fmt.Errorf("compact read id %q at ordinal %d: %w", id, oldOrdinal, err)
 		}
 		if err := writeVectorRecord(tmp.File, id, vec); err != nil {
 			return err
 		}
-		newOffsets[id] = newOffset
+		newOrdinals[id] = int64(len(newOrdinals))
 	}
 
 	if err := tmp.Sync(); err != nil {
@@ -767,63 +748,47 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := security.RenameRootedFile(tmpPath, v.vecPath); err != nil {
 		return err
 	}
-	reopened, err := security.OpenRootedFile(v.vecPath, os.O_RDWR|os.O_CREATE, 0o644)
+	reopened, err := security.OpenRootedFile(v.vecPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	v.file = reopened
-	v.idToOff = newOffsets
+	v.idToOrdinal = newOrdinals
+	v.nextOrdinal = int64(len(newOrdinals))
 	return nil
 }
 
-func (v *VectorFileStore) readVectorAtLocked(offset int64) ([]float32, error) {
+func (v *VectorFileStore) readVectorAtLocked(ordinal int64) ([]float32, error) {
 	if v.file == nil {
 		return nil, errVecFileClosed
 	}
-	head := make([]byte, 4)
-	if _, err := v.file.ReadAt(head, offset); err != nil {
-		return nil, err
+	if ordinal < 0 || ordinal >= v.nextOrdinal {
+		return nil, fmt.Errorf("vector ordinal %d is outside %d slots", ordinal, v.nextOrdinal)
 	}
-	idLen := int(binary.LittleEndian.Uint32(head))
 	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	if !ok {
-		return nil, fmt.Errorf("vector dimensions overflow record length: %d", v.dimensions)
+		return nil, fmt.Errorf("vector dimensions overflow payload length: %d", v.dimensions)
 	}
-	recLen, ok := util.SafeIntSum(4, idLen, vectorBytes)
-	if !ok {
-		return nil, fmt.Errorf("vector record length overflow")
-	}
-	buf := make([]byte, recLen)
-	if _, err := v.file.ReadAt(buf, offset); err != nil {
+	buf := make([]byte, vectorBytes)
+	if _, err := v.file.ReadAt(buf, v.vectorOffset(ordinal)); err != nil {
 		return nil, err
 	}
 	vec := make([]float32, v.dimensions)
-	base := 4 + idLen
 	for i := 0; i < v.dimensions; i++ {
-		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[base+i*4:]))
+		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
 	}
 	return vec, nil
 }
 
 func writeVectorRecord(f *os.File, id string, vec []float32) error {
-	idBytes := []byte(id)
-	idLen := uint32(len(idBytes))
-	if int(idLen) != len(idBytes) {
-		return fmt.Errorf("id too long")
-	}
+	_ = id
 	vectorBytes, ok := util.SafeIntProduct(len(vec), 4)
 	if !ok {
-		return fmt.Errorf("vector size overflow for record %q", id)
+		return fmt.Errorf("vector size overflow for %q", id)
 	}
-	bufLen, ok := util.SafeIntSum(4, len(idBytes), vectorBytes)
-	if !ok {
-		return fmt.Errorf("record buffer size overflow for %q", id)
-	}
-	buf := make([]byte, bufLen)
-	binary.LittleEndian.PutUint32(buf[0:4], idLen)
-	copy(buf[4:4+idLen], idBytes)
+	buf := make([]byte, vectorBytes)
 	for i := range vec {
-		binary.LittleEndian.PutUint32(buf[4+int(idLen)+i*4:], math.Float32bits(vec[i]))
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(vec[i]))
 	}
 	_, err := f.Write(buf)
 	return err
