@@ -338,6 +338,9 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 //	config.EnableCORS = true
 //	config.CORSOrigins = []string{"http://localhost:3000"} // Local dev UI only
 type Config struct {
+	// ProcessConfig is the resolved YAML/environment/CLI configuration used to
+	// open the database. Database-setting resolution must use this same snapshot.
+	ProcessConfig *nornicConfig.Config
 	// Address to bind to (default: "127.0.0.1" - localhost only for security)
 	// Set to "0.0.0.0" to listen on all interfaces (required for Docker/external access)
 	Address string
@@ -714,6 +717,10 @@ type Server struct {
 	privilegesStore       *auth.PrivilegesStore       // per-DB read/write (Phase 4) when auth enabled
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
+	processConfig         *nornicConfig.Config
+	dbConfigStateMu       sync.RWMutex
+	dbConfigActive        map[string]map[string]string
+	dbConfigPending       map[string]map[string]struct{}
 	// perDBYAMLOverrides carries the `databases:` map from nornicdb.yaml,
 	// passed through by the binary at construction time. Seeded into
 	// dbConfigStore on first boot via LoadWithYAMLDefaults; subsequent
@@ -1020,7 +1027,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// This avoids duplicate logs and provides more detailed information
 
 	// Load environment-backed global config once (used for multi-db + feature defaults).
-	globalConfig := nornicConfig.LoadFromEnv()
+	globalConfig := config.ProcessConfig
+	if globalConfig == nil {
+		globalConfig = nornicConfig.LoadFromEnv()
+	}
 
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server
@@ -1100,6 +1110,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		searchServices:     make(map[string]*search.Service),
 		executors:          make(map[string]*cypher.StorageExecutor),
 		perDBYAMLOverrides: config.PerDBYAMLOverrides,
+		processConfig:      globalConfig,
+		dbConfigActive:     make(map[string]map[string]string),
+		dbConfigPending:    make(map[string]map[string]struct{}),
 	}
 	// Foreground-first policy: while tx requests are active, background embed work yields.
 	s.db.SetEmbedQueueShouldYield(func() bool {
@@ -1679,7 +1692,15 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerDatabaseConfigStoreLoadFailedEvent())
 		} else {
 			s.dbConfigStore = dbConfigStore
-			globalConfig := nornicConfig.LoadFromEnv()
+			for _, info := range dbManager.ListDatabases() {
+				if info == nil {
+					continue
+				}
+				resolved := dbconfig.Resolve(globalConfig, dbConfigStore.GetOverrides(info.Name))
+				if resolved != nil {
+					s.dbConfigActive[info.Name] = cloneStringMap(resolved.Effective)
+				}
+			}
 			db.SetDbConfigResolver(func(dbName string) (int, float64, string) {
 				overrides := dbConfigStore.GetOverrides(dbName)
 				r := dbconfig.Resolve(globalConfig, overrides)
@@ -1704,7 +1725,12 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 				return search.ServiceOptions{
 					DatabaseID: dbName, SearchResultCacheEntries: resolved.SearchResultCacheMaxEntries,
-					SearchResultCacheTTL: resolved.SearchResultCacheTTL,
+					SearchResultCacheTTL:   resolved.SearchResultCacheTTL,
+					BM25MemoryMaxBytes:     resolved.BM25MemoryMaxBytes,
+					VectorMemoryMaxBytes:   resolved.VectorMemoryMaxBytes,
+					MetadataMemoryMaxBytes: resolved.MetadataMemoryMaxBytes,
+					BM25StorageMode:        resolved.BM25StorageMode,
+					VectorStorageMode:      resolved.VectorStorageMode,
 				}
 			})
 			// Per-DB embedder registry: resolve embed config per database for EmbedQueryForDB.

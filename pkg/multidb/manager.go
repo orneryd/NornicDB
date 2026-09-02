@@ -427,6 +427,7 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 		m.databases[name] = info
 		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
+	delete(m.limitCheckers, name)
 
 	return nil
 }
@@ -743,6 +744,7 @@ func (m *DatabaseManager) Close() error {
 
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
+	m.limitCheckers = make(map[string]*databaseLimitChecker)
 
 	// Close the underlying storage
 	return m.inner.Close()
@@ -768,6 +770,35 @@ func (m *DatabaseManager) ResolveDatabase(nameOrAlias string) (string, error) {
 	}
 
 	return "", ErrDatabaseNotFound
+}
+
+// ResolveConnectionLimitOwner resolves a Bolt database selection to the local
+// database whose connection limit owns it. Local composite constituents are
+// charged to their underlying database; remote constituents use the composite.
+func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if dot := strings.IndexByte(selection, '.'); dot > 0 && dot < len(selection)-1 {
+		compositeName, err := m.resolveDatabaseInternal(selection[:dot])
+		if err != nil {
+			return "", err
+		}
+		info := m.databases[compositeName]
+		if info == nil || info.Type != "composite" {
+			return "", ErrDatabaseNotFound
+		}
+		for _, constituent := range info.Constituents {
+			if constituent.Alias != selection[dot+1:] {
+				continue
+			}
+			if constituent.Type == "local" {
+				return m.resolveDatabaseInternal(constituent.DatabaseName)
+			}
+			return compositeName, nil
+		}
+		return "", ErrDatabaseNotFound
+	}
+	return m.resolveDatabaseInternal(selection)
 }
 
 // CreateAlias creates an alias for a database (Neo4j-compatible).

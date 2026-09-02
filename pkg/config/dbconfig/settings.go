@@ -12,7 +12,6 @@ type SettingScope string
 
 const (
 	ScopeDatabase       SettingScope = "database"
-	ScopeDatabaseIndex  SettingScope = "database-index"
 	ScopePhysicalEngine SettingScope = "physical-engine"
 )
 
@@ -104,21 +103,22 @@ var settingsRegistry = []SettingDefinition{
 	{Name: "db.nornic.embed.chunk.overlap", EnvironmentVariable: "NORNICDB_EMBED_CHUNK_OVERLAP", Type: "number", Category: "Embed worker", Scope: ScopeDatabase, RestartLevel: RestartProcess},
 	{Name: "db.nornic.mvcc.lifecycle.interval", EnvironmentVariable: "NORNICDB_MVCC_LIFECYCLE_INTERVAL", Type: "duration", Category: "MVCC lifecycle", Scope: ScopeDatabase, RestartLevel: RestartProcess},
 	{Name: "db.nornic.query_cache.max_entries", EnvironmentVariable: "NORNICDB_QUERY_CACHE_SIZE", Type: "number", Category: "Query cache", Description: "Maximum entries in this database's query cache. Correlates with Neo4j's server.memory.query_cache.per_db_cache_num_entries, but is independently configurable per database.", DefaultValue: "1000", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "disabled"},
-	{Name: "db.nornic.query_cache.ttl", EnvironmentVariable: "NORNICDB_QUERY_CACHE_TTL", Type: "duration", Category: "Query cache", DefaultValue: "5m", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchCache},
+	{Name: "db.nornic.query_cache.ttl", EnvironmentVariable: "NORNICDB_QUERY_CACHE_TTL", Type: "duration", Category: "Query cache", DefaultValue: "5m", Scope: ScopeDatabase, RestartLevel: RestartProcess},
 	{Name: "db.nornic.query_plan_cache.max_entries", Type: "number", Category: "Query cache", DefaultValue: "500", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "disabled"},
 	{Name: "db.nornic.fabric_plan_cache.max_entries", Type: "number", Category: "Query cache", DefaultValue: "500", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "disabled"},
 	{Name: "db.nornic.query_analysis_cache.max_entries", Type: "number", Category: "Query cache", DefaultValue: "1000", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "disabled"},
 	{Name: "db.nornic.search_result_cache.max_entries", Type: "number", Category: "Search", DefaultValue: "1000", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchCache, ZeroSemantics: "disabled"},
+	{Name: "db.nornic.search_result_cache.ttl", Type: "duration", Category: "Search", DefaultValue: "5m", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchCache},
 	{Name: "db.nornic.query_lookup_metadata.max_entries", Type: "number", Category: "Query cache", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "existing per-cache bounds"},
 	{Name: "db.memory.transaction.total.max", Type: "bytes", Category: "Transactions", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
+	{Name: "db.nornic.memory.index.bm25.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
+	{Name: "db.nornic.memory.index.vector.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
+	{Name: "db.nornic.memory.index.metadata.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited per index"},
+	{Name: "db.nornic.index.bm25.storage", Type: "enum", Category: "Index capacity", DefaultValue: "memory", Scope: ScopeDatabase, RestartLevel: RestartProcess, ValidValues: []string{"memory"}},
+	{Name: "db.nornic.index.vector.storage", Type: "enum", Category: "Index capacity", DefaultValue: "auto", Scope: ScopeDatabase, RestartLevel: RestartProcess, ValidValues: []string{"auto", "memory", "disk"}},
 	{Name: "db.nornic.memory.storage.mode", Type: "enum", Category: "Storage", DefaultValue: "default", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess, ValidValues: []string{"default", "low"}},
 	{Name: "db.nornic.memory.storage.node_cache.max_entries", EnvironmentVariable: "NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES", Type: "number", Category: "Storage", DefaultValue: "10000", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess},
 	{Name: "db.nornic.memory.storage.edge_type_cache.max_entries", EnvironmentVariable: "NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES", Type: "number", Category: "Storage", DefaultValue: "50", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess},
-	{Name: "db.nornic.memory.index.bm25.max", Type: "bytes", Category: "Search", DefaultValue: "0", Scope: ScopeDatabaseIndex, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
-	{Name: "db.nornic.memory.index.vector.max", Type: "bytes", Category: "Search", DefaultValue: "0", Scope: ScopeDatabaseIndex, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
-	{Name: "db.nornic.memory.index.metadata.max", Type: "bytes", Category: "Search", DefaultValue: "0", Scope: ScopeDatabaseIndex, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
-	{Name: "db.nornic.index.bm25.storage", Type: "enum", Category: "Search", DefaultValue: "memory", Scope: ScopeDatabaseIndex, RestartLevel: RestartProcess, ValidValues: []string{"memory", "disk"}},
-	{Name: "db.nornic.index.vector.storage", Type: "enum", Category: "Search", DefaultValue: "automatic", Scope: ScopeDatabaseIndex, RestartLevel: RestartProcess, ValidValues: []string{"automatic", "memory", "disk"}},
 	{Name: "db.nornic.recovery.batch.max_bytes", Type: "bytes", Category: "Recovery", DefaultValue: "0", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
 	{Name: "db.nornic.recovery.memory.max", Type: "bytes", Category: "Recovery", DefaultValue: "0", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
 }
@@ -234,11 +234,18 @@ func NormalizeSettingValue(name, raw string) (string, error) {
 		}
 		return strconv.FormatBool(parsed), nil
 	case "number":
-		parsed, err := strconv.ParseFloat(value, 64)
+		if isFloatingPointSetting(definition.Name) {
+			parsed, err := strconv.ParseFloat(value, 64)
+			if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 {
+				return "", fmt.Errorf("invalid nonnegative number %q", raw)
+			}
+			return strconv.FormatFloat(parsed, 'f', -1, 64), nil
+		}
+		parsed, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || parsed < 0 {
 			return "", fmt.Errorf("invalid nonnegative number %q", raw)
 		}
-		return value, nil
+		return strconv.FormatInt(parsed, 10), nil
 	case "duration":
 		parsed, err := time.ParseDuration(value)
 		if err != nil || parsed < 0 {
@@ -254,5 +261,14 @@ func NormalizeSettingValue(name, raw string) (string, error) {
 		return "", fmt.Errorf("invalid value for %s: got %s (allowed: %s)", name, raw, strings.Join(definition.ValidValues, ","))
 	default:
 		return value, nil
+	}
+}
+
+func isFloatingPointSetting(name string) bool {
+	switch name {
+	case "db.nornic.search.min.similarity", "db.nornic.auto.links.threshold":
+		return true
+	default:
+		return false
 	}
 }

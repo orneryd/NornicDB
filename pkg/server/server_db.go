@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -277,6 +278,12 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 
 	executor := cypher.NewStorageExecutor(storageEngine)
 	executor.SetLocalizationRenderer(s.localizer)
+	executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
+		overrides := s.dbConfigStore.GetOverrides(dbName)
+		resolved := dbconfig.Resolve(s.processConfig, overrides)
+		active, _ := s.databaseConfigRuntimeState(dbName, resolved)
+		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
+	})
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	if !s.dbManager.IsCompositeDatabase(dbName) {

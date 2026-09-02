@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -189,15 +188,13 @@ func (s *Server) handleGetDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if overrides == nil {
 		overrides = make(map[string]string)
 	}
-	global := nornicConfig.LoadFromEnv()
-	resolved := dbconfig.Resolve(global, overrides)
-	effective := make(map[string]string)
-	if resolved != nil && resolved.Effective != nil {
-		effective = resolved.Effective
-	}
+	resolved := dbconfig.Resolve(s.processConfig, overrides)
+	effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides": overrides,
-		"effective": effective,
+		"overrides":      redactDatabaseSettings(overrides),
+		"configured":     redactDatabaseSettings(overrides),
+		"effective":      redactDatabaseSettings(effective),
+		"pendingRestart": pendingRestart,
 	})
 }
 
@@ -213,13 +210,10 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		body.Overrides = make(map[string]string)
 	}
 	body.Overrides = dbconfig.CanonicalizeOverrides(body.Overrides)
-	global := nornicConfig.LoadFromEnv()
 	previousOverrides := s.dbConfigStore.GetOverrides(dbName)
-	previousResolved := dbconfig.Resolve(global, previousOverrides)
-	hasDynamicChange := false
+	previousResolved := dbconfig.Resolve(s.processConfig, previousOverrides)
 	hasSearchRebuildChange := false
 	hasSearchCacheChange := false
-	pendingRestart := false
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
@@ -231,17 +225,19 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 			return
 		}
 		body.Overrides[key] = normalized
-		definition, _ := dbconfig.LookupSetting(key)
-		if definition.HotReload != dbconfig.HotReloadNone {
-			hasDynamicChange = true
-			switch definition.HotReload {
-			case dbconfig.HotReloadSearchCache:
-				hasSearchCacheChange = true
-			case dbconfig.HotReloadSearchRebuild:
-				hasSearchRebuildChange = true
-			}
-		} else {
-			pendingRestart = true
+	}
+	nextResolved := dbconfig.Resolve(s.processConfig, body.Overrides)
+	changedDefinitions := make([]dbconfig.SettingDefinition, 0)
+	for _, definition := range dbconfig.Settings() {
+		if previousResolved.Effective[definition.Name] == nextResolved.Effective[definition.Name] {
+			continue
+		}
+		changedDefinitions = append(changedDefinitions, definition)
+		switch definition.HotReload {
+		case dbconfig.HotReloadSearchCache:
+			hasSearchCacheChange = true
+		case dbconfig.HotReloadSearchRebuild:
+			hasSearchRebuildChange = true
 		}
 	}
 	if err := s.dbConfigStore.SetOverrides(r.Context(), dbName, body.Overrides); err != nil {
@@ -255,9 +251,8 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
-	if hasDynamicChange && hasSearchCacheChange {
-		resolved := dbconfig.Resolve(global, body.Overrides)
-		s.db.SetSearchResultCachePolicy(dbName, resolved.SearchResultCacheMaxEntries, resolved.SearchResultCacheTTL)
+	if hasSearchCacheChange {
+		s.db.SetSearchResultCachePolicy(dbName, nextResolved.SearchResultCacheMaxEntries, nextResolved.SearchResultCacheTTL)
 	}
 	if hasSearchRebuildChange && !s.dbManager.IsCompositeDatabase(dbName) {
 		s.db.ResetSearchService(dbName)
@@ -273,20 +268,73 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if overrides == nil {
 		overrides = make(map[string]string)
 	}
-	effective := dbconfig.Resolve(global, overrides).Effective
-	if pendingRestart && previousResolved != nil {
-		for key := range body.Overrides {
-			definition, _ := dbconfig.LookupSetting(key)
-			if definition.RestartLevel != dbconfig.RestartNone {
-				effective[key] = previousResolved.Effective[key]
-			}
-		}
-	}
+	effective, pendingRestart := s.updateDatabaseConfigRuntimeState(dbName, previousResolved, nextResolved, changedDefinitions)
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides":        overrides,
-		"configured":       overrides,
-		"effective":        effective,
+		"overrides":        redactDatabaseSettings(overrides),
+		"configured":       redactDatabaseSettings(overrides),
+		"effective":        redactDatabaseSettings(effective),
 		"pendingRestart":   pendingRestart,
 		"rebuildTriggered": rebuildTriggered,
 	})
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func redactDatabaseSettings(values map[string]string) map[string]string {
+	redacted := cloneStringMap(values)
+	for key := range redacted {
+		definition, ok := dbconfig.LookupSetting(key)
+		if ok && definition.Redacted {
+			redacted[key] = "<REDACTED>"
+		}
+	}
+	return redacted
+}
+
+func (s *Server) databaseConfigRuntimeState(dbName string, resolved *dbconfig.ResolvedDbConfig) (map[string]string, bool) {
+	s.dbConfigStateMu.Lock()
+	defer s.dbConfigStateMu.Unlock()
+	active, exists := s.dbConfigActive[dbName]
+	if !exists {
+		active = cloneStringMap(resolved.Effective)
+		s.dbConfigActive[dbName] = active
+	}
+	return cloneStringMap(active), len(s.dbConfigPending[dbName]) > 0
+}
+
+func (s *Server) updateDatabaseConfigRuntimeState(dbName string, previous, next *dbconfig.ResolvedDbConfig, changed []dbconfig.SettingDefinition) (map[string]string, bool) {
+	s.dbConfigStateMu.Lock()
+	defer s.dbConfigStateMu.Unlock()
+	active, exists := s.dbConfigActive[dbName]
+	if !exists {
+		active = cloneStringMap(previous.Effective)
+		s.dbConfigActive[dbName] = active
+	}
+	pending := s.dbConfigPending[dbName]
+	if pending == nil {
+		pending = make(map[string]struct{})
+		s.dbConfigPending[dbName] = pending
+	}
+	for _, definition := range changed {
+		if definition.RestartLevel == dbconfig.RestartNone {
+			active[definition.Name] = next.Effective[definition.Name]
+			delete(pending, definition.Name)
+			continue
+		}
+		if active[definition.Name] == next.Effective[definition.Name] {
+			delete(pending, definition.Name)
+		} else {
+			pending[definition.Name] = struct{}{}
+		}
+	}
+	if len(pending) == 0 {
+		delete(s.dbConfigPending, dbName)
+	}
+	return cloneStringMap(active), len(pending) > 0
 }

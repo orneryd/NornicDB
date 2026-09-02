@@ -37,12 +37,20 @@ func TestSettingDefinitionsActivationAndScope(t *testing.T) {
 	require.Equal(t, RestartProcess, physical.RestartLevel)
 	require.False(t, IsAllowedKey(physical.Name))
 
-	indexBudget, ok := LookupSetting("db.nornic.memory.index.vector.max")
-	require.True(t, ok)
-	require.Equal(t, ScopeDatabaseIndex, indexBudget.Scope)
-	require.False(t, indexBudget.Dynamic)
-	require.Equal(t, RestartProcess, indexBudget.RestartLevel)
-	require.True(t, IsAllowedKey(indexBudget.Name))
+	for _, name := range []string{
+		"db.nornic.memory.index.bm25.max",
+		"db.nornic.memory.index.vector.max",
+		"db.nornic.memory.index.metadata.max",
+		"db.nornic.index.bm25.storage",
+		"db.nornic.index.vector.storage",
+	} {
+		definition, found := LookupSetting(name)
+		require.True(t, found, name)
+		require.True(t, IsAllowedKey(name), name)
+		require.Equal(t, ScopeDatabase, definition.Scope, name)
+		require.False(t, definition.Dynamic, name)
+		require.Equal(t, RestartProcess, definition.RestartLevel, name)
+	}
 
 	queryCache, ok := LookupSetting("db.nornic.query_cache.max_entries")
 	require.True(t, ok)
@@ -66,7 +74,7 @@ func TestNormalizeSettingValue(t *testing.T) {
 		name string
 		want string
 	}{
-		"binary size": {"db.nornic.memory.index.bm25.max", "2097152"},
+		"binary size": {"db.memory.transaction.total.max", "2097152"},
 		"enum":        {"db.nornic.memory.storage.mode", "low"},
 		"boolean":     {"NORNICDB_SEARCH_VECTOR_ENABLED", "true"},
 	}
@@ -84,15 +92,48 @@ func TestNormalizeSettingValue(t *testing.T) {
 
 	_, err := NormalizeSettingValue("db.nornic.memory.storage.mode", "tiny")
 	require.Error(t, err)
+
+	for _, value := range []string{"1.5", "NaN", "+Inf"} {
+		_, err = NormalizeSettingValue("db.nornic.embedding.dimensions", value)
+		require.Error(t, err, value)
+	}
+	for _, value := range []string{"NaN", "+Inf"} {
+		_, err = NormalizeSettingValue("db.nornic.search.min.similarity", value)
+		require.Error(t, err, value)
+	}
 }
 
 func TestResolveSearchResultCachePolicy(t *testing.T) {
 	resolved := Resolve(config.LoadDefaults(), map[string]string{
 		"db.nornic.search_result_cache.max_entries": "0",
-		"db.nornic.query_cache.ttl":                 "2m",
+		"db.nornic.search_result_cache.ttl":         "2m",
 	})
 	require.Equal(t, 0, resolved.SearchResultCacheMaxEntries)
 	require.Equal(t, 2*time.Minute, resolved.SearchResultCacheTTL)
+}
+
+func TestResolveIndexCapacityPolicy(t *testing.T) {
+	resolved := Resolve(config.LoadDefaults(), map[string]string{
+		"db.nornic.memory.index.bm25.max":     "1m",
+		"db.nornic.memory.index.vector.max":   "2m",
+		"db.nornic.memory.index.metadata.max": "3m",
+		"db.nornic.index.bm25.storage":        "memory",
+		"db.nornic.index.vector.storage":      "disk",
+	})
+
+	require.Equal(t, int64(1<<20), resolved.BM25MemoryMaxBytes)
+	require.Equal(t, int64(2<<20), resolved.VectorMemoryMaxBytes)
+	require.Equal(t, int64(3<<20), resolved.MetadataMemoryMaxBytes)
+	require.Equal(t, "memory", resolved.BM25StorageMode)
+	require.Equal(t, "disk", resolved.VectorStorageMode)
+}
+
+func TestQueryCacheTTLRequiresProcessRestart(t *testing.T) {
+	definition, ok := LookupSetting("db.nornic.query_cache.ttl")
+	require.True(t, ok)
+	require.False(t, definition.Dynamic)
+	require.Equal(t, RestartProcess, definition.RestartLevel)
+	require.Equal(t, HotReloadNone, definition.HotReload)
 }
 
 func TestEveryEnvironmentAlternativeHasExplicitCanonicalSetting(t *testing.T) {

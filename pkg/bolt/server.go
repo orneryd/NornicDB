@@ -233,6 +233,7 @@ type Server struct {
 	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	// Resolver for per-DB read/write (Phase 4). When set, used for mutation write check.
 	resolvedAccessResolver    func(roles []string, dbName string) auth.ResolvedAccess
+	databaseConnectionResolve func(databaseName string) (string, error)
 	databaseConnectionAdmit   func(databaseName string) error
 	databaseConnectionRelease func(databaseName string)
 
@@ -911,8 +912,9 @@ func (s *Server) SetResolvedAccessResolver(resolver func(roles []string, dbName 
 	s.resolvedAccessResolver = resolver
 }
 
-// SetDatabaseConnectionAdmission configures per-database connection admission.
-func (s *Server) SetDatabaseConnectionAdmission(admit func(string) error, release func(string)) {
+// SetDatabaseConnectionAdmission configures canonical per-database connection admission.
+func (s *Server) SetDatabaseConnectionAdmission(resolve func(string) (string, error), admit func(string) error, release func(string)) {
+	s.databaseConnectionResolve = resolve
 	s.databaseConnectionAdmit = admit
 	s.databaseConnectionRelease = release
 }
@@ -2053,13 +2055,28 @@ func (s *Session) handleHello(data []byte) error {
 }
 
 func (s *Session) bindDatabaseConnection(databaseName string) error {
-	if s == nil || s.server == nil || s.admittedDatabase != "" || databaseName == "" || s.server.databaseConnectionAdmit == nil {
+	if s == nil || s.server == nil || databaseName == "" || s.server.databaseConnectionAdmit == nil {
 		return nil
 	}
-	if err := s.server.databaseConnectionAdmit(databaseName); err != nil {
+	owner := databaseName
+	if s.server.databaseConnectionResolve != nil {
+		resolved, err := s.server.databaseConnectionResolve(databaseName)
+		if err != nil {
+			return err
+		}
+		owner = resolved
+	}
+	if owner == s.admittedDatabase {
+		return nil
+	}
+	if err := s.server.databaseConnectionAdmit(owner); err != nil {
 		return err
 	}
-	s.admittedDatabase = databaseName
+	previous := s.admittedDatabase
+	s.admittedDatabase = owner
+	if previous != "" && s.server.databaseConnectionRelease != nil {
+		s.server.databaseConnectionRelease(previous)
+	}
 	return nil
 }
 

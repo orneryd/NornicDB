@@ -192,9 +192,17 @@ Instance-level configuration (env, config file) is the **default** for every dat
 
 Canonical names are the database settings contract and are persisted in
 `_DbConfig`. The table below lists settings that also have an environment
-alternative. Settings without one, including index budgets and storage policy,
-remain available under their canonical names from
-`GET /admin/databases/config/keys`.
+alternative. Other implemented settings remain available under their canonical
+names from `GET /admin/databases/config/keys`.
+
+The restart-bound index controls
+`db.nornic.memory.index.{bm25,vector,metadata}.max` use byte values and `0`
+means unlimited. Limits are independent and reject index mutations or startup
+builds before they exceed the configured accounted resident-byte ceiling. Metadata is checked
+separately for the BM25 and vector implementations. BM25 currently supports
+`db.nornic.index.bm25.storage=memory`. Vector storage supports `auto`, `memory`,
+and `disk`; explicit `disk` requires search-index persistence and a configured
+index path, while `auto` preserves the existing file-backed build behavior.
 
 | Canonical database setting                   | Supported environment alternative           |
 | -------------------------------------------- | ------------------------------------------- |
@@ -268,7 +276,7 @@ The key metadata endpoint reports the activation contract for every setting:
 - **Process restart:** every other registered setting, including embedding
   enablement/cache/property selection, ANN/HNSW/IVF/k-means tuning, workers,
   auto-link/TLP, MVCC lifecycle, query/plan/analysis caches, transaction memory,
-  Badger mode/caches, index budgets/storage, and recovery budgets. A PUT
+  Badger mode/caches and recovery budgets. A PUT
   persists the configured value and returns `pendingRestart: true`; it does not
   change the running value.
 

@@ -33,18 +33,19 @@ func openPersistentDBConfigTestServer(t *testing.T, dataDir string) (*Server, *a
 	serverConfig := DefaultConfig()
 	serverConfig.Port = 0
 	serverConfig.EmbeddingEnabled = false
+	serverConfig.ProcessConfig = dbConfig
 	server, err := New(database, authenticator, serverConfig)
 	require.NoError(t, err)
 	return server, authenticator, database
 }
 
-func TestAdminPutStaticCapacityReportsPendingRestart(t *testing.T) {
+func TestAdminPutRestartSettingReportsPendingRestart(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
 
 	response := makeRequest(t, server, http.MethodPut, "/admin/databases/nornic/config",
 		map[string]any{"overrides": map[string]string{
-			"db.nornic.memory.index.vector.max": "2m",
+			"db.nornic.query_plan_cache.max_entries": "222",
 		}}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 
@@ -52,12 +53,19 @@ func TestAdminPutStaticCapacityReportsPendingRestart(t *testing.T) {
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 	require.Equal(t, true, body["pendingRestart"])
 	require.Equal(t, false, body["rebuildTriggered"])
-	require.Equal(t, "2097152", body["configured"].(map[string]any)["db.nornic.memory.index.vector.max"])
-	require.Equal(t, "0", body["effective"].(map[string]any)["db.nornic.memory.index.vector.max"])
+	require.Equal(t, "222", body["configured"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
+	require.Equal(t, "500", body["effective"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
+
+	response = makeRequest(t, server, http.MethodGet, "/admin/databases/nornic/config", nil, "Bearer "+token)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, true, body["pendingRestart"])
+	require.Equal(t, "222", body["configured"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
+	require.Equal(t, "500", body["effective"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
 
 	response = makeRequest(t, server, http.MethodPut, "/admin/databases/nornic/config",
 		map[string]any{"overrides": map[string]string{
-			"db.nornic.memory.index.vector.max": "-1",
+			"db.nornic.query_plan_cache.max_entries": "-1",
 		}}, "Bearer "+token)
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
@@ -72,7 +80,7 @@ func TestAdminPutDynamicSearchCacheDoesNotRebuild(t *testing.T) {
 	response := makeRequest(t, server, http.MethodPut, "/admin/databases/nornic/config",
 		map[string]any{"overrides": map[string]string{
 			"db.nornic.search_result_cache.max_entries": "12",
-			"db.nornic.query_cache.ttl":                 "2m",
+			"db.nornic.search_result_cache.ttl":         "2m",
 		}}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 
@@ -87,6 +95,59 @@ func TestAdminPutDynamicSearchCacheDoesNotRebuild(t *testing.T) {
 	reloadedService, err := server.db.GetOrCreateSearchService("nornic", nil)
 	require.NoError(t, err)
 	require.Same(t, service, reloadedService, "cache policy update must not rebuild the search service")
+
+	response = makeRequest(t, server, http.MethodPut, "/admin/databases/nornic/config",
+		map[string]any{"overrides": map[string]string{}}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	maxEntries, ttl = service.SearchResultCachePolicy()
+	require.Equal(t, 1000, maxEntries)
+	require.Equal(t, 5*time.Minute, ttl)
+}
+
+func TestAdminDatabaseConfigRedactsSecrets(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := getAuthToken(t, authenticator, "admin")
+	const secret = "secret-api-key"
+
+	response := makeRequest(t, server, http.MethodPut, "/admin/databases/nornic/config",
+		map[string]any{"overrides": map[string]string{
+			"db.nornic.embedding.api.key": secret,
+		}}, "Bearer "+token)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), secret)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, "<REDACTED>", body["configured"].(map[string]any)["db.nornic.embedding.api.key"])
+
+	response = makeRequest(t, server, http.MethodGet, "/admin/databases/nornic/config", nil, "Bearer "+token)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), secret)
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, "<REDACTED>", body["configured"].(map[string]any)["db.nornic.embedding.api.key"])
+}
+
+func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
+	dbConfig := nornicdb.DefaultConfig()
+	dbConfig.Memory.DecayEnabled = false
+	dbConfig.Memory.AutoLinksEnabled = false
+	dbConfig.Memory.QueryCacheTTL = 17 * time.Minute
+	database, err := nornicdb.Open("", dbConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: false}, storage.NewMemoryEngine())
+	require.NoError(t, err)
+	serverConfig := DefaultConfig()
+	serverConfig.ProcessConfig = dbConfig
+	server, err := New(database, authenticator, serverConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = server.Stop(context.Background()) })
+
+	response := makeRequest(t, server, http.MethodGet, "/admin/databases/nornic/config", nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, "17m0s", body["effective"].(map[string]any)["db.nornic.query_cache.ttl"])
 }
 
 func TestAdminPutRestartSettingPersistsAcrossDatabaseReopen(t *testing.T) {
@@ -96,14 +157,14 @@ func TestAdminPutRestartSettingPersistsAcrossDatabaseReopen(t *testing.T) {
 
 	response := makeRequest(t, serverBefore, http.MethodPut, "/admin/databases/nornic/config",
 		map[string]any{"overrides": map[string]string{
-			"db.nornic.memory.index.vector.max": "2m",
+			"db.nornic.query_plan_cache.max_entries": "222",
 		}}, "Bearer "+tokenBefore)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var putBody map[string]any
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&putBody))
 	require.Equal(t, true, putBody["pendingRestart"])
-	require.Equal(t, "2097152", putBody["configured"].(map[string]any)["db.nornic.memory.index.vector.max"])
-	require.Equal(t, "0", putBody["effective"].(map[string]any)["db.nornic.memory.index.vector.max"])
+	require.Equal(t, "222", putBody["configured"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
+	require.Equal(t, "500", putBody["effective"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
 
 	require.NoError(t, serverBefore.Stop(context.Background()))
 	require.NoError(t, databaseBefore.Close())
@@ -118,6 +179,6 @@ func TestAdminPutRestartSettingPersistsAcrossDatabaseReopen(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var getBody map[string]any
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&getBody))
-	require.Equal(t, "2097152", getBody["overrides"].(map[string]any)["db.nornic.memory.index.vector.max"])
-	require.Equal(t, "2097152", getBody["effective"].(map[string]any)["db.nornic.memory.index.vector.max"])
+	require.Equal(t, "222", getBody["overrides"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
+	require.Equal(t, "222", getBody["effective"].(map[string]any)["db.nornic.query_plan_cache.max_entries"])
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,4 +89,18 @@ func TestResolveDurabilityOptions(t *testing.T) {
 			require.Equal(t, cfg.Database.AsyncMaxEdgeCacheSize, asyncConfig.MaxEdgeCacheSize)
 		})
 	}
+}
+
+func TestOpenStrictDurabilityDisablesAsyncWriteBehind(t *testing.T) {
+	cfg := config.LoadDefaults()
+	cfg.Database.StrictDurability = true
+	cfg.Database.AsyncWritesEnabled = true
+	cfg.Database.WALAutoCompactionEnabled = false
+
+	db, err := Open(t.TempDir(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	_, isAsync := db.baseStorage.(*storage.AsyncEngine)
+	require.False(t, isAsync, "strict durability must not acknowledge writes before WAL persistence")
 }

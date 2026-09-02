@@ -52,3 +52,12 @@ func TestWriteSnapshotRequiresStreamingEngine(t *testing.T) {
 	err := WriteSnapshot(context.Background(), &materializingOnlyEngine{Engine: NewMemoryEngine()}, &output, SnapshotOptions{})
 	require.ErrorIs(t, err, ErrStreamingSnapshotUnsupported)
 }
+
+func TestWriteSnapshotRejectsUnreadableRecordLimit(t *testing.T) {
+	var output bytes.Buffer
+	err := WriteSnapshot(context.Background(), NewMemoryEngine(), &output, SnapshotOptions{
+		MaxRecordBytes: defaultSnapshotRecordSize + 1,
+	})
+	require.ErrorContains(t, err, "snapshot max record bytes")
+	require.Empty(t, output.Bytes())
+}

@@ -1,6 +1,8 @@
 package search
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -29,6 +31,115 @@ func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
 	})
 	require.Equal(t, 12, configured.resultCache.maxSize)
 	require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
+}
+
+func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+		DatabaseID:             "capacity",
+		BM25MemoryMaxBytes:     1 << 20,
+		VectorMemoryMaxBytes:   2 << 20,
+		MetadataMemoryMaxBytes: 3 << 20,
+		BM25StorageMode:        "memory",
+		VectorStorageMode:      "disk",
+	})
+
+	bm25Max, vectorMax, metadataMax, bm25Storage, vectorStorage := service.IndexCapacityPolicy()
+	require.Equal(t, int64(1<<20), bm25Max)
+	require.Equal(t, int64(2<<20), vectorMax)
+	require.Equal(t, int64(3<<20), metadataMax)
+	require.Equal(t, "memory", bm25Storage)
+	require.Equal(t, "disk", vectorStorage)
+}
+
+func TestVectorStorageModeControlsFileStore(t *testing.T) {
+	for _, test := range []struct {
+		mode          string
+		wantFileStore bool
+	}{
+		{mode: "memory", wantFileStore: false},
+		{mode: "disk", wantFileStore: true},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: test.mode})
+			service.SetPersistenceEnabled(true)
+			service.SetVectorIndexPath(t.TempDir() + "/vectors")
+
+			service.indexMu.Lock()
+			service.ensureBuildVectorFileStore()
+			service.indexMu.Unlock()
+
+			require.Equal(t, test.wantFileStore, service.vectorFileStore != nil)
+			require.NoError(t, service.Close())
+		})
+	}
+}
+
+func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name    string
+		options ServiceOptions
+		node    *storage.Node
+	}{
+		{
+			name:    "bm25 payload",
+			options: ServiceOptions{BM25MemoryMaxBytes: 4},
+			node:    &storage.Node{ID: "document", Properties: map[string]any{"text": "larger than four bytes"}},
+		},
+		{
+			name:    "vector payload",
+			options: ServiceOptions{VectorMemoryMaxBytes: 16, VectorStorageMode: "memory"},
+			node:    &storage.Node{ID: "vector", ChunkEmbeddings: [][]float32{{1, 2, 3}}},
+		},
+		{
+			name:    "index metadata",
+			options: ServiceOptions{MetadataMemoryMaxBytes: 1},
+			node:    &storage.Node{ID: "metadata", Labels: []string{"Document"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &test.options)
+			err := service.IndexNode(test.node)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrIndexMemoryBudgetExceeded))
+			require.Equal(t, 0, service.fulltextIndex.Count())
+			require.Equal(t, 0, service.vectorIndex.Count())
+		})
+	}
+}
+
+func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	_, err := engine.CreateNode(&storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
+	require.NoError(t, err)
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", &ServiceOptions{BM25MemoryMaxBytes: 4})
+
+	err = service.BuildIndexes(context.Background())
+	require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
+}
+
+func TestDiskVectorStorageRequiresPersistencePath(t *testing.T) {
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+
+	err := service.BuildIndexes(context.Background())
+	require.ErrorContains(t, err, "vector disk storage requires")
+
+	disabled := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+	disabled.SetIndexFlags(true, false)
+	require.NoError(t, disabled.BuildIndexes(context.Background()))
+}
+
+func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorMemoryMaxBytes: 8})
+
+	err := service.IndexEdge(&storage.Edge{
+		ID:         "relationship",
+		Type:       "RELATED_TO",
+		Properties: map[string]any{"embedding": []float32{1, 2, 3}},
+	})
+	require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
+	require.Empty(t, service.edgePropVector)
 }
 
 func TestSearchResultCacheResizeAndTTL(t *testing.T) {

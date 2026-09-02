@@ -288,6 +288,15 @@ func isIdentCharByte(b byte) bool {
 // This allows external systems (like the embed queue) to be notified so embeddings can be (re)generated.
 type NodeMutatedCallback func(nodeID string)
 
+// SettingsSnapshot contains configured and active values for SHOW SETTINGS.
+type SettingsSnapshot struct {
+	Configured map[string]string
+	Active     map[string]string
+}
+
+// SettingsResolver returns the current database-scoped settings snapshot.
+type SettingsResolver func() SettingsSnapshot
+
 type StorageExecutor struct {
 	parser    *Parser
 	storage   storage.Engine
@@ -330,6 +339,7 @@ type StorageExecutor struct {
 
 	// localizationRenderer renders descriptor-backed metadata using request context.
 	localizationRenderer ProcedureMetadataRenderer
+	settingsResolver     SettingsResolver
 
 	// onNodeMutated is called when a node is created or mutated (CREATE, MERGE, SET, REMOVE).
 	// This allows the embed queue to be notified so embeddings are (re)generated.
@@ -489,6 +499,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		searchService:                  e.searchService,
 		inferenceManager:               e.inferenceManager,
 		localizationRenderer:           e.localizationRenderer,
+		settingsResolver:               e.settingsResolver,
 		onNodeMutated:                  e.onNodeMutated,
 		inlineEmbeddingTextOptions:     e.inlineEmbeddingTextOptions,
 		inlineEmbeddingChunkSize:       e.inlineEmbeddingChunkSize,
@@ -651,6 +662,11 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 // SetLocalizationRenderer sets the immutable renderer used for procedure metadata.
 func (e *StorageExecutor) SetLocalizationRenderer(renderer ProcedureMetadataRenderer) {
 	e.localizationRenderer = renderer
+}
+
+// SetSettingsResolver configures database-scoped values for SHOW SETTINGS.
+func (e *StorageExecutor) SetSettingsResolver(resolver SettingsResolver) {
+	e.settingsResolver = resolver
 }
 
 // GetLocalizationRenderer returns the renderer inherited by scoped executors.

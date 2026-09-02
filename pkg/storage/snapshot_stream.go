@@ -50,8 +50,8 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	if maxRecordBytes == 0 {
 		maxRecordBytes = defaultSnapshotRecordSize
 	}
-	if maxRecordBytes < 0 {
-		return fmt.Errorf("snapshot max record bytes must be nonnegative")
+	if maxRecordBytes < 0 || maxRecordBytes > defaultSnapshotRecordSize {
+		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", defaultSnapshotRecordSize)
 	}
 
 	buffered := bufio.NewWriter(writer)
@@ -131,7 +131,7 @@ func SaveStreamingSnapshot(ctx context.Context, engine Engine, path string, opti
 	}
 	removeTemp = false
 	if err := syncDir(dir); err != nil {
-		return nil
+		return fmt.Errorf("wal: failed to sync snapshot directory: %w", err)
 	}
 	return nil
 }

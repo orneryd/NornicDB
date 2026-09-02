@@ -857,7 +857,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 		// Optionally wrap with AsyncEngine for faster writes (eventual consistency)
 		var baseStorage storage.Engine
-		if config.Database.AsyncWritesEnabled {
+		if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability {
 			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
 			if config.Database.AsyncMaxNodeCacheSize > 0 || config.Database.AsyncMaxEdgeCacheSize > 0 {
 				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v, node cache: %d, edge cache: %d)\n",

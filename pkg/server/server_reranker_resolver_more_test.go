@@ -27,6 +27,8 @@ func TestNew_PerDatabaseRerankerResolverBranches(t *testing.T) {
 		SearchRerankAPIURL:   "",
 		SearchRerankModel:    "",
 	}
+	cfg.ProcessConfig = nornicConfig.LoadDefaults()
+	cfg.ProcessConfig.Features = *cfg.Features
 
 	server, err := New(db, nil, cfg)
 	require.NoError(t, err)
