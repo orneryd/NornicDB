@@ -33,6 +33,34 @@ func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
 	require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
 }
 
+func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
+	var nilService *Service
+	nilService.SetSearchResultCachePolicy(10, time.Minute)
+	maxEntries, ttl := nilService.SearchResultCachePolicy()
+	require.Zero(t, maxEntries)
+	require.Zero(t, ttl)
+
+	service := NewServiceWithDimensionsAndBM25Engine(storage.NewMemoryEngine(), 3, "v2")
+	service.resultCache.Put("first", &SearchResponse{Query: "first"})
+	service.resultCache.Put("second", &SearchResponse{Query: "second"})
+
+	service.SetSearchResultCachePolicy(1, 30*time.Second)
+	maxEntries, ttl = service.SearchResultCachePolicy()
+	require.Equal(t, 1, maxEntries)
+	require.Equal(t, 30*time.Second, ttl)
+	service.resultCache.mu.Lock()
+	require.Len(t, service.resultCache.entries, 1)
+	service.resultCache.mu.Unlock()
+
+	service.SetSearchResultCachePolicy(0, time.Minute)
+	maxEntries, ttl = service.SearchResultCachePolicy()
+	require.Zero(t, maxEntries)
+	require.Equal(t, time.Minute, ttl)
+	service.resultCache.mu.Lock()
+	require.Empty(t, service.resultCache.entries)
+	service.resultCache.mu.Unlock()
+}
+
 func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
 	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
 		DatabaseID:             "capacity",
@@ -142,6 +170,50 @@ func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
 	require.Empty(t, service.edgePropVector)
 }
 
+func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+		BM25StorageMode:        "memory",
+		VectorStorageMode:      "memory",
+		VectorMemoryMaxBytes:   1 << 20,
+		MetadataMemoryMaxBytes: 1 << 20,
+	})
+	service.SetIndexFlags(false, true)
+
+	node := &storage.Node{
+		ID:              "node",
+		NamedEmbeddings: map[string][]float32{"default": {1, 2, 3}},
+	}
+	require.NoError(t, service.IndexNode(node))
+	require.Equal(t, int64(24), service.vectorResidentBytes)
+	require.Equal(t, int64(54), service.vectorMetadataBytes)
+	require.Contains(t, service.indexCapacityByNode, "node")
+
+	require.NoError(t, service.RemoveNode(node.ID))
+	require.Zero(t, service.vectorResidentBytes)
+	require.Zero(t, service.vectorMetadataBytes)
+	require.NotContains(t, service.indexCapacityByNode, "node")
+	require.NoError(t, service.RemoveNode(node.ID), "repeated removal must remain idempotent")
+
+	edge := &storage.Edge{
+		ID:         "edge",
+		Type:       "RELATED",
+		Properties: map[string]any{"embedding": []float32{1, 2, 3}},
+	}
+	require.NoError(t, service.IndexEdge(edge))
+	require.Equal(t, int64(12), service.vectorResidentBytes)
+	require.Equal(t, int64(52), service.vectorMetadataBytes)
+	require.Contains(t, service.indexCapacityByEdge, "edge")
+	require.True(t, service.HasRelationshipVectorEntries("RELATED", "embedding"))
+
+	require.NoError(t, service.RemoveEdge(edge.ID))
+	require.Zero(t, service.vectorResidentBytes)
+	require.Zero(t, service.vectorMetadataBytes)
+	require.NotContains(t, service.indexCapacityByEdge, "edge")
+	require.False(t, service.HasRelationshipVectorEntries("RELATED", "embedding"))
+	require.NoError(t, service.RemoveEdge(edge.ID), "repeated removal must remain idempotent")
+	require.NoError(t, (*Service)(nil).RemoveEdge(edge.ID))
+}
+
 func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	cache := newSearchResultCache(3, time.Hour)
 	cache.Put("a", &SearchResponse{Query: "a"})
@@ -166,4 +238,22 @@ func TestSearchResultCacheResizeAndTTL(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	cache.SetTTL(time.Millisecond)
 	require.Nil(t, cache.Get("old"))
+}
+
+func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
+	require.Nil(t, collapseCandidatesByNodeID(nil))
+
+	collapsed := collapseCandidatesByNodeID([]SearchCandidate{
+		{ID: "node-a-chunk-0", Score: 0.4},
+		{ID: "node-b-prop-embedding", Score: 0.8},
+		{ID: "node-a-named-summary", Score: 0.9},
+		{ID: "node-c", Score: 0.6},
+		{ID: "node-b-chunk-2", Score: 0.7},
+	})
+
+	require.Equal(t, []SearchCandidate{
+		{ID: "node-a", Score: 0.9},
+		{ID: "node-b", Score: 0.8},
+		{ID: "node-c", Score: 0.6},
+	}, collapsed)
 }

@@ -7,6 +7,7 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,6 +86,44 @@ func TestSaveSnapshotSyncsDirectory(t *testing.T) {
 	tmpPath := snapshotPath + ".tmp"
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 		t.Error("Temp file should be cleaned up after save")
+	}
+}
+
+func TestSaveSnapshotPropagatesDirectorySyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	snapshotPath := filepath.Join(dir, "snapshot.json")
+	snapshot := &Snapshot{
+		Sequence: 42,
+		Nodes:    []*Node{{ID: "n1", Labels: []string{"Test"}}},
+		Edges:    []*Edge{},
+		Version:  "1.0",
+	}
+	wantErr := errors.New("forced directory sync failure")
+	syncCalls := 0
+
+	err := saveSnapshot(snapshot, snapshotPath, func(gotDir string) error {
+		syncCalls++
+		if gotDir != dir {
+			t.Fatalf("sync directory = %q, want %q", gotDir, dir)
+		}
+		return wantErr
+	})
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("SaveSnapshot error = %v, want wrapped %v", err, wantErr)
+	}
+	if syncCalls != 1 {
+		t.Fatalf("sync calls = %d, want 1", syncCalls)
+	}
+	if _, statErr := os.Stat(snapshotPath + ".tmp"); !os.IsNotExist(statErr) {
+		t.Fatalf("temporary snapshot still exists: %v", statErr)
+	}
+	loaded, loadErr := LoadSnapshot(snapshotPath)
+	if loadErr != nil {
+		t.Fatalf("renamed snapshot must remain readable after sync failure: %v", loadErr)
+	}
+	if loaded.Sequence != snapshot.Sequence || loaded.Version != snapshot.Version {
+		t.Fatalf("loaded snapshot = sequence %d version %q, want sequence %d version %q", loaded.Sequence, loaded.Version, snapshot.Sequence, snapshot.Version)
 	}
 }
 

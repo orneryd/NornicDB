@@ -73,6 +73,24 @@ func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
 	require.Equal(t, strategyModeBruteCPU, svc.currentPipelineStrategy())
 }
 
+func TestSwitchBruteStrategyFromGPUToCPUWithoutHardware(t *testing.T) {
+	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc.vectorPipeline = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(nil), &IdentityExactScorer{})
+	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())
+
+	require.False(t, svc.switchBruteStrategy(strategyModeBruteGPU), "switching to the active strategy must be a no-op")
+	require.True(t, svc.switchBruteStrategy(strategyModeBruteCPU))
+	require.Equal(t, strategyModeBruteCPU, svc.currentPipelineStrategy())
+	require.Nil(t, svc.hnswIndex)
+
+	svc.pipelineMu.RLock()
+	pipeline := svc.vectorPipeline
+	svc.pipelineMu.RUnlock()
+	require.IsType(t, &BruteForceCandidateGen{}, pipeline.candidateGen)
+	require.IsType(t, &CPUExactScorer{}, pipeline.exactScorer)
+	require.False(t, svc.switchBruteStrategy(strategyModeBruteGPU), "CPU-to-GPU must fail cleanly without a synchronized GPU index")
+}
+
 func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)

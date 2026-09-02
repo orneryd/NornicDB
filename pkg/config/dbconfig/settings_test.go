@@ -60,6 +60,12 @@ func TestSettingDefinitionsActivationAndScope(t *testing.T) {
 	require.Equal(t, "NORNICDB_QUERY_CACHE_SIZE", queryCache.EnvironmentVariable)
 }
 
+func TestKeyDescriptionUsesSettingRegistry(t *testing.T) {
+	description := KeyDescription("db.nornic.query_cache.ttl")
+	require.Contains(t, description, "milliseconds")
+	require.Empty(t, KeyDescription("db.nornic.unknown"))
+}
+
 func TestSettingDefinitionsDynamicMatchesRestartLevel(t *testing.T) {
 	for _, definition := range Settings() {
 		require.Equalf(t, definition.RestartLevel == RestartNone, definition.Dynamic,
