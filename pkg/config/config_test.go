@@ -1466,6 +1466,25 @@ func TestLoadFromFile_MissingFileReturnsDefaults(t *testing.T) {
 	require.Equal(t, "nornic", cfg.Database.DefaultDatabase)
 }
 
+func TestLoadFromFile_PerDatabaseOverridesAcceptBothKeyForms(t *testing.T) {
+	clearEnvVars(t)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+databases:
+  analytics:
+    db.nornic.search.bm25.enabled: "false"
+    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+`), 0o600))
+
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"db.nornic.search.bm25.enabled":  "false",
+		"NORNICDB_SEARCH_VECTOR_WARMING": "lazy",
+	}, cfg.PerDBOverrides["analytics"])
+}
+
 func TestLoadFromFile_RetentionAndSubjectSelectorConfig(t *testing.T) {
 	clearEnvVars(t)
 	path := filepath.Join(t.TempDir(), "retention.yaml")

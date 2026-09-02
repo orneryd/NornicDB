@@ -212,6 +212,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if body.Overrides == nil {
 		body.Overrides = make(map[string]string)
 	}
+	body.Overrides = dbconfig.CanonicalizeOverrides(body.Overrides)
 	global := nornicConfig.LoadFromEnv()
 	previousOverrides := s.dbConfigStore.GetOverrides(dbName)
 	previousResolved := dbconfig.Resolve(global, previousOverrides)
@@ -231,12 +232,12 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		}
 		body.Overrides[key] = normalized
 		definition, _ := dbconfig.LookupSetting(key)
-		if definition.Dynamic {
+		if definition.HotReload != dbconfig.HotReloadNone {
 			hasDynamicChange = true
-			switch key {
-			case "db.nornic.search_result_cache.max_entries", "db.nornic.query_cache.ttl":
+			switch definition.HotReload {
+			case dbconfig.HotReloadSearchCache:
 				hasSearchCacheChange = true
-			default:
+			case dbconfig.HotReloadSearchRebuild:
 				hasSearchRebuildChange = true
 			}
 		} else {
@@ -276,7 +277,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if pendingRestart && previousResolved != nil {
 		for key := range body.Overrides {
 			definition, _ := dbconfig.LookupSetting(key)
-			if !definition.Dynamic {
+			if definition.RestartLevel != dbconfig.RestartNone {
 				effective[key] = previousResolved.Effective[key]
 			}
 		}

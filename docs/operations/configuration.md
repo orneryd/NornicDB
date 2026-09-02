@@ -181,12 +181,91 @@ Instance-level configuration (env, config file) is the **default** for every dat
 - **Precedence:** For a given database, effective config = global defaults (env + config file) **overlaid by** per-database overrides. Any key not set in overrides uses the global value.
 - **Storage:** Overrides are stored in the **system database** (same pattern as RBAC allowlist/privileges). They are loaded at startup and on every `PUT` so all nodes see the same view.
 - **Management:**
-  - **Admin API:** `GET /admin/databases/{dbName}/config` returns `overrides` and `effective`; `PUT /admin/databases/{dbName}/config` with body `{ "overrides": { "NORNICDB_EMBEDDING_MODEL": "bge-m3", ... } }` saves overrides. `GET /admin/databases/config/keys` returns the list of allowed keys and their types/categories. All require admin authentication.
+  - **Admin API:** `GET /admin/databases/{dbName}/config` returns canonical dotted names in `overrides` and `effective`; `PUT /admin/databases/{dbName}/config` with body `{ "overrides": { "db.nornic.embedding.model": "bge-m3", ... } }` saves overrides. `GET /admin/databases/config/keys` returns each canonical key, its supported `environmentVariable` alternative, and type/category metadata. All require admin authentication.
   - **UI:** On the **Databases** page, users with the admin role see a settings (cog) button on each database card. Clicking it opens a configuration modal where you can set or clear overrides per key; "Use default" means that key is not overridden.
-- **Allowed keys:** Embedding (`NORNICDB_EMBEDDING_*`, including `NORNICDB_EMBEDDING_API_KEY`), search (`NORNICDB_SEARCH_*`, including `NORNICDB_SEARCH_RERANK_API_KEY`), HNSW (`NORNICDB_VECTOR_*`), k-means (`NORNICDB_KMEANS_*`), auto-links (`NORNICDB_AUTO_LINKS_*`), Auto-TLP (`NORNICDB_AUTO_TLP_*`), and embed worker (`NORNICDB_EMBED_*`). All listed keys can be set per database.
-- **Effect:** Search service creation (vector dimensions, min similarity) and, where implemented, other per-DB behaviour use the resolved config for that database. Changing overrides takes effect for new operations; existing search service caches may need a restart or index rebuild for index-related settings to apply fully.
+- **Allowed keys:** Use the canonical dotted names returned by `GET /admin/databases/config/keys` and enumerated below. Existing `NORNICDB_*` names remain supported alternatives for environment configuration and compatibility with previously stored `_DbConfig` values; they are not deprecated. Writes are normalized to canonical names.
+- **Effect:** Settings returned with `restartLevel: none` are applied immediately by an explicit runtime applicator. Search/index/embedder/reranker settings rebuild the database's search service; search-result cache capacity and TTL resize the existing cache in place. Settings returned with `restartLevel: process` are persisted immediately and return `pendingRestart: true`, but the current runtime value remains active until restart.
 - **Search pipeline and query embedding:** The search pipeline must embed the **query** using the same effective config (and thus dimensions) as the **index** for that database to avoid vector dimension mismatches. The HTTP search handler uses per-database resolved config when embedding the query: it validates that the global embedder's output dimensions match the database's resolved embedding dimensions. If they differ (e.g. you set a per-DB override for embedding dimensions that does not match the global embedder), the API returns `400 Bad Request` with a clear message instead of returning empty vector results. Align global embedding dimensions with per-DB overrides, or leave per-DB embedding dimensions unset so they match global.
-- **Remote embedding providers (OpenAI, Ollama) per database:** You can set per-DB overrides for `NORNICDB_EMBEDDING_PROVIDER`, `NORNICDB_EMBEDDING_MODEL`, `NORNICDB_EMBEDDING_API_URL`, `NORNICDB_EMBEDDING_API_KEY`, and `NORNICDB_EMBEDDING_DIMENSIONS` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` (or another provider that requires a key), the **resolved** API key for that database (global default or per-DB override) is used. Ensure the effective API key is set and valid for any database that uses a provider requiring it. Ollama typically does not require an API key; per-DB URL and model work without change.
+- **Remote embedding providers (OpenAI, Ollama) per database:** You can set `db.nornic.embedding.provider`, `db.nornic.embedding.model`, `db.nornic.embedding.api.url`, `db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` (or another provider that requires a key), the **resolved** API key for that database (global default or per-DB setting) is used. Ollama typically does not require an API key.
+
+#### Canonical settings and environment alternatives
+
+Canonical names are the database settings contract and are persisted in `_DbConfig`. The corresponding environment variable remains a supported way to configure the global value and is accepted as an alternate input name by the database configuration API.
+
+| Canonical database setting                   | Supported environment alternative           |
+| -------------------------------------------- | ------------------------------------------- |
+| `db.nornic.embedding.enabled`                | `NORNICDB_EMBEDDING_ENABLED`                |
+| `db.nornic.embedding.provider`               | `NORNICDB_EMBEDDING_PROVIDER`               |
+| `db.nornic.embedding.model`                  | `NORNICDB_EMBEDDING_MODEL`                  |
+| `db.nornic.embedding.api.url`                | `NORNICDB_EMBEDDING_API_URL`                |
+| `db.nornic.embedding.api.key`                | `NORNICDB_EMBEDDING_API_KEY`                |
+| `db.nornic.embedding.dimensions`             | `NORNICDB_EMBEDDING_DIMENSIONS`             |
+| `db.nornic.embedding.cache.size`             | `NORNICDB_EMBEDDING_CACHE_SIZE`             |
+| `db.nornic.embedding.properties.include`     | `NORNICDB_EMBEDDING_PROPERTIES_INCLUDE`     |
+| `db.nornic.embedding.properties.exclude`     | `NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE`     |
+| `db.nornic.embedding.include.labels`         | `NORNICDB_EMBEDDING_INCLUDE_LABELS`         |
+| `db.nornic.embedding.gpu.layers`             | `NORNICDB_EMBEDDING_GPU_LAYERS`             |
+| `db.nornic.embedding.warmup.interval`        | `NORNICDB_EMBEDDING_WARMUP_INTERVAL`        |
+| `db.nornic.search.min.similarity`            | `NORNICDB_SEARCH_MIN_SIMILARITY`            |
+| `db.nornic.search.bm25.engine`               | `NORNICDB_SEARCH_BM25_ENGINE`               |
+| `db.nornic.search.bm25.enabled`              | `NORNICDB_SEARCH_BM25_ENABLED`              |
+| `db.nornic.search.bm25.warming`              | `NORNICDB_SEARCH_BM25_WARMING`              |
+| `db.nornic.search.vector.enabled`            | `NORNICDB_SEARCH_VECTOR_ENABLED`            |
+| `db.nornic.search.vector.warming`            | `NORNICDB_SEARCH_VECTOR_WARMING`            |
+| `db.nornic.search.rerank.enabled`            | `NORNICDB_SEARCH_RERANK_ENABLED`            |
+| `db.nornic.search.rerank.provider`           | `NORNICDB_SEARCH_RERANK_PROVIDER`           |
+| `db.nornic.search.rerank.model`              | `NORNICDB_SEARCH_RERANK_MODEL`              |
+| `db.nornic.search.rerank.api.url`            | `NORNICDB_SEARCH_RERANK_API_URL`            |
+| `db.nornic.search.rerank.api.key`            | `NORNICDB_SEARCH_RERANK_API_KEY`            |
+| `db.nornic.search.index.persist.delay.sec`   | `NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC`   |
+| `db.nornic.vector.ann.quality`               | `NORNICDB_VECTOR_ANN_QUALITY`               |
+| `db.nornic.vector.hnsw.m`                    | `NORNICDB_VECTOR_HNSW_M`                    |
+| `db.nornic.vector.hnsw.ef.construction`      | `NORNICDB_VECTOR_HNSW_EF_CONSTRUCTION`      |
+| `db.nornic.vector.hnsw.ef.search`            | `NORNICDB_VECTOR_HNSW_EF_SEARCH`            |
+| `db.nornic.vector.hnsw.metal.min.candidates` | `NORNICDB_VECTOR_HNSW_METAL_MIN_CANDIDATES` |
+| `db.nornic.vector.ivf.hnsw.enabled`          | `NORNICDB_VECTOR_IVF_HNSW_ENABLED`          |
+| `db.nornic.vector.ivf.hnsw.min.cluster.size` | `NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE` |
+| `db.nornic.vector.ivf.hnsw.max.clusters`     | `NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS`     |
+| `db.nornic.vector.cpu.brute.max.n`           | `NORNICDB_VECTOR_CPU_BRUTE_MAX_N`           |
+| `db.nornic.vector.gpu.brute.min.n`           | `NORNICDB_VECTOR_GPU_BRUTE_MIN_N`           |
+| `db.nornic.vector.gpu.brute.max.n`           | `NORNICDB_VECTOR_GPU_BRUTE_MAX_N`           |
+| `db.nornic.kmeans.clustering.enabled`        | `NORNICDB_KMEANS_CLUSTERING_ENABLED`        |
+| `db.nornic.kmeans.min.embeddings`            | `NORNICDB_KMEANS_MIN_EMBEDDINGS`            |
+| `db.nornic.kmeans.cluster.interval`          | `NORNICDB_KMEANS_CLUSTER_INTERVAL`          |
+| `db.nornic.kmeans.num.clusters`              | `NORNICDB_KMEANS_NUM_CLUSTERS`              |
+| `db.nornic.kmeans.max.iterations`            | `NORNICDB_KMEANS_MAX_ITERATIONS`            |
+| `db.nornic.auto.links.enabled`               | `NORNICDB_AUTO_LINKS_ENABLED`               |
+| `db.nornic.auto.links.threshold`             | `NORNICDB_AUTO_LINKS_THRESHOLD`             |
+| `db.nornic.auto.tlp.enabled`                 | `NORNICDB_AUTO_TLP_ENABLED`                 |
+| `db.nornic.auto.tlp.llm.qc.enabled`          | `NORNICDB_AUTO_TLP_LLM_QC_ENABLED`          |
+| `db.nornic.auto.tlp.llm.augment.enabled`     | `NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED`     |
+| `db.nornic.embed.worker.num.workers`         | `NORNICDB_EMBED_WORKER_NUM_WORKERS`         |
+| `db.nornic.embed.scan.interval`              | `NORNICDB_EMBED_SCAN_INTERVAL`              |
+| `db.nornic.embed.batch.delay`                | `NORNICDB_EMBED_BATCH_DELAY`                |
+| `db.nornic.embed.trigger.debounce`           | `NORNICDB_EMBED_TRIGGER_DEBOUNCE`           |
+| `db.nornic.embed.max.retries`                | `NORNICDB_EMBED_MAX_RETRIES`                |
+| `db.nornic.embed.chunk.size`                 | `NORNICDB_EMBED_CHUNK_SIZE`                 |
+| `db.nornic.embed.chunk.overlap`              | `NORNICDB_EMBED_CHUNK_OVERLAP`              |
+| `db.nornic.mvcc.lifecycle.interval`          | `NORNICDB_MVCC_LIFECYCLE_INTERVAL`          |
+| `db.nornic.query_cache.max_entries`          | `NORNICDB_QUERY_CACHE_SIZE`                 |
+| `db.nornic.query_cache.ttl`                  | `NORNICDB_QUERY_CACHE_TTL`                  |
+
+`db.nornic.query_cache.max_entries` correlates with Neo4j's
+`server.memory.query_cache.per_db_cache_num_entries`: both control the number of
+cached queries allocated per database and default to 1000. They intentionally
+do not share a setting name. Neo4j declares its value as `server.*` DBMS
+configuration that is applied uniformly to each database. NornicDB persists
+this value in `_DbConfig`, so each database can choose an independent limit;
+that per-database mutation contract is a NornicDB extension and therefore uses
+`db.nornic.*`.
+
+Settings metadata reports `restartLevel: none` for changes applied at runtime
+and `restartLevel: process` for changes persisted for the next NornicDB process
+start. NornicDB does not currently expose a database-only restart operation, so
+it does not advertise a database restart level. `isDynamic` in `SHOW SETTINGS`
+is true exactly when `restartLevel` is `none`. The registry requires every
+dynamic setting to name a concrete hot-reload applicator; settings without one
+are process-activated and cannot silently trigger an unrelated search rebuild.
 
 ### Per-database search index control
 
@@ -194,24 +273,21 @@ Two orthogonal axes per index, four keys total.
 
 #### Precedence ladder
 
-Configuration values for these flags resolve through a fixed ladder, lowest → highest:
+Configuration values resolve through a fixed ladder, lowest to highest:
 
 1. **Built-in defaults** — bm25=true, vector=true, both warming=startup.
 2. **Global config** — `cfg.Memory.Search*` populated by YAML and env vars (`NORNICDB_SEARCH_*`).
-3. **Per-DB overrides** — admin API (`PUT /admin/databases/{name}/config`) and the YAML `databases:` block.
-4. **CLI overrides** — `--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve`. Only flags explicitly typed on the command line participate; unset flags inherit the next level down.
+3. **Explicit process overrides** — supported command-line flags explicitly supplied to `nornicdb serve`.
+4. **Persisted per-database settings** — admin API values and values seeded from the YAML `databases:` block.
 
-**Why CLI trumps per-DB.** CLI is the operational kill switch. When an operator types `--search-bm25-enabled=false` at boot — typically during an OOM incident, disk-pressure recovery, or debug session — that intent must take effect even if a tenant's per-DB store entry says otherwise. Env and YAML do **not** get this treatment because they're declarative config that's easy to forget in a compose file or k8s manifest, and a stale env shouldn't be able to silently revert a tenant's intentional per-DB configuration. CLI is what an operator types when something is on fire; it's unambiguous.
+Per-database settings win in both directions. An override of `true` turns on a globally disabled index; an override of `false` turns off a globally enabled one. Clear the database setting to inherit the process/global value again.
 
-In all other directions: per-DB overrides win over global, in both directions. An override of `true` turns on a globally-disabled index; an override of `false` turns off a globally-enabled one. Same for warming. The "always wins" guarantee is what makes the multi-tenant story work (one DB needs search, the rest don't).
-
-| Key                               | Type    | Default   | Meaning                                                                                                                                                                                                                                 |
-| --------------------------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_SEARCH_BM25_ENABLED`    | boolean | `true`    | Master switch for BM25 fulltext search. When false, no BM25 build runs.                                                                                                                                                                 |
-| `NORNICDB_SEARCH_BM25_WARMING`    | enum    | `startup` | When BM25 is enabled, choose `startup` (build at boot) or `lazy` (defer until first search query, which blocks synchronously while warming).                                                                                            |
-| `NORNICDB_SEARCH_BM25_PROPERTIES` | list    | empty     | Comma-separated property allowlist for BM25 indexing. Empty indexes labels and all properties. Changing this value rebuilds persisted BM25 data.                                                                                        |
-| `NORNICDB_SEARCH_VECTOR_ENABLED`  | boolean | `true`    | Master switch for vector search across every ANN strategy (HNSW, IVF-HNSW, brute-force, GPU, Metal, Qdrant). When false, node embeddings are NOT iterated into the in-memory ANN substrate — strongest available memory-pressure lever. |
-| `NORNICDB_SEARCH_VECTOR_WARMING`  | enum    | `startup` | When vector is enabled, choose `startup` or `lazy`. See the BM25 warming description.                                                                                                                                                   |
+| Canonical key                     | Environment alternative          | Type    | Default   | Meaning                                                    |
+| --------------------------------- | -------------------------------- | ------- | --------- | ---------------------------------------------------------- |
+| `db.nornic.search.bm25.enabled`   | `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search.                    |
+| `db.nornic.search.bm25.warming`   | `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | Build at startup or lazily on first search.                |
+| `db.nornic.search.vector.enabled` | `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy. |
+| `db.nornic.search.vector.warming` | `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | Build at startup or lazily on first search.                |
 
 BM25 uses language-neutral NFKC normalization, Unicode case folding, and exact tokens by default. `NORNICDB_BM25_PREFIX_MAX_EXPANSIONS` optionally enables bounded prefix matching for every BM25 query term; its default is `0` (disabled). Enable it only when partial-token matching is required. `NORNICDB_BM25_PREFIX_MIN_LEN` (default `3`) sets the minimum Unicode character count for terms eligible for expansion.
 
@@ -228,11 +304,11 @@ Behavior summary (all combinations supported):
 
 Configure via (in order of effective precedence; later sources override earlier ones):
 
-- **YAML global** (`memory.search_*` block in `nornicdb.yaml`): sets the global default. Affects all databases that don't have a per-DB override or a CLI flag set.
+- **YAML global** (`memory.search_*` block in `nornicdb.yaml`): sets the global default.
 - **Env vars** (`NORNICDB_SEARCH_*` at boot): override YAML on the global default.
-- **YAML per-DB** (`databases:` map keyed by database name; see the [yaml schema example](#yaml-databases-map)): seeded into the dbconfig store on first boot only.
-- **Admin API** (`PUT /admin/databases/{name}/config`): per-DB overrides applied at runtime; flipping `enabled=true→false` triggers an immediate teardown of the affected index.
-- **CLI** (`--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming` on `nornicdb serve`): explicit boot-time overrides. Top of the precedence ladder — these trump per-DB store entries (the kill-switch contract above). Only flags explicitly set on the command line participate.
+- **CLI** (`--search-bm25-enabled`, `--search-bm25-warming`, `--search-vector-enabled`, `--search-vector-warming`): explicit process overrides above global YAML/env values.
+- **YAML per-DB** (`databases:` map keyed by database name): seeds canonical persisted settings on first boot only.
+- **Admin API** (`PUT /admin/databases/{name}/config`): updates authoritative per-database settings at runtime.
 
 Health checks **must not** target `/nornicdb/search` for `warming=lazy` or any `*_enabled=false` database — use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead. Probing search on a lazy DB triggers the build on every probe; probing a disabled DB streams 503s that look like real failures in monitoring.
 
@@ -243,17 +319,23 @@ databases:
   hot_app_db: {} # both indexes default (enabled, startup)
 
   analytics:
-    NORNICDB_SEARCH_BM25_ENABLED: "false"
+    db.nornic.search.bm25.enabled: "false"
     NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
 
   audit_logs:
-    NORNICDB_SEARCH_BM25_ENABLED: "false"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false"
+    db.nornic.search.bm25.enabled: "false"
+    db.nornic.search.vector.enabled: "false"
 
   exports_only:
-    NORNICDB_SEARCH_BM25_ENABLED: "true"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false" # write embeddings; never load in-process
+    db.nornic.search.bm25.enabled: "true"
+    db.nornic.search.vector.enabled: "false" # write embeddings; never load in-process
 ```
+
+Each entry may use either the canonical dotted setting name or its documented
+`NORNICDB_*` environment-variable alternative; both forms are normalized to the
+canonical name before validation and persistence. Forms may be mixed across the
+map. If both forms identify the same setting in one database entry, the
+canonical dotted name wins.
 
 The yaml `databases:` map is read into `dbconfig.Store` **only on first boot** for each `(dbName, key)` pair. Once an admin has PUT a value via `/admin/databases/{name}/config`, that value is authoritative across restarts and yaml changes for the same key are ignored. Operators who want yaml to win again can either delete the `_DbConfig` node from the system database or PUT the desired value back via the admin API.
 

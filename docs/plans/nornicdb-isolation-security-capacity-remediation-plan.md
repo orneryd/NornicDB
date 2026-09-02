@@ -285,8 +285,8 @@ Acceptance criteria:
 
 | Existing seam                                                                                                                                     | Exact change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pkg/config/dbconfig/keys.go`: `KeyMeta`, `AllowedKeys`, `IsAllowedKey`, enum helpers                                                             | Replace `keyTuple`/`allowedKeysRaw` with `SettingDefinition` records. Each record owns canonical dotted name, legacy `_DbConfig` key, parser, default source, scope, dynamic flag, restart level, zero semantics, redaction, and valid values. Generate the existing admin key response from this registry during migration.                                                                                                                                                                                                                |
-| `pkg/config/dbconfig/resolver.go`: `ResolvedDbConfig`, `Resolve`, `applyOverride`                                                                 | Add typed cache and independent BM25/vector/metadata budget fields for logical databases and indexes. Resolve canonical persisted names first, migrate legacy keys deterministically, and retain the current built-in/global/per-database/CLI precedence. Remove direct environment reads from resolution where the loaded global config already owns that source; add no environment aliases. Physical Badger mode/cache values come from the DBMS startup registry, not `_DbConfig`, while one engine is shared by namespaces.            |
+| `pkg/config/dbconfig/keys.go`: `KeyMeta`, `AllowedKeys`, `IsAllowedKey`, enum helpers                                                             | Replace `keyTuple`/`allowedKeysRaw` with `SettingDefinition` records. Each record owns its canonical dotted name, supported environment-variable alternative, parser, default source, scope, dynamic flag, restart level, zero semantics, redaction, and valid values. Generate the admin key response from this registry.                                                                                                                                                                                                                  |
+| `pkg/config/dbconfig/resolver.go`: `ResolvedDbConfig`, `Resolve`, `applyOverride`                                                                 | Add typed cache and independent BM25/vector/metadata budget fields for logical databases and indexes. Resolve canonical persisted names first, normalize supported environment alternatives deterministically, and retain the built-in/global/process/per-database precedence. Remove direct environment reads from resolution where the loaded global config already owns that source. Physical Badger mode/cache values come from the DBMS startup registry, not `_DbConfig`, while one engine is shared by namespaces.                   |
 | `pkg/server/server_dbconfig.go`: config PUT handler and `ResetSearchService` call                                                                 | Split registry entries by activation. Apply dynamic cache size/TTL through cache resize methods. Persist static settings but leave the running service unchanged and return configured/effective values plus `pendingRestart`; call `ResetSearchService` only for existing settings whose declared contract remains dynamic.                                                                                                                                                                                                                |
 | `pkg/cypher` administrative dispatch and settings result production                                                                               | Add `SHOW SETTING`/`SHOW SETTINGS` dispatch backed by the same registry. Keep Neo4j's default columns exact; expose NornicDB restart/configured-value fields only when explicitly yielded. Do not route arbitrary settings through `ALTER DATABASE ... SET OPTION`.                                                                                                                                                                                                                                                                         |
 | `pkg/nornicdb/db.go`: `Open` and Badger options construction                                                                                      | Add physical storage mode/cache fields to the existing `config.Config` startup model and replace hardcoded `HighPerformance: true`, `LowMemory: false` with a pure `resolveBadgerOptions` helper. `default` returns today's values; `low` returns `LowMemory=true` and `HighPerformance=false`; both preserve existing node and edge-type cache limits. Test this helper without opening Badger.                                                                                                                                            |
@@ -331,10 +331,11 @@ existing defaults where it currently means disabled.
 
 Neo4j comparison, verified against the local `~/src/neo4j` source:
 
-- `server.memory.query_cache.per_db_cache_num_entries` is database-scoped,
-  defaults to 1000 entries, accepts zero, and is dynamic. "Per database" means
-  Neo4j allocates that many entries to each database, not that the value is
-  independently stored as metadata on every named database.
+- `server.memory.query_cache.per_db_cache_num_entries` defaults to 1000 entries,
+  accepts zero, and is dynamic, but it is a `server.*` DBMS setting. Neo4j
+  applies the configured count to each database; it is not independently stored
+  or mutated per named database. NornicDB's independently scoped counterpart is
+  `db.nornic.query_cache.max_entries`.
 - `db.memory.transaction.total.max` is database-scoped, byte-valued, uses binary
   unit suffixes, uses zero for unlimited, and is dynamic. It is likewise a
   registered DBMS configuration value applied to each database.
@@ -364,7 +365,7 @@ mutation contract.
 
 | Canonical setting                                      | Existing legacy global source               | Scope                                  | Default                                         | Activation                                         |
 | ------------------------------------------------------ | ------------------------------------------- | -------------------------------------- | ----------------------------------------------- | -------------------------------------------------- |
-| `server.memory.query_cache.per_db_cache_num_entries`   | `NORNICDB_QUERY_CACHE_SIZE`                 | Per database instance                  | Existing 1000 entries                           | Dynamic                                            |
+| `db.nornic.query_cache.max_entries`                    | `NORNICDB_QUERY_CACHE_SIZE`                 | Per database instance                  | Existing 1000 entries                           | Process restart                                    |
 | `db.nornic.query_cache.ttl`                            | `NORNICDB_QUERY_CACHE_TTL`                  | Per database instance                  | Existing 5 minutes                              | Dynamic                                            |
 | `db.nornic.query_plan_cache.max_entries`               | None                                        | Per database instance                  | Existing 500 entries                            | Dynamic                                            |
 | `db.nornic.fabric_plan_cache.max_entries`              | None                                        | Per database instance                  | Existing 500 entries                            | Dynamic                                            |
@@ -426,7 +427,7 @@ features or default capacity limits:
    the existing LRU eviction and TTL semantics; key by database plus normalized
    query, parameters, locale, and result-affecting options. A write invalidates
    only affected database caches.
-6. Map `server.memory.query_cache.per_db_cache_num_entries` and
+6. Map `db.nornic.query_cache.max_entries` and
    `db.nornic.query_cache.ttl` to the existing per-database `SmartQueryCache`.
    Do not apply that one count to structurally different caches. Expose separate
    Nornic settings for the existing 500-entry parsed-plan/Fabric caches,
@@ -524,7 +525,7 @@ falling back to unrestricted memory use.
   dynamic LRU changes apply immediately; reopen applies static settings.
 - Existing global environment variables retain their current effective values.
   New database/index settings use the persisted typed API without environment
-  aliases, and legacy `_DbConfig` keys migrate deterministically to canonical
+  aliases, and environment-style `_DbConfig` keys normalize deterministically to canonical
   dotted names.
 - `SHOW SETTINGS` default columns and `YIELD *` match Neo4j's names, types,
   filtering, authorization, and current/default/startup value semantics.

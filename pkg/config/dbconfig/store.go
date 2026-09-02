@@ -24,7 +24,7 @@ const (
 type Store struct {
 	storage storage.Engine
 	mu      sync.RWMutex
-	// dbName -> overrides (key = env-style name, value = string)
+	// dbName -> overrides (canonical dotted setting name -> string value)
 	overrides map[string]map[string]string
 }
 
@@ -61,6 +61,7 @@ func (s *Store) LoadWithYAMLDefaults(ctx context.Context, yamlOverrides map[stri
 		s.mu.RLock()
 		existing := s.overrides[dbName]
 		s.mu.RUnlock()
+		kv = CanonicalizeOverrides(kv)
 		merged := make(map[string]string, len(kv))
 		for k, v := range existing {
 			merged[k] = v
@@ -104,7 +105,7 @@ func (s *Store) Load(ctx context.Context) error {
 		if dbName == "" {
 			return nil
 		}
-		overrides := overridesFromProperties(n.Properties)
+		overrides := CanonicalizeOverrides(overridesFromProperties(n.Properties))
 		m[dbName] = overrides
 		return nil
 	})
@@ -149,6 +150,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 		s.mu.Unlock()
 		return nil
 	}
+	overrides = CanonicalizeOverrides(overrides)
 	overridesJSON, err := json.Marshal(overrides)
 	if err != nil {
 		return err
