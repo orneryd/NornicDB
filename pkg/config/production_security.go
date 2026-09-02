@@ -6,33 +6,33 @@ import (
 	"strings"
 )
 
-// ValidateProductionSecurity rejects insecure listener and authentication
-// combinations only when the configured runtime environment is production.
-func ValidateProductionSecurity(config *Config) error {
-	if config == nil || !strings.EqualFold(strings.TrimSpace(config.Server.Environment), "production") {
-		return nil
+// ValidateSecurityConfiguration rejects insecure listener and credential
+// combinations before startup.
+func ValidateSecurityConfiguration(config *Config) error {
+	if config == nil {
+		return fmt.Errorf("security configuration: config is required")
 	}
 	if !config.Auth.Enabled {
-		return fmt.Errorf("production security: authentication must be enabled")
+		return nil
 	}
 	if strings.TrimSpace(config.Auth.InitialPassword) == "" || config.Auth.InitialPassword == "password" {
-		return fmt.Errorf("production security: default or empty initial password is not allowed")
+		return fmt.Errorf("security configuration: default or empty initial password is not allowed")
 	}
 	if config.Server.EnableCORS {
 		for _, origin := range config.Server.CORSOrigins {
 			if strings.TrimSpace(origin) == "*" {
-				return fmt.Errorf("production security: wildcard CORS origin is not allowed")
+				return fmt.Errorf("security configuration: wildcard CORS origin is not allowed")
 			}
 		}
 	}
 	if config.Server.HTTPEnabled && isPublicListener(config.Server.HTTPAddress) {
-		return fmt.Errorf("production security: public plaintext HTTP listener is not allowed")
+		return fmt.Errorf("security configuration: public plaintext HTTP listener is not allowed")
 	}
 	if config.Server.BoltEnabled && isPublicListener(config.Server.BoltAddress) && !config.Server.BoltTLSRequire {
-		return fmt.Errorf("production security: public Bolt listener must require TLS")
+		return fmt.Errorf("security configuration: public Bolt listener must require TLS")
 	}
 	if config.Features.QdrantGRPCEnabled && isPublicListener(config.Features.QdrantGRPCListenAddr) {
-		return fmt.Errorf("production security: public plaintext gRPC listener is not allowed")
+		return fmt.Errorf("security configuration: public plaintext gRPC listener is not allowed")
 	}
 	return nil
 }

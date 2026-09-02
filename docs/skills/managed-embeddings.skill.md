@@ -41,6 +41,22 @@ The OpenAI provider also reads `embedding.api_key` (or `NORNICDB_EMBEDDING_API_K
 
 Defaults shipped with NornicDB: `provider=local`, `model=bge-m3`, `dimensions=1024`.
 
+### Per-database configuration
+
+For a named database, use canonical keys in the YAML `databases:` map or
+`PUT /admin/databases/{name}/config`: `db.nornic.embedding.provider`,
+`db.nornic.embedding.model`, `db.nornic.embedding.api.url`,
+`db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions`. Their
+`NORNICDB_*` forms remain supported global environment alternatives and
+alternate input names; canonical keys win collisions.
+
+Provider, model, API URL/key, dimensions, and GPU-layer updates hot reload by
+rebuilding that database's search service. `db.nornic.embedding.enabled`, cache
+size, property selection, label inclusion, and warmup interval are persisted
+but require a process restart. Check `restartLevel` from
+`GET /admin/databases/config/keys` instead of assuming every embedding setting
+is dynamic.
+
 ### Provider configuration
 
 | Provider | Required env | Notes |
@@ -191,7 +207,7 @@ There is no per-label opt-out in `WITH EMBEDDING` — every node touched by the 
 - Dimensions are model-specific. Switching models requires re-embedding (the search service compares vector lengths against the index).
 - `NORNICDB_EMBEDDING_DIMENSIONS` is used to validate provider responses. It does not silently truncate or pad.
 - The local provider resolves the model file as `${NORNICDB_MODELS_DIR}/${NORNICDB_EMBEDDING_MODEL}.gguf`. Setting only `NORNICDB_EMBEDDING_MODEL=...` without putting the matching `.gguf` in the models dir will fail at first use.
-- Cache (`NORNICDB_EMBEDDING_CACHE_SIZE`, default 10000) is per-process and not persisted. Restarts re-embed identical text on the next call.
+- The global embedding cache (`NORNICDB_EMBEDDING_CACHE_SIZE`, default 10000) is per-process and not persisted. A per-database `db.nornic.embedding.cache.size` override is persisted configuration but takes effect after a process restart; cached vectors themselves are still not persisted.
 - If you write `n.embedding = [...]` directly **and** also rely on `WITH EMBEDDING`, the managed `ChunkEmbeddings` slot is what the vector index sees by default — your manual property may be ignored. Pick one path per label.
 
 ## See also

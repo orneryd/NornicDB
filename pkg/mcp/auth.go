@@ -541,7 +541,7 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Security disabled mode (development only)
+		// Explicit security-disabled compatibility mode.
 		// Respects the existing auth.Authenticator's SecurityEnabled flag
 		if !m.isSecurityEnabled() {
 			authCtx := &AuthContext{

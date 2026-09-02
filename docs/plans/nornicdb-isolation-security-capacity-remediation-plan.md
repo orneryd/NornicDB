@@ -35,20 +35,20 @@ remaining remediations against current `main`; it does not implement them.
 
 ## Current-Main Findings
 
-| ID     | Finding                                                                                | Status                  | Current evidence                                                                                                                                                                                                                                         | Required disposition                                                                                                                            |
-| ------ | -------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| ISO-01 | MCP accepts a caller-selected database without per-database authorization              | **Fixed**               | MCP now derives the request database scope from authenticated RBAC context and rejects a caller-selected mismatch before executor or storage resolution                                                                                                  | Retain the cross-database MCP denial tests in the release gate                                                                                  |
-| ISO-02 | GraphQL lacks per-database authorization                                               | **Fixed**               | `pkg/server/server_router.go` enriches GraphQL requests with RBAC; `pkg/graphql/resolvers/resolver.go` checks the database allowlist and mutation write privilege; denial tests exist                                                                    | Retain cross-database query and mutation regression tests in the release gate                                                                   |
-| ISO-03 | Empty allowlists grant every database and missing privilege rows inherit global roles  | **Accepted constraint** | `pkg/auth/allowlist.go` defines empty as all; `pkg/auth/privileges.go` falls back to global permissions                                                                                                                                                  | Retain only as an explicit compatibility behavior; secure multi-database operation requires strict database policy                              |
-| ISO-04 | Headless mode does not fully suppress the browser-only HTTP surface                    | **Fixed**               | `registerUIRoutes` omits SPA assets and `/auth/config`; `registerGraphQLRoutes` now omits `/graphql/playground`; `handleDiscovery` rejects non-root fallthrough paths; the headless route matrix preserves core APIs                                     | Retain the browser-route and core-API preservation regression test in the release gate                                                          |
-| RES-01 | Per-database limits are implemented but not attached to production storage/query paths | **Partial**             | `DatabaseManager` now owns checker lifecycle, enforcing storage wrappers and database-scoped executors apply configured storage/query limits; startup streams exact byte reconciliation; Bolt has exact-once permits; inference resolves manager storage | Add periodic drift fault telemetry and define connection semantics for request-scoped HTTP/gRPC protocols                                       |
-| RES-02 | Default database limits are unlimited                                                  | **Accepted constraint** | `pkg/multidb/limits.go` sets nodes, edges, bytes, query time, results, concurrency, connections, and rates to zero                                                                                                                                       | Preserve zero-as-unlimited compatibility; enforce each dimension only when an operator configures a nonzero per-database limit                  |
-| RES-03 | Badger low-memory mode is not wired                                                    | **Fixed**               | `resolveBadgerOptions` maps restart-bound `storage.mode`; `default` preserves high-performance behavior and `low` selects `LowMemory=true`, while retaining configured cache limits                                                                      | Retain pure option-resolution and config validation tests                                                                                       |
-| RES-04 | Vector and BM25 memory scale with corpus size                                          | **Partial**             | disk-backed vectors and HNSW vector lookup avoid one full vector copy, but search metadata, BM25 documents/postings, auxiliary vector maps, and startup builds remain memory-resident                                                                    | Add restart-bound per-database/per-index budgets and disk-backed low-memory implementations while retaining only bounded lookup metadata in RAM |
-| RES-05 | Background inference can add unplanned CPU, GPU, memory, and graph growth              | **Partial**             | Heimdall, reranking, decay, and topology integration default off; embeddings default off, but auto-links and search startup warming default on, and Compose enables local embeddings, clustering, and Heimdall                                           | Require inference to be explicitly enabled per workload in production and enforce graph-growth quotas                                           |
-| DUR-01 | Strict durability and WAL sync configuration are not applied to storage constructors   | **Partial**             | `resolveDurabilityOptions` validates and maps Badger, WAL, and async-write controls, with strict durability applied as the final override                                                                                                                | Add process-crash acknowledgement/recovery tests and expose effective durability in status output                                               |
-| DUR-02 | Snapshot and corruption recovery have unbounded peak memory                            | **Partial**             | Automatic compaction writes atomic framed snapshots by streaming `StreamingEngine`; recovery validates CRC/footer and incrementally visits records; legacy JSON remains readable                                                                         | Restore directly into the production engine with a recovery memory budget instead of returning a fully materialized `MemoryEngine`              |
-| DEP-01 | Container examples expose unauthenticated services broadly                             | **Partial**             | Base Compose files override images to enable auth and publish HTTP on loopback only; standalone images retain no-auth compatibility defaults but emit an ERROR event; production startup rejects insecure combinations                                   | Decide whether the standalone-image compatibility default is acceptable for release and retain structural/startup security tests                |
+| ID     | Finding                                                                                | Status                              | Current evidence                                                                                                                                                                                                                                                                 | Required disposition                                                                                                                            |
+| ------ | -------------------------------------------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| ISO-01 | MCP accepts a caller-selected database without per-database authorization              | **Fixed**                           | MCP now derives the request database scope from authenticated RBAC context and rejects a caller-selected mismatch before executor or storage resolution                                                                                                                          | Retain the cross-database MCP denial tests in the release gate                                                                                  |
+| ISO-02 | GraphQL lacks per-database authorization                                               | **Fixed**                           | `pkg/server/server_router.go` enriches GraphQL requests with RBAC; `pkg/graphql/resolvers/resolver.go` checks the database allowlist and mutation write privilege; denial tests exist                                                                                            | Retain cross-database query and mutation regression tests in the release gate                                                                   |
+| ISO-03 | Empty allowlists grant every database and missing privilege rows inherit global roles  | **Accepted constraint**             | `pkg/auth/allowlist.go` defines empty as all; `pkg/auth/privileges.go` falls back to global permissions                                                                                                                                                                          | Retain only as an explicit compatibility behavior; secure multi-database operation requires strict database policy                              |
+| ISO-04 | Headless mode does not fully suppress the browser-only HTTP surface                    | **Fixed**                           | `registerUIRoutes` omits SPA assets and `/auth/config`; `registerGraphQLRoutes` now omits `/graphql/playground`; `handleDiscovery` rejects non-root fallthrough paths; the headless route matrix preserves core APIs                                                             | Retain the browser-route and core-API preservation regression test in the release gate                                                          |
+| RES-01 | Per-database limits are implemented but not attached to production storage/query paths | **Partial**                         | `DatabaseManager` now owns checker lifecycle, enforcing storage wrappers and database-scoped executors apply configured storage/query limits; startup streams exact byte reconciliation; Bolt has exact-once permits; inference resolves manager storage                         | Add periodic drift fault telemetry and define connection semantics for request-scoped HTTP/gRPC protocols                                       |
+| RES-02 | Default database limits are unlimited                                                  | **Accepted constraint**             | `pkg/multidb/limits.go` sets nodes, edges, bytes, query time, results, concurrency, connections, and rates to zero                                                                                                                                                               | Preserve zero-as-unlimited compatibility; enforce each dimension only when an operator configures a nonzero per-database limit                  |
+| RES-03 | Badger low-memory mode is not wired                                                    | **Fixed**                           | `resolveBadgerOptions` maps restart-bound `storage.mode`; `default` preserves high-performance behavior and `low` selects `LowMemory=true`, while retaining configured cache limits                                                                                              | Retain pure option-resolution and config validation tests                                                                                       |
+| RES-04 | Vector and BM25 memory scale with corpus size                                          | **Partial**                         | disk-backed vectors and HNSW vector lookup avoid one full vector copy, but search metadata, BM25 documents/postings, auxiliary vector maps, and startup builds remain memory-resident                                                                                            | Add restart-bound per-database/per-index budgets and disk-backed low-memory implementations while retaining only bounded lookup metadata in RAM |
+| RES-05 | Background inference can add unplanned CPU, GPU, memory, and graph growth              | **Partial**                         | Heimdall, reranking, decay, and topology integration default off; embeddings default off, but auto-links and search startup warming default on, and Compose enables local embeddings, clustering, and Heimdall                                                                   | Require inference to be explicitly enabled per workload in production and enforce graph-growth quotas                                           |
+| DUR-01 | Strict durability and WAL sync configuration are not applied to storage constructors   | **Partial**                         | `resolveDurabilityOptions` validates and maps Badger, WAL, and async-write controls, with strict durability applied as the final override                                                                                                                                        | Add process-crash acknowledgement/recovery tests and expose effective durability in status output                                               |
+| DUR-02 | Snapshot and corruption recovery have unbounded peak memory                            | **Partial**                         | Automatic compaction writes atomic framed snapshots by streaming `StreamingEngine`; recovery validates CRC/footer and incrementally visits records; legacy JSON remains readable                                                                                                 | Restore directly into the production engine with a recovery memory budget instead of returning a fully materialized `MemoryEngine`              |
+| DEP-01 | Container examples expose unauthenticated services broadly                             | **Accepted compatibility contract** | Images and Compose retain the explicit no-auth default; the entrypoint emits an ERROR event. Security validation runs in every environment and permits explicit no-auth while rejecting wildcard CORS, public plaintext listeners, and default credentials when auth is enabled. | Keep the compatibility default and its structural/startup regression tests visible to operators.                                                |
 
 ## Target Security Contract
 
@@ -97,10 +97,12 @@ name/list/expression forms and standard columns: `name`, `description`, `value`,
 filtering, sorting, duplicate-name collapse, internal-setting exclusion, and
 setting-level privilege filtering must match Neo4j.
 
-Only settings declared dynamic may change at runtime. A Neo4j-compatible dynamic
-configuration procedure is DBMS-scoped and changes the effective runtime value;
-it must not be misrepresented as persisted per-database catalog metadata.
-Startup/static values remain startup configuration and reject live mutation.
+Only settings declared dynamic and assigned a concrete hot-reload applicator may
+change at runtime. A Neo4j-compatible dynamic configuration procedure is
+DBMS-scoped and changes the effective runtime value; it must not be
+misrepresented as persisted per-database catalog metadata. Startup/static values
+may be persisted through the NornicDB extension API, but retain the running value
+and report `pendingRestart` until the next process start.
 `ALTER DATABASE ... SET/REMOVE OPTION` is reserved for the bounded database
 catalog-option contract implemented by Neo4j, not arbitrary `db.*` settings.
 
@@ -110,8 +112,9 @@ typed admin API. They appear in the same read-only settings registry metadata,
 but extension fields such as `configuredValue`, `effectiveValue`,
 `pendingRestart`, and `restartLevel` are opt-in projections rather than changes
 to Neo4j's default result shape. Do not add environment variables for these new
-settings. Existing environment variables remain supported only as legacy global
-startup sources. Reserve Neo4j setting names for behaviorally equivalent
+settings. Existing environment variables remain supported global startup
+alternatives and alternate YAML/API input names; canonical dotted names win if
+both forms are supplied. Reserve Neo4j setting names for behaviorally equivalent
 settings; declare NornicDB-only settings under the `db.nornic.*` namespace.
 
 Conformance tests must import or translate Neo4j's parser and acceptance cases
@@ -287,7 +290,7 @@ Acceptance criteria:
 | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pkg/config/dbconfig/keys.go`: `KeyMeta`, `AllowedKeys`, `IsAllowedKey`, enum helpers                                                             | Replace `keyTuple`/`allowedKeysRaw` with `SettingDefinition` records. Each record owns its canonical dotted name, supported environment-variable alternative, parser, default source, scope, dynamic flag, restart level, zero semantics, redaction, and valid values. Generate the admin key response from this registry.                                                                                                                                                                                                                  |
 | `pkg/config/dbconfig/resolver.go`: `ResolvedDbConfig`, `Resolve`, `applyOverride`                                                                 | Add typed cache and independent BM25/vector/metadata budget fields for logical databases and indexes. Resolve canonical persisted names first, normalize supported environment alternatives deterministically, and retain the built-in/global/process/per-database precedence. Remove direct environment reads from resolution where the loaded global config already owns that source. Physical Badger mode/cache values come from the DBMS startup registry, not `_DbConfig`, while one engine is shared by namespaces.                   |
-| `pkg/server/server_dbconfig.go`: config PUT handler and `ResetSearchService` call                                                                 | Split registry entries by activation. Apply dynamic cache size/TTL through cache resize methods. Persist static settings but leave the running service unchanged and return configured/effective values plus `pendingRestart`; call `ResetSearchService` only for existing settings whose declared contract remains dynamic.                                                                                                                                                                                                                |
+| `pkg/server/server_dbconfig.go`: config PUT handler and `ResetSearchService` call                                                                 | Split registry entries by activation. Apply search-result cache capacity and query-cache TTL through the in-place cache applicator. Persist process-activated settings but leave the running service unchanged and return configured/effective values plus `pendingRestart`; call `ResetSearchService` only for settings assigned the search-rebuild applicator.                                                                                                                                                                            |
 | `pkg/cypher` administrative dispatch and settings result production                                                                               | Add `SHOW SETTING`/`SHOW SETTINGS` dispatch backed by the same registry. Keep Neo4j's default columns exact; expose NornicDB restart/configured-value fields only when explicitly yielded. Do not route arbitrary settings through `ALTER DATABASE ... SET OPTION`.                                                                                                                                                                                                                                                                         |
 | `pkg/nornicdb/db.go`: `Open` and Badger options construction                                                                                      | Add physical storage mode/cache fields to the existing `config.Config` startup model and replace hardcoded `HighPerformance: true`, `LowMemory: false` with a pure `resolveBadgerOptions` helper. `default` returns today's values; `low` returns `LowMemory=true` and `HighPerformance=false`; both preserve existing node and edge-type cache limits. Test this helper without opening Badger.                                                                                                                                            |
 | `pkg/search/search.go`: `NewServiceWithDimensionsAndBM25Engine`, `resultCache`, `ensureBuildVectorFileStore`, `BuildIndexes`, persistence writers | Add `ServiceOptions` carrying database ID, cache policy, storage policy, and three independent index budgets. Replace the hardcoded `newSearchResultCache(1000, 5*time.Minute)`. In low-memory mode require configured index paths, open disk readers before build, and account every resident metadata allocation and build batch against its own budget.                                                                                                                                                                                  |
@@ -336,9 +339,10 @@ Neo4j comparison, verified against the local `~/src/neo4j` source:
   applies the configured count to each database; it is not independently stored
   or mutated per named database. NornicDB's independently scoped counterpart is
   `db.nornic.query_cache.max_entries`.
-- `db.memory.transaction.total.max` is database-scoped, byte-valued, uses binary
-  unit suffixes, uses zero for unlimited, and is dynamic. It is likewise a
-  registered DBMS configuration value applied to each database.
+- Neo4j's `db.memory.transaction.total.max` is database-scoped, byte-valued,
+  uses binary unit suffixes, uses zero for unlimited, and is dynamic. NornicDB
+  accepts the same setting name and value contract, but currently reports
+  process activation because it has no live transaction-accounting applicator.
 - `server.memory.pagecache.size` is a static DBMS-level byte setting, not a
   per-database or per-index budget.
 - Neo4j declares settings in a typed registry. `SHOW SETTINGS` reads current,
@@ -357,30 +361,30 @@ Neo4j comparison, verified against the local `~/src/neo4j` source:
 
 Use Neo4j-style dotted setting IDs in the central registry and Cypher read API.
 Do not add environment variables for new per-database/index settings. Existing
-`NORNICDB_*` variables remain legacy global startup inputs. Persist logical
+`NORNICDB_*` variables remain supported global startup alternatives. Persist logical
 database/index values in `_DbConfig` through the authenticated typed admin API.
 Physical-engine values are startup YAML/CLI settings in the same registry and
 are not stored per namespace. This is a documented extension, not Neo4j's
 mutation contract.
 
-| Canonical setting                                      | Existing legacy global source               | Scope                                  | Default                                         | Activation                                         |
-| ------------------------------------------------------ | ------------------------------------------- | -------------------------------------- | ----------------------------------------------- | -------------------------------------------------- |
-| `db.nornic.query_cache.max_entries`                    | `NORNICDB_QUERY_CACHE_SIZE`                 | Per database instance                  | Existing 1000 entries                           | Process restart                                    |
-| `db.nornic.query_cache.ttl`                            | `NORNICDB_QUERY_CACHE_TTL`                  | Per database instance                  | Existing 5 minutes                              | Dynamic                                            |
-| `db.nornic.query_plan_cache.max_entries`               | None                                        | Per database instance                  | Existing 500 entries                            | Dynamic                                            |
-| `db.nornic.fabric_plan_cache.max_entries`              | None                                        | Per database instance                  | Existing 500 entries                            | Dynamic                                            |
-| `db.nornic.query_analysis_cache.max_entries`           | None                                        | Per database instance                  | Existing 1000 entries                           | Dynamic                                            |
-| `db.nornic.search_result_cache.max_entries`            | None                                        | Per database instance                  | Existing 1000 entries                           | Dynamic                                            |
-| `db.nornic.query_lookup_metadata.max_entries`          | None                                        | Per database instance                  | Existing per-cache bounds                       | Dynamic                                            |
-| `db.memory.transaction.total.max`                      | None                                        | Per database                           | `0` (unlimited)                                 | Dynamic when transaction accounting is implemented |
-| `db.nornic.memory.storage.mode`                        | None                                        | Per physical database engine           | `default`, preserving high-performance behavior | Restart                                            |
-| `db.nornic.memory.storage.node_cache.max_entries`      | `NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES`    | Per physical database engine           | Existing 10000 entries                          | Restart                                            |
-| `db.nornic.memory.storage.edge_type_cache.max_entries` | `NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES` | Per physical database engine           | Existing 50 types                               | Restart                                            |
-| `db.nornic.memory.index.bm25.max`                      | None                                        | Per database, BM25 index               | `0` (unlimited/current representation)          | Restart/rebuild                                    |
-| `db.nornic.memory.index.vector.max`                    | None                                        | Per database, vector index             | `0` (unlimited/current representation)          | Restart/rebuild                                    |
-| `db.nornic.memory.index.metadata.max`                  | None                                        | Per database, per index implementation | `0` (unlimited/current representation)          | Restart/rebuild                                    |
-| `db.nornic.index.bm25.storage`                         | None                                        | Per database, BM25 index               | `memory`/current behavior                       | Restart/rebuild                                    |
-| `db.nornic.index.vector.storage`                       | None                                        | Per database, vector index             | current automatic behavior                      | Restart/rebuild                                    |
+| Canonical setting                                      | Supported environment alternative           | Scope                                  | Default                                         | Activation      |
+| ------------------------------------------------------ | ------------------------------------------- | -------------------------------------- | ----------------------------------------------- | --------------- |
+| `db.nornic.query_cache.max_entries`                    | `NORNICDB_QUERY_CACHE_SIZE`                 | Per database instance                  | Existing 1000 entries                           | Process restart |
+| `db.nornic.query_cache.ttl`                            | `NORNICDB_QUERY_CACHE_TTL`                  | Per database instance                  | Existing 5 minutes                              | Dynamic         |
+| `db.nornic.query_plan_cache.max_entries`               | None                                        | Per database instance                  | Existing 500 entries                            | Process restart |
+| `db.nornic.fabric_plan_cache.max_entries`              | None                                        | Per database instance                  | Existing 500 entries                            | Process restart |
+| `db.nornic.query_analysis_cache.max_entries`           | None                                        | Per database instance                  | Existing 1000 entries                           | Process restart |
+| `db.nornic.search_result_cache.max_entries`            | None                                        | Per database instance                  | Existing 1000 entries                           | Dynamic         |
+| `db.nornic.query_lookup_metadata.max_entries`          | None                                        | Per database instance                  | Existing per-cache bounds                       | Process restart |
+| `db.memory.transaction.total.max`                      | None                                        | Per database                           | `0` (unlimited)                                 | Process restart |
+| `db.nornic.memory.storage.mode`                        | None                                        | Per physical database engine           | `default`, preserving high-performance behavior | Restart         |
+| `db.nornic.memory.storage.node_cache.max_entries`      | `NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES`    | Per physical database engine           | Existing 10000 entries                          | Restart         |
+| `db.nornic.memory.storage.edge_type_cache.max_entries` | `NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES` | Per physical database engine           | Existing 50 types                               | Restart         |
+| `db.nornic.memory.index.bm25.max`                      | None                                        | Per database, BM25 index               | `0` (unlimited/current representation)          | Process restart |
+| `db.nornic.memory.index.vector.max`                    | None                                        | Per database, vector index             | `0` (unlimited/current representation)          | Process restart |
+| `db.nornic.memory.index.metadata.max`                  | None                                        | Per database, per index implementation | `0` (unlimited/current representation)          | Process restart |
+| `db.nornic.index.bm25.storage`                         | None                                        | Per database, BM25 index               | `memory`/current behavior                       | Process restart |
+| `db.nornic.index.vector.storage`                       | None                                        | Per database, vector index             | current automatic behavior                      | Process restart |
 
 The API accepts raw bytes or case-insensitive binary suffixes compatible with
 Neo4j (`k`, `m`, `g`, `t`, interpreted as KiB, MiB, GiB, TiB). It serializes
@@ -434,8 +438,8 @@ features or default capacity limits:
    1000-entry analyzer/search-response caches, and bounded lookup metadata.
    Share configuration and metrics, not cached values or entry types. Preserve
    every current default and correctness-specific invalidation rule.
-7. Resizing an LRU cache is the only live memory-envelope change in this
-   workstream. Shrinking evicts least-recently-used entries immediately;
+7. Resizing the search-result LRU is the only live memory-envelope change in
+   this workstream. Shrinking evicts least-recently-used entries immediately;
    setting entry count to zero disables that cache; growing preserves existing
    entries; TTL changes apply to new entries and may eagerly remove entries
    already older than the new TTL.
@@ -448,26 +452,27 @@ or change result quality. A zero budget preserves today's unrestricted behavior.
 #### Restart and Change Semantics
 
 Match Neo4j's distinction between explicitly dynamic settings and static
-settings. Query-cache entry count/TTL and transaction-memory admission are
-dynamic. Badger mode/cache settings, index storage selection, and index memory
-budgets are static because they select on-disk structures and build algorithms.
+settings without claiming an applicator NornicDB does not have. Query-cache TTL
+and search-result cache capacity are dynamic through the in-place cache
+applicator. Search, embedding, and reranker settings marked dynamic use the
+search-service rebuild applicator. Query-cache entry count, transaction-memory
+admission, Badger mode/cache settings, index storage selection, and index memory
+budgets require a process restart.
 
 `PUT /admin/databases/{db}/config` persists static changes but must not call
 `ResetSearchService` or trigger an immediate rebuild. It returns
 `pendingRestart: true` with the old effective runtime value and new configured
-value. Apply the setting when that database is next opened. If NornicDB later
-supports independently stopping/starting a logical database, that database
-restart is sufficient for index settings; physical Badger settings require a
-process/physical-engine restart. Failed reopen leaves the previous index
-generation intact and reports the database/index unavailable rather than
-falling back to unrestricted memory use.
+value. Apply the setting on the next process start. NornicDB does not currently
+expose or advertise a database-only restart level. Failed reopen leaves the
+previous index generation intact and reports the database/index unavailable
+rather than falling back to unrestricted memory use.
 
 #### Implementation Tasks
 
 1. Replace the positional `dbconfig.KeyMeta` list with one typed settings
    registry containing canonical name, description, parser/type, valid values,
    default, scope, dynamic flag, restart level, zero semantics, deprecation, and
-   any existing legacy source. Reuse it for startup parsing, config resolution,
+   any supported environment alternative. Reuse it for startup parsing, config resolution,
    admin validation, and `SHOW SETTINGS` so behavior and metadata cannot drift.
 2. Add byte-size parsing compatible with Neo4j and persist normalized values in
    `_DbConfig`. Do not add new environment variables. Keep current precedence
@@ -724,61 +729,58 @@ Acceptance criteria:
 - Recovery point and time objectives are measured on the maximum supported
   database fixture.
 
-### 6. Secure Container and Network Defaults
+### 6. Explicit Container Security Signaling
 
 **Priority:** P0 for published examples and images.
 
 #### Exact code seams
 
-| Existing seam                                                                                                 | Exact change                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `docker/Dockerfile.*` environment blocks                                                                      | Change every maintained image's baked `NORNICDB_NO_AUTH=true` to `false`. Keep container listeners on all interfaces internally; image defaults alone must not publish ports.                                                                                                                                |
-| `docker-compose.yml`, `docker-compose.amd64.yml`, `docker-compose.arm64.yml`, maintained accelerator variants | Remove `${NORNICDB_NO_AUTH:-true}` and publish the required HTTP port as `127.0.0.1:7474:7474`. Remove Bolt/Qdrant host publication from the base example. Put broad publication and no-auth only in an explicitly named development override file.                                                          |
-| `docker/entrypoint.sh`                                                                                        | Keep explicit `NORNICDB_NO_AUTH=true` support, but emit one high-severity structured startup event when selected. Do not silently add `--no-auth`; preserve the explicit argument construction.                                                                                                              |
-| `pkg/config/config.go`: environment/security fields; `cmd/nornicdb/main.go`: startup before listeners         | Add `ValidateProductionSecurity(config)` using existing environment, auth, CORS, HTTP/TLS, and listener settings. In production reject no-auth, wildcard CORS, public plaintext listeners, and generated/default credentials before opening HTTP, Bolt, or gRPC listeners. Add no new environment variables. |
-| `pkg/server/server_public.go` and listener startup                                                            | Reuse address/public-host detection for the validator. Keep runtime route behavior unchanged after validation; this is startup admission, not request middleware.                                                                                                                                            |
-| New `testing/container_security_test.go` or script-backed Go test                                             | Parse Dockerfiles and Compose YAML structurally. Enumerate every maintained variant and fail on baked no-auth, wildcard host publication in base examples, unnecessary published ports, or literal secrets. Add a smoke test that starts default Compose and verifies LAN interfaces are not published.      |
+| Existing seam                                                                                                 | Exact change                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker/Dockerfile.*` environment blocks                                                                      | Retain the baked `NORNICDB_NO_AUTH=true` compatibility default across maintained images.                                                                                                                                                                                                                                           |
+| `docker-compose.yml`, `docker-compose.amd64.yml`, `docker-compose.arm64.yml`, maintained accelerator variants | Retain `${NORNICDB_NO_AUTH:-true}` or the equivalent explicit value so existing container startup behavior does not change.                                                                                                                                                                                                        |
+| `docker/entrypoint.sh`                                                                                        | Keep explicit `NORNICDB_NO_AUTH=true` support, but emit one high-severity structured startup event when selected. Do not silently add `--no-auth`; preserve the explicit argument construction.                                                                                                                                    |
+| `pkg/config/config.go`: environment/security fields; `cmd/nornicdb/main.go`: startup before listeners         | Add `ValidateSecurityConfiguration(config)` using existing auth, CORS, HTTP/TLS, and listener settings in every environment. Allow explicit no-auth; when auth is enabled reject empty/default credentials. Reject wildcard CORS and public plaintext HTTP, Bolt, or gRPC listeners before bind. Add no new environment variables. |
+| `pkg/server/server_public.go` and listener startup                                                            | Reuse address/public-host detection for the validator. Keep runtime route behavior unchanged after validation; this is startup admission, not request middleware.                                                                                                                                                                  |
+| New `testing/container_security_test.go`                                                                      | Parse Dockerfiles and Compose YAML structurally. Enumerate every maintained variant, require the intentional no-auth compatibility default, and require the entrypoint's stable high-severity event. Listener/CORS rejection remains covered by config validation tests.                                                           |
 
-The static structured-file test is the immediate discriminator. The production
+The static structured-file test is the immediate discriminator. The security
 startup test then proves validation runs before any listener bind by injecting
 a listener factory that fails the test if called.
 
 ```mermaid
 flowchart LR
    A[Image and Compose config] --> B[Load existing settings]
-   B --> C[ValidateProductionSecurity]
-   C --> D{Secure combination?}
-   D -- No --> E[Fail before listener bind]
-   D -- Yes --> F[Start internal listeners]
-   F --> G[Loopback host publication]
-   H[Explicit development override] --> I[High severity audit event]
-   I --> F
+   B --> C[ValidateSecurityConfiguration]
+   C --> D{Explicit no-auth?}
+   D -- Yes --> E[Emit high-severity event]
+   E --> F[Start listeners]
+   D -- No --> G{Credentials and ingress valid?}
+   G -- No --> H[Fail before listener bind]
+   G -- Yes --> F
 ```
 
 Implementation tasks:
 
-1. Set every image's `NORNICDB_NO_AUTH` default to `false`; remove no-auth from
-   normal Compose examples.
-2. Bind example host publications to loopback by default. Container listeners
-   may bind all interfaces only inside an isolated network with authenticated
-   ingress.
-3. Do not publish Bolt or Qdrant ports unless the selected example needs them.
-   Add separate explicit development and production examples.
-4. Require a non-default initial credential/secret through a file or secret
-   provider. Refuse production startup with generated/default credentials,
-   wildcard CORS, plaintext public ingress, or no-auth.
-5. Add a startup security summary and high-severity audit event for explicitly
-   insecure development mode.
-6. Add static CI checks over Dockerfiles and Compose files for no-auth defaults,
-   wildcard/public bindings, published ports, and secret values.
+1. Retain `NORNICDB_NO_AUTH=true` in maintained images and Compose examples for
+   compatibility.
+2. Emit a stable high-severity structured event whenever the entrypoint selects
+   no-auth mode.
+3. Permit explicit no-auth startup in every environment.
+4. When authentication is enabled, refuse startup with an empty/default
+   credential. Reject wildcard CORS and public plaintext ingress in every
+   environment.
+5. Add structural CI coverage for the compatibility default and warning event,
+   plus focused config tests for each rejected security combination.
 
 Acceptance criteria:
 
-- Running the default Compose file does not expose an unauthenticated database
-  to the LAN.
-- Production mode fails startup on insecure combinations rather than warning
-  and continuing.
-- Security-default tests cover every maintained Dockerfile and Compose variant.
+- Running a maintained image or Compose example preserves the documented
+  no-auth compatibility default and emits the stable warning event.
+- Every environment allows explicit no-auth, but rejects invalid enabled-auth
+  credentials, wildcard CORS, and public plaintext listeners.
+- Compatibility-default tests cover every maintained Dockerfile and Compose
+  variant.
 
 ### 7. Enforce the Headless Browser Surface
 

@@ -48,7 +48,9 @@ nornicdb serve \
 - `--bolt-port`: Bolt protocol port (default: `7687`; env: `NORNICDB_BOLT_PORT`).
 - `--http-port`: HTTP API port (default: `7474`; env: `NORNICDB_HTTP_PORT`).
 - `--address`: bind address (default: `0.0.0.0`).
-- `--no-auth`: disable authentication (development only).
+- `--no-auth`: explicitly disable authentication. Container startup emits a
+  high-severity structured event when `NORNICDB_NO_AUTH=true` selects this mode;
+  security validation does not reject the explicit override in any environment.
 - `--headless`: disable embedded UI assets, SPA/bootstrap routes, and browser IDEs. Core APIs remain available.
 
 **Example:**

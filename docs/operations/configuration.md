@@ -178,19 +178,23 @@ See:
 
 Instance-level configuration (env, config file) is the **default** for every database. You can override specific settings **per database** so that embedding, search, HNSW, k-means, and related options can differ by database.
 
-- **Precedence:** For a given database, effective config = global defaults (env + config file) **overlaid by** per-database overrides. Any key not set in overrides uses the global value.
+- **Precedence:** For a given database, values resolve from built-in defaults, global YAML/environment configuration, explicit process/CLI overrides, then persisted per-database settings. Later sources win; any key not set per database inherits the process/global value.
 - **Storage:** Overrides are stored in the **system database** (same pattern as RBAC allowlist/privileges). They are loaded at startup and on every `PUT` so all nodes see the same view.
 - **Management:**
   - **Admin API:** `GET /admin/databases/{dbName}/config` returns canonical dotted names in `overrides` and `effective`; `PUT /admin/databases/{dbName}/config` with body `{ "overrides": { "db.nornic.embedding.model": "bge-m3", ... } }` saves overrides. `GET /admin/databases/config/keys` returns each canonical key, its supported `environmentVariable` alternative, and type/category metadata. All require admin authentication.
   - **UI:** On the **Databases** page, users with the admin role see a settings (cog) button on each database card. Clicking it opens a configuration modal where you can set or clear overrides per key; "Use default" means that key is not overridden.
-- **Allowed keys:** Use the canonical dotted names returned by `GET /admin/databases/config/keys` and enumerated below. Existing `NORNICDB_*` names remain supported alternatives for environment configuration and compatibility with previously stored `_DbConfig` values; they are not deprecated. Writes are normalized to canonical names.
+- **Allowed keys:** `GET /admin/databases/config/keys` is the authoritative complete inventory. Use its canonical dotted names for persisted settings. Existing `NORNICDB_*` names remain supported alternatives for environment configuration and alternate YAML/API input; they are not deprecated. Writes are normalized to canonical names, and the canonical form wins a collision.
 - **Effect:** Settings returned with `restartLevel: none` are applied immediately by an explicit runtime applicator. Search/index/embedder/reranker settings rebuild the database's search service; search-result cache capacity and TTL resize the existing cache in place. Settings returned with `restartLevel: process` are persisted immediately and return `pendingRestart: true`, but the current runtime value remains active until restart.
 - **Search pipeline and query embedding:** The search pipeline must embed the **query** using the same effective config (and thus dimensions) as the **index** for that database to avoid vector dimension mismatches. The HTTP search handler uses per-database resolved config when embedding the query: it validates that the global embedder's output dimensions match the database's resolved embedding dimensions. If they differ (e.g. you set a per-DB override for embedding dimensions that does not match the global embedder), the API returns `400 Bad Request` with a clear message instead of returning empty vector results. Align global embedding dimensions with per-DB overrides, or leave per-DB embedding dimensions unset so they match global.
 - **Remote embedding providers (OpenAI, Ollama) per database:** You can set `db.nornic.embedding.provider`, `db.nornic.embedding.model`, `db.nornic.embedding.api.url`, `db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions` so different databases use different models, endpoints, or API keys. When a database uses provider `openai` (or another provider that requires a key), the **resolved** API key for that database (global default or per-DB setting) is used. Ollama typically does not require an API key.
 
-#### Canonical settings and environment alternatives
+#### Canonical settings with environment alternatives
 
-Canonical names are the database settings contract and are persisted in `_DbConfig`. The corresponding environment variable remains a supported way to configure the global value and is accepted as an alternate input name by the database configuration API.
+Canonical names are the database settings contract and are persisted in
+`_DbConfig`. The table below lists settings that also have an environment
+alternative. Settings without one, including index budgets and storage policy,
+remain available under their canonical names from
+`GET /admin/databases/config/keys`.
 
 | Canonical database setting                   | Supported environment alternative           |
 | -------------------------------------------- | ------------------------------------------- |
@@ -249,6 +253,28 @@ Canonical names are the database settings contract and are persisted in `_DbConf
 | `db.nornic.mvcc.lifecycle.interval`          | `NORNICDB_MVCC_LIFECYCLE_INTERVAL`          |
 | `db.nornic.query_cache.max_entries`          | `NORNICDB_QUERY_CACHE_SIZE`                 |
 | `db.nornic.query_cache.ttl`                  | `NORNICDB_QUERY_CACHE_TTL`                  |
+
+#### Activation summary
+
+The key metadata endpoint reports the activation contract for every setting:
+
+- **Search rebuild:** embedding provider/model/API URL/API key/dimensions/GPU
+  layers; search minimum similarity, BM25 engine/enabled/warming, vector
+  enabled/warming, and reranker settings. These persist and immediately rebuild
+  only the affected database's search service.
+- **In-place cache update:** `db.nornic.query_cache.ttl` and
+  `db.nornic.search_result_cache.max_entries`. These mutate the existing search
+  result cache without rebuilding the service.
+- **Process restart:** every other registered setting, including embedding
+  enablement/cache/property selection, ANN/HNSW/IVF/k-means tuning, workers,
+  auto-link/TLP, MVCC lifecycle, query/plan/analysis caches, transaction memory,
+  Badger mode/caches, index budgets/storage, and recovery budgets. A PUT
+  persists the configured value and returns `pendingRestart: true`; it does not
+  change the running value.
+
+Do not infer activation from a setting family. Read `restartLevel` (and
+`isDynamic` in `SHOW SETTINGS`) because only settings with a concrete runtime
+applicator are dynamic.
 
 `db.nornic.query_cache.max_entries` correlates with Neo4j's
 `server.memory.query_cache.per_db_cache_num_entries`: both control the number of

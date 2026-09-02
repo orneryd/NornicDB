@@ -431,7 +431,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if noAuth {
 		cfg.Auth.Enabled = false
 	}
-	if err := config.ValidateProductionSecurity(cfg); err != nil {
+	if err := config.ValidateSecurityConfiguration(cfg); err != nil {
 		return err
 	}
 

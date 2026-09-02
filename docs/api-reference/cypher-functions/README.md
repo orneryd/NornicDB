@@ -18,161 +18,162 @@ Last Updated: November 25, 2025
 
 ### 🔍 Node & Relationship Functions (11 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `id(n)` | Get unique ID | `MATCH (n) RETURN id(n)` |
-| `elementId(n)` | Neo4j-compatible ID | `RETURN elementId(n)` |
-| `labels(n)` | Get node labels/types | `RETURN labels(n)` |
-| `type(r)` | Get relationship type | `MATCH ()-[r]->() RETURN type(r)` |
-| `keys(n)` | List property names | `RETURN keys(n)` |
-| `properties(n)` | Get all properties | `RETURN properties(n)` |
-| `startNode(r)` | Get relationship start node | `RETURN startNode(r)` |
-| `endNode(r)` | Get relationship end node | `RETURN endNode(r)` |
-| `nodes(path)` | Get nodes in path | `RETURN nodes(path)` |
-| `relationships(path)` | Get rels in path | `RETURN relationships(path)` |
-| `exists(n.prop)` | Check if property exists | `WHERE exists(n.email)` |
+| Function              | What It Does                | Example                           |
+| --------------------- | --------------------------- | --------------------------------- |
+| `id(n)`               | Get unique ID               | `MATCH (n) RETURN id(n)`          |
+| `elementId(n)`        | Neo4j-compatible ID         | `RETURN elementId(n)`             |
+| `labels(n)`           | Get node labels/types       | `RETURN labels(n)`                |
+| `type(r)`             | Get relationship type       | `MATCH ()-[r]->() RETURN type(r)` |
+| `keys(n)`             | List property names         | `RETURN keys(n)`                  |
+| `properties(n)`       | Get all properties          | `RETURN properties(n)`            |
+| `startNode(r)`        | Get relationship start node | `RETURN startNode(r)`             |
+| `endNode(r)`          | Get relationship end node   | `RETURN endNode(r)`               |
+| `nodes(path)`         | Get nodes in path           | `RETURN nodes(path)`              |
+| `relationships(path)` | Get rels in path            | `RETURN relationships(path)`      |
+| `exists(n.prop)`      | Check if property exists    | `WHERE exists(n.email)`           |
 
 ### 📝 String Functions (15 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `toString(val)` | Convert to string | `RETURN toString(42)` |
-| `toLower(s)` | Convert to lowercase | `RETURN toLower("HELLO")` |
-| `toUpper(s)` | Convert to UPPERCASE | `RETURN toUpper("hello")` |
-| `trim(s)` | Remove edge whitespace | `RETURN trim("  hi  ")` |
-| `ltrim(s)` | Trim left side | `RETURN ltrim("  hi")` |
-| `rtrim(s)` | Trim right side | `RETURN rtrim("hi  ")` |
-| `replace(s, find, repl)` | Find & replace | `RETURN replace("cat", "c", "b")` |
-| `split(s, delim)` | Split into list | `RETURN split("a,b,c", ",")` |
-| `substring(s, start, len)` | Extract substring | `RETURN substring("hello", 0, 3)` |
-| `left(s, n)` | First n characters | `RETURN left("hello", 2)` |
-| `right(s, n)` | Last n characters | `RETURN right("hello", 2)` |
-| `size(s)` | String/list length | `RETURN size("hello")` |
-| `char_length(s)` | Character count | `RETURN char_length("hi")` |
-| `normalize(s)` | Unicode normalization | `RETURN normalize(s)` |
-| `btrim(s, chars)` | Trim specific chars | `RETURN btrim("!!hi!!", "!")` |
+| Function                   | What It Does           | Example                           |
+| -------------------------- | ---------------------- | --------------------------------- |
+| `toString(val)`            | Convert to string      | `RETURN toString(42)`             |
+| `toLower(s)`               | Convert to lowercase   | `RETURN toLower("HELLO")`         |
+| `toUpper(s)`               | Convert to UPPERCASE   | `RETURN toUpper("hello")`         |
+| `trim(s)`                  | Remove edge whitespace | `RETURN trim("  hi  ")`           |
+| `ltrim(s)`                 | Trim left side         | `RETURN ltrim("  hi")`            |
+| `rtrim(s)`                 | Trim right side        | `RETURN rtrim("hi  ")`            |
+| `replace(s, find, repl)`   | Find & replace         | `RETURN replace("cat", "c", "b")` |
+| `split(s, delim)`          | Split into list        | `RETURN split("a,b,c", ",")`      |
+| `substring(s, start, len)` | Extract substring      | `RETURN substring("hello", 0, 3)` |
+| `left(s, n)`               | First n characters     | `RETURN left("hello", 2)`         |
+| `right(s, n)`              | Last n characters      | `RETURN right("hello", 2)`        |
+| `size(s)`                  | String/list length     | `RETURN size("hello")`            |
+| `char_length(s)`           | Character count        | `RETURN char_length("hi")`        |
+| `normalize(s)`             | Unicode normalization  | `RETURN normalize(s)`             |
+| `btrim(s, chars)`          | Trim specific chars    | `RETURN btrim("!!hi!!", "!")`     |
 
 ### 🔢 Type Conversion Functions (4 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `toInteger(val)` | Convert to integer | `RETURN toInteger("42")` |
-| `toInt(val)` | Alias for toInteger | `RETURN toInt("42")` |
-| `toFloat(val)` | Convert to decimal | `RETURN toFloat("3.14")` |
+| Function         | What It Does          | Example                    |
+| ---------------- | --------------------- | -------------------------- |
+| `toInteger(val)` | Convert to integer    | `RETURN toInteger("42")`   |
+| `toInt(val)`     | Alias for toInteger   | `RETURN toInt("42")`       |
+| `toFloat(val)`   | Convert to decimal    | `RETURN toFloat("3.14")`   |
 | `toBoolean(val)` | Convert to true/false | `RETURN toBoolean("true")` |
 
 ### 📐 Mathematical Functions (7 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `abs(x)` | Absolute value | `RETURN abs(-5)` |
-| `ceil(x)` | Round up | `RETURN ceil(3.2)` |
-| `floor(x)` | Round down | `RETURN floor(3.8)` |
-| `round(x)` | Round normally | `RETURN round(3.5)` |
-| `sign(x)` | Get sign (-1/0/1) | `RETURN sign(-5)` |
-| `sqrt(x)` | Square root | `RETURN sqrt(16)` |
-| `rand()` | Random 0-1 | `RETURN rand()` |
+| Function   | What It Does      | Example             |
+| ---------- | ----------------- | ------------------- |
+| `abs(x)`   | Absolute value    | `RETURN abs(-5)`    |
+| `ceil(x)`  | Round up          | `RETURN ceil(3.2)`  |
+| `floor(x)` | Round down        | `RETURN floor(3.8)` |
+| `round(x)` | Round normally    | `RETURN round(3.5)` |
+| `sign(x)`  | Get sign (-1/0/1) | `RETURN sign(-5)`   |
+| `sqrt(x)`  | Square root       | `RETURN sqrt(16)`   |
+| `rand()`   | Random 0-1        | `RETURN rand()`     |
 
 ### 📊 Trigonometric Functions (11 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `sin(x)` | Sine | `RETURN sin(radians(90))` |
-| `cos(x)` | Cosine | `RETURN cos(radians(0))` |
-| `tan(x)` | Tangent | `RETURN tan(radians(45))` |
-| `cot(x)` | Cotangent | `RETURN cot(radians(45))` |
-| `asin(x)` | Arc sine | `RETURN asin(0.5)` |
-| `acos(x)` | Arc cosine | `RETURN acos(0.5)` |
-| `atan(x)` | Arc tangent | `RETURN atan(1)` |
-| `atan2(y, x)` | 2-arg arc tangent | `RETURN atan2(y, x)` |
-| `radians(deg)` | Degrees→radians | `RETURN radians(180)` |
-| `degrees(rad)` | Radians→degrees | `RETURN degrees(3.14)` |
-| `haversin(x)` | Haversine | `RETURN haversin(x)` |
+| Function       | What It Does      | Example                   |
+| -------------- | ----------------- | ------------------------- |
+| `sin(x)`       | Sine              | `RETURN sin(radians(90))` |
+| `cos(x)`       | Cosine            | `RETURN cos(radians(0))`  |
+| `tan(x)`       | Tangent           | `RETURN tan(radians(45))` |
+| `cot(x)`       | Cotangent         | `RETURN cot(radians(45))` |
+| `asin(x)`      | Arc sine          | `RETURN asin(0.5)`        |
+| `acos(x)`      | Arc cosine        | `RETURN acos(0.5)`        |
+| `atan(x)`      | Arc tangent       | `RETURN atan(1)`          |
+| `atan2(y, x)`  | 2-arg arc tangent | `RETURN atan2(y, x)`      |
+| `radians(deg)` | Degrees→radians   | `RETURN radians(180)`     |
+| `degrees(rad)` | Radians→degrees   | `RETURN degrees(3.14)`    |
+| `haversin(x)`  | Haversine         | `RETURN haversin(x)`      |
 
 ### 🌟 Advanced Math Functions (4 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `exp(x)` | e^x | `RETURN exp(1)` |
-| `log(x)` | Natural log | `RETURN log(2.718)` |
-| `log10(x)` | Base-10 log | `RETURN log10(100)` |
-| `pi()` | π constant | `RETURN pi()` |
-| `e()` | e constant | `RETURN e()` |
+| Function   | What It Does | Example             |
+| ---------- | ------------ | ------------------- |
+| `exp(x)`   | e^x          | `RETURN exp(1)`     |
+| `log(x)`   | Natural log  | `RETURN log(2.718)` |
+| `log10(x)` | Base-10 log  | `RETURN log10(100)` |
+| `pi()`     | π constant   | `RETURN pi()`       |
+| `e()`      | e constant   | `RETURN e()`        |
 
 ### 📋 List Functions (9 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `size(list)` | List length | `RETURN size([1,2,3])` |
-| `head(list)` | First element | `RETURN head([1,2,3])` |
-| `last(list)` | Last element | `RETURN last([1,2,3])` |
-| `tail(list)` | All except first | `RETURN tail([1,2,3])` |
-| `reverse(list)` | Reverse order | `RETURN reverse([1,2,3])` |
-| `range(start, end, step)` | Create number sequence | `RETURN range(1, 10, 2)` |
-| `coalesce(v1, v2, ...)` | First non-null value | `RETURN coalesce(null, 5, 10)` |
-| `reduce(...)` | Reduce list to value | See examples below |
-| `isEmpty(x)` | Check if empty | `RETURN isEmpty([])` |
+| Function                  | What It Does           | Example                        |
+| ------------------------- | ---------------------- | ------------------------------ |
+| `size(list)`              | List length            | `RETURN size([1,2,3])`         |
+| `head(list)`              | First element          | `RETURN head([1,2,3])`         |
+| `last(list)`              | Last element           | `RETURN last([1,2,3])`         |
+| `tail(list)`              | All except first       | `RETURN tail([1,2,3])`         |
+| `reverse(list)`           | Reverse order          | `RETURN reverse([1,2,3])`      |
+| `range(start, end, step)` | Create number sequence | `RETURN range(1, 10, 2)`       |
+| `coalesce(v1, v2, ...)`   | First non-null value   | `RETURN coalesce(null, 5, 10)` |
+| `reduce(...)`             | Reduce list to value   | See examples below             |
+| `isEmpty(x)`              | Check if empty         | `RETURN isEmpty([])`           |
 
 ### 🎯 Vector Functions (2 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `vector.similarity.cosine(v1, v2)` | Cosine similarity | `RETURN vector.similarity.cosine([1,2,3], [2,3,4])` |
-| `vector.similarity.euclidean(v1, v2)` | Euclidean distance | `RETURN vector.similarity.euclidean([0,0], [3,4])` |
+| Function                              | What It Does       | Example                                             |
+| ------------------------------------- | ------------------ | --------------------------------------------------- |
+| `vector.similarity.cosine(v1, v2)`    | Cosine similarity  | `RETURN vector.similarity.cosine([1,2,3], [2,3,4])` |
+| `vector.similarity.euclidean(v1, v2)` | Euclidean distance | `RETURN vector.similarity.euclidean([0,0], [3,4])`  |
 
 ### 📈 Kalman Filter Functions (10 functions)
 
 Real-time signal filtering and prediction for time series data. Perfect for smoothing noisy sensor readings, tracking market sentiment, or predicting trends.
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `kalman.init(config?)` | Create basic filter state | `RETURN kalman.init()` |
-| `kalman.process(val, state, target?)` | Filter a measurement | `kalman.process(23.5, s.state)` |
-| `kalman.predict(state, steps)` | Predict future value | `kalman.predict(s.state, 5)` |
-| `kalman.state(state)` | Get current estimate | `kalman.state(s.state)` |
-| `kalman.reset(state)` | Reset filter | `kalman.reset(s.state)` |
-| `kalman.velocity.init(pos?, vel?)` | Create trend-tracking filter | `kalman.velocity.init()` |
-| `kalman.velocity.process(val, state)` | Filter with velocity tracking | Returns `{value, velocity, state}` |
-| `kalman.velocity.predict(state, steps)` | Predict with momentum | `kalman.velocity.predict(s.state, 5)` |
-| `kalman.adaptive.init(config?)` | Create auto-switching filter | `kalman.adaptive.init()` |
-| `kalman.adaptive.process(val, state)` | Filter with auto mode-switch | Returns `{value, mode, state}` |
+| Function                                | What It Does                  | Example                               |
+| --------------------------------------- | ----------------------------- | ------------------------------------- |
+| `kalman.init(config?)`                  | Create basic filter state     | `RETURN kalman.init()`                |
+| `kalman.process(val, state, target?)`   | Filter a measurement          | `kalman.process(23.5, s.state)`       |
+| `kalman.predict(state, steps)`          | Predict future value          | `kalman.predict(s.state, 5)`          |
+| `kalman.state(state)`                   | Get current estimate          | `kalman.state(s.state)`               |
+| `kalman.reset(state)`                   | Reset filter                  | `kalman.reset(s.state)`               |
+| `kalman.velocity.init(pos?, vel?)`      | Create trend-tracking filter  | `kalman.velocity.init()`              |
+| `kalman.velocity.process(val, state)`   | Filter with velocity tracking | Returns `{value, velocity, state}`    |
+| `kalman.velocity.predict(state, steps)` | Predict with momentum         | `kalman.velocity.predict(s.state, 5)` |
+| `kalman.adaptive.init(config?)`         | Create auto-switching filter  | `kalman.adaptive.init()`              |
+| `kalman.adaptive.process(val, state)`   | Filter with auto mode-switch  | Returns `{value, mode, state}`        |
 
 ### ⏰ Date/Time Functions (4 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
+| Function      | What It Does                | Example              |
+| ------------- | --------------------------- | -------------------- |
 | `timestamp()` | Current Unix timestamp (ms) | `RETURN timestamp()` |
-| `datetime()` | Current datetime | `RETURN datetime()` |
-| `date()` | Current date | `RETURN date()` |
-| `time()` | Current time | `RETURN time()` |
+| `datetime()`  | Current datetime            | `RETURN datetime()`  |
+| `date()`      | Current date                | `RETURN date()`      |
+| `time()`      | Current time                | `RETURN time()`      |
 
 ### ✅ Null/Check Functions (3 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `isEmpty(x)` | Check if empty | `RETURN isEmpty("")` |
-| `isNaN(x)` | Check if not-a-number | `RETURN isNaN(0/0)` |
-| `nullIf(v1, v2)` | Return null if equal | `RETURN nullIf(5, 5)` |
+| Function         | What It Does          | Example               |
+| ---------------- | --------------------- | --------------------- |
+| `isEmpty(x)`     | Check if empty        | `RETURN isEmpty("")`  |
+| `isNaN(x)`       | Check if not-a-number | `RETURN isNaN(0/0)`   |
+| `nullIf(v1, v2)` | Return null if equal  | `RETURN nullIf(5, 5)` |
 
 ### 🔄 Aggregation Functions (2 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `count(x)` | Count items | `MATCH (n) RETURN count(n)` |
-| `length(path)` | Path length | `RETURN length(path)` |
+| Function       | What It Does | Example                     |
+| -------------- | ------------ | --------------------------- |
+| `count(x)`     | Count items  | `MATCH (n) RETURN count(n)` |
+| `length(path)` | Path length  | `RETURN length(path)`       |
 
 ### 🎲 Utility Functions (2 functions)
 
-| Function | What It Does | Example |
-|----------|-------------|---------|
-| `randomUUID()` | Generate UUID | `RETURN randomUUID()` |
-| `rand()` | Random number 0-1 | `RETURN rand()` |
+| Function       | What It Does      | Example               |
+| -------------- | ----------------- | --------------------- |
+| `randomUUID()` | Generate UUID     | `RETURN randomUUID()` |
+| `rand()`       | Random number 0-1 | `RETURN rand()`       |
 
 ---
 
 ## Real-World Example Collections
 
 ### Example 1: Memory Search with Decay
+
 ```cypher
 // Find strong memories about a topic
 MATCH (m:Memory)
@@ -187,6 +188,7 @@ LIMIT 10
 ```
 
 ### Example 2: Data Cleaning
+
 ```cypher
 // Clean up user input
 MATCH (user:User)
@@ -197,6 +199,7 @@ RETURN count(user) AS cleanedCount
 ```
 
 ### Example 3: Calculate Distances
+
 ```cypher
 // Find nearby locations using Pythagorean theorem
 MATCH (loc1:Location), (loc2:Location)
@@ -209,6 +212,7 @@ ORDER BY distance
 ```
 
 ### Example 4: Text Processing
+
 ```cypher
 // Parse and normalize tags
 MATCH (post:Post)
@@ -219,6 +223,7 @@ RETURN count(post) AS processed
 ```
 
 ### Example 5: Find Similar Memories (Vector Search)
+
 ```cypher
 // Find memories similar to a query embedding
 MATCH (m:Memory)
@@ -234,6 +239,7 @@ LIMIT 5
 ```
 
 ### Example 6: Statistical Analysis
+
 ```cypher
 // Analyze decay score distribution by label
 MATCH (m:KnowledgeFact)
@@ -249,6 +255,7 @@ RETURN label, total,
 ```
 
 ### Example 7: Conditional Logic with Coalesce
+
 ```cypher
 // Handle missing data gracefully
 MATCH (user:User)
@@ -258,13 +265,15 @@ RETURN user.name,
 ```
 
 ### Example 8: Generate Sequences
+
 ```cypher
 // Create pagination links
-RETURN [page IN range(1, 10) | 
+RETURN [page IN range(1, 10) |
         "https://example.com/page/" + toString(page)] AS pageLinks
 ```
 
 ### Example 9: Complex String Manipulation
+
 ```cypher
 // Format display names
 MATCH (person:Person)
@@ -276,6 +285,7 @@ RETURN person.fullName,
 ```
 
 ### Example 10: Trigonometry for Geo-coordinates
+
 ```cypher
 // Haversine formula for Earth distance
 MATCH (p1:Place), (p2:Place)
@@ -346,6 +356,7 @@ RETURN s.symbol, current, predicted, "🎯 BREAKOUT CANDIDATE" AS alert
 ```
 
 ### Example 12: IoT Sensor Smoothing with Kalman
+
 ```cypher
 // Initialize temperature sensors with Kalman filtering
 CREATE (s:Sensor {
@@ -373,6 +384,7 @@ RETURN s.id, s.location,
 ```
 
 ### Example 13: Adaptive Kalman for Volatile Time Series
+
 ```cypher
 // Use adaptive filter for crypto (high volatility) - auto-switches modes
 CREATE (c:Crypto {
@@ -403,32 +415,41 @@ RETURN c.symbol,
 ## Function Categories by Use Case
 
 ### 🔍 Data Inspection
+
 - `id()`, `labels()`, `type()`, `keys()`, `properties()`
 
 ### 🧹 Data Cleaning
+
 - `trim()`, `toLower()`, `toUpper()`, `replace()`, `split()`
 
 ### 🔄 Type Safety
+
 - `toInteger()`, `toFloat()`, `toString()`, `toBoolean()`
 
 ### 📊 Analytics
+
 - `count()`, `avg()`, `sum()`, `min()`, `max()`
 
 ### 🧮 Math & Stats
+
 - `abs()`, `ceil()`, `floor()`, `round()`, `sqrt()`, `pow()`
 
 ### 🗺️ Spatial/Geo
+
 - `sin()`, `cos()`, `haversin()`, `atan2()`, `sqrt()` (for distances)
 
 ### 🤖 AI/ML Features
+
 - `vector.similarity.cosine()`, `vector.similarity.euclidean()`
 
 ### 📈 Signal Processing & Prediction
+
 - `kalman.init()`, `kalman.process()`, `kalman.predict()`
 - `kalman.velocity.init()`, `kalman.velocity.process()`, `kalman.velocity.predict()`
 - `kalman.adaptive.init()`, `kalman.adaptive.process()`
 
 ### 🧠 Memory Management
+
 - Decay system functions (see [Memory Decay System](../../features/memory-decay.md))
 
 ---
@@ -436,20 +457,24 @@ RETURN c.symbol,
 ## Performance Notes
 
 ### Fast Functions (< 1μs)
+
 - `id()`, `labels()`, `type()`
 - `toString()`, `toInteger()`, `toFloat()`
 - `toLower()`, `toUpper()`
 
 ### Medium Functions (1-10μs)
+
 - `trim()`, `replace()`, `split()`
 - `abs()`, `ceil()`, `floor()`, `round()`
 
 ### Slower Functions (> 10μs)
+
 - `sin()`, `cos()`, `tan()` and other trig functions
 - `sqrt()`, `exp()`, `log()`
 - `vector.similarity.*()` - depends on vector size
 
 ### Tips for Performance
+
 1. **Cache computed values** instead of recalculating
 2. **Use indexes** for WHERE clauses before function calls
 3. **Batch operations** instead of per-node function calls
@@ -460,6 +485,7 @@ RETURN c.symbol,
 ## Common Patterns
 
 ### Pattern: Case-Insensitive Search
+
 ```cypher
 MATCH (n)
 WHERE toLower(n.name) = toLower($searchTerm)
@@ -467,12 +493,14 @@ RETURN n
 ```
 
 ### Pattern: Safe Property Access
+
 ```cypher
 MATCH (n)
 RETURN coalesce(n.optionalProperty, "default value") AS prop
 ```
 
 ### Pattern: Parse CSV Data
+
 ```cypher
 MATCH (n:RawData)
 WITH n, split(n.csvLine, ",") AS fields
@@ -484,6 +512,7 @@ CREATE (p:ParsedData {
 ```
 
 ### Pattern: Calculate Age
+
 ```cypher
 MATCH (person:Person)
 RETURN person.name,
@@ -491,6 +520,7 @@ RETURN person.name,
 ```
 
 ### Pattern: Vector Similarity Search
+
 ```cypher
 MATCH (doc:Document)
 WHERE doc.embedding IS NOT NULL
@@ -505,7 +535,10 @@ LIMIT 10
 
 ## `db.index.vector.queryNodes` — disabled-database behaviour
 
-When the procedure is called against a database whose `NORNICDB_SEARCH_VECTOR_ENABLED` is `false` (per-DB or global, with the per-DB override winning):
+When the procedure is called against a database whose
+`db.nornic.search.vector.enabled` setting is `false` (or whose global
+`NORNICDB_SEARCH_VECTOR_ENABLED` alternative is false, with the per-database
+override winning):
 
 - The procedure returns **zero rows** — the same shape as a query against an empty index.
 - A `WARN`-level log line is emitted with `subsystem=vector_search` and the `index_name`:
@@ -519,7 +552,7 @@ To switch behaviour, flip the master switch via:
 ```bash
 curl -X PUT http://localhost:7474/admin/databases/<db>/config \
   -H "Content-Type: application/json" \
-  -d '{"overrides": {"NORNICDB_SEARCH_VECTOR_ENABLED": "true"}}'
+    -d '{"overrides": {"db.nornic.search.vector.enabled": "true"}}'
 ```
 
 See [Per-Database Search Index Flags](../../operations/configuration.md#per-database-search-index-control).
@@ -527,20 +560,24 @@ See [Per-Database Search Index Flags](../../operations/configuration.md#per-data
 ## References & Further Reading
 
 ### Memory Models
+
 - **Atkinson-Shiffrin Model** (1968) - Three-store memory model
 - **Ebbinghaus Forgetting Curve** (1885) - Exponential memory decay
 - **Spaced Repetition** - Optimal review timing for retention
 
 ### Mathematical Functions
+
 - **Khan Academy** - Trigonometry basics
 - **3Blue1Brown** - Visual math explanations (YouTube)
 - **Essence of Calculus** - Understanding exponentials and logs
 
 ### Vector Similarity
+
 - **Cosine Similarity** explained: https://en.wikipedia.org/wiki/Cosine_similarity
 - **Euclidean vs Cosine** - When to use which
 
 ### Neo4j Cypher Reference
+
 - Official Neo4j Cypher manual
 - Neo4j function reference
 
@@ -548,6 +585,6 @@ See [Per-Database Search Index Flags](../../operations/configuration.md#per-data
 
 **Documentation Status:** ✅ Complete  
 **Functions Documented:** 62/62 (100%)  
-**Examples Provided:** 160+  
+**Examples Provided:** 160+
 
 **Last Updated:** November 29, 2025
