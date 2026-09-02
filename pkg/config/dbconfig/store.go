@@ -7,6 +7,7 @@ package dbconfig
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -74,7 +75,11 @@ func (s *Store) LoadWithYAMLDefaults(ctx context.Context, yamlOverrides map[stri
 			if _, set := existing[k]; set {
 				continue
 			}
-			merged[k] = v
+			normalized, err := NormalizeSettingValue(k, v)
+			if err != nil {
+				return fmt.Errorf("invalid database setting %s for %s: %w", k, dbName, err)
+			}
+			merged[k] = normalized
 			changed = true
 		}
 		if !changed {

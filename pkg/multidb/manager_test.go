@@ -101,6 +101,45 @@ func TestDatabaseManager_CreateDatabase_Duplicate(t *testing.T) {
 	assert.Equal(t, ErrDatabaseExists, err)
 }
 
+func TestDatabaseManagerDropClearsLimitChecker(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("tenant"))
+
+	_, err = manager.GetStorage("tenant")
+	require.NoError(t, err)
+	first := manager.limitCheckers["tenant"]
+	require.NotNil(t, first)
+	require.NoError(t, manager.DropDatabase("tenant"))
+	require.NotContains(t, manager.limitCheckers, "tenant")
+
+	require.NoError(t, manager.CreateDatabase("tenant"))
+	_, err = manager.GetStorage("tenant")
+	require.NoError(t, err)
+	require.NotSame(t, first, manager.limitCheckers["tenant"])
+}
+
+func TestResolveConnectionLimitOwner(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("tenant"))
+	require.NoError(t, manager.CreateAlias("tenant-alias", "tenant"))
+	require.NoError(t, manager.CreateCompositeDatabase("fabric", []ConstituentRef{{
+		Alias: "part", DatabaseName: "tenant", Type: "local", AccessMode: "read_write",
+	}}))
+
+	owner, err := manager.ResolveConnectionLimitOwner("tenant-alias")
+	require.NoError(t, err)
+	require.Equal(t, "tenant", owner)
+	owner, err = manager.ResolveConnectionLimitOwner("fabric.part")
+	require.NoError(t, err)
+	require.Equal(t, "tenant", owner)
+}
+
 func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
 	inner := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = inner.Close() })

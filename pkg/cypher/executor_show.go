@@ -47,6 +47,10 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 	}
 
 	definitions := dbconfig.Settings()
+	snapshot := SettingsSnapshot{}
+	if e.settingsResolver != nil {
+		snapshot = e.settingsResolver()
+	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
 	rows := make([][]interface{}, 0, len(definitions))
 	seen := make(map[string]struct{}, len(definitions))
@@ -60,15 +64,33 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 				continue
 			}
 		}
+		value := definition.DefaultValue
+		startupValue := definition.DefaultValue
+		configuredValue, explicitlySet := snapshot.Configured[definition.Name]
+		if explicitlySet {
+			value = configuredValue
+		}
+		if activeValue, ok := snapshot.Active[definition.Name]; ok {
+			value = activeValue
+			startupValue = activeValue
+		}
+		if definition.Redacted {
+			if value != "" {
+				value = "<REDACTED>"
+			}
+			if startupValue != "" {
+				startupValue = "<REDACTED>"
+			}
+		}
 		rows = append(rows, []interface{}{
 			definition.Name,
 			definition.Description,
-			definition.DefaultValue,
+			value,
 			definition.Dynamic,
 			definition.DefaultValue,
-			definition.DefaultValue,
+			startupValue,
 			append([]string(nil), definition.ValidValues...),
-			false,
+			explicitlySet,
 			definition.Deprecated,
 		})
 	}

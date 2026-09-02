@@ -967,6 +967,35 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond, "lazy build should replay queued write mutations after warmup")
 }
 
+func TestSearchServiceReceivesDatabaseIndexCapacityPolicy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Memory.EmbeddingEnabled = false
+	cfg.Database.AsyncWritesEnabled = false
+	db, err := Open("", cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	db.SetDbSearchOptionsResolver(func(dbName string) search.ServiceOptions {
+		return search.ServiceOptions{
+			DatabaseID:             dbName,
+			BM25MemoryMaxBytes:     1 << 20,
+			VectorMemoryMaxBytes:   2 << 20,
+			MetadataMemoryMaxBytes: 3 << 20,
+			BM25StorageMode:        "memory",
+			VectorStorageMode:      "memory",
+		}
+	})
+
+	service, err := db.GetOrCreateSearchService("capacity", nil)
+	require.NoError(t, err)
+	bm25Max, vectorMax, metadataMax, bm25Storage, vectorStorage := service.IndexCapacityPolicy()
+	require.Equal(t, int64(1<<20), bm25Max)
+	require.Equal(t, int64(2<<20), vectorMax)
+	require.Equal(t, int64(3<<20), metadataMax)
+	require.Equal(t, "memory", bm25Storage)
+	require.Equal(t, "memory", vectorStorage)
+}
+
 func TestSearchServices_GetOrCreate_ResolverAndPersistPaths(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Memory.EmbeddingDimensions = 3

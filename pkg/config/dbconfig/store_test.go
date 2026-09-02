@@ -176,6 +176,24 @@ func TestLoadWithYAMLDefaults_AcceptsBothKeyForms(t *testing.T) {
 	}, store.GetOverrides("analytics"))
 }
 
+func TestLoadWithYAMLDefaultsNormalizesAndRejectsInvalidValues(t *testing.T) {
+	ctx := context.Background()
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+	store := NewStore(engine)
+
+	require.NoError(t, store.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {"db.memory.transaction.total.max": "2m"},
+	}))
+	require.Equal(t, "2097152", store.GetOverrides("analytics")["db.memory.transaction.total.max"])
+
+	err := store.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"broken": {"db.nornic.search.vector.warming": "eventually"},
+	})
+	require.ErrorContains(t, err, "db.nornic.search.vector.warming")
+	require.Nil(t, store.GetOverrides("broken"))
+}
+
 func TestStoreCanonicalizesEnvironmentAlternativeKeys(t *testing.T) {
 	engine := storage.NewMemoryEngine()
 	store := NewStore(engine)

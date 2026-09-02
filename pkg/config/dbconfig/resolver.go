@@ -34,6 +34,11 @@ type ResolvedDbConfig struct {
 	VectorWarming               string
 	SearchResultCacheMaxEntries int
 	SearchResultCacheTTL        time.Duration
+	BM25MemoryMaxBytes          int64
+	VectorMemoryMaxBytes        int64
+	MetadataMemoryMaxBytes      int64
+	BM25StorageMode             string
+	VectorStorageMode           string
 	// Effective is the full effective value for every allowed key (string form for API).
 	Effective map[string]string
 }
@@ -59,7 +64,9 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		VectorEnabled:               global.Memory.SearchVectorEnabled,
 		VectorWarming:               normalizeWarming(global.Memory.SearchVectorWarming),
 		SearchResultCacheMaxEntries: 1000,
-		SearchResultCacheTTL:        global.Memory.QueryCacheTTL,
+		SearchResultCacheTTL:        5 * time.Minute,
+		BM25StorageMode:             "memory",
+		VectorStorageMode:           "auto",
 		Effective:                   make(map[string]string),
 	}
 	if r.EmbeddingDimensions <= 0 {
@@ -177,6 +184,8 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_EMBED_CHUNK_SIZE", strconv.Itoa(c.EmbeddingWorker.ChunkSize))
 	setEffective("NORNICDB_EMBED_CHUNK_OVERLAP", strconv.Itoa(c.EmbeddingWorker.ChunkOverlap))
 	setEffective("NORNICDB_MVCC_LIFECYCLE_INTERVAL", c.Database.MVCCLifecycleCycleInterval.String())
+	setEffective("NORNICDB_QUERY_CACHE_SIZE", strconv.Itoa(c.Memory.QueryCacheSize))
+	setEffective("NORNICDB_QUERY_CACHE_TTL", c.Memory.QueryCacheTTL.String())
 	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)
 	setEffective("NORNICDB_AUTO_TLP_ENABLED", boolStr(c.Features.TopologyAutoIntegrationEnabled))
 }
@@ -250,10 +259,22 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 			r.SearchResultCacheMaxEntries = entries
 		}
 	}
-	if key == "db.nornic.query_cache.ttl" {
+	if key == "db.nornic.search_result_cache.ttl" {
 		if ttl, err := time.ParseDuration(value); err == nil && ttl >= 0 {
 			r.SearchResultCacheTTL = ttl
 		}
+	}
+	switch key {
+	case "db.nornic.memory.index.bm25.max":
+		r.BM25MemoryMaxBytes, _ = ParseByteSize(value)
+	case "db.nornic.memory.index.vector.max":
+		r.VectorMemoryMaxBytes, _ = ParseByteSize(value)
+	case "db.nornic.memory.index.metadata.max":
+		r.MetadataMemoryMaxBytes, _ = ParseByteSize(value)
+	case "db.nornic.index.bm25.storage":
+		r.BM25StorageMode = strings.ToLower(value)
+	case "db.nornic.index.vector.storage":
+		r.VectorStorageMode = strings.ToLower(value)
 	}
 	switch behaviorKey {
 	case "NORNICDB_SEARCH_BM25_ENABLED":

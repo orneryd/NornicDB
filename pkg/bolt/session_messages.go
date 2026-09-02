@@ -179,6 +179,9 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
 			s.localize(localization.DatabaseNotFound(dbName)))
 	}
+	if err := s.bindDatabaseConnection(dbName); err != nil {
+		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
+	}
 	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
 	var mode auth.DatabaseAccessMode
 	if s.server != nil && s.server.databaseAccessModeResolver != nil {
@@ -830,6 +833,9 @@ func (s *Session) handleBegin(data []byte) error {
 		}
 		s.executor = txExec
 		txDatabase = dbName
+	}
+	if err := s.bindDatabaseConnection(txDatabase); err != nil {
+		return s.sendTransactionControlFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
 
 	// TRC-14: extract traceparent from BEGIN metadata for distributed tracing.

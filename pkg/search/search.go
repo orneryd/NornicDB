@@ -552,11 +552,22 @@ func (c *searchResultCache) Invalidate() {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
-	engine          storage.Engine
-	vectorIndex     *VectorIndex
-	vectorFileStore *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
-	logger          *slog.Logger
-	localizer       *localization.Manager
+	engine                 storage.Engine
+	vectorIndex            *VectorIndex
+	vectorFileStore        *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
+	bm25MemoryMaxBytes     int64
+	vectorMemoryMaxBytes   int64
+	metadataMemoryMaxBytes int64
+	bm25StorageMode        string
+	vectorStorageMode      string
+	indexCapacityByNode    map[string]indexCapacityUsage
+	indexCapacityByEdge    map[string]indexCapacityUsage
+	bm25ResidentBytes      int64
+	vectorResidentBytes    int64
+	bm25MetadataBytes      int64
+	vectorMetadataBytes    int64
+	logger                 *slog.Logger
+	localizer              *localization.Manager
 	// Primary BM25 implementation used by the live search pipeline.
 	fulltextIndex bm25Index
 	bm25Engine    string
@@ -861,6 +872,11 @@ type ServiceOptions struct {
 	DatabaseID               string
 	SearchResultCacheEntries int
 	SearchResultCacheTTL     time.Duration
+	BM25MemoryMaxBytes       int64
+	VectorMemoryMaxBytes     int64
+	MetadataMemoryMaxBytes   int64
+	BM25StorageMode          string
+	VectorStorageMode        string
 }
 
 // NewServiceWithDimensionsAndBM25EngineAndOptions creates a search service with explicit resource policy.
@@ -872,10 +888,14 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 	cacheEntries := 1000
 	cacheTTL := 5 * time.Minute
 	cacheNamespace := ""
+	bm25StorageMode := "memory"
+	vectorStorageMode := "auto"
 	if options != nil {
 		cacheEntries = options.SearchResultCacheEntries
 		cacheTTL = options.SearchResultCacheTTL
 		cacheNamespace = options.DatabaseID
+		bm25StorageMode = normalizeBM25StorageMode(options.BM25StorageMode)
+		vectorStorageMode = normalizeVectorStorageMode(options.VectorStorageMode)
 	}
 	if envutil.GetBoolStrict(EnvSearchResultCacheEnabled, true) {
 		resultCache = newSearchResultCache(max(cacheEntries, 1), cacheTTL)
@@ -884,6 +904,10 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 	svc := &Service{
 		engine:                     engine,
 		vectorIndex:                NewVectorIndex(dimensions),
+		bm25StorageMode:            bm25StorageMode,
+		vectorStorageMode:          vectorStorageMode,
+		indexCapacityByNode:        make(map[string]indexCapacityUsage),
+		indexCapacityByEdge:        make(map[string]indexCapacityUsage),
 		fulltextIndex:              fulltextIndex,
 		bm25Engine:                 selectedBM25Engine,
 		minEmbeddingsForClustering: DefaultMinEmbeddingsForClustering,
@@ -900,6 +924,11 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		lifecycleCtx:               lifecycleCtx,
 		lifecycleCancel:            lifecycleCancel,
 	}
+	if options != nil {
+		svc.bm25MemoryMaxBytes = options.BM25MemoryMaxBytes
+		svc.vectorMemoryMaxBytes = options.VectorMemoryMaxBytes
+		svc.metadataMemoryMaxBytes = options.MetadataMemoryMaxBytes
+	}
 	svc.ready.Store(false)
 	svc.persistEnabled.Store(false)
 	svc.buildPhase.Store("idle")
@@ -913,6 +942,30 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 	svc.warmDone = make(chan struct{})
 	svc.logEvent(context.Background(), slog.LevelInfo, localization.SearchBM25EngineSelectedEvent(selectedBM25Engine))
 	return svc
+}
+
+func normalizeBM25StorageMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "memory") {
+		return "memory"
+	}
+	return "memory"
+}
+
+func normalizeVectorStorageMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "memory", "disk":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "auto"
+	}
+}
+
+// IndexCapacityPolicy returns this service's restart-bound index resource policy.
+func (s *Service) IndexCapacityPolicy() (bm25Max, vectorMax, metadataMax int64, bm25Storage, vectorStorage string) {
+	if s == nil {
+		return 0, 0, 0, "memory", "auto"
+	}
+	return s.bm25MemoryMaxBytes, s.vectorMemoryMaxBytes, s.metadataMemoryMaxBytes, s.bm25StorageMode, s.vectorStorageMode
 }
 
 // SetSearchResultCachePolicy applies a dynamic result-cache capacity and TTL.
@@ -2425,6 +2478,9 @@ func (s *Service) removeVectorLocked(id string) {
 // Caller holds s.indexMu.
 // When not resuming, BuildIndexes has already removed .vec/.meta so we start from 0; when resuming, existing files are appended to.
 func (s *Service) ensureBuildVectorFileStore() {
+	if s.vectorStorageMode == "memory" {
+		return
+	}
 	if !s.persistEnabled.Load() {
 		return
 	}
@@ -2487,6 +2543,10 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	nodeIDStr := string(node.ID)
 	allowLiveHNSW := s.allowLiveHNSWUpdatesLocked()
 	shouldIndex, err := s.shouldIndexNode(node)
+	if err != nil {
+		return err
+	}
+	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, skipFulltext)
 	if err != nil {
 		return err
 	}
@@ -2686,6 +2746,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.fulltextIndex.Index(string(node.ID), text)
 		}
 	}
+	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
 	return nil
 }
@@ -2826,6 +2887,7 @@ func (s *Service) removeNodeLocked(nodeIDStr string) {
 	if nodeIDStr == "" {
 		return
 	}
+	s.releaseNodeIndexCapacityLocked(nodeIDStr)
 	allowLiveHNSW := s.allowLiveHNSWUpdatesLocked()
 
 	// Remove main embedding
@@ -2979,6 +3041,10 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		copy(copied, vec)
 		indexed[key] = copied
 	}
+	capacityUsage, err := s.checkEdgeIndexCapacityLocked(edge, indexed)
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	delete(s.edgePropVector, edgeIDStr)
@@ -2988,6 +3054,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		s.edgeTypes[edgeIDStr] = edge.Type
 	}
 	s.mu.Unlock()
+	s.commitEdgeIndexCapacityLocked(edgeIDStr, capacityUsage)
 	return nil
 }
 
@@ -2995,6 +3062,7 @@ func (s *Service) removeEdgeLocked(edgeIDStr string) {
 	if edgeIDStr == "" {
 		return
 	}
+	s.releaseEdgeIndexCapacityLocked(edgeIDStr)
 	s.mu.Lock()
 	delete(s.edgePropVector, edgeIDStr)
 	delete(s.edgeTypes, edgeIDStr)
@@ -3236,6 +3304,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		vectorPath = ""
 		hnswPath = ""
 	}
+	if s.vectorEnabled.Load() && s.vectorStorageMode == "disk" && vectorPath == "" {
+		return fmt.Errorf("search: vector disk storage requires index persistence and a configured vector index path")
+	}
 	var storageNodeCount int64
 	if n, err := s.engine.NodeCount(); err == nil {
 		storageNodeCount = n
@@ -3294,7 +3365,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 	}
 	// Prefer file-backed vector store when .vec exists (low-RAM format); else legacy in-memory index.
-	if vectorPath != "" && s.vectorIndex != nil {
+	if vectorPath != "" && s.vectorStorageMode != "memory" && s.vectorIndex != nil {
 		if _, err := security.RootedStat(vectorPath + ".vec"); err == nil {
 			dims := s.vectorIndex.GetDimensions()
 			if dims <= 0 {
@@ -3533,6 +3604,21 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				if shouldIndex {
 					filtered = append(filtered, n)
 				}
+			}
+			if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
+				s.indexMu.Lock()
+				defer s.indexMu.Unlock()
+				if s.vectorStorageMode != "memory" && vectorPath != "" {
+					s.ensureBuildVectorFileStore()
+				}
+				for _, node := range filtered {
+					if err := s.indexNodeLocked(node, false); err != nil {
+						return err
+					}
+				}
+				count += len(batch)
+				s.buildProcessed.Store(int64(count))
+				return nil
 			}
 			if !skipFulltextRebuild {
 				entries := make([]FulltextBatchEntry, 0, len(filtered))

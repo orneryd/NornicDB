@@ -836,6 +836,34 @@ func TestDatabaseLimitChecker_CheckWriteRate_ExceedsLimit(t *testing.T) {
 	requireLocalizedMessageID(t, err, localization.MessageMultidbWriteRateExceeded)
 }
 
+func TestDatabaseLimitChecker_RateChecksRaceWithLimitUpdates(t *testing.T) {
+	manager, dbName := setupTestManager(t)
+	checker, err := newDatabaseLimitChecker(manager, dbName)
+	require.NoError(t, err)
+
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(3)
+	go func() {
+		defer waitGroup.Done()
+		for index := 0; index < 1000; index++ {
+			checker.updateLimits(&Limits{Rate: RateLimits{MaxQueriesPerSecond: index%3 + 1, MaxWritesPerSecond: index%5 + 1}})
+		}
+	}()
+	go func() {
+		defer waitGroup.Done()
+		for index := 0; index < 1000; index++ {
+			_ = checker.CheckQueryRate()
+		}
+	}()
+	go func() {
+		defer waitGroup.Done()
+		for index := 0; index < 1000; index++ {
+			_ = checker.CheckWriteRate()
+		}
+	}()
+	waitGroup.Wait()
+}
+
 func TestDatabaseLimitChecker_NewDatabaseLimitChecker_DatabaseNotFound(t *testing.T) {
 	manager, _ := setupTestManager(t)
 

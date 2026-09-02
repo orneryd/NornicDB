@@ -306,6 +306,12 @@ func normalizeWarmingFlag(v string) string {
 	}
 }
 
+func applyLowMemoryMode(cfg *config.Config) {
+	cfg.Storage.Mode = "low"
+	cfg.Database.BadgerNodeCacheMaxEntries = 1000
+	cfg.Database.BadgerEdgeTypeCacheMaxTypes = 10
+}
+
 func runServe(cmd *cobra.Command, args []string) error {
 	boltPort, _ := cmd.Flags().GetInt("bolt-port")
 	httpPort, _ := cmd.Flags().GetInt("http-port")
@@ -607,9 +613,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// before Open so cache sizing is correct.
 	lowMemory, _ := cmd.Flags().GetBool("low-memory")
 	if lowMemory {
-		// Preserve low-memory behavior by shrinking hot caches.
-		dbConfig.Database.BadgerNodeCacheMaxEntries = 1000
-		dbConfig.Database.BadgerEdgeTypeCacheMaxTypes = 10
+		applyLowMemoryMode(dbConfig)
 	}
 
 	// pkg/server installs the per-DB search-flags resolver after Open
@@ -776,6 +780,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and start HTTP server
 	serverConfig := server.DefaultConfig()
+	serverConfig.ProcessConfig = cfg
 	serverConfig.Port = httpPort
 	serverConfig.BoltPort = boltPort
 	serverConfig.Address = resolvedAddress
@@ -929,7 +934,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
 	connectionTracker := multidb.NewConnectionTracker()
-	boltServer.SetDatabaseConnectionAdmission(func(databaseName string) error {
+	boltServer.SetDatabaseConnectionAdmission(httpServer.GetDatabaseManager().ResolveConnectionLimitOwner, func(databaseName string) error {
 		return connectionTracker.TryIncrementConnection(httpServer.GetDatabaseManager(), databaseName)
 	}, connectionTracker.DecrementConnection)
 	// Wire per-database access from HTTP server so Bolt enforces same policy (allowlist + principal roles)

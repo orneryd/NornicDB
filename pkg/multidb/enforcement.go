@@ -144,6 +144,18 @@ func (c *databaseLimitChecker) limitsSnapshot() *Limits {
 	return cloneLimits(c.limits)
 }
 
+func (c *databaseLimitChecker) queryRateSnapshot() (*Limits, *rateLimiter) {
+	c.limitsMu.RLock()
+	defer c.limitsMu.RUnlock()
+	return cloneLimits(c.limits), c.queryRateLimiter
+}
+
+func (c *databaseLimitChecker) writeRateSnapshot() (*Limits, *rateLimiter) {
+	c.limitsMu.RLock()
+	defer c.limitsMu.RUnlock()
+	return cloneLimits(c.limits), c.writeRateLimiter
+}
+
 // CheckStorageLimits checks if storage operations are within limits.
 //
 // Parameters:
@@ -478,11 +490,11 @@ func (c *databaseLimitChecker) GetRateLimits() *RateLimits {
 
 // CheckQueryRate checks if query rate limit is allowed.
 func (c *databaseLimitChecker) CheckQueryRate() error {
-	limits := c.limitsSnapshot()
-	if c.queryRateLimiter == nil {
+	limits, limiter := c.queryRateSnapshot()
+	if limiter == nil {
 		return nil // No limit
 	}
-	if !c.queryRateLimiter.Allow() {
+	if !limiter.Allow() {
 		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
@@ -490,11 +502,11 @@ func (c *databaseLimitChecker) CheckQueryRate() error {
 
 // CheckWriteRate checks if write rate limit is allowed.
 func (c *databaseLimitChecker) CheckWriteRate() error {
-	limits := c.limitsSnapshot()
-	if c.writeRateLimiter == nil {
+	limits, limiter := c.writeRateSnapshot()
+	if limiter == nil {
 		return nil // No limit
 	}
-	if !c.writeRateLimiter.Allow() {
+	if !limiter.Allow() {
 		return localizedError(localization.MultidbWriteRateExceeded(c.databaseName, limits.Rate.MaxWritesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
