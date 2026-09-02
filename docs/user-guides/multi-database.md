@@ -862,14 +862,16 @@ No `Authorization` header on incoming request
 
 Each database can have its BM25 fulltext and vector ANN indexes independently enabled, disabled, eagerly built, or lazily warmed. Per-database overrides always win over the global default in **both directions** — an override of `true` turns on a globally-disabled index, an override of `false` turns off a globally-enabled one.
 
-Four keys control this:
+Four canonical database settings control this. The corresponding
+`NORNICDB_*` names remain supported global environment alternatives and
+alternate input names.
 
-| Key                              | Type    | Default   |
-| -------------------------------- | ------- | --------- |
-| `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    |
-| `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` |
-| `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    |
-| `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` |
+| Canonical setting                    | Environment alternative              | Type    | Default   |
+| ------------------------------------ | ------------------------------------ | ------- | --------- |
+| `db.nornic.search.bm25.enabled`      | `NORNICDB_SEARCH_BM25_ENABLED`       | boolean | `true`    |
+| `db.nornic.search.bm25.warming`      | `NORNICDB_SEARCH_BM25_WARMING`       | enum    | `startup` |
+| `db.nornic.search.vector.enabled`    | `NORNICDB_SEARCH_VECTOR_ENABLED`     | boolean | `true`    |
+| `db.nornic.search.vector.warming`    | `NORNICDB_SEARCH_VECTOR_WARMING`     | enum    | `startup` |
 
 Resolution order (highest → lowest precedence):
 
@@ -890,21 +892,25 @@ databases:
   hot_app_db: {}                                       # default startup, both enabled
 
   analytics:
-    NORNICDB_SEARCH_BM25_ENABLED:   "false"
-    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+    db.nornic.search.bm25.enabled:   "false"
+    db.nornic.search.vector.warming: "lazy"
 
   audit_logs:
-    NORNICDB_SEARCH_BM25_ENABLED:   "false"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false"            # search disabled
+    db.nornic.search.bm25.enabled:   "false"
+    db.nornic.search.vector.enabled: "false"            # search disabled
 
   exports_only:
-    NORNICDB_SEARCH_BM25_ENABLED:   "true"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false"            # write embeddings; never load in-process
+    db.nornic.search.bm25.enabled:   "true"
+    db.nornic.search.vector.enabled: "false"            # write embeddings; never load in-process
 
   multi_tenant_archive:
-    NORNICDB_SEARCH_BM25_WARMING:   "lazy"
-    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"             # cold; absorb cost on first query
+    db.nornic.search.bm25.warming:   "lazy"
+    db.nornic.search.vector.warming: "lazy"             # cold; absorb cost on first query
 ```
+
+These four settings are dynamic. An admin API update persists the canonical
+value and rebuilds only that database's search service; it does not require a
+process restart. When both input forms are present, the canonical key wins.
 
 See [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) for the full configuration reference.
 

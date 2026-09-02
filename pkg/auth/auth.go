@@ -537,7 +537,7 @@ type AuditEvent struct {
 //   - They have different wristbands for VIP, regular, and just-looking (roles)
 //
 // SecurityEnabled = true means "bouncer is on duty"
-// SecurityEnabled = false means "anyone can walk in" (development only!)
+// SecurityEnabled = false means "anyone can walk in" (explicit compatibility mode)
 //
 // Real-world Analogy:
 //

@@ -111,7 +111,7 @@ func TestConfigSelectedLocaleRendersLaterCommandError(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
-	command.SetArgs([]string{"serve", "--config", configPath, "--memory-limit", "bad"})
+	command.SetArgs([]string{"serve", "--config", configPath, "--no-auth", "--memory-limit", "bad"})
 	err = command.Execute()
 
 	require.Error(t, err)

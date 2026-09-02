@@ -49,10 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retaining compatibility with existing JSON snapshots.
 - **Hardened multi-database isolation and deployment defaults.** Manager-owned
   storage/query limits cover protocol and background inference paths, MCP and
-  Bolt enforce database scope/admission, production startup rejects insecure
-  auth/CORS/public-plaintext combinations. Standalone images retain the
-  authentication-disabled compatibility default and emit a high-severity event;
-  maintained Compose examples override it with authenticated loopback publication.
+  Bolt enforce database scope/admission, and startup rejects wildcard CORS,
+  public plaintext listeners, and default credentials when authentication is
+  enabled, regardless of environment. Explicit no-auth startup remains
+  supported in every environment.
+  Container images and maintained Compose examples retain their
+  authentication-disabled compatibility default, and the entrypoint emits a
+  high-severity structured event whenever it is selected.
 - **BM25 V2 now defaults to exact, language-neutral Unicode retrieval.** Text
   is normalized with NFKC and Unicode case folding without default English
   stopwords or stemming. Bounded prefix matching remains available through

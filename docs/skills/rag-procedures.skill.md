@@ -182,6 +182,13 @@ export NORNICDB_SEARCH_RERANK_API_URL=...         # for provider=http (Cohere, T
 export NORNICDB_SEARCH_RERANK_API_KEY=...
 ```
 
+For per-database reranking, use the canonical
+`db.nornic.search.rerank.{enabled,provider,model,api.url,api.key}` settings in
+the YAML `databases:` map or `PUT /admin/databases/{name}/config`. The
+`NORNICDB_SEARCH_RERANK_*` variables above remain supported global environment
+alternatives. Per-database reranker changes hot reload by rebuilding only that
+database's search service; API keys are redacted from settings responses.
+
 Inference (`db.infer`) provider configuration is part of NornicDB's heimdall/inference subsystem and is configured separately from search.
 
 ## See also

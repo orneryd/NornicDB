@@ -52,12 +52,12 @@ db.searchService = search.NewServiceWithDimensions(storage, 1024)
 
 Large vector indexes are built through HNSW. On supported Apple Metal hosts, NornicDB attempts GPU-assisted construction by default: the GPU scores nearest-neighbor candidates in batches, while the CPU still performs final HNSW graph mutation and reciprocal linking. If Metal is unavailable or a build kernel fails, construction restarts through the normal CPU builder and the persisted HNSW artifact format remains unchanged.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `NORNICDB_HNSW_BUILD_GPU_ENABLED` | `true` | Attempt GPU-assisted HNSW construction. |
-| `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE` | `2048` | Vectors per construction batch. |
-| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K` | `128` | Candidate neighbors requested from the accelerator before CPU linking. |
-| `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION` | `fp32` | Build candidate-search precision. |
+| Variable                                     | Default | Description                                                            |
+| -------------------------------------------- | ------- | ---------------------------------------------------------------------- |
+| `NORNICDB_HNSW_BUILD_GPU_ENABLED`            | `true`  | Attempt GPU-assisted HNSW construction.                                |
+| `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE`         | `2048`  | Vectors per construction batch.                                        |
+| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`        | `128`   | Candidate neighbors requested from the accelerator before CPU linking. |
+| `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION` | `fp32`  | Build candidate-search precision.                                      |
 
 #### 2. User-Defined Cypher Indexes (Optional)
 
@@ -569,7 +569,9 @@ curl http://localhost:8080/health
 
 ## Disabling vector search per database
 
-`NORNICDB_SEARCH_VECTOR_ENABLED=false` (per-DB or global) prevents NornicDB from building or serving any vector index for that database. Set when:
+`db.nornic.search.vector.enabled=false` prevents NornicDB from building or
+serving any vector index for that database. The supported global environment
+alternative is `NORNICDB_SEARCH_VECTOR_ENABLED=false`. Set it when:
 
 - Memory pressure: durably stored embeddings still take RAM when iterated into the in-memory ANN substrate at boot. Disabling skips that load entirely.
 - Exports-only deployments: NornicDB generates embeddings but a downstream system (Qdrant, Weaviate, custom pipeline) owns the index.
@@ -585,7 +587,13 @@ See **[Per-Database Search Index Flags](../operations/configuration.md#per-datab
 
 ## Lazy warming
 
-`NORNICDB_SEARCH_VECTOR_WARMING=lazy` defers the vector index build until the first inbound search query for that database. The first request **blocks synchronously** while the build runs (any `Service.Search` caller — HTTP, Bolt, GraphQL, gRPC, Cypher procedures — gets the same behavior). Subsequent requests are warm. Useful for multi-tenant deployments where most databases are idle at any moment.
+`db.nornic.search.vector.warming=lazy` defers the vector index build until the
+first inbound search query for that database. Its supported global environment
+alternative is `NORNICDB_SEARCH_VECTOR_WARMING=lazy`. The first request
+**blocks synchronously** while the build runs (any `Service.Search` caller —
+HTTP, Bolt, GraphQL, gRPC, Cypher procedures — gets the same behavior).
+Subsequent requests are warm. This is useful for multi-tenant deployments where
+most databases are idle at any moment.
 
 Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [Low Memory Mode → Caveat: health checks](../operations/low-memory-mode.md#caveat-health-checks).
 

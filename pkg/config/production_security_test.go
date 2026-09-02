@@ -6,7 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateProductionSecurity(t *testing.T) {
+func TestValidateSecurityConfiguration(t *testing.T) {
+	require.ErrorContains(t, ValidateSecurityConfiguration(nil), "config is required")
+
 	secure := func() *Config {
 		config := LoadDefaults()
 		config.Server.Environment = "production"
@@ -26,7 +28,9 @@ func TestValidateProductionSecurity(t *testing.T) {
 		match  string
 	}{
 		{name: "secure", mutate: func(*Config) {}},
-		{name: "no auth", mutate: func(c *Config) { c.Auth.Enabled = false }, match: "authentication"},
+		{name: "explicit no auth remains allowed", mutate: func(c *Config) { c.Auth.Enabled = false }},
+		{name: "no auth ignores empty password", mutate: func(c *Config) { c.Auth.Enabled = false; c.Auth.InitialPassword = "" }},
+		{name: "no auth ignores default password", mutate: func(c *Config) { c.Auth.Enabled = false; c.Auth.InitialPassword = "password" }},
 		{name: "default password", mutate: func(c *Config) { c.Auth.InitialPassword = "password" }, match: "initial password"},
 		{name: "wildcard cors", mutate: func(c *Config) { c.Server.CORSOrigins = []string{"*"} }, match: "wildcard CORS"},
 		{name: "public http", mutate: func(c *Config) { c.Server.HTTPAddress = "0.0.0.0" }, match: "plaintext HTTP"},
@@ -37,7 +41,7 @@ func TestValidateProductionSecurity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			config := secure()
 			test.mutate(config)
-			err := ValidateProductionSecurity(config)
+			err := ValidateSecurityConfiguration(config)
 			if test.match == "" {
 				require.NoError(t, err)
 			} else {
@@ -47,6 +51,38 @@ func TestValidateProductionSecurity(t *testing.T) {
 	}
 }
 
-func TestValidateProductionSecurityPreservesDevelopmentDefaults(t *testing.T) {
-	require.NoError(t, ValidateProductionSecurity(LoadDefaults()))
+func TestValidateSecurityConfigurationRejectsInsecureDefaults(t *testing.T) {
+	require.ErrorContains(t, ValidateSecurityConfiguration(LoadDefaults()), "initial password")
+}
+
+func TestValidateSecurityConfigurationAppliesToEveryEnvironment(t *testing.T) {
+	for _, environment := range []string{"", "development", "test"} {
+		t.Run(environment, func(t *testing.T) {
+			config := LoadDefaults()
+			config.Server.Environment = environment
+			config.Auth.Enabled = true
+			config.Auth.InitialPassword = "operator-supplied-secret"
+			config.Server.EnableCORS = true
+			config.Server.CORSOrigins = []string{"*"}
+
+			require.ErrorContains(t, ValidateSecurityConfiguration(config), "wildcard CORS")
+		})
+	}
+}
+
+func TestValidateSecurityConfigurationAllowsExplicitNoAuthContainerStartup(t *testing.T) {
+	for _, environment := range []string{"", "development", "production"} {
+		t.Run(environment, func(t *testing.T) {
+			config := LoadDefaults()
+			config.Server.Environment = environment
+			config.Auth.Enabled = false
+			config.Server.EnableCORS = true
+			config.Server.CORSOrigins = []string{"*"}
+			config.Server.HTTPAddress = "0.0.0.0"
+			config.Server.BoltAddress = "0.0.0.0"
+			config.Server.BoltTLSRequire = false
+
+			require.NoError(t, ValidateSecurityConfiguration(config))
+		})
+	}
 }

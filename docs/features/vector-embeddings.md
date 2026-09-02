@@ -5,6 +5,7 @@
 ## Overview
 
 NornicDB automatically generates vector embeddings for nodes, enabling:
+
 - Semantic similarity search
 - Hybrid search (vector + text)
 - Automatic relationship inference
@@ -15,11 +16,11 @@ See `docs/architecture/embedding-search.md` for details.
 
 ## Embedding Providers
 
-| Provider | Latency | Cost | Quality |
-|----------|---------|------|---------|
-| Ollama (local) | 50-100ms | Free | High |
-| OpenAI | 100-200ms | $$$ | Highest |
-| Local GGUF | 30-80ms | Free | High |
+| Provider       | Latency   | Cost | Quality |
+| -------------- | --------- | ---- | ------- |
+| Ollama (local) | 50-100ms  | Free | High    |
+| OpenAI         | 100-200ms | $$$  | Highest |
+| Local GGUF     | 30-80ms   | Free | High    |
 
 ## Configuration
 
@@ -64,6 +65,7 @@ The local provider resolves the model file as `${NORNICDB_MODELS_DIR}/${NORNICDB
 By default, the embedding worker builds text from **all node properties** and **node labels**. Managed embedding metadata is stored internally (`EmbedMeta`) to avoid property namespace pollution. You can limit this so that only specific properties are used, or exclude others.
 
 **Use cases:**
+
 - **Embed only one field** (e.g. `content`) so you don’t re-embed stored vectors or noisy fields.
 - **Exclude internal or large fields** (e.g. `internal_id`, `raw_html`) from the text sent to the embedder.
 
@@ -71,9 +73,9 @@ By default, the embedding worker builds text from **all node properties** and **
 
 ```yaml
 embedding_worker:
-  properties_include: [content]              # Only these keys (empty = all)
+  properties_include: [content] # Only these keys (empty = all)
   properties_exclude: [internal_id, raw_html]
-  include_labels: true                       # Prepend labels (default: true)
+  include_labels: true # Prepend labels (default: true)
 ```
 
 **Environment variables:**
@@ -183,11 +185,11 @@ db.ExecuteCypher(ctx, `CREATE (n:KnowledgeFact {
 
 ## Embedding Dimensions
 
-| Model | Dimensions | Memory/Vector |
-|-------|------------|---------------|
-| mxbai-embed-large | 1024 | 4KB |
-| text-embedding-3-small | 1536 | 6KB |
-| text-embedding-3-large | 3072 | 12KB |
+| Model                  | Dimensions | Memory/Vector |
+| ---------------------- | ---------- | ------------- |
+| mxbai-embed-large      | 1024       | 4KB           |
+| text-embedding-3-small | 1536       | 6KB           |
+| text-embedding-3-large | 3072       | 12KB          |
 
 ### Configuration
 
@@ -223,7 +225,7 @@ results, err := db.FindSimilar(ctx, nodeID, 10)
 
 ```go
 // Combine vector + text search
-results, err := db.HybridSearch(ctx, 
+results, err := db.HybridSearch(ctx,
     "machine learning",    // Text query
     queryEmbedding,        // Vector query
     []string{"Document"},  // Labels
@@ -306,12 +308,14 @@ result, _ := db.ExecuteCypher(ctx, `
 ### Embeddings Not Generating
 
 1. Check embedding service:
+
    ```bash
    curl http://localhost:11434/api/embed \
      -d '{"model":"mxbai-embed-large","input":"test"}'
    ```
 
 2. Check queue:
+
    ```bash
    curl http://localhost:7474/status | jq .embeddings
    ```
@@ -330,15 +334,19 @@ result, _ := db.ExecuteCypher(ctx, `
 
 ## Disabling vector search per database
 
-The per-database flag `NORNICDB_SEARCH_VECTOR_ENABLED` (default `true`) is the **strongest** memory-pressure lever — it prevents the in-memory ANN substrate from being populated at all, even when embeddings exist on disk.
+The per-database setting `db.nornic.search.vector.enabled` (default `true`) is
+the **strongest** memory-pressure lever: it prevents the in-memory ANN substrate
+from being populated at all, even when embeddings exist on disk.
+`NORNICDB_SEARCH_VECTOR_ENABLED` remains the supported global environment
+alternative.
 
 ### Distinct from `NORNICDB_EMBEDDING_ENABLED`
 
-| Flag                              | Stops the embed worker? | Loads existing embeddings into RAM? | Vector queries work?   |
-| --------------------------------- | :---------------------: | :---------------------------------: | :--------------------: |
-| `NORNICDB_EMBEDDING_ENABLED=true`  | no                     | yes                                  | yes                    |
-| `NORNICDB_EMBEDDING_ENABLED=false` | yes                    | **yes** (user-set vectors stay live)| yes                    |
-| `NORNICDB_SEARCH_VECTOR_ENABLED=false` | no              | **no**                               | no (returns no results)|
+| Flag                                    | Stops the embed worker? | Loads existing embeddings into RAM?  |  Vector queries work?   |
+| --------------------------------------- | :---------------------: | :----------------------------------: | :---------------------: |
+| `NORNICDB_EMBEDDING_ENABLED=true`       |           no            |                 yes                  |           yes           |
+| `NORNICDB_EMBEDDING_ENABLED=false`      |           yes           | **yes** (user-set vectors stay live) |           yes           |
+| `db.nornic.search.vector.enabled=false` |           no            |                **no**                | no (returns no results) |
 
 `EMBEDDING_ENABLED=false` only stops automatic generation. User-set vectors written via `SET n.embedding = [...]`, `WITH EMBEDDING`, or external import are still durable in Badger and still iterated into the in-memory ANN substrate by today's search service. `SEARCH_VECTOR_ENABLED=false` is the stronger guarantee: those durable vectors are NOT iterated into RAM and no ANN strategy serves vector queries.
 
@@ -348,9 +356,9 @@ A common combination for downstream systems like Qdrant or Weaviate that keep th
 
 ```yaml
 memory:
-  search_vector_enabled: false  # don't load embeddings into NornicDB's ANN substrate
+  search_vector_enabled: false # don't load embeddings into NornicDB's ANN substrate
 embedding:
-  enabled: true                  # do generate them
+  enabled: true # do generate them
 ```
 
 NornicDB writes the embeddings to durable Badger storage; an external pipeline (e.g. CDC into Qdrant) consumes them. NornicDB itself never builds HNSW / IVF / GPU brute-force structures and `db.index.vector.queryNodes` returns empty results with a WARN log.

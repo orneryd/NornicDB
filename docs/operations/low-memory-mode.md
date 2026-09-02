@@ -41,7 +41,7 @@ services:
     image: timothyswt/nornicdb-arm64-metal:latest
     environment:
       - NORNICDB_LOW_MEMORY=true
-      - GOGC=100  # Recommended with low memory mode
+      - GOGC=100 # Recommended with low memory mode
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -57,31 +57,31 @@ nornicdb serve --low-memory
 
 ## Memory Usage Comparison
 
-| Mode | BadgerDB RAM | Typical Total | Use Case |
-|------|--------------|---------------|----------|
-| **High Performance** (default) | ~1GB | 1.5-2GB | Servers with 8GB+ RAM |
-| **Default** | ~150MB | 300-500MB | General purpose |
-| **Low Memory** | ~50MB | 150-300MB | Resource-constrained |
+| Mode                           | BadgerDB RAM | Typical Total | Use Case              |
+| ------------------------------ | ------------ | ------------- | --------------------- |
+| **High Performance** (default) | ~1GB         | 1.5-2GB       | Servers with 8GB+ RAM |
+| **Default**                    | ~150MB       | 300-500MB     | General purpose       |
+| **Low Memory**                 | ~50MB        | 150-300MB     | Resource-constrained  |
 
 ### Breakdown by Component
 
-| Component | High Performance | Default | Low Memory |
-|-----------|-----------------|---------|------------|
-| BadgerDB MemTable | 128MB × 5 | 64MB × 3 | 8MB × 1 |
-| Value Log | 256MB | 128MB | 32MB |
-| Block Cache | 256MB | 128MB | 8MB |
-| Index Cache | 128MB | 64MB | 4MB |
-| **Total Storage Layer** | **~1GB** | **~150MB** | **~50MB** |
+| Component               | High Performance | Default    | Low Memory |
+| ----------------------- | ---------------- | ---------- | ---------- |
+| BadgerDB MemTable       | 128MB × 5        | 64MB × 3   | 8MB × 1    |
+| Value Log               | 256MB            | 128MB      | 32MB       |
+| Block Cache             | 256MB            | 128MB      | 8MB        |
+| Index Cache             | 128MB            | 64MB       | 4MB        |
+| **Total Storage Layer** | **~1GB**         | **~150MB** | **~50MB**  |
 
 ## Configuration Options
 
 ### Environment Variables
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `NORNICDB_LOW_MEMORY` | bool | `false` | Enable low memory mode |
-| `NORNICDB_BADGER_HIGH_PERFORMANCE` | bool | `true` | High performance mode (mutually exclusive with low memory) |
-| `GOGC` | int | `100` | Go garbage collector target percentage |
+| Variable                           | Type | Default | Description                                                |
+| ---------------------------------- | ---- | ------- | ---------------------------------------------------------- |
+| `NORNICDB_LOW_MEMORY`              | bool | `false` | Enable low memory mode                                     |
+| `NORNICDB_BADGER_HIGH_PERFORMANCE` | bool | `true`  | High performance mode (mutually exclusive with low memory) |
+| `GOGC`                             | int  | `100`   | Go garbage collector target percentage                     |
 
 ### CLI Flags
 
@@ -104,13 +104,13 @@ Flags:
 
 Low memory mode trades some performance for reduced RAM usage:
 
-| Metric | High Performance | Low Memory | Impact |
-|--------|-----------------|------------|--------|
-| Write throughput | 50,000 ops/sec | 20,000 ops/sec | -60% |
-| Read throughput | 100,000 ops/sec | 80,000 ops/sec | -20% |
-| Query latency (p50) | 1ms | 2ms | +100% |
-| Query latency (p99) | 5ms | 15ms | +200% |
-| Startup time | 2s | 1s | -50% |
+| Metric              | High Performance | Low Memory     | Impact |
+| ------------------- | ---------------- | -------------- | ------ |
+| Write throughput    | 50,000 ops/sec   | 20,000 ops/sec | -60%   |
+| Read throughput     | 100,000 ops/sec  | 80,000 ops/sec | -20%   |
+| Query latency (p50) | 1ms              | 2ms            | +100%  |
+| Query latency (p99) | 5ms              | 15ms           | +200%  |
+| Startup time        | 2s               | 1s             | -50%   |
 
 > **Note:** These numbers are approximate and vary by workload. For most use cases, low memory mode provides acceptable performance.
 
@@ -171,7 +171,7 @@ services:
       - NORNICDB_LOW_MEMORY=true
       - NORNICDB_EMBEDDING_PROVIDER=ollama
       - NORNICDB_EMBEDDING_API_URL=http://ollama:11434
-  
+
   ollama:
     image: ollama/ollama:latest
     # Ollama manages its own memory
@@ -186,7 +186,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2.5G  # 1.2GB model + 1GB BadgerDB + headroom
+          memory: 2.5G # 1.2GB model + 1GB BadgerDB + headroom
 ```
 
 ## WAL Compaction
@@ -331,17 +331,20 @@ curl http://localhost:7474/health
 ### Still Running Out of Memory
 
 1. **Check actual usage:**
+
    ```bash
    docker stats nornicdb --no-stream
    ```
 
 2. **Lower GC target:**
+
    ```bash
    # More aggressive garbage collection
    docker run -e GOGC=50 ...
    ```
 
 3. **Disable features:**
+
    ```bash
    # Disable local embeddings
    docker run -e NORNICDB_EMBEDDING_ENABLED=false ...
@@ -399,18 +402,18 @@ The first inbound search query against a lazy database **blocks synchronously wh
 ```yaml
 # Boot only the hot database eagerly; everything else warms on demand.
 memory:
-  search_bm25_warming:   startup
+  search_bm25_warming: startup
   search_vector_warming: lazy
 
 databases:
-  active_tenant_a: {}                                     # default startup
-  active_tenant_b: {}                                     # default startup
+  active_tenant_a: {} # default startup
+  active_tenant_b: {} # default startup
   archive_2024:
-    NORNICDB_SEARCH_BM25_WARMING:   "lazy"
-    NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
+    db.nornic.search.bm25.warming: "lazy"
+    db.nornic.search.vector.warming: "lazy"
   audit_logs:
-    NORNICDB_SEARCH_BM25_ENABLED:   "false"
-    NORNICDB_SEARCH_VECTOR_ENABLED: "false"
+    db.nornic.search.bm25.enabled: "false"
+    db.nornic.search.vector.enabled: "false"
 ```
 
 ### Caveat: health checks
@@ -445,4 +448,3 @@ Health/liveness probes must NOT target `/nornicdb/search` for any `warming=lazy`
 
 **Memory issues?** → **[Troubleshooting Guide](troubleshooting.md)**  
 **Need more performance?** → Consider upgrading to a system with 8GB+ RAM
-

@@ -221,12 +221,18 @@ RETURN node.id, node.title, score
 
 Each database has independent BM25 and vector master switches plus warming triggers. Defaults reproduce today's behaviour: both enabled, both built at startup. Any caller (HTTP, Bolt, GraphQL, gRPC, Cypher procedures) sees the same contract because the gating lives on `search.Service`.
 
-| Setting (per DB or global)                  | What changes                                                                                                  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_SEARCH_BM25_ENABLED=false`        | No BM25 build, no fulltext docs ingested. `db.index.fulltext.queryNodes` returns empty.                       |
-| `NORNICDB_SEARCH_VECTOR_ENABLED=false`      | No ANN substrate built or loaded. `db.index.vector.queryNodes` returns empty + WARN log; query does not error. |
-| `NORNICDB_SEARCH_*_WARMING=lazy`            | First inbound search blocks synchronously while the build runs; subsequent calls are warm.                     |
-| Both `*_ENABLED=false`                      | `POST /nornicdb/search` returns 503 `search_disabled_for_database`, `retryable: false`.                       |
+| Canonical database setting                     | What changes                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `db.nornic.search.bm25.enabled=false`          | No BM25 build, no fulltext docs ingested. `db.index.fulltext.queryNodes` returns empty.                       |
+| `db.nornic.search.vector.enabled=false`        | No ANN substrate built or loaded. `db.index.vector.queryNodes` returns empty + WARN log; query does not error. |
+| `db.nornic.search.{bm25,vector}.warming=lazy`  | First inbound search blocks synchronously while the build runs; subsequent calls are warm.                    |
+| Both enabled settings set to `false`           | `POST /nornicdb/search` returns 503 `search_disabled_for_database`, `retryable: false`.                       |
+
+Use these canonical keys in `PUT /admin/databases/{name}/config` and the YAML
+`databases:` map. The matching `NORNICDB_SEARCH_*` names remain supported global
+environment alternatives and alternate input names. These switches hot reload
+by rebuilding only the affected database's search service; no process restart
+is required.
 
 Health/liveness probes must NOT target `/nornicdb/search` for `warming=lazy` or any `*_enabled=false` database — every probe would either trigger the build or stream `503` responses that look like real failures. Use `/nornicdb/health` (DB-agnostic) or `/admin/databases/{name}/config` (lookup-only) instead.
 
