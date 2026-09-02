@@ -56,6 +56,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -66,6 +67,22 @@ import (
 )
 
 const cypherMutationConflictRetries = 5
+
+type toolDatabaseAccess uint8
+
+const (
+	toolDatabaseRead toolDatabaseAccess = iota
+	toolDatabaseWrite
+)
+
+var toolDatabaseAccessByName = map[string]toolDatabaseAccess{
+	ToolStore:    toolDatabaseWrite,
+	ToolRecall:   toolDatabaseRead,
+	ToolDiscover: toolDatabaseRead,
+	ToolLink:     toolDatabaseWrite,
+	ToolTask:     toolDatabaseWrite,
+	ToolTasks:    toolDatabaseRead,
+}
 
 // Embedder interface for generating embeddings (abstracts Ollama/OpenAI).
 type Embedder interface {
@@ -528,18 +545,37 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		args = make(map[string]interface{})
 	}
 
-	// Allow callers to target a specific database at call time.
-	// Precedence:
-	// 1) arguments.database / arguments.db
-	// 2) database already present in ctx (e.g. agentic loop default)
-	// 3) otherwise route to the server's configured default database
-	if dbArg := extractDatabaseArg(args); dbArg != "" {
-		ctx = ContextWithDatabase(ctx, dbArg)
-	}
-
 	handler, ok := s.handlers[name]
 	if !ok {
 		return nil, localizedError(localization.MCPUnknownTool(name), nil)
+	}
+	accessRequirement, ok := toolDatabaseAccessByName[name]
+	if !ok {
+		return nil, localizedError(localization.MCPUnknownTool(name), nil)
+	}
+
+	databaseSelection := extractDatabaseArg(args)
+	if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
+		database, allowed := scope.Resolve(databaseSelection)
+		if !allowed {
+			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
+		}
+		resolveAccess := auth.RequestResolvedAccessResolverFromContext(ctx)
+		if resolveAccess == nil {
+			return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
+		}
+		resolvedAccess := resolveAccess(database)
+		if !resolvedAccess.Read {
+			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
+		}
+		if accessRequirement == toolDatabaseWrite && !resolvedAccess.Write {
+			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
+		}
+		ctx = contextWithAuthorizedDatabase(ctx, database)
+	} else if auth.RequestDatabaseAccessModeFromContext(ctx) != nil {
+		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
+	} else if databaseSelection != "" {
+		ctx = ContextWithDatabase(ctx, databaseSelection)
 	}
 
 	return handler(ctx, args)
@@ -576,6 +612,9 @@ func (s *Server) ToolDefinitions() []Tool {
 // When dbName is empty but DatabaseScopedExecutor is set, uses DefaultDatabaseName() so store/recall/link
 // always use the same database as the rest of the server (e.g. agentic loop).
 func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.StorageExecutor, getNode func(context.Context, string) (*nornicdb.Node, error), err error) {
+	if auth.RequestDatabaseAccessModeFromContext(ctx) != nil && !hasAuthorizedDatabase(ctx) {
+		return nil, nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
+	}
 	dbName := DatabaseFromContext(ctx)
 	if dbName == "" && s.config.DatabaseScopedExecutor != nil {
 		dbName = s.DefaultDatabaseName()
@@ -605,6 +644,9 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 }
 
 func (s *Server) storageForContext(ctx context.Context) (storage.Engine, error) {
+	if auth.RequestDatabaseAccessModeFromContext(ctx) != nil && !hasAuthorizedDatabase(ctx) {
+		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
+	}
 	dbName := DatabaseFromContext(ctx)
 	if dbName == "" && s.config.DatabaseScopedStorage != nil {
 		dbName = s.DefaultDatabaseName()

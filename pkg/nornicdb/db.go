@@ -209,8 +209,10 @@ type DB struct {
 	// Optional: when set, per-database config overrides are applied for search/embed (dims, minSimilarity).
 	// Server wires this when system DB and DbConfigStore are available.
 	// Use dbConfigResolverMu (not db.mu) so getOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
-	dbConfigResolverMu sync.RWMutex
-	dbConfigResolver   DbConfigResolver
+	dbConfigResolverMu      sync.RWMutex
+	dbConfigResolver        DbConfigResolver
+	dbSearchOptionsResolver DbSearchOptionsResolver
+	databaseStorageResolver func(string) (storage.Engine, error)
 
 	// Per-database search index master switches + warming triggers. When the
 	// resolver is unset, every database defaults to (true, true, startup,
@@ -261,6 +263,9 @@ type DB struct {
 // When set, getOrCreateSearchService uses these instead of the global db.config values.
 // Return ("", 0, 0) values to use global defaults for that DB.
 type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string)
+
+// DbSearchOptionsResolver returns resource options for a database search service.
+type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
 
 // DbSearchFlagsResolver returns the per-database search index master switches
 // and warming triggers. Defaults reproduce today's behaviour: bm25Enabled=true,
@@ -613,27 +618,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if dataDir != "" {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
-		badgerOpts := storage.BadgerOptions{
-			DataDir:               dataDir,
-			HighPerformance:       true,
-			LowMemory:             false,
-			NodeCacheMaxEntries:   config.Database.BadgerNodeCacheMaxEntries,
-			EdgeTypeCacheMaxTypes: config.Database.BadgerEdgeTypeCacheMaxTypes,
-			AllowStorageUpgrade:   config.Database.AllowStorageUpgrade,
-			EngineOptions: storage.EngineOptions{
-				RetentionPolicy: storage.RetentionPolicy{
-					MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
-					TTL:               config.Database.MVCCRetentionTTL,
-				},
-				IDFreelistTTL: config.Database.IDFreelistTTL,
-			},
-			// Phase 2 D-01: thread the structured *slog.Logger from
-			// nornicConfig.Config (set by cmd/nornicdb/main.go before Open)
-			// into BadgerEngine so all storage emissions flow through the
-			// production handler stack. Discard fallback in NewBadgerEngine-
-			// WithOptions handles nil per D-01a.
-			Logger: config.Logger,
-		}
+		badgerOpts, walConfig, asyncConfig := resolveDurabilityOptions(dataDir, config)
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"
@@ -847,32 +832,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Initialize WAL for durability (uses batch sync mode by default for better performance)
-		walConfig := storage.DefaultWALConfig()
-		walConfig.Dir = dataDir + "/wal"
-		walConfig.SnapshotInterval = 5 * time.Minute // Compact WAL every 5 minutes (not 1 hour!)
-		if config.Database.WALRetentionLedgerDefaults &&
-			config.Database.WALRetentionMaxSegments == 0 &&
-			config.Database.WALRetentionMaxAge == 0 {
-			config.Database.WALRetentionMaxSegments = 24
-			config.Database.WALRetentionMaxAge = 7 * 24 * time.Hour
-		}
-		// Apply WAL retention settings from config
-		if config.Database.WALRetentionMaxSegments > 0 {
-			walConfig.RetentionMaxSegments = config.Database.WALRetentionMaxSegments
-		}
-		if config.Database.WALRetentionMaxAge > 0 {
-			walConfig.RetentionMaxAge = config.Database.WALRetentionMaxAge
-		}
-		if config.Database.WALSnapshotRetentionMaxCount > 0 {
-			walConfig.SnapshotRetentionMaxCount = config.Database.WALSnapshotRetentionMaxCount
-		}
-		if config.Database.WALSnapshotRetentionMaxAge > 0 {
-			walConfig.SnapshotRetentionMaxAge = config.Database.WALSnapshotRetentionMaxAge
-		}
-		// D-07: thread the structured *slog.Logger into the WAL config so
-		// the wal/wal_compaction/wal_recovery subsystems emit through the
-		// production handler stack. Discard fallback inside NewWAL.
-		walConfig.SlogLogger = config.Logger
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
 			badgerEngine.Close()
@@ -899,16 +858,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Optionally wrap with AsyncEngine for faster writes (eventual consistency)
 		var baseStorage storage.Engine
 		if config.Database.AsyncWritesEnabled {
-			asyncConfig := &storage.AsyncEngineConfig{
-				FlushInterval:    config.Database.AsyncFlushInterval,
-				MaxNodeCacheSize: config.Database.AsyncMaxNodeCacheSize,
-				MaxEdgeCacheSize: config.Database.AsyncMaxEdgeCacheSize,
-				// Phase 2 D-01 + D-06: thread the structured *slog.Logger
-				// so the AsyncEngine flush goroutine derives the
-				// single-allocation flushLog (subsystem=async_flush) from
-				// the same handler stack used everywhere else.
-				Logger: config.Logger,
-			}
 			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
 			if config.Database.AsyncMaxNodeCacheSize > 0 || config.Database.AsyncMaxEdgeCacheSize > 0 {
 				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v, node cache: %d, edge cache: %d)\n",
@@ -1451,6 +1400,65 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions {
+	lowMemory := strings.EqualFold(strings.TrimSpace(config.Storage.Mode), "low")
+	return storage.BadgerOptions{
+		DataDir:               dataDir,
+		HighPerformance:       !lowMemory,
+		LowMemory:             lowMemory,
+		NodeCacheMaxEntries:   config.Database.BadgerNodeCacheMaxEntries,
+		EdgeTypeCacheMaxTypes: config.Database.BadgerEdgeTypeCacheMaxTypes,
+		AllowStorageUpgrade:   config.Database.AllowStorageUpgrade,
+		EngineOptions: storage.EngineOptions{
+			RetentionPolicy: storage.RetentionPolicy{
+				MaxVersionsPerKey: config.Database.MVCCRetentionMaxVersions,
+				TTL:               config.Database.MVCCRetentionTTL,
+			},
+			IDFreelistTTL: config.Database.IDFreelistTTL,
+		},
+		Logger: config.Logger,
+	}
+}
+
+func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOptions, *storage.WALConfig, *storage.AsyncEngineConfig) {
+	badgerOptions := resolveBadgerOptions(dataDir, config)
+
+	walConfig := storage.DefaultWALConfig()
+	walConfig.Dir = filepath.Join(dataDir, "wal")
+	walConfig.SyncMode = strings.ToLower(strings.TrimSpace(config.Database.WALSyncMode))
+	walConfig.BatchSyncInterval = config.Database.WALSyncInterval
+	if walConfig.SyncMode != "batch" {
+		walConfig.BatchSyncInterval = 0
+	}
+	walConfig.SnapshotInterval = 5 * time.Minute
+	walConfig.RetentionMaxSegments = config.Database.WALRetentionMaxSegments
+	walConfig.RetentionMaxAge = config.Database.WALRetentionMaxAge
+	if config.Database.WALRetentionLedgerDefaults && walConfig.RetentionMaxSegments == 0 && walConfig.RetentionMaxAge == 0 {
+		walConfig.RetentionMaxSegments = 24
+		walConfig.RetentionMaxAge = 7 * 24 * time.Hour
+	}
+	if config.Database.WALSnapshotRetentionMaxCount > 0 {
+		walConfig.SnapshotRetentionMaxCount = config.Database.WALSnapshotRetentionMaxCount
+	}
+	walConfig.SnapshotRetentionMaxAge = config.Database.WALSnapshotRetentionMaxAge
+	walConfig.SlogLogger = config.Logger
+
+	asyncConfig := &storage.AsyncEngineConfig{
+		FlushInterval:    config.Database.AsyncFlushInterval,
+		MaxNodeCacheSize: config.Database.AsyncMaxNodeCacheSize,
+		MaxEdgeCacheSize: config.Database.AsyncMaxEdgeCacheSize,
+		Logger:           config.Logger,
+	}
+	if config.Database.StrictDurability {
+		badgerOptions.SyncWrites = true
+		walConfig.SyncMode = "immediate"
+		walConfig.BatchSyncInterval = 0
+		asyncConfig.FlushInterval = 10 * time.Millisecond
+	}
+
+	return badgerOptions, walConfig, asyncConfig
 }
 
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
@@ -2108,6 +2116,13 @@ func (db *DB) SetDbConfigResolver(resolver DbConfigResolver) {
 	db.dbConfigResolverMu.Lock()
 	defer db.dbConfigResolverMu.Unlock()
 	db.dbConfigResolver = resolver
+}
+
+// SetDbSearchOptionsResolver configures per-database search resource options.
+func (db *DB) SetDbSearchOptionsResolver(resolver DbSearchOptionsResolver) {
+	db.dbConfigResolverMu.Lock()
+	defer db.dbConfigResolverMu.Unlock()
+	db.dbSearchOptionsResolver = resolver
 }
 
 // SetDbSearchFlagsResolver sets an optional resolver for per-database search

@@ -391,10 +391,12 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	w.mutationMu.Lock()
 	defer w.mutationMu.Unlock()
 
-	// Create snapshot from current engine state
-	snapshot, err := w.wal.CreateSnapshot(w.engine)
-	if err != nil {
-		return fmt.Errorf("failed to create snapshot: %w", err)
+	if w.wal.closed.Load() {
+		return ErrWALClosed
+	}
+	snapshotSequence := w.wal.sequence.Load()
+	if err := w.wal.Checkpoint(); err != nil {
+		return fmt.Errorf("failed to create snapshot checkpoint: %w", err)
 	}
 
 	// Save snapshot with high-resolution timestamp to avoid filename collisions
@@ -402,13 +404,13 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	timestamp := time.Now().Format("20060102-150405.000000000")
 	snapshotPath := filepath.Join(w.snapshotDir, fmt.Sprintf("snapshot-%s.json", timestamp))
 
-	if err := SaveSnapshot(snapshot, snapshotPath); err != nil {
+	if err := SaveStreamingSnapshot(context.Background(), w.engine, snapshotPath, SnapshotOptions{Sequence: snapshotSequence}); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
 	}
 
 	// Truncate WAL to remove entries before snapshot
 	// This is the key compaction step that prevents unbounded growth
-	if err := w.wal.TruncateAfterSnapshot(snapshot.Sequence); err != nil {
+	if err := w.wal.TruncateAfterSnapshot(snapshotSequence); err != nil {
 		// Log error but don't fail - snapshot is still valid
 		// Next compaction will try again
 		return fmt.Errorf("failed to truncate WAL (snapshot saved): %w", err)

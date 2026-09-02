@@ -101,6 +101,54 @@ func TestDatabaseManager_CreateDatabase_Duplicate(t *testing.T) {
 	assert.Equal(t, ErrDatabaseExists, err)
 }
 
+func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = inner.Close() })
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+
+	limits := &Limits{Storage: StorageLimits{MaxNodes: 1}}
+	require.NoError(t, manager.SetDatabaseLimits("nornic", limits))
+	limits.Storage.MaxNodes = 100
+
+	engine, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "first"})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "blocked"})
+	require.ErrorIs(t, err, ErrStorageLimitExceeded)
+
+	require.NoError(t, manager.SetDatabaseLimits("nornic", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
+	_, err = engine.CreateNode(&storage.Node{ID: "second"})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "still-blocked"})
+	require.ErrorIs(t, err, ErrStorageLimitExceeded)
+}
+
+func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
+	inner := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = inner.Close() })
+	manager, err := NewDatabaseManager(inner, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+
+	engine, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
+	require.NoError(t, err)
+	currentBytes, _, _ := manager.GetStorageSize("nornic")
+	require.Positive(t, currentBytes)
+	require.NoError(t, manager.SetDatabaseLimits("nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
+
+	err = engine.UpdateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}})
+	require.ErrorIs(t, err, ErrStorageLimitExceeded)
+
+	stored, err := engine.GetNode("node")
+	require.NoError(t, err)
+	require.Equal(t, "small", stored.Properties["value"])
+}
+
 func TestDatabaseManager_CreateDatabase_InvalidName(t *testing.T) {
 	inner := storage.NewMemoryEngine()
 	defer inner.Close()
@@ -545,6 +593,34 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotSame(t, compositeStore, compositeStore2)
 	})
+}
+
+func TestNewDatabaseManagerReconcilesStorageSizesAtStartup(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	seed, err := NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	engine, err := seed.GetStorage(seed.DefaultDatabaseName())
+	require.NoError(t, err)
+	node := &storage.Node{ID: "persisted", Labels: []string{"Record"}, Properties: map[string]any{"name": "alpha"}}
+	_, err = engine.CreateNode(node)
+	require.NoError(t, err)
+	restarted, err := NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	restartedStorage, err := restarted.GetStorage(restarted.DefaultDatabaseName())
+	require.NoError(t, err)
+	storedNode, err := restartedStorage.GetNode("persisted")
+	require.NoError(t, err)
+	wantNodeSize, err := calculateNodeSize(storedNode)
+	require.NoError(t, err)
+	restarted.mu.RLock()
+	info := restarted.databases[restarted.DefaultDatabaseName()]
+	restarted.mu.RUnlock()
+	require.NotNil(t, info)
+	info.sizeMu.RLock()
+	defer info.sizeMu.RUnlock()
+	require.True(t, info.sizeInitialized)
+	require.Equal(t, wantNodeSize, info.nodeSize)
+	require.Equal(t, wantNodeSize, info.totalSize)
 }
 
 func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {

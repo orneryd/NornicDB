@@ -29,6 +29,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/pool"
@@ -429,6 +430,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cfg.Server.BoltAddress = resolvedAddress
 	if noAuth {
 		cfg.Auth.Enabled = false
+	}
+	if err := config.ValidateProductionSecurity(cfg); err != nil {
+		return err
 	}
 
 	// YAML config file is the source of truth for embedding settings
@@ -924,6 +928,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	connectionTracker := multidb.NewConnectionTracker()
+	boltServer.SetDatabaseConnectionAdmission(func(databaseName string) error {
+		return connectionTracker.TryIncrementConnection(httpServer.GetDatabaseManager(), databaseName)
+	}, connectionTracker.DecrementConnection)
 	// Wire per-database access from HTTP server so Bolt enforces same policy (allowlist + principal roles)
 	boltServer.SetDatabaseAccessModeResolver(httpServer.GetDatabaseAccessModeForRoles)
 	// Wire per-DB read/write for mutation checks (Phase 4)

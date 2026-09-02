@@ -70,7 +70,7 @@ type LimitChecker interface {
 	CheckQueryLimits(ctx context.Context) (context.Context, context.CancelFunc, error)
 
 	// GetQueryLimits returns the query limits for this database.
-	GetQueryLimits() *QueryLimits
+	GetQueryLimits() interface{}
 
 	// GetRateLimits returns the rate limits for this database.
 	GetRateLimits() *RateLimits
@@ -86,6 +86,7 @@ type LimitChecker interface {
 type databaseLimitChecker struct {
 	manager      *DatabaseManager
 	databaseName string
+	limitsMu     sync.RWMutex
 	limits       *Limits
 
 	// Query tracking
@@ -111,23 +112,36 @@ func newDatabaseLimitChecker(manager *DatabaseManager, databaseName string) (*da
 		return nil, ErrDatabaseNotFound
 	}
 
-	checker := &databaseLimitChecker{
-		manager:      manager,
-		databaseName: databaseName,
-		limits:       info.Limits,
-	}
+	return newDatabaseLimitCheckerWithLimits(manager, databaseName, info.Limits), nil
+}
 
-	// Initialize rate limiters if limits are set
-	if info.Limits != nil {
-		if info.Limits.Rate.MaxQueriesPerSecond > 0 {
-			checker.queryRateLimiter = newRateLimiter(info.Limits.Rate.MaxQueriesPerSecond)
+func newDatabaseLimitCheckerWithLimits(manager *DatabaseManager, databaseName string, limits *Limits) *databaseLimitChecker {
+	checker := &databaseLimitChecker{manager: manager, databaseName: databaseName}
+	checker.updateLimits(limits)
+	return checker
+}
+
+func (c *databaseLimitChecker) updateLimits(limits *Limits) {
+	limits = cloneLimits(limits)
+	c.limitsMu.Lock()
+	defer c.limitsMu.Unlock()
+	c.limits = limits
+	c.queryRateLimiter = nil
+	c.writeRateLimiter = nil
+	if limits != nil {
+		if limits.Rate.MaxQueriesPerSecond > 0 {
+			c.queryRateLimiter = newRateLimiter(limits.Rate.MaxQueriesPerSecond)
 		}
-		if info.Limits.Rate.MaxWritesPerSecond > 0 {
-			checker.writeRateLimiter = newRateLimiter(info.Limits.Rate.MaxWritesPerSecond)
+		if limits.Rate.MaxWritesPerSecond > 0 {
+			c.writeRateLimiter = newRateLimiter(limits.Rate.MaxWritesPerSecond)
 		}
 	}
+}
 
-	return checker, nil
+func (c *databaseLimitChecker) limitsSnapshot() *Limits {
+	c.limitsMu.RLock()
+	defer c.limitsMu.RUnlock()
+	return cloneLimits(c.limits)
 }
 
 // CheckStorageLimits checks if storage operations are within limits.
@@ -167,7 +181,8 @@ func newDatabaseLimitChecker(manager *DatabaseManager, databaseName string) (*da
 //   - MaxEdges: "has reached max_edges limit (5000/5000)"
 //   - MaxBytes: "would exceed max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
 func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error {
-	if c.limits == nil || c.limits.IsUnlimited() {
+	limits := c.limitsSnapshot()
+	if limits == nil || limits.IsUnlimited() {
 		return nil // No limits
 	}
 
@@ -188,7 +203,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 	}
 
 	// Check limits
-	storageLimits := c.limits.Storage
+	storageLimits := limits.Storage
 
 	if operation == "create_node" {
 		if storageLimits.MaxNodes > 0 && nodeCount >= storageLimits.MaxNodes {
@@ -216,11 +231,39 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 			if err != nil {
 				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(err), err)
 			}
+		} else if operation == "update_node" && node != nil {
+			existing, getErr := storage.GetNode(node.ID)
+			if getErr != nil {
+				return nil
+			}
+			oldSize, sizeErr := calculateNodeSize(existing)
+			if sizeErr != nil {
+				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
+			}
+			newSize, sizeErr := calculateNodeSize(node)
+			if sizeErr != nil {
+				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
+			}
+			newEntitySize = newSize - oldSize
 		} else if operation == "create_edge" && edge != nil {
 			newEntitySize, err = calculateEdgeSize(edge)
 			if err != nil {
 				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(err), err)
 			}
+		} else if operation == "update_edge" && edge != nil {
+			existing, getErr := storage.GetEdge(edge.ID)
+			if getErr != nil {
+				return nil
+			}
+			oldSize, sizeErr := calculateEdgeSize(existing)
+			if sizeErr != nil {
+				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)
+			}
+			newSize, sizeErr := calculateEdgeSize(edge)
+			if sizeErr != nil {
+				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)
+			}
+			newEntitySize = newSize - oldSize
 		} else {
 			// Fallback: if node/edge not provided, we can't check MaxBytes
 			// This shouldn't happen in practice, but handle gracefully
@@ -377,11 +420,12 @@ func calculateEdgeSize(edge *storage.Edge) (int64, error) {
 
 // CheckQueryLimits checks if query execution is allowed and returns a context with timeout.
 func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Context, context.CancelFunc, error) {
-	if c.limits == nil || c.limits.IsUnlimited() {
+	limits := c.limitsSnapshot()
+	if limits == nil || limits.IsUnlimited() {
 		return ctx, func() {}, nil // No limits
 	}
 
-	queryLimits := c.limits.Query
+	queryLimits := limits.Query
 
 	// Check concurrent query limit
 	if queryLimits.MaxConcurrentQueries > 0 {
@@ -416,38 +460,42 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 // GetQueryLimits returns the query limits for this database.
 // Implements storage.QueryLimitChecker interface.
 func (c *databaseLimitChecker) GetQueryLimits() interface{} {
-	if c.limits == nil {
+	limits := c.limitsSnapshot()
+	if limits == nil {
 		return nil
 	}
-	return &c.limits.Query
+	return &limits.Query
 }
 
 // GetRateLimits returns the rate limits for this database.
 func (c *databaseLimitChecker) GetRateLimits() *RateLimits {
-	if c.limits == nil {
+	limits := c.limitsSnapshot()
+	if limits == nil {
 		return nil
 	}
-	return &c.limits.Rate
+	return &limits.Rate
 }
 
 // CheckQueryRate checks if query rate limit is allowed.
 func (c *databaseLimitChecker) CheckQueryRate() error {
+	limits := c.limitsSnapshot()
 	if c.queryRateLimiter == nil {
 		return nil // No limit
 	}
 	if !c.queryRateLimiter.Allow() {
-		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, c.limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
+		return localizedError(localization.MultidbQueryRateExceeded(c.databaseName, limits.Rate.MaxQueriesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
 }
 
 // CheckWriteRate checks if write rate limit is allowed.
 func (c *databaseLimitChecker) CheckWriteRate() error {
+	limits := c.limitsSnapshot()
 	if c.writeRateLimiter == nil {
 		return nil // No limit
 	}
 	if !c.writeRateLimiter.Allow() {
-		return localizedError(localization.MultidbWriteRateExceeded(c.databaseName, c.limits.Rate.MaxWritesPerSecond), ErrRateLimitExceeded)
+		return localizedError(localization.MultidbWriteRateExceeded(c.databaseName, limits.Rate.MaxWritesPerSecond), ErrRateLimitExceeded)
 	}
 	return nil
 }

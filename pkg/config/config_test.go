@@ -921,6 +921,42 @@ database:
 	require.Equal(t, 456, cfg.Database.AsyncMaxEdgeCacheSize)
 }
 
+func TestStorageModeDefaultsLoadsAndValidates(t *testing.T) {
+	cfg := LoadDefaults()
+	require.Equal(t, "default", cfg.Storage.Mode)
+	require.NoError(t, cfg.Validate())
+
+	path := filepath.Join(t.TempDir(), "nornicdb.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("storage:\n  mode: low\n"), 0o600))
+	loaded, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "low", loaded.Storage.Mode)
+	require.NoError(t, loaded.Validate())
+
+	loaded.Storage.Mode = "tiny"
+	require.ErrorContains(t, loaded.Validate(), "storage mode")
+}
+
+func TestValidateDurabilitySettings(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Config)
+	}{
+		{"unknown WAL mode", func(cfg *Config) { cfg.Database.WALSyncMode = "sometimes" }},
+		{"nonpositive batch interval", func(cfg *Config) { cfg.Database.WALSyncInterval = 0 }},
+		{"negative node cache", func(cfg *Config) { cfg.Database.AsyncMaxNodeCacheSize = -1 }},
+		{"negative edge cache", func(cfg *Config) { cfg.Database.AsyncMaxEdgeCacheSize = -1 }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := LoadDefaults()
+			test.configure(cfg)
+			require.Error(t, cfg.Validate())
+		})
+	}
+}
+
 func TestLoadFromFile_AsyncWriteSettingsNestedYAMLLegacyShape(t *testing.T) {
 	clearEnvVars(t)
 

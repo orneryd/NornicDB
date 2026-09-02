@@ -350,6 +350,7 @@ func (o *SearchOptions) GetMinSimilarity(fallback float64) float64 {
 // searchResultCacheEntry holds a cached SearchResponse and expiry (same semantics as Cypher query cache).
 type searchResultCacheEntry struct {
 	response *SearchResponse
+	created  time.Time
 	expires  time.Time
 }
 
@@ -426,14 +427,13 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 }
 
 func (c *searchResultCache) Get(key string) *SearchResponse {
-	c.mu.RLock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	ent, ok := c.entries[key]
-	c.mu.RUnlock()
 	if !ok || ent == nil {
 		return nil
 	}
 	if c.ttl > 0 && time.Now().After(ent.expires) {
-		c.mu.Lock()
 		delete(c.entries, key)
 		for i, k := range c.lru {
 			if k == key {
@@ -441,8 +441,14 @@ func (c *searchResultCache) Get(key string) *SearchResponse {
 				break
 			}
 		}
-		c.mu.Unlock()
 		return nil
+	}
+	for i, existing := range c.lru {
+		if existing == key {
+			c.lru = append(c.lru[:i], c.lru[i+1:]...)
+			c.lru = append(c.lru, key)
+			break
+		}
 	}
 	return ent.response
 }
@@ -457,6 +463,9 @@ func (c *searchResultCache) Put(key string, response *SearchResponse) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.maxSize <= 0 {
+		return
+	}
 	if _, exists := c.entries[key]; !exists {
 		for len(c.lru) >= c.maxSize {
 			evict := c.lru[0]
@@ -465,7 +474,50 @@ func (c *searchResultCache) Put(key string, response *SearchResponse) {
 		}
 		c.lru = append(c.lru, key)
 	}
-	c.entries[key] = &searchResultCacheEntry{response: response, expires: expires}
+	c.entries[key] = &searchResultCacheEntry{response: response, created: time.Now(), expires: expires}
+}
+
+func (c *searchResultCache) Resize(maxSize int) {
+	if maxSize < 0 {
+		maxSize = 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxSize = maxSize
+	for len(c.lru) > maxSize {
+		evict := c.lru[0]
+		c.lru = c.lru[1:]
+		delete(c.entries, evict)
+	}
+}
+
+func (c *searchResultCache) SetTTL(ttl time.Duration) {
+	if ttl < 0 {
+		ttl = 0
+	}
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ttl = ttl
+	retained := c.lru[:0]
+	for _, key := range c.lru {
+		entry := c.entries[key]
+		if entry == nil {
+			continue
+		}
+		if ttl == 0 {
+			entry.expires = time.Time{}
+			retained = append(retained, key)
+			continue
+		}
+		entry.expires = entry.created.Add(ttl)
+		if now.After(entry.expires) {
+			delete(c.entries, key)
+			continue
+		}
+		retained = append(retained, key)
+	}
+	c.lru = retained
 }
 
 func (c *searchResultCache) Invalidate() {
@@ -633,7 +685,8 @@ type Service struct {
 
 	// resultCache caches Search() results by query+options (same semantics as Cypher query cache).
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
-	resultCache *searchResultCache
+	resultCache    *searchResultCache
+	cacheNamespace string
 
 	nodeDecayFilter NodeDecayFilterFunc
 
@@ -800,11 +853,33 @@ func NewServiceWithDimensions(engine storage.Engine, dimensions int) *Service {
 // NewServiceWithDimensionsAndBM25Engine creates a search Service with explicit BM25 engine selection.
 // bm25Engine values: "v1", "v2" (invalid values default to "v1").
 func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int, bm25Engine string) *Service {
+	return NewServiceWithDimensionsAndBM25EngineAndOptions(engine, dimensions, bm25Engine, nil)
+}
+
+// ServiceOptions configures database-specific search service resources.
+type ServiceOptions struct {
+	DatabaseID               string
+	SearchResultCacheEntries int
+	SearchResultCacheTTL     time.Duration
+}
+
+// NewServiceWithDimensionsAndBM25EngineAndOptions creates a search service with explicit resource policy.
+// Nil options preserve the historical 1000-entry, five-minute result cache.
+func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dimensions int, bm25Engine string, options *ServiceOptions) *Service {
 	fulltextIndex, selectedBM25Engine := newBM25Index(bm25Engine)
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
+	cacheEntries := 1000
+	cacheTTL := 5 * time.Minute
+	cacheNamespace := ""
+	if options != nil {
+		cacheEntries = options.SearchResultCacheEntries
+		cacheTTL = options.SearchResultCacheTTL
+		cacheNamespace = options.DatabaseID
+	}
 	if envutil.GetBoolStrict(EnvSearchResultCacheEnabled, true) {
-		resultCache = newSearchResultCache(1000, 5*time.Minute)
+		resultCache = newSearchResultCache(max(cacheEntries, 1), cacheTTL)
+		resultCache.Resize(cacheEntries)
 	}
 	svc := &Service{
 		engine:                     engine,
@@ -821,6 +896,7 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 		edgePropVector:             make(map[string]map[string][]float32, 1024),
 		clusterLexicalProfiles:     make(map[int]map[string]float64),
 		resultCache:                resultCache,
+		cacheNamespace:             cacheNamespace,
 		lifecycleCtx:               lifecycleCtx,
 		lifecycleCancel:            lifecycleCancel,
 	}
@@ -837,6 +913,15 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 	svc.warmDone = make(chan struct{})
 	svc.logEvent(context.Background(), slog.LevelInfo, localization.SearchBM25EngineSelectedEvent(selectedBM25Engine))
 	return svc
+}
+
+// SetSearchResultCachePolicy applies a dynamic result-cache capacity and TTL.
+func (s *Service) SetSearchResultCachePolicy(maxEntries int, ttl time.Duration) {
+	if s == nil || s.resultCache == nil {
+		return
+	}
+	s.resultCache.Resize(maxEntries)
+	s.resultCache.SetTTL(ttl)
 }
 
 // SetRuntimeStrategyTransitionsEnabled controls whether live writes may schedule
@@ -3831,7 +3916,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	opts.MinSimilarity = s.resolveMinSimilarity(opts)
 
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
-	cacheKey := searchCacheKey(query, embedding, opts)
+	cacheKey := s.cacheNamespace + "\x00" + searchCacheKey(query, embedding, opts)
 	if s.resultCache != nil {
 		if cached := s.resultCache.Get(cacheKey); cached != nil {
 			s.maybeLogSearchTiming(query, cached, time.Since(start), true)

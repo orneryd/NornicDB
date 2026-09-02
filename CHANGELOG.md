@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Added typed, database-scoped capacity settings without changing unrestricted
+  defaults.** Static storage/index settings report pending restart, dynamic
+  search-result cache size and TTL changes apply in place, and bounded
+  `SHOW SETTING[S]` reads from the same registry. Badger low-memory mode and
+  existing durability controls now reach their storage constructors.
+- **Automatic WAL compaction now writes atomic, checksummed streaming
+  snapshots.** Recovery detects and incrementally reads the framed format while
+  retaining compatibility with existing JSON snapshots.
+- **Hardened multi-database isolation and deployment defaults.** Manager-owned
+  storage/query limits cover protocol and background inference paths, MCP and
+  Bolt enforce database scope/admission, production startup rejects insecure
+  auth/CORS/public-plaintext combinations. Standalone images retain the
+  authentication-disabled compatibility default and emit a high-severity event;
+  maintained Compose examples override it with authenticated loopback publication.
 - **BM25 V2 now defaults to exact, language-neutral Unicode retrieval.** Text
   is normalized with NFKC and Unicode case folding without default English
   stopwords or stemming. Bounded prefix matching remains available through

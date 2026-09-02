@@ -37,10 +37,11 @@ func (db *DB) getOrCreateInferenceService(dbName string, storageEngine storage.E
 
 	// Build storage for this database if not provided.
 	if storageEngine == nil {
-		if db.baseStorage == nil {
-			return nil, localizedError(localization.NornicDBCoreInferenceBaseStorageUnavailable(), nil)
+		var err error
+		storageEngine, err = db.resolveDatabaseStorage(dbName)
+		if err != nil {
+			return nil, err
 		}
-		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
 	}
 
 	// Create inference engine using current config flags.
@@ -88,6 +89,27 @@ func (db *DB) getOrCreateInferenceService(dbName string, storageEngine storage.E
 	db.inferenceServicesMu.Unlock()
 
 	return engine, nil
+}
+
+// SetDatabaseStorageResolver routes background writes through the database
+// manager's decorated storage chain when one is available.
+func (db *DB) SetDatabaseStorageResolver(resolver func(string) (storage.Engine, error)) {
+	db.dbConfigResolverMu.Lock()
+	db.databaseStorageResolver = resolver
+	db.dbConfigResolverMu.Unlock()
+}
+
+func (db *DB) resolveDatabaseStorage(dbName string) (storage.Engine, error) {
+	db.dbConfigResolverMu.RLock()
+	resolver := db.databaseStorageResolver
+	db.dbConfigResolverMu.RUnlock()
+	if resolver != nil {
+		return resolver(dbName)
+	}
+	if db.baseStorage == nil {
+		return nil, localizedError(localization.NornicDBCoreInferenceBaseStorageUnavailable(), nil)
+	}
+	return storage.NewNamespacedEngine(db.baseStorage, dbName), nil
 }
 
 // GetOrCreateInferenceService is the public wrapper that checks closed state.

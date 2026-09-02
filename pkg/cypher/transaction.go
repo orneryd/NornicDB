@@ -551,6 +551,8 @@ func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher
 			return e.executeShowDatabase(ctx, cypher)
 		case strings.HasPrefix(upper, "SHOW ALIASES"):
 			return e.executeShowAliases(ctx, cypher)
+		case strings.HasPrefix(upper, "SHOW SETTING"):
+			return e.executeShowSettings(ctx, cypher)
 		case strings.HasPrefix(upper, "SHOW LIMITS"):
 			return e.executeShowLimits(ctx, cypher)
 		default:

@@ -212,15 +212,35 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if body.Overrides == nil {
 		body.Overrides = make(map[string]string)
 	}
+	global := nornicConfig.LoadFromEnv()
+	previousOverrides := s.dbConfigStore.GetOverrides(dbName)
+	previousResolved := dbconfig.Resolve(global, previousOverrides)
+	hasDynamicChange := false
+	hasSearchRebuildChange := false
+	hasSearchCacheChange := false
+	pendingRestart := false
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
 			return
 		}
-		if ok, allowed := dbconfig.IsValidEnumValue(key, value); !ok {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest",
-				"invalid value for "+key+": got "+value+" (allowed: "+allowed+")")
+		normalized, err := dbconfig.NormalizeSettingValue(key, value)
+		if err != nil {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", err.Error())
 			return
+		}
+		body.Overrides[key] = normalized
+		definition, _ := dbconfig.LookupSetting(key)
+		if definition.Dynamic {
+			hasDynamicChange = true
+			switch key {
+			case "db.nornic.search_result_cache.max_entries", "db.nornic.query_cache.ttl":
+				hasSearchCacheChange = true
+			default:
+				hasSearchRebuildChange = true
+			}
+		} else {
+			pendingRestart = true
 		}
 	}
 	if err := s.dbConfigStore.SetOverrides(r.Context(), dbName, body.Overrides); err != nil {
@@ -234,7 +254,11 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
-	if !s.dbManager.IsCompositeDatabase(dbName) {
+	if hasDynamicChange && hasSearchCacheChange {
+		resolved := dbconfig.Resolve(global, body.Overrides)
+		s.db.SetSearchResultCachePolicy(dbName, resolved.SearchResultCacheMaxEntries, resolved.SearchResultCacheTTL)
+	}
+	if hasSearchRebuildChange && !s.dbManager.IsCompositeDatabase(dbName) {
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStorageResolveFailedEvent(dbName, err))
@@ -248,8 +272,20 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	if overrides == nil {
 		overrides = make(map[string]string)
 	}
+	effective := dbconfig.Resolve(global, overrides).Effective
+	if pendingRestart && previousResolved != nil {
+		for key := range body.Overrides {
+			definition, _ := dbconfig.LookupSetting(key)
+			if !definition.Dynamic {
+				effective[key] = previousResolved.Effective[key]
+			}
+		}
+	}
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"overrides":        overrides,
+		"configured":       overrides,
+		"effective":        effective,
+		"pendingRestart":   pendingRestart,
 		"rebuildTriggered": rebuildTriggered,
 	})
 }

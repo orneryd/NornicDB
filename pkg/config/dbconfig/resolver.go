@@ -31,7 +31,9 @@ type ResolvedDbConfig struct {
 	// not iterated into RAM. Per-DB override wins over the global default.
 	VectorEnabled bool
 	// VectorWarming is "startup" or "lazy". See BM25Warming.
-	VectorWarming string
+	VectorWarming               string
+	SearchResultCacheMaxEntries int
+	SearchResultCacheTTL        time.Duration
 	// Effective is the full effective value for every allowed key (string form for API).
 	Effective map[string]string
 }
@@ -60,20 +62,29 @@ type ResolvedDbConfig struct {
 // multi-tenant story work (one DB needs search, the rest don't).
 func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConfig {
 	r := &ResolvedDbConfig{
-		EmbeddingDimensions: global.Memory.EmbeddingDimensions,
-		SearchMinSimilarity: global.Memory.SearchMinSimilarity,
-		BM25Engine:          normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")),
-		BM25Enabled:         global.Memory.SearchBM25Enabled,
-		BM25Warming:         normalizeWarming(global.Memory.SearchBM25Warming),
-		VectorEnabled:       global.Memory.SearchVectorEnabled,
-		VectorWarming:       normalizeWarming(global.Memory.SearchVectorWarming),
-		Effective:           make(map[string]string),
+		EmbeddingDimensions:         global.Memory.EmbeddingDimensions,
+		SearchMinSimilarity:         global.Memory.SearchMinSimilarity,
+		BM25Engine:                  normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")),
+		BM25Enabled:                 global.Memory.SearchBM25Enabled,
+		BM25Warming:                 normalizeWarming(global.Memory.SearchBM25Warming),
+		VectorEnabled:               global.Memory.SearchVectorEnabled,
+		VectorWarming:               normalizeWarming(global.Memory.SearchVectorWarming),
+		SearchResultCacheMaxEntries: 1000,
+		SearchResultCacheTTL:        global.Memory.QueryCacheTTL,
+		Effective:                   make(map[string]string),
 	}
 	if r.EmbeddingDimensions <= 0 {
 		r.EmbeddingDimensions = 1024
 	}
 	// Build effective map from global (we'll overlay overrides below).
 	effectiveFromGlobal(global, r.Effective)
+	for _, definition := range Settings() {
+		if definition.Scope != ScopePhysicalEngine && definition.DefaultValue != "" {
+			if _, exists := r.Effective[definition.Name]; !exists {
+				r.Effective[definition.Name] = definition.DefaultValue
+			}
+		}
+	}
 	// Per-DB overrides (admin API store / YAML databases: block) apply
 	// on top of global.
 	for k, v := range overrides {
@@ -231,6 +242,16 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 	}
 	if key == "NORNICDB_SEARCH_BM25_ENGINE" {
 		r.BM25Engine = normalizeBM25Engine(value)
+	}
+	if key == "db.nornic.search_result_cache.max_entries" {
+		if entries, err := strconv.Atoi(value); err == nil && entries >= 0 {
+			r.SearchResultCacheMaxEntries = entries
+		}
+	}
+	if key == "db.nornic.query_cache.ttl" {
+		if ttl, err := time.ParseDuration(value); err == nil && ttl >= 0 {
+			r.SearchResultCacheTTL = ttl
+		}
 	}
 	switch key {
 	case "NORNICDB_SEARCH_BM25_ENABLED":

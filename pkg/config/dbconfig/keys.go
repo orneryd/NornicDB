@@ -6,9 +6,14 @@ import "strings"
 
 // KeyMeta describes one allowed per-database config key.
 type KeyMeta struct {
-	Key      string `json:"key"`
-	Type     string `json:"type"`     // "string", "number", "boolean", "duration"
-	Category string `json:"category"` // "Embeddings", "Search", "HNSW", etc.
+	Key          string       `json:"key"`
+	Type         string       `json:"type"`     // "string", "number", "boolean", "duration"
+	Category     string       `json:"category"` // "Embeddings", "Search", "HNSW", etc.
+	Scope        SettingScope `json:"scope,omitempty"`
+	Dynamic      bool         `json:"dynamic"`
+	RestartLevel RestartLevel `json:"restartLevel,omitempty"`
+	DefaultValue string       `json:"defaultValue,omitempty"`
+	ValidValues  []string     `json:"validValues,omitempty"`
 	// Description is optional. Surfaced as field-level help in the per-DB
 	// config UI when present. Looked up via KeyDescription(key).
 	Description string `json:"description,omitempty"`
@@ -45,13 +50,23 @@ type keyTuple struct {
 // with Description populated from the keyDescriptions map for keys that have one.
 // Used by API validation and by GET /admin/databases/config/keys.
 func AllowedKeys() []KeyMeta {
-	raw := allowedKeysRaw()
-	keys := make([]KeyMeta, len(raw))
-	for i, t := range raw {
-		keys[i] = KeyMeta{Key: t.key, Type: t.typ, Category: t.category}
-		if d, ok := keyDescriptions[t.key]; ok {
-			keys[i].Description = d
+	definitions := Settings()
+	keys := make([]KeyMeta, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Scope == ScopePhysicalEngine || KeysExcludedFromPerDB[definition.Name] {
+			continue
 		}
+		keys = append(keys, KeyMeta{
+			Key:          definition.Name,
+			Type:         definition.Type,
+			Category:     definition.Category,
+			Scope:        definition.Scope,
+			Dynamic:      definition.Dynamic,
+			RestartLevel: definition.RestartLevel,
+			DefaultValue: definition.DefaultValue,
+			ValidValues:  append([]string(nil), definition.ValidValues...),
+			Description:  definition.Description,
+		})
 	}
 	return keys
 }
@@ -148,24 +163,22 @@ func IsAllowedKey(key string) bool {
 	if KeysExcludedFromPerDB[key] {
 		return false
 	}
-	_, ok := AllowedKeysSet()[key]
-	return ok
+	definition, ok := LookupSetting(key)
+	return ok && definition.Scope != ScopePhysicalEngine
 }
 
 // EnumValues returns the permitted values for a key whose Type is "enum:v1,v2,...",
 // or nil for non-enum keys (or unknown keys).
 func EnumValues(key string) []string {
-	meta, ok := AllowedKeysSet()[key]
+	definition, ok := LookupSetting(key)
 	if !ok {
 		return nil
 	}
-	if !strings.HasPrefix(meta.Type, "enum:") {
+	if definition.Type != "enum" {
 		return nil
 	}
-	raw := strings.TrimPrefix(meta.Type, "enum:")
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
+	out := make([]string, 0, len(definition.ValidValues))
+	for _, p := range definition.ValidValues {
 		if v := strings.TrimSpace(p); v != "" {
 			out = append(out, v)
 		}

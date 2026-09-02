@@ -30,7 +30,10 @@ ARGS="$ARGS --bolt-port=${NORNICDB_BOLT_PORT:-7687}"
 # The default changed to 127.0.0.1 for security (localhost-only outside containers)
 ARGS="$ARGS --address=${NORNICDB_ADDRESS:-0.0.0.0}"
 
-[ "${NORNICDB_NO_AUTH:-false}" = "true" ] && ARGS="$ARGS --no-auth"
+if [ "${NORNICDB_NO_AUTH:-false}" = "true" ]; then
+    printf '%s\n' '{"level":"ERROR","event_id":"security.insecure_no_auth.enabled","component":"entrypoint","message":"Authentication explicitly disabled for container startup"}' >&2
+    ARGS="$ARGS --no-auth"
+fi
 
 # Embedding config
 [ -n "$NORNICDB_EMBEDDING_PROVIDER" ] && ARGS="$ARGS --embedding-provider=$NORNICDB_EMBEDDING_PROVIDER"

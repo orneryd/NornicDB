@@ -3,6 +3,7 @@ package multidb
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -15,6 +16,8 @@ type sizeTrackingEngine struct {
 	storage.Engine
 	manager *DatabaseManager
 	dbName  string
+	checker *databaseLimitChecker
+	writeMu sync.Mutex
 }
 
 var _ storage.Engine = (*sizeTrackingEngine)(nil)
@@ -28,12 +31,24 @@ var _ storage.MVCCIndexedVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCHeadEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCLifecycleEngine = (*sizeTrackingEngine)(nil)
 
-func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbName string) storage.Engine {
-	return &sizeTrackingEngine{
+func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbName string, checkers ...*databaseLimitChecker) storage.Engine {
+	wrapped := &sizeTrackingEngine{
 		Engine:  engine,
 		manager: manager,
 		dbName:  dbName,
 	}
+	if len(checkers) > 0 {
+		wrapped.checker = checkers[0]
+	}
+	return wrapped
+}
+
+func (t *sizeTrackingEngine) GetQueryLimitChecker() interface {
+	CheckQueryRate() error
+	CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
+	GetQueryLimits() interface{}
+} {
+	return t.checker
 }
 
 func (t *sizeTrackingEngine) GetInnerEngine() storage.Engine {
@@ -267,6 +282,11 @@ func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCC
 }
 
 func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("create_node", node, nil); err != nil {
+		return "", err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return "", err
 	}
@@ -289,6 +309,11 @@ func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 }
 
 func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("update_node", node, nil); err != nil {
+		return err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return err
 	}
@@ -320,6 +345,11 @@ func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
 }
 
 func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("delete_node", nil, nil); err != nil {
+		return err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return err
 	}
@@ -345,6 +375,11 @@ func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
 }
 
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("create_edge", nil, edge); err != nil {
+		return err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return err
 	}
@@ -366,6 +401,11 @@ func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 }
 
 func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("update_edge", nil, edge); err != nil {
+		return err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return err
 	}
@@ -397,6 +437,11 @@ func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
 }
 
 func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.checkWrite("delete_edge", nil, nil); err != nil {
+		return err
+	}
 	if err := t.manager.ensureStorageSizeInitialized(t.dbName, t.Engine); err != nil {
 		return err
 	}
@@ -486,4 +531,14 @@ func (t *sizeTrackingEngine) connectedEdgeBytes(id storage.NodeID) (int64, error
 		total += size
 	}
 	return total, nil
+}
+
+func (t *sizeTrackingEngine) checkWrite(operation string, node *storage.Node, edge *storage.Edge) error {
+	if t.checker == nil {
+		return nil
+	}
+	if err := t.checker.CheckWriteRate(); err != nil {
+		return err
+	}
+	return t.checker.CheckStorageLimits(operation, node, edge)
 }

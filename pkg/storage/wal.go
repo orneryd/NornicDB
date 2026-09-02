@@ -2519,49 +2519,69 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	// Load snapshot if available
 	var snapshotSeq uint64
 	if snapshotPath != "" {
-		snapshot, err := LoadSnapshot(snapshotPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
+		streaming, detectErr := IsStreamingSnapshot(snapshotPath)
+		if detectErr != nil && !os.IsNotExist(detectErr) {
+			return nil, result, fmt.Errorf("wal: failed to inspect snapshot: %w", detectErr)
+		}
+		if streaming {
+			file, err := os.Open(snapshotPath)
+			if err != nil {
+				return nil, result, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
-			// No snapshot, start fresh
+			metadata, readErr := ReadSnapshot(file, engineSnapshotVisitor{engine: engine})
+			closeErr := file.Close()
+			if readErr != nil {
+				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", readErr)
+			}
+			if closeErr != nil {
+				return nil, result, fmt.Errorf("wal: failed to close snapshot: %w", closeErr)
+			}
+			snapshotSeq = metadata.Sequence
 		} else {
-			// Apply snapshot
-			snapshotSeq = snapshot.Sequence
-
-			// Determine database name from snapshot contents or config.
-			globalConfig := config.LoadFromEnv()
-			dbName := globalConfig.Database.DefaultDatabase
-			if dbName == "" {
-				dbName = "nornic" // Fallback to "nornic" if not configured
-			}
-
-			if len(snapshot.Nodes) > 0 {
-				if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Nodes[0].ID)); ok {
-					dbName = parsedDB
+			snapshot, err := LoadSnapshot(snapshotPath)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
 				}
-			} else if len(snapshot.Edges) > 0 {
-				if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Edges[0].ID)); ok {
-					dbName = parsedDB
+				// No snapshot, start fresh
+			} else {
+				// Apply snapshot
+				snapshotSeq = snapshot.Sequence
+
+				// Determine database name from snapshot contents or config.
+				globalConfig := config.LoadFromEnv()
+				dbName := globalConfig.Database.DefaultDatabase
+				if dbName == "" {
+					dbName = "nornic" // Fallback to "nornic" if not configured
 				}
-			}
 
-			// Unprefix snapshot data for the selected database before restoring via NamespacedEngine.
-			for _, node := range snapshot.Nodes {
-				node.ID = NodeID(StripDatabasePrefix(dbName, string(node.ID)))
-			}
-			for _, edge := range snapshot.Edges {
-				edge.ID = EdgeID(StripDatabasePrefix(dbName, string(edge.ID)))
-				edge.StartNode = NodeID(StripDatabasePrefix(dbName, string(edge.StartNode)))
-				edge.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
-			}
+				if len(snapshot.Nodes) > 0 {
+					if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Nodes[0].ID)); ok {
+						dbName = parsedDB
+					}
+				} else if len(snapshot.Edges) > 0 {
+					if parsedDB, _, ok := ParseDatabasePrefix(string(snapshot.Edges[0].ID)); ok {
+						dbName = parsedDB
+					}
+				}
 
-			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := BulkCreateNodesForRecovery(namespacedEngine, snapshot.Nodes); err != nil {
-				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
-			}
-			if err := BulkCreateEdgesForRecovery(namespacedEngine, snapshot.Edges); err != nil {
-				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
+				// Unprefix snapshot data for the selected database before restoring via NamespacedEngine.
+				for _, node := range snapshot.Nodes {
+					node.ID = NodeID(StripDatabasePrefix(dbName, string(node.ID)))
+				}
+				for _, edge := range snapshot.Edges {
+					edge.ID = EdgeID(StripDatabasePrefix(dbName, string(edge.ID)))
+					edge.StartNode = NodeID(StripDatabasePrefix(dbName, string(edge.StartNode)))
+					edge.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
+				}
+
+				namespacedEngine := NewNamespacedEngine(engine, dbName)
+				if err := BulkCreateNodesForRecovery(namespacedEngine, snapshot.Nodes); err != nil {
+					return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
+				}
+				if err := BulkCreateEdgesForRecovery(namespacedEngine, snapshot.Edges); err != nil {
+					return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
+				}
 			}
 		}
 	}
@@ -2588,6 +2608,19 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	result = ReplayWALEntries(engine, entries)
 
 	return engine, result, nil
+}
+
+type engineSnapshotVisitor struct {
+	engine Engine
+}
+
+func (v engineSnapshotVisitor) VisitNode(node *Node) error {
+	_, err := v.engine.CreateNode(node)
+	return err
+}
+
+func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
+	return v.engine.CreateEdge(edge)
 }
 
 // ReplayWALEntries replays multiple entries and tracks results.

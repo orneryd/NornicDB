@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"errors"
 	"testing"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
@@ -8,6 +9,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveDatabaseStorageUsesConfiguredResolver(t *testing.T) {
+	db := &DB{}
+	wantErr := errors.New("quota storage unavailable")
+	db.SetDatabaseStorageResolver(func(databaseName string) (storage.Engine, error) {
+		require.Equal(t, "tenant", databaseName)
+		return nil, wantErr
+	})
+
+	_, err := db.resolveDatabaseStorage("tenant")
+	require.ErrorIs(t, err, wantErr)
+}
 
 func TestInferenceServices_PerDatabaseIsolation(t *testing.T) {
 	cfg := DefaultConfig()

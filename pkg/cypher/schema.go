@@ -38,7 +38,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 	upper := strings.ToUpper(strings.TrimSpace(cypher))
 	prefixes := []string{
 		"SHOW DATABASE", "SHOW COMPOSITE", "SHOW CONSTITUENTS",
-		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS",
+		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
 		// Schema introspection/DDL commands pass through to their own handlers
 		// which return more specific composite-root error messages.
 		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX",

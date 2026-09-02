@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -660,6 +661,91 @@ func TestServerStorageAndExecutorHelpers(t *testing.T) {
 		store, err := server.storageForContext(context.Background())
 		require.NoError(t, err)
 		require.Nil(t, store)
+	})
+}
+
+func TestCallToolEnforcesRequestDatabaseScopeBeforeDispatch(t *testing.T) {
+	server := NewServer(nil, nil)
+	var handlerCalls int
+	server.handlers[ToolRecall] = func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+		handlerCalls++
+		return DatabaseFromContext(ctx), nil
+	}
+	server.handlers[ToolStore] = func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+		handlerCalls++
+		return DatabaseFromContext(ctx), nil
+	}
+
+	newContext := func(scope *auth.RequestDatabaseScope, access auth.ResolvedAccess) context.Context {
+		ctx := auth.WithRequestDatabaseAccessMode(context.Background(), auth.FullDatabaseAccessMode)
+		ctx = auth.WithRequestResolvedAccessResolver(ctx, func(string) auth.ResolvedAccess { return access })
+		if scope != nil {
+			ctx = auth.WithRequestDatabaseScope(ctx, scope)
+		}
+		return ctx
+	}
+
+	t.Run("unauthorized database is denied before handler dispatch", func(t *testing.T) {
+		handlerCalls = 0
+		scope := auth.NewRequestDatabaseScope("tenant_a", map[string]string{"tenant_a": "tenant_a"})
+		_, err := server.CallTool(newContext(scope, auth.ResolvedAccess{Read: true, Write: true}), ToolRecall, map[string]interface{}{
+			"database": "tenant_b",
+			"id":       "node-1",
+		})
+
+		require.Error(t, err)
+		require.Zero(t, handlerCalls)
+	})
+
+	t.Run("write denial is enforced before handler dispatch", func(t *testing.T) {
+		handlerCalls = 0
+		scope := auth.NewRequestDatabaseScope("tenant_a", map[string]string{"tenant_a": "tenant_a"})
+		_, err := server.CallTool(newContext(scope, auth.ResolvedAccess{Read: true}), ToolStore, map[string]interface{}{
+			"database": "tenant_a",
+			"content":  "blocked write",
+		})
+
+		require.Error(t, err)
+		require.Zero(t, handlerCalls)
+	})
+
+	t.Run("authorized alias dispatches with canonical database", func(t *testing.T) {
+		handlerCalls = 0
+		scope := auth.NewRequestDatabaseScope("tenant_a", map[string]string{
+			"tenant_a": "tenant_a",
+			"primary":  "tenant_a",
+		})
+		result, err := server.CallTool(newContext(scope, auth.ResolvedAccess{Read: true}), ToolRecall, map[string]interface{}{
+			"database": " PRIMARY ",
+			"id":       "node-1",
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "tenant_a", result)
+		require.Equal(t, 1, handlerCalls)
+	})
+
+	t.Run("ambiguous omission is denied before handler dispatch", func(t *testing.T) {
+		handlerCalls = 0
+		scope := auth.NewRequestDatabaseScope("", map[string]string{
+			"tenant_a": "tenant_a",
+			"tenant_b": "tenant_b",
+		})
+		_, err := server.CallTool(newContext(scope, auth.ResolvedAccess{Read: true}), ToolRecall, map[string]interface{}{"id": "node-1"})
+
+		require.Error(t, err)
+		require.Zero(t, handlerCalls)
+	})
+
+	t.Run("missing scope fails closed when RBAC context is present", func(t *testing.T) {
+		handlerCalls = 0
+		_, err := server.CallTool(newContext(nil, auth.ResolvedAccess{Read: true}), ToolRecall, map[string]interface{}{
+			"database": "tenant_a",
+			"id":       "node-1",
+		})
+
+		require.Error(t, err)
+		require.Zero(t, handlerCalls)
 	})
 }
 

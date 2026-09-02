@@ -160,11 +160,30 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 		return r
 	}
 	ctx := r.Context()
+	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
-	ctx = auth.WithRequestDatabaseAccessMode(ctx, s.getDatabaseAccessMode(claims))
+	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
 	ctx = auth.WithRequestResolvedAccessResolver(ctx, func(dbName string) auth.ResolvedAccess {
 		return s.getResolvedAccess(claims, dbName)
 	})
+	selections := make(map[string]string)
+	defaultDatabase := ""
+	if s.dbManager != nil {
+		for _, database := range s.dbManager.ListDatabases() {
+			if database == nil || database.Type == "system" || !databaseAccessMode.CanAccessDatabase(database.Name) {
+				continue
+			}
+			selections[database.Name] = database.Name
+			for _, alias := range database.Aliases {
+				selections[alias] = database.Name
+			}
+		}
+		configuredDefault := s.dbManager.DefaultDatabaseName()
+		if _, allowed := selections[configuredDefault]; allowed {
+			defaultDatabase = configuredDefault
+		}
+	}
+	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope(defaultDatabase, selections))
 	return r.WithContext(ctx)
 }
 
