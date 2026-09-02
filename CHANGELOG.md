@@ -7,13 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Added production localization across user-facing commands, protocols,
+  errors, and runtime logs.** Immutable embedded `en-US`, `es-ES`, and `en-XA`
+  pseudo-locale catalogs support BCP 47 language negotiation from CLI options,
+  `NORNICDB_LANGUAGE`, YAML, operating-system preferences, request context,
+  HTTP `Accept-Language`, gRPC metadata, and Bolt session metadata. Localized
+  boundaries now cover the NornicDB and admin CLIs, HTTP and GraphQL services,
+  MCP JSON-RPC, Bolt, Nornic and Qdrant gRPC, Heimdall, authentication, Cypher,
+  storage, search, replication, multi-database operations, retention, and core
+  database errors. Typed descriptors preserve wrapped causes, sentinels,
+  protocol status codes, exit codes, and machine-readable configuration keys.
+  Stable structured event IDs keep logs queryable independently of rendered
+  prose, while missing packs or entries fall back deterministically to English
+  with bounded warnings. Catalog validation checks canonical language tags,
+  duplicate and unknown IDs, plural forms, and template placeholders in CI
+  without requiring localization inventory CSV files at runtime.
+
 ### Changed
 
-- **Added typed, database-scoped capacity settings without changing unrestricted
-  defaults.** Static storage/index settings report pending restart, dynamic
-  search-result cache size and TTL changes apply in place, and bounded
-  `SHOW SETTING[S]` reads from the same registry. Badger low-memory mode and
-  existing durability controls now reach their storage constructors.
+- **Made database-scoped settings explicit, canonical, and operationally
+  verifiable without changing unrestricted defaults.** One typed registry now
+  drives validation, resolution, admin metadata, and bounded `SHOW SETTING[S]`
+  output. Settings that overlap Neo4j use the matching Neo4j namespace;
+  NornicDB extensions use `db.nornic.*`. Canonical dotted keys and their
+  `NORNICDB_*` alternatives are both accepted in YAML and API input, normalized
+  before persistence, and resolved in built-in, global YAML/environment,
+  explicit process/CLI, then per-database override order. Every dynamic setting
+  names a concrete applicator: embedding, search-index, and reranker changes
+  rebuild that database's search service, while search-result cache capacity
+  and TTL mutate the live cache in place. Other settings persist immediately,
+  retain the current effective value, and report `pendingRestart` until the next
+  process start; no unsupported database-only restart level is advertised.
+  Restart persistence is covered across an actual Badger close/reopen, and the
+  registry rejects settings that claim hot reload without an implementation.
+  Badger low-memory mode and existing durability controls now reach their
+  storage constructors.
 - **Automatic WAL compaction now writes atomic, checksummed streaming
   snapshots.** Recovery detects and incrementally reads the framed format while
   retaining compatibility with existing JSON snapshots.
