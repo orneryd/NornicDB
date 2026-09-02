@@ -1,7 +1,6 @@
 package search
 
 import (
-	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
@@ -48,6 +47,7 @@ func TestVectorFileStore_MoreAddAndIterateBranches(t *testing.T) {
 		vfs, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
 		defer func() { _ = vfs.Close() }()
+		require.NoError(t, vfs.Add("id-1", []float32{1, 0}))
 
 		vfs.mu.Lock()
 		require.NoError(t, vfs.file.Close())
@@ -75,10 +75,12 @@ func TestVectorFileStore_MoreAddAndIterateBranches(t *testing.T) {
 
 		f, err := os.OpenFile(base+".vec", os.O_RDWR|os.O_APPEND, 0o644)
 		require.NoError(t, err)
-		require.NoError(t, binary.Write(f, binary.LittleEndian, uint32(10)))
-		_, err = f.Write([]byte("abc"))
+		_, err = f.Write([]byte("partial"))
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
+		vfs.mu.Lock()
+		vfs.idToOrdinal["partial"] = 0
+		vfs.mu.Unlock()
 
 		err = vfs.IterateChunked(1, func([]string, [][]float32) error { return nil })
 		require.Error(t, err)
@@ -101,34 +103,14 @@ func TestVectorFileStore_MoreLoadRebuildAndCompactBranches(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("rebuild_closed_and_seek_and_buffer_growth", func(t *testing.T) {
+	t.Run("load_requires_metadata_for_non_empty_slab", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "vectors")
 		vfs, err := NewVectorFileStore(base, 2)
 		require.NoError(t, err)
 		defer func() { _ = vfs.Close() }()
 
-		vfs.mu.Lock()
-		vfs.closed = true
-		err = vfs.rebuildIndexFromVecLocked()
-		vfs.closed = false
-		vfs.mu.Unlock()
-		require.ErrorIs(t, err, errVecFileClosed)
-
-		vfs.mu.Lock()
-		require.NoError(t, vfs.file.Close())
-		err = vfs.rebuildIndexFromVecLocked()
-		vfs.mu.Unlock()
-		require.Error(t, err)
-
-		vfs2, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors2"), 2)
-		require.NoError(t, err)
-		defer func() { _ = vfs2.Close() }()
-		longID := string(make([]byte, 400))
-		require.NoError(t, vfs2.Add(longID, []float32{1, 0}))
-		vfs2.mu.Lock()
-		err = vfs2.rebuildIndexFromVecLocked()
-		vfs2.mu.Unlock()
-		require.NoError(t, err)
+		require.NoError(t, vfs.Add("id-1", []float32{1, 0}))
+		require.Error(t, vfs.Load())
 	})
 
 	t.Run("compact_clamps_and_stat_error", func(t *testing.T) {

@@ -154,7 +154,7 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 
 	var firstID string
 	vfs.mu.RLock()
-	for id := range vfs.idToOff {
+	for id := range vfs.idToOrdinal {
 		firstID = id
 		break
 	}
