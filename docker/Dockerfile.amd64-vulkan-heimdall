@@ -36,7 +36,7 @@ FROM ${LLAMA_CPU_IMAGE} AS llama
 # =============================================================================
 # Stage 3: Go build with Vulkan + localllm (CPU)
 # =============================================================================
-FROM golang:1.26.5-bookworm AS builder
+FROM golang:1.27.0-bookworm AS builder
 ARG HEADLESS=false
 WORKDIR /build
 
