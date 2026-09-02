@@ -259,13 +259,13 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 		return nil
 	}
 	get := func(key, def string) string {
-		if v := effective[key]; v != "" {
+		if v := effective[dbconfig.CanonicalSettingName(key)]; v != "" {
 			return strings.TrimSpace(v)
 		}
 		return def
 	}
 	getInt := func(key string, def int) int {
-		if v := effective[key]; v != "" {
+		if v := effective[dbconfig.CanonicalSettingName(key)]; v != "" {
 			if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 				return i
 			}
@@ -1156,7 +1156,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			return enabled, provider, model, apiURL, apiKey
 		}
 		eff := resolved.Effective
-		if raw := strings.TrimSpace(strings.ToLower(eff["NORNICDB_SEARCH_RERANK_ENABLED"])); raw != "" {
+		if raw := strings.TrimSpace(strings.ToLower(eff["db.nornic.search.rerank.enabled"])); raw != "" {
 			switch raw {
 			case "1", "true", "yes", "on":
 				enabled = true
@@ -1164,16 +1164,16 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				enabled = false
 			}
 		}
-		if v := strings.TrimSpace(strings.ToLower(eff["NORNICDB_SEARCH_RERANK_PROVIDER"])); v != "" {
+		if v := strings.TrimSpace(strings.ToLower(eff["db.nornic.search.rerank.provider"])); v != "" {
 			provider = v
 		}
-		if v := eff["NORNICDB_SEARCH_RERANK_MODEL"]; strings.TrimSpace(v) != "" {
+		if v := eff["db.nornic.search.rerank.model"]; strings.TrimSpace(v) != "" {
 			model = strings.TrimSpace(v)
 		}
-		if v := eff["NORNICDB_SEARCH_RERANK_API_URL"]; strings.TrimSpace(v) != "" {
+		if v := eff["db.nornic.search.rerank.api.url"]; strings.TrimSpace(v) != "" {
 			apiURL = strings.TrimSpace(v)
 		}
-		if v := eff["NORNICDB_SEARCH_RERANK_API_KEY"]; strings.TrimSpace(v) != "" {
+		if v := eff["db.nornic.search.rerank.api.key"]; strings.TrimSpace(v) != "" {
 			apiKey = v
 		}
 		if provider == "ollama" && apiURL == "" {

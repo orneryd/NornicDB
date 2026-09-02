@@ -6,14 +6,14 @@ Columns: `Variable`, `Description`, `Type`, `Default`, `Valid Values / Range`, `
 
 ## Precedence
 
-For variables flagged in the `Notes` column as a **per-database override key**, the runtime resolver merges values across multiple sources. The ladder, lowest → highest, is:
+For variables flagged in the `Notes` column as a **per-database override key**, the variable is a supported environment alternative to a canonical dotted database setting. The runtime resolver uses this ladder, lowest to highest:
 
 1. **Built-in defaults** baked into `pkg/config.LoadDefaults`.
 2. **Global config** from YAML (`memory.search_*` and similar blocks) and env vars (`NORNICDB_*`).
-3. **Per-DB overrides** from the YAML `databases:` map (seeded on first boot only) and the admin API (`PUT /admin/databases/{name}/config`, authoritative across restarts after that).
-4. **CLI overrides** for flags explicitly typed on `nornicdb serve` (e.g. `--search-bm25-enabled=false`). Top of the ladder — these trump per-DB store entries by design, so an operator's boot-time kill switch always takes effect.
+3. **Explicit process overrides** from flags explicitly supplied to `nornicdb serve`.
+4. **Persisted per-database settings** from the YAML `databases:` map (seeded on first boot only) and the admin API (`PUT /admin/databases/{name}/config`).
 
-Env vars and YAML do NOT trump per-DB overrides; they're declarative config that a stale compose/manifest could silently revert. Only CLI flags that the operator actually typed at boot are escalated above per-DB. See [`configuration.md` § Per-database search index control](configuration.md#per-database-search-index-control) for the full rationale and example scenarios.
+Use canonical names such as `db.nornic.search.bm25.enabled` in the database API and YAML `databases:` map. Environment names such as `NORNICDB_SEARCH_BM25_ENABLED` remain supported and are not deprecated. See [Per-database configuration overrides](configuration.md#per-database-configuration-overrides) for the complete mapping.
 
 Total variables: **352**
 

@@ -1705,8 +1705,9 @@ type YAMLConfig struct {
 	} `yaml:"plugins"`
 
 	// Databases is a per-database override map (keyed by database name).
-	// Each entry is a free-form string→string map of dbconfig keys (e.g.
-	// NORNICDB_SEARCH_BM25_ENABLED) → values. Loaded into dbconfig.Store
+	// Each entry is a free-form string→string map accepting canonical dbconfig
+	// names or their environment-variable alternatives (for example,
+	// db.nornic.search.bm25.enabled or NORNICDB_SEARCH_BM25_ENABLED). Loaded into dbconfig.Store
 	// at first boot ONLY when the store has no row for that (dbName, key)
 	// pair yet — admin API edits made later are authoritative across
 	// restarts. See pkg/config/dbconfig/store.go LoadWithYAMLDefaults.
@@ -1715,7 +1716,7 @@ type YAMLConfig struct {
 	//
 	//   databases:
 	//     analytics:
-	//       NORNICDB_SEARCH_BM25_ENABLED: "false"
+	//       db.nornic.search.bm25.enabled: "false"
 	//       NORNICDB_SEARCH_VECTOR_WARMING: "lazy"
 	//     audit_logs:
 	//       NORNICDB_SEARCH_BM25_ENABLED: "false"

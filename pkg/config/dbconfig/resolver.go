@@ -44,22 +44,11 @@ type ResolvedDbConfig struct {
 //
 //  1. Built-in defaults (config.LoadDefaults).
 //  2. YAML / env-loaded `global` config (cfg.Memory.Search* etc).
-//  3. Per-DB overrides supplied via the `overrides` map (admin API, YAML
-//     `databases:` block).
-//  4. CLI overrides on the same global config (cfg.CLIOverrides).
+//  3. Explicit process/CLI overrides (cfg.CLIOverrides).
+//  4. Persisted canonical per-DB settings supplied via the `overrides` map.
 //
-// CLI is the kill switch: when an operator explicitly sets a flag at
-// boot — e.g. `--search-bm25-enabled=false` during an OOM incident — it
-// must take effect across every database, including ones that have a
-// per-DB store entry saying otherwise. Env and YAML do NOT get this
-// treatment because they're declarative config that's easy to forget
-// in a compose file or k8s manifest; CLI is what an operator types
-// when something is on fire and intent is unambiguous.
-//
-// In both directions: an override of `true` turns on a globally-disabled
-// index; an override of `false` turns off a globally-enabled one. Same
-// for warming. The "always wins" guarantee is what makes the
-// multi-tenant story work (one DB needs search, the rest don't).
+// Supported NORNICDB_* alternatives found in existing _DbConfig rows remain accepted,
+// but canonical db.nornic.* values win when both forms are present.
 func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConfig {
 	r := &ResolvedDbConfig{
 		EmbeddingDimensions:         global.Memory.EmbeddingDimensions,
@@ -85,24 +74,22 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 			}
 		}
 	}
-	// Per-DB overrides (admin API store / YAML databases: block) apply
-	// on top of global.
-	for k, v := range overrides {
+	// Explicit process/CLI overrides sit above global config but below stored
+	// database settings.
+	for k, v := range CanonicalizeOverrides(global.CLIOverrides) {
 		if !IsAllowedKey(k) {
 			continue
 		}
 		applyOverride(r, k, v)
-		r.Effective[k] = v
+		r.Effective[CanonicalSettingName(k)] = v
 	}
-	// CLI overrides apply LAST — top of the precedence ladder. Empty
-	// for callers that didn't go through the runServe CLI parser, in
-	// which case this loop is a no-op.
-	for k, v := range global.CLIOverrides {
+	// Persisted per-database settings are authoritative.
+	for k, v := range CanonicalizeOverrides(overrides) {
 		if !IsAllowedKey(k) {
 			continue
 		}
 		applyOverride(r, k, v)
-		r.Effective[k] = v
+		r.Effective[CanonicalSettingName(k)] = v
 	}
 	return r
 }
@@ -137,52 +124,61 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	if c == nil {
 		return
 	}
-	// Embeddings
-	m["NORNICDB_EMBEDDING_ENABLED"] = boolStr(c.Memory.EmbeddingEnabled)
-	m["NORNICDB_EMBEDDING_PROVIDER"] = c.Memory.EmbeddingProvider
-	m["NORNICDB_EMBEDDING_MODEL"] = c.Memory.EmbeddingModel
-	m["NORNICDB_EMBEDDING_API_URL"] = c.Memory.EmbeddingAPIURL
-	m["NORNICDB_EMBEDDING_API_KEY"] = c.Memory.EmbeddingAPIKey
-	m["NORNICDB_EMBEDDING_DIMENSIONS"] = strconv.Itoa(c.Memory.EmbeddingDimensions)
-	if c.Memory.EmbeddingDimensions <= 0 {
-		m["NORNICDB_EMBEDDING_DIMENSIONS"] = "1024"
+	for _, definition := range Settings() {
+		if definition.EnvironmentVariable == "" {
+			continue
+		}
+		if value, ok := os.LookupEnv(definition.EnvironmentVariable); ok {
+			m[definition.Name] = value
+		}
 	}
-	m["NORNICDB_EMBEDDING_CACHE_SIZE"] = strconv.Itoa(c.Memory.EmbeddingCacheSize)
-	m["NORNICDB_EMBEDDING_PROPERTIES_INCLUDE"] = strings.Join(c.EmbeddingWorker.PropertiesInclude, ",")
-	m["NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE"] = strings.Join(c.EmbeddingWorker.PropertiesExclude, ",")
-	m["NORNICDB_EMBEDDING_INCLUDE_LABELS"] = boolStr(c.EmbeddingWorker.IncludeLabels)
-	m["NORNICDB_EMBEDDING_GPU_LAYERS"] = strconv.Itoa(c.Memory.EmbeddingGPULayers)
-	m["NORNICDB_EMBEDDING_WARMUP_INTERVAL"] = c.Memory.EmbeddingWarmupInterval.String()
+	// Embeddings
+	setEffective := func(environmentVariable, value string) { m[CanonicalSettingName(environmentVariable)] = value }
+	setEffective("NORNICDB_EMBEDDING_ENABLED", boolStr(c.Memory.EmbeddingEnabled))
+	setEffective("NORNICDB_EMBEDDING_PROVIDER", c.Memory.EmbeddingProvider)
+	setEffective("NORNICDB_EMBEDDING_MODEL", c.Memory.EmbeddingModel)
+	setEffective("NORNICDB_EMBEDDING_API_URL", c.Memory.EmbeddingAPIURL)
+	setEffective("NORNICDB_EMBEDDING_API_KEY", c.Memory.EmbeddingAPIKey)
+	setEffective("NORNICDB_EMBEDDING_DIMENSIONS", strconv.Itoa(c.Memory.EmbeddingDimensions))
+	if c.Memory.EmbeddingDimensions <= 0 {
+		setEffective("NORNICDB_EMBEDDING_DIMENSIONS", "1024")
+	}
+	setEffective("NORNICDB_EMBEDDING_CACHE_SIZE", strconv.Itoa(c.Memory.EmbeddingCacheSize))
+	setEffective("NORNICDB_EMBEDDING_PROPERTIES_INCLUDE", strings.Join(c.EmbeddingWorker.PropertiesInclude, ","))
+	setEffective("NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE", strings.Join(c.EmbeddingWorker.PropertiesExclude, ","))
+	setEffective("NORNICDB_EMBEDDING_INCLUDE_LABELS", boolStr(c.EmbeddingWorker.IncludeLabels))
+	setEffective("NORNICDB_EMBEDDING_GPU_LAYERS", strconv.Itoa(c.Memory.EmbeddingGPULayers))
+	setEffective("NORNICDB_EMBEDDING_WARMUP_INTERVAL", c.Memory.EmbeddingWarmupInterval.String())
 	// Search
-	m["NORNICDB_SEARCH_MIN_SIMILARITY"] = strconv.FormatFloat(c.Memory.SearchMinSimilarity, 'f', -1, 64)
-	m["NORNICDB_SEARCH_BM25_ENGINE"] = normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE"))
-	m["NORNICDB_SEARCH_BM25_ENABLED"] = boolStr(c.Memory.SearchBM25Enabled)
-	m["NORNICDB_SEARCH_BM25_WARMING"] = normalizeWarming(c.Memory.SearchBM25Warming)
-	m["NORNICDB_SEARCH_VECTOR_ENABLED"] = boolStr(c.Memory.SearchVectorEnabled)
-	m["NORNICDB_SEARCH_VECTOR_WARMING"] = normalizeWarming(c.Memory.SearchVectorWarming)
-	m["NORNICDB_SEARCH_RERANK_ENABLED"] = boolStr(c.Features.SearchRerankEnabled)
-	m["NORNICDB_SEARCH_RERANK_PROVIDER"] = c.Features.SearchRerankProvider
-	m["NORNICDB_SEARCH_RERANK_MODEL"] = c.Features.SearchRerankModel
-	m["NORNICDB_SEARCH_RERANK_API_URL"] = c.Features.SearchRerankAPIURL
-	m["NORNICDB_SEARCH_RERANK_API_KEY"] = c.Features.SearchRerankAPIKey
+	setEffective("NORNICDB_SEARCH_MIN_SIMILARITY", strconv.FormatFloat(c.Memory.SearchMinSimilarity, 'f', -1, 64))
+	setEffective("NORNICDB_SEARCH_BM25_ENGINE", normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")))
+	setEffective("NORNICDB_SEARCH_BM25_ENABLED", boolStr(c.Memory.SearchBM25Enabled))
+	setEffective("NORNICDB_SEARCH_BM25_WARMING", normalizeWarming(c.Memory.SearchBM25Warming))
+	setEffective("NORNICDB_SEARCH_VECTOR_ENABLED", boolStr(c.Memory.SearchVectorEnabled))
+	setEffective("NORNICDB_SEARCH_VECTOR_WARMING", normalizeWarming(c.Memory.SearchVectorWarming))
+	setEffective("NORNICDB_SEARCH_RERANK_ENABLED", boolStr(c.Features.SearchRerankEnabled))
+	setEffective("NORNICDB_SEARCH_RERANK_PROVIDER", c.Features.SearchRerankProvider)
+	setEffective("NORNICDB_SEARCH_RERANK_MODEL", c.Features.SearchRerankModel)
+	setEffective("NORNICDB_SEARCH_RERANK_API_URL", c.Features.SearchRerankAPIURL)
+	setEffective("NORNICDB_SEARCH_RERANK_API_KEY", c.Features.SearchRerankAPIKey)
 	// K-means (from Memory)
-	m["NORNICDB_KMEANS_MIN_EMBEDDINGS"] = strconv.Itoa(c.Memory.KmeansMinEmbeddings)
-	m["NORNICDB_KMEANS_CLUSTER_INTERVAL"] = c.Memory.KmeansClusterInterval.String()
-	m["NORNICDB_KMEANS_NUM_CLUSTERS"] = strconv.Itoa(c.Memory.KmeansNumClusters)
+	setEffective("NORNICDB_KMEANS_MIN_EMBEDDINGS", strconv.Itoa(c.Memory.KmeansMinEmbeddings))
+	setEffective("NORNICDB_KMEANS_CLUSTER_INTERVAL", c.Memory.KmeansClusterInterval.String())
+	setEffective("NORNICDB_KMEANS_NUM_CLUSTERS", strconv.Itoa(c.Memory.KmeansNumClusters))
 	// Auto-links
-	m["NORNICDB_AUTO_LINKS_ENABLED"] = boolStr(c.Memory.AutoLinksEnabled)
-	m["NORNICDB_AUTO_LINKS_THRESHOLD"] = strconv.FormatFloat(c.Memory.AutoLinksSimilarityThreshold, 'f', -1, 64)
+	setEffective("NORNICDB_AUTO_LINKS_ENABLED", boolStr(c.Memory.AutoLinksEnabled))
+	setEffective("NORNICDB_AUTO_LINKS_THRESHOLD", strconv.FormatFloat(c.Memory.AutoLinksSimilarityThreshold, 'f', -1, 64))
 	// Embed worker
-	m["NORNICDB_EMBED_WORKER_NUM_WORKERS"] = strconv.Itoa(c.EmbeddingWorker.NumWorkers)
-	m["NORNICDB_EMBED_SCAN_INTERVAL"] = c.EmbeddingWorker.ScanInterval.String()
-	m["NORNICDB_EMBED_BATCH_DELAY"] = c.EmbeddingWorker.BatchDelay.String()
-	m["NORNICDB_EMBED_TRIGGER_DEBOUNCE"] = c.EmbeddingWorker.TriggerDebounceDelay.String()
-	m["NORNICDB_EMBED_MAX_RETRIES"] = strconv.Itoa(c.EmbeddingWorker.MaxRetries)
-	m["NORNICDB_EMBED_CHUNK_SIZE"] = strconv.Itoa(c.EmbeddingWorker.ChunkSize)
-	m["NORNICDB_EMBED_CHUNK_OVERLAP"] = strconv.Itoa(c.EmbeddingWorker.ChunkOverlap)
-	m["NORNICDB_MVCC_LIFECYCLE_INTERVAL"] = c.Database.MVCCLifecycleCycleInterval.String()
+	setEffective("NORNICDB_EMBED_WORKER_NUM_WORKERS", strconv.Itoa(c.EmbeddingWorker.NumWorkers))
+	setEffective("NORNICDB_EMBED_SCAN_INTERVAL", c.EmbeddingWorker.ScanInterval.String())
+	setEffective("NORNICDB_EMBED_BATCH_DELAY", c.EmbeddingWorker.BatchDelay.String())
+	setEffective("NORNICDB_EMBED_TRIGGER_DEBOUNCE", c.EmbeddingWorker.TriggerDebounceDelay.String())
+	setEffective("NORNICDB_EMBED_MAX_RETRIES", strconv.Itoa(c.EmbeddingWorker.MaxRetries))
+	setEffective("NORNICDB_EMBED_CHUNK_SIZE", strconv.Itoa(c.EmbeddingWorker.ChunkSize))
+	setEffective("NORNICDB_EMBED_CHUNK_OVERLAP", strconv.Itoa(c.EmbeddingWorker.ChunkOverlap))
+	setEffective("NORNICDB_MVCC_LIFECYCLE_INTERVAL", c.Database.MVCCLifecycleCycleInterval.String())
 	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)
-	m["NORNICDB_AUTO_TLP_ENABLED"] = boolStr(c.Features.TopologyAutoIntegrationEnabled)
+	setEffective("NORNICDB_AUTO_TLP_ENABLED", boolStr(c.Features.TopologyAutoIntegrationEnabled))
 }
 
 func boolStr(b bool) string {
@@ -193,15 +189,21 @@ func boolStr(b bool) string {
 }
 
 func applyOverride(r *ResolvedDbConfig, key, value string) {
+	key = CanonicalSettingName(key)
 	value = strings.TrimSpace(value)
 	meta, ok := AllowedKeysSet()[key]
 	if !ok {
 		return
 	}
+	definition, _ := LookupSetting(key)
+	behaviorKey := definition.EnvironmentVariable
+	if behaviorKey == "" {
+		behaviorKey = key
+	}
 	switch meta.Type {
 	case "number":
 		if i, err := strconv.Atoi(value); err == nil {
-			switch key {
+			switch behaviorKey {
 			case "NORNICDB_EMBEDDING_DIMENSIONS":
 				r.EmbeddingDimensions = i
 				if r.EmbeddingDimensions <= 0 {
@@ -214,7 +216,7 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 				}
 			}
 		} else if f, err := strconv.ParseFloat(value, 64); err == nil {
-			if key == "NORNICDB_SEARCH_MIN_SIMILARITY" || key == "NORNICDB_AUTO_LINKS_THRESHOLD" {
+			if behaviorKey == "NORNICDB_SEARCH_MIN_SIMILARITY" || behaviorKey == "NORNICDB_AUTO_LINKS_THRESHOLD" {
 				r.SearchMinSimilarity = f
 			}
 		}
@@ -223,24 +225,24 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 		_ = b
 		// Only EmbeddingDimensions and SearchMinSimilarity are used in ResolvedDbConfig for now
 	case "string", "duration":
-		if key == "NORNICDB_SEARCH_MIN_SIMILARITY" {
+		if behaviorKey == "NORNICDB_SEARCH_MIN_SIMILARITY" {
 			if f, err := strconv.ParseFloat(value, 64); err == nil {
 				r.SearchMinSimilarity = f
 			}
 		}
 	}
 	// Always update EmbeddingDimensions and SearchMinSimilarity when present in overrides
-	if key == "NORNICDB_EMBEDDING_DIMENSIONS" {
+	if behaviorKey == "NORNICDB_EMBEDDING_DIMENSIONS" {
 		if i, err := strconv.Atoi(value); err == nil && i > 0 {
 			r.EmbeddingDimensions = i
 		}
 	}
-	if key == "NORNICDB_SEARCH_MIN_SIMILARITY" {
+	if behaviorKey == "NORNICDB_SEARCH_MIN_SIMILARITY" {
 		if f, err := strconv.ParseFloat(value, 64); err == nil {
 			r.SearchMinSimilarity = f
 		}
 	}
-	if key == "NORNICDB_SEARCH_BM25_ENGINE" {
+	if behaviorKey == "NORNICDB_SEARCH_BM25_ENGINE" {
 		r.BM25Engine = normalizeBM25Engine(value)
 	}
 	if key == "db.nornic.search_result_cache.max_entries" {
@@ -253,7 +255,7 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 			r.SearchResultCacheTTL = ttl
 		}
 	}
-	switch key {
+	switch behaviorKey {
 	case "NORNICDB_SEARCH_BM25_ENABLED":
 		r.BM25Enabled = parseBoolFallback(value, r.BM25Enabled)
 	case "NORNICDB_SEARCH_BM25_WARMING":

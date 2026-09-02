@@ -27,8 +27,8 @@ func TestStore_Load_Get_Set(t *testing.T) {
 	require.NoError(t, err)
 	o := store.GetOverrides("mydb")
 	require.NotNil(t, o)
-	assert.Equal(t, "bge-m3", o["NORNICDB_EMBEDDING_MODEL"])
-	assert.Equal(t, "0.7", o["NORNICDB_SEARCH_MIN_SIMILARITY"])
+	assert.Equal(t, "bge-m3", o["db.nornic.embedding.model"])
+	assert.Equal(t, "0.7", o["db.nornic.search.min.similarity"])
 
 	// Reload from storage (simulate restart)
 	store2 := NewStore(eng)
@@ -36,7 +36,7 @@ func TestStore_Load_Get_Set(t *testing.T) {
 	require.NoError(t, err)
 	o2 := store2.GetOverrides("mydb")
 	require.NotNil(t, o2)
-	assert.Equal(t, "bge-m3", o2["NORNICDB_EMBEDDING_MODEL"])
+	assert.Equal(t, "bge-m3", o2["db.nornic.embedding.model"])
 }
 
 func TestStore_SetOverrides_EmptyClears(t *testing.T) {
@@ -102,7 +102,7 @@ func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 
 	store := NewStore(eng)
 	require.NoError(t, store.Load(ctx))
-	assert.Equal(t, map[string]string{"NORNICDB_EMBEDDING_MODEL": "bge-m3"}, store.GetOverrides("alpha"))
+	assert.Equal(t, map[string]string{"db.nornic.embedding.model": "bge-m3"}, store.GetOverrides("alpha"))
 	assert.Nil(t, store.GetOverrides("broken"))
 	assert.Nil(t, store.GetOverrides("no-label"))
 }
@@ -143,15 +143,88 @@ func TestLoadWithYAMLDefaults_SeedsOnFirstBoot(t *testing.T) {
 
 	got := store.GetOverrides("analytics")
 	require.NotNil(t, got)
-	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
-	assert.Equal(t, "lazy", got["NORNICDB_SEARCH_VECTOR_WARMING"])
+	assert.Equal(t, "false", got["db.nornic.search.bm25.enabled"])
+	assert.Equal(t, "lazy", got["db.nornic.search.vector.warming"])
 
 	// Reload — values must persist across "restart".
 	store2 := NewStore(eng)
 	require.NoError(t, store2.Load(ctx))
 	got2 := store2.GetOverrides("analytics")
 	require.NotNil(t, got2)
-	assert.Equal(t, "false", got2["NORNICDB_SEARCH_BM25_ENABLED"])
+	assert.Equal(t, "false", got2["db.nornic.search.bm25.enabled"])
+}
+
+func TestLoadWithYAMLDefaults_AcceptsBothKeyForms(t *testing.T) {
+	ctx := context.Background()
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+	store := NewStore(engine)
+
+	require.NoError(t, store.LoadWithYAMLDefaults(ctx, map[string]map[string]string{
+		"analytics": {
+			"NORNICDB_SEARCH_BM25_ENABLED":    "true",
+			"db.nornic.search.bm25.enabled":   "false",
+			"NORNICDB_SEARCH_VECTOR_WARMING":  "lazy",
+			"db.nornic.search.vector.enabled": "false",
+		},
+	}))
+
+	require.Equal(t, map[string]string{
+		"db.nornic.search.bm25.enabled":   "false",
+		"db.nornic.search.vector.warming": "lazy",
+		"db.nornic.search.vector.enabled": "false",
+	}, store.GetOverrides("analytics"))
+}
+
+func TestStoreCanonicalizesEnvironmentAlternativeKeys(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	store := NewStore(engine)
+	require.NoError(t, store.SetOverrides(context.Background(), "alpha", map[string]string{
+		"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
+	}))
+
+	require.Equal(t, map[string]string{
+		"db.nornic.search.vector.enabled": "false",
+	}, store.GetOverrides("alpha"))
+
+	reloaded := NewStore(engine)
+	require.NoError(t, reloaded.Load(context.Background()))
+	require.Equal(t, store.GetOverrides("alpha"), reloaded.GetOverrides("alpha"))
+}
+
+func TestStorePersistsEveryRestartSettingAcrossReload(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+	configured := make(map[string]string)
+	for _, definition := range Settings() {
+		if definition.RestartLevel != RestartProcess || !IsAllowedKey(definition.Name) {
+			continue
+		}
+		raw := "value"
+		switch definition.Type {
+		case "boolean":
+			raw = "true"
+		case "number":
+			raw = "7"
+		case "duration":
+			raw = "1s"
+		case "bytes":
+			raw = "1k"
+		case "enum":
+			require.NotEmpty(t, definition.ValidValues, definition.Name)
+			raw = definition.ValidValues[0]
+		}
+		normalized, err := NormalizeSettingValue(definition.Name, raw)
+		require.NoError(t, err, definition.Name)
+		configured[definition.Name] = normalized
+	}
+	require.NotEmpty(t, configured)
+
+	store := NewStore(engine)
+	require.NoError(t, store.SetOverrides(context.Background(), "restart_db", configured))
+	reloaded := NewStore(engine)
+	require.NoError(t, reloaded.Load(context.Background()))
+	require.Equal(t, configured, reloaded.GetOverrides("restart_db"))
 }
 
 // TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits — once an admin has set
@@ -169,7 +242,7 @@ func TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits(t *testing.T) {
 		"analytics": {"NORNICDB_SEARCH_BM25_ENABLED": "false"},
 	}))
 	got := store1.GetOverrides("analytics")
-	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
+	assert.Equal(t, "false", got["db.nornic.search.bm25.enabled"])
 
 	// Admin flips the flag back via the admin API.
 	require.NoError(t, store1.SetOverrides(ctx, "analytics", map[string]string{
@@ -182,7 +255,7 @@ func TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits(t *testing.T) {
 		"analytics": {"NORNICDB_SEARCH_BM25_ENABLED": "false"},
 	}))
 	got2 := store2.GetOverrides("analytics")
-	assert.Equal(t, "true", got2["NORNICDB_SEARCH_BM25_ENABLED"],
+	assert.Equal(t, "true", got2["db.nornic.search.bm25.enabled"],
 		"admin-API edit must survive subsequent yaml-default load")
 }
 
@@ -208,8 +281,8 @@ func TestLoadWithYAMLDefaults_FillsMissingKeysOnly(t *testing.T) {
 	}))
 
 	got := store.GetOverrides("analytics")
-	assert.Equal(t, "true", got["NORNICDB_SEARCH_BM25_ENABLED"], "admin's value preserved")
-	assert.Equal(t, "lazy", got["NORNICDB_SEARCH_VECTOR_WARMING"], "yaml fills missing key")
+	assert.Equal(t, "true", got["db.nornic.search.bm25.enabled"], "admin's value preserved")
+	assert.Equal(t, "lazy", got["db.nornic.search.vector.warming"], "yaml fills missing key")
 }
 
 // TestLoadWithYAMLDefaults_RejectsDisallowedKeys — the seed path applies
@@ -231,5 +304,5 @@ func TestLoadWithYAMLDefaults_RejectsDisallowedKeys(t *testing.T) {
 	require.NotNil(t, got)
 	_, present := got["NORNICDB_NOT_A_REAL_KEY"]
 	assert.False(t, present, "disallowed key must not have been persisted")
-	assert.Equal(t, "false", got["NORNICDB_SEARCH_BM25_ENABLED"])
+	assert.Equal(t, "false", got["db.nornic.search.bm25.enabled"])
 }

@@ -3580,9 +3580,9 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, 1024, cfg.Dimensions)
 
 	cfg = buildEmbedConfigFromResolved(map[string]string{
-		"NORNICDB_EMBEDDING_PROVIDER":   "ollama",
-		"NORNICDB_EMBEDDING_DIMENSIONS": "1536",
-		"NORNICDB_EMBEDDING_GPU_LAYERS": "12",
+		"db.nornic.embedding.provider":   "ollama",
+		"db.nornic.embedding.dimensions": "1536",
+		"db.nornic.embedding.gpu.layers": "12",
 	}, fallback)
 	require.Equal(t, "ollama", cfg.Provider)
 	require.Equal(t, "/api/embeddings", cfg.APIPath)
@@ -3590,9 +3590,9 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, 12, cfg.GPULayers)
 
 	cfg = buildEmbedConfigFromResolved(map[string]string{
-		"NORNICDB_EMBEDDING_PROVIDER":   "local",
-		"NORNICDB_EMBEDDING_DIMENSIONS": "-1",
-		"NORNICDB_EMBEDDING_GPU_LAYERS": "not-an-int",
+		"db.nornic.embedding.provider":   "local",
+		"db.nornic.embedding.dimensions": "-1",
+		"db.nornic.embedding.gpu.layers": "not-an-int",
 	}, fallback)
 	require.Equal(t, "local", cfg.Provider)
 	require.Equal(t, "", cfg.APIPath)
@@ -3600,7 +3600,7 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, 0, cfg.GPULayers)
 
 	cfg = buildEmbedConfigFromResolved(map[string]string{
-		"NORNICDB_EMBEDDING_PROVIDER": "custom-provider",
+		"db.nornic.embedding.provider": "custom-provider",
 	}, fallback)
 	require.Equal(t, "/api/embeddings", cfg.APIPath)
 }

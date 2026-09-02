@@ -41,13 +41,24 @@ func TestSettingDefinitionsActivationAndScope(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, ScopeDatabaseIndex, indexBudget.Scope)
 	require.False(t, indexBudget.Dynamic)
-	require.Equal(t, RestartDatabase, indexBudget.RestartLevel)
+	require.Equal(t, RestartProcess, indexBudget.RestartLevel)
 	require.True(t, IsAllowedKey(indexBudget.Name))
 
-	queryCache, ok := LookupSetting("server.memory.query_cache.per_db_cache_num_entries")
+	queryCache, ok := LookupSetting("db.nornic.query_cache.max_entries")
 	require.True(t, ok)
-	require.True(t, queryCache.Dynamic)
-	require.Equal(t, RestartNone, queryCache.RestartLevel)
+	require.False(t, queryCache.Dynamic)
+	require.Equal(t, RestartProcess, queryCache.RestartLevel)
+	require.Equal(t, ScopeDatabase, queryCache.Scope)
+	require.Equal(t, "NORNICDB_QUERY_CACHE_SIZE", queryCache.EnvironmentVariable)
+}
+
+func TestSettingDefinitionsDynamicMatchesRestartLevel(t *testing.T) {
+	for _, definition := range Settings() {
+		require.Equalf(t, definition.RestartLevel == RestartNone, definition.Dynamic,
+			"%s has contradictory activation metadata", definition.Name)
+		require.Equalf(t, definition.Dynamic, definition.HotReload != HotReloadNone,
+			"%s must name a hot-reload applicator", definition.Name)
+	}
 }
 
 func TestNormalizeSettingValue(t *testing.T) {
@@ -82,4 +93,49 @@ func TestResolveSearchResultCachePolicy(t *testing.T) {
 	})
 	require.Equal(t, 0, resolved.SearchResultCacheMaxEntries)
 	require.Equal(t, 2*time.Minute, resolved.SearchResultCacheTTL)
+}
+
+func TestEveryEnvironmentAlternativeHasExplicitCanonicalSetting(t *testing.T) {
+	seen := make(map[string]string)
+	for _, definition := range Settings() {
+		if definition.EnvironmentVariable == "" {
+			continue
+		}
+		canonical := CanonicalSettingName(definition.EnvironmentVariable)
+		require.NotEqual(t, definition.EnvironmentVariable, canonical)
+		require.Contains(t, canonical, ".")
+		require.NotContains(t, canonical, "NORNICDB_")
+		if previous, exists := seen[canonical]; exists {
+			t.Fatalf("environment variables %s and %s map to duplicate canonical setting %s", previous, definition.EnvironmentVariable, canonical)
+		}
+		seen[canonical] = definition.EnvironmentVariable
+		lookup, ok := LookupSetting(definition.EnvironmentVariable)
+		require.True(t, ok, definition.EnvironmentVariable)
+		require.Equal(t, canonical, lookup.Name)
+		require.Equal(t, definition.EnvironmentVariable, lookup.EnvironmentVariable)
+	}
+}
+
+func TestResolveCanonicalDatabaseSettingWinsEnvironmentAlternativeAndCLI(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.SearchBM25Enabled = true
+	global.CLIOverrides = map[string]string{"NORNICDB_SEARCH_BM25_ENABLED": "false"}
+	resolved := Resolve(global, map[string]string{
+		"NORNICDB_SEARCH_BM25_ENABLED":  "false",
+		"db.nornic.search.bm25.enabled": "true",
+	})
+	require.True(t, resolved.BM25Enabled)
+	require.Equal(t, "true", resolved.Effective["db.nornic.search.bm25.enabled"])
+	_, hasEnvironmentName := resolved.Effective["NORNICDB_SEARCH_BM25_ENABLED"]
+	require.False(t, hasEnvironmentName)
+}
+
+func TestCanonicalSettingNameDoesNotInferUnknownEnvironmentVariable(t *testing.T) {
+	require.Equal(t, "NORNICDB_NOT_A_REGISTERED_SETTING", CanonicalSettingName("NORNICDB_NOT_A_REGISTERED_SETTING"))
+}
+
+func TestDeprecatedNeo4jSettingNameIsNotAcceptedAsAlias(t *testing.T) {
+	require.Equal(t, "server.db.query_cache_size", CanonicalSettingName("server.db.query_cache_size"))
+	_, ok := LookupSetting("server.db.query_cache_size")
+	require.False(t, ok)
 }

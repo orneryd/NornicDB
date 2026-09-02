@@ -924,6 +924,16 @@ func (s *Service) SetSearchResultCachePolicy(maxEntries int, ttl time.Duration) 
 	s.resultCache.SetTTL(ttl)
 }
 
+// SearchResultCachePolicy returns the live result-cache capacity and TTL.
+func (s *Service) SearchResultCachePolicy() (maxEntries int, ttl time.Duration) {
+	if s == nil || s.resultCache == nil {
+		return 0, 0
+	}
+	s.resultCache.mu.Lock()
+	defer s.resultCache.mu.Unlock()
+	return s.resultCache.maxSize, s.resultCache.ttl
+}
+
 // SetRuntimeStrategyTransitionsEnabled controls whether live writes may schedule
 // background vector strategy rebuilds, such as brute-force -> HNSW transitions.
 // Explicit BuildIndexes/warmup calls can still build ANN structures when this is false.
@@ -5942,6 +5952,16 @@ func (s *Service) SetReranker(r Reranker) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reranker = r
+}
+
+// RerankerName returns the configured Stage-2 reranker name, or an empty string.
+func (s *Service) RerankerName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.reranker == nil {
+		return ""
+	}
+	return s.reranker.Name()
 }
 
 // CrossEncoderAvailable returns true if a cross-encoder reranker is configured and available.

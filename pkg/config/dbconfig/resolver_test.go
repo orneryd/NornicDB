@@ -18,7 +18,7 @@ func TestResolve_GlobalOnly(t *testing.T) {
 	assert.Equal(t, 1536, r.EmbeddingDimensions)
 	assert.Equal(t, 0.6, r.SearchMinSimilarity)
 	assert.Equal(t, "v2", r.BM25Engine)
-	assert.NotEmpty(t, r.Effective["NORNICDB_EMBEDDING_DIMENSIONS"])
+	assert.NotEmpty(t, r.Effective["db.nornic.embedding.dimensions"])
 }
 
 func TestResolve_Overrides(t *testing.T) {
@@ -36,9 +36,9 @@ func TestResolve_Overrides(t *testing.T) {
 	assert.Equal(t, 768, r.EmbeddingDimensions)
 	assert.Equal(t, 0.8, r.SearchMinSimilarity)
 	assert.Equal(t, "v2", r.BM25Engine)
-	assert.Equal(t, "768", r.Effective["NORNICDB_EMBEDDING_DIMENSIONS"])
-	assert.Equal(t, "0.8", r.Effective["NORNICDB_SEARCH_MIN_SIMILARITY"])
-	assert.Equal(t, "v2", r.Effective["NORNICDB_SEARCH_BM25_ENGINE"])
+	assert.Equal(t, "768", r.Effective["db.nornic.embedding.dimensions"])
+	assert.Equal(t, "0.8", r.Effective["db.nornic.search.min.similarity"])
+	assert.Equal(t, "v2", r.Effective["db.nornic.search.bm25.engine"])
 }
 
 func TestResolve_DefaultDimensionsAndIgnoredOverrides(t *testing.T) {
@@ -113,10 +113,10 @@ func TestResolveSearchFlags_Defaults(t *testing.T) {
 	assert.Equal(t, "startup", r.BM25Warming)
 	assert.Equal(t, "startup", r.VectorWarming)
 	// Effective map mirrors all four keys.
-	assert.Equal(t, "true", r.Effective["NORNICDB_SEARCH_BM25_ENABLED"])
-	assert.Equal(t, "startup", r.Effective["NORNICDB_SEARCH_BM25_WARMING"])
-	assert.Equal(t, "true", r.Effective["NORNICDB_SEARCH_VECTOR_ENABLED"])
-	assert.Equal(t, "startup", r.Effective["NORNICDB_SEARCH_VECTOR_WARMING"])
+	assert.Equal(t, "true", r.Effective["db.nornic.search.bm25.enabled"])
+	assert.Equal(t, "startup", r.Effective["db.nornic.search.bm25.warming"])
+	assert.Equal(t, "true", r.Effective["db.nornic.search.vector.enabled"])
+	assert.Equal(t, "startup", r.Effective["db.nornic.search.vector.warming"])
 }
 
 // TestResolveSearchFlags_OverrideMatrix — the load-bearing guarantee.
@@ -313,10 +313,7 @@ func TestResolve_PrecedenceLadder(t *testing.T) {
 		assert.True(t, r.VectorEnabled, "per-DB true must override global false")
 	})
 
-	t.Run("CLI trumps per-DB and global (kill switch)", func(t *testing.T) {
-		// The lab-incident shape: tenant has search ON via per-DB store,
-		// operator boots with --search-*-enabled=false to mitigate OOM.
-		// CLI must win.
+	t.Run("per-DB trumps process override and global", func(t *testing.T) {
 		global := config.LoadDefaults()
 		global.Memory.SearchBM25Enabled = true
 		global.Memory.SearchVectorEnabled = true
@@ -324,25 +321,19 @@ func TestResolve_PrecedenceLadder(t *testing.T) {
 			"NORNICDB_SEARCH_BM25_ENABLED":   "false",
 			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
 		}
-		// Per-DB explicitly says enabled — CLI must still win.
+		// A persisted database setting is authoritative for that database.
 		overrides := map[string]string{
 			"NORNICDB_SEARCH_BM25_ENABLED":   "true",
 			"NORNICDB_SEARCH_VECTOR_ENABLED": "true",
 		}
 		r := Resolve(global, overrides)
-		assert.False(t, r.BM25Enabled,
-			"CLI kill switch must override per-DB enable; got=%+v", r)
-		assert.False(t, r.VectorEnabled,
-			"CLI kill switch must override per-DB enable; got=%+v", r)
-		// Effective map should reflect CLI's value as the last writer.
-		assert.Equal(t, "false", r.Effective["NORNICDB_SEARCH_BM25_ENABLED"])
-		assert.Equal(t, "false", r.Effective["NORNICDB_SEARCH_VECTOR_ENABLED"])
+		assert.True(t, r.BM25Enabled)
+		assert.True(t, r.VectorEnabled)
+		assert.Equal(t, "true", r.Effective["db.nornic.search.bm25.enabled"])
+		assert.Equal(t, "true", r.Effective["db.nornic.search.vector.enabled"])
 	})
 
-	t.Run("CLI trumps per-DB the other direction", func(t *testing.T) {
-		// Operator wants search ON globally even though a per-DB entry
-		// says off. Less common but symmetric — a debug or recovery
-		// session could need it.
+	t.Run("per-DB trumps process override the other direction", func(t *testing.T) {
 		global := config.LoadDefaults()
 		global.Memory.SearchBM25Enabled = false
 		global.Memory.SearchVectorEnabled = false
@@ -355,8 +346,8 @@ func TestResolve_PrecedenceLadder(t *testing.T) {
 			"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
 		}
 		r := Resolve(global, overrides)
-		assert.True(t, r.BM25Enabled, "CLI true must trump per-DB false")
-		assert.True(t, r.VectorEnabled, "CLI true must trump per-DB false")
+		assert.False(t, r.BM25Enabled, "per-DB false must override process true")
+		assert.False(t, r.VectorEnabled, "per-DB false must override process true")
 	})
 
 	t.Run("CLI applies even without per-DB override", func(t *testing.T) {
@@ -390,9 +381,7 @@ func TestResolve_PrecedenceLadder(t *testing.T) {
 		assert.False(t, r.VectorEnabled, "per-DB overrides vector — CLI didn't touch it")
 	})
 
-	t.Run("CLI warming override beats per-DB warming", func(t *testing.T) {
-		// Warming is enum-typed (startup/lazy). Make sure the CLI path
-		// applies it the same way as the boolean path.
+	t.Run("per-DB warming beats process override", func(t *testing.T) {
 		global := config.LoadDefaults()
 		global.Memory.SearchBM25Warming = "startup"
 		global.CLIOverrides = map[string]string{
@@ -402,6 +391,6 @@ func TestResolve_PrecedenceLadder(t *testing.T) {
 			"NORNICDB_SEARCH_BM25_WARMING": "startup",
 		}
 		r := Resolve(global, overrides)
-		assert.Equal(t, "lazy", r.BM25Warming, "CLI warming override wins")
+		assert.Equal(t, "startup", r.BM25Warming, "per-DB warming wins")
 	})
 }
