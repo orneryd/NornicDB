@@ -4,34 +4,36 @@
 
 ### ARM64 (Apple Silicon)
 
-| Image | Size | Description | Use When |
-|-------|------|-------------|----------|
-| `nornicdb-arm64-metal` | ~148MB | Base image | BYOM - bring your own models |
-| `nornicdb-arm64-metal-bge` | ~586MB | With BGE-M3 | Ready for embeddings immediately |
+| Image                               | Size   | Description            | Use When                                          |
+| ----------------------------------- | ------ | ---------------------- | ------------------------------------------------- |
+| `nornicdb-arm64-metal`              | ~148MB | Base image             | BYOM - bring your own models                      |
+| `nornicdb-arm64-metal-bge`          | ~586MB | With BGE-M3            | Ready for embeddings immediately                  |
 | `nornicdb-arm64-metal-bge-heimdall` | ~1.1GB | With BGE-M3 + Heimdall | **Full cognitive features** - single-click deploy |
-| `nornicdb-arm64-metal-headless` | ~148MB | Headless (no UI) | API-only, embedded deployments |
+| `nornicdb-arm64-metal-headless`     | ~148MB | Headless (no UI)       | API-only, embedded deployments                    |
 
 ### AMD64 (Intel/AMD)
 
-| Image | Size | Description | Use When |
-|-------|------|-------------|----------|
-| `nornicdb-amd64-cuda` | ~3GB | CUDA base | NVIDIA GPU, BYOM |
-| `nornicdb-amd64-cuda-bge` | ~4.5GB | CUDA + BGE-M3 | NVIDIA GPU, ready for embeddings |
-| `nornicdb-amd64-cuda-bge-heimdall` | ~5GB | CUDA + BGE + Heimdall | **Full cognitive features with GPU** |
-| `nornicdb-amd64-cuda-headless` | ~2.9GB | CUDA headless | API-only with GPU |
-| `nornicdb-amd64-vulkan` | ~600MB | Vulkan GPU | **Any GPU** (NVIDIA/AMD/Intel), no CUDA |
-| `nornicdb-amd64-vulkan-heimdall` | ~1GB | Vulkan + Heimdall | **Any GPU** with AI assistant |
-| `nornicdb-amd64-cpu` | ~500MB | CPU-only | No GPU required, minimal |
-| `nornicdb-amd64-cpu-headless` | ~500MB | CPU-only headless | API-only, smallest footprint |
+| Image                              | Size   | Description           | Use When                                |
+| ---------------------------------- | ------ | --------------------- | --------------------------------------- |
+| `nornicdb-amd64-cuda`              | ~3GB   | CUDA base             | NVIDIA GPU, BYOM                        |
+| `nornicdb-amd64-cuda-bge`          | ~4.5GB | CUDA + BGE-M3         | NVIDIA GPU, ready for embeddings        |
+| `nornicdb-amd64-cuda-bge-heimdall` | ~5GB   | CUDA + BGE + Heimdall | **Full cognitive features with GPU**    |
+| `nornicdb-amd64-cuda-headless`     | ~2.9GB | CUDA headless         | API-only with GPU                       |
+| `nornicdb-amd64-vulkan`            | ~600MB | Vulkan GPU            | **Any GPU** (NVIDIA/AMD/Intel), no CUDA |
+| `nornicdb-amd64-vulkan-heimdall`   | ~1GB   | Vulkan + Heimdall     | **Any GPU** with AI assistant           |
+| `nornicdb-amd64-cpu`               | ~500MB | CPU-only              | No GPU required, minimal                |
+| `nornicdb-amd64-cpu-headless`      | ~500MB | CPU-only headless     | API-only, smallest footprint            |
 
 ### 🛡️ Heimdall Build
 
 The Heimdall images (`*-bge-heimdall`) are "batteries included":
+
 - **BGE-M3** (~400MB) for vector search/embeddings
 - **qwen3-0.6b-Instruct** (~350MB) for Heimdall (cognitive guardian)
 - **Bifrost** chat interface enabled by default
 
 Heimdall provides:
+
 - Anomaly detection on graph structure
 - Runtime diagnosis (goroutine analysis, memory issues)
 - Memory curation (summarization, deduplication)
@@ -60,17 +62,20 @@ go tool pprof http://127.0.0.1:9091/debug/pprof/profile?seconds=30
 ## ARM64 Metal (Apple Silicon)
 
 ### Prerequisites
+
 - Docker Desktop for Mac
 - Make (for build commands)
 - curl (for automatic model downloads)
 
 **Note:** Models are automatically downloaded during Heimdall builds. You can also pre-download:
+
 ```bash
 make download-models  # Downloads BGE-M3 + qwen3-0.6b (~750MB total)
 make check-models     # Verify models present
 ```
 
 ### Build & Deploy Base Image
+
 ```bash
 cd nornicdb
 
@@ -85,6 +90,7 @@ make deploy-arm64-metal
 ```
 
 ### Build & Deploy BGE Image (with embedded model)
+
 ```bash
 cd nornicdb
 
@@ -102,6 +108,7 @@ make deploy-arm64-metal-bge
 ```
 
 ### Build & Deploy Heimdall Image (full cognitive features)
+
 ```bash
 cd nornicdb
 
@@ -120,6 +127,7 @@ make deploy-arm64-metal-bge-heimdall
 ```
 
 ### Build & Deploy Headless Image (API-only)
+
 ```bash
 cd nornicdb
 
@@ -131,6 +139,7 @@ make deploy-arm64-metal-headless
 ```
 
 **Running the Heimdall image:**
+
 ```bash
 # Simple run
 docker run -p 7474:7474 -p 7687:7687 timothyswt/nornicdb-arm64-metal-bge-heimdall
@@ -146,12 +155,15 @@ Access the Bifrost chat interface at `http://localhost:7474/bifrost` to interact
 ## AMD64 CUDA (NVIDIA GPU)
 
 ### Prerequisites
+
 - Docker with NVIDIA runtime
 - CUDA drivers installed
 - `models/bge-m3.gguf` file (only for BGE variant)
 
 ### One-Time Setup: Build CUDA Libraries
+
 This caches llama.cpp CUDA compilation (~15 min build, then reused forever):
+
 ```bash
 cd nornicdb
 
@@ -163,6 +175,7 @@ make push-llama-cuda
 ```
 
 ### Build & Deploy Base Image
+
 ```bash
 cd nornicdb
 
@@ -177,6 +190,7 @@ make deploy-amd64-cuda
 ```
 
 ### Build & Deploy BGE Image (with embedded model)
+
 ```bash
 cd nornicdb
 
@@ -194,6 +208,7 @@ make deploy-amd64-cuda-bge
 ```
 
 ### Build & Deploy Heimdall Image (full cognitive features)
+
 ```bash
 cd nornicdb
 
@@ -205,6 +220,7 @@ make deploy-amd64-cuda-bge-heimdall
 ```
 
 ### Build & Deploy CPU-Only Images (no GPU)
+
 ```bash
 cd nornicdb
 
@@ -222,18 +238,22 @@ make deploy-amd64-cpu-headless
 ## AMD64 Vulkan (Any GPU - NVIDIA/AMD/Intel)
 
 ### Overview
+
 The Vulkan builds provide GPU acceleration without requiring CUDA, making them compatible with any Vulkan-capable GPU:
+
 - **NVIDIA** GPUs (via Vulkan driver)
 - **AMD** GPUs (via RADV or AMDVLK)
 - **Intel** GPUs (via Mesa ANV driver)
 
 This is ideal for:
+
 - AMD GPU users who don't have CUDA
 - Intel integrated/discrete GPU users
 - Mixed GPU environments
 - Deployments where you don't want CUDA dependencies
 
 ### Prerequisites
+
 - Docker
 - Vulkan-capable GPU with drivers installed
 - For AMD: AMDGPU driver with RADV
@@ -241,6 +261,7 @@ This is ideal for:
 - For NVIDIA: nvidia-container-toolkit (optional, or just use CUDA variant)
 
 ### Build & Deploy Vulkan Images
+
 ```bash
 cd nornicdb
 
@@ -308,11 +329,12 @@ glslc pkg/gpu/vulkan/shaders/topk_full.comp -o pkg/gpu/vulkan/topk_full.spv
 ```
 
 Notes:
+
 - `glslc` is included in the Vulkan SDK. On Windows it is typically under `C:\VulkanSDK\<version>\Bin\glslc.exe`.
 - After compiling, the `.spv` files must be placed in `pkg/gpu/vulkan/` so the build embeds them.
 
-
 ### Running Vulkan Images
+
 ```bash
 # Using docker-compose (recommended)
 docker-compose -f docker/docker-compose.vulkan.yml up
@@ -352,6 +374,7 @@ REGISTRY=myregistry VERSION=v1.0.0 make deploy-all
 ## Alternative: Shell Scripts
 
 ### Mac/Linux
+
 ```bash
 ./build.sh build arm64-metal        # Build base
 ./build.sh build arm64-metal-bge    # Build with BGE
@@ -361,6 +384,7 @@ REGISTRY=myregistry VERSION=v1.0.0 make deploy-all
 ```
 
 ### Windows PowerShell
+
 ```powershell
 .\build.ps1 build amd64-cuda        # Build base
 .\build.ps1 build amd64-cuda-bge    # Build with BGE
@@ -374,7 +398,9 @@ REGISTRY=myregistry VERSION=v1.0.0 make deploy-all
 ## Running the Images
 
 ### BGE Variant (Ready to Go)
+
 No model setup needed - just run:
+
 ```bash
 # ARM64 Metal
 docker run -d --name nornicdb \
@@ -390,7 +416,9 @@ docker run -d --name nornicdb --gpus all \
 ```
 
 ### Base Variant (BYOM - Bring Your Own Model)
+
 Mount your models directory:
+
 ```bash
 # ARM64 Metal
 docker run -d --name nornicdb \
@@ -408,6 +436,7 @@ docker run -d --name nornicdb --gpus all \
 ```
 
 ### Verify Running
+
 ```bash
 # Check health
 curl http://localhost:7474/health
@@ -473,25 +502,25 @@ See [APOC Plugin Guide](../docs/features/plugin-system.md) for creating custom p
 
 ### Core Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NORNICDB_DATA_DIR` | `/data` | Data directory |
-| `NORNICDB_HTTP_PORT` | `7474` | HTTP/UI port |
-| `NORNICDB_BOLT_PORT` | `7687` | Bolt protocol port |
-| `NORNICDB_NO_AUTH` | `true` | Disable authentication |
-| `NORNICDB_HEADLESS` | `false` | Disable web UI |
+| Variable             | Default | Description                                                             |
+| -------------------- | ------- | ----------------------------------------------------------------------- |
+| `NORNICDB_DATA_DIR`  | `/data` | Data directory                                                          |
+| `NORNICDB_HTTP_PORT` | `7474`  | HTTP/UI port                                                            |
+| `NORNICDB_BOLT_PORT` | `7687`  | Bolt protocol port                                                      |
+| `NORNICDB_NO_AUTH`   | `true`  | Disable authentication                                                  |
+| `NORNICDB_HEADLESS`  | `false` | Disable embedded UI routes and browser IDEs; core APIs remain available |
 
 ### Embeddings & AI
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NORNICDB_EMBEDDING_PROVIDER` | `local` | Embedding provider (local/ollama/openai/none) |
-| `NORNICDB_EMBEDDING_MODEL` | `models/bge-m3.gguf` | Embedding model path |
-| `NORNICDB_MODELS_DIR` | `/app/models` | Models directory |
-| `NORNICDB_GPU_BACKEND` | `-1` (CUDA) / `0` (Metal) | GPU layers for embeddings |
-| `NORNICDB_EMBEDDING_GPU_LAYERS` | `-1` (CUDA) / `0` (Metal) | GPU layers for embeddings |
-| `NORNICDB_HEIMDALL_ENABLED` | `false` | Enable Heimdall AI assistant |
-| `NORNICDB_HEIMDALL_MODEL` | `models/qwen3-0.6b-instruct-q4_k_m.gguf` | Heimdall LLM model path |
-| `NORNICDB_PLUGINS_DIR` | `/app/plugins` | APOC plugins directory |
+| Variable                        | Default                                  | Description                                   |
+| ------------------------------- | ---------------------------------------- | --------------------------------------------- |
+| `NORNICDB_EMBEDDING_PROVIDER`   | `local`                                  | Embedding provider (local/ollama/openai/none) |
+| `NORNICDB_EMBEDDING_MODEL`      | `models/bge-m3.gguf`                     | Embedding model path                          |
+| `NORNICDB_MODELS_DIR`           | `/app/models`                            | Models directory                              |
+| `NORNICDB_GPU_BACKEND`          | `-1` (CUDA) / `0` (Metal)                | GPU layers for embeddings                     |
+| `NORNICDB_EMBEDDING_GPU_LAYERS` | `-1` (CUDA) / `0` (Metal)                | GPU layers for embeddings                     |
+| `NORNICDB_HEIMDALL_ENABLED`     | `false`                                  | Enable Heimdall AI assistant                  |
+| `NORNICDB_HEIMDALL_MODEL`       | `models/qwen3-0.6b-instruct-q4_k_m.gguf` | Heimdall LLM model path                       |
+| `NORNICDB_PLUGINS_DIR`          | `/app/plugins`                           | APOC plugins directory                        |
 
 **Note:** In CPU-only images, `NORNICDB_EMBEDDING_PROVIDER` defaults to `none` for optimal performance.

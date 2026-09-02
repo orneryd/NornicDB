@@ -441,8 +441,9 @@ type Config struct {
 	Logging nornicConfig.LoggingConfig
 
 	// Headless Mode Configuration
-	// Headless disables the web UI and browser-related endpoints
-	// Set to true for API-only deployments (e.g., embedded use, microservices)
+	// Headless disables embedded UI assets, SPA routes, browser bootstrap
+	// endpoints, and interactive browser IDEs. Core APIs remain available.
+	// Set to true for server-only deployments (e.g., embedded use, microservices).
 	// Env: NORNICDB_HEADLESS=true|false
 	Headless bool
 

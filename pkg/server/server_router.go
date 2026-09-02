@@ -300,10 +300,12 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 	}, auth.PermRead))
 
 	// GraphQL Playground - interactive IDE (read access required)
-	mux.HandleFunc("/graphql/playground", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
-		r = s.withBifrostRBAC(r)
-		s.graphqlHandler.Playground().ServeHTTP(w, r)
-	}, auth.PermRead))
+	if !s.config.Headless {
+		mux.HandleFunc("/graphql/playground", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+			r = s.withBifrostRBAC(r)
+			s.graphqlHandler.Playground().ServeHTTP(w, r)
+		}, auth.PermRead))
+	}
 	s.logEvent(context.Background(), slog.LevelInfo, localization.ServerGraphQLEnabledEvent("/graphql"))
 }
 

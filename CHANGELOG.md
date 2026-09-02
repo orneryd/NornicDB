@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   common-query latency and 85% fewer allocations than the previous 32-prefix
   default.
 
+### Fixed
+
+- **Headless mode now disables the complete browser-only HTTP surface.** The
+  GraphQL Playground is no longer registered in headless mode, while the
+  authenticated GraphQL API and other core APIs remain available.
+
 ## [v1.2.3] - 8/20/2026
 
 ### Added

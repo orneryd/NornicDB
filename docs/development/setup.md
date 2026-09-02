@@ -145,14 +145,14 @@ go test ./pkg/nornicdb/...
 
 ### Core Settings
 
-| Variable              | Description    | Default           |
-| --------------------- | -------------- | ----------------- |
-| `NORNICDB_DATA_DIR`   | Data directory | `./data`          |
-| `NORNICDB_HTTP_PORT`  | HTTP API port  | `7474`            |
-| `NORNICDB_BOLT_PORT`  | Bolt port      | `7687`            |
-| `NORNICDB_AUTH`       | Set to `none` to disable, or `user/pass` to enable | `none` (auth off) |
-| `NORNICDB_AUTH_JWT_SECRET` | JWT secret (min 32 characters) | Required for auth |
-| `NORNICDB_HEADLESS`   | Disable web UI | `false`           |
+| Variable                   | Description                                                             | Default           |
+| -------------------------- | ----------------------------------------------------------------------- | ----------------- |
+| `NORNICDB_DATA_DIR`        | Data directory                                                          | `./data`          |
+| `NORNICDB_HTTP_PORT`       | HTTP API port                                                           | `7474`            |
+| `NORNICDB_BOLT_PORT`       | Bolt port                                                               | `7687`            |
+| `NORNICDB_AUTH`            | Set to `none` to disable, or `user/pass` to enable                      | `none` (auth off) |
+| `NORNICDB_AUTH_JWT_SECRET` | JWT secret (min 32 characters)                                          | Required for auth |
+| `NORNICDB_HEADLESS`        | Disable embedded UI routes and browser IDEs; core APIs remain available | `false`           |
 
 ### Embedding & AI Features
 

@@ -405,7 +405,7 @@ docker run -d -p 7474:7474 -p 7687:7687 \
 
 ### Headless Mode
 
-For embedded deployments, microservices, or API-only use cases, NornicDB supports headless mode which disables the web UI for a smaller binary and reduced attack surface.
+For embedded deployments, microservices, or server-only use cases, NornicDB supports headless mode, which disables embedded UI assets, SPA/bootstrap routes, and browser IDEs while keeping core APIs available.
 
 **Runtime flag:**
 

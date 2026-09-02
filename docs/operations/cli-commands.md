@@ -49,7 +49,7 @@ nornicdb serve \
 - `--http-port`: HTTP API port (default: `7474`; env: `NORNICDB_HTTP_PORT`).
 - `--address`: bind address (default: `0.0.0.0`).
 - `--no-auth`: disable authentication (development only).
-- `--headless`: disable web UI.
+- `--headless`: disable embedded UI assets, SPA/bootstrap routes, and browser IDEs. Core APIs remain available.
 
 **Example:**
 
