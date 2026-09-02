@@ -1132,6 +1132,10 @@ func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 // SaveSnapshot writes a snapshot to disk with full durability guarantees.
 // Uses write-to-temp + atomic-rename pattern for crash safety.
 func SaveSnapshot(snapshot *Snapshot, path string) error {
+	return saveSnapshot(snapshot, path, syncDir)
+}
+
+func saveSnapshot(snapshot *Snapshot, path string, syncDirectory func(string) error) error {
 	// Create directory if needed
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -1169,10 +1173,8 @@ func SaveSnapshot(snapshot *Snapshot, path string) error {
 
 	// Sync directory to ensure rename is durable
 	// Without this, the rename may not survive a crash on some filesystems
-	if err := syncDir(dir); err != nil {
-		// Log but don't fail - snapshot data is already safe
-		// The rename may just need to be redone on recovery
-		return nil
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("wal: failed to sync snapshot directory: %w", err)
 	}
 
 	return nil

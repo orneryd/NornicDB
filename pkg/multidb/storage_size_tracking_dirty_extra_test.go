@@ -300,6 +300,14 @@ func TestSizeTrackingEngine_ConnectedEdgeBytesReturnsIncomingError(t *testing.T)
 	require.ErrorContains(t, err, "get incoming edges")
 }
 
+func TestSizeTrackingEngineExposesInjectedQueryLimitChecker(t *testing.T) {
+	manager, dbName := setupTestManager(t)
+	checker := newDatabaseLimitCheckerWithLimits(manager, dbName, &Limits{})
+	wrapper := newSizeTrackingEngine(storage.NewMemoryEngine(), manager, dbName, checker).(*sizeTrackingEngine)
+
+	require.Same(t, checker, wrapper.GetQueryLimitChecker())
+}
+
 func TestSizeTrackingEngineConnectedEdgeBytesDeduplicatesSelfLoop(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	base := storage.NewMemoryEngine()
