@@ -320,7 +320,10 @@ func (e *StorageExecutor) resolveRetrieveEmbedding(ctx context.Context, req map[
 				return nil, failClosedEmbeddingUnavailable(errRetrieveEmbeddingNotAVector)
 			}
 		} else {
-			embedding := toFloat32Slice(raw)
+			embedding, parseErr := parseRetrieveEmbedding(raw, failClosed)
+			if parseErr != nil {
+				return nil, failClosedEmbeddingUnavailable(parseErr)
+			}
 			if usableEmbedding(embedding) {
 				return embedding, nil
 			}
@@ -355,6 +358,41 @@ func failClosedEmbeddingUnavailable(cause error) error {
 	return localizedError(localization.CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause), cause)
 }
 
+func parseRetrieveEmbedding(raw interface{}, failClosed bool) ([]float32, error) {
+	if !failClosed {
+		return toFloat32Slice(raw), nil
+	}
+	return strictNumericEmbedding(raw)
+}
+
+func strictNumericEmbedding(raw interface{}) ([]float32, error) {
+	switch val := raw.(type) {
+	case []float32:
+		return val, nil
+	case []float64:
+		out := make([]float32, len(val))
+		for i, f := range val {
+			out[i] = float32(f)
+		}
+		return out, nil
+	case []interface{}:
+		out := make([]float32, len(val))
+		for i, item := range val {
+			if _, isString := item.(string); isString {
+				return nil, errRetrieveEmbeddingNotAVector
+			}
+			f, ok := ragToFloat64(item)
+			if !ok {
+				return nil, errRetrieveEmbeddingNotAVector
+			}
+			out[i] = float32(f)
+		}
+		return out, nil
+	default:
+		return nil, errRetrieveEmbeddingNotAVector
+	}
+}
+
 func usableEmbedding(values []float32) bool {
 	if len(values) == 0 {
 		return false
@@ -371,7 +409,14 @@ func isFinite(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
+func isIntegral(value float64) bool {
+	return isFinite(value) && value == math.Trunc(value)
+}
+
 func validateFailClosedNumericPolicy(req map[string]interface{}) error {
+	inCandidateRange := func(v float64) bool {
+		return isIntegral(v) && v >= 1 && v <= float64(search.MaxCandidates)
+	}
 	checks := []struct {
 		field string
 		keys  []string
@@ -385,9 +430,11 @@ func validateFailClosedNumericPolicy(req map[string]interface{}) error {
 		{"initialOverfetchRatio", []string{"initialOverfetchRatio", "initial_overfetch_ratio"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= 100 }},
 		{"maxOverfetchRatio", []string{"maxOverfetchRatio", "max_overfetch_ratio"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= 100 }},
 		{"overfetchGrowthFactor", []string{"overfetchGrowthFactor", "overfetch_growth_factor"}, func(v float64) bool { return isFinite(v) && v > 1 && v <= 100 }},
-		{"candidateTarget", []string{"candidateTarget", "candidate_target"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
-		{"maxCandidateLimit", []string{"maxCandidateLimit", "max_candidate_limit"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
-		{"limit", []string{"limit"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
+		{"candidateTarget", []string{"candidateTarget", "candidate_target"}, inCandidateRange},
+		{"maxCandidateLimit", []string{"maxCandidateLimit", "max_candidate_limit"}, inCandidateRange},
+		{"limit", []string{"limit"}, inCandidateRange},
+		{"rerankTopK", []string{"rerankTopK", "rerank_top_k"}, inCandidateRange},
+		{"rerankMinScore", []string{"rerankMinScore", "rerank_min_score"}, isFinite},
 	}
 	for _, check := range checks {
 		raw, present := policyPresent(req, check.keys...)

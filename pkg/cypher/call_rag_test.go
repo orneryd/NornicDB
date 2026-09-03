@@ -309,6 +309,70 @@ func TestCallDbRetrieveFailClosedRejectsStringEmbedding(t *testing.T) {
 	require.ErrorIs(t, err, errRetrieveEmbeddingNotAVector)
 }
 
+func TestApplyRetrievalPolicyOptionsFailClosedRejectsRerankAndFractionalCounts(t *testing.T) {
+	tests := []struct {
+		name  string
+		req   map[string]interface{}
+		field string
+	}{
+		{
+			name:  "rerank min score NaN",
+			req:   map[string]interface{}{"failClosed": true, "rerankMinScore": math.NaN()},
+			field: "rerankMinScore",
+		},
+		{
+			name:  "rerank top k infinity",
+			req:   map[string]interface{}{"failClosed": true, "rerankTopK": math.Inf(1)},
+			field: "rerankTopK",
+		},
+		{
+			name:  "fractional candidate target",
+			req:   map[string]interface{}{"failClosed": true, "candidateTarget": 1.9},
+			field: "candidateTarget",
+		},
+		{
+			name:  "fractional limit",
+			req:   map[string]interface{}{"failClosed": true, "limit": 10.5},
+			field: "limit",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := search.DefaultSearchOptions()
+			_, err := applyRetrievalPolicyOptions(opts, tt.req)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "failClosed")
+			require.Contains(t, err.Error(), tt.field)
+		})
+	}
+}
+
+func TestResolveRetrieveEmbeddingFailClosedRejectsMalformedElements(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	ctx := context.Background()
+
+	_, err := exec.resolveRetrieveEmbedding(ctx, map[string]interface{}{
+		"embedding": []interface{}{1, "bad", 0},
+	}, "alpha", true)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errRetrieveEmbeddingNotAVector)
+
+	_, err = exec.resolveRetrieveEmbedding(ctx, map[string]interface{}{
+		"embedding": []interface{}{1, "2", 0},
+	}, "alpha", true)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errRetrieveEmbeddingNotAVector)
+}
+
+func TestResolveRetrieveEmbeddingFailOpenDropsInvalidElements(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	embedding, err := exec.resolveRetrieveEmbedding(context.Background(), map[string]interface{}{
+		"embedding": []interface{}{float64(1), "bad", float64(0)},
+	}, "alpha", false)
+	require.NoError(t, err)
+	require.Equal(t, []float32{1, 0}, embedding)
+}
+
 func TestParseRetrievalFiltersEdgeCases(t *testing.T) {
 	require.Nil(t, parseRetrievalFilters(nil))
 	require.Nil(t, parseRetrievalFilters("not-a-map"))

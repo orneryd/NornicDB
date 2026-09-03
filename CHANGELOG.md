@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (alias `fail_closed`) requires a usable numeric query embedding and
   disables strategy fallback, including BM25-only search, without changing
   ranking defaults. Callers that need deterministic RRF or candidate depth
-  still pass those fields explicitly. In fail-closed mode, non-finite or
-  out-of-range supplied policy values error, and embedder failures wrap
+  still pass those fields explicitly. In fail-closed mode, non-finite,
+  out-of-range, or non-integral count policy values error (including
+  `rerankTopK` / `rerankMinScore`), supplied embedding elements must be
+  numeric types, and embedder failures wrap
   the underlying cause so operators can distinguish a disabled embedder,
   timeout, empty output, or a string passed as `embedding`. Without the
   flag, empty embeddings still fall back to BM25. `fallbackEnabled: false`
