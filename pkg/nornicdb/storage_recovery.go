@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,47 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// RecoveryPhase identifies the current corruption-recovery step.
+type RecoveryPhase string
+
+const (
+	RecoveryPhaseInspect  RecoveryPhase = "inspect"
+	RecoveryPhasePreserve RecoveryPhase = "preserve"
+	RecoveryPhaseOpen     RecoveryPhase = "open_destination"
+	RecoveryPhaseReplay   RecoveryPhase = "replay"
+	RecoveryPhaseComplete RecoveryPhase = "complete"
+)
+
+// RecoveryStatus is persisted beside preserved data for operator diagnostics.
+type RecoveryStatus struct {
+	Phase             RecoveryPhase `json:"phase"`
+	StartedAt         time.Time     `json:"started_at"`
+	CompletedAt       time.Time     `json:"completed_at,omitempty"`
+	SourceDataDir     string        `json:"source_data_dir"`
+	PreservedDataDir  string        `json:"preserved_data_dir,omitempty"`
+	SnapshotPath      string        `json:"snapshot_path,omitempty"`
+	SnapshotStreaming bool          `json:"snapshot_streaming"`
+	SnapshotNodes     uint64        `json:"snapshot_nodes"`
+	SnapshotEdges     uint64        `json:"snapshot_edges"`
+	WALEntries        uint64        `json:"wal_entries"`
+	Applied           int           `json:"applied"`
+	Skipped           int           `json:"skipped"`
+	Failed            int           `json:"failed"`
+	Error             string        `json:"error,omitempty"`
+}
+
+// StoreUnavailableError reports that the store could not safely complete recovery.
+type StoreUnavailableError struct {
+	Status RecoveryStatus
+	Cause  error
+}
+
+func (e *StoreUnavailableError) Error() string {
+	return fmt.Sprintf("store unavailable: recovery failed during %s: %v", e.Status.Phase, e.Cause)
+}
+
+func (e *StoreUnavailableError) Unwrap() error { return e.Cause }
 
 // autoRecoverOnCorruptionEnabled controls whether NornicDB should attempt to recover
 // from WAL snapshots when the primary Badger store fails to open.
@@ -120,9 +162,20 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
 // snapshot + WAL replay, preserving the original store before rebuilding it.
 func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
-	walDir := filepath.Join(dataDir, "wal")
-	snapshotDir := filepath.Join(dataDir, "snapshots")
+	status := RecoveryStatus{
+		Phase:         RecoveryPhaseInspect,
+		StartedAt:     time.Now().UTC(),
+		SourceDataDir: dataDir,
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("data path is not a directory")
+		}
+		return nil, "", recoveryUnavailable(status, err)
+	}
 
+	snapshotDir := filepath.Join(dataDir, "snapshots")
 	snapPath, snapErr := latestSnapshotPath(snapshotDir)
 	if snapErr != nil {
 		// No snapshots yet (e.g., new DB) or snapshot directory missing — attempt WAL-only recovery.
@@ -131,21 +184,7 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 		fmt.Printf("⚠️  Auto-recover: no snapshots found (%v); attempting WAL-only recovery\n", snapErr)
 		snapPath = ""
 	}
-
-	// Rebuild state in memory from snapshot + WAL. This does not depend on Badger.
-	memEngine, replay, err := storage.RecoverFromWALWithResult(walDir, snapPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("auto-recover: wal replay failed: %w", err)
-	}
-
-	nodes, err := memEngine.AllNodes()
-	if err != nil {
-		return nil, "", fmt.Errorf("auto-recover: read recovered nodes: %w", err)
-	}
-	edges, err := memEngine.AllEdges()
-	if err != nil {
-		return nil, "", fmt.Errorf("auto-recover: read recovered edges: %w", err)
-	}
+	status.SnapshotPath = snapPath
 
 	// Preserve original directory for forensics/manual recovery.
 	ts := time.Now().Format("20060102-150405")
@@ -157,39 +196,132 @@ func recoverBadgerFromSnapshotAndWAL(dataDir string, badgerOpts storage.BadgerOp
 		backupDir = fmt.Sprintf("%s.corrupted-%s-%d", strings.TrimRight(dataDir, string(os.PathSeparator)), ts, i)
 	}
 
+	status.Phase = RecoveryPhasePreserve
 	preservedDir, err := preserveCorruptedDataDir(dataDir, backupDir, os.Rename)
 	if err != nil {
-		return nil, "", fmt.Errorf("auto-recover: failed to preserve corrupted data dir (%s → %s): %w", dataDir, backupDir, err)
+		return nil, "", recoveryUnavailable(status, fmt.Errorf("failed to preserve corrupted data dir (%s → %s): %w", dataDir, backupDir, err))
 	}
 	backupDir = preservedDir
+	status.PreservedDataDir = backupDir
+	walDir := filepath.Join(backupDir, "wal")
+	if snapPath != "" {
+		relativeSnapshot, relErr := filepath.Rel(dataDir, snapPath)
+		if relErr != nil {
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, relErr)
+		}
+		snapPath = filepath.Join(backupDir, relativeSnapshot)
+		status.SnapshotPath = snapPath
+	}
 
 	// Recreate data directory and a fresh Badger store.
+	status.Phase = RecoveryPhaseOpen
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, backupDir, fmt.Errorf("auto-recover: failed to recreate data dir %s: %w", dataDir, err)
+		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("failed to recreate data dir %s: %w", dataDir, err))
 	}
 
 	badgerOpts.DataDir = dataDir
 	newStore, err := storage.NewBadgerEngineWithOptions(badgerOpts)
 	if err != nil {
-		return nil, backupDir, fmt.Errorf("auto-recover: failed to open fresh badger store: %w", err)
+		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("failed to open fresh badger store: %w", err))
 	}
 
-	// Restore recovered state into the fresh store.
-	if err := storage.BulkCreateNodesForRecovery(newStore, nodes); err != nil {
+	status.Phase = RecoveryPhaseReplay
+	replay, streamStatus, err := storage.RecoverIntoEngine(newStore, walDir, snapPath)
+	status.SnapshotStreaming = streamStatus.SnapshotStreaming
+	status.SnapshotNodes = streamStatus.SnapshotNodes
+	status.SnapshotEdges = streamStatus.SnapshotEdges
+	status.WALEntries = streamStatus.WALEntries
+	status.Applied = replay.Applied
+	status.Skipped = replay.Skipped
+	status.Failed = replay.Failed
+	if err != nil {
 		_ = newStore.Close()
-		return nil, backupDir, fmt.Errorf("auto-recover: failed to restore nodes into fresh store: %w", err)
-	}
-	if err := storage.BulkCreateEdgesForRecovery(newStore, edges); err != nil {
-		_ = newStore.Close()
-		return nil, backupDir, fmt.Errorf("auto-recover: failed to restore edges into fresh store: %w", err)
+		return nil, backupDir, finishRecoveryFailure(status, backupDir, err)
 	}
 
 	// Best-effort: surface replay health in logs (callers can decide how to report).
 	if replay.Failed > 0 {
 		fmt.Printf("⚠️  Auto-recover replay completed with errors: %s\n", replay.Summary())
 	}
+	status.Phase = RecoveryPhaseComplete
+	status.CompletedAt = time.Now().UTC()
+	if err := writeRecoveryManifest(backupDir, status); err != nil {
+		_ = newStore.Close()
+		return nil, backupDir, recoveryUnavailable(status, fmt.Errorf("write recovery manifest: %w", err))
+	}
 
 	return newStore, backupDir, nil
+}
+
+func recoveryUnavailable(status RecoveryStatus, err error) error {
+	status.Error = err.Error()
+	status.CompletedAt = time.Now().UTC()
+	return &StoreUnavailableError{Status: status, Cause: err}
+}
+
+func finishRecoveryFailure(status RecoveryStatus, backupDir string, err error) error {
+	unavailable := recoveryUnavailable(status, err)
+	failedStatus := unavailable.(*StoreUnavailableError).Status
+	if manifestErr := writeRecoveryManifest(backupDir, failedStatus); manifestErr != nil {
+		return &StoreUnavailableError{Status: status, Cause: fmt.Errorf("%w (write recovery manifest: %v)", err, manifestErr)}
+	}
+	if manifestErr := writeRecoveryManifest(status.SourceDataDir, failedStatus); manifestErr != nil {
+		return &StoreUnavailableError{Status: status, Cause: fmt.Errorf("%w (write unavailable marker: %v)", err, manifestErr)}
+	}
+	return unavailable
+}
+
+func readRecoveryManifest(dataDir string) (RecoveryStatus, error) {
+	var status RecoveryStatus
+	file, err := os.Open(filepath.Join(dataDir, "recovery-manifest.json"))
+	if err != nil {
+		return status, err
+	}
+	defer file.Close()
+	if err := json.NewDecoder(file).Decode(&status); err != nil {
+		return status, err
+	}
+	return status, nil
+}
+
+func writeRecoveryManifest(backupDir string, status RecoveryStatus) error {
+	if backupDir == "" {
+		return nil
+	}
+	path := filepath.Join(backupDir, "recovery-manifest.json")
+	tempPath := path + ".tmp"
+	file, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	removeTemp := true
+	defer func() {
+		_ = file.Close()
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(status); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	removeTemp = false
+	dir, err := os.Open(backupDir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 type renamePathFunc func(oldPath, newPath string) error

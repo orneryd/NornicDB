@@ -1,6 +1,9 @@
 package nornicdb
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -190,7 +193,9 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	snapshot, err := wal.CreateSnapshot(mem)
 	require.NoError(t, err)
 	snapshotPath := filepath.Join(snapshotDir, "snapshot-current.json")
-	require.NoError(t, storage.SaveSnapshot(snapshot, snapshotPath))
+	require.NoError(t, storage.SaveStreamingSnapshot(context.Background(), mem, snapshotPath, storage.SnapshotOptions{
+		Sequence: snapshot.Sequence,
+	}))
 
 	// Post-snapshot write must be replayed from WAL.
 	require.NoError(t, wal.AppendWithDatabase(storage.OpCreateNode, storage.WALNodeData{
@@ -223,6 +228,43 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID("test:seed-1"), edge.StartNode)
 	require.Equal(t, storage.NodeID("test:seed-2"), edge.EndNode)
+
+	manifestBytes, err := os.ReadFile(filepath.Join(backupDir, "recovery-manifest.json"))
+	require.NoError(t, err)
+	var manifest RecoveryStatus
+	require.NoError(t, json.Unmarshal(manifestBytes, &manifest))
+	require.Equal(t, RecoveryPhaseComplete, manifest.Phase)
+	require.True(t, manifest.SnapshotStreaming)
+	require.Equal(t, uint64(2), manifest.SnapshotNodes)
+	require.Equal(t, uint64(1), manifest.SnapshotEdges)
+	require.NotZero(t, manifest.CompletedAt)
+}
+
+func TestRecoverBadgerFromSnapshotAndWAL_ReplayFailureWritesUnavailableManifest(t *testing.T) {
+	dataDir := t.TempDir()
+	walDir := filepath.Join(dataDir, "wal")
+	require.NoError(t, os.MkdirAll(walDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(walDir, "wal.log"), []byte("not-json"), 0644))
+
+	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
+	require.Error(t, err)
+	require.Nil(t, recovered)
+	var unavailable *StoreUnavailableError
+	require.True(t, errors.As(err, &unavailable))
+	require.Equal(t, RecoveryPhaseReplay, unavailable.Status.Phase)
+
+	manifestBytes, readErr := os.ReadFile(filepath.Join(backupDir, "recovery-manifest.json"))
+	require.NoError(t, readErr)
+	var manifest RecoveryStatus
+	require.NoError(t, json.Unmarshal(manifestBytes, &manifest))
+	require.Equal(t, RecoveryPhaseReplay, manifest.Phase)
+	require.NotEmpty(t, manifest.Error)
+	require.NotZero(t, manifest.CompletedAt)
+
+	unavailableMarker, readErr := readRecoveryManifest(dataDir)
+	require.NoError(t, readErr)
+	require.Equal(t, RecoveryPhaseReplay, unavailableMarker.Phase)
+	require.Equal(t, backupDir, unavailableMarker.PreservedDataDir)
 }
 
 func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeNodeSetInChunks(t *testing.T) {
@@ -326,18 +368,23 @@ func TestRecoverBadgerFromSnapshotAndWAL_WALReplayError(t *testing.T) {
 	opts := storage.BadgerOptions{DataDir: filePath}
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(filePath, opts)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "wal replay failed")
+	var unavailable *StoreUnavailableError
+	require.True(t, errors.As(err, &unavailable))
+	require.Equal(t, RecoveryPhaseInspect, unavailable.Status.Phase)
+	require.Contains(t, err.Error(), "recovery failed")
 	require.Nil(t, recovered)
 	require.Empty(t, backupDir)
 }
 
 func TestRecoverBadgerFromSnapshotAndWAL_PreserveDirRenameFailure(t *testing.T) {
-	// Missing directory makes the preserve step (os.Rename) fail after replay stage.
+	// Missing directories are rejected before any preservation or rebuild work begins.
 	dataDir := filepath.Join(t.TempDir(), "missing-data-dir")
 	opts := storage.BadgerOptions{DataDir: dataDir}
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, opts)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to preserve corrupted data dir")
+	var unavailable *StoreUnavailableError
+	require.True(t, errors.As(err, &unavailable))
+	require.Equal(t, RecoveryPhaseInspect, unavailable.Status.Phase)
 	require.Nil(t, recovered)
 	require.Empty(t, backupDir)
 }

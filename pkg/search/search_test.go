@@ -522,6 +522,114 @@ func TestSearchCacheKeyAndMinSimilarityHelpers(t *testing.T) {
 	require.Equal(t, 0.42, optsA.GetMinSimilarity(0.1))
 	optsA.MinSimilarity = nil
 	require.Equal(t, 0.1, optsA.GetMinSimilarity(0.1))
+
+	strictOptions := DefaultSearchOptions()
+	baseKey := searchCacheKey("strict", []float32{1, 0}, strictOptions)
+	assertDifferentKey := func(name string, mutate func(*SearchOptions)) {
+		t.Helper()
+		changed := *strictOptions
+		mutate(&changed)
+		require.NotEqual(t, baseKey, searchCacheKey("strict", []float32{1, 0}, &changed), name)
+	}
+	assertDifferentKey("rrf k", func(opts *SearchOptions) { opts.RRFK = 42 })
+	assertDifferentKey("vector weight", func(opts *SearchOptions) { opts.VectorWeight = 0.5 })
+	assertDifferentKey("bm25 weight", func(opts *SearchOptions) { opts.BM25Weight = 1.5 })
+	assertDifferentKey("minimum rrf score", func(opts *SearchOptions) { opts.MinRRFScore = 0 })
+	assertDifferentKey("minimum similarity", func(opts *SearchOptions) {
+		value := 0.25
+		opts.MinSimilarity = &value
+	})
+	assertDifferentKey("fallback", func(opts *SearchOptions) {
+		value := false
+		opts.FallbackEnabled = &value
+	})
+}
+
+func TestFuseRRF_MinimumScoreControlsSingleBranchRank50(t *testing.T) {
+	service := NewService(newNamespacedEngine(t))
+	vectorResults := make([]indexResult, 50)
+	for index := range vectorResults {
+		vectorResults[index] = indexResult{ID: fmt.Sprintf("node-%02d", index+1), Score: 1}
+	}
+
+	defaultResults := service.fuseRRF(vectorResults, nil, DefaultSearchOptions())
+	require.Len(t, defaultResults, 40)
+
+	strictOptions := DefaultSearchOptions()
+	strictOptions.MinRRFScore = 0
+	strictResults := service.fuseRRF(vectorResults, nil, strictOptions)
+	require.Len(t, strictResults, 50)
+	require.Equal(t, "node-50", strictResults[49].ID)
+	require.Equal(t, 1.0/110.0, strictResults[49].RRFScore)
+}
+
+func TestResolveAdaptiveOverfetch_CandidateTargetIndependentOfLimit(t *testing.T) {
+	opts := DefaultSearchOptions()
+	opts.Limit = 10
+	opts.CandidateTarget = 50
+	opts.AdaptiveOverfetch = false
+
+	config := resolveAdaptiveOverfetch(opts)
+	require.Equal(t, 50, config.target)
+	require.Equal(t, 75, config.initialLimit)
+	require.False(t, config.adaptive)
+}
+
+func TestFuseRRF_UsesExplicitKAndBranchWeights(t *testing.T) {
+	service := NewService(newNamespacedEngine(t))
+	opts := DefaultSearchOptions()
+	opts.RRFK = 10
+	opts.VectorWeight = 2
+	opts.BM25Weight = 3
+	opts.MinRRFScore = 0
+
+	results := service.fuseRRF(
+		[]indexResult{{ID: "both", Score: 0.9}, {ID: "vector-only", Score: 0.8}},
+		[]indexResult{{ID: "both", Score: 0.7}, {ID: "bm25-only", Score: 0.6}},
+		opts,
+	)
+
+	require.Len(t, results, 3)
+	require.Equal(t, "both", results[0].ID)
+	require.InDelta(t, 2.0/11.0+3.0/11.0, results[0].RRFScore, 1e-12)
+	require.Equal(t, "bm25-only", results[1].ID)
+	require.InDelta(t, 3.0/12.0, results[1].RRFScore, 1e-12)
+	require.Equal(t, "vector-only", results[2].ID)
+	require.InDelta(t, 2.0/12.0, results[2].RRFScore, 1e-12)
+}
+
+func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewServiceWithDimensions(engine, 2)
+	node := &storage.Node{
+		ID:     "vector-candidate",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content":   "strict retrieval",
+			"embedding": []float32{1, 0},
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.IndexNode(node))
+
+	fallbackDisabled := false
+	strictOptions := DefaultSearchOptions()
+	strictOptions.MinRRFScore = 1
+	strictOptions.FallbackEnabled = &fallbackDisabled
+	strictResponse, err := service.Search(context.Background(), "strict retrieval", []float32{1, 0}, strictOptions)
+	require.NoError(t, err)
+	require.Empty(t, strictResponse.Results)
+	require.Equal(t, "rrf_hybrid", strictResponse.SearchMethod)
+	require.False(t, strictResponse.FallbackTriggered)
+
+	legacyOptions := DefaultSearchOptions()
+	legacyOptions.MinRRFScore = 1
+	legacyResponse, err := service.Search(context.Background(), "strict retrieval", []float32{1, 0}, legacyOptions)
+	require.NoError(t, err)
+	require.Len(t, legacyResponse.Results, 1)
+	require.Equal(t, "vector-candidate", legacyResponse.Results[0].ID)
+	require.True(t, legacyResponse.FallbackTriggered)
 }
 
 func TestSearchResultCacheCanBeDisabled(t *testing.T) {

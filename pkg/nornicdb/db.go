@@ -671,6 +671,19 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			}
 		}
 
+		if dataInfo, statErr := os.Stat(dataDir); statErr == nil && dataInfo.IsDir() {
+			if recoveryStatus, statusErr := readRecoveryManifest(dataDir); statusErr == nil && recoveryStatus.Phase != RecoveryPhaseComplete {
+				cause := errors.New(recoveryStatus.Error)
+				if recoveryStatus.Error == "" {
+					cause = errors.New("previous recovery did not complete")
+				}
+				return nil, &StoreUnavailableError{Status: recoveryStatus, Cause: cause}
+			} else if statusErr != nil && !os.IsNotExist(statusErr) {
+				status := RecoveryStatus{Phase: RecoveryPhaseInspect, SourceDataDir: dataDir, Error: statusErr.Error()}
+				return nil, &StoreUnavailableError{Status: status, Cause: fmt.Errorf("read recovery status: %w", statusErr)}
+			}
+		}
+
 		badgerEngine, err := storage.NewBadgerEngineWithOptions(badgerOpts)
 		if err != nil {
 			// Check for encryption-related errors and provide helpful messages
@@ -712,7 +725,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				log.Printf("⚠️  Persistent store open failed; attempting auto-recovery from snapshots + WAL (dataDir=%s)", dataDir)
 				recovered, backupDir, recErr := recoverBadgerFromSnapshotAndWAL(dataDir, badgerOpts)
 				if recErr != nil {
-					return nil, fmt.Errorf("failed to open persistent storage: %w (auto-recovery failed: %v)", err, recErr)
+					return nil, fmt.Errorf("failed to open persistent storage: %v (auto-recovery failed: %w)", err, recErr)
 				}
 				log.Printf("✅ Auto-recovery succeeded; preserved old data dir at %s", backupDir)
 				badgerEngine = recovered

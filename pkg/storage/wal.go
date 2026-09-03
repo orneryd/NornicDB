@@ -1540,12 +1540,21 @@ func ReadWALEntries(walPath string) ([]WALEntry, error) {
 // thread a subsystem=wal_recovery logger so partial-write and corrupted-
 // embedding diagnostics land in the structured log stream.
 func ReadWALEntriesWithLogger(walPath string, logger *slog.Logger) ([]WALEntry, error) {
+	entries := make([]WALEntry, 0)
+	err := visitWALEntriesWithLogger(walPath, logger, func(entry WALEntry) error {
+		entries = append(entries, entry)
+		return nil
+	})
+	return entries, err
+}
+
+func visitWALEntriesWithLogger(walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
 	file, err := os.Open(walPath)
 	if err != nil {
-		return nil, fmt.Errorf("wal: failed to open: %w", err)
+		return fmt.Errorf("wal: failed to open: %w", err)
 	}
 	defer file.Close()
 
@@ -1553,25 +1562,25 @@ func ReadWALEntriesWithLogger(walPath string, logger *slog.Logger) ([]WALEntry, 
 	header := make([]byte, 4)
 	n, err := file.Read(header)
 	if err == io.EOF || n == 0 {
-		return []WALEntry{}, nil // Empty file
+		return nil // Empty file
 	}
 	if err != nil {
-		return nil, fmt.Errorf("wal: failed to read header: %w", err)
+		return fmt.Errorf("wal: failed to read header: %w", err)
 	}
 
 	// Reset to beginning
 	if _, err := file.Seek(0, 0); err != nil {
-		return nil, fmt.Errorf("wal: failed to seek: %w", err)
+		return fmt.Errorf("wal: failed to seek: %w", err)
 	}
 
 	// Detect format: new format starts with magic "WALE", legacy starts with '{'
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return readAtomicWALEntries(file, logger)
+		return visitAtomicWALEntries(file, logger, visit)
 	}
 
 	// Legacy JSON format (for backward compatibility)
-	return readLegacyWALEntries(file, logger)
+	return visitLegacyWALEntries(file, logger, visit)
 }
 
 // readAtomicWALEntries reads entries in the new atomic format.
@@ -1582,12 +1591,21 @@ func ReadWALEntriesWithLogger(walPath string, logger *slog.Logger) ([]WALEntry, 
 // pass nil get an internal discard logger. No allocations in the steady
 // path beyond what the slog handler emits per record.
 func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
+	entries := make([]WALEntry, 0)
+	err := visitAtomicWALEntries(file, logger, func(entry WALEntry) error {
+		entries = append(entries, entry)
+		return nil
+	})
+	return entries, err
+}
+
+func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
-	var entries []WALEntry
 	var skippedEmbeddings int
 	var partialWriteDetected bool
+	var lastGoodSeq uint64
 
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9) // magic(4) + version(1) + length(4)
@@ -1604,7 +1622,7 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("wal: failed to read entry header: %w", err)
+			return fmt.Errorf("wal: failed to read entry header: %w", err)
 		}
 		if n != 9 {
 			partialWriteDetected = true
@@ -1614,20 +1632,20 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 		// Verify magic
 		magic := binary.LittleEndian.Uint32(headerBuf[0:4])
 		if magic != walMagic {
-			return nil, fmt.Errorf("%w: invalid magic at offset, expected WALE", ErrWALCorrupted)
+			return fmt.Errorf("%w: invalid magic at offset, expected WALE", ErrWALCorrupted)
 		}
 
 		// Read version (for future compatibility)
 		version := headerBuf[4]
 		if version > walFormatVersion {
-			return nil, fmt.Errorf("%w: unsupported WAL version %d (max supported: %d)",
+			return fmt.Errorf("%w: unsupported WAL version %d (max supported: %d)",
 				ErrWALCorrupted, version, walFormatVersion)
 		}
 
 		// Read payload length
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 		if payloadLen > walMaxEntrySize {
-			return nil, fmt.Errorf("%w: entry size %d exceeds maximum %d",
+			return fmt.Errorf("%w: entry size %d exceeds maximum %d",
 				ErrWALCorrupted, payloadLen, walMaxEntrySize)
 		}
 
@@ -1640,7 +1658,7 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("wal: failed to read payload: %w", err)
+			return fmt.Errorf("wal: failed to read payload: %w", err)
 		}
 
 		// Read CRC
@@ -1652,7 +1670,7 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("wal: failed to read CRC: %w", err)
+			return fmt.Errorf("wal: failed to read CRC: %w", err)
 		}
 
 		// Verify CRC
@@ -1667,8 +1685,8 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 					continue
 				}
 			}
-			return nil, fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
-				ErrWALChecksumFailed, storedCRC, computedCRC, getLastSeq(entries))
+			return fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
+				ErrWALChecksumFailed, storedCRC, computedCRC, lastGoodSeq)
 		}
 
 		// Version 2+: Read and verify trailer canary
@@ -1681,7 +1699,7 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 				break
 			}
 			if err != nil {
-				return nil, fmt.Errorf("wal: failed to read trailer: %w", err)
+				return fmt.Errorf("wal: failed to read trailer: %w", err)
 			}
 
 			// Verify trailer canary
@@ -1706,7 +1724,7 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 					break
 				}
 				if err != nil {
-					return nil, fmt.Errorf("wal: failed to read padding: %w", err)
+					return fmt.Errorf("wal: failed to read padding: %w", err)
 				}
 			}
 		}
@@ -1714,8 +1732,8 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 		// Decode entry
 		var entry WALEntry
 		if err := json.Unmarshal(payload, &entry); err != nil {
-			return nil, fmt.Errorf("%w: failed to decode entry after seq %d: %v",
-				ErrWALCorrupted, getLastSeq(entries), err)
+			return fmt.Errorf("%w: failed to decode entry after seq %d: %v",
+				ErrWALCorrupted, lastGoodSeq, err)
 		}
 
 		// Also verify the inner data checksum
@@ -1725,11 +1743,14 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 				skippedEmbeddings++
 				continue
 			}
-			return nil, fmt.Errorf("%w: data checksum mismatch at seq %d",
+			return fmt.Errorf("%w: data checksum mismatch at seq %d",
 				ErrWALChecksumFailed, entry.Sequence)
 		}
 
-		entries = append(entries, entry)
+		if err := visit(entry); err != nil {
+			return err
+		}
+		lastGoodSeq = entry.Sequence
 	}
 
 	if partialWriteDetected {
@@ -1739,17 +1760,26 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "atomic"))
 	}
 
-	return entries, nil
+	return nil
 }
 
 // readLegacyWALEntries reads entries in the legacy JSON-per-line format.
 // This is for backward compatibility with existing WAL files.
 func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error) {
+	entries := make([]WALEntry, 0)
+	err := visitLegacyWALEntries(file, logger, func(entry WALEntry) error {
+		entries = append(entries, entry)
+		return nil
+	})
+	return entries, err
+}
+
+func visitLegacyWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
-	var entries []WALEntry
 	var skippedEmbeddings int
+	var lastGoodSeq uint64
 	decoder := json.NewDecoder(file)
 
 	for {
@@ -1760,8 +1790,8 @@ func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 			}
 			// JSON decode failed - entry is malformed
 			// This could be a partial write from a crash
-			return nil, fmt.Errorf("%w: JSON decode failed at entry after seq %d: %v",
-				ErrWALCorrupted, getLastSeq(entries), err)
+			return fmt.Errorf("%w: JSON decode failed at entry after seq %d: %v",
+				ErrWALCorrupted, lastGoodSeq, err)
 		}
 
 		// Verify checksum
@@ -1774,18 +1804,21 @@ func readLegacyWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 				continue
 			}
 			// Critical operation corrupted - fail recovery
-			return nil, fmt.Errorf("%w: checksum mismatch at seq %d, op %s (expected %d, got %d)",
+			return fmt.Errorf("%w: checksum mismatch at seq %d, op %s (expected %d, got %d)",
 				ErrWALCorrupted, entry.Sequence, entry.Operation, expected, entry.Checksum)
 		}
 
-		entries = append(entries, entry)
+		if err := visit(entry); err != nil {
+			return err
+		}
+		lastGoodSeq = entry.Sequence
 	}
 
 	if skippedEmbeddings > 0 {
 		logWALRecoveryEvent(logger, localization.StorageWALCorruptedEmbeddingsSkippedEvent(skippedEmbeddings, "legacy"))
 	}
 
-	return entries, nil
+	return nil
 }
 
 // readWALEntriesForTruncation does a best-effort read of WAL entries for truncation.

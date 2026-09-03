@@ -237,6 +237,46 @@ func ReadWALEntriesAfterFromDir(walDir string, afterSeq uint64) ([]WALEntry, err
 	return filtered, nil
 }
 
+// VisitWALEntriesAfterFromDir visits WAL entries after the given sequence in
+// segment order without retaining the complete WAL in memory.
+func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALEntry) error) error {
+	manifest, err := loadWALManifest(walDir)
+	if err != nil {
+		return err
+	}
+	if len(manifest.Segments) == 0 {
+		if scanned, scanErr := scanSegmentsFromDir(walDir); scanErr == nil && len(scanned) > 0 {
+			manifest.Segments = scanned
+		}
+	}
+
+	visitFile := func(path string) error {
+		return visitWALEntriesWithLogger(path, discardWALSlog(), func(entry WALEntry) error {
+			if entry.Sequence <= afterSeq {
+				return nil
+			}
+			return visit(entry)
+		})
+	}
+	for _, segment := range manifest.Segments {
+		segmentPath, err := resolveWALSegmentPath(walDir, segment.Path)
+		if err != nil {
+			return err
+		}
+		if err := visitFile(segmentPath); err != nil {
+			return err
+		}
+	}
+
+	activePath := walActivePath(walDir)
+	if _, err := os.Stat(activePath); err == nil {
+		return visitFile(activePath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // ReadWALEntriesRangeFromDir reads entries in [fromSeq, toSeq] (inclusive).
 func ReadWALEntriesRangeFromDir(walDir string, fromSeq, toSeq uint64) ([]WALEntry, error) {
 	all, err := ReadWALEntriesFromDir(walDir)

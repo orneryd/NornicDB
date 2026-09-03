@@ -76,6 +76,52 @@ func TestCallDbRetrieveAndRerank(t *testing.T) {
 	require.GreaterOrEqual(t, len(rretrieveRes.Rows), 1)
 }
 
+func TestCallDbRetrieveAppliesPropertyFilters(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+
+	for _, node := range []*storage.Node{
+		{ID: "active-source", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(3), "artifact": "source"}},
+		{ID: "active-summary-array", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(4), "artifact": []string{"derived", "summary"}}},
+		{ID: "archived", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "archived", "generation": int64(3), "artifact": "source"}},
+		{ID: "wrong-generation", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(5), "artifact": "source"}},
+		{ID: "wrong-artifact", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(3), "artifact": "derived"}},
+	} {
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+	}
+
+	service := search.NewService(store)
+	require.NoError(t, service.BuildIndexes(ctx))
+	exec.SetSearchService(service)
+
+	for _, filterKey := range []string{"filters", "propertyFilters", "property_filters"} {
+		t.Run(filterKey, func(t *testing.T) {
+			result, err := exec.Execute(ctx, "CALL db.retrieve($request)", map[string]interface{}{
+				"request": map[string]interface{}{
+					"query": "policy document",
+					"limit": int64(10),
+					filterKey: map[string]interface{}{
+						"lifecycle":  "active",
+						"generation": []interface{}{int64(3), int64(4)},
+						"artifact":   []interface{}{"source", "summary"},
+					},
+				},
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 2)
+			ids := make([]string, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				node, ok := row[0].(*storage.Node)
+				require.True(t, ok)
+				ids = append(ids, string(node.ID))
+			}
+			require.ElementsMatch(t, []string{"active-source", "active-summary-array"}, ids)
+		})
+	}
+}
+
 func TestApplyAdaptiveCandidateOptions(t *testing.T) {
 	opts := search.DefaultSearchOptions()
 	applyAdaptiveCandidateOptions(opts, map[string]interface{}{
@@ -93,6 +139,88 @@ func TestApplyAdaptiveCandidateOptions(t *testing.T) {
 	require.Equal(t, 8.0, opts.MaxOverfetchRatio)
 	require.Equal(t, 1.5, opts.OverfetchGrowthFactor)
 	require.Equal(t, 1200, opts.MaxCandidateLimit)
+}
+
+func TestApplyRetrievalPolicyOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		req  map[string]interface{}
+	}{
+		{
+			name: "camel case",
+			req: map[string]interface{}{
+				"rrfK": 42.0, "vectorWeight": 0.25, "bm25Weight": 1.75,
+				"minRRFScore": 0.0, "fallbackEnabled": false,
+				"candidateTarget": int64(50), "adaptiveOverfetch": false,
+				"propertyFilters": map[string]interface{}{
+					"generation": []interface{}{int64(3), int64(4)}, "lifecycle": "active",
+				},
+			},
+		},
+		{
+			name: "snake case",
+			req: map[string]interface{}{
+				"rrf_k": 42.0, "vector_weight": 0.25, "bm25_weight": 1.75,
+				"min_rrf_score": 0.0, "fallback_enabled": false,
+				"candidate_target": int64(50), "adaptive_overfetch": false,
+				"property_filters": map[string]interface{}{
+					"generation": []interface{}{int64(3), int64(4)}, "lifecycle": "active",
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := search.DefaultSearchOptions()
+			applyRetrievalPolicyOptions(opts, test.req)
+			require.Equal(t, 42.0, opts.RRFK)
+			require.Equal(t, 0.25, opts.VectorWeight)
+			require.Equal(t, 1.75, opts.BM25Weight)
+			require.Equal(t, 0.0, opts.MinRRFScore)
+			require.NotNil(t, opts.FallbackEnabled)
+			require.False(t, *opts.FallbackEnabled)
+			require.Equal(t, 50, opts.CandidateTarget)
+			require.False(t, opts.AdaptiveOverfetch)
+			require.Equal(t, map[string][]string{
+				"generation": {"3", "4"}, "lifecycle": {"active"},
+			}, opts.Filters)
+		})
+	}
+}
+
+func TestApplyRetrievalPolicyOptionsRejectsInvalidBoundaries(t *testing.T) {
+	opts := search.DefaultSearchOptions()
+	applyRetrievalPolicyOptions(opts, map[string]interface{}{
+		"rrfK": -1, "vectorWeight": 0, "bm25Weight": -2,
+		"minRRFScore": -0.1, "fallbackEnabled": "not-a-bool",
+		"candidateTarget": 0, "adaptiveOverfetch": "not-a-bool",
+		"filters": "not-a-map",
+	})
+
+	require.Equal(t, 60.0, opts.RRFK)
+	require.Equal(t, 1.0, opts.VectorWeight)
+	require.Equal(t, 1.0, opts.BM25Weight)
+	require.Equal(t, 0.01, opts.MinRRFScore)
+	require.Nil(t, opts.FallbackEnabled)
+	require.Zero(t, opts.CandidateTarget)
+	require.True(t, opts.AdaptiveOverfetch)
+	require.Nil(t, opts.Filters)
+}
+
+func TestParseRetrievalFiltersEdgeCases(t *testing.T) {
+	require.Nil(t, parseRetrievalFilters(nil))
+	require.Nil(t, parseRetrievalFilters("not-a-map"))
+	require.Nil(t, parseRetrievalFilters(map[string]interface{}{}))
+	require.Nil(t, parseRetrievalFilters(map[string]interface{}{
+		"": nil, "empty": []interface{}{nil},
+	}))
+
+	require.Equal(t, map[string][]string{
+		"bool": {"true"}, "float": {"1.5"}, "mixed": {"3", "active"},
+	}, parseRetrievalFilters(map[string]interface{}{
+		"bool": true, "float": 1.5, "mixed": []interface{}{int64(3), nil, "active"},
+	}))
 }
 
 func TestCallDbInfer(t *testing.T) {

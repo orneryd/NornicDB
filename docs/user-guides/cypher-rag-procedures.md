@@ -17,6 +17,7 @@ These procedures are read-only and designed to map directly to internal contract
 
 - `db.retrieve`
   - Uses existing hybrid search behavior.
+  - Accepts explicit candidate-depth, RRF, property-filter, and fallback policy controls.
   - Reranking is optional and follows request/config defaults.
 
 - `db.rretrieve`
@@ -50,6 +51,35 @@ CALL db.infer({
 }) YIELD text
 RETURN node, score, text
 ```
+
+For deterministic retrieval policy, set the candidate depth independently of
+the final result limit and disable score-based or strategy fallback explicitly:
+
+```cypher
+CALL db.retrieve({
+  query: 'zero-trust architecture',
+  limit: 10,
+  candidateTarget: 50,
+  adaptiveOverfetch: false,
+  rrfK: 60,
+  vectorWeight: 1.0,
+  bm25Weight: 1.0,
+  minRRFScore: 0.0,
+  fallbackEnabled: false,
+  filters: {
+    lifecycle: 'active',
+    generation: [3, 4],
+    artifact: ['source', 'summary']
+  }
+})
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+RETURN node, score, rrf_score
+```
+
+Filter values use OR semantics within one property and AND semantics across
+properties. Scalar and array-valued node properties are supported. Every policy
+key also accepts snake_case, for example `candidate_target`, `rrf_k`,
+`min_rrf_score`, `property_filters`, and `fallback_enabled`.
 
 ```cypher
 CALL db.retrieve({query: 'zero-trust architecture', limit: 20}) YIELD node, score

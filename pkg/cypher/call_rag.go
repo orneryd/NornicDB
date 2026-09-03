@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -188,7 +189,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if limit, ok := toInt(req["limit"]); ok && limit > 0 {
 		opts.Limit = limit
 	}
-	applyAdaptiveCandidateOptions(opts, req)
+	applyRetrievalPolicyOptions(opts, req)
 	if types := toStringSlice(firstPresent(req, "types", "labels")); len(types) > 0 {
 		opts.Types = types
 	}
@@ -254,6 +255,62 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	return result, nil
+}
+
+func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]interface{}) {
+	applyAdaptiveCandidateOptions(opts, req)
+	if value, ok := ragToFloat64(firstPresent(req, "rrfK", "rrf_k")); ok && value > 0 {
+		opts.RRFK = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "vectorWeight", "vector_weight")); ok && value > 0 {
+		opts.VectorWeight = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "bm25Weight", "bm25_weight")); ok && value > 0 {
+		opts.BM25Weight = value
+	}
+	if value, ok := ragToFloat64(firstPresent(req, "minRRFScore", "min_rrf_score")); ok && value >= 0 {
+		opts.MinRRFScore = value
+	}
+	if value, ok := toBool(firstPresent(req, "fallbackEnabled", "fallback_enabled")); ok {
+		opts.FallbackEnabled = &value
+	}
+	opts.Filters = parseRetrievalFilters(firstPresent(req, "filters", "propertyFilters", "property_filters"))
+}
+
+func parseRetrievalFilters(raw interface{}) map[string][]string {
+	filters, ok := raw.(map[string]interface{})
+	if !ok || len(filters) == 0 {
+		return nil
+	}
+	parsed := make(map[string][]string, len(filters))
+	for property, rawValues := range filters {
+		if strings.TrimSpace(property) == "" {
+			continue
+		}
+		var values []string
+		switch typed := rawValues.(type) {
+		case []string:
+			values = typed
+		case []interface{}:
+			values = make([]string, 0, len(typed))
+			for _, value := range typed {
+				if value != nil {
+					values = append(values, fmt.Sprint(value))
+				}
+			}
+		default:
+			if rawValues != nil {
+				values = []string{fmt.Sprint(rawValues)}
+			}
+		}
+		if len(values) > 0 {
+			parsed[property] = values
+		}
+	}
+	if len(parsed) == 0 {
+		return nil
+	}
+	return parsed
 }
 
 func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]interface{}) {

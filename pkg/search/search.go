@@ -289,6 +289,9 @@ type SearchOptions struct {
 	VectorWeight float64 // Weight for vector results (default: 1.0)
 	BM25Weight   float64 // Weight for BM25 results (default: 1.0)
 	MinRRFScore  float64 // Minimum RRF score threshold (default: 0.01)
+	// FallbackEnabled controls vector/full-text fallback after an empty hybrid result.
+	// nil preserves the legacy default of enabled.
+	FallbackEnabled *bool
 
 	// Adaptive candidate retrieval. CandidateTarget is the unique-node depth
 	// requested from each retrieval branch; 0 derives max(Limit*2, 20).
@@ -416,6 +419,12 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 		strconv.FormatBool(opts.MMREnabled),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
+		strconv.FormatFloat(opts.RRFK, 'g', -1, 64),
+		strconv.FormatFloat(opts.VectorWeight, 'g', -1, 64),
+		strconv.FormatFloat(opts.BM25Weight, 'g', -1, 64),
+		strconv.FormatFloat(opts.MinRRFScore, 'g', -1, 64),
+		strconv.FormatFloat(opts.GetMinSimilarity(0), 'g', -1, 64),
+		strconv.FormatBool(opts.fallbackEnabled()),
 		strconv.FormatBool(opts.AdaptiveOverfetch),
 		strconv.Itoa(opts.CandidateTarget),
 		strconv.FormatFloat(opts.InitialOverfetchRatio, 'g', -1, 64),
@@ -4053,6 +4062,16 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
 	}
+	if !opts.fallbackEnabled() {
+		if response == nil {
+			response = &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid"}
+		}
+		if err == nil && s.resultCache != nil {
+			s.resultCache.Put(cacheKey, response)
+		}
+		s.maybeLogSearchTiming(query, response, time.Since(start), false)
+		return response, err
+	}
 
 	// Fallback to vector-only
 	response, err = s.vectorSearchOnly(ctx, embedding, opts)
@@ -4074,6 +4093,10 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	}
 	s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 	return resp, err
+}
+
+func (o *SearchOptions) fallbackEnabled() bool {
+	return o.FallbackEnabled == nil || *o.FallbackEnabled
 }
 
 // rrfHybridSearch performs Reciprocal Rank Fusion combining vector and BM25 results.

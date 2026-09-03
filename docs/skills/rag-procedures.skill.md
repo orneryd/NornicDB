@@ -9,12 +9,12 @@ NornicDB exposes the entire retrieval-augmented-generation pipeline as Cypher pr
 
 ## The four verbs
 
-| Procedure | What it does | Stages |
-|---|---|---|
-| `db.retrieve(req)` | Hybrid retrieval | vector + BM25, fused with RRF |
-| `db.rretrieve(req)` | Retrieve + rerank when reranker is configured | adds cross-encoder rerank if `NORNICDB_SEARCH_RERANK_ENABLED=true` |
-| `db.rerank(req)` | Standalone rerank over user-supplied candidates | cross-encoder only |
-| `db.infer(req)` | LLM generation | calls the configured inference manager |
+| Procedure           | What it does                                    | Stages                                                             |
+| ------------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| `db.retrieve(req)`  | Hybrid retrieval                                | vector + BM25, fused with RRF                                      |
+| `db.rretrieve(req)` | Retrieve + rerank when reranker is configured   | adds cross-encoder rerank if `NORNICDB_SEARCH_RERANK_ENABLED=true` |
+| `db.rerank(req)`    | Standalone rerank over user-supplied candidates | cross-encoder only                                                 |
+| `db.infer(req)`     | LLM generation                                  | calls the configured inference manager                             |
 
 All four take a single map argument. Most fields support both camelCase and snake_case; pick one and stick with it.
 
@@ -26,6 +26,13 @@ CALL db.retrieve({
   limit:          10,                          -- default 50
   minSimilarity:  0.5,                         -- vector floor
   types:          ['Document', 'Memory'],      -- label filter; alias: labels
+  filters:        {lifecycle: 'active'},       -- property filters
+  candidateTarget: 50,                         -- branch depth, independent of limit
+  rrfK:           60,
+  vectorWeight:   1.0,
+  bm25Weight:     1.0,
+  minRRFScore:    0.0,
+  fallbackEnabled: false,
   rerankEnabled:  false,                       -- explicit on/off
   rerankTopK:     100,
   rerankMinScore: 0.0,
@@ -37,8 +44,13 @@ ORDER BY score DESC
 ```
 
 Behavior:
+
 - If `embedding` is omitted and the embedder is configured, NornicDB embeds `query` server-side.
-- Adaptive RRF weights are picked from `query` length: 1–2 words → BM25-favored (V=0.5, B=1.5); 3–5 → balanced; 6+ → vector-favored (V=1.5, B=0.5).
+- Vector and BM25 results use equal weights by default. Set `vectorWeight` and `bm25Weight` for an explicit policy.
+- `candidateTarget` controls each retrieval branch independently of the final `limit`; when omitted it is derived as `max(limit * 2, 20)` up to the configured maximum.
+- `filters` (aliases: `propertyFilters`, `property_filters`) uses OR within each property and AND across properties. Scalar and array-valued node properties are supported.
+- `minRRFScore: 0` retains single-branch results at deeper ranks; the default is `0.01`.
+- `fallbackEnabled: false` returns the empty hybrid result instead of switching to vector-only and then BM25-only retrieval.
 - `search_method` reports the winning path: `rrf_hybrid`, `rrf_hybrid+rerank`, `vector_only`, or `bm25_only`.
 - `fallback_triggered: true` means one strategy returned nothing and the engine fell back.
 
@@ -111,6 +123,7 @@ RETURN text, finishReason
 ```
 
 Notes:
+
 - If `text` is valid JSON, `structured` is its parsed form. Otherwise `structured` is null.
 - `usage` is `{ prompt_tokens, completion_tokens, total_tokens }` when the provider returns it.
 - `db.infer` requires an inference manager. If none is configured the procedure errors with `inference manager is not configured`.
@@ -152,15 +165,22 @@ This shortcut is not available on `db.rerank` or `db.infer`, both of which requi
 
 ## Tuning knobs
 
-| Knob | Where | Effect |
-|---|---|---|
-| `limit` | `db.retrieve` request | Number of results returned |
-| `minSimilarity` | `db.retrieve` request | Drops vector results below this cosine score |
-| `types` / `labels` | `db.retrieve` request | Restricts to specific labels |
-| `rerankTopK` | `db.retrieve` / `db.rretrieve` / `db.rerank` | Pool size sent to the cross-encoder |
-| `rerankMinScore` | same | Floor on `final_score` after rerank |
-| `temperature` / `top_p` / `top_k` | `db.infer` | Sampling controls; lower = more deterministic |
-| `max_tokens` | `db.infer` | Length cap |
+| Knob                              | Where                                        | Effect                                                                          |
+| --------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------- |
+| `limit`                           | `db.retrieve` request                        | Number of results returned                                                      |
+| `minSimilarity`                   | `db.retrieve` request                        | Drops vector results below this cosine score                                    |
+| `types` / `labels`                | `db.retrieve` request                        | Restricts to specific labels                                                    |
+| `filters` / `propertyFilters`     | `db.retrieve` request                        | Restricts by node property values                                               |
+| `candidateTarget`                 | `db.retrieve` request                        | Candidate depth requested from each retrieval branch                            |
+| `adaptiveOverfetch`               | `db.retrieve` request                        | Enables adaptive widening toward the candidate target                           |
+| `rrfK`                            | `db.retrieve` request                        | Reciprocal-rank fusion constant                                                 |
+| `vectorWeight` / `bm25Weight`     | `db.retrieve` request                        | Relative contribution of each retrieval branch                                  |
+| `minRRFScore`                     | `db.retrieve` request                        | Drops fused results below this score; use `0` to retain deep single-branch hits |
+| `fallbackEnabled`                 | `db.retrieve` request                        | Allows or forbids fallback after empty hybrid retrieval                         |
+| `rerankTopK`                      | `db.retrieve` / `db.rretrieve` / `db.rerank` | Pool size sent to the cross-encoder                                             |
+| `rerankMinScore`                  | same                                         | Floor on `final_score` after rerank                                             |
+| `temperature` / `top_p` / `top_k` | `db.infer`                                   | Sampling controls; lower = more deterministic                                   |
+| `max_tokens`                      | `db.infer`                                   | Length cap                                                                      |
 
 ## Failure modes worth knowing
 
@@ -192,6 +212,7 @@ database's search service; API keys are redacted from settings responses.
 Inference (`db.infer`) provider configuration is part of NornicDB's heimdall/inference subsystem and is configured separately from search.
 
 ## See also
+
 - `nornicdb-vector-search` — the vector and full-text indexes the retrieval procedures sit on top of.
 - `nornicdb-managed-embeddings` — generating the embeddings consumed by retrieval.
 - `nornicdb-knowledge-policies` — suppression and decay scoring that filter the candidates retrieval sees.
