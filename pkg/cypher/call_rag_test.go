@@ -2,12 +2,14 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -22,6 +24,18 @@ func (s *stubVectorEmbedder) Embed(ctx context.Context, text string) ([]float32,
 }
 
 func (s *stubVectorEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return chunkTestText(text, maxTokens, overlap)
+}
+
+type failingVectorEmbedder struct {
+	err error
+}
+
+func (s *failingVectorEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return nil, s.err
+}
+
+func (s *failingVectorEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
 	return chunkTestText(text, maxTokens, overlap)
 }
 
@@ -124,14 +138,14 @@ func TestCallDbRetrieveAppliesPropertyFilters(t *testing.T) {
 
 func TestApplyAdaptiveCandidateOptions(t *testing.T) {
 	opts := search.DefaultSearchOptions()
-	require.NoError(t, applyAdaptiveCandidateOptions(opts, map[string]interface{}{
+	applyAdaptiveCandidateOptions(opts, map[string]interface{}{
 		"adaptive_overfetch":      false,
 		"candidateTarget":         int64(75),
 		"initial_overfetch_ratio": 2.0,
 		"maxOverfetchRatio":       8.0,
 		"overfetch_growth_factor": 1.5,
 		"maxCandidateLimit":       int64(1200),
-	}, false))
+	})
 
 	require.False(t, opts.AdaptiveOverfetch)
 	require.Equal(t, 75, opts.CandidateTarget)
@@ -210,43 +224,40 @@ func TestApplyRetrievalPolicyOptionsRejectsInvalidBoundaries(t *testing.T) {
 	require.Nil(t, opts.Filters)
 }
 
-func TestApplyRetrievalPolicyOptionsStrictPolicy(t *testing.T) {
+func TestApplyRetrievalPolicyOptionsFailClosed(t *testing.T) {
 	opts := search.DefaultSearchOptions()
 	opts.Limit = 10
-	strict, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
-		"strictPolicy": true,
+	failClosed, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
+		"failClosed": true,
 		"filters": map[string]interface{}{
 			"lifecycle": "active",
 		},
 	})
 	require.NoError(t, err)
-	require.True(t, strict)
-	require.False(t, opts.AdaptiveOverfetch)
-	require.Equal(t, 1.0, opts.InitialOverfetchRatio)
-	require.Equal(t, 50, opts.CandidateTarget)
+	require.True(t, failClosed)
+	require.True(t, opts.AdaptiveOverfetch)
+	require.Equal(t, 1.5, opts.InitialOverfetchRatio)
+	require.Zero(t, opts.CandidateTarget)
 	require.Equal(t, 60.0, opts.RRFK)
-	require.Equal(t, 1.0, opts.VectorWeight)
-	require.Equal(t, 1.0, opts.BM25Weight)
-	require.Equal(t, 0.0, opts.MinRRFScore)
-	require.NotNil(t, opts.MinSimilarity)
-	require.Equal(t, 0.0, *opts.MinSimilarity)
+	require.Equal(t, 0.01, opts.MinRRFScore)
+	require.Nil(t, opts.MinSimilarity)
 	require.NotNil(t, opts.FallbackEnabled)
 	require.False(t, *opts.FallbackEnabled)
 	require.Equal(t, map[string][]string{"lifecycle": {"active"}}, opts.Filters)
 }
 
-func TestApplyRetrievalPolicyOptionsStrictPolicyRejectsInvalidValues(t *testing.T) {
+func TestApplyRetrievalPolicyOptionsFailClosedRejectsNonFiniteValues(t *testing.T) {
 	opts := search.DefaultSearchOptions()
 	_, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
-		"strict_policy": true,
-		"rrfK":          0,
+		"fail_closed": true,
+		"rrfK":        math.NaN(),
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "strictPolicy")
+	require.Contains(t, err.Error(), "failClosed")
 	require.Contains(t, err.Error(), "rrfK")
 }
 
-func TestCallDbRetrieveStrictPolicyRequiresEmbedding(t *testing.T) {
+func TestCallDbRetrieveFailClosedRequiresEmbedding(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
@@ -254,9 +265,48 @@ func TestCallDbRetrieveStrictPolicyRequiresEmbedding(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
-	_, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', strictPolicy: true})", nil)
+	_, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', failClosed: true})", nil)
+	require.Error(t, err)
+	var unavailable *localization.LocalizedError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, string(localization.MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable), unavailable.Code)
+	var inner *localization.LocalizedError
+	require.ErrorAs(t, unavailable.Cause, &inner)
+	require.Equal(t, string(localization.MessageCypherCoreEmbedderNotConfigured), inner.Code)
+}
+
+func TestCallDbRetrieveFailClosedPreservesEmbedderCause(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&failingVectorEmbedder{err: context.DeadlineExceeded})
+	svc := search.NewService(store)
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+
+	_, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', failClosed: true})", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "embedding")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestCallDbRetrieveFailClosedRejectsStringEmbedding(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	svc := search.NewService(store)
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+
+	_, err := exec.Execute(ctx, "CALL db.retrieve($request)", map[string]interface{}{
+		"request": map[string]interface{}{
+			"query":      "alpha",
+			"failClosed": true,
+			"embedding":  "not-a-vector",
+		},
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, errRetrieveEmbeddingNotAVector)
 }
 
 func TestParseRetrievalFiltersEdgeCases(t *testing.T) {
