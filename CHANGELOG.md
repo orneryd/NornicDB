@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Added fail-closed `strictPolicy` for `db.retrieve`.** `strictPolicy: true`
-  (alias `strict_policy`) applies the documented deterministic hybrid
-  contract in one flag: candidate depth 50, no adaptive overfetch, unit
-  initial overfetch, `rrfK: 60`, equal branch weights, `minRRFScore: 0`,
-  `minSimilarity: 0`, and no strategy fallback. The procedure errors when
-  no query embedding is supplied and the server embedder cannot produce
-  one, and when present policy fields are invalid instead of silently
-  restoring defaults. `fallbackEnabled: false` also no longer silently
-  switches empty-embedding requests to BM25-only search.
+- **Added opt-in `failClosed` for `db.retrieve`.** `failClosed: true`
+  (alias `fail_closed`) requires a usable numeric query embedding and
+  disables strategy fallback, including BM25-only search, without changing
+  ranking defaults. Callers that need deterministic RRF or candidate depth
+  still pass those fields explicitly. In fail-closed mode, non-finite or
+  out-of-range supplied policy values error, and embedder failures wrap
+  the underlying cause so operators can distinguish a disabled embedder,
+  timeout, empty output, or a string passed as `embedding`. Without the
+  flag, empty embeddings still fall back to BM25. `fallbackEnabled: false`
+  also no longer silently switches empty-embedding requests to BM25-only
+  search.
 
 - **Added production localization across user-facing commands, protocols,
   errors, and runtime logs.** Immutable embedded `en-US`, `es-ES`, and `en-XA`

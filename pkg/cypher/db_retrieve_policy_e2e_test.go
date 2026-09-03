@@ -82,7 +82,7 @@ func TestE2E_DbRetrieve_DocumentedStrictPolicyQuery(t *testing.T) {
 	require.ElementsMatch(t, []string{"active-source", "active-summary-array"}, ids)
 }
 
-func TestE2E_DbRetrieve_StrictPolicyFlag(t *testing.T) {
+func TestE2E_DbRetrieve_FailClosedFlag(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
@@ -110,7 +110,12 @@ func TestE2E_DbRetrieve_StrictPolicyFlag(t *testing.T) {
 	result, err := exec.Execute(ctx, `CALL db.retrieve({
   query: 'zero-trust architecture',
   limit: 10,
-  strictPolicy: true,
+  failClosed: true,
+  candidateTarget: 50,
+  adaptiveOverfetch: false,
+  rrfK: 60,
+  minRRFScore: 0.0,
+  fallbackEnabled: false,
   filters: {lifecycle: 'active'}
 })
 YIELD node, score, search_method, fallback_triggered

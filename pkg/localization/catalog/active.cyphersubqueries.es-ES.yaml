@@ -145,9 +145,9 @@
 - id: cyphersubqueries.rag_candidate_id_required
   description: A un candidato de db.rerank le falta id.
   other: se requiere el id del candidato de db.rerank
-- id: cyphersubqueries.rag_strict_policy_invalid
-  description: db.retrieve strictPolicy recibió un campo inválido.
-  other: "db.retrieve strictPolicy tiene un valor {{.Field}} inválido"
-- id: cyphersubqueries.rag_strict_policy_embedding_required
-  description: db.retrieve strictPolicy requiere un embedding de consulta.
-  other: db.retrieve strictPolicy requiere un embedding
+- id: cyphersubqueries.rag_fail_closed_invalid
+  description: db.retrieve failClosed recibió un campo inválido.
+  other: "db.retrieve failClosed tiene un valor {{.Field}} inválido"
+- id: cyphersubqueries.rag_fail_closed_embedding_unavailable
+  description: db.retrieve failClosed no obtuvo un embedding de consulta usable.
+  other: "db.retrieve failClosed requiere un embedding de consulta usable: {{.Cause}}"

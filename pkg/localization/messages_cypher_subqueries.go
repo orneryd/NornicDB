@@ -55,8 +55,8 @@ const (
 	MessageCypherSubqueriesRAGParameterMustBeMap             MessageID = "cyphersubqueries.rag_parameter_must_be_map"
 	MessageCypherSubqueriesRAGRequestMustBeMapLiteral        MessageID = "cyphersubqueries.rag_request_must_be_map_literal"
 	MessageCypherSubqueriesRAGCandidateIDRequired            MessageID = "cyphersubqueries.rag_candidate_id_required"
-	MessageCypherSubqueriesRAGStrictPolicyInvalid            MessageID = "cyphersubqueries.rag_strict_policy_invalid"
-	MessageCypherSubqueriesRAGStrictPolicyEmbeddingRequired  MessageID = "cyphersubqueries.rag_strict_policy_embedding_required"
+	MessageCypherSubqueriesRAGFailClosedInvalid              MessageID = "cyphersubqueries.rag_fail_closed_invalid"
+	MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable MessageID = "cyphersubqueries.rag_fail_closed_embedding_unavailable"
 )
 
 func cypherSubqueriesMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -265,10 +265,10 @@ func CypherSubqueriesRAGCandidateIDRequired() Message {
 	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGCandidateIDRequired, "db.rerank candidate id is required", nil)
 }
 
-func CypherSubqueriesRAGStrictPolicyInvalid(field string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGStrictPolicyInvalid, "db.retrieve strictPolicy has an invalid "+field+" value", map[string]any{"Field": field})
+func CypherSubqueriesRAGFailClosedInvalid(field string) Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGFailClosedInvalid, "db.retrieve failClosed has an invalid "+field+" value", map[string]any{"Field": field})
 }
 
-func CypherSubqueriesRAGStrictPolicyEmbeddingRequired() Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGStrictPolicyEmbeddingRequired, "db.retrieve strictPolicy requires an embedding", nil)
+func CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause error) Message {
+	return cypherSubqueriesCauseMessage(MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable, "db.retrieve failClosed requires a usable query embedding: ", cause)
 }

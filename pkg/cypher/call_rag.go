@@ -3,7 +3,9 @@ package cypher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -189,21 +191,18 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if limit, ok := toInt(req["limit"]); ok && limit > 0 {
 		opts.Limit = limit
 	}
-	strict, err := applyRetrievalPolicyOptions(opts, req)
+	failClosed, err := applyRetrievalPolicyOptions(opts, req)
 	if err != nil {
 		return nil, err
 	}
 	if types := toStringSlice(firstPresent(req, "types", "labels")); len(types) > 0 {
 		opts.Types = types
 	}
-	if raw, present := policyPresent(req, "minSimilarity", "min_similarity"); present {
-		minSim, ok := ragToFloat64(raw)
-		if !ok {
-			if strict {
-				return nil, localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid("minSimilarity"), nil)
-			}
-		} else {
-			opts.MinSimilarity = &minSim
+	if minSim, ok := ragToFloat64(firstPresent(req, "minSimilarity", "min_similarity")); ok && (!failClosed || isFinite(minSim)) {
+		opts.MinSimilarity = &minSim
+	} else if failClosed {
+		if _, present := policyPresent(req, "minSimilarity", "min_similarity"); present {
+			return nil, localizedError(localization.CypherSubqueriesRAGFailClosedInvalid("minSimilarity"), nil)
 		}
 	}
 	if forceRerank {
@@ -216,15 +215,9 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		opts.RerankMinScore = v
 	}
 
-	embedding := toFloat32Slice(firstPresent(req, "embedding", "queryEmbedding", "query_embedding"))
-	if len(embedding) == 0 && e.embedder != nil {
-		embedded, embedErr := embedQueryChunked(ctx, e.embedder, query)
-		if embedErr == nil {
-			embedding = embedded
-		}
-	}
-	if strict && len(embedding) == 0 {
-		return nil, localizedError(localization.CypherSubqueriesRAGStrictPolicyEmbeddingRequired(), nil)
+	embedding, err := e.resolveRetrieveEmbedding(ctx, req, query, failClosed)
+	if err != nil {
+		return nil, err
 	}
 
 	svc := e.searchService
@@ -271,94 +264,151 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 }
 
 func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]interface{}) (bool, error) {
-	strict, err := parseStrictPolicy(req)
+	failClosed, err := parseFailClosed(req)
 	if err != nil {
 		return false, err
 	}
-	if strict {
-		applyStrictRetrievalPolicyDefaults(opts)
+	applyAdaptiveCandidateOptions(opts, req)
+	if value, ok := ragToFloat64(firstPresent(req, "rrfK", "rrf_k")); ok && value > 0 && isFinite(value) {
+		opts.RRFK = value
 	}
-	if err := applyAdaptiveCandidateOptions(opts, req, strict); err != nil {
-		return strict, err
+	if value, ok := ragToFloat64(firstPresent(req, "vectorWeight", "vector_weight")); ok && value > 0 && isFinite(value) {
+		opts.VectorWeight = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "rrfK", []string{"rrfK", "rrf_k"}, func(value float64) bool { return value > 0 }, func(value float64) { opts.RRFK = value }); err != nil {
-		return strict, err
+	if value, ok := ragToFloat64(firstPresent(req, "bm25Weight", "bm25_weight")); ok && value > 0 && isFinite(value) {
+		opts.BM25Weight = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "vectorWeight", []string{"vectorWeight", "vector_weight"}, func(value float64) bool { return value > 0 }, func(value float64) { opts.VectorWeight = value }); err != nil {
-		return strict, err
+	if value, ok := ragToFloat64(firstPresent(req, "minRRFScore", "min_rrf_score")); ok && value >= 0 && isFinite(value) {
+		opts.MinRRFScore = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "bm25Weight", []string{"bm25Weight", "bm25_weight"}, func(value float64) bool { return value > 0 }, func(value float64) { opts.BM25Weight = value }); err != nil {
-		return strict, err
+	if value, ok := toBool(firstPresent(req, "fallbackEnabled", "fallback_enabled")); ok {
+		opts.FallbackEnabled = &value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "minRRFScore", []string{"minRRFScore", "min_rrf_score"}, func(value float64) bool { return value >= 0 }, func(value float64) { opts.MinRRFScore = value }); err != nil {
-		return strict, err
-	}
-	if raw, present := policyPresent(req, "fallbackEnabled", "fallback_enabled"); present {
-		value, ok := toBool(raw)
-		if !ok {
-			if strict {
-				return strict, localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid("fallbackEnabled"), nil)
-			}
-		} else {
-			opts.FallbackEnabled = &value
+	opts.Filters = parseRetrievalFilters(firstPresent(req, "filters", "propertyFilters", "property_filters"))
+	if failClosed {
+		if err := validateFailClosedNumericPolicy(req); err != nil {
+			return true, err
 		}
+		disabled := false
+		opts.FallbackEnabled = &disabled
 	}
-	if raw, present := policyPresent(req, "filters", "propertyFilters", "property_filters"); present {
-		if raw == nil {
-			opts.Filters = nil
-		} else if _, ok := raw.(map[string]interface{}); !ok {
-			if strict {
-				return strict, localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid("filters"), nil)
-			}
-			opts.Filters = nil
-		} else {
-			opts.Filters = parseRetrievalFilters(raw)
-		}
-	}
-	return strict, nil
+	return failClosed, nil
 }
 
-func parseStrictPolicy(req map[string]interface{}) (bool, error) {
-	raw, present := policyPresent(req, "strictPolicy", "strict_policy")
+func parseFailClosed(req map[string]interface{}) (bool, error) {
+	raw, present := policyPresent(req, "failClosed", "fail_closed")
 	if !present {
 		return false, nil
 	}
 	value, ok := toBool(raw)
 	if !ok {
-		return false, localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid("strictPolicy"), nil)
+		return false, localizedError(localization.CypherSubqueriesRAGFailClosedInvalid("failClosed"), nil)
 	}
 	return value, nil
 }
 
-func applyStrictRetrievalPolicyDefaults(opts *search.SearchOptions) {
-	opts.AdaptiveOverfetch = false
-	opts.InitialOverfetchRatio = 1.0
-	opts.RRFK = 60
-	opts.VectorWeight = 1.0
-	opts.BM25Weight = 1.0
-	opts.MinRRFScore = 0
-	zero := 0.0
-	opts.MinSimilarity = &zero
-	disabled := false
-	opts.FallbackEnabled = &disabled
-	if opts.CandidateTarget <= 0 {
-		opts.CandidateTarget = 50
+var (
+	errRetrieveEmbeddingNotAVector = errors.New("query embedding must be a numeric vector")
+	errRetrieveEmbeddingInvalid    = errors.New("query embedding is empty or non-finite")
+)
+
+func (e *StorageExecutor) resolveRetrieveEmbedding(ctx context.Context, req map[string]interface{}, query string, failClosed bool) ([]float32, error) {
+	raw, present := policyPresent(req, "embedding", "queryEmbedding", "query_embedding")
+	if present {
+		if _, isString := raw.(string); isString {
+			if failClosed {
+				return nil, failClosedEmbeddingUnavailable(errRetrieveEmbeddingNotAVector)
+			}
+		} else {
+			embedding := toFloat32Slice(raw)
+			if usableEmbedding(embedding) {
+				return embedding, nil
+			}
+			if failClosed {
+				return nil, failClosedEmbeddingUnavailable(errRetrieveEmbeddingInvalid)
+			}
+		}
 	}
+	if e.embedder != nil {
+		embedded, embedErr := embedQueryChunked(ctx, e.embedder, query)
+		if embedErr != nil {
+			if failClosed {
+				return nil, failClosedEmbeddingUnavailable(embedErr)
+			}
+			return nil, nil
+		}
+		if usableEmbedding(embedded) {
+			return embedded, nil
+		}
+		if failClosed {
+			return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbeddingNoOutput(), nil))
+		}
+		return nil, nil
+	}
+	if failClosed {
+		return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbedderNotConfigured(), nil))
+	}
+	return nil, nil
 }
 
-func applyBoundedFloatPolicy(req map[string]interface{}, strict bool, field string, keys []string, valid func(float64) bool, apply func(float64)) error {
-	raw, present := policyPresent(req, keys...)
-	if !present {
-		return nil
+func failClosedEmbeddingUnavailable(cause error) error {
+	return localizedError(localization.CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause), cause)
+}
+
+func usableEmbedding(values []float32) bool {
+	if len(values) == 0 {
+		return false
 	}
-	value, ok := ragToFloat64(raw)
-	if !ok || !valid(value) {
-		if strict {
-			return localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid(field), nil)
+	for _, value := range values {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return false
 		}
-		return nil
 	}
-	apply(value)
+	return true
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func validateFailClosedNumericPolicy(req map[string]interface{}) error {
+	checks := []struct {
+		field string
+		keys  []string
+		ok    func(float64) bool
+	}{
+		{"rrfK", []string{"rrfK", "rrf_k"}, func(v float64) bool { return isFinite(v) && v > 0 && v <= 10000 }},
+		{"vectorWeight", []string{"vectorWeight", "vector_weight"}, func(v float64) bool { return isFinite(v) && v > 0 && v <= 100 }},
+		{"bm25Weight", []string{"bm25Weight", "bm25_weight"}, func(v float64) bool { return isFinite(v) && v > 0 && v <= 100 }},
+		{"minRRFScore", []string{"minRRFScore", "min_rrf_score"}, func(v float64) bool { return isFinite(v) && v >= 0 && v <= 1 }},
+		{"minSimilarity", []string{"minSimilarity", "min_similarity"}, func(v float64) bool { return isFinite(v) && v >= -1 && v <= 1 }},
+		{"initialOverfetchRatio", []string{"initialOverfetchRatio", "initial_overfetch_ratio"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= 100 }},
+		{"maxOverfetchRatio", []string{"maxOverfetchRatio", "max_overfetch_ratio"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= 100 }},
+		{"overfetchGrowthFactor", []string{"overfetchGrowthFactor", "overfetch_growth_factor"}, func(v float64) bool { return isFinite(v) && v > 1 && v <= 100 }},
+		{"candidateTarget", []string{"candidateTarget", "candidate_target"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
+		{"maxCandidateLimit", []string{"maxCandidateLimit", "max_candidate_limit"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
+		{"limit", []string{"limit"}, func(v float64) bool { return isFinite(v) && v >= 1 && v <= float64(search.MaxCandidates) }},
+	}
+	for _, check := range checks {
+		raw, present := policyPresent(req, check.keys...)
+		if !present {
+			continue
+		}
+		value, ok := ragToFloat64(raw)
+		if !ok || !check.ok(value) {
+			return localizedError(localization.CypherSubqueriesRAGFailClosedInvalid(check.field), nil)
+		}
+	}
+	if raw, present := policyPresent(req, "adaptiveOverfetch", "adaptive_overfetch"); present {
+		if _, ok := toBool(raw); !ok {
+			return localizedError(localization.CypherSubqueriesRAGFailClosedInvalid("adaptiveOverfetch"), nil)
+		}
+	}
+	if raw, present := policyPresent(req, "fallbackEnabled", "fallback_enabled"); present {
+		if _, ok := toBool(raw); !ok {
+			return localizedError(localization.CypherSubqueriesRAGFailClosedInvalid("fallbackEnabled"), nil)
+		}
+	}
 	return nil
 }
 
@@ -398,46 +448,25 @@ func parseRetrievalFilters(raw interface{}) map[string][]string {
 	return parsed
 }
 
-func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]interface{}, strict bool) error {
-	if raw, present := policyPresent(req, "adaptiveOverfetch", "adaptive_overfetch"); present {
-		value, ok := toBool(raw)
-		if !ok {
-			if strict {
-				return localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid("adaptiveOverfetch"), nil)
-			}
-		} else {
-			opts.AdaptiveOverfetch = value
-		}
+func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]interface{}) {
+	if value, ok := toBool(firstPresent(req, "adaptiveOverfetch", "adaptive_overfetch")); ok {
+		opts.AdaptiveOverfetch = value
 	}
-	if err := applyBoundedIntPolicy(req, strict, "candidateTarget", []string{"candidateTarget", "candidate_target"}, func(value int) bool { return value > 0 }, func(value int) { opts.CandidateTarget = value }); err != nil {
-		return err
+	if value, ok := toInt(firstPresent(req, "candidateTarget", "candidate_target")); ok && value > 0 {
+		opts.CandidateTarget = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "initialOverfetchRatio", []string{"initialOverfetchRatio", "initial_overfetch_ratio"}, func(value float64) bool { return value >= 1 }, func(value float64) { opts.InitialOverfetchRatio = value }); err != nil {
-		return err
+	if value, ok := ragToFloat64(firstPresent(req, "initialOverfetchRatio", "initial_overfetch_ratio")); ok && value >= 1 && isFinite(value) {
+		opts.InitialOverfetchRatio = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "maxOverfetchRatio", []string{"maxOverfetchRatio", "max_overfetch_ratio"}, func(value float64) bool { return value >= 1 }, func(value float64) { opts.MaxOverfetchRatio = value }); err != nil {
-		return err
+	if value, ok := ragToFloat64(firstPresent(req, "maxOverfetchRatio", "max_overfetch_ratio")); ok && value >= 1 && isFinite(value) {
+		opts.MaxOverfetchRatio = value
 	}
-	if err := applyBoundedFloatPolicy(req, strict, "overfetchGrowthFactor", []string{"overfetchGrowthFactor", "overfetch_growth_factor"}, func(value float64) bool { return value > 1 }, func(value float64) { opts.OverfetchGrowthFactor = value }); err != nil {
-		return err
+	if value, ok := ragToFloat64(firstPresent(req, "overfetchGrowthFactor", "overfetch_growth_factor")); ok && value > 1 && isFinite(value) {
+		opts.OverfetchGrowthFactor = value
 	}
-	return applyBoundedIntPolicy(req, strict, "maxCandidateLimit", []string{"maxCandidateLimit", "max_candidate_limit"}, func(value int) bool { return value > 0 }, func(value int) { opts.MaxCandidateLimit = value })
-}
-
-func applyBoundedIntPolicy(req map[string]interface{}, strict bool, field string, keys []string, valid func(int) bool, apply func(int)) error {
-	raw, present := policyPresent(req, keys...)
-	if !present {
-		return nil
+	if value, ok := toInt(firstPresent(req, "maxCandidateLimit", "max_candidate_limit")); ok && value > 0 {
+		opts.MaxCandidateLimit = value
 	}
-	value, ok := toInt(raw)
-	if !ok || !valid(value) {
-		if strict {
-			return localizedError(localization.CypherSubqueriesRAGStrictPolicyInvalid(field), nil)
-		}
-		return nil
-	}
-	apply(value)
-	return nil
 }
 
 func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, procName string) (map[string]interface{}, error) {

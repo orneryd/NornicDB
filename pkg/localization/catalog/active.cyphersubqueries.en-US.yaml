@@ -145,9 +145,9 @@
 - id: cyphersubqueries.rag_candidate_id_required
   description: db.rerank candidate lacks an id. Procedure and field name are untranslated.
   other: db.rerank candidate id is required
-- id: cyphersubqueries.rag_strict_policy_invalid
-  description: db.retrieve strictPolicy received an invalid field. Procedure, flag, and Field are untranslated machine names.
-  other: "db.retrieve strictPolicy has an invalid {{.Field}} value"
-- id: cyphersubqueries.rag_strict_policy_embedding_required
-  description: db.retrieve strictPolicy requires a query embedding. Procedure and flag names are untranslated.
-  other: db.retrieve strictPolicy requires an embedding
+- id: cyphersubqueries.rag_fail_closed_invalid
+  description: db.retrieve failClosed received an invalid field. Procedure, flag, and Field are untranslated machine names.
+  other: "db.retrieve failClosed has an invalid {{.Field}} value"
+- id: cyphersubqueries.rag_fail_closed_embedding_unavailable
+  description: db.retrieve failClosed could not obtain a usable query embedding. Cause is untranslated diagnostic text.
+  other: "db.retrieve failClosed requires a usable query embedding: {{.Cause}}"
