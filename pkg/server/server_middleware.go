@@ -85,15 +85,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			tokenResp, claims, err = s.handleBasicAuth(authHeader, r)
 			if err == nil && tokenResp != nil && tokenResp.AccessToken != "" {
 				// Help browsers / UI by issuing a cookie so future requests can use JWT.
-				http.SetCookie(w, &http.Cookie{
-					Name:     "nornicdb_token",
-					Value:    tokenResp.AccessToken,
-					Path:     "/",
-					HttpOnly: true,
-					Secure:   true,
-					SameSite: http.SameSiteLaxMode,
-					MaxAge:   86400 * 7, // 7 days
-				})
+				http.SetCookie(w, sessionTokenCookie(r, tokenResp.AccessToken, 86400*7))
 			}
 			if err == nil && s.basicAuthCache != nil && claims != nil {
 				s.basicAuthCache.SetFromHeader(authHeader, claims)

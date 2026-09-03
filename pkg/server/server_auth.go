@@ -63,30 +63,15 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set HTTP-only cookie for browser sessions (secure auth)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "nornicdb_token",
-		Value:    tokenResp.AccessToken,
-		Path:     "/",
-		HttpOnly: true, // Prevent XSS attacks
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode, // Lax allows normal navigation, prevents CSRF on POST
-		MaxAge:   86400 * 7,            // 7 days
-	})
+	// Set an HTTP-only cookie for browser sessions.
+	http.SetCookie(w, sessionTokenCookie(r, tokenResp.AccessToken, 86400*7))
 
 	s.writeJSON(w, http.StatusOK, tokenResp)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Clear the auth cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "nornicdb_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		MaxAge:   -1, // Delete cookie
-	})
+	http.SetCookie(w, sessionTokenCookie(r, "", -1))
 
 	// Audit the logout event
 	claims := getClaims(r)
@@ -295,6 +280,18 @@ func isHTTPSRequest(r *http.Request) bool {
 	return strings.EqualFold(firstProto, "https")
 }
 
+func sessionTokenCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     "nornicdb_token",
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isHTTPSRequest(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	}
+}
+
 // handleOAuthRedirect initiates the OAuth 2.0 authorization flow
 // GET /auth/oauth/redirect
 func (s *Server) handleOAuthRedirect(w http.ResponseWriter, r *http.Request) {
@@ -367,15 +364,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set HTTP-only cookie for browser sessions
-	http.SetCookie(w, &http.Cookie{
-		Name:     "nornicdb_token",
-		Value:    tokenResponse.AccessToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400 * 7, // 7 days
-	})
+	http.SetCookie(w, sessionTokenCookie(r, tokenResponse.AccessToken, 86400*7))
 
 	s.logEvent(r.Context(), slog.LevelInfo, localization.ServerOAuthUserAuthenticatedEvent())
 
