@@ -632,6 +632,34 @@ func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
 	require.True(t, legacyResponse.FallbackTriggered)
 }
 
+func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewServiceWithDimensions(engine, 2)
+	node := &storage.Node{
+		ID:     "lexical-only",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content": "zero-trust architecture source",
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.BuildIndexes(context.Background()))
+
+	fallbackDisabled := false
+	opts := DefaultSearchOptions()
+	opts.FallbackEnabled = &fallbackDisabled
+	response, err := service.Search(context.Background(), "zero-trust architecture", nil, opts)
+	require.NoError(t, err)
+	require.Empty(t, response.Results)
+	require.Equal(t, "rrf_hybrid", response.SearchMethod)
+	require.False(t, response.FallbackTriggered)
+
+	legacy, err := service.Search(context.Background(), "zero-trust architecture", nil, DefaultSearchOptions())
+	require.NoError(t, err)
+	require.NotEmpty(t, legacy.Results)
+}
+
 func TestSearchResultCacheCanBeDisabled(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	disabled := NewService(storage.NewMemoryEngine())

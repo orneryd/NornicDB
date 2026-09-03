@@ -18,6 +18,7 @@ These procedures are read-only and designed to map directly to internal contract
 - `db.retrieve`
   - Uses existing hybrid search behavior.
   - Accepts explicit candidate-depth, RRF, property-filter, and fallback policy controls.
+  - `strictPolicy: true` applies the documented deterministic contract in one flag: candidate depth 50, no adaptive overfetch, `rrfK: 60`, equal weights, `minRRFScore: 0`, `minSimilarity: 0`, and `fallbackEnabled: false`. It fails closed if no query embedding is supplied and the server embedder cannot produce one. Invalid policy values error instead of being ignored.
   - Reranking is optional and follows request/config defaults.
 
 - `db.rretrieve`
@@ -52,8 +53,27 @@ CALL db.infer({
 RETURN node, score, text
 ```
 
-For deterministic retrieval policy, set the candidate depth independently of
-the final result limit and disable score-based or strategy fallback explicitly:
+For deterministic retrieval policy, set `strictPolicy: true` (alias
+`strict_policy`). That single flag applies the documented defaults and
+requires a query embedding. Explicit fields still override the defaults,
+and invalid values fail the procedure instead of being ignored:
+
+```cypher
+CALL db.retrieve({
+  query: 'zero-trust architecture',
+  limit: 10,
+  strictPolicy: true,
+  filters: {
+    lifecycle: 'active',
+    generation: [3, 4],
+    artifact: ['source', 'summary']
+  }
+})
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered
+RETURN node, score, rrf_score
+```
+
+The equivalent expanded form is:
 
 ```cypher
 CALL db.retrieve({

@@ -24,6 +24,7 @@ All four take a single map argument. Most fields support both camelCase and snak
 CALL db.retrieve({
   query:          'authentication patterns',   -- required
   limit:          10,                          -- default 50
+  strictPolicy:   true,                        -- fail-closed deterministic hybrid
   minSimilarity:  0.5,                         -- vector floor
   types:          ['Document', 'Memory'],      -- label filter; alias: labels
   filters:        {lifecycle: 'active'},       -- property filters
@@ -45,6 +46,7 @@ ORDER BY score DESC
 
 Behavior:
 
+- `strictPolicy: true` (alias `strict_policy`) applies deterministic hybrid defaults (`candidateTarget: 50`, `adaptiveOverfetch: false`, `initialOverfetchRatio: 1.0`, `rrfK: 60`, equal weights, `minRRFScore: 0`, `minSimilarity: 0`, `fallbackEnabled: false`) and fails if no embedding can be produced. Invalid policy values error instead of being ignored.
 - If `embedding` is omitted and the embedder is configured, NornicDB embeds `query` server-side.
 - Vector and BM25 results use equal weights by default. Set `vectorWeight` and `bm25Weight` for an explicit policy.
 - `candidateTarget` controls each retrieval branch independently of the final `limit`; when omitted it is derived as `max(limit * 2, 20)` up to the configured maximum.

@@ -55,12 +55,17 @@ func splitTopLevelComma(input string) []string {
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {
+	value, _ := policyPresent(m, keys...)
+	return value
+}
+
+func policyPresent(m map[string]interface{}, keys ...string) (interface{}, bool) {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
-			return v
+			return v, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 func stringOr(v interface{}, fallback string) string {

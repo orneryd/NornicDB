@@ -124,14 +124,14 @@ func TestCallDbRetrieveAppliesPropertyFilters(t *testing.T) {
 
 func TestApplyAdaptiveCandidateOptions(t *testing.T) {
 	opts := search.DefaultSearchOptions()
-	applyAdaptiveCandidateOptions(opts, map[string]interface{}{
+	require.NoError(t, applyAdaptiveCandidateOptions(opts, map[string]interface{}{
 		"adaptive_overfetch":      false,
 		"candidateTarget":         int64(75),
 		"initial_overfetch_ratio": 2.0,
 		"maxOverfetchRatio":       8.0,
 		"overfetch_growth_factor": 1.5,
 		"maxCandidateLimit":       int64(1200),
-	})
+	}, false))
 
 	require.False(t, opts.AdaptiveOverfetch)
 	require.Equal(t, 75, opts.CandidateTarget)
@@ -173,7 +173,8 @@ func TestApplyRetrievalPolicyOptions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			opts := search.DefaultSearchOptions()
-			applyRetrievalPolicyOptions(opts, test.req)
+			_, err := applyRetrievalPolicyOptions(opts, test.req)
+			require.NoError(t, err)
 			require.Equal(t, 42.0, opts.RRFK)
 			require.Equal(t, 0.25, opts.VectorWeight)
 			require.Equal(t, 1.75, opts.BM25Weight)
@@ -191,12 +192,13 @@ func TestApplyRetrievalPolicyOptions(t *testing.T) {
 
 func TestApplyRetrievalPolicyOptionsRejectsInvalidBoundaries(t *testing.T) {
 	opts := search.DefaultSearchOptions()
-	applyRetrievalPolicyOptions(opts, map[string]interface{}{
+	_, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
 		"rrfK": -1, "vectorWeight": 0, "bm25Weight": -2,
 		"minRRFScore": -0.1, "fallbackEnabled": "not-a-bool",
 		"candidateTarget": 0, "adaptiveOverfetch": "not-a-bool",
 		"filters": "not-a-map",
 	})
+	require.NoError(t, err)
 
 	require.Equal(t, 60.0, opts.RRFK)
 	require.Equal(t, 1.0, opts.VectorWeight)
@@ -206,6 +208,55 @@ func TestApplyRetrievalPolicyOptionsRejectsInvalidBoundaries(t *testing.T) {
 	require.Zero(t, opts.CandidateTarget)
 	require.True(t, opts.AdaptiveOverfetch)
 	require.Nil(t, opts.Filters)
+}
+
+func TestApplyRetrievalPolicyOptionsStrictPolicy(t *testing.T) {
+	opts := search.DefaultSearchOptions()
+	opts.Limit = 10
+	strict, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
+		"strictPolicy": true,
+		"filters": map[string]interface{}{
+			"lifecycle": "active",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, strict)
+	require.False(t, opts.AdaptiveOverfetch)
+	require.Equal(t, 1.0, opts.InitialOverfetchRatio)
+	require.Equal(t, 50, opts.CandidateTarget)
+	require.Equal(t, 60.0, opts.RRFK)
+	require.Equal(t, 1.0, opts.VectorWeight)
+	require.Equal(t, 1.0, opts.BM25Weight)
+	require.Equal(t, 0.0, opts.MinRRFScore)
+	require.NotNil(t, opts.MinSimilarity)
+	require.Equal(t, 0.0, *opts.MinSimilarity)
+	require.NotNil(t, opts.FallbackEnabled)
+	require.False(t, *opts.FallbackEnabled)
+	require.Equal(t, map[string][]string{"lifecycle": {"active"}}, opts.Filters)
+}
+
+func TestApplyRetrievalPolicyOptionsStrictPolicyRejectsInvalidValues(t *testing.T) {
+	opts := search.DefaultSearchOptions()
+	_, err := applyRetrievalPolicyOptions(opts, map[string]interface{}{
+		"strict_policy": true,
+		"rrfK":          0,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "strictPolicy")
+	require.Contains(t, err.Error(), "rrfK")
+}
+
+func TestCallDbRetrieveStrictPolicyRequiresEmbedding(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	svc := search.NewService(store)
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+
+	_, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', strictPolicy: true})", nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "embedding")
 }
 
 func TestParseRetrievalFiltersEdgeCases(t *testing.T) {

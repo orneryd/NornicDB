@@ -4029,8 +4029,16 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		}
 	}
 
-	// If no embedding provided, fall back to full-text only
+	// If no embedding provided, fall back to full-text only unless fallback is disabled.
 	if len(embedding) == 0 {
+		if !opts.fallbackEnabled() {
+			response := &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid"}
+			if s.resultCache != nil {
+				s.resultCache.Put(cacheKey, response)
+			}
+			s.maybeLogSearchTiming(query, response, time.Since(start), false)
+			return response, nil
+		}
 		mode = "bm25" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.fullTextSearchOnly(ctx, query, opts)
 		if err == nil && s.resultCache != nil {
