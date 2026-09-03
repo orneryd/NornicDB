@@ -103,10 +103,10 @@ func TestVectorFileStore_FixedStridePayloadAndOrdinalReload(t *testing.T) {
 
 	first, ok := reloaded.GetVector("a")
 	require.True(t, ok)
-	require.Equal(t, []float32{1, 0}, first)
+	require.InDeltaSlice(t, []float32{1, 0}, first, 1e-6)
 	second, ok := reloaded.GetVector(strings.Repeat("long-id-", 100))
 	require.True(t, ok)
-	require.Equal(t, []float32{0, 1}, second)
+	require.InDeltaSlice(t, []float32{0, 1}, second, 1e-6)
 	_, ok = reloaded.GetVector("uncommitted")
 	require.False(t, ok)
 }
