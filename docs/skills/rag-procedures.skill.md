@@ -46,7 +46,7 @@ ORDER BY score DESC
 
 Behavior:
 
-- `failClosed: true` (alias `fail_closed`) requires a usable numeric query embedding and disables strategy fallback, including BM25-only search when no embedding is available. It does not change ranking defaults. Invalid or non-finite supplied policy values error. The wrapped cause distinguishes a missing embedder, provider/timeout failure, empty output, or a non-vector embedding argument.
+- `failClosed: true` (alias `fail_closed`) requires a usable numeric query embedding and disables strategy fallback, including BM25-only search when no embedding is available. It does not change ranking defaults. Invalid, non-finite, or non-integral count policy values error, including `rerankTopK` and `rerankMinScore`. Supplied embedding elements must all be numeric types; strings and dropped/coerced elements are rejected. The wrapped cause distinguishes a missing embedder, provider/timeout failure, empty output, or a non-vector embedding argument.
 - If `embedding` is omitted and the embedder is configured, NornicDB embeds `query` server-side. Without `failClosed`, that path still falls back to BM25 when no embedding can be produced.
 - Vector and BM25 results use equal weights by default. Set `vectorWeight` and `bm25Weight` for an explicit policy.
 - `candidateTarget` controls each retrieval branch independently of the final `limit`; when omitted it is derived as `max(limit * 2, 20)` up to the configured maximum.

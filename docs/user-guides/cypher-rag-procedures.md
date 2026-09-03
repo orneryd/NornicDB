@@ -18,7 +18,7 @@ These procedures are read-only and designed to map directly to internal contract
 - `db.retrieve`
   - Uses existing hybrid search behavior.
   - Accepts explicit candidate-depth, RRF, property-filter, and fallback policy controls.
-  - `failClosed: true` (alias `fail_closed`) is opt-in fail-closed retrieval: a usable numeric query embedding is required, strategy fallback including BM25-only is disabled, and supplied numeric policy values must be finite and in range. It does not change ranking defaults. Absent the flag, empty embeddings still fall back to BM25.
+  - `failClosed: true` (alias `fail_closed`) is opt-in fail-closed retrieval: a usable numeric query embedding is required, strategy fallback including BM25-only is disabled, and supplied numeric policy values must be finite and in range (count fields such as `limit`, `candidateTarget`, and `rerankTopK` must be whole numbers; `rerankMinScore` must be finite). Embedding elements must be numeric types. It does not change ranking defaults. Absent the flag, empty embeddings still fall back to BM25.
   - Reranking is optional and follows request/config defaults.
 
 - `db.rretrieve`
