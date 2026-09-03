@@ -145,3 +145,9 @@
 - id: cyphersubqueries.rag_candidate_id_required
   description: Expanded pseudo-locale missing rerank candidate id.
   other: "[!! db.rerank candidate id is required !!]"
+- id: cyphersubqueries.rag_strict_policy_invalid
+  description: Expanded pseudo-locale invalid strict retrieve field.
+  other: "[!! db.retrieve strictPolicy has an invalid {{.Field}} value !!]"
+- id: cyphersubqueries.rag_strict_policy_embedding_required
+  description: Expanded pseudo-locale missing strict retrieve embedding.
+  other: "[!! db.retrieve strictPolicy requires an embedding !!]"

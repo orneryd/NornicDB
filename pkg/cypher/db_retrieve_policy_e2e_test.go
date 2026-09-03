@@ -81,3 +81,45 @@ func TestE2E_DbRetrieve_DocumentedStrictPolicyQuery(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"active-source", "active-summary-array"}, ids)
 }
+
+func TestE2E_DbRetrieve_StrictPolicyFlag(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0}})
+
+	nodes := []*storage.Node{
+		{ID: "active-source", Labels: []string{"Document"}, Properties: map[string]interface{}{
+			"content": "zero-trust architecture source", "embedding": []float32{1, 0},
+			"lifecycle": "active", "generation": int64(3), "artifact": "source",
+		}},
+		{ID: "archived", Labels: []string{"Document"}, Properties: map[string]interface{}{
+			"content": "zero-trust architecture archived", "embedding": []float32{1, 0},
+			"lifecycle": "archived", "generation": int64(3), "artifact": "source",
+		}},
+	}
+	for _, node := range nodes {
+		_, err := store.CreateNode(node)
+		require.NoError(t, err)
+	}
+
+	service := search.NewServiceWithDimensions(store, 2)
+	require.NoError(t, service.BuildIndexes(ctx))
+	exec.SetSearchService(service)
+
+	result, err := exec.Execute(ctx, `CALL db.retrieve({
+  query: 'zero-trust architecture',
+  limit: 10,
+  strictPolicy: true,
+  filters: {lifecycle: 'active'}
+})
+YIELD node, score, search_method, fallback_triggered
+RETURN node, search_method, fallback_triggered`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	require.Equal(t, "active-source", string(node.ID))
+	require.Equal(t, "rrf_hybrid", result.Rows[0][1])
+	require.Equal(t, false, result.Rows[0][2])
+}
