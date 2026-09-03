@@ -132,6 +132,8 @@
   other: "[!! ⚠️  Wárníng: fáíléd tó lóád cónfíg fróm {{.Path}}: {{.Cause}} !!]"
 - id: nornicdbcli.config.loaded
   other: "[!! 📄 Lóádéd cónfíg fróm: {{.Path}} !!]"
+- id: nornicdbcli.serve.default_admin_password_warning
+  other: "[!! ⚠️  Wárníng: thé défáúlt ádmín pásswórd hás nót béén chángéd !!]"
 - id: nornicdbcli.serve.starting
   other: "[!! 🚀 Stártíng NórnícDB {{.Version}} !!]"
 - id: nornicdbcli.serve.data_directory

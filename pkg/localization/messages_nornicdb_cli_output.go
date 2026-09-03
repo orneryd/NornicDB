@@ -7,6 +7,7 @@ const (
 	MessageNornicDBCLINoConfig                  MessageID = "nornicdbcli.config.not_found"
 	MessageNornicDBCLIConfigWarning             MessageID = "nornicdbcli.config.load_warning"
 	MessageNornicDBCLIConfigLoaded              MessageID = "nornicdbcli.config.loaded"
+	MessageNornicDBCLIDefaultPasswordWarning    MessageID = "nornicdbcli.serve.default_admin_password_warning"
 	MessageNornicDBCLIStarting                  MessageID = "nornicdbcli.serve.starting"
 	MessageNornicDBCLIDataDirectory             MessageID = "nornicdbcli.serve.data_directory"
 	MessageNornicDBCLIBoltEndpoint              MessageID = "nornicdbcli.serve.bolt_endpoint"
@@ -97,6 +98,9 @@ func NornicDBCLIConfigWarning(path string, cause error) Message {
 }
 func NornicDBCLIConfigLoaded(path string) Message {
 	return cliOutput(MessageNornicDBCLIConfigLoaded, "📄 Loaded config from: "+path, map[string]any{"Path": path})
+}
+func NornicDBCLIDefaultPasswordWarning() Message {
+	return cliOutput(MessageNornicDBCLIDefaultPasswordWarning, "⚠️  Warning: the default admin password has not been changed", nil)
 }
 func NornicDBCLIStarting(version string) Message {
 	return cliOutput(MessageNornicDBCLIStarting, "🚀 Starting NornicDB "+version, map[string]any{"Version": version})

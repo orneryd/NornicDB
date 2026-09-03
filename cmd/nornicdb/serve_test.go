@@ -164,6 +164,42 @@ func TestServeAuthEnabledUsesLoadedConfig(t *testing.T) {
 	}
 }
 
+func TestUsesDefaultAdminPassword(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want bool
+	}{
+		{name: "enabled with documented default", cfg: &config.Config{Auth: config.AuthConfig{Enabled: true, InitialPassword: "password"}}, want: true},
+		{name: "enabled with changed password", cfg: &config.Config{Auth: config.AuthConfig{Enabled: true, InitialPassword: "changed-password"}}},
+		{name: "explicitly disabled", cfg: &config.Config{Auth: config.AuthConfig{Enabled: false, InitialPassword: "password"}}},
+		{name: "nil config"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := usesDefaultAdminPassword(test.cfg); got != test.want {
+				t.Fatalf("usesDefaultAdminPassword() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplyServeSecurityOverrides(t *testing.T) {
+	cfg := &config.Config{Auth: config.AuthConfig{Enabled: true, InitialPassword: "from-config"}}
+	applyServeSecurityOverrides(cfg, false, "from-flag", true)
+	if !cfg.Auth.Enabled || cfg.Auth.InitialPassword != "from-flag" {
+		t.Fatalf("explicit password override not applied: %+v", cfg.Auth)
+	}
+
+	applyServeSecurityOverrides(cfg, true, "ignored-default", false)
+	if cfg.Auth.Enabled || cfg.Auth.InitialPassword != "from-flag" {
+		t.Fatalf("no-auth override changed credentials unexpectedly: %+v", cfg.Auth)
+	}
+
+	applyServeSecurityOverrides(nil, true, "ignored", true)
+}
+
 // ----------------------------------------------------------------------
 // TestServe_TelemetryEndpointsLive — Phase-success-1.
 // ----------------------------------------------------------------------

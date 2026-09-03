@@ -31,8 +31,10 @@ func TestValidateSecurityConfiguration(t *testing.T) {
 		{name: "explicit no auth remains allowed", mutate: func(c *Config) { c.Auth.Enabled = false }},
 		{name: "no auth ignores empty password", mutate: func(c *Config) { c.Auth.Enabled = false; c.Auth.InitialPassword = "" }},
 		{name: "no auth ignores default password", mutate: func(c *Config) { c.Auth.Enabled = false; c.Auth.InitialPassword = "password" }},
-		{name: "default password", mutate: func(c *Config) { c.Auth.InitialPassword = "password" }, match: "initial password"},
-		{name: "wildcard cors", mutate: func(c *Config) { c.Server.CORSOrigins = []string{"*"} }, match: "wildcard CORS"},
+		{name: "default password is allowed", mutate: func(c *Config) { c.Auth.InitialPassword = "password" }},
+		{name: "empty password", mutate: func(c *Config) { c.Auth.InitialPassword = "" }, match: "initial password"},
+		{name: "loopback wildcard cors", mutate: func(c *Config) { c.Server.CORSOrigins = []string{"*"} }},
+		{name: "public wildcard cors", mutate: func(c *Config) { c.Server.CORSOrigins = []string{"*"}; c.Server.HTTPAddress = "0.0.0.0" }, match: "wildcard CORS"},
 		{name: "public http", mutate: func(c *Config) { c.Server.HTTPAddress = "0.0.0.0" }, match: "plaintext HTTP"},
 		{name: "public bolt without required tls", mutate: func(c *Config) { c.Server.BoltAddress = "192.0.2.1" }, match: "must require TLS"},
 		{name: "public grpc", mutate: func(c *Config) { c.Features.QdrantGRPCEnabled = true; c.Features.QdrantGRPCListenAddr = ":6334" }, match: "plaintext gRPC"},
@@ -51,8 +53,12 @@ func TestValidateSecurityConfiguration(t *testing.T) {
 	}
 }
 
-func TestValidateSecurityConfigurationRejectsInsecureDefaults(t *testing.T) {
-	require.ErrorContains(t, ValidateSecurityConfiguration(LoadDefaults()), "initial password")
+func TestValidateSecurityConfigurationAllowsDocumentedDefaults(t *testing.T) {
+	config := LoadDefaults()
+	config.Server.HTTPAddress = "127.0.0.1"
+	config.Server.BoltAddress = "127.0.0.1"
+
+	require.NoError(t, ValidateSecurityConfiguration(config))
 }
 
 func TestValidateSecurityConfigurationAppliesToEveryEnvironment(t *testing.T) {
@@ -64,6 +70,7 @@ func TestValidateSecurityConfigurationAppliesToEveryEnvironment(t *testing.T) {
 			config.Auth.InitialPassword = "operator-supplied-secret"
 			config.Server.EnableCORS = true
 			config.Server.CORSOrigins = []string{"*"}
+			config.Server.HTTPAddress = "0.0.0.0"
 
 			require.ErrorContains(t, ValidateSecurityConfiguration(config), "wildcard CORS")
 		})

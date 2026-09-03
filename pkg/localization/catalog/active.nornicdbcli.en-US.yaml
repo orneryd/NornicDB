@@ -190,6 +190,9 @@
   other: "⚠️  Warning: failed to load config from {{.Path}}: {{.Cause}}"
 - id: nornicdbcli.config.loaded
   other: "📄 Loaded config from: {{.Path}}"
+- id: nornicdbcli.serve.default_admin_password_warning
+  description: Startup warning when authentication uses the documented default admin password.
+  other: "⚠️  Warning: the default admin password has not been changed"
 - id: nornicdbcli.serve.starting
   other: 🚀 Starting NornicDB {{.Version}}
 - id: nornicdbcli.serve.data_directory

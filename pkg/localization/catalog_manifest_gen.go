@@ -1116,6 +1116,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "nornicdbcli.serve.create_data_directory_failed", Constructor: "NornicDBCLICreateDataDirectoryFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.create_server_failed", Constructor: "NornicDBCLICreateServerFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.data_directory", Constructor: "NornicDBCLIDataDirectory", Fields: []string{"Path"}, PluralForms: []string{"other"}},
+	{ID: "nornicdbcli.serve.default_admin_password_warning", Constructor: "NornicDBCLIDefaultPasswordWarning", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.embedding_local", Constructor: "NornicDBCLIEmbeddingLocal", Fields: []string{"Dimensions", "GPU", "Model", "Path"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.embedding_model", Constructor: "NornicDBCLIEmbeddingModel", Fields: []string{"Dimensions", "Model"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.embedding_url", Constructor: "NornicDBCLIEmbeddingURL", Fields: []string{"URL"}, PluralForms: []string{"other"}},

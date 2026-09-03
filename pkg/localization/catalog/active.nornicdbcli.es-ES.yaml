@@ -132,6 +132,8 @@
   other: "⚠️  Advertencia: no se pudo cargar la configuración desde {{.Path}}: {{.Cause}}"
 - id: nornicdbcli.config.loaded
   other: "📄 Configuración cargada desde: {{.Path}}"
+- id: nornicdbcli.serve.default_admin_password_warning
+  other: "⚠️  Advertencia: la contraseña predeterminada del administrador no se ha cambiado"
 - id: nornicdbcli.serve.starting
   other: 🚀 Iniciando NornicDB {{.Version}}
 - id: nornicdbcli.serve.data_directory

@@ -433,9 +433,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	resolvedAddress := resolveBindAddress(cmd, cfg, address, loadedConfigFile)
 	cfg.Server.HTTPAddress = resolvedAddress
 	cfg.Server.BoltAddress = resolvedAddress
-	if noAuth {
-		cfg.Auth.Enabled = false
-	}
+	applyServeSecurityOverrides(cfg, noAuth, adminPasswordFlag, adminPasswordFlagChanged)
 	if err := config.ValidateSecurityConfiguration(cfg); err != nil {
 		return err
 	}
@@ -751,6 +749,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
 		} else {
 			commandPrintln(cmd, localization.NornicDBCLIAdminCreated(adminUsername))
+			if usesDefaultAdminPassword(cfg) {
+				commandPrintln(cmd, localization.NornicDBCLIDefaultPasswordWarning())
+			}
 		}
 	}
 	// Note: Auth status logged at server startup
@@ -1984,4 +1985,20 @@ func serveAuthEnabled(cfg *config.Config, noAuth bool) bool {
 		return false
 	}
 	return cfg.Auth.Enabled
+}
+
+func applyServeSecurityOverrides(cfg *config.Config, noAuth bool, adminPassword string, adminPasswordChanged bool) {
+	if cfg == nil {
+		return
+	}
+	if noAuth {
+		cfg.Auth.Enabled = false
+	}
+	if adminPasswordChanged {
+		cfg.Auth.InitialPassword = adminPassword
+	}
+}
+
+func usesDefaultAdminPassword(cfg *config.Config) bool {
+	return cfg != nil && cfg.Auth.Enabled && cfg.Auth.InitialPassword == "password"
 }

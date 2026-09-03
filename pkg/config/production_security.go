@@ -15,12 +15,12 @@ func ValidateSecurityConfiguration(config *Config) error {
 	if !config.Auth.Enabled {
 		return nil
 	}
-	if strings.TrimSpace(config.Auth.InitialPassword) == "" || config.Auth.InitialPassword == "password" {
-		return fmt.Errorf("security configuration: default or empty initial password is not allowed")
+	if strings.TrimSpace(config.Auth.InitialPassword) == "" {
+		return fmt.Errorf("security configuration: empty initial password is not allowed")
 	}
 	if config.Server.EnableCORS {
 		for _, origin := range config.Server.CORSOrigins {
-			if strings.TrimSpace(origin) == "*" {
+			if strings.TrimSpace(origin) == "*" && isPublicListener(config.Server.HTTPAddress) {
 				return fmt.Errorf("security configuration: wildcard CORS origin is not allowed")
 			}
 		}
