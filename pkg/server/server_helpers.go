@@ -15,6 +15,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -328,13 +329,50 @@ func hasPermission(s *Server, roles []string, required auth.Permission) bool {
 }
 
 func isMutationQuery(query string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(query))
-	return strings.HasPrefix(upper, "CREATE") ||
-		strings.HasPrefix(upper, "MERGE") ||
-		strings.HasPrefix(upper, "DELETE") ||
-		strings.HasPrefix(upper, "SET") ||
-		strings.HasPrefix(upper, "REMOVE") ||
-		strings.HasPrefix(upper, "DROP")
+	requirements := cypher.QueryPermissionRequirements(query)
+	return requirements.Write || requirements.Schema
+}
+
+func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query string) auth.Permission {
+	if !s.isRBACEnforced() {
+		return ""
+	}
+
+	requirements := cypher.QueryPermissionRequirements(query)
+	roles := []string(nil)
+	if claims != nil {
+		roles = claims.Roles
+	}
+	if requirements.Schema && !hasPermission(s, roles, auth.PermSchema) {
+		return auth.PermSchema
+	}
+	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) {
+		return auth.PermAdmin
+	}
+	if requirements.Write && !s.getResolvedAccess(claims, dbName).Write {
+		return auth.PermWrite
+	}
+	return ""
+}
+
+func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth.JWTClaims, dbName string) context.Context {
+	if !s.isRBACEnforced() {
+		return ctx
+	}
+	return cypher.WithPermissionChecker(ctx, func(permission string) bool {
+		switch auth.Permission(permission) {
+		case auth.PermRead:
+			return s.getResolvedAccess(claims, dbName).Read
+		case auth.PermWrite:
+			return s.getResolvedAccess(claims, dbName).Write
+		case auth.PermSchema:
+			return claims != nil && hasPermission(s, claims.Roles, auth.PermSchema)
+		case auth.PermAdmin:
+			return claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin)
+		default:
+			return false
+		}
+	})
 }
 
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).

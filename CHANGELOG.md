@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.0] - 9/5/2026
+
+### Security
+
+- **Fixed an authorization bypass in the Neo4j-compatible HTTP transaction
+  API.** An authenticated user with read-only database access could previously
+  execute data-changing compound Cypher statements because HTTP authorization
+  classified statements by their leading keyword. Autocommit and explicit
+  transaction open, execute, and commit paths now use the canonical Cypher
+  permission analysis used by Bolt. Registered procedure modes and nested
+  statements also inherit the caller's read, write, schema, and admin
+  permissions. Operators should upgrade to `v1.3.0`. Reported by Sevban Dönmez
+  (`jankesec`).
+- **Updated Browserslist to `4.28.8`.** The UI dependency is pinned to the
+  patched release rather than accepting an older transitive resolution.
+
 ### Added
 
 - **Added opt-in `failClosed` for `db.retrieve`.** `failClosed: true`
@@ -64,9 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hardened multi-database isolation and deployment defaults.** Manager-owned
   storage/query limits cover protocol and background inference paths, MCP and
   Bolt enforce database scope/admission, and startup rejects wildcard CORS,
-  public plaintext listeners, and default credentials when authentication is
-  enabled, regardless of environment. Explicit no-auth startup remains
-  supported in every environment.
+  public plaintext listeners, and empty credentials when authentication is
+  enabled, regardless of environment. The documented initial `admin` / `password`
+  credentials remain supported for local bootstrap and emit a warning until
+  changed. Explicit no-auth startup remains supported in every environment.
   Container images and maintained Compose examples retain their
   authentication-disabled compatibility default, and the entrypoint emits a
   high-severity structured event whenever it is selected.
@@ -83,9 +100,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `0.74200` to `0.78761`. Ten-run in-memory benchmarks measured about 67% lower
   common-query latency and 85% fewer allocations than the previous 32-prefix
   default.
+- **Vector search storage now uses fixed-stride file-backed records.** Direct
+  ordinal offsets replace variable-length record scans, with atomic metadata
+  checkpoints, uncommitted-tail recovery, ordinal-based compaction, and batched
+  candidate scoring. Vector storage selection supports `auto`, `memory`, and
+  `disk`, with independent BM25, vector, and metadata byte ceilings enforced
+  during writes and startup index builds.
+- **Hybrid retrieval now parallelizes reciprocal-rank fusion and uses bounded
+  adaptive IVF-PQ overfetch.** Deterministic policy controls cover candidate
+  depth, RRF weights, score thresholds, fallback behavior, and property
+  filters without changing default ranking behavior.
+- **Refreshed supported build and application dependencies.** Container builds
+  use Go `1.27.1`; UI packages, Go modules, and associated lock files were
+  updated, including UI Grid `5.0.1`, Lucide React `1.37.0`, and React Router
+  DOM `7.18.3`.
 
 ### Fixed
 
+- **Local browser authentication now works over loopback HTTP without weakening
+  HTTPS deployments.** Session cookies remain `HttpOnly` and `SameSite=Lax`;
+  the `Secure` attribute is enabled for direct TLS and TLS-terminating proxies
+  that report `X-Forwarded-Proto: https`, and omitted for direct HTTP such as
+  `http://localhost`.
+- **Initial administrator bootstrap is idempotent and preserves changed
+  credentials.** The documented default password is accepted only for initial
+  creation with a warning, credentials are stored as salted bcrypt hashes, and
+  subsequent startups never overwrite a password changed through the console.
+- **Corruption recovery now uses bounded memory.** Snapshot records stream into
+  a fresh Badger database in fixed-size batches and WAL entries replay
+  incrementally. Failed recovery preserves source data, records a recovery
+  manifest, and does not reopen a partial rebuild.
 - **Headless mode now disables the complete browser-only HTTP surface.** The
   GraphQL Playground is no longer registered in headless mode, while the
   authenticated GraphQL API and other core APIs remain available.

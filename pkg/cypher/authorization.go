@@ -18,15 +18,12 @@ type PermissionRequirements struct {
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
-	upper := strings.ToUpper(query)
+	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read: true,
-		Write: strings.Contains(upper, "CREATE") ||
-			strings.Contains(upper, "DELETE") ||
-			strings.Contains(upper, "SET ") ||
-			strings.Contains(upper, "MERGE") ||
-			strings.Contains(upper, "REMOVE "),
-		Schema: strings.Contains(upper, "INDEX") || strings.Contains(upper, "CONSTRAINT"),
+		Write: keywords["CREATE"] || keywords["DELETE"] || keywords["SET"] ||
+			keywords["MERGE"] || keywords["REMOVE"],
+		Schema: keywords["INDEX"] || keywords["CONSTRAINT"],
 	}
 
 	if procedure, found := RegisteredProcedureForCall(query); found {
@@ -40,6 +37,72 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		}
 	}
 	return requirements
+}
+
+func queryKeywords(query string) map[string]bool {
+	keywords := make(map[string]bool)
+	for index := 0; index < len(query); {
+		switch query[index] {
+		case '/', '\'', '"', '`':
+			if query[index] == '/' && index+1 < len(query) && query[index+1] == '/' {
+				index += 2
+				for index < len(query) && query[index] != '\n' {
+					index++
+				}
+				continue
+			}
+			if query[index] == '/' && index+1 < len(query) && query[index+1] == '*' {
+				index += 2
+				for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
+					index++
+				}
+				if index+1 < len(query) {
+					index += 2
+				}
+				continue
+			}
+			if query[index] != '/' {
+				quote := query[index]
+				index++
+				for index < len(query) {
+					if query[index] == '\\' && quote != '`' && index+1 < len(query) {
+						index += 2
+						continue
+					}
+					if query[index] == quote {
+						if index+1 < len(query) && query[index+1] == quote {
+							index += 2
+							continue
+						}
+						index++
+						break
+					}
+					index++
+				}
+				continue
+			}
+		}
+
+		if !isCypherIdentifierStart(query[index]) {
+			index++
+			continue
+		}
+		start := index
+		index++
+		for index < len(query) && isCypherIdentifierPart(query[index]) {
+			index++
+		}
+		keywords[strings.ToUpper(query[start:index])] = true
+	}
+	return keywords
+}
+
+func isCypherIdentifierStart(value byte) bool {
+	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+}
+
+func isCypherIdentifierPart(value byte) bool {
+	return isCypherIdentifierStart(value) || value >= '0' && value <= '9'
 }
 
 // PermissionChecker answers whether the caller holds an entitlement.

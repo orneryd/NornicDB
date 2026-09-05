@@ -1188,24 +1188,19 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 
-		// Per-database write: for mutations, require ResolvedAccess.Write for this (principal, db).
-		if isMutationQuery(stmt.Statement) && s.isRBACEnforced() {
-			if claims == nil {
-				response.Errors = append(response.Errors, QueryError{
-					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: "Write permission required",
-				})
-				hasError = true
-				continue
+		if missing := s.missingQueryPermission(claims, effectiveDbName, queryStatement); missing != "" {
+			message := localization.DatabaseWriteDenied(effectiveDbName)
+			if missing == auth.PermSchema {
+				message = localization.SchemaPermissionRequired()
+			} else if missing == auth.PermAdmin {
+				message = localization.AdminPermissionRequired()
 			}
-			if !s.getResolvedAccess(claims, effectiveDbName).Write {
-				response.Errors = append(response.Errors, QueryError{
-					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: s.localizedText(w, r, localization.DatabaseWriteDenied(effectiveDbName)),
-				})
-				hasError = true
-				continue
-			}
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, message),
+			})
+			hasError = true
+			continue
 		}
 
 		// Check if database exists before attempting to get executor.
@@ -1255,6 +1250,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		// Track query execution time for slow query logging
 		queryStart := time.Now()
 		execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
+		execCtx = s.withDatabasePermissionChecker(execCtx, claims, effectiveDbName)
 		result, err := executor.Execute(execCtx, queryStatement, stmt.Parameters)
 		queryDuration := time.Since(queryStart)
 
@@ -1397,19 +1393,22 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 		return nil, true
 	}
 
-	// Write permission check for mutations.
-	if isMutationQuery(stmt.Statement) && s.isRBACEnforced() {
-		if claims == nil || !s.getResolvedAccess(claims, dbName).Write {
-			resp := TransactionResponse{
-				Results: []QueryResult{},
-				Errors: []QueryError{{
-					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: s.localizedText(w, r, localization.DatabaseWriteDenied(dbName)),
-				}},
-			}
-			s.writeJSON(w, http.StatusOK, resp)
-			return nil, true
+	if missing := s.missingQueryPermission(claims, dbName, trimmedStmt); missing != "" {
+		message := localization.DatabaseWriteDenied(dbName)
+		if missing == auth.PermSchema {
+			message = localization.SchemaPermissionRequired()
+		} else if missing == auth.PermAdmin {
+			message = localization.AdminPermissionRequired()
 		}
+		resp := TransactionResponse{
+			Results: []QueryResult{},
+			Errors: []QueryError{{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: s.localizedText(w, r, message),
+			}},
+		}
+		s.writeJSON(w, http.StatusOK, resp)
+		return nil, true
 	}
 
 	// Database existence check.
@@ -1458,6 +1457,7 @@ func (s *Server) handleSingleStatementFastPath(w http.ResponseWriter, r *http.Re
 
 	queryStart := time.Now()
 	execCtx := cypher.WithAuthToken(r.Context(), r.Header.Get("Authorization"))
+	execCtx = s.withDatabasePermissionChecker(execCtx, claims, dbName)
 	result, execErr := executor.Execute(execCtx, queryStatement, stmt.Parameters)
 	queryDuration := time.Since(queryStart)
 
@@ -1851,24 +1851,22 @@ func (s *Server) executeTxStatements(
 			continue
 		}
 
-		if isMutationQuery(queryStatement) && s.isRBACEnforced() {
-			if claims == nil {
-				response.Errors = append(response.Errors, QueryError{
-					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: "Write permission required",
-				})
-				continue
+		if missing := s.missingQueryPermission(claims, effectiveDB, queryStatement); missing != "" {
+			message := fmt.Sprintf("Write on database '%s' is not allowed.", effectiveDB)
+			if missing == auth.PermSchema {
+				message = localization.SchemaPermissionRequired().Fallback
+			} else if missing == auth.PermAdmin {
+				message = localization.AdminPermissionRequired().Fallback
 			}
-			if !s.getResolvedAccess(claims, effectiveDB).Write {
-				response.Errors = append(response.Errors, QueryError{
-					Code:    "Neo.ClientError.Security.Forbidden",
-					Message: fmt.Sprintf("Write on database '%s' is not allowed.", effectiveDB),
-				})
-				continue
-			}
+			response.Errors = append(response.Errors, QueryError{
+				Code:    "Neo.ClientError.Security.Forbidden",
+				Message: message,
+			})
+			continue
 		}
 
-		result, err := s.txSessions.ExecuteInSession(ctx, session, queryStatement, stmt.Parameters)
+		execCtx := s.withDatabasePermissionChecker(ctx, claims, effectiveDB)
+		result, err := s.txSessions.ExecuteInSession(execCtx, session, queryStatement, stmt.Parameters)
 		if err != nil {
 			code, message := mapSessionExecError(err)
 			response.Errors = append(response.Errors, QueryError{
