@@ -93,7 +93,10 @@ func TestTransactionSnapshotReservedPeerNodeDeleteConflictsAtCommit(t *testing.T
 	_, latestErr := latestReader.GetNode(source)
 	require.ErrorIs(t, latestErr, ErrNotFound, "peer node deletion must be independently committed")
 	require.ErrorIs(t, reader.Commit(), ErrConflict, "reader cannot update a node deleted after its physical snapshot")
-	_, latestErr = latestReader.GetNode(source)
+	afterCommitReader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = afterCommitReader.Rollback() })
+	_, latestErr = afterCommitReader.GetNode(source)
 	require.ErrorIs(t, latestErr, ErrNotFound, "failed reader must not resurrect the deleted node")
 }
 

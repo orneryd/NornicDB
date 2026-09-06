@@ -2040,7 +2040,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 // getCommittedEdgeForUpdateLocked resolves the committed edge body for a
 // write (UpdateEdge). It behaves exactly like getCommittedEdgeLocked except
 // in one case: when the edge head exists but was committed AFTER this
-// transaction's snapshot (ErrNotVisibleAtSnapshot) and the edge is live at
+// transaction's snapshot (ErrNotVisibleAtSnapshot or no physical head) and the edge is live at
 // latest-committed state, it returns ErrConflict instead of ErrNotFound.
 //
 // Rationale: MERGE resolves an existing relationship through a
@@ -2066,7 +2066,10 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
 	edge, err := tx.engine.getEdgeVisibleAtWithView(edgeID, tx.readTS, tx.withSnapshotViewLocked)
-	if err != ErrNotVisibleAtSnapshot {
+	// A peer-created edge has no head at the pinned physical snapshot.
+	// Classify it using latest state just like a logically newer edge; never
+	// replace an existing snapshot body with that latest body.
+	if !errors.Is(err, ErrNotVisibleAtSnapshot) && !errors.Is(err, ErrNotFound) {
 		return edge, err
 	}
 	_, latestErr := tx.engine.GetEdgeLatestVisible(edgeID)
