@@ -656,7 +656,10 @@ func NewBadgerEngine(dataDir string) (*BadgerEngine, error) {
 //	Safe for concurrent use from multiple goroutines.
 func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	retentionPolicy := normalizeRetentionPolicy(opts.EngineOptions.RetentionPolicy)
-	badgerOpts := badger.DefaultOptions(opts.DataDir)
+	// Precommit validation cannot see a peer that publishes afterward. Native
+	// conflict tracking closes that window for the writer's enrolled keys in
+	// every storage mode, including the default high-performance server mode.
+	badgerOpts := badger.DefaultOptions(opts.DataDir).WithDetectConflicts(true)
 
 	if opts.InMemory {
 		badgerOpts = badgerOpts.WithInMemory(true)
@@ -705,8 +708,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			WithBlockCacheSize(256 << 20).   // 256MB block cache
 			WithIndexCacheSize(128 << 20).   // 128MB index cache
 			WithNumCompactors(4).            // More parallel compaction
-			WithCompactL0OnClose(false).     // Don't compact on close (faster shutdown)
-			WithDetectConflicts(false)       // Skip conflict detection (we handle it)
+			WithCompactL0OnClose(false)      // Don't compact on close (faster shutdown)
 	} else if opts.LowMemory {
 		// LOW MEMORY MODE: Minimize RAM usage
 		badgerOpts = badgerOpts.

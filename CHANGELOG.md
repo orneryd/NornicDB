@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Relationship updates cannot overwrite peer writes published after validation.**
-  Committed edge targets now join the native transaction's conflict-read set.
+  Native conflict detection remains enabled in high-performance mode, and
+  committed edge targets now join the native transaction's conflict-read set.
   A late peer update or deletion causes the stale writer to return the existing
   transient conflict error instead of losing newer properties or resurrecting
   a deleted relationship.
