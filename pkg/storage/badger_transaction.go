@@ -1293,6 +1293,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		var err error
 		edge, err = tx.getCommittedEdgeLocked(edgeID)
 		if err == ErrNotFound {
+			tx.logMissingDeleteSnapshotLocked(edgeID)
 			return ErrNotFound
 		}
 		if err != nil {
