@@ -21,7 +21,7 @@ NornicDB transactions provide full ACID guarantees for graph mutations:
 NornicDB provides **snapshot isolation** via MVCC:
 
 - Each transaction captures a read snapshot at the moment it begins
-- All reads inside the transaction see a consistent view of the graph as of that snapshot, plus the transaction's own pending changes
+- Snapshot-aware reads of node bodies, label scans, and directional relationships see that snapshot plus the transaction's own pending changes
 - Uncommitted changes from other transactions are never visible
 - If two transactions attempt to write to the same data, the second to commit receives a conflict error
 
