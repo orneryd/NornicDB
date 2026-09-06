@@ -32,7 +32,8 @@ its primary key in the native write
 transaction's conflict set. A peer update or deletion published after precommit
 validation therefore rejects the stale writer with the existing transient
 conflict error, preserving the peer's committed properties or deletion. Snapshot
-body lookup and the established conflict telemetry remain unchanged.
+body lookup remains unchanged; existing conflict telemetry records the normalized
+conflict.
 
 ---
 
