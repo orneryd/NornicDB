@@ -85,10 +85,15 @@ func TestTransactionSnapshotReservedPeerNodeDeleteConflictsAtCommit(t *testing.T
 	require.NoError(t, reader.UpdateNode(readerNode))
 
 	publishReservedPublication(t, peer)
-	_, latestErr := engine.GetNode(source)
+	// The barrier publishes native bytes before normal post-commit cache
+	// maintenance. A fresh transaction independently observes durable truth.
+	latestReader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = latestReader.Rollback() })
+	_, latestErr := latestReader.GetNode(source)
 	require.ErrorIs(t, latestErr, ErrNotFound, "peer node deletion must be independently committed")
 	require.ErrorIs(t, reader.Commit(), ErrConflict, "reader cannot update a node deleted after its physical snapshot")
-	_, latestErr = engine.GetNode(source)
+	_, latestErr = latestReader.GetNode(source)
 	require.ErrorIs(t, latestErr, ErrNotFound, "failed reader must not resurrect the deleted node")
 }
 

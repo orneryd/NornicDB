@@ -51,7 +51,9 @@ func TestEshu6579BoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
 			const namespace = "eshu6579"
 			store := storage.NewNamespacedEngine(base, namespace)
 			exec := NewStorageExecutor(store)
-			prefix := "eshu6579-sink-cascade-" + tc.name
+			// Keep fixture values free of parser keywords so the test targets
+			// the production relationship-delete route.
+			prefix := "eshu6579-cascade-" + tc.deletedUIDKey
 			uids := map[string]string{
 				"source":  prefix + "-source",
 				"sink":    prefix + "-sink",
