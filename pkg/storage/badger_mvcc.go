@@ -1020,13 +1020,17 @@ func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 }
 
 func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
+	return b.getNodeVisibleAtWithView(id, version, b.withView)
+}
+
+func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Node, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
 	}
 	defer deregister()
 	var node *Node
-	err = b.withView(func(txn *badger.Txn) error {
+	err = view(func(txn *badger.Txn) error {
 		head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 		if err != nil {
 			return err
@@ -1149,13 +1153,17 @@ func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 }
 
 func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
+	return b.getEdgeVisibleAtWithView(id, version, b.withView)
+}
+
+func (b *BadgerEngine) getEdgeVisibleAtWithView(id EdgeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Edge, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
 	}
 	defer deregister()
 	var edge *Edge
-	err = b.withView(func(txn *badger.Txn) error {
+	err = view(func(txn *badger.Txn) error {
 		var innerErr error
 		edge, innerErr = b.getEdgeVisibleAtInTxn(txn, id, version)
 		return innerErr
@@ -1164,6 +1172,10 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.getOutgoingEdgesVisibleAtWithView(nodeID, version, b.withView)
+}
+
+func (b *BadgerEngine) getOutgoingEdgesVisibleAtWithView(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
 	if nodeID == "" {
 		return nil, ErrInvalidID
 	}
@@ -1173,7 +1185,7 @@ func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVers
 	}
 	defer deregister()
 	var edges []*Edge
-	err = b.withView(func(txn *badger.Txn) error {
+	err = view(func(txn *badger.Txn) error {
 		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccOutgoingAdjacencyPrefixString(nodeID), version)
 		if err != nil {
 			return err
@@ -1199,6 +1211,10 @@ func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVers
 }
 
 func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
+	return b.getIncomingEdgesVisibleAtWithView(nodeID, version, b.withView)
+}
+
+func (b *BadgerEngine) getIncomingEdgesVisibleAtWithView(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
 	if nodeID == "" {
 		return nil, ErrInvalidID
 	}
@@ -1208,7 +1224,7 @@ func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVers
 	}
 	defer deregister()
 	var edges []*Edge
-	err = b.withView(func(txn *badger.Txn) error {
+	err = view(func(txn *badger.Txn) error {
 		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccIncomingAdjacencyPrefixString(nodeID), version)
 		if err != nil {
 			return err
@@ -1419,6 +1435,10 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 }
 
 func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+	return b.getNodesByLabelVisibleAtWithView(label, version, b.withView)
+}
+
+func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -1426,7 +1446,7 @@ func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersio
 	defer deregister()
 	var nodes []*Node
 	normalizedLabel := normalizeLabel(label)
-	err = b.withView(func(txn *badger.Txn) error {
+	err = view(func(txn *badger.Txn) error {
 		return b.iterateNodesVisibleAtInTxn(txn, version, func(node *Node) error {
 			if node == nil {
 				return nil

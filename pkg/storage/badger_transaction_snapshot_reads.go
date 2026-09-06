@@ -1,10 +1,12 @@
 package storage
 
+import "github.com/dgraph-io/badger/v4"
+
 func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
 	if tx.readTS.IsZero() {
 		return tx.engine.AllNodes()
 	}
-	return tx.engine.GetNodesByLabelVisibleAt("", tx.readTS)
+	return tx.engine.getNodesByLabelVisibleAtWithView("", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -39,10 +41,48 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	}
 	switch direction {
 	case Outgoing:
-		return tx.engine.GetOutgoingEdgesVisibleAt(nodeID, tx.readTS)
+		return tx.engine.getOutgoingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
 	case Incoming:
-		return tx.engine.GetIncomingEdgesVisibleAt(nodeID, tx.readTS)
+		return tx.engine.getIncomingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
 	default:
 		return nil, ErrInvalidData
 	}
+}
+
+// withSnapshotViewLocked keeps every snapshot read on the same physical Badger
+// version. The MVCC namespace sequence alone can include an uncommitted peer's
+// reservation. Fresh Views would admit that peer halfway through this reader.
+// The separate read-only transaction does not enlarge the writer's SSI read set.
+func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error) error {
+	if tx.snapshotTx != nil {
+		return read(tx.snapshotTx)
+	}
+	// Legacy manually constructed transactions lack a lifetime-pinned reader.
+	return tx.engine.withView(read)
+}
+
+// snapshotHeadConflict also compares physical publication versions: namespace
+// MVCC reservations can predate this reader even when their data commits later.
+// A separate read transaction preserves the existing consumer conflict shape
+// without adding planning reads to the writer's Badger SSI set.
+func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersion) (bool, error) {
+	if tx.snapshotIsolationConflict(version) {
+		return true, nil
+	}
+	if tx.snapshotTx == nil || key == nil {
+		return false, nil
+	}
+	var changed bool
+	err := tx.engine.withView(func(view *badger.Txn) error {
+		item, err := view.Get(key)
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		changed = item.Version() > tx.snapshotTx.ReadTs()
+		return nil
+	})
+	return changed, err
 }

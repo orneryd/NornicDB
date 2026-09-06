@@ -46,4 +46,5 @@ func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	require.NoError(t, snapshotErr, "snapshot edge vanished after a reserved peer version published")
 	require.Equal(t, edgeID, snapshotEdge.ID)
 	require.NoError(t, deleteErr, "DELETE of an enumerated snapshot edge must not fail not-found")
+	require.ErrorIs(t, reader.Commit(), ErrConflict, "reader must not overwrite the peer publication")
 }

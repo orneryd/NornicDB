@@ -56,6 +56,10 @@ type BadgerTransaction struct {
 	// Badger's native transaction
 	badgerTx *badger.Txn
 
+	// Independent read-only snapshot keeps planning reads out of writer SSI
+	// while excluding MVCC versions reserved but not yet physically committed.
+	snapshotTx *badger.Txn
+
 	// Parent engine for constraint validation
 	engine *BadgerEngine
 
@@ -140,6 +144,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	beginSnapshot := b.snapshotNamespaceVersions()
 	txID := generateTxID()
 	startTime := time.Now()
+	snapshotTx := badgerDB.NewTransaction(false)
 	badgerTx := badgerDB.NewTransaction(true)
 
 	return &BadgerTransaction{
@@ -149,6 +154,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		readTS:             readTS,
 		beginSnapshot:      beginSnapshot,
 		badgerTx:           badgerTx,
+		snapshotTx:         snapshotTx,
 		engine:             b,
 		pendingNodes:       make(map[NodeID]*Node),
 		pendingEdges:       make(map[EdgeID]*Edge),
@@ -222,6 +228,10 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	}
 	if discard && tx.badgerTx != nil {
 		tx.badgerTx.Discard()
+	}
+	if tx.snapshotTx != nil {
+		tx.snapshotTx.Discard()
+		tx.snapshotTx = nil
 	}
 	tx.pendingWrites = make(map[string][]byte)
 	tx.pendingDeletes = make(map[string]bool)
@@ -1940,7 +1950,7 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := tx.engine.GetNodeVisibleAt(nodeID, tx.readTS)
+	node, err := tx.engine.getNodeVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
@@ -1964,8 +1974,8 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 	return node, err
 }
 
-// getNodeFromBadgerSnapshotLocked reads the primary nodeKey via a fresh
-// read-only Badger transaction rather than the user txn so the read does
+// getNodeFromBadgerSnapshotLocked reads the primary nodeKey via the pinned
+// read-only Badger transaction rather than the writer txn so the read does
 // NOT enter the user txn's SSI read set. Without that isolation, the
 // MERGE planning path (which probes peer-tx node IDs returned from the
 // schema's UNIQUE-constraint cache) would put the peer's nodeKey into
@@ -1980,7 +1990,7 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*Node, error) {
 	key := nodeKey(nodeID)
 	var nodeBytes []byte
-	err := tx.engine.db.View(func(rtxn *badger.Txn) error {
+	err := tx.withSnapshotViewLocked(func(rtxn *badger.Txn) error {
 		item, err := rtxn.Get(key)
 		if err != nil {
 			return err
@@ -2018,7 +2028,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 		}
 		return tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
 	}
-	edge, err := tx.engine.GetEdgeVisibleAt(edgeID, tx.readTS)
+	edge, err := tx.engine.getEdgeVisibleAtWithView(edgeID, tx.readTS, tx.withSnapshotViewLocked)
 	if err == ErrNotVisibleAtSnapshot {
 		// SI: edge head exists but isn't visible at our snapshot.
 		// Surface as ErrNotFound so callers can't observe peer
@@ -2081,7 +2091,7 @@ func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error
 	if tx.readTS.IsZero() {
 		return tx.engine.GetNodesByLabel(label)
 	}
-	return tx.engine.GetNodesByLabelVisibleAt(label, tx.readTS)
+	return tx.engine.getNodesByLabelVisibleAtWithView(label, tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // nodeExists checks if a node exists (pending or storage).
@@ -2177,7 +2187,11 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 	if err != nil {
 		return err
 	}
-	if tx.snapshotIsolationConflict(head.Version) {
+	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	if err != nil {
+		return err
+	}
+	if conflict {
 		// Wire contract: substrings "conflict:" and "changed after transaction start" are
 		// matched by downstream Bolt classifiers as transient.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.2.
@@ -2194,7 +2208,11 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 	if err != nil {
 		return err
 	}
-	if tx.snapshotIsolationConflict(head.Version) {
+	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+	if err != nil {
+		return err
+	}
+	if conflict {
 		// MERGE-on-same-unique-value race: this transaction's MERGE
 		// matched a node that a peer committed between our begin and
 		// our commit. The match → UpdateNode redirect onto the peer's
@@ -2270,7 +2288,11 @@ func (tx *BadgerTransaction) checkEdgeCreateConflict(edgeID EdgeID) error {
 	if err != nil {
 		return err
 	}
-	if tx.snapshotIsolationConflict(head.Version) {
+	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
+	if err != nil {
+		return err
+	}
+	if conflict {
 		return fmt.Errorf("%w: edge %s changed after transaction start", ErrConflict, edgeID)
 	}
 	return nil
@@ -2284,7 +2306,11 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
 	if err != nil {
 		return err
 	}
-	if tx.snapshotIsolationConflict(head.Version) {
+	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
+	if err != nil {
+		return err
+	}
+	if conflict {
 		return fmt.Errorf("%w: edge %s changed after transaction start", ErrConflict, edgeID)
 	}
 	return nil
@@ -2314,7 +2340,11 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 			return err
 		}
 		if head.Tombstoned {
-			if tx.snapshotIsolationConflict(head.Version) {
+			conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
+			if err != nil {
+				return err
+			}
+			if conflict {
 				return fmt.Errorf("%w: endpoint node %s was deleted after transaction start", ErrConflict, nodeID)
 			}
 			return ErrInvalidEdge
@@ -2354,7 +2384,12 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 					it.Close()
 					return err
 				}
-				if tx.snapshotIsolationConflict(head.Version) {
+				conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
+				if err != nil {
+					it.Close()
+					return err
+				}
+				if conflict {
 					it.Close()
 					return fmt.Errorf("%w: node %s has adjacent edge %s changed after transaction start", ErrConflict, nodeID, edgeID)
 				}
