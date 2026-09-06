@@ -243,6 +243,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Transaction snapshot reads no longer admit unpublished MVCC reservations.**
+  A peer could reserve a sequence, let a reader enumerate an existing edge,
+  then publish its deletion at that same sequence. Fresh underlying read views
+  made the edge disappear inside the reader's snapshot. Snapshot lookups now
+  share one read-only Badger transaction, and write admission compares physical
+  publication revisions as well as logical versions. The conflicting write
+  keeps the existing transient error contract without serializing transactions.
+
 - **Relationship `MERGE` now includes properties from the pattern in its
   identity.**
   NornicDB previously matched relationships by start node, end node, and type

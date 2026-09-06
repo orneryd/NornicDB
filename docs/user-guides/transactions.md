@@ -21,9 +21,27 @@ NornicDB transactions provide full ACID guarantees for graph mutations:
 NornicDB provides **snapshot isolation** via MVCC:
 
 - Each transaction captures a read snapshot at the moment it begins
-- All reads inside the transaction see a consistent view of the graph as of that snapshot, plus the transaction's own pending changes
+- Snapshot-aware reads of node bodies, label scans, and directional relationships see that snapshot plus the transaction's own pending changes
 - Uncommitted changes from other transactions are never visible
 - If two transactions attempt to write to the same data, the second to commit receives a conflict error
+
+Transaction snapshot lookups pin a separate read-only Badger transaction for
+node bodies, label scans, and directional relationship traversal. Reserving an
+MVCC sequence does not publish a write: a peer deletion committed after that
+physical snapshot cannot make a relationship disappear between enumeration and
+`DELETE`. Pending writes remain visible through the transaction's own overlay.
+
+Relationship identity lookups used by `MERGE` still consult latest committed
+state. A peer relationship discovered there but absent from the transaction
+snapshot retains the existing transient conflict classification.
+
+Write conflict checks also compare the head's physical publication revision,
+including tombstones. This catches a peer that reserved its sequence before the
+reader began but committed afterward. The conflict retains the existing
+`changed after transaction start` error and Bolt transient classification, so
+existing conflict telemetry and bounded client retries continue to apply.
+The pinned reader is released on commit, rollback, or transaction expiry;
+long-running transactions retain the underlying versions until release.
 
 ---
 

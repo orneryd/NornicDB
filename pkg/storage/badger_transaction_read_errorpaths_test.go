@@ -107,7 +107,15 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 		return txn.Set(headKey, []byte("corrupt-head"))
 	}))
 
+	// The original physical snapshot predates the injected corruption.
 	_, err = tx.getCommittedEdgeLocked("test:e1")
+	require.NoError(t, err)
+
+	corruptReader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, corruptReader.SetNamespace("test"))
+	defer func() { _ = corruptReader.Rollback() }()
+	_, err = corruptReader.getCommittedEdgeLocked("test:e1")
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrNotFound)
 }
