@@ -2065,7 +2065,7 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
-	edge, err := tx.engine.GetEdgeVisibleAt(edgeID, tx.readTS)
+	edge, err := tx.engine.getEdgeVisibleAtWithView(edgeID, tx.readTS, tx.withSnapshotViewLocked)
 	if err != ErrNotVisibleAtSnapshot {
 		return edge, err
 	}
