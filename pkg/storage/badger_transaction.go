@@ -1189,6 +1189,13 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
 		}
+		// Snapshot body reads use a separate view. Enroll only this write's
+		// primary key in Badger's conflict set so a peer publishing after
+		// precommit validation cannot be overwritten by the buffered update.
+		// A missing key still enrolls the read; retain snapshot body semantics.
+		if _, err := tx.badgerTx.Get(edgeKey(edge.ID)); err != nil && err != badger.ErrKeyNotFound {
+			return fmt.Errorf("tracking edge write conflict: %w", err)
+		}
 	}
 
 	// If endpoints changed, verify they exist and update outgoing/incoming indexes.

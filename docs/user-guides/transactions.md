@@ -25,6 +25,12 @@ NornicDB provides **snapshot isolation** via MVCC:
 - Uncommitted changes from other transactions are never visible
 - If two transactions attempt to write to the same data, the second to commit receives a conflict error
 
+Updates to an existing relationship enroll its primary key in the native write
+transaction's conflict set. A peer update or deletion published after precommit
+validation therefore rejects the stale writer with the existing transient
+conflict error, preserving the peer's committed properties or deletion. Snapshot
+body lookup and the established conflict telemetry remain unchanged.
+
 ---
 
 ## Usage
