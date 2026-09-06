@@ -112,3 +112,31 @@ func TestTransactionPinnedSnapshotDiscardedOnRollbackAndCommit(t *testing.T) {
 	require.NoError(t, committed.Commit())
 	require.Nil(t, committed.snapshotTx)
 }
+
+func TestTransactionSnapshotReservedPeerDeleteAllowsUpdateUntilCommit(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
+
+	peer, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = peer.Rollback() })
+	require.NoError(t, peer.DeleteEdge(edgeID))
+	stageReservedPublication(t, peer)
+
+	reader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Rollback() })
+	require.NoError(t, reader.SetNamespace(peer.namespace))
+	readerEdge, err := reader.GetEdge(edgeID)
+	require.NoError(t, err)
+	require.Empty(t, readerEdge.Properties)
+
+	publishReservedPublication(t, peer)
+	_, err = engine.GetEdge(edgeID)
+	require.ErrorIs(t, err, ErrNotFound, "peer deletion must be independently committed")
+	readerEdge.Properties = map[string]interface{}{"writer": "reader"}
+	require.NoError(t, reader.UpdateEdge(readerEdge), "snapshot write must not leak a hard missing-edge error after peer publication")
+	require.ErrorIs(t, reader.Commit(), ErrConflict, "peer deletion must reject the stale write at commit")
+	_, err = engine.GetEdge(edgeID)
+	require.ErrorIs(t, err, ErrNotFound, "failed reader must not resurrect the deleted edge")
+}
