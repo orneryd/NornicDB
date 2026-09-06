@@ -5,7 +5,9 @@ package cypher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"slices"
 	"strings"
@@ -46,7 +48,7 @@ func TestEshu6579BoltSharedEdgeDiagnostic(t *testing.T) {
 	source, sink := prefix+"-source", prefix+"-sink"
 	call := func(phase, q string, p map[string]any) []*neo4j.Record {
 		t.Helper()
-		r, err := eshu6579BoltCall(ctx, t, driver, phase, q, p)
+		r, err := eshu6579SharedBoltCall(ctx, t, driver, phase, q, p)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +57,7 @@ func TestEshu6579BoltSharedEdgeDiagnostic(t *testing.T) {
 	defer func() {
 		c, done := context.WithTimeout(context.Background(), 30*time.Second)
 		defer done()
-		_, err := eshu6579BoltCall(c, t, driver, "cleanup", `UNWIND $uids AS uid MATCH (f:Function {uid:uid}) DETACH DELETE f`, map[string]any{"uids": []string{source, sink}})
+		_, err := eshu6579SharedBoltCall(c, t, driver, "cleanup", `UNWIND $uids AS uid MATCH (f:Function {uid:uid}) DETACH DELETE f`, map[string]any{"uids": []string{source, sink}})
 		if err != nil {
 			t.Errorf("owned cleanup: %v", err)
 		}
@@ -135,14 +137,14 @@ func TestEshu6579BoltSharedEdgeDiagnostic(t *testing.T) {
 				case <-time.After(time.Duration(1+(worker+round)%4) * time.Millisecond):
 				}
 				phase := fmt.Sprintf("shared/worker%d/round%d", worker, round)
-				_, err := eshu6579BoltCall(ctx, t, driver, phase+"/retract", eshu6579Retract, params)
+				_, err := eshu6579SharedBoltCall(ctx, t, driver, phase+"/retract", eshu6579Retract, params)
 				t.Logf("caller_phase=%s/retract error=%v", phase, err)
 				if err != nil {
 					t.Error(err)
 					failed++
 					continue
 				}
-				_, err = eshu6579BoltCall(ctx, t, driver, phase+"/upsert", eshu6579Upsert, map[string]any{"rows": []map[string]any{makeRow(worker, round)}})
+				_, err = eshu6579SharedBoltCall(ctx, t, driver, phase+"/upsert", eshu6579Upsert, map[string]any{"rows": []map[string]any{makeRow(worker, round)}})
 				t.Logf("caller_phase=%s/upsert error=%v", phase, err)
 				if err != nil {
 					t.Error(err)
@@ -165,10 +167,10 @@ func TestEshu6579BoltSharedEdgeDiagnostic(t *testing.T) {
 	if !slices.Equal(before, tuples(prefix+"-other")) {
 		t.Fatal("unaffected tuple changed")
 	}
-	endpoints := call("endpoint_count", `UNWIND $uids AS uid MATCH (f:Function {uid:uid}) RETURN f.uid AS uid`, map[string]any{"uids": []string{source, sink}})
+	endpoints := call("endpoint_count", `UNWIND $endpoint_uids AS endpoint_uid MATCH (f:Function {uid:endpoint_uid}) RETURN f.uid AS function_uid`, map[string]any{"endpoint_uids": []string{source, sink}})
 	got := make([]string, len(endpoints))
 	for i, r := range endpoints {
-		v, ok := r.Get("uid")
+		v, ok := r.Get("function_uid")
 		if !ok {
 			t.Fatal("uid missing")
 		}
@@ -199,5 +201,57 @@ func TestEshu6579BoltSharedEdgeDiagnostic(t *testing.T) {
 	}
 	if !slices.Equal(before, tuples(prefix+"-other")) {
 		t.Fatal("replay changed unaffected tuple")
+	}
+}
+
+// The shared probe uses one TOTAL four-attempt budget, not a second retry loop
+// around eshu6579BoltCall. The predicate below mirrors Eshu
+// retrying_executor.go:333-385 (MERGE guard, typed SyntaxError, exact update
+// message or ordered create-prefix/suffix). UNWIND MATCH not-found stays terminal.
+func eshu6579SharedSnapshotConflict(err error, query string) bool {
+	if !strings.Contains(strings.ToUpper(query), "MERGE") {
+		return false
+	}
+	var wire *neo4j.Neo4jError
+	if !errors.As(err, &wire) || wire.Code != "Neo.ClientError.Statement.SyntaxError" {
+		return false
+	}
+	if strings.Contains(wire.Msg, "UNWIND MERGE chain relationship update failed: not found") {
+		return true
+	}
+	const prefix = "UNWIND MERGE chain relationship create failed: start node "
+	start := strings.Index(wire.Msg, prefix)
+	return start >= 0 && strings.Contains(wire.Msg[start+len(prefix):], " does not exist")
+}
+
+func eshu6579SharedBoltCall(ctx context.Context, t *testing.T, driver neo4j.DriverWithContext, phase, query string, params map[string]any) ([]*neo4j.Record, error) {
+	for attempt := 0; ; attempt++ {
+		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: os.Getenv("ESHU6579_BOLT_DATABASE"), AccessMode: neo4j.AccessModeWrite})
+		result, err := session.Run(ctx, query, params)
+		var records []*neo4j.Record
+		if err == nil {
+			records, err = result.Collect(ctx)
+		}
+		closeErr := session.Close(ctx)
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			return records, nil
+		}
+		msg := err.Error()
+		conflict := strings.Contains(msg, "conflict:") && strings.Contains(msg, "changed after transaction start")
+		snapshot := eshu6579SharedSnapshotConflict(err, query)
+		t.Logf("caller_phase=%s attempt=%d recognized_conflict=%t recognized_merge_snapshot=%t error=%v", phase, attempt, conflict, snapshot, err)
+		if (!conflict && !snapshot) || attempt == 3 {
+			return nil, fmt.Errorf("caller_phase=%s attempt=%d: %w", phase, attempt, err)
+		}
+		delay := 50 * time.Millisecond * time.Duration(1<<uint(attempt))
+		jitter := time.Duration(float64(delay) * (0.5 + rand.Float64()))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(jitter):
+		}
 	}
 }
