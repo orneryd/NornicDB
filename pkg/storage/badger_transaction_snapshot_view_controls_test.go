@@ -92,3 +92,37 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 	require.NoError(t, err)
 	require.False(t, conflict, "an absent valid head is not evidence of a peer publication")
 }
+
+func TestTransactionSnapshotHeadInViewShortCircuitsAndPropagatesReadErrors(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
+	key := engine.mvccEdgeHeadKeyStringLookup(edgeID)
+	require.NotEmpty(t, key)
+
+	readVersion := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 10}
+	legacy := &BadgerTransaction{engine: engine, readTS: readVersion}
+	conflict, err := legacy.snapshotHeadConflictInView(nil, key, readVersion)
+	require.NoError(t, err)
+	require.False(t, conflict, "a reader without a physical snapshot must not access the view")
+
+	newer := readVersion
+	newer.CommitSequence++
+	conflict, err = legacy.snapshotHeadConflictInView(nil, key, newer)
+	require.NoError(t, err)
+	require.True(t, conflict, "logical conflicts must short-circuit before accessing the view")
+
+	reader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Rollback() })
+	discarded := engine.db.NewTransaction(false)
+	discarded.Discard()
+
+	conflict, err = reader.snapshotHeadConflictInView(discarded, key, reader.readTS)
+	require.ErrorIs(t, err, badger.ErrDiscardedTxn)
+	require.False(t, conflict)
+
+	edgeNum, ok := engine.idDict.lookupEdgeNumID(edgeID)
+	require.True(t, ok)
+	_, _, err = engine.loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(discarded, edgeNum)
+	require.ErrorIs(t, err, badger.ErrDiscardedTxn)
+}
