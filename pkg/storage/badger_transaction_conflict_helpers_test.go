@@ -113,6 +113,9 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	// Missing entities on create-conflict checks are non-conflicting.
 	require.NoError(t, tx.checkNodeCreateConflict("test:missing"))
 	require.NoError(t, tx.checkEdgeCreateConflict("test:missing"))
+	// Existing heads already visible to this transaction are also non-conflicting.
+	require.NoError(t, tx.checkNodeCreateConflict("test:n1"))
+	require.NoError(t, tx.checkEdgeCreateConflict("test:e"))
 
 	// snapshotIsolationConflict branches: same sequence (non-max) => false.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(10, 0).UTC(), CommitSequence: 9}
@@ -158,6 +161,36 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_Branches(t *testing.T) {
 
 	// Node without dictionary/index entries uses empty-prefix path and should not fail.
 	require.NoError(t, tx.checkNodeAdjacencyConflict("test:missing"))
+}
+
+func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t *testing.T) {
+	engine := newTestEngine(t)
+	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	require.NoError(t, err)
+
+	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+		prefix := engine.outgoingIndexPrefixString("test:a")
+		require.NotNil(t, prefix)
+		if err := view.Set(append(append([]byte{}, prefix...), []byte("bad")...), nil); err != nil {
+			return err
+		}
+		nodeNum, ok := engine.idDict.lookupNodeNumID("test:a")
+		require.True(t, ok)
+		if err := view.Set(outgoingIndexKey(nodeNum, 999999999), nil); err != nil {
+			return err
+		}
+		missingHeadKey, err := engine.outgoingIndexKeyString(view, "test:a", "test:missing-head")
+		if err != nil {
+			return err
+		}
+		return view.Set(missingHeadKey, nil)
+	}))
+
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.checkNodeAdjacencyConflict("test:a"))
 }
 
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *testing.T) {
