@@ -766,17 +766,30 @@ func (b *BadgerEngine) loadNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID) (MVCCHe
 }
 
 func (b *BadgerEngine) loadEdgeMVCCHeadInTxn(txn *badger.Txn, id EdgeID) (MVCCHead, error) {
-	key := b.mvccEdgeHeadKeyStringLookup(id)
-	if key == nil {
-		return MVCCHead{}, ErrNotFound
+	head, _, err := b.loadEdgeMVCCHeadWithPhysicalVersionInTxn(txn, id)
+	return head, err
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadWithPhysicalVersionInTxn(txn *badger.Txn, id EdgeID) (MVCCHead, uint64, error) {
+	numID, ok := b.idDict.lookupEdgeNumID(id)
+	if !ok {
+		return MVCCHead{}, 0, ErrNotFound
 	}
-	item, err := txn.Get(key)
+	return b.loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(txn, numID)
+}
+
+func (b *BadgerEngine) loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(txn *badger.Txn, numID uint64) (MVCCHead, uint64, error) {
+	var key [1 + 8]byte
+	key[0] = prefixMVCCEdgeHead
+	binary.BigEndian.PutUint64(key[1:], numID)
+	item, err := txn.Get(key[:])
 	if err == badger.ErrKeyNotFound {
-		return MVCCHead{}, ErrNotFound
+		return MVCCHead{}, 0, ErrNotFound
 	}
 	if err != nil {
-		return MVCCHead{}, err
+		return MVCCHead{}, 0, err
 	}
+	physicalVersion := item.Version()
 	var head MVCCHead
 	err = item.Value(func(val []byte) error {
 		var decodeErr error
@@ -784,9 +797,9 @@ func (b *BadgerEngine) loadEdgeMVCCHeadInTxn(txn *badger.Txn, id EdgeID) (MVCCHe
 		return decodeErr
 	})
 	if err != nil {
-		return MVCCHead{}, err
+		return MVCCHead{}, 0, err
 	}
-	return head, nil
+	return head, physicalVersion, nil
 }
 
 func (b *BadgerEngine) loadNodeMVCCRecordExactInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, error) {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Deterministic diagnostic for Eshu #6579. It is a test-only race harness, not a fix.
+// Deterministic bound-delete snapshot diagnostic. It is a test-only race harness, not a fix.
 package cypher
 
 import (
@@ -11,18 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// eshu6579AfterOutgoingEngine delegates all production storage operations to a
+// afterOutgoingEdgesEngine delegates all production storage operations to a
 // real transaction wrapper. It invokes after only after the bound DELETE has
 // obtained its outgoing candidates, which places the peer's public DETACH
 // DELETE in the narrow read-to-delete interval under investigation.
-type eshu6579AfterOutgoingEngine struct {
+type afterOutgoingEdgesEngine struct {
 	storage.Engine
 	after   func([]*storage.Edge) error
 	fired   bool
 	hookErr error
 }
 
-func (e *eshu6579AfterOutgoingEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *afterOutgoingEdgesEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
 	edges, err := e.Engine.GetOutgoingEdges(nodeID)
 	if err != nil || e.fired {
 		return edges, err
@@ -34,7 +34,7 @@ func (e *eshu6579AfterOutgoingEngine) GetOutgoingEdges(nodeID storage.NodeID) ([
 	return edges, nil
 }
 
-func TestEshu6579BoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
+func TestBoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name          string
@@ -48,20 +48,20 @@ func TestEshu6579BoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, base.Close()) }()
 
-			const namespace = "eshu6579"
+			const namespace = "snapshot_cascade"
 			store := storage.NewNamespacedEngine(base, namespace)
 			exec := NewStorageExecutor(store)
 			// Keep fixture values free of parser keywords so the test targets
 			// the production relationship-delete route.
-			prefix := "eshu6579-cascade-" + tc.deletedUIDKey
+			prefix := "bound-delete-cascade-" + tc.deletedUIDKey
 			uids := map[string]string{
 				"source":  prefix + "-source",
 				"sink":    prefix + "-sink",
 				"control": prefix + "-control",
 			}
-			const evidence = "eshu6579-snapshot-evidence"
+			const evidence = "snapshot-evidence"
 
-			_, err = exec.Execute(ctx, "CREATE INDEX eshu6579_function_uid IF NOT EXISTS FOR (f:Function) ON (f.uid)", nil)
+			_, err = exec.Execute(ctx, "CREATE INDEX snapshot_cascade_function_uid IF NOT EXISTS FOR (f:Function) ON (f.uid)", nil)
 			require.NoError(t, err)
 			for _, uid := range uids {
 				_, err = exec.Execute(ctx, "CREATE (:Function {uid:$uid})", map[string]interface{}{"uid": uid})
@@ -86,7 +86,7 @@ CREATE (s)-[:TAINT_FLOWS_TO {evidence_source:'unaffected'}]->(c)`, map[string]in
 			txStore := &transactionStorageWrapper{tx: tx, underlying: store, namespace: namespace, separator: ":", mutatedNodeIDs: make(map[string]struct{})}
 
 			var snapshotEdge *storage.Edge
-			intercept := &eshu6579AfterOutgoingEngine{Engine: txStore}
+			intercept := &afterOutgoingEdgesEngine{Engine: txStore}
 			intercept.after = func(candidates []*storage.Edge) error {
 				for _, edge := range candidates {
 					if edge != nil && fmt.Sprint(edge.Properties["evidence_source"]) == evidence {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Diagnostic-only reproduction of Eshu #6579, not a production fix or causal proof.
+// Diagnostic-only concurrent retract reproduction, not a production fix or causal proof.
 package cypher
 
 import (
@@ -17,7 +17,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-const eshu6579Upsert = `UNWIND $rows AS row
+const concurrentRetractUpsertQuery = `UNWIND $rows AS row
 MATCH (s:Function {uid: row.source_function_uid})
 MATCH (t:Function {uid: row.sink_function_uid})
 MERGE (s)-[rel:TAINT_FLOWS_TO {evidence_uid: row.uid}]->(t)
@@ -32,24 +32,24 @@ SET rel.sink_kind = row.sink_kind,
     rel.generation_id = row.generation_id,
     rel.evidence_source = row.evidence_source`
 
-const eshu6579Retract = `UNWIND $source_uids AS suid
+const concurrentRetractDeleteQuery = `UNWIND $source_uids AS suid
 MATCH (s:Function {uid: suid})-[rel:TAINT_FLOWS_TO]->(:Function)
 WHERE rel.evidence_source = $evidence_source
 DELETE rel`
 
 // Requires an explicitly opted-in disposable backend. Ordinary suites skip it;
 // an opted-in run with a missing DSN fails instead of silently skipping.
-func TestEshu6579BoltRetractDiagnostic(t *testing.T) {
-	if os.Getenv("ESHU6579_BOLT_DIAGNOSTIC") != "1" {
-		t.Skip("set ESHU6579_BOLT_DIAGNOSTIC=1 for disposable backend")
+func TestBoltConcurrentRetractDiagnostic(t *testing.T) {
+	if os.Getenv("NORNICDB_TEST_BOLT_DIAGNOSTIC") != "1" {
+		t.Skip("set NORNICDB_TEST_BOLT_DIAGNOSTIC=1 for disposable backend")
 	}
-	dsn := strings.TrimSpace(os.Getenv("ESHU6579_BOLT_DSN"))
+	dsn := strings.TrimSpace(os.Getenv("NORNICDB_TEST_BOLT_DSN"))
 	if dsn == "" {
-		t.Fatal("ESHU6579_BOLT_DSN required")
+		t.Fatal("NORNICDB_TEST_BOLT_DSN required")
 	}
 	auth := neo4j.NoAuth()
-	if user := os.Getenv("ESHU6579_BOLT_USER"); user != "" {
-		auth = neo4j.BasicAuth(user, os.Getenv("ESHU6579_BOLT_PASSWORD"), "")
+	if user := os.Getenv("NORNICDB_TEST_BOLT_USER"); user != "" {
+		auth = neo4j.BasicAuth(user, os.Getenv("NORNICDB_TEST_BOLT_PASSWORD"), "")
 	}
 	driver, err := neo4j.NewDriverWithContext(dsn, auth)
 	if err != nil {
@@ -61,16 +61,16 @@ func TestEshu6579BoltRetractDiagnostic(t *testing.T) {
 		}
 	}()
 	for _, mode := range []string{"delete", "rewrite", "endpoint"} {
-		t.Run(mode, func(t *testing.T) { eshu6579BoltArm(t, driver, mode) })
+		t.Run(mode, func(t *testing.T) { runBoltConcurrentRetractScenario(t, driver, mode) })
 	}
 }
 
 // Each operation and each retry opens a new independent autocommit session.
 // Accept the legacy conflict text and typed Outdated errors from current
 // upstream localized conflicts. Other categories and bare not-found stay terminal.
-func eshu6579BoltCall(ctx context.Context, t *testing.T, driver neo4j.DriverWithContext, phase, query string, params map[string]any) ([]*neo4j.Record, error) {
+func boltDiagnosticCall(ctx context.Context, t *testing.T, driver neo4j.DriverWithContext, phase, query string, params map[string]any) ([]*neo4j.Record, error) {
 	for attempt := 0; ; attempt++ {
-		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: os.Getenv("ESHU6579_BOLT_DATABASE"), AccessMode: neo4j.AccessModeWrite})
+		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: os.Getenv("NORNICDB_TEST_BOLT_DATABASE"), AccessMode: neo4j.AccessModeWrite})
 		result, err := session.Run(ctx, query, params)
 		var records []*neo4j.Record
 		if err == nil {
@@ -83,7 +83,7 @@ func eshu6579BoltCall(ctx context.Context, t *testing.T, driver neo4j.DriverWith
 		if err == nil {
 			return records, nil
 		}
-		conflict := eshu6579DiagnosticWriteConflict(err)
+		conflict := boltDiagnosticWriteConflict(err)
 		t.Logf("caller_phase=%s attempt=%d recognized_conflict=%t error=%v", phase, attempt, conflict, err)
 		if !conflict || attempt == 3 {
 			return nil, fmt.Errorf("caller_phase=%s attempt=%d: %w", phase, attempt, err)
@@ -98,20 +98,20 @@ func eshu6579BoltCall(ctx context.Context, t *testing.T, driver neo4j.DriverWith
 	}
 }
 
-func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) {
+func runBoltConcurrentRetractScenario(t *testing.T, driver neo4j.DriverWithContext, mode string) {
 	const anchors, trials, workers = 64, 12, 4
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	prefix := fmt.Sprintf("eshu6579-%s-%d", mode, time.Now().UnixNano())
+	prefix := fmt.Sprintf("concurrent-retract-%s-%d", mode, time.Now().UnixNano())
 	call := func(phase, query string, params map[string]any) []*neo4j.Record {
 		t.Helper()
-		records, err := eshu6579BoltCall(ctx, t, driver, phase, query, params)
+		records, err := boltDiagnosticCall(ctx, t, driver, phase, query, params)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return records
 	}
-	call("index", "CREATE INDEX eshu6579_function_uid IF NOT EXISTS FOR (f:Function) ON (f.uid)", nil)
+	call("index", "CREATE INDEX diagnostic_function_uid IF NOT EXISTS FOR (f:Function) ON (f.uid)", nil)
 	rows, controls := make([]map[string]any, anchors), make([]map[string]any, anchors)
 	uids := make([]string, anchors)
 	allUIDs := make([]string, 0, anchors*4)
@@ -136,7 +136,7 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 	defer func() {
 		cleanupCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
 		defer done()
-		_, err := eshu6579BoltCall(cleanupCtx, t, driver, "cleanup", `UNWIND $uids AS uid MATCH (f:Function {uid:uid}) DETACH DELETE f`, map[string]any{"uids": allUIDs})
+		_, err := boltDiagnosticCall(cleanupCtx, t, driver, "cleanup", `UNWIND $uids AS uid MATCH (f:Function {uid:uid}) DETACH DELETE f`, map[string]any{"uids": allUIDs})
 		if err != nil {
 			t.Errorf("owned fixture cleanup: %v", err)
 		}
@@ -144,7 +144,7 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 	const endpoints = `UNWIND $rows AS row MERGE (s:Function {uid:row.source_function_uid}) MERGE (t:Function {uid:row.sink_function_uid})`
 	call("seed_endpoints", endpoints, map[string]any{"rows": rows})
 	call("seed_control_endpoints", endpoints, map[string]any{"rows": controls})
-	call("seed_controls", eshu6579Upsert, map[string]any{"rows": controls})
+	call("seed_controls", concurrentRetractUpsertQuery, map[string]any{"rows": controls})
 	tuples := func(source string) []string {
 		records := call("truth", `MATCH (s:Function)-[rel:TAINT_FLOWS_TO]->(t:Function) WHERE rel.evidence_source=$source RETURN s.uid AS source, t.uid AS sink, properties(rel) AS properties`, map[string]any{"source": source})
 		out := make([]string, len(records))
@@ -164,7 +164,7 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 	}
 	retractParams := map[string]any{"source_uids": uids, "evidence_source": prefix}
 	for trial := 0; trial < trials; trial++ {
-		call("seed_target", eshu6579Upsert, map[string]any{"rows": rows})
+		call("seed_target", concurrentRetractUpsertQuery, map[string]any{"rows": rows})
 		if n := len(tuples(prefix)); n != anchors {
 			t.Fatalf("seed target=%d", n)
 		}
@@ -177,7 +177,7 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 				ready.Done()
 				<-start
 				run := func(phase, q string, p map[string]any) error {
-					_, err := eshu6579BoltCall(ctx, t, driver, fmt.Sprintf("%s/trial%d/worker%d/%s", mode, trial, worker, phase), q, p)
+					_, err := boltDiagnosticCall(ctx, t, driver, fmt.Sprintf("%s/trial%d/worker%d/%s", mode, trial, worker, phase), q, p)
 					t.Logf("mode=%s trial=%d worker=%d caller_phase=%s completed=true error=%v", mode, trial, worker, phase, err)
 					return err
 				}
@@ -188,9 +188,9 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 						err = run("endpoint_recreate", endpoints, map[string]any{"rows": rows})
 					}
 				} else {
-					err = run("retract", eshu6579Retract, retractParams)
+					err = run("retract", concurrentRetractDeleteQuery, retractParams)
 					if err == nil && mode == "rewrite" {
-						err = run("upsert", eshu6579Upsert, map[string]any{"rows": rows})
+						err = run("upsert", concurrentRetractUpsertQuery, map[string]any{"rows": rows})
 					}
 				}
 				results <- err
@@ -235,15 +235,15 @@ func eshu6579BoltArm(t *testing.T, driver neo4j.DriverWithContext, mode string) 
 		if !slices.Equal(actual, expected) {
 			t.Fatal("endpoint pair multiset changed")
 		}
-		call("replay_retract", eshu6579Retract, retractParams)
-		call("empty_replay_retract", eshu6579Retract, retractParams)
-		call("empty_input", eshu6579Retract, map[string]any{"source_uids": []string{}, "evidence_source": prefix})
+		call("replay_retract", concurrentRetractDeleteQuery, retractParams)
+		call("empty_replay_retract", concurrentRetractDeleteQuery, retractParams)
+		call("empty_input", concurrentRetractDeleteQuery, map[string]any{"source_uids": []string{}, "evidence_source": prefix})
 		if n := len(tuples(prefix)); n != 0 {
 			t.Fatalf("empty replay target=%d", n)
 		}
-		call("replay_upsert", eshu6579Upsert, map[string]any{"rows": rows})
+		call("replay_upsert", concurrentRetractUpsertQuery, map[string]any{"rows": rows})
 		expectedTarget := tuples(prefix)
-		call("duplicate_upsert", eshu6579Upsert, map[string]any{"rows": rows})
+		call("duplicate_upsert", concurrentRetractUpsertQuery, map[string]any{"rows": rows})
 		if after := tuples(prefix); len(after) != anchors || !slices.Equal(expectedTarget, after) {
 			t.Fatal("duplicate replay changed target multiset")
 		}

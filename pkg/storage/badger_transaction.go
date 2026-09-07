@@ -141,11 +141,11 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	badgerDB := b.db
 	b.mu.RUnlock()
 
+	snapshotTx := badgerDB.NewTransaction(false)
 	readTS := b.currentMVCCReadVersion("")
 	beginSnapshot := b.snapshotNamespaceVersions()
 	txID := generateTxID()
 	startTime := time.Now()
-	snapshotTx := badgerDB.NewTransaction(false)
 	badgerTx := badgerDB.NewTransaction(true)
 
 	return &BadgerTransaction{
@@ -636,6 +636,12 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		}
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
+		}
+		// Snapshot body reads use a separate view. Enroll only this write's
+		// primary key in Badger's conflict set so a peer publishing after
+		// precommit validation cannot be overwritten by the buffered update.
+		if _, err := tx.badgerTx.Get(nodeKey(node.ID)); err != nil && err != badger.ErrKeyNotFound {
+			return fmt.Errorf("tracking node write conflict: %w", err)
 		}
 	}
 
@@ -2373,7 +2379,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 			opts.PrefetchValues = false
 			it := viewTx.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-				edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
+				edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().Key())
 				if !ok {
 					continue
 				}
@@ -2381,7 +2387,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 				if !ok {
 					continue
 				}
-				head, err := tx.engine.loadEdgeMVCCHeadInTxn(viewTx, edgeID)
+				head, physicalVersion, err := tx.engine.loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn(viewTx, edgeNum)
 				if err == ErrNotFound {
 					continue
 				}
@@ -2389,12 +2395,7 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 					it.Close()
 					return err
 				}
-				conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
-				if err != nil {
-					it.Close()
-					return err
-				}
-				if conflict {
+				if tx.snapshotHeadVersionConflict(head.Version, physicalVersion) {
 					it.Close()
 					return localizedError(localization.StorageTransactionAdjacentEdgeChanged(string(nodeID), string(edgeID)), ErrConflict)
 				}

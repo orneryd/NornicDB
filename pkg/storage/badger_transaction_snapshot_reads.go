@@ -74,15 +74,33 @@ func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersio
 	}
 	var changed bool
 	err := tx.engine.withView(func(view *badger.Txn) error {
-		item, err := view.Get(key)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		changed = item.Version() > tx.snapshotTx.ReadTs()
-		return nil
+		var err error
+		changed, err = tx.snapshotHeadConflictInView(view, key, version)
+		return err
 	})
 	return changed, err
+}
+
+func (tx *BadgerTransaction) snapshotHeadConflictInView(view *badger.Txn, key []byte, version MVCCVersion) (bool, error) {
+	if tx.snapshotIsolationConflict(version) {
+		return true, nil
+	}
+	if tx.snapshotTx == nil || key == nil {
+		return false, nil
+	}
+	item, err := view.Get(key)
+	if err == badger.ErrKeyNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return item.Version() > tx.snapshotTx.ReadTs(), nil
+}
+
+func (tx *BadgerTransaction) snapshotHeadVersionConflict(version MVCCVersion, physicalVersion uint64) bool {
+	if tx.snapshotIsolationConflict(version) {
+		return true
+	}
+	return tx.snapshotTx != nil && physicalVersion > tx.snapshotTx.ReadTs()
 }

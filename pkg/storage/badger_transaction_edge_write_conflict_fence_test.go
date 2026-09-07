@@ -12,18 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// edgeWriteConflictHandler pauses the real Commit path at its existing
+// writeConflictBarrier pauses the real Commit path at its existing
 // metadata log, after snapshot validation and before materialization. No
 // production hook or extra commit-time observation is introduced by the test.
-type edgeWriteConflictHandler struct {
+type writeConflictBarrier struct {
 	target  string
 	reached chan struct{}
 	resume  chan struct{}
 	once    sync.Once
 }
 
-func (h *edgeWriteConflictHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h *edgeWriteConflictHandler) Handle(ctx context.Context, record slog.Record) error {
+func (h *writeConflictBarrier) Enabled(context.Context, slog.Level) bool { return true }
+func (h *writeConflictBarrier) Handle(ctx context.Context, record slog.Record) error {
 	if record.Message != "transaction committing with metadata" {
 		return nil
 	}
@@ -44,8 +44,8 @@ func (h *edgeWriteConflictHandler) Handle(ctx context.Context, record slog.Recor
 	}
 	return nil
 }
-func (h *edgeWriteConflictHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *edgeWriteConflictHandler) WithGroup(string) slog.Handler      { return h }
+func (h *writeConflictBarrier) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *writeConflictBarrier) WithGroup(string) slog.Handler      { return h }
 
 func TestTransactionEdgeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	for _, highPerformance := range []bool{false, true} {
@@ -60,7 +60,7 @@ func TestTransactionEdgeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 	for _, scenario := range []string{"peer_updates_edge", "peer_deletes_edge"} {
 		t.Run(scenario, func(t *testing.T) {
-			barrier := &edgeWriteConflictHandler{reached: make(chan struct{}), resume: make(chan struct{})}
+			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
 			engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
@@ -122,7 +122,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 }
 
 func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *testing.T) {
-	barrier := &edgeWriteConflictHandler{reached: make(chan struct{}), resume: make(chan struct{})}
+	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
 	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(barrier)})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
