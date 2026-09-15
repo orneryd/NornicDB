@@ -21,6 +21,7 @@ See `docs/architecture/embedding-search.md` for details.
 | Ollama (local) | 50-100ms  | Free | High    |
 | OpenAI         | 100-200ms | $$$  | Highest |
 | OrcaRouter     | Network-dependent | Usage-based | Model-dependent |
+| Voyage AI      | 100-200ms | $$$  | Highest |
 | Local GGUF     | 30-80ms   | Free | High    |
 
 ## Configuration
@@ -65,6 +66,17 @@ export NORNICDB_EMBEDDING_API_KEY=your-orca-key
 # NORNICDB_EMBEDDING_MODEL=openai/text-embedding-3-small
 # NORNICDB_EMBEDDING_DIMENSIONS=1536
 ```
+
+### Voyage AI
+
+```bash
+export NORNICDB_EMBEDDING_PROVIDER=voyage
+export NORNICDB_EMBEDDING_API_KEY=pa-...
+export NORNICDB_EMBEDDING_MODEL=voyage-4-large
+export NORNICDB_EMBEDDING_DIMENSIONS=1024
+```
+
+For provider-managed document chunking, add `NORNICDB_EMBEDDING_VOYAGE_MODE=contextualized` and use `voyage-context-4`. See [Voyage AI](../advanced/embeddings/voyage-ai.md).
 
 ### Local GGUF
 

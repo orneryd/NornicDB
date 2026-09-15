@@ -6150,13 +6150,16 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 
 	// Limit to top-K (optional; keeps prompt/service bounded).
 	topK := effectiveRerankTopK(opts)
-	if len(results) > topK {
-		results = results[:topK]
+	rerankInput := results
+	var tail []rrfResult
+	if len(rerankInput) > topK {
+		rerankInput = results[:topK]
+		tail = results[topK:]
 	}
 
 	// Build candidates with content from storage.
-	candidates := make([]RerankCandidate, 0, len(results))
-	for _, r := range results {
+	candidates := make([]RerankCandidate, 0, len(rerankInput))
+	for _, r := range rerankInput {
 		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
@@ -6226,13 +6229,14 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	// Build map by ID so we can reliably preserve VectorRank/BM25Rank when converting
 	// reranker output back to rrfResult. Without this, original ranks can be lost when
 	// reranking reorders or filters results.
-	resultsByID := make(map[string]*rrfResult, len(results))
-	for i := range results {
-		resultsByID[results[i].ID] = &results[i]
+	resultsByID := make(map[string]*rrfResult, len(rerankInput))
+	for i := range rerankInput {
+		resultsByID[rerankInput[i].ID] = &rerankInput[i]
 	}
 
 	// Convert back to rrfResult format
-	rerankedResults := make([]rrfResult, 0, len(reranked))
+	rerankedResults := make([]rrfResult, 0, len(results))
+	usedIDs := make(map[string]struct{}, len(reranked))
 	for _, r := range reranked {
 		original := resultsByID[r.ID]
 		if original == nil {
@@ -6243,6 +6247,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		if opts.RerankMinScore > 0 && r.FinalScore < opts.RerankMinScore {
 			continue
 		}
+		usedIDs[r.ID] = struct{}{}
 		var vectorRank, bm25Rank int
 		originalScore := r.BiScore
 		if original != nil {
@@ -6256,6 +6261,15 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			BM25Rank:      bm25Rank,
 			OriginalScore: originalScore,
 		})
+	}
+	if opts.RerankMinScore <= 0 {
+		for _, original := range rerankInput {
+			if _, ok := usedIDs[original.ID]; ok {
+				continue
+			}
+			rerankedResults = append(rerankedResults, original)
+		}
+		rerankedResults = append(rerankedResults, tail...)
 	}
 
 	return rerankedResults

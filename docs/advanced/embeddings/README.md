@@ -8,6 +8,7 @@
 - **[Ollama Integration](../../features/vector-embeddings.md#ollama-recommended)** - Use Ollama for embeddings
 - **[OpenAI Integration](../../features/vector-embeddings.md#openai)** - Use OpenAI API
 - **[OrcaRouter Integration](../../features/vector-embeddings.md#orcarouter)** - Use OrcaRouter's OpenAI-compatible API
+- **[Voyage AI](voyage-ai.md)** - Use Voyage embeddings, contextualized chunking, and reranking
 
 ## 🎯 What are Embeddings?
 
@@ -44,6 +45,14 @@ export NORNICDB_EMBEDDING_MODEL=text-embedding-3-small
 ```bash
 export NORNICDB_EMBEDDING_PROVIDER=orca
 export NORNICDB_EMBEDDING_API_KEY=your-orca-key
+
+### With Voyage AI
+
+```bash
+export NORNICDB_EMBEDDING_PROVIDER=voyage
+export NORNICDB_EMBEDDING_API_KEY=pa-...
+export NORNICDB_EMBEDDING_MODEL=voyage-4-large
+export NORNICDB_EMBEDDING_DIMENSIONS=1024
 ```
 
 ## 📖 Learn More
@@ -52,6 +61,7 @@ export NORNICDB_EMBEDDING_API_KEY=your-orca-key
 - **[Ollama Setup](../../features/vector-embeddings.md#ollama-recommended)** - Easy local embeddings
 - **[OpenAI API](../../features/vector-embeddings.md#openai)** - Cloud embeddings
 - **[OrcaRouter](../../features/vector-embeddings.md#orcarouter)** - Routed hosted embeddings
+- **[Voyage AI](voyage-ai.md)** - Managed embeddings and reranking
 
 ---
 

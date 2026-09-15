@@ -2302,13 +2302,24 @@ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb embed.Embedd
 		return nil, nil, nil
 	}
 	if len(chunks) == 1 {
-		vec, err := emb.Embed(ctx, chunks[0])
+		var vec []float32
+		var err error
+		if typed, ok := emb.(embed.TypedEmbedder); ok {
+			vec, err = typed.EmbedWithInputType(ctx, chunks[0], embed.InputTypeQuery)
+		} else {
+			vec, err = emb.Embed(ctx, chunks[0])
+		}
 		if err != nil || len(vec) == 0 {
 			return chunks, nil, err
 		}
 		return chunks, [][]float32{vec}, nil
 	}
-	embs, err := emb.EmbedBatch(ctx, chunks)
+	var embs [][]float32
+	if typed, ok := emb.(embed.TypedEmbedder); ok {
+		embs, err = typed.EmbedBatchWithInputType(ctx, chunks, embed.InputTypeQuery)
+	} else {
+		embs, err = emb.EmbedBatch(ctx, chunks)
+	}
 	if len(embs) == 0 {
 		if err != nil {
 			return chunks, nil, err

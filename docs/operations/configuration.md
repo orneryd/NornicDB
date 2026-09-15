@@ -609,9 +609,11 @@ explicit global embedding flags.
 
 ```yaml
 embedding:
-  provider: local # or ollama, openai
+  provider: local # or ollama, openai, voyage
   model: bge-m3
   dimensions: 1024
+  # Voyage only: text, contextualized, or multimodal
+  voyage_mode: text
 ```
 
 > Note: embedding generation is **disabled by default** in current releases. Enable it explicitly with `NORNICDB_EMBEDDING_ENABLED=true` (or `nornicdb serve --embedding-enabled`) to get semantic search without manually storing vectors.

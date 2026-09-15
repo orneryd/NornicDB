@@ -25,7 +25,7 @@
 //   - NORNICDB_DATA_DIR="./data"
 //
 // Features:
-//   - NORNICDB_EMBEDDING_PROVIDER="ollama" or "openai"
+//   - NORNICDB_EMBEDDING_PROVIDER="ollama", "openai", "local", or "voyage"
 //   - NORNICDB_EMBEDDING_MODEL="bge-m3"
 //   - NORNICDB_HEIMDALL_ENABLED=true
 //
@@ -588,7 +588,7 @@ type MemoryConfig struct {
 	// EmbeddingEnabled controls whether embedding generation is active
 	// Env: NORNICDB_EMBEDDING_ENABLED
 	EmbeddingEnabled bool
-	// EmbeddingProvider (local, ollama, openai, orca)
+	// EmbeddingProvider (local, ollama, openai, orca, or voyage)
 	EmbeddingProvider string
 	// EmbeddingModel name
 	EmbeddingModel string
@@ -596,6 +596,9 @@ type MemoryConfig struct {
 	EmbeddingAPIURL string
 	// EmbeddingAPIKey for authenticated providers. Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
+	// EmbeddingVoyageMode selects Voyage's embedding endpoint behavior: text, contextualized, or multimodal.
+	// Env: NORNICDB_EMBEDDING_VOYAGE_MODE
+	EmbeddingVoyageMode string
 	// EmbeddingDimensions size
 	EmbeddingDimensions int
 	// EmbeddingCacheSize is max embeddings to cache (0 = disabled, default: 10000)
@@ -1555,6 +1558,7 @@ type YAMLConfig struct {
 		Model         string  `yaml:"model"`
 		URL           string  `yaml:"url"`
 		APIKey        string  `yaml:"api_key"`
+		VoyageMode    string  `yaml:"voyage_mode"`
 		Dimensions    int     `yaml:"dimensions"`
 		CacheSize     int     `yaml:"cache_size"`
 		MinSimilarity float64 `yaml:"min_similarity"`
@@ -1942,6 +1946,7 @@ func LoadDefaults() *Config {
 	config.Memory.EmbeddingProvider = "local" // Use local GGUF models by default
 	config.Memory.EmbeddingModel = "bge-m3"
 	config.Memory.EmbeddingAPIURL = "http://localhost:11434"
+	config.Memory.EmbeddingVoyageMode = "text"
 	config.Memory.EmbeddingDimensions = 1024
 	config.Memory.EmbeddingCacheSize = 10000
 	config.Memory.ModelsDir = "./models"
@@ -2505,6 +2510,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnv("NORNICDB_EMBEDDING_API_KEY", ""); v != "" {
 		config.Memory.EmbeddingAPIKey = v
+	}
+	if v := getEnv("NORNICDB_EMBEDDING_VOYAGE_MODE", ""); v != "" {
+		config.Memory.EmbeddingVoyageMode = strings.TrimSpace(strings.ToLower(v))
 	}
 	if v := getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 0); v > 0 {
 		config.Memory.EmbeddingDimensions = v
@@ -3426,6 +3434,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Embedding.APIKey != "" {
 		config.Memory.EmbeddingAPIKey = yamlCfg.Embedding.APIKey
+	}
+	if yamlCfg.Embedding.VoyageMode != "" {
+		config.Memory.EmbeddingVoyageMode = strings.TrimSpace(strings.ToLower(yamlCfg.Embedding.VoyageMode))
 	}
 	if yamlCfg.Embedding.Dimensions > 0 {
 		config.Memory.EmbeddingDimensions = yamlCfg.Embedding.Dimensions

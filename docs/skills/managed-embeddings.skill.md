@@ -20,7 +20,7 @@ Vector index lookup order is `NamedEmbeddings[indexProperty] → node.Properties
 
 ```bash
 export NORNICDB_EMBEDDING_ENABLED=true
-export NORNICDB_EMBEDDING_PROVIDER=ollama          # ollama | openai | orca | local
+export NORNICDB_EMBEDDING_PROVIDER=ollama          # ollama | openai | orca | voyage | local
 export NORNICDB_EMBEDDING_MODEL=mxbai-embed-large
 export NORNICDB_EMBEDDING_API_URL=http://localhost:11434
 export NORNICDB_EMBEDDING_DIMENSIONS=1024
@@ -31,13 +31,13 @@ YAML form:
 ```yaml
 embedding:
   enabled: true
-  provider: ollama          # ollama | openai | orca | local
+  provider: ollama          # ollama | openai | orca | voyage | local
   model: mxbai-embed-large
   url: http://localhost:11434
   dimensions: 1024
 ```
 
-The OpenAI and Orca providers read `embedding.api_key` (or `NORNICDB_EMBEDDING_API_KEY`). The local provider resolves the model file inside `NORNICDB_MODELS_DIR`.
+The OpenAI, Orca, and Voyage providers read `embedding.api_key` (or `NORNICDB_EMBEDDING_API_KEY`). The local provider resolves the model file inside `NORNICDB_MODELS_DIR`.
 
 Defaults shipped with NornicDB: `provider=local`, `model=bge-m3`, `dimensions=1024`.
 
@@ -46,7 +46,8 @@ Defaults shipped with NornicDB: `provider=local`, `model=bge-m3`, `dimensions=10
 For a named database, use canonical keys in the YAML `databases:` map or
 `PUT /admin/databases/{name}/config`: `db.nornic.embedding.provider`,
 `db.nornic.embedding.model`, `db.nornic.embedding.api.url`,
-`db.nornic.embedding.api.key`, and `db.nornic.embedding.dimensions`. Their
+`db.nornic.embedding.api.key`, `db.nornic.embedding.voyage.mode`, and
+`db.nornic.embedding.dimensions`. Their
 `NORNICDB_*` forms remain supported global environment alternatives and
 alternate input names; canonical keys win collisions.
 
@@ -64,6 +65,7 @@ is dynamic.
 | `ollama` | `NORNICDB_EMBEDDING_API_URL=http://host:11434` | `ollama pull <model>` first; works offline |
 | `openai` | `NORNICDB_EMBEDDING_API_KEY=sk-...` | Models: `text-embedding-3-small` (1536), `text-embedding-3-large` (3072) |
 | `orca` | `NORNICDB_EMBEDDING_API_KEY=...` | Defaults to OrcaRouter's API and `openai/text-embedding-3-small` (1536); generic URL/model/dimension settings remain overridable |
+| `voyage` | `NORNICDB_EMBEDDING_API_KEY=pa-...` | Defaults to `https://api.voyageai.com`; set `NORNICDB_EMBEDDING_VOYAGE_MODE=contextualized` for provider-managed chunking |
 | `local`  | `NORNICDB_MODELS_DIR=./models` | Resolves `${NORNICDB_MODELS_DIR}/${NORNICDB_EMBEDDING_MODEL}.gguf`; set `NORNICDB_EMBEDDING_GPU_LAYERS=-1` for auto-GPU |
 
 ### Embedding text — which properties contribute
