@@ -41,11 +41,13 @@
 - id: nornicdbcli.flag.upgrade_storage
   other: "[!! Áúthórízé óné-wáý stórágé úpgrádés thróúgh áll súppórtéd mígrátíóns; báck úp fírst. !!]"
 - id: nornicdbcli.flag.embedding_provider
-  other: "[!! Émbéddíng próvídér: local, ollama, openai, orca !!]"
+  other: "[!! Émbéddíng próvídér: local, ollama, openai, orca, voyage !!]"
 - id: nornicdbcli.flag.embedding_url
-  other: "[!! Émbéddíng ÁPÍ URL (ollama/openai/orca) !!]"
+  other: "[!! Émbéddíng ÁPÍ URL (ollama/openai/orca/voyage) !!]"
 - id: nornicdbcli.flag.embedding_key
-  other: "[!! Émbéddíngs ÁPÍ Kéý (openai/orca) !!]"
+  other: "[!! Émbéddíngs ÁPÍ kéý (openai/orca/voyage) !!]"
+- id: nornicdbcli.flag.embedding_voyage_mode
+  other: "[!! Voyage émbéddíng módé: text, contextualized, ór multimodal !!]"
 - id: nornicdbcli.flag.embedding_model
   other: "[!! Émbéddíng módél námé !!]"
 - id: nornicdbcli.flag.embedding_dimensions

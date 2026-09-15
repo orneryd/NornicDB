@@ -41,11 +41,13 @@
 - id: nornicdbcli.flag.upgrade_storage
   other: Autoriza la actualización unidireccional de la versión de almacenamiento mediante todas las migraciones admitidas. Haz una copia de seguridad antes de activarla.
 - id: nornicdbcli.flag.embedding_provider
-  other: "Proveedor de embeddings: local, ollama, openai, orca"
+  other: "Proveedor de embeddings: local, ollama, openai, orca, voyage"
 - id: nornicdbcli.flag.embedding_url
-  other: URL de la API de embeddings (ollama/openai/orca)
+  other: URL de la API de embeddings (ollama/openai/orca/voyage)
 - id: nornicdbcli.flag.embedding_key
-  other: Clave de la API de embeddings (openai/orca)
+  other: Clave de la API de embeddings (openai/orca/voyage)
+- id: nornicdbcli.flag.embedding_voyage_mode
+  other: "Modo de embeddings de Voyage: text, contextualized o multimodal"
 - id: nornicdbcli.flag.embedding_model
   other: Nombre del modelo de embeddings
 - id: nornicdbcli.flag.embedding_dimensions
