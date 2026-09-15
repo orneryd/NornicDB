@@ -25,6 +25,8 @@ type ResolvedDbConfig struct {
 	// Ignored when BM25Enabled=false; preserved across flips so a future
 	// re-enable honours the operator's intended trigger.
 	BM25Warming string
+	// BM25Stemmer is the selected BM25 stemmer plugin ID or "none".
+	BM25Stemmer string
 	// VectorEnabled controls whether ANY vector search strategy (HNSW,
 	// IVF-HNSW, brute-force, GPU brute-force, Metal, Qdrant pass-through) is
 	// built and queryable for this database. When false, node embeddings are
@@ -63,6 +65,7 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		BM25Engine:                  normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")),
 		BM25Enabled:                 global.Memory.SearchBM25Enabled,
 		BM25Warming:                 normalizeWarming(global.Memory.SearchBM25Warming),
+		BM25Stemmer:                 normalizeStemmerSelection(global.Memory.SearchBM25Stemmer),
 		VectorEnabled:               global.Memory.SearchVectorEnabled,
 		VectorWarming:               normalizeWarming(global.Memory.SearchVectorWarming),
 		QueryCacheMaxEntries:        global.Memory.QueryCacheSize,
@@ -171,6 +174,7 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_SEARCH_BM25_ENGINE", normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")))
 	setEffective("NORNICDB_SEARCH_BM25_ENABLED", boolStr(c.Memory.SearchBM25Enabled))
 	setEffective("NORNICDB_SEARCH_BM25_WARMING", normalizeWarming(c.Memory.SearchBM25Warming))
+	setEffective("NORNICDB_SEARCH_BM25_STEMMER", normalizeStemmerSelection(c.Memory.SearchBM25Stemmer))
 	setEffective("NORNICDB_SEARCH_VECTOR_ENABLED", boolStr(c.Memory.SearchVectorEnabled))
 	setEffective("NORNICDB_SEARCH_VECTOR_WARMING", normalizeWarming(c.Memory.SearchVectorWarming))
 	setEffective("NORNICDB_SEARCH_RERANK_ENABLED", boolStr(c.Features.SearchRerankEnabled))
@@ -264,6 +268,9 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 	if behaviorKey == "NORNICDB_SEARCH_BM25_ENGINE" {
 		r.BM25Engine = normalizeBM25Engine(value)
 	}
+	if behaviorKey == "NORNICDB_SEARCH_BM25_STEMMER" {
+		r.BM25Stemmer = normalizeStemmerSelection(value)
+	}
 	if key == "db.nornic.search_result_cache.max_entries" {
 		if entries, err := strconv.Atoi(value); err == nil && entries >= 0 {
 			r.SearchResultCacheMaxEntries = entries
@@ -310,6 +317,14 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 			r.VectorWarming = normalizeWarming(value)
 		}
 	}
+}
+
+func normalizeStemmerSelection(raw string) string {
+	selected := strings.ToLower(strings.TrimSpace(raw))
+	if selected == "" {
+		return "none"
+	}
+	return selected
 }
 
 func normalizeBM25Engine(raw string) string {

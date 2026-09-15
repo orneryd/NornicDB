@@ -222,6 +222,7 @@ index path, while `auto` preserves the existing file-backed build behavior.
 | `db.nornic.search.bm25.engine`               | `NORNICDB_SEARCH_BM25_ENGINE`               |
 | `db.nornic.search.bm25.enabled`              | `NORNICDB_SEARCH_BM25_ENABLED`              |
 | `db.nornic.search.bm25.warming`              | `NORNICDB_SEARCH_BM25_WARMING`              |
+| `db.nornic.search.bm25.stemmer`              | `NORNICDB_SEARCH_BM25_STEMMER`              |
 | `db.nornic.search.vector.enabled`            | `NORNICDB_SEARCH_VECTOR_ENABLED`            |
 | `db.nornic.search.vector.warming`            | `NORNICDB_SEARCH_VECTOR_WARMING`            |
 | `db.nornic.search.rerank.enabled`            | `NORNICDB_SEARCH_RERANK_ENABLED`            |
@@ -329,10 +330,11 @@ Per-database settings win in both directions. An override of `true` turns on a g
 | --------------------------------- | -------------------------------- | ------- | --------- | ---------------------------------------------------------- |
 | `db.nornic.search.bm25.enabled`   | `NORNICDB_SEARCH_BM25_ENABLED`   | boolean | `true`    | Master switch for BM25 fulltext search.                    |
 | `db.nornic.search.bm25.warming`   | `NORNICDB_SEARCH_BM25_WARMING`   | enum    | `startup` | Build at startup or lazily on first search.                |
+| `db.nornic.search.bm25.stemmer`   | `NORNICDB_SEARCH_BM25_STEMMER`   | string  | `none`    | BM25 stemmer plugin ID; `none` keeps exact tokens.         |
 | `db.nornic.search.vector.enabled` | `NORNICDB_SEARCH_VECTOR_ENABLED` | boolean | `true`    | Master switch for vector search across every ANN strategy. |
 | `db.nornic.search.vector.warming` | `NORNICDB_SEARCH_VECTOR_WARMING` | enum    | `startup` | Build at startup or lazily on first search.                |
 
-BM25 uses language-neutral NFKC normalization, Unicode case folding, and exact tokens by default. `NORNICDB_BM25_PREFIX_MAX_EXPANSIONS` optionally enables bounded prefix matching for every BM25 query term; its default is `0` (disabled). Enable it only when partial-token matching is required. `NORNICDB_BM25_PREFIX_MIN_LEN` (default `3`) sets the minimum Unicode character count for terms eligible for expansion.
+BM25 uses language-neutral NFKC normalization, Unicode case folding, and exact tokens by default. NornicDB ships no language stemmers. To use stemming, configure a process-level plugin directory with `plugins.stemmers.directory` or `NORNICDB_STEMMER_PLUGINS_DIR`, then select a registered plugin ID through `search.bm25_stemmer`, `NORNICDB_SEARCH_BM25_STEMMER`, or the per-database `db.nornic.search.bm25.stemmer` setting. See [BM25 Stemmer Plugins](../user-guides/bm25-stemmers.md). `NORNICDB_BM25_PREFIX_MAX_EXPANSIONS` optionally enables bounded prefix matching for every BM25 query term; its default is `0` (disabled). Enable it only when partial-token matching is required. `NORNICDB_BM25_PREFIX_MIN_LEN` (default `3`) sets the minimum Unicode character count for terms eligible for expansion.
 
 Behavior summary (all combinations supported):
 

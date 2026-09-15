@@ -507,6 +507,9 @@ type ServerConfig struct {
 	// HeimdallPluginsDir is the directory for Heimdall plugins
 	// Env: NORNICDB_HEIMDALL_PLUGINS_DIR (default: ./plugins/heimdall)
 	HeimdallPluginsDir string
+	// StemmerPluginsDir is the directory for manifest-verified BM25 stemmer plugins.
+	// Env: NORNICDB_STEMMER_PLUGINS_DIR (default: empty, disabled)
+	StemmerPluginsDir string
 
 	// EnableCORS enables CORS headers for cross-origin requests
 	// Env: NORNICDB_CORS_ENABLED (default: false for security)
@@ -605,6 +608,10 @@ type MemoryConfig struct {
 	// Empty preserves the default behavior of indexing labels and all properties.
 	// Env: NORNICDB_SEARCH_BM25_PROPERTIES (comma-separated)
 	SearchBM25Properties []string
+	// SearchBM25Stemmer is the global default BM25 stemmer plugin ID.
+	// "none" preserves the default language-neutral analyzer.
+	// Env: NORNICDB_SEARCH_BM25_STEMMER (default: none)
+	SearchBM25Stemmer string
 	// SearchVectorEnabled is the global default for whether vector search is
 	// enabled. When false, no ANN strategy (HNSW, IVF-HNSW, brute-force, GPU,
 	// Metal, Qdrant pass-through) is built or queryable for that database;
@@ -1535,6 +1542,7 @@ type YAMLConfig struct {
 		BM25Enabled    *bool    `yaml:"bm25_enabled"`
 		BM25Warming    string   `yaml:"bm25_warming"`
 		BM25Properties []string `yaml:"bm25_properties"`
+		BM25Stemmer    string   `yaml:"bm25_stemmer"`
 		VectorEnabled  *bool    `yaml:"vector_enabled"`
 		VectorWarming  string   `yaml:"vector_warming"`
 	} `yaml:"search"`
@@ -1742,6 +1750,9 @@ type YAMLConfig struct {
 	Plugins struct {
 		Dir         string `yaml:"dir"`          // APOC plugins directory
 		HeimdallDir string `yaml:"heimdall_dir"` // Heimdall plugins directory
+		Stemmers    struct {
+			Directory string `yaml:"directory"`
+		} `yaml:"stemmers"`
 	} `yaml:"plugins"`
 
 	// Databases is a per-database override map (keyed by database name).
@@ -1881,6 +1892,7 @@ func LoadDefaults() *Config {
 	config.Server.AllowHTTP = true
 	config.Server.PluginsDir = "./plugins"
 	config.Server.HeimdallPluginsDir = "./plugins/heimdall"
+	config.Server.StemmerPluginsDir = ""
 
 	// Server defaults - CORS
 	config.Server.EnableCORS = true
@@ -1896,6 +1908,7 @@ func LoadDefaults() *Config {
 	// (both indexes enabled, both built eagerly at startup).
 	config.Memory.SearchBM25Enabled = true
 	config.Memory.SearchBM25Warming = "startup"
+	config.Memory.SearchBM25Stemmer = "none"
 	config.Memory.SearchVectorEnabled = true
 	config.Memory.SearchVectorWarming = "startup"
 	config.Memory.EmbeddingProvider = "local" // Use local GGUF models by default
@@ -2290,6 +2303,9 @@ func applyEnvVars(config *Config) error {
 	if v := getEnv("NORNICDB_HEIMDALL_PLUGINS_DIR", ""); v != "" {
 		config.Server.HeimdallPluginsDir = v
 	}
+	if v := getEnv("NORNICDB_STEMMER_PLUGINS_DIR", ""); v != "" {
+		config.Server.StemmerPluginsDir = v
+	}
 
 	// CORS settings
 	if getEnv("NORNICDB_CORS_ENABLED", "") == "true" {
@@ -2480,6 +2496,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_PROPERTIES", nil); len(v) > 0 {
 		config.Memory.SearchBM25Properties = v
+	}
+	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_STEMMER", ""))); v != "" {
+		config.Memory.SearchBM25Stemmer = v
 	}
 	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
 		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
@@ -3337,6 +3356,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if len(yamlCfg.Search.BM25Properties) > 0 {
 		config.Memory.SearchBM25Properties = append([]string(nil), yamlCfg.Search.BM25Properties...)
 	}
+	if v := strings.TrimSpace(strings.ToLower(yamlCfg.Search.BM25Stemmer)); v != "" {
+		config.Memory.SearchBM25Stemmer = v
+	}
 	if yamlCfg.Search.VectorEnabled != nil {
 		config.Memory.SearchVectorEnabled = *yamlCfg.Search.VectorEnabled
 	}
@@ -3807,6 +3829,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Plugins.HeimdallDir != "" {
 		config.Server.HeimdallPluginsDir = yamlCfg.Plugins.HeimdallDir
+	}
+	if yamlCfg.Plugins.Stemmers.Directory != "" {
+		config.Server.StemmerPluginsDir = yamlCfg.Plugins.Stemmers.Directory
 	}
 
 	// === Per-database overrides (databases: map) ===

@@ -141,6 +141,14 @@ Contract:
 
 Manifest files, not plugin methods, provide the plugin ID, version, type, and ABI version. The narrow API deliberately excludes initialization, start, stop, shutdown, metadata, and configuration hooks. A stemmer is pure token processing and has no service lifecycle of its own.
 
+The generated Snowball bridge may also expose an optional structural fast path:
+
+```go
+StemTokens(tokens []string) []string
+```
+
+This is not required for hand-written plugins and is not part of the minimum ABI. NornicDB detects it when present and otherwise falls back to `Stem` per token. The method receives the analyzer's current token slice and may rewrite it in place; it must preserve the one-token-in/one-token-out contract and return non-empty terms.
+
 The loader keeps a process-wide immutable registry:
 
 ```go
@@ -358,6 +366,21 @@ func (generatedStemmer) Stem(token string) string {
     return result
 }
 
+func (generatedStemmer) StemTokens(tokens []string) []string {
+    if len(tokens) == 0 {
+        return tokens
+    }
+    env := envPool.Get().(*snowballRuntime.Env)
+    for i, token := range tokens {
+        env.SetCurrent(token)
+        Stem(env)
+        tokens[i] = env.Current()
+    }
+    env.SetCurrent("")
+    envPool.Put(env)
+    return tokens
+}
+
 var Plugin generatedStemmer
 ```
 
@@ -504,6 +527,8 @@ Minimum retrieval scenarios:
 | unrelated Ukrainian token | query token | No false match in fixture cases.                    |
 
 The same cases must not be forced to match under `none`; this proves opt-in behavior.
+
+The analyzer and BM25 tests also include deterministic fixtures for Chinese, French, Spanish, and Dutch token pairs. These fixtures prove Unicode and per-language plugin selection behavior across scripts and inflected forms; they are not shipped as production language algorithms.
 
 Additional scenarios:
 

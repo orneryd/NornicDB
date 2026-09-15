@@ -35,6 +35,7 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 	s.mu.RLock()
 	clusterIndex := s.clusterIndex
 	fulltext := s.fulltextIndex
+	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	s.mu.RUnlock()
 	if clusterIndex == nil || !clusterIndex.IsClustered() || fulltext == nil {
 		s.clearClusterLexicalProfiles()
@@ -65,7 +66,7 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 			if !ok || text == "" {
 				continue
 			}
-			for _, tok := range tokenize(text) {
+			for _, tok := range analyzer.Analyze(text) {
 				tf[tok]++
 				total++
 			}
@@ -138,7 +139,10 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 		}
 		return semanticClusters
 	}
-	queryTokens := tokenize(queryText)
+	s.mu.RLock()
+	analyzer := normalizeAnalyzer(s.bm25Analyzer)
+	s.mu.RUnlock()
+	queryTokens := analyzer.Analyze(queryText)
 	if len(queryTokens) == 0 {
 		if len(semanticClusters) > defaultN {
 			return semanticClusters[:defaultN]

@@ -55,6 +55,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/retention"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/storage/lifecycle"
 	"go.opentelemetry.io/otel"
@@ -954,6 +955,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if db.config.Server.PluginsDir != "" {
 		if err := LoadPluginsFromDir(db.config.Server.PluginsDir, nil); err != nil {
 			fmt.Printf("⚠️  Plugin loading warning: %v\n", err)
+		}
+	}
+	if db.config.Server.StemmerPluginsDir != "" {
+		if err := stemmer.LoadDir(db.config.Server.StemmerPluginsDir); err != nil {
+			_ = db.baseStorage.Close()
+			return nil, fmt.Errorf("loading stemmer plugins: %w", err)
 		}
 	}
 
