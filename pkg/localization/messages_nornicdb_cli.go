@@ -22,6 +22,7 @@ const (
 	MessageNornicDBCLIFlagEmbeddingProvider       MessageID = "nornicdbcli.flag.embedding_provider"
 	MessageNornicDBCLIFlagEmbeddingURL            MessageID = "nornicdbcli.flag.embedding_url"
 	MessageNornicDBCLIFlagEmbeddingKey            MessageID = "nornicdbcli.flag.embedding_key"
+	MessageNornicDBCLIFlagEmbeddingVoyageMode     MessageID = "nornicdbcli.flag.embedding_voyage_mode"
 	MessageNornicDBCLIFlagEmbeddingModel          MessageID = "nornicdbcli.flag.embedding_model"
 	MessageNornicDBCLIFlagEmbeddingDimensions     MessageID = "nornicdbcli.flag.embedding_dimensions"
 	MessageNornicDBCLIFlagEmbeddingCache          MessageID = "nornicdbcli.flag.embedding_cache"
@@ -125,13 +126,16 @@ func NornicDBCLIFlagUpgradeStorage() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagUpgradeStorage, "Authorize one-way upgrade of the data directory's storage version through every migration arm this binary understands. Back up before enabling.")
 }
 func NornicDBCLIFlagEmbeddingProvider() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingProvider, "Embedding provider: local, ollama, openai")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingProvider, "Embedding provider: local, ollama, openai, voyage")
 }
 func NornicDBCLIFlagEmbeddingURL() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingURL, "Embedding API URL (ollama/openai)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingURL, "Embedding API URL (ollama/openai/voyage)")
 }
 func NornicDBCLIFlagEmbeddingKey() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API Key (openai)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API key (openai/voyage)")
+}
+func NornicDBCLIFlagEmbeddingVoyageMode() Message {
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingVoyageMode, "Voyage embedding mode: text, contextualized, or multimodal")
 }
 func NornicDBCLIFlagEmbeddingModel() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingModel, "Embedding model name")

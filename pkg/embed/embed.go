@@ -3,6 +3,8 @@
 // This package supports multiple embedding providers:
 //   - Ollama: Local open-source models (mxbai-embed-large, nomic-embed-text)
 //   - OpenAI: Cloud API (text-embedding-3-small, text-embedding-3-large)
+//   - Voyage AI: Managed text, multimodal, and contextualized embeddings
+//   - Local GGUF: Offline embedding models through llama.cpp
 //
 // Embeddings convert text into high-dimensional vectors that capture semantic meaning.
 // Similar texts have similar vectors, enabling semantic search.
@@ -102,13 +104,45 @@ type Embedder interface {
 	Backend() string
 }
 
+const (
+	// InputTypeQuery asks providers that support asymmetric retrieval prompts
+	// to embed text as a search query.
+	InputTypeQuery = "query"
+	// InputTypeDocument asks providers that support asymmetric retrieval prompts
+	// to embed text as stored document content.
+	InputTypeDocument = "document"
+)
+
+// TypedEmbedder is an optional extension for providers that distinguish query
+// embeddings from document embeddings.
+type TypedEmbedder interface {
+	EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error)
+	EmbedBatchWithInputType(ctx context.Context, texts []string, inputType string) ([][]float32, error)
+}
+
+// DocumentChunkResult is returned by embedders that can chunk and embed a full
+// document in one provider call.
+type DocumentChunkResult struct {
+	Chunks         []string
+	Embeddings     [][]float32
+	Model          string
+	ChunkerVersion string
+	TotalTokens    int
+}
+
+// DocumentChunkEmbedder is an optional extension for provider-managed
+// document chunking.
+type DocumentChunkEmbedder interface {
+	EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error)
+}
+
 // Config holds embedding provider configuration.
 //
 // Fields:
-//   - Provider: "ollama" or "openai" or "local"
+//   - Provider: "ollama", "openai", "local", or "voyage"
 //   - APIURL: Base URL for API (e.g., http://localhost:11434)
 //   - APIPath: Endpoint path (e.g., /api/embeddings)
-//   - APIKey: Authentication key (OpenAI only)
+//   - APIKey: Authentication key (OpenAI/Voyage)
 //   - Model: Model name (e.g., mxbai-embed-large)
 //   - Dimensions: Expected vector size for validation
 //   - Timeout: HTTP request timeout
@@ -124,13 +158,16 @@ type Embedder interface {
 //		Timeout:    60 * time.Second,
 //	}
 type Config struct {
-	Provider   string        // ollama, openai, local
+	Provider   string        // ollama, openai, local, voyage
 	APIURL     string        // e.g., http://localhost:11434
 	APIPath    string        // e.g., /api/embeddings or /v1/embeddings
 	APIKey     string        // For OpenAI
 	Model      string        // e.g., mxbai-embed-large
 	Dimensions int           // Expected dimensions (for validation)
 	Timeout    time.Duration // Request timeout
+
+	// Voyage-specific mode: text (default), contextualized, or multimodal.
+	VoyageMode string
 
 	// Local GGUF model settings (used when Provider="local")
 	ModelsDir      string        // Directory containing .gguf models (default: ./models)
@@ -880,7 +917,9 @@ func NewEmbedder(config *Config) (Embedder, error) {
 			return nil, fmt.Errorf("OpenAI requires an API key")
 		}
 		return NewOpenAI(config), nil
+	case "voyage":
+		return NewVoyage(config)
 	default:
-		return nil, fmt.Errorf("unknown provider: %s (supported: local, ollama, openai)", config.Provider)
+		return nil, fmt.Errorf("unknown provider: %s (supported: local, ollama, openai, voyage)", config.Provider)
 	}
 }

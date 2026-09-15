@@ -92,6 +92,17 @@ func hashText(text string) string {
 	return strconv.FormatUint(h.Sum64(), 36)
 }
 
+func hashTextForInputType(text, inputType string) string {
+	if inputType == "" {
+		return hashText(text)
+	}
+	h := fnv.New64a()
+	h.Write([]byte(inputType))
+	h.Write([]byte{0})
+	h.Write([]byte(text))
+	return strconv.FormatUint(h.Sum64(), 36)
+}
+
 // Embed generates or retrieves a cached embedding for the text.
 //
 // On cache hit, returns immediately without calling the underlying embedder.
@@ -151,13 +162,41 @@ func (c *CachedEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 // Each text is checked against the cache individually. Only cache misses
 // are sent to the underlying embedder.
 func (c *CachedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return c.embedBatchWithKeyFunc(ctx, texts, "", func(misses []string) ([][]float32, error) {
+		return c.base.EmbedBatch(ctx, misses)
+	})
+}
+
+// EmbedWithInputType delegates query/document-aware embedding to the wrapped
+// provider when available and keeps those cache entries separate.
+func (c *CachedEmbedder) EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error) {
+	vecs, err := c.EmbedBatchWithInputType(ctx, []string{text}, inputType)
+	if err != nil || len(vecs) == 0 {
+		return nil, err
+	}
+	return vecs[0], nil
+}
+
+// EmbedBatchWithInputType delegates query/document-aware embedding to the
+// wrapped provider when available and keeps those cache entries separate.
+func (c *CachedEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []string, inputType string) ([][]float32, error) {
+	typed, ok := c.base.(TypedEmbedder)
+	if !ok {
+		return c.EmbedBatch(ctx, texts)
+	}
+	return c.embedBatchWithKeyFunc(ctx, texts, inputType, func(misses []string) ([][]float32, error) {
+		return typed.EmbedBatchWithInputType(ctx, misses, inputType)
+	})
+}
+
+func (c *CachedEmbedder) embedBatchWithKeyFunc(ctx context.Context, texts []string, inputType string, embedMisses func([]string) ([][]float32, error)) ([][]float32, error) {
 	results := make([][]float32, len(texts))
 	var misses []int
 	var missTexts []string
 
 	// Check cache for each text
 	for i, text := range texts {
-		key := hashText(text)
+		key := hashTextForInputType(text, inputType)
 
 		c.mu.RLock()
 		if elem, ok := c.cache[key]; ok {
@@ -180,7 +219,7 @@ func (c *CachedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 	// Generate embeddings for cache misses
 	if len(missTexts) > 0 {
-		embeddings, err := c.base.EmbedBatch(ctx, missTexts)
+		embeddings, err := embedMisses(missTexts)
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +231,7 @@ func (c *CachedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 			results[i] = embedding
 
 			// Cache the result
-			key := hashText(missTexts[j])
+			key := hashTextForInputType(missTexts[j], inputType)
 			if _, ok := c.cache[key]; !ok {
 				for c.lru.Len() >= c.maxSize {
 					c.evictOldest()
@@ -206,6 +245,23 @@ func (c *CachedEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	}
 
 	return results, nil
+}
+
+// EmbedDocumentChunks delegates provider-managed chunking when available.
+func (c *CachedEmbedder) EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error) {
+	chunker, ok := c.base.(DocumentChunkEmbedder)
+	if !ok {
+		chunks, err := c.ChunkText(text, maxTokens, overlap)
+		if err != nil {
+			return nil, err
+		}
+		embeddings, err := c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		if err != nil {
+			return nil, err
+		}
+		return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: c.Model()}, nil
+	}
+	return chunker.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
 }
 
 // ChunkText delegates chunking to the wrapped embedder.

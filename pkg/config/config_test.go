@@ -407,6 +407,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	t.Setenv("NORNICDB_EMBEDDING_MODEL", "env-embed-model")
 	t.Setenv("NORNICDB_EMBEDDING_API_URL", "http://embed-env")
 	t.Setenv("NORNICDB_EMBEDDING_API_KEY", "embed-env-key")
+	t.Setenv("NORNICDB_EMBEDDING_VOYAGE_MODE", "contextualized")
 	t.Setenv("NORNICDB_EMBEDDING_CACHE_SIZE", "999")
 	t.Setenv("NORNICDB_SEARCH_MIN_SIMILARITY", "0.75")
 	t.Setenv("NORNICDB_MODELS_DIR", "/models")
@@ -547,7 +548,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	if cfg.Memory.DecayEnabled || !cfg.Memory.EmbeddingEnabled || cfg.Memory.EmbeddingModel != "env-embed-model" {
 		t.Fatalf("unexpected memory embedding basics: %+v", cfg.Memory)
 	}
-	if cfg.Memory.EmbeddingAPIURL != "http://embed-env" || cfg.Memory.EmbeddingAPIKey != "embed-env-key" || cfg.Memory.EmbeddingCacheSize != 999 {
+	if cfg.Memory.EmbeddingAPIURL != "http://embed-env" || cfg.Memory.EmbeddingAPIKey != "embed-env-key" || cfg.Memory.EmbeddingVoyageMode != "contextualized" || cfg.Memory.EmbeddingCacheSize != 999 {
 		t.Fatalf("unexpected embedding api config: %+v", cfg.Memory)
 	}
 	if cfg.Memory.SearchMinSimilarity != 0.75 || cfg.Memory.ModelsDir != "/models" || cfg.Memory.EmbeddingGPULayers != 4 {
@@ -1126,6 +1127,7 @@ embedding:
   model: "embed-model"
   url: "http://embed"
   api_key: "embed-key"
+  voyage_mode: "contextualized"
   dimensions: 1536
   cache_size: 77
   min_similarity: 0.42
@@ -1285,6 +1287,7 @@ plugins:
 	require.Equal(t, "embed-model", cfg.Memory.EmbeddingModel)
 	require.Equal(t, "http://embed", cfg.Memory.EmbeddingAPIURL)
 	require.Equal(t, "embed-key", cfg.Memory.EmbeddingAPIKey)
+	require.Equal(t, "contextualized", cfg.Memory.EmbeddingVoyageMode)
 	require.Equal(t, 1536, cfg.Memory.EmbeddingDimensions)
 	require.Equal(t, 77, cfg.Memory.EmbeddingCacheSize)
 	require.Equal(t, 0.42, cfg.Memory.SearchMinSimilarity)
@@ -2138,6 +2141,8 @@ func clearEnvVars(t *testing.T) {
 		"NORNICDB_EMBEDDING_PROVIDER",
 		"NORNICDB_EMBEDDING_MODEL",
 		"NORNICDB_EMBEDDING_API_URL",
+		"NORNICDB_EMBEDDING_API_KEY",
+		"NORNICDB_EMBEDDING_VOYAGE_MODE",
 		"NORNICDB_EMBEDDING_DIMENSIONS",
 		"NORNICDB_AUTO_LINKS_ENABLED",
 		"NORNICDB_AUTO_LINKS_THRESHOLD",
