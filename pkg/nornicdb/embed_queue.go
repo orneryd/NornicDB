@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -701,25 +702,10 @@ func (ew *EmbedWorker) processNextBatch() bool {
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	text := embeddingutil.BuildText(node.Properties, node.Labels, opts)
 
-	chunker, ok := ew.embedder.(deterministicTextChunker)
-	if !ok {
-		fmt.Printf("⚠️  Failed to chunk node %s: embedder %T does not support deterministic token chunking\n", node.ID, ew.embedder)
-		ew.addNodeToPendingEmbeddings(node.ID)
-		ew.failed.Add(1)
-		return true
-	}
-
-	// Chunk text using the embedder's tokenizer so every chunk respects the true token cap.
-	chunks, err := chunker.ChunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
-	if err != nil {
-		fmt.Printf("⚠️  Failed to chunk node %s: %v\n", node.ID, err)
-		ew.addNodeToPendingEmbeddings(node.ID)
-		ew.failed.Add(1)
-		return true
-	}
-
-	// Embed chunks in micro-batches to avoid oversized single requests for large files.
-	embeddings, err := ew.embedChunksInBatches(chunks, node.ID)
+	// Embed documents through the provider-managed document path when available.
+	// Voyage contextualized mode uses this to return provider-generated chunks;
+	// other providers fall back to deterministic local chunking + micro-batches.
+	_, embeddings, providerMeta, err := ew.embedDocument(text, node.ID)
 	if err != nil {
 		fmt.Printf("⚠️  Failed to embed node %s: %v\n", node.ID, err)
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
@@ -737,6 +723,9 @@ func (ew *EmbedWorker) processNextBatch() bool {
 
 	// Persist worker-managed embedding fields in a shared canonical shape.
 	embeddingutil.ApplyManagedEmbedding(node, embeddings, ew.embedder.Model(), ew.embedder.Dimensions(), time.Now())
+	for key, value := range providerMeta {
+		node.EmbedMeta[key] = value
+	}
 
 	// CRITICAL: Double-check node still exists before updating
 	// This prevents creating orphaned nodes if the node was deleted between
@@ -794,7 +783,7 @@ func (ew *EmbedWorker) processNextBatch() bool {
 			fmt.Printf("⚠️  Node no longer exists - skipping update to prevent orphaned node\n")
 			return false
 		}
-		fmt.Printf("⚠️  Failed to update node embedding state; re-queuing for retry\n")
+		fmt.Printf("⚠️  Failed to update node embedding state: %s; re-queuing for retry\n", compactWorkerError(updateErr, 300))
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
 		ew.failed.Add(1)
 		return true // Failed but we tried - continue to next node
@@ -838,6 +827,17 @@ func (ew *EmbedWorker) processNextBatch() bool {
 	ew.signalTrigger()
 
 	return true // Successfully processed
+}
+
+func compactWorkerError(err error, maxLen int) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if maxLen <= 0 || len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "...(truncated)"
 }
 
 // EmbeddingFinder interface for efficient node lookup
@@ -931,6 +931,43 @@ func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.Node
 	return allEmbeddings, nil
 }
 
+func (ew *EmbedWorker) embedDocument(text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
+	if documentEmbedder, ok := ew.embedder.(embed.DocumentChunkEmbedder); ok {
+		result, err := documentEmbedder.EmbedDocumentChunks(ew.ctx, text, ew.config.ChunkSize, ew.config.ChunkOverlap)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		meta := make(map[string]any)
+		if result != nil {
+			if result.ChunkerVersion != "" {
+				meta["chunker_version"] = result.ChunkerVersion
+			}
+			if result.TotalTokens > 0 {
+				meta["embedding_total_tokens"] = result.TotalTokens
+			}
+			if len(result.Chunks) > 0 && (result.ChunkerVersion != "" || result.TotalTokens > 0) {
+				meta["chunk_texts"] = append([]string(nil), result.Chunks...)
+			}
+			return result.Chunks, result.Embeddings, meta, nil
+		}
+		return nil, nil, meta, nil
+	}
+
+	chunker, ok := ew.embedder.(deterministicTextChunker)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("embedder %T does not support deterministic token chunking", ew.embedder)
+	}
+	chunks, err := chunker.ChunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	embeddings, err := ew.embedChunksInBatches(chunks, nodeID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return chunks, embeddings, nil, nil
+}
+
 // embedBatchWithRetry retries a single micro-batch with backoff.
 func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error) {
 	var embeddings [][]float32
@@ -942,7 +979,13 @@ func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error)
 		}
 		resultCh := make(chan embedResult, 1)
 		go func() {
-			embs, embedErr := ew.embedder.EmbedBatch(ew.ctx, chunks)
+			var embs [][]float32
+			var embedErr error
+			if typed, ok := ew.embedder.(embed.TypedEmbedder); ok {
+				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
+			} else {
+				embs, embedErr = ew.embedder.EmbedBatch(ew.ctx, chunks)
+			}
 			resultCh <- embedResult{embeddings: embs, err: embedErr}
 		}()
 		select {

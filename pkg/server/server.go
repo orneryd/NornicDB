@@ -201,6 +201,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
+	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
 // Errors for HTTP operations.
@@ -277,9 +278,26 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 	if provider == "" {
 		provider = "openai"
 	}
+	provider = strings.TrimSpace(strings.ToLower(provider))
 	model := get("NORNICDB_EMBEDDING_MODEL", fallback.EmbeddingModel)
 	apiURL := get("NORNICDB_EMBEDDING_API_URL", fallback.EmbeddingAPIURL)
 	apiKey := get("NORNICDB_EMBEDDING_API_KEY", fallback.EmbeddingAPIKey)
+	voyageMode := get("NORNICDB_EMBEDDING_VOYAGE_MODE", fallback.EmbeddingVoyageMode)
+	if provider == "voyage" {
+		if apiURL == "" {
+			apiURL = voyage.DefaultBaseURL
+		}
+		if model == "" {
+			if strings.EqualFold(voyageMode, embed.VoyageModeContextualized) {
+				model = voyage.DefaultContextModel
+			} else {
+				model = voyage.DefaultEmbeddingModel
+			}
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("VOYAGE_API_KEY")
+		}
+	}
 	dimensions := getInt("NORNICDB_EMBEDDING_DIMENSIONS", fallback.EmbeddingDimensions)
 	if dimensions <= 0 {
 		dimensions = 1024
@@ -291,6 +309,7 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 		APIKey:        apiKey,
 		Model:         model,
 		Dimensions:    dimensions,
+		VoyageMode:    voyageMode,
 		ModelsDir:     fallback.ModelsDir,
 		Timeout:       30 * time.Second,
 		GPULayers:     gpuLayers,
@@ -303,6 +322,8 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 	case "ollama":
 		cfg.APIPath = "/api/embeddings"
 	case "openai":
+		cfg.APIPath = "/v1/embeddings"
+	case "voyage":
 		cfg.APIPath = "/v1/embeddings"
 	case "local":
 		// no APIPath
@@ -430,6 +451,9 @@ type Config struct {
 	// EmbeddingAPIKey is the API key for authenticated embedding providers (OpenAI, Cloudflare Workers AI, etc.)
 	// Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
+	// EmbeddingVoyageMode selects Voyage embedding behavior: text, contextualized, or multimodal.
+	// Env: NORNICDB_EMBEDDING_VOYAGE_MODE
+	EmbeddingVoyageMode string
 	// ModelsDir is the directory containing local GGUF models
 	// Env: NORNICDB_MODELS_DIR (default: ./models)
 	ModelsDir string
@@ -562,6 +586,7 @@ func DefaultConfig() *Config {
 		EmbeddingAPIURL:     "http://localhost:11434",
 		EmbeddingModel:      "bge-m3",
 		EmbeddingDimensions: 1024,
+		EmbeddingVoyageMode: "text",
 		EmbeddingCacheSize:  10000, // ~40MB cache for 1024-dim vectors
 		EmbeddingGPULayers:  -1,
 
@@ -1178,6 +1203,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		if provider == "ollama" && apiURL == "" {
 			apiURL = "http://localhost:11434/rerank"
 		}
+		if provider == "voyage" {
+			if apiURL == "" {
+				apiURL = voyage.DefaultBaseURL
+			}
+			if model == "" {
+				model = voyage.DefaultRerankModel
+			}
+			if apiKey == "" {
+				apiKey = os.Getenv("VOYAGE_API_KEY")
+			}
+		}
 		if s.dbConfigStore == nil {
 			return enabled, provider, model, apiURL, apiKey
 		}
@@ -1210,6 +1246,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		if provider == "ollama" && apiURL == "" {
 			apiURL = "http://localhost:11434/rerank"
 		}
+		if provider == "voyage" {
+			if apiURL == "" {
+				apiURL = voyage.DefaultBaseURL
+			}
+			if model == "" {
+				model = voyage.DefaultRerankModel
+			}
+			if apiKey == "" {
+				apiKey = os.Getenv("VOYAGE_API_KEY")
+			}
+		}
 		return enabled, provider, model, apiURL, apiKey
 	}
 	getOrCreateExternalReranker := func(provider, model, apiURL, apiKey string) search.Reranker {
@@ -1222,6 +1269,22 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		rerankerResolverMu.RUnlock()
 		if apiURL == "" {
 			return nil
+		}
+		if provider == "voyage" {
+			reranker, err := search.NewVoyageReranker(&search.VoyageRerankConfig{
+				Enabled: true,
+				APIURL:  apiURL,
+				APIKey:  apiKey,
+				Model:   model,
+				Timeout: 30 * time.Second,
+			})
+			if err != nil {
+				return nil
+			}
+			rerankerResolverMu.Lock()
+			perDBRerankerCache[key] = reranker
+			rerankerResolverMu.Unlock()
+			return reranker
 		}
 		ceConfig := &search.CrossEncoderConfig{
 			Enabled:  true,
@@ -1434,18 +1497,44 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if apiURL == "" {
 				if provider == "ollama" {
 					apiURL = "http://localhost:11434/rerank"
+				} else if provider == "voyage" {
+					apiURL = voyage.DefaultBaseURL
 				}
+			}
+			apiKey := featuresConfig.SearchRerankAPIKey
+			if provider == "voyage" && apiKey == "" {
+				apiKey = os.Getenv("VOYAGE_API_KEY")
+			}
+			model := featuresConfig.SearchRerankModel
+			if provider == "voyage" && model == "" {
+				model = voyage.DefaultRerankModel
 			}
 			if apiURL == "" {
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerSearchRerankAPIURLMissingEvent(
 						"search_rerank", provider, "NORNICDB_SEARCH_RERANK_API_URL"))
+			} else if provider == "voyage" {
+				reranker, err := search.NewVoyageReranker(&search.VoyageRerankConfig{
+					Enabled: true,
+					APIURL:  apiURL,
+					APIKey:  apiKey,
+					Model:   model,
+					Timeout: 30 * time.Second,
+				})
+				if err != nil {
+					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerModelUnavailableEvent(err))
+				} else {
+					db.SetSearchReranker(reranker)
+					setGlobalRerankerResolver(func(string) search.Reranker { return reranker })
+					s.logEvent(context.Background(), slog.LevelInfo,
+						localization.ServerSearchRerankerReadyExternalEvent("search_rerank", provider, apiURL))
+				}
 			} else {
 				ceConfig := &search.CrossEncoderConfig{
 					Enabled:  true,
 					APIURL:   apiURL,
-					APIKey:   featuresConfig.SearchRerankAPIKey,
-					Model:    featuresConfig.SearchRerankModel,
+					APIKey:   apiKey,
+					Model:    model,
 					TopK:     100,
 					Timeout:  30 * time.Second,
 					MinScore: 0.0,
@@ -1465,16 +1554,36 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			localization.ServerSearchRerankDisabledEvent("search_rerank", "NORNICDB_SEARCH_RERANK_ENABLED"))
 	}
 
-	// Configure embeddings if enabled
-	// Local provider doesn't need API URL, others do
-	embeddingsReady := config.EmbeddingEnabled && (config.EmbeddingProvider == "local" || config.EmbeddingAPIURL != "")
+	// Configure embeddings if enabled.
+	embeddingProvider := strings.TrimSpace(strings.ToLower(config.EmbeddingProvider))
+	embeddingAPIURL := strings.TrimSpace(config.EmbeddingAPIURL)
+	embeddingAPIKey := config.EmbeddingAPIKey
+	embeddingModel := config.EmbeddingModel
+	if embeddingProvider == "voyage" {
+		if embeddingAPIURL == "" {
+			embeddingAPIURL = voyage.DefaultBaseURL
+		}
+		if embeddingAPIKey == "" {
+			embeddingAPIKey = os.Getenv("VOYAGE_API_KEY")
+		}
+		if strings.TrimSpace(embeddingModel) == "" {
+			if strings.EqualFold(config.EmbeddingVoyageMode, embed.VoyageModeContextualized) {
+				embeddingModel = voyage.DefaultContextModel
+			} else {
+				embeddingModel = voyage.DefaultEmbeddingModel
+			}
+		}
+	}
+	// Local provider doesn't need API URL; Voyage has a default API URL.
+	embeddingsReady := config.EmbeddingEnabled && (embeddingProvider == "local" || embeddingAPIURL != "")
 	if embeddingsReady {
 		embedConfig := &embed.Config{
-			Provider:      config.EmbeddingProvider,
-			APIURL:        config.EmbeddingAPIURL,
-			APIKey:        config.EmbeddingAPIKey,
-			Model:         config.EmbeddingModel,
+			Provider:      embeddingProvider,
+			APIURL:        embeddingAPIURL,
+			APIKey:        embeddingAPIKey,
+			Model:         embeddingModel,
 			Dimensions:    config.EmbeddingDimensions,
+			VoyageMode:    config.EmbeddingVoyageMode,
 			ModelsDir:     config.ModelsDir,
 			GPULayers:     config.EmbeddingGPULayers,
 			Timeout:       30 * time.Second,
@@ -1485,10 +1594,12 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		}
 
 		// Set API path based on provider (only for remote providers)
-		switch config.EmbeddingProvider {
+		switch embeddingProvider {
 		case "ollama":
 			embedConfig.APIPath = "/api/embeddings"
 		case "openai":
+			embedConfig.APIPath = "/v1/embeddings"
+		case "voyage":
 			embedConfig.APIPath = "/v1/embeddings"
 		case "local":
 			// Local provider doesn't need API path
@@ -1542,13 +1653,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 								embeddingCacheMemoryMB(config.EmbeddingCacheSize, config.EmbeddingDimensions)))
 					}
 
-					if config.EmbeddingProvider == "local" {
+					if embeddingProvider == "local" {
 						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyLocalEvent(config.EmbeddingModel, config.EmbeddingDimensions))
+							localization.ServerEmbeddingsReadyLocalEvent(embeddingModel, config.EmbeddingDimensions))
 					} else {
 						s.logEvent(context.Background(), slog.LevelInfo,
-							localization.ServerEmbeddingsReadyRemoteEvent(config.EmbeddingProvider,
-								config.EmbeddingAPIURL, config.EmbeddingModel, config.EmbeddingDimensions))
+							localization.ServerEmbeddingsReadyRemoteEvent(embeddingProvider,
+								embeddingAPIURL, embeddingModel, config.EmbeddingDimensions))
 					}
 
 					if mcpServer != nil {
@@ -1562,13 +1673,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					return
 				}
 
-				if config.EmbeddingProvider == "local" {
+				if embeddingProvider == "local" {
 					s.logEvent(context.Background(), slog.LevelWarn,
-						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, config.EmbeddingModel, err))
+						localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embeddingModel, err))
 				} else {
 					s.logEvent(context.Background(), slog.LevelWarn,
 						localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
-							config.EmbeddingProvider, config.EmbeddingModel, config.EmbeddingAPIURL, err))
+							embeddingProvider, embeddingModel, embeddingAPIURL, err))
 				}
 
 				if backoff < maxBackoff {

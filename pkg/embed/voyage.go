@@ -1,0 +1,200 @@
+package embed
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/textchunk"
+	voyageapi "github.com/orneryd/nornicdb/pkg/voyage"
+)
+
+const (
+	VoyageModeText           = "text"
+	VoyageModeContextualized = "contextualized"
+	VoyageModeMultimodal     = "multimodal"
+)
+
+// DefaultVoyageConfig returns a default Voyage embedding configuration.
+func DefaultVoyageConfig(apiKey string) *Config {
+	return &Config{
+		Provider:   "voyage",
+		APIURL:     voyageapi.DefaultBaseURL,
+		APIPath:    "/v1/embeddings",
+		APIKey:     apiKey,
+		Model:      voyageapi.DefaultEmbeddingModel,
+		Dimensions: voyageapi.DefaultOutputDimension,
+		Timeout:    30 * time.Second,
+		VoyageMode: VoyageModeText,
+	}
+}
+
+// VoyageEmbedder implements Embedder for Voyage AI embeddings.
+type VoyageEmbedder struct {
+	config *Config
+	client *voyageapi.Client
+	mode   string
+}
+
+// NewVoyage creates a Voyage embedder.
+func NewVoyage(config *Config) (*VoyageEmbedder, error) {
+	if config == nil {
+		config = DefaultVoyageConfig(os.Getenv("VOYAGE_API_KEY"))
+	}
+	cfg := *config
+	cfg.Provider = strings.TrimSpace(strings.ToLower(cfg.Provider))
+	if cfg.Provider == "" {
+		cfg.Provider = "voyage"
+	}
+	if cfg.APIKey == "" {
+		cfg.APIKey = os.Getenv("VOYAGE_API_KEY")
+	}
+	if cfg.APIKey == "" {
+		return nil, fmt.Errorf("Voyage requires an API key")
+	}
+	if strings.TrimSpace(cfg.APIURL) == "" {
+		cfg.APIURL = voyageapi.DefaultBaseURL
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		if normalizeVoyageMode(cfg.VoyageMode) == VoyageModeContextualized {
+			cfg.Model = voyageapi.DefaultContextModel
+		} else {
+			cfg.Model = voyageapi.DefaultEmbeddingModel
+		}
+	}
+	if cfg.Dimensions <= 0 {
+		cfg.Dimensions = voyageapi.DefaultOutputDimension
+	}
+	client, err := voyageapi.NewClient(voyageapi.Config{
+		APIKey:  cfg.APIKey,
+		BaseURL: cfg.APIURL,
+		Timeout: cfg.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &VoyageEmbedder{
+		config: &cfg,
+		client: client,
+		mode:   normalizeVoyageMode(cfg.VoyageMode),
+	}, nil
+}
+
+// Embed generates a query embedding for a single text string.
+func (e *VoyageEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	return e.EmbedWithInputType(ctx, text, InputTypeQuery)
+}
+
+// EmbedBatch generates document embeddings for multiple texts.
+func (e *VoyageEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.EmbedBatchWithInputType(ctx, texts, InputTypeDocument)
+}
+
+func (e *VoyageEmbedder) EmbedWithInputType(ctx context.Context, text, inputType string) ([]float32, error) {
+	vecs, err := e.EmbedBatchWithInputType(ctx, []string{text}, inputType)
+	if err != nil || len(vecs) == 0 {
+		return nil, err
+	}
+	return vecs[0], nil
+}
+
+func (e *VoyageEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []string, inputType string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	resp, err := e.client.EmbedText(ctx, texts, voyageapi.EmbeddingOptions{
+		Model:           e.config.Model,
+		InputType:       inputType,
+		Truncation:      true,
+		OutputDimension: e.config.Dimensions,
+		OutputDType:     "float",
+	})
+	if err != nil {
+		return nil, err
+	}
+	results := make([][]float32, len(texts))
+	for _, item := range resp.Data {
+		if item.Index >= 0 && item.Index < len(results) {
+			results[item.Index] = item.Embedding
+		}
+	}
+	return results, nil
+}
+
+func (e *VoyageEmbedder) EmbedDocumentChunks(ctx context.Context, text string, maxTokens, overlap int) (*DocumentChunkResult, error) {
+	if e.mode != VoyageModeContextualized {
+		chunks, err := e.ChunkText(text, maxTokens, overlap)
+		if err != nil {
+			return nil, err
+		}
+		embeddings, err := e.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		if err != nil {
+			return nil, err
+		}
+		return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: e.Model()}, nil
+	}
+	model := strings.TrimSpace(e.config.Model)
+	if model == "" || strings.HasPrefix(model, "voyage-4") {
+		model = voyageapi.DefaultContextModel
+	}
+	resp, err := e.client.EmbedContextualized(ctx, []string{text}, voyageapi.ContextualizedOptions{
+		Model:              model,
+		InputType:          InputTypeDocument,
+		OutputDimension:    e.config.Dimensions,
+		OutputDType:        "float",
+		EnableAutoChunking: true,
+		ChunkSize:          maxTokens,
+		ChunkOverlap:       overlap,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Data) == 0 {
+		return &DocumentChunkResult{Model: model, ChunkerVersion: resp.ChunkerVersion, TotalTokens: resp.Usage.TotalTokens}, nil
+	}
+	first := resp.Data[0]
+	chunks := make([]string, 0, len(first.Data))
+	embeddings := make([][]float32, 0, len(first.Data))
+	for _, item := range first.Data {
+		chunks = append(chunks, item.Text)
+		embeddings = append(embeddings, item.Embedding)
+	}
+	return &DocumentChunkResult{
+		Chunks:         chunks,
+		Embeddings:     embeddings,
+		Model:          model,
+		ChunkerVersion: resp.ChunkerVersion,
+		TotalTokens:    resp.Usage.TotalTokens,
+	}, nil
+}
+
+func (e *VoyageEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, func(value string) (int, error) {
+		return len(value), nil
+	})
+}
+
+func (e *VoyageEmbedder) Dimensions() int {
+	return e.config.Dimensions
+}
+
+func (e *VoyageEmbedder) Model() string {
+	return e.config.Model
+}
+
+func (e *VoyageEmbedder) Backend() string {
+	return "cpu"
+}
+
+func normalizeVoyageMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case VoyageModeContextualized:
+		return VoyageModeContextualized
+	case VoyageModeMultimodal:
+		return VoyageModeMultimodal
+	default:
+		return VoyageModeText
+	}
+}
