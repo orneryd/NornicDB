@@ -71,6 +71,11 @@ After those priority fields, **all remaining properties are also indexed**. Prop
 
 Example: a search for `docker configuration` can match a node through `content`, `title`, or any other indexed property that contains those terms.
 
+BM25 uses NFKC normalization, Unicode case folding, Unicode token splitting,
+and exact tokens by default. NornicDB does not ship any language stemmers. If a
+database needs stemming, install and select a trusted local plugin as described
+in [BM25 Stemmer Plugins](bm25-stemmers.md).
+
 ## Embedding Text Inputs
 
 The vector side of hybrid search depends on whatever text was embedded for the node.

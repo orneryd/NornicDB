@@ -2405,20 +2405,21 @@ func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {
 	assert.True(t, vectorIDInSeedNodeSet("a", map[string]struct{}{"a": {}}))
 	assert.False(t, vectorIDInSeedNodeSet("b", map[string]struct{}{"a": {}}))
 
-	current := "schema=2;format=" + bm25V2FormatVersion + ";analyzer=" + bm25AnalyzerVersion + ";props=title,text"
+	defaultAnalyzerSettings := analyzerFingerprint(nil).BuildSettings()
+	current := "schema=3;format=" + bm25V2FormatVersion + ";" + defaultAnalyzerSettings + ";props=title,text"
 	assert.True(t, bm25SettingsEquivalent(current, current, bm25V2FormatVersion))
 	assert.True(t, bm25SettingsEquivalent(
-		"schema=2;format="+fulltextIndexFormatVersion+";analyzer="+bm25AnalyzerVersion+";props=title,text",
+		"schema=3;format="+fulltextIndexFormatVersion+";"+defaultAnalyzerSettings+";props=title,text",
 		current,
 		bm25V2FormatVersion,
 	))
 	assert.False(t, bm25SettingsEquivalent(
-		"schema=2;format="+fulltextIndexFormatVersion+";analyzer="+bm25AnalyzerVersion+";props=title",
+		"schema=3;format="+fulltextIndexFormatVersion+";"+defaultAnalyzerSettings+";props=title",
 		current,
 		bm25V2FormatVersion,
 	))
 	assert.False(t, bm25SettingsEquivalent(
-		"schema=2;format=1.0.0;props=title,text",
+		"schema=3;format=1.0.0;"+defaultAnalyzerSettings+";props=title,text",
 		current,
 		bm25V2FormatVersion,
 	))

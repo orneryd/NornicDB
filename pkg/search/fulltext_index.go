@@ -8,20 +8,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
 )
 
 // BM25 parameters (standard values)
 const (
 	bm25K1              = 1.2  // Term frequency saturation
 	bm25B               = 0.75 // Length normalization
-	bm25AnalyzerVersion = "unicode-nfkc-casefold-v1"
+	bm25AnalyzerVersion = bm25TokenizerVersion
 )
 
 // FulltextIndex provides BM25-based full-text search.
@@ -50,14 +47,22 @@ type FulltextIndex struct {
 	// Versioning for dirty tracking (version != persistedVersion => needs save).
 	version          uint64
 	persistedVersion uint64
+
+	analyzer Analyzer
 }
 
 // NewFulltextIndex creates a new full-text search index.
 func NewFulltextIndex() *FulltextIndex {
+	return NewFulltextIndexWithAnalyzer(nil)
+}
+
+// NewFulltextIndexWithAnalyzer creates a new full-text search index using analyzer.
+func NewFulltextIndexWithAnalyzer(analyzer Analyzer) *FulltextIndex {
 	return &FulltextIndex{
 		documents:     make(map[string]string),
 		invertedIndex: make(map[string]map[string]int),
 		docLengths:    make(map[string]int),
+		analyzer:      normalizeAnalyzer(analyzer),
 	}
 }
 
@@ -253,7 +258,7 @@ func (f *FulltextIndex) Index(id string, text string) {
 	removed := f.removeInternal(id)
 
 	// Tokenize and normalize
-	tokens := tokenize(text)
+	tokens := f.analyze(text)
 	if len(tokens) == 0 {
 		if removed {
 			f.markDirtyLocked()
@@ -307,7 +312,7 @@ func (f *FulltextIndex) IndexBatch(entries []FulltextBatchEntry) {
 		if f.removeInternal(e.ID) {
 			dirty = true
 		}
-		tokens := tokenize(e.Text)
+		tokens := f.analyze(e.Text)
 		if len(tokens) == 0 {
 			continue
 		}
@@ -353,7 +358,7 @@ func (f *FulltextIndex) removeInternal(id string) bool {
 
 	// Get the document's terms
 	text := f.documents[id]
-	tokens := tokenize(text)
+	tokens := f.analyze(text)
 
 	// Count term frequencies
 	termFreq := make(map[string]int)
@@ -390,7 +395,7 @@ func (f *FulltextIndex) Search(query string, limit int) []indexResult {
 	}
 
 	// Tokenize query
-	queryTerms := tokenize(query)
+	queryTerms := f.analyze(query)
 	if len(queryTerms) == 0 {
 		return nil
 	}
@@ -572,12 +577,11 @@ func lexicalSeedMinDocumentFrequency() int {
 
 // tokenize splits canonically equivalent Unicode text into exact terms.
 func tokenize(text string) []string {
-	text = cases.Fold().String(norm.NFKC.String(text))
+	return DefaultTextAnalyzer().Analyze(text)
+}
 
-	words := strings.FieldsFunc(text, func(c rune) bool {
-		return !unicode.IsLetter(c) && !unicode.IsDigit(c) && !unicode.IsMark(c)
-	})
-	return words
+func (f *FulltextIndex) analyze(text string) []string {
+	return normalizeAnalyzer(f.analyzer).Analyze(text)
 }
 
 // PhraseSearch searches for an exact phrase match.
