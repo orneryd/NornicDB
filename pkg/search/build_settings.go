@@ -15,7 +15,7 @@ import (
 
 const (
 	searchBuildSettingsFormatVersion = 1
-	bm25SettingsSchemaVersion        = "2"
+	bm25SettingsSchemaVersion        = "3"
 	vectorSettingsSchemaVersion      = "1"
 	hnswSettingsSchemaVersion        = "1"
 	routingSettingsSchemaVersion     = "1"
@@ -104,10 +104,11 @@ func (s *Service) composeBM25BuildSettings() string {
 	if configured := s.FulltextProperties(); len(configured) > 0 {
 		properties = strings.Join(configured, ",")
 	}
-	return fmt.Sprintf("schema=%s;format=%s;analyzer=%s;props=%s",
+	analyzer := analyzerFingerprint(s.bm25Analyzer).BuildSettings()
+	return fmt.Sprintf("schema=%s;format=%s;%s;props=%s",
 		bm25SettingsSchemaVersion,
 		s.currentBM25FormatVersion(),
-		bm25AnalyzerVersion,
+		analyzer,
 		properties)
 }
 

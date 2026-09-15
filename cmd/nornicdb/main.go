@@ -802,6 +802,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Pass plugin directories from loaded config
 	serverConfig.PluginsDir = cfg.Server.PluginsDir
 	serverConfig.HeimdallPluginsDir = cfg.Server.HeimdallPluginsDir
+	serverConfig.StemmerPluginsDir = cfg.Server.StemmerPluginsDir
 	// CORS configuration from loaded config
 	serverConfig.EnableCORS = cfg.Server.EnableCORS
 	serverConfig.CORSOrigins = cfg.Server.CORSOrigins

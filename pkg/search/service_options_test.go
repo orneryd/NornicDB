@@ -3,9 +3,11 @@ package search
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +79,29 @@ func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
 	require.Equal(t, int64(3<<20), metadataMax)
 	require.Equal(t, "memory", bm25Storage)
 	require.Equal(t, "disk", vectorStorage)
+}
+
+func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
+	service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{
+		BM25Stemmer: &stemmer.Registration{
+			APIVersion: stemmer.APIVersion,
+			ID:         "test.fold",
+			Version:    "1.0.0",
+			Digest:     strings.Repeat("d", 64),
+			Stem: func(token string) string {
+				switch token {
+				case "children", "child":
+					return "child"
+				default:
+					return token
+				}
+			},
+		},
+	})
+	service.fulltextIndex.Index("doc", "children")
+	require.Len(t, service.fulltextIndex.Search("child", 10), 1)
+	require.Contains(t, service.composeBM25BuildSettings(), "stemmer=test.fold")
+	require.Contains(t, service.composeBM25BuildSettings(), "stemmer_api=1")
 }
 
 func TestVectorStorageModeControlsFileStore(t *testing.T) {

@@ -19,6 +19,7 @@ func TestResolve_GlobalOnly(t *testing.T) {
 	assert.Equal(t, 1536, r.EmbeddingDimensions)
 	assert.Equal(t, 0.6, r.SearchMinSimilarity)
 	assert.Equal(t, "v2", r.BM25Engine)
+	assert.Equal(t, "none", r.BM25Stemmer)
 	assert.NotEmpty(t, r.Effective["db.nornic.embedding.dimensions"])
 }
 
@@ -31,15 +32,42 @@ func TestResolve_Overrides(t *testing.T) {
 		"NORNICDB_EMBEDDING_DIMENSIONS":  "768",
 		"NORNICDB_SEARCH_MIN_SIMILARITY": "0.8",
 		"NORNICDB_SEARCH_BM25_ENGINE":    "v2",
+		"NORNICDB_SEARCH_BM25_STEMMER":   "snowball.ukrainian",
 	}
 	r := Resolve(global, overrides)
 	require.NotNil(t, r)
 	assert.Equal(t, 768, r.EmbeddingDimensions)
 	assert.Equal(t, 0.8, r.SearchMinSimilarity)
 	assert.Equal(t, "v2", r.BM25Engine)
+	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
 	assert.Equal(t, "768", r.Effective["db.nornic.embedding.dimensions"])
 	assert.Equal(t, "0.8", r.Effective["db.nornic.search.min.similarity"])
 	assert.Equal(t, "v2", r.Effective["db.nornic.search.bm25.engine"])
+	assert.Equal(t, "snowball.ukrainian", r.Effective["db.nornic.search.bm25.stemmer"])
+}
+
+func TestResolve_DocumentedStemmerSelectionExamples(t *testing.T) {
+	global := config.LoadDefaults()
+	global.Memory.SearchBM25Stemmer = "snowball.french"
+
+	frenchDefault := Resolve(global, nil)
+	require.NotNil(t, frenchDefault)
+	assert.Equal(t, "snowball.french", frenchDefault.BM25Stemmer)
+	assert.Equal(t, "snowball.french", frenchDefault.Effective["db.nornic.search.bm25.stemmer"])
+
+	spanishDB := Resolve(global, map[string]string{
+		"db.nornic.search.bm25.stemmer": "snowball.spanish",
+	})
+	require.NotNil(t, spanishDB)
+	assert.Equal(t, "snowball.spanish", spanishDB.BM25Stemmer)
+	assert.Equal(t, "snowball.spanish", spanishDB.Effective["db.nornic.search.bm25.stemmer"])
+
+	exactTokenDB := Resolve(global, map[string]string{
+		"db.nornic.search.bm25.stemmer": "none",
+	})
+	require.NotNil(t, exactTokenDB)
+	assert.Equal(t, "none", exactTokenDB.BM25Stemmer)
+	assert.Equal(t, "none", exactTokenDB.Effective["db.nornic.search.bm25.stemmer"])
 }
 
 func TestResolve_QueryCacheTTLIsDatabaseScoped(t *testing.T) {
@@ -106,6 +134,9 @@ func TestApplyOverride(t *testing.T) {
 	applyOverride(r, "NORNICDB_SEARCH_BM25_ENGINE", "V1")
 	assert.Equal(t, "v1", r.BM25Engine)
 
+	applyOverride(r, "NORNICDB_SEARCH_BM25_STEMMER", " Snowball.Ukrainian ")
+	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
+
 	applyOverride(r, "NORNICDB_EMBEDDING_ENABLED", "1")
 	assert.Equal(t, "v1", r.BM25Engine)
 
@@ -119,6 +150,7 @@ func TestIsAllowedKey(t *testing.T) {
 	assert.True(t, IsAllowedKey("NORNICDB_EMBEDDING_API_KEY"))
 	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_ENABLED"))
 	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_WARMING"))
+	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_BM25_STEMMER"))
 	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_VECTOR_ENABLED"))
 	assert.True(t, IsAllowedKey("NORNICDB_SEARCH_VECTOR_WARMING"))
 	assert.False(t, IsAllowedKey("UNKNOWN_KEY"))

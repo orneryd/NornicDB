@@ -57,9 +57,14 @@ type FulltextIndexV2 struct {
 
 	maxPrefixExpansions int
 	minPrefixLength     int
+	analyzer            Analyzer
 }
 
 func NewFulltextIndexV2() *FulltextIndexV2 {
+	return NewFulltextIndexV2WithAnalyzer(nil)
+}
+
+func NewFulltextIndexV2WithAnalyzer(analyzer Analyzer) *FulltextIndexV2 {
 	maxPrefixExpansions := envutil.GetInt("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", 0)
 	if maxPrefixExpansions < 0 {
 		maxPrefixExpansions = 0
@@ -75,6 +80,7 @@ func NewFulltextIndexV2() *FulltextIndexV2 {
 		docIDsLexicalByNum:  true,
 		maxPrefixExpansions: maxPrefixExpansions,
 		minPrefixLength:     minPrefixLength,
+		analyzer:            normalizeAnalyzer(analyzer),
 	}
 }
 
@@ -148,7 +154,7 @@ func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 		if f.removeInternalLocked(e.ID) {
 			dirty = true
 		}
-		tokens := tokenize(e.Text)
+		tokens := f.analyze(e.Text)
 		if len(tokens) == 0 {
 			continue
 		}
@@ -231,7 +237,7 @@ func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
 		return false
 	}
 
-	tokens := tokenize(text)
+	tokens := f.analyze(text)
 	seen := make(map[string]struct{}, len(tokens))
 	for _, t := range tokens {
 		if _, exists := seen[t]; exists {
@@ -284,7 +290,7 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 		plan := cached.(bm25QueryPlan)
 		weightedTerms = plan.terms
 	} else {
-		queryTerms := tokenize(query)
+		queryTerms := f.analyze(query)
 		if len(queryTerms) == 0 {
 			return nil
 		}
@@ -630,6 +636,10 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 		})
 	}
 	return terms
+}
+
+func (f *FulltextIndexV2) analyze(text string) []string {
+	return normalizeAnalyzer(f.analyzer).Analyze(text)
 }
 
 type scoredDoc struct {

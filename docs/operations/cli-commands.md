@@ -29,6 +29,11 @@ The CLI surface is intentionally small. The full set is:
 
 For migration, backup, and import operations, use the HTTP/Bolt APIs, the runnable scripts under [`scripts/migration/`](https://github.com/orneryd/nornicdb/tree/main/scripts/migration), or the offline admin guide at [admin-tool.md](admin-tool.md). The main `nornicdb` server CLI does not have general-purpose `import` or `export` subcommands; those live under `nornicdb-admin`.
 
+BM25 Snowball stemmer packaging is intentionally separate from both
+`nornicdb` and `nornicdb-admin`. Use the standalone `nornicdb-snowball` helper
+to wrap generated Snowball Go source as a local stemmer plugin; see
+[BM25 Stemmer Plugins](../user-guides/bm25-stemmers.md).
+
 ---
 
 ### `nornicdb serve`

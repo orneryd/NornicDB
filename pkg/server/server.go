@@ -474,6 +474,9 @@ type Config struct {
 	// HeimdallPluginsDir is the directory for Heimdall plugins
 	// Env: NORNICDB_HEIMDALL_PLUGINS_DIR
 	HeimdallPluginsDir string
+	// StemmerPluginsDir is the directory for BM25 stemmer plugin manifests.
+	// Env: NORNICDB_STEMMER_PLUGINS_DIR
+	StemmerPluginsDir string
 
 	// Features configuration (passed from main config loading)
 	// This contains feature flags like HeimdallEnabled loaded from YAML/env
@@ -1757,6 +1760,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					MetadataMemoryMaxBytes: resolved.MetadataMemoryMaxBytes,
 					BM25StorageMode:        resolved.BM25StorageMode,
 					VectorStorageMode:      resolved.VectorStorageMode,
+					BM25StemmerID:          resolved.BM25Stemmer,
 				}
 			})
 			// Per-DB embedder registry: resolve embed config per database for EmbedQueryForDB.

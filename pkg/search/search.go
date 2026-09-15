@@ -114,6 +114,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -185,11 +186,15 @@ func DefaultBM25Engine() string {
 }
 
 func newBM25Index(engine string) (bm25Index, string) {
+	return newBM25IndexWithAnalyzer(engine, nil)
+}
+
+func newBM25IndexWithAnalyzer(engine string, analyzer Analyzer) (bm25Index, string) {
 	switch normalizeBM25Engine(engine) {
 	case BM25EngineV2:
-		return NewFulltextIndexV2(), BM25EngineV2
+		return NewFulltextIndexV2WithAnalyzer(analyzer), BM25EngineV2
 	default:
-		return NewFulltextIndex(), BM25EngineV1
+		return NewFulltextIndexWithAnalyzer(analyzer), BM25EngineV1
 	}
 }
 
@@ -646,6 +651,7 @@ type Service struct {
 	localizer              *localization.Manager
 	// Primary BM25 implementation used by the live search pipeline.
 	fulltextIndex bm25Index
+	bm25Analyzer  Analyzer
 	bm25Engine    string
 	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
 	fulltextProperties []string
@@ -960,12 +966,18 @@ type ServiceOptions struct {
 	MetadataMemoryMaxBytes   int64
 	BM25StorageMode          string
 	VectorStorageMode        string
+	BM25StemmerID            string
+	BM25Stemmer              *stemmer.Registration
 }
 
 // NewServiceWithDimensionsAndBM25EngineAndOptions creates a search service with explicit resource policy.
 // Nil options preserve the historical 1000-entry, five-minute result cache.
 func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dimensions int, bm25Engine string, options *ServiceOptions) *Service {
-	fulltextIndex, selectedBM25Engine := newBM25Index(bm25Engine)
+	analyzer := DefaultTextAnalyzer()
+	if options != nil && options.BM25Stemmer != nil {
+		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
+	}
+	fulltextIndex, selectedBM25Engine := newBM25IndexWithAnalyzer(bm25Engine, analyzer)
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
 	cacheEntries := 1000
@@ -992,6 +1004,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		indexCapacityByNode:        make(map[string]indexCapacityUsage),
 		indexCapacityByEdge:        make(map[string]indexCapacityUsage),
 		fulltextIndex:              fulltextIndex,
+		bm25Analyzer:               analyzer,
 		bm25Engine:                 selectedBM25Engine,
 		minEmbeddingsForClustering: DefaultMinEmbeddingsForClustering,
 		defaultMinSimilarity:       -1, // -1 = not set, use SearchOptions default
@@ -5754,10 +5767,13 @@ func bm25SettingsEquivalent(saved, current, currentFormat string) bool {
 		return false
 	}
 	if savedKV["schema"] != currentKV["schema"] ||
-		savedKV["props"] != currentKV["props"] ||
-		savedKV["analyzer"] == "" ||
-		savedKV["analyzer"] != currentKV["analyzer"] {
+		savedKV["props"] != currentKV["props"] {
 		return false
+	}
+	for _, key := range []string{"tokenizer", "stemmer", "stemmer_api", "stemmer_version", "stemmer_sha256"} {
+		if savedKV[key] == "" || savedKV[key] != currentKV[key] {
+			return false
+		}
 	}
 	return savedKV["format"] == fulltextIndexFormatVersion &&
 		currentKV["format"] == currentFormat &&

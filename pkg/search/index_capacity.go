@@ -53,7 +53,7 @@ func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, skipFullte
 		if text != "" {
 			usage.bm25Metadata = int64(len(nodeID) + 16)
 			seenTerms := make(map[string]struct{})
-			for _, term := range tokenize(text) {
+			for _, term := range normalizeAnalyzer(s.bm25Analyzer).Analyze(text) {
 				if _, exists := seenTerms[term]; exists {
 					continue
 				}

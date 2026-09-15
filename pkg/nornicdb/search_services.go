@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -271,6 +273,18 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	if optionsResolver != nil {
 		resolved := optionsResolver(dbName)
 		serviceOptions = &resolved
+	} else if db.config != nil && stemmer.NormalizeSelection(db.config.Memory.SearchBM25Stemmer) != stemmer.NoneID {
+		serviceOptions = &search.ServiceOptions{BM25StemmerID: db.config.Memory.SearchBM25Stemmer}
+	}
+	if serviceOptions != nil {
+		selectedStemmer := stemmer.NormalizeSelection(serviceOptions.BM25StemmerID)
+		if selectedStemmer != stemmer.NoneID {
+			reg, ok := stemmer.Lookup(selectedStemmer)
+			if !ok {
+				return nil, fmt.Errorf("configured BM25 stemmer %q is not registered", selectedStemmer)
+			}
+			serviceOptions.BM25Stemmer = &reg
+		}
 	}
 	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, serviceOptions)
 	continuations, err := db.getOrCreateSearchContinuationRegistry()
