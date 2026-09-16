@@ -4195,6 +4195,9 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		response.RetrievalExhausted = response.RetrievalExhausted && !hybridIncomplete
 		response.FallbackTriggered = true
 		response.FallbackReason = SearchFallbackNoHybridResults
+		if hybridFailed {
+			response.FallbackReason = SearchFallbackHybridSearchFailed
+		}
 		response.Message = "RRF search returned no results, fell back to vector search"
 		if s.resultCache != nil {
 			s.resultCache.Put(cacheKey, response)

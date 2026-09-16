@@ -40,6 +40,20 @@ type lastWriteEngine struct {
 	writeTime time.Time
 }
 
+type errorThenCandidateGenerator struct {
+	calls     int
+	firstErr  error
+	candidate Candidate
+}
+
+func (g *errorThenCandidateGenerator) SearchCandidates(context.Context, []float32, int, float64) ([]Candidate, error) {
+	g.calls++
+	if g.calls == 1 {
+		return nil, g.firstErr
+	}
+	return []Candidate{g.candidate}, nil
+}
+
 func (e *iteratorEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	if e.iterateErr != nil {
 		return e.iterateErr
@@ -665,6 +679,35 @@ func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
 	require.Equal(t, "vector-candidate", legacyResponse.Results[0].ID)
 	require.True(t, legacyResponse.FallbackTriggered)
 	require.Equal(t, SearchFallbackNoHybridResults, legacyResponse.FallbackReason)
+}
+
+func TestSearch_VectorFallbackReportsHybridFailure(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewServiceWithDimensions(engine, 2)
+	node := &storage.Node{
+		ID:     "vector-candidate",
+		Labels: []string{"Document"},
+		Properties: map[string]any{
+			"content":   "fallback candidate",
+			"embedding": []float32{1, 0},
+		},
+	}
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.IndexNode(node))
+	service.vectorPipeline = NewVectorSearchPipeline(
+		&errorThenCandidateGenerator{
+			firstErr:  errors.New("hybrid vector retrieval failed"),
+			candidate: Candidate{ID: string(node.ID), Score: 1},
+		},
+		&IdentityExactScorer{},
+	)
+
+	response, err := service.Search(context.Background(), "fallback candidate", []float32{1, 0}, DefaultSearchOptions())
+	require.NoError(t, err)
+	require.Len(t, response.Results, 1)
+	require.True(t, response.FallbackTriggered)
+	require.Equal(t, SearchFallbackHybridSearchFailed, response.FallbackReason)
 }
 
 func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T) {

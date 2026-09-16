@@ -77,6 +77,24 @@ func TestSanitizedEmbeddingDiagnostic(t *testing.T) {
 }
 
 func TestSearchTextChunksUsesOuterRRFAndBM25Fallback(t *testing.T) {
+	t.Run("does not report fallback when no embedder and fallback is disabled", func(t *testing.T) {
+		fallbackEnabled := false
+		response, err := SearchTextChunks(
+			context.Background(),
+			"complete query",
+			&SearchOptions{Limit: 2, FallbackEnabled: &fallbackEnabled},
+			nil,
+			nil,
+			func(_ context.Context, _ string, embedding []float32, _ *SearchOptions) (*SearchResponse, error) {
+				require.Nil(t, embedding)
+				return &SearchResponse{SearchMethod: "rrf_hybrid"}, nil
+			},
+		)
+		require.NoError(t, err)
+		require.False(t, response.FallbackTriggered)
+		require.Equal(t, SearchFallbackNone, response.FallbackReason)
+	})
+
 	t.Run("fuses independently searched chunks", func(t *testing.T) {
 		var searchedQueries []string
 		response, err := SearchTextChunks(

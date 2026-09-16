@@ -25,6 +25,8 @@ func logSearchEvent(ctx context.Context, logger *slog.Logger, localizer *localiz
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Manager.Log delegates rendering to Manager.Render, whose nil receiver
+	// contract emits the message fallback in American English.
 	localizer.Log(ctx, logger, level, event)
 }
 

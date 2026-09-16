@@ -69,6 +69,9 @@ func SearchTextChunksWithErrorPolicy(
 	}
 	if embedQuery == nil {
 		response, err := searchQuery(ctx, query, nil, opts)
+		if !opts.fallbackEnabled() {
+			return response, err
+		}
 		return withSearchFallback(response, SearchFallbackNoEmbedder), err
 	}
 
