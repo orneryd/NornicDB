@@ -70,13 +70,13 @@ export NORNICDB_EMBEDDING_API_KEY=your-orca-key
 ### Voyage AI
 
 ```bash
-export NORNICDB_EMBEDDING_PROVIDER=voyage
+ export NORNICDB_EMBEDDING_PROVIDER=voyage
 export NORNICDB_EMBEDDING_API_KEY=pa-...
 export NORNICDB_EMBEDDING_MODEL=voyage-4-large
 export NORNICDB_EMBEDDING_DIMENSIONS=1024
 ```
 
-For provider-managed document chunking, add `NORNICDB_EMBEDDING_VOYAGE_MODE=contextualized` and use `voyage-context-4`. See [Voyage AI](../advanced/embeddings/voyage-ai.md).
+For provider-managed document chunking, add `NORNICDB_EMBEDDING_MODE=contextualized` and use `voyage-context-4`. See [Voyage AI](../advanced/embeddings/voyage-ai.md).
 
 ### Local GGUF
 

@@ -1072,7 +1072,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "nornicdbcli.flag.embedding_model", Constructor: "NornicDBCLIFlagEmbeddingModel", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.flag.embedding_provider", Constructor: "NornicDBCLIFlagEmbeddingProvider", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.flag.embedding_url", Constructor: "NornicDBCLIFlagEmbeddingURL", Fields: []string{}, PluralForms: []string{"other"}},
-	{ID: "nornicdbcli.flag.embedding_voyage_mode", Constructor: "NornicDBCLIFlagEmbeddingVoyageMode", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "nornicdbcli.flag.embedding_mode", Constructor: "NornicDBCLIFlagEmbeddingMode", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.flag.gc_percent", Constructor: "NornicDBCLIFlagGCPercent", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.flag.gpu_backend", Constructor: "NornicDBCLIFlagGPUBackend", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.flag.headless", Constructor: "NornicDBCLIFlagHeadless", Fields: []string{}, PluralForms: []string{"other"}},

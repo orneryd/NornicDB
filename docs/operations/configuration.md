@@ -612,8 +612,8 @@ embedding:
   provider: local # or ollama, openai, voyage
   model: bge-m3
   dimensions: 1024
-  # Voyage only: text or contextualized
-  voyage_mode: text
+  # Provider-specific free-form mode (for example: text or contextualized)
+  mode: text
 ```
 
 > Note: embedding generation is **disabled by default** in current releases. Enable it explicitly with `NORNICDB_EMBEDDING_ENABLED=true` (or `nornicdb serve --embedding-enabled`) to get semantic search without manually storing vectors.

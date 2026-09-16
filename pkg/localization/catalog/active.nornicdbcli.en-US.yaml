@@ -65,9 +65,9 @@
 - id: nornicdbcli.flag.embedding_key
   description: Embedding API key flag help.
   other: Embeddings API key (openai/orca/voyage)
-- id: nornicdbcli.flag.embedding_voyage_mode
-  description: Voyage embedding mode flag help. Mode names are machine values.
-  other: "Voyage embedding mode: text or contextualized"
+- id: nornicdbcli.flag.embedding_mode
+  description: Provider-specific embedding mode flag help. Mode names are free-form values.
+  other: "Provider-specific embedding mode (default: text)"
 - id: nornicdbcli.flag.embedding_model
   description: Embedding model flag help.
   other: Embedding model name

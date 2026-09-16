@@ -3949,7 +3949,7 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 		"db.nornic.embedding.provider":       "voyage",
 		"db.nornic.embedding.api.url":        "",
 		"db.nornic.embedding.model":          "",
-		"db.nornic.embedding.voyage.mode":    "contextualized",
+		"db.nornic.embedding.mode":           "contextualized",
 		"db.nornic.embedding.dimensions":     "1024",
 		"db.nornic.embedding.gpu.layers":     "0",
 		"db.nornic.embedding.cache.size":     "100",
@@ -3959,7 +3959,7 @@ func TestBuildEmbedConfigFromResolved_Branches(t *testing.T) {
 	require.Equal(t, "https://api.voyageai.com", cfg.APIURL)
 	require.Equal(t, "/v1/embeddings", cfg.APIPath)
 	require.Equal(t, "voyage-context-4", cfg.Model)
-	require.Equal(t, "contextualized", cfg.VoyageMode)
+	require.Equal(t, "contextualized", cfg.Mode)
 
 	voyageFallback := DefaultConfig()
 	voyageFallback.EmbeddingAPIURL = "http://localhost:11434"
@@ -4691,13 +4691,13 @@ func TestNew_SearchRerankProviderBranches(t *testing.T) {
 	})
 
 	t.Run("voyage provider uses native reranker defaults", func(t *testing.T) {
-		t.Setenv("VOYAGE_API_KEY", "test-voyage-key")
 		cfg := DefaultConfig()
 		cfg.EmbeddingEnabled = false
 		cfg.MCPEnabled = false
 		cfg.Features = &nornicConfig.FeatureFlagsConfig{
 			SearchRerankEnabled:  true,
 			SearchRerankProvider: "voyage",
+			SearchRerankAPIKey:   "test-voyage-key",
 		}
 		s, err := New(db, nil, cfg)
 		require.NoError(t, err)

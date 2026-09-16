@@ -1091,7 +1091,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Initialize embedding worker config from main config
 	embedChunkSize := resolveEmbedWorkerChunkSize(
 		config.Memory.EmbeddingProvider,
-		config.Memory.EmbeddingVoyageMode,
+		config.Memory.EmbeddingMode,
 		config.EmbeddingWorker.ChunkSize,
 	)
 	db.embedWorkerConfig = &EmbedWorkerConfig{
@@ -1424,9 +1424,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	return db, nil
 }
 
-func resolveEmbedWorkerChunkSize(provider, voyageMode string, chunkSize int) int {
+func resolveEmbedWorkerChunkSize(provider, mode string, chunkSize int) int {
 	if strings.EqualFold(strings.TrimSpace(provider), "voyage") &&
-		strings.EqualFold(strings.TrimSpace(voyageMode), embed.VoyageModeContextualized) &&
+		strings.EqualFold(strings.TrimSpace(mode), embed.VoyageModeContextualized) &&
 		chunkSize == defaultEmbedChunkSize {
 		return embed.VoyageContextualizedMaxChunkTokens
 	}

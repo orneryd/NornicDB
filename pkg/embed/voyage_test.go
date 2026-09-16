@@ -88,7 +88,7 @@ func TestVoyageEmbedderContextualizedDocumentChunks(t *testing.T) {
 		APIURL:     server.URL,
 		APIKey:     "voyage-key",
 		Dimensions: 2,
-		VoyageMode: VoyageModeContextualized,
+		Mode:       VoyageModeContextualized,
 		Timeout:    time.Second,
 	})
 	require.NoError(t, err)
@@ -133,7 +133,7 @@ func TestVoyageEmbedderContextualizedUsesTextModelForQueries(t *testing.T) {
 		APIURL:     server.URL,
 		APIKey:     "voyage-key",
 		Dimensions: 2,
-		VoyageMode: VoyageModeContextualized,
+		Mode:       VoyageModeContextualized,
 		Timeout:    time.Second,
 	})
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestVoyageEmbedderRejectsMultimodalManagedMode(t *testing.T) {
 		APIURL:     "http://127.0.0.1",
 		APIKey:     "voyage-key",
 		Dimensions: 2,
-		VoyageMode: VoyageModeMultimodal,
+		Mode:       VoyageModeMultimodal,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "multimodal mode is not supported")

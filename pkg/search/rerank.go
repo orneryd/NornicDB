@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
 // Reranker is a Stage-2 reranking component.
@@ -139,22 +140,10 @@ func NewCrossEncoder(config *CrossEncoderConfig) *CrossEncoder {
 }
 
 // RerankCandidate represents a document to be reranked.
-type RerankCandidate struct {
-	ID      string
-	Content string
-	Score   float64 // Original score (from bi-encoder)
-}
+type RerankCandidate = voyage.Candidate
 
 // RerankResult is a reranked document with new score.
-type RerankResult struct {
-	ID           string
-	Content      string
-	OriginalRank int
-	NewRank      int
-	BiScore      float64 // Original bi-encoder score
-	CrossScore   float64 // Cross-encoder score
-	FinalScore   float64 // Combined or cross-encoder score
-}
+type RerankResult = voyage.RankedCandidate
 
 // Rerank takes a query and candidates, returns reranked results.
 func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {

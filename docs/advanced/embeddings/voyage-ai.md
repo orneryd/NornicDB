@@ -11,7 +11,7 @@ Official references:
 ## Text Embeddings
 
 ```bash
-export VOYAGE_API_KEY=pa-...
+export NORNICDB_EMBEDDING_API_KEY=pa-...
 export NORNICDB_EMBEDDING_ENABLED=true
 export NORNICDB_EMBEDDING_PROVIDER=voyage
 export NORNICDB_EMBEDDING_MODEL=voyage-4-large
@@ -26,13 +26,13 @@ NornicDB sends query embeddings with Voyage `input_type: query` and document emb
 
 ## Contextualized Document Chunking
 
-Voyage's contextualized embedding API can chunk a whole document and return chunk embeddings in one provider call. Enable it with `NORNICDB_EMBEDDING_VOYAGE_MODE=contextualized`.
+Voyage's contextualized embedding API can chunk a whole document and return chunk embeddings in one provider call. Enable it with `NORNICDB_EMBEDDING_MODE=contextualized`.
 
 ```bash
-export VOYAGE_API_KEY=pa-...
+export NORNICDB_EMBEDDING_API_KEY=pa-...
 export NORNICDB_EMBEDDING_ENABLED=true
 export NORNICDB_EMBEDDING_PROVIDER=voyage
-export NORNICDB_EMBEDDING_VOYAGE_MODE=contextualized
+export NORNICDB_EMBEDDING_MODE=contextualized
 export NORNICDB_EMBEDDING_MODEL=voyage-context-4
 export NORNICDB_EMBEDDING_DIMENSIONS=1024
 
@@ -49,7 +49,7 @@ embedding:
   provider: voyage
   api_key: "pa-..."
   model: voyage-context-4
-  voyage_mode: contextualized
+  mode: contextualized
   dimensions: 1024
 
 embedding_worker:
@@ -62,7 +62,7 @@ embedding_worker:
 Voyage reranking is configured through the existing search rerank feature flag. It uses Voyage's native `/v1/rerank` API, not the generic cross-encoder adapter.
 
 ```bash
-export VOYAGE_API_KEY=pa-...
+export NORNICDB_SEARCH_RERANK_API_KEY=pa-...
 export NORNICDB_SEARCH_RERANK_ENABLED=true
 export NORNICDB_SEARCH_RERANK_PROVIDER=voyage
 export NORNICDB_SEARCH_RERANK_MODEL=rerank-2.5
@@ -70,7 +70,7 @@ export NORNICDB_SEARCH_RERANK_MODEL=rerank-2.5
 nornicdb serve
 ```
 
-`NORNICDB_SEARCH_RERANK_API_URL` is optional for Voyage and defaults to `https://api.voyageai.com`. If `NORNICDB_SEARCH_RERANK_API_KEY` is unset, NornicDB falls back to `VOYAGE_API_KEY`.
+`NORNICDB_SEARCH_RERANK_API_URL` is optional for Voyage and defaults to `https://api.voyageai.com`. Configure credentials with `NORNICDB_SEARCH_RERANK_API_KEY`.
 
 Per-database override example:
 
@@ -78,7 +78,7 @@ Per-database override example:
 CALL db.nornic.config.set('docs', {
   `db.nornic.embedding.provider`: 'voyage',
   `db.nornic.embedding.model`: 'voyage-context-4',
-  `db.nornic.embedding.voyage.mode`: 'contextualized',
+  `db.nornic.embedding.mode`: 'contextualized',
   `db.nornic.embedding.api.key`: 'pa-...',
   `db.nornic.search.rerank.enabled`: 'true',
   `db.nornic.search.rerank.provider`: 'voyage',

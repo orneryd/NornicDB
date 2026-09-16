@@ -22,7 +22,7 @@ const (
 	MessageNornicDBCLIFlagEmbeddingProvider       MessageID = "nornicdbcli.flag.embedding_provider"
 	MessageNornicDBCLIFlagEmbeddingURL            MessageID = "nornicdbcli.flag.embedding_url"
 	MessageNornicDBCLIFlagEmbeddingKey            MessageID = "nornicdbcli.flag.embedding_key"
-	MessageNornicDBCLIFlagEmbeddingVoyageMode     MessageID = "nornicdbcli.flag.embedding_voyage_mode"
+	MessageNornicDBCLIFlagEmbeddingMode           MessageID = "nornicdbcli.flag.embedding_mode"
 	MessageNornicDBCLIFlagEmbeddingModel          MessageID = "nornicdbcli.flag.embedding_model"
 	MessageNornicDBCLIFlagEmbeddingDimensions     MessageID = "nornicdbcli.flag.embedding_dimensions"
 	MessageNornicDBCLIFlagEmbeddingCache          MessageID = "nornicdbcli.flag.embedding_cache"
@@ -134,8 +134,8 @@ func NornicDBCLIFlagEmbeddingURL() Message {
 func NornicDBCLIFlagEmbeddingKey() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingKey, "Embeddings API key (openai/orca/voyage)")
 }
-func NornicDBCLIFlagEmbeddingVoyageMode() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingVoyageMode, "Voyage embedding mode: text or contextualized")
+func NornicDBCLIFlagEmbeddingMode() Message {
+	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingMode, "Provider-specific embedding mode (default: text)")
 }
 func NornicDBCLIFlagEmbeddingModel() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagEmbeddingModel, "Embedding model name")

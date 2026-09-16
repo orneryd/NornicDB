@@ -282,18 +282,15 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 	model := get("NORNICDB_EMBEDDING_MODEL", fallback.EmbeddingModel)
 	apiURL := get("NORNICDB_EMBEDDING_API_URL", fallback.EmbeddingAPIURL)
 	apiKey := get("NORNICDB_EMBEDDING_API_KEY", fallback.EmbeddingAPIKey)
-	voyageMode := get("NORNICDB_EMBEDDING_VOYAGE_MODE", fallback.EmbeddingVoyageMode)
+	mode := get("NORNICDB_EMBEDDING_MODE", fallback.EmbeddingMode)
 	if provider == "voyage" {
 		apiURL = resolveVoyageEmbeddingAPIURL(apiURL)
 		if model == "" {
-			if strings.EqualFold(voyageMode, embed.VoyageModeContextualized) {
+			if strings.EqualFold(mode, embed.VoyageModeContextualized) {
 				model = voyage.DefaultContextModel
 			} else {
 				model = voyage.DefaultEmbeddingModel
 			}
-		}
-		if apiKey == "" {
-			apiKey = os.Getenv("VOYAGE_API_KEY")
 		}
 	}
 	dimensions := getInt("NORNICDB_EMBEDDING_DIMENSIONS", fallback.EmbeddingDimensions)
@@ -307,7 +304,7 @@ func buildEmbedConfigFromResolved(effective map[string]string, fallback *Config)
 		APIKey:        apiKey,
 		Model:         model,
 		Dimensions:    dimensions,
-		VoyageMode:    voyageMode,
+		Mode:          mode,
 		ModelsDir:     fallback.ModelsDir,
 		Timeout:       30 * time.Second,
 		GPULayers:     gpuLayers,
@@ -459,9 +456,9 @@ type Config struct {
 	// EmbeddingAPIKey is the API key for authenticated embedding providers.
 	// Env: NORNICDB_EMBEDDING_API_KEY
 	EmbeddingAPIKey string
-	// EmbeddingVoyageMode selects Voyage embedding behavior: text or contextualized.
-	// Env: NORNICDB_EMBEDDING_VOYAGE_MODE
-	EmbeddingVoyageMode string
+	// EmbeddingMode selects provider-specific embedding behavior as free-form text.
+	// Env: NORNICDB_EMBEDDING_MODE
+	EmbeddingMode string
 	// ModelsDir is the directory containing local GGUF models
 	// Env: NORNICDB_MODELS_DIR (default: ./models)
 	ModelsDir string
@@ -598,7 +595,7 @@ func DefaultConfig() *Config {
 		EmbeddingAPIURL:     "http://localhost:11434",
 		EmbeddingModel:      "bge-m3",
 		EmbeddingDimensions: 1024,
-		EmbeddingVoyageMode: "text",
+		EmbeddingMode:       "text",
 		EmbeddingCacheSize:  10000, // ~40MB cache for 1024-dim vectors
 		EmbeddingGPULayers:  -1,
 		EmbeddingLazyMode:   1,
@@ -1223,9 +1220,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if model == "" {
 				model = voyage.DefaultRerankModel
 			}
-			if apiKey == "" {
-				apiKey = os.Getenv("VOYAGE_API_KEY")
-			}
 		}
 		if s.dbConfigStore == nil {
 			return enabled, provider, model, apiURL, apiKey
@@ -1266,9 +1260,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if model == "" {
 				model = voyage.DefaultRerankModel
 			}
-			if apiKey == "" {
-				apiKey = os.Getenv("VOYAGE_API_KEY")
-			}
 		}
 		return enabled, provider, model, apiURL, apiKey
 	}
@@ -1284,7 +1275,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			return nil
 		}
 		if provider == "voyage" {
-			reranker, err := search.NewVoyageReranker(&search.VoyageRerankConfig{
+			reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
 				Enabled: true,
 				APIURL:  apiURL,
 				APIKey:  apiKey,
@@ -1516,9 +1507,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 			}
 			apiKey := featuresConfig.SearchRerankAPIKey
-			if provider == "voyage" && apiKey == "" {
-				apiKey = os.Getenv("VOYAGE_API_KEY")
-			}
 			model := featuresConfig.SearchRerankModel
 			if provider == "voyage" && model == "" {
 				model = voyage.DefaultRerankModel
@@ -1528,7 +1516,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					localization.ServerSearchRerankAPIURLMissingEvent(
 						"search_rerank", provider, "NORNICDB_SEARCH_RERANK_API_URL"))
 			} else if provider == "voyage" {
-				reranker, err := search.NewVoyageReranker(&search.VoyageRerankConfig{
+				reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
 					Enabled: true,
 					APIURL:  apiURL,
 					APIKey:  apiKey,
@@ -1575,11 +1563,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	embeddingModel := config.EmbeddingModel
 	if embeddingProvider == "voyage" {
 		embeddingAPIURL = resolveVoyageEmbeddingAPIURL(embeddingAPIURL)
-		if embeddingAPIKey == "" {
-			embeddingAPIKey = os.Getenv("VOYAGE_API_KEY")
-		}
 		if strings.TrimSpace(embeddingModel) == "" {
-			if strings.EqualFold(config.EmbeddingVoyageMode, embed.VoyageModeContextualized) {
+			if strings.EqualFold(config.EmbeddingMode, embed.VoyageModeContextualized) {
 				embeddingModel = voyage.DefaultContextModel
 			} else {
 				embeddingModel = voyage.DefaultEmbeddingModel
@@ -1592,7 +1577,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		APIKey:        embeddingAPIKey,
 		Model:         embeddingModel,
 		Dimensions:    config.EmbeddingDimensions,
-		VoyageMode:    config.EmbeddingVoyageMode,
+		Mode:          config.EmbeddingMode,
 		ModelsDir:     config.ModelsDir,
 		GPULayers:     config.EmbeddingGPULayers,
 		Timeout:       30 * time.Second,

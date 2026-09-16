@@ -170,7 +170,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	serveCmd.Flags().String("embedding-provider", getEnvStr("NORNICDB_EMBEDDING_PROVIDER", "local"), text(localization.NornicDBCLIFlagEmbeddingProvider()))
 	serveCmd.Flags().String("embedding-url", getEnvStr("NORNICDB_EMBEDDING_API_URL", "http://localhost:11434"), text(localization.NornicDBCLIFlagEmbeddingURL()))
 	serveCmd.Flags().String("embedding-key", getEnvStr("NORNICDB_EMBEDDING_API_KEY", ""), text(localization.NornicDBCLIFlagEmbeddingKey()))
-	serveCmd.Flags().String("embedding-voyage-mode", getEnvStr("NORNICDB_EMBEDDING_VOYAGE_MODE", "text"), text(localization.NornicDBCLIFlagEmbeddingVoyageMode()))
+	serveCmd.Flags().String("embedding-mode", getEnvStr("NORNICDB_EMBEDDING_MODE", "text"), text(localization.NornicDBCLIFlagEmbeddingMode()))
 	serveCmd.Flags().String("embedding-model", getEnvStr("NORNICDB_EMBEDDING_MODEL", "bge-m3"), text(localization.NornicDBCLIFlagEmbeddingModel()))
 	serveCmd.Flags().Int("embedding-dim", getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 1024), text(localization.NornicDBCLIFlagEmbeddingDimensions()))
 	serveCmd.Flags().Int("embedding-cache", getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 10000), text(localization.NornicDBCLIFlagEmbeddingCache()))
@@ -331,9 +331,9 @@ func applyServeEmbeddingOverrides(cmd *cobra.Command, cfg *config.Config) {
 	if cmd.Flags().Changed("embedding-key") {
 		cfg.Memory.EmbeddingAPIKey, _ = cmd.Flags().GetString("embedding-key")
 	}
-	if cmd.Flags().Changed("embedding-voyage-mode") {
-		cfg.Memory.EmbeddingVoyageMode, _ = cmd.Flags().GetString("embedding-voyage-mode")
-		cfg.Memory.EmbeddingVoyageMode = strings.TrimSpace(strings.ToLower(cfg.Memory.EmbeddingVoyageMode))
+	if cmd.Flags().Changed("embedding-mode") {
+		cfg.Memory.EmbeddingMode, _ = cmd.Flags().GetString("embedding-mode")
+		cfg.Memory.EmbeddingMode = strings.TrimSpace(cfg.Memory.EmbeddingMode)
 	}
 	if cmd.Flags().Changed("embedding-dim") {
 		cfg.Memory.EmbeddingDimensions, _ = cmd.Flags().GetInt("embedding-dim")
@@ -796,7 +796,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	serverConfig.EmbeddingProvider = cfg.Memory.EmbeddingProvider
 	serverConfig.EmbeddingAPIURL = cfg.Memory.EmbeddingAPIURL
 	serverConfig.EmbeddingAPIKey = cfg.Memory.EmbeddingAPIKey
-	serverConfig.EmbeddingVoyageMode = cfg.Memory.EmbeddingVoyageMode
+	serverConfig.EmbeddingMode = cfg.Memory.EmbeddingMode
 	serverConfig.EmbeddingModel = cfg.Memory.EmbeddingModel
 	serverConfig.EmbeddingDimensions = cfg.Memory.EmbeddingDimensions
 	serverConfig.EmbeddingCacheSize = cfg.Memory.EmbeddingCacheSize

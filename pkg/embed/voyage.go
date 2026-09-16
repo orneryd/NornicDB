@@ -3,7 +3,6 @@ package embed
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -31,7 +30,7 @@ func DefaultVoyageConfig(apiKey string) *Config {
 		Model:      voyageapi.DefaultEmbeddingModel,
 		Dimensions: voyageapi.DefaultOutputDimension,
 		Timeout:    30 * time.Second,
-		VoyageMode: VoyageModeText,
+		Mode:       VoyageModeText,
 	}
 }
 
@@ -47,7 +46,7 @@ type VoyageEmbedder struct {
 // NewVoyage creates a Voyage embedder.
 func NewVoyage(config *Config) (*VoyageEmbedder, error) {
 	if config == nil {
-		config = DefaultVoyageConfig(os.Getenv("VOYAGE_API_KEY"))
+		config = DefaultVoyageConfig("")
 	}
 	cfg := *config
 	cfg.Provider = strings.TrimSpace(strings.ToLower(cfg.Provider))
@@ -55,15 +54,12 @@ func NewVoyage(config *Config) (*VoyageEmbedder, error) {
 		cfg.Provider = "voyage"
 	}
 	if cfg.APIKey == "" {
-		cfg.APIKey = os.Getenv("VOYAGE_API_KEY")
-	}
-	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("Voyage requires an API key")
 	}
 	if strings.TrimSpace(cfg.APIURL) == "" {
 		cfg.APIURL = voyageapi.DefaultBaseURL
 	}
-	mode := normalizeVoyageMode(cfg.VoyageMode)
+	mode := normalizeVoyageMode(cfg.Mode)
 	if mode == VoyageModeMultimodal {
 		return nil, fmt.Errorf("Voyage multimodal mode is not supported for managed text embeddings")
 	}

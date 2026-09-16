@@ -168,8 +168,9 @@ type Config struct {
 	Dimensions int           // Expected dimensions (for validation)
 	Timeout    time.Duration // Request timeout
 
-	// Voyage-specific mode: text (default) or contextualized.
-	VoyageMode string
+	// Mode selects provider-specific embedding behavior. Providers may interpret
+	// free-form values; the default is "text".
+	Mode string
 
 	// Local GGUF model settings (used when Provider="local")
 	ModelsDir      string        // Directory containing .gguf models (default: ./models)

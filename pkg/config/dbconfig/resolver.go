@@ -198,7 +198,7 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_EMBEDDING_MODEL", c.Memory.EmbeddingModel)
 	setEffective("NORNICDB_EMBEDDING_API_URL", c.Memory.EmbeddingAPIURL)
 	setEffective("NORNICDB_EMBEDDING_API_KEY", c.Memory.EmbeddingAPIKey)
-	setEffective("NORNICDB_EMBEDDING_VOYAGE_MODE", c.Memory.EmbeddingVoyageMode)
+	setEffective("NORNICDB_EMBEDDING_MODE", c.Memory.EmbeddingMode)
 	setEffective("NORNICDB_EMBEDDING_DIMENSIONS", strconv.Itoa(c.Memory.EmbeddingDimensions))
 	if c.Memory.EmbeddingDimensions <= 0 {
 		setEffective("NORNICDB_EMBEDDING_DIMENSIONS", "1024")
